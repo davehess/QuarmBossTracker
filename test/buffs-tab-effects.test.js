@@ -28,6 +28,11 @@ const { _wpBuffFx, _wpBuffSummary } = evalBlock(
   ['_wpBuffFx', '_wpBuffSummary'],
 );
 
+const { _wpSecs } = evalBlock(
+  sliceBlock(src, 'function _wpSecs(secs) {', '\n// What a buff gives you, on its own card.'),
+  ['_wpSecs'],
+);
+
 const buff = (name, fx) => ({ name, fx });
 
 describe('effects on the buff card', () => {
@@ -129,5 +134,43 @@ describe('wiring', () => {
     // Backtick possessives — EQ logs "Talisman of Altuna" style names with a
     // backtick where the catalog stores an apostrophe.
     expect(agent).toMatch(/_spellByNameLower\.get\(k\.replace\(\/`\/g, "'"\)\)/);
+  });
+});
+
+// ⚠ THE BUG THIS CLASS EXISTS TO PREVENT. The Buffs tab shipped with a seconds
+// formatter declared as _wpDur — a name already taken further down the same
+// single-scope file by a MILLISECONDS formatter. Two top-level `function`
+// declarations with one name silently resolve to the LAST, so every buff
+// rendered at 1/1000 of its real time and nothing threw. Hitya caught it against
+// the in-game buff window: Girdle of Karana's 56 minutes read "3s", and its
+// 4320-second catalog duration read "~4s".
+//
+// Expectations below are the GAME's own numbers from that screenshot.
+describe('buff times, against what the game shows', () => {
+  it("formats Girdle of Karana's catalog duration as the game states it", () => {
+    expect(_wpSecs(720 * 6)).toBe('1h 12m');     // spell data: "720 ticks (1h12m)"
+  });
+
+  it('formats its remaining time as the buff window shows it', () => {
+    expect(_wpSecs(560 * 6)).toBe('56m 00s');    // buff window: 56m
+  });
+
+  it("formats Mask of the Stalker's three hours", () => {
+    expect(_wpSecs(1800 * 6)).toBe('3h 00m');    // spell data: "1800 ticks [3h]"
+  });
+
+  it('never divides seconds by a thousand', () => {
+    // The actual regression, pinned directly: these all collapsed to "3s",
+    // "9s", "1s", "0s" under the ms formatter.
+    expect(_wpSecs(3360)).not.toBe('3s');
+    expect(_wpSecs(9846)).not.toBe('9s');
+    expect(_wpSecs(1080)).not.toBe('1s');
+    expect(_wpSecs(120)).toBe('2m 00s');
+  });
+
+  it('still reads small values as seconds', () => {
+    expect(_wpSecs(0)).toBe('0s');
+    expect(_wpSecs(45)).toBe('45s');
+    expect(_wpSecs(null)).toBe('—');
   });
 });

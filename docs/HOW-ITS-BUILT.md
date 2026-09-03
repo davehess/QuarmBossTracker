@@ -1450,6 +1450,23 @@ connect-then-close with no error — run Mimic as admin (field-diagnosed
 2026-07-05; auto-hint in the Zeal notification + zealhealth.html).
 In-EQ-folder installs can break DX-hook detection — reinstall outside.
 
+### ⚠ Dashboard scope hazard: duplicate `function` names (agent 3.6.31)
+`dashboard.html` is ~8900 lines in ONE script scope. Two top-level `function`
+declarations sharing a name are legal JavaScript and silently resolve to the
+**last** one — nothing throws, and the wrong function is simply used.
+
+It shipped. The Buffs tab added a **seconds** formatter named `_wpDur`, a name
+already taken further down by a **milliseconds** formatter (agent liveness
+ages), so every buff rendered at **1/1000** of its real time: Girdle of Karana's
+56 minutes read `3s`, its 4320-second catalog duration read `~4s`. The numbers
+were plausible enough to read past, and only a screenshot against the in-game
+buff window caught it (Hitya, 2026-09-02). The seconds one is now `_wpSecs`.
+
+**`check-agent-dashboard.js` fails the build on any duplicate top-level
+declaration** (`checkDuplicateFunctions`) — verified by reintroducing the exact
+collision and watching it exit 1. Nested helpers are exempt: they are properly
+scoped and shadowing one is normal.
+
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target

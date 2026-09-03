@@ -14025,7 +14025,14 @@ function _wpBuffProv(kind) {
   return '<span title="' + t + '" style="font-size:9px;border:1px solid ' + c + ';color:' + c
        + ';border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">' + kind + '</span>';
 }
-function _wpDur(secs) {
+// ⚠ NOT _wpDur — that name is already taken further down by a formatter that
+// takes MILLISECONDS (agent liveness ages). Two top-level \`function\` declarations
+// with one name silently resolve to the LAST one, so this used to hand seconds
+// to the ms formatter and every buff on the Buffs tab read 1/1000 of its real
+// time: Girdle of Karana's 56m showed as "3s", its 4320s catalog as "~4s"
+// (Hitya 2026-09-02, with the in-game buff window beside it). check-agent-
+// dashboard.js now fails the build on any duplicate declaration.
+function _wpSecs(secs) {
   if (secs == null) return '—';
   var s = Math.max(0, Math.round(secs));
   if (s < 60) return s + 's';
@@ -14133,7 +14140,7 @@ function renderBuffsTab(s) {
         +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
         +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
         +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
-        +       (b.remaining_secs == null ? 'permanent' : _wpDur(b.remaining_secs)) + '</span>'
+        +       (b.remaining_secs == null ? 'permanent' : _wpSecs(b.remaining_secs)) + '</span>'
         +   '</div>'
         +   (pct != null
               ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
@@ -14141,8 +14148,8 @@ function renderBuffsTab(s) {
               : '')
         +   '<div class="dim" style="font-size:9px;margin-top:3px">'
         +     (b.remaining_secs != null ? 'left' + _wpBuffProv('zeal') : '')
-        +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
-                              : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
+        +     (b.measured_secs ? ' · of ~' + _wpSecs(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
+                              : (b.catalog_secs ? ' · of ~' + _wpSecs(b.catalog_secs) + _wpBuffProv('db') : ''))
         +   '</div>'
         +   _wpBuffFx(b.fx)
         + '</div>';
@@ -14206,11 +14213,11 @@ function renderBuffsTab(s) {
       var rcol = ratio == null ? 'var(--dim)' : (ratio > 1.08 ? 'var(--green)' : (ratio < 0.92 ? 'var(--orange)' : 'var(--dim)'));
       h += '<tr>'
         + '<td style="text-align:left">' + esc(d.spell) + '</td>'
-        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpDur(d.median) + _wpBuffProv('log') + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpSecs(d.median) + _wpBuffProv('log') + '</td>'
         + '<td style="text-align:right" class="dim">' + d.n + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.p25) + ' – ' + _wpDur(d.p75) + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.min) + ' – ' + _wpDur(d.max) + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.catalog_secs) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.p25) + ' – ' + _wpSecs(d.p75) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.min) + ' – ' + _wpSecs(d.max) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.catalog_secs) + '</td>'
         + '<td style="text-align:right;color:' + rcol + '">' + (ratio == null ? '—' : ('×' + ratio.toFixed(2))) + '</td>'
         + '</tr>';
     }

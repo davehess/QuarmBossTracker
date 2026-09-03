@@ -133,6 +133,44 @@ function checkScripts(html, label) {
   return failed;
 }
 
+// Two top-level `function` declarations sharing one name are legal JavaScript
+// and silently resolve to the LAST one. In an 8900-line single-scope dashboard
+// that is a live hazard, and it shipped: a seconds formatter named _wpDur was
+// added above a pre-existing MILLISECONDS formatter of the same name, so every
+// buff on the Buffs tab rendered 1/1000 of its real time — Girdle of Karana's
+// 56 minutes read "3s" (Hitya 2026-09-02, screenshot against the in-game buff
+// window). Nothing threw, nothing looked broken, and the numbers were plausible
+// enough to read past.
+//
+// Cheap to detect, so detect it: a redeclaration is never intentional here.
+function checkDuplicateFunctions(html, label) {
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]);
+  const seen = new Map();          // name → first line number
+  const dupes = [];
+  scripts.forEach((body) => {
+    const lines = body.split('\n');
+    lines.forEach((line, i) => {
+      // Top-level declarations only (column 0) — a nested helper is properly
+      // scoped and shadowing it is a normal thing to do.
+      const m = /^function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/.exec(line);
+      if (!m) return;
+      const name = m[1];
+      if (seen.has(name)) dupes.push({ name, first: seen.get(name), again: i + 1 });
+      else seen.set(name, i + 1);
+    });
+  });
+  if (dupes.length) {
+    for (const d of dupes) {
+      console.error(`✗ ${label}: function ${d.name}() is declared twice (line ${d.first} and line ${d.again}).`);
+      console.error('    The LAST declaration silently wins. Rename one — this is how the Buffs tab');
+      console.error('    got a milliseconds formatter and showed every buff at 1/1000 of its real time.');
+    }
+    return dupes.length;
+  }
+  console.log(`✓ no duplicate top-level function declarations in ${label} (${seen.size} functions)`);
+  return 0;
+}
+
 function main() {
   let html, embeds;
   try {
@@ -142,6 +180,8 @@ function main() {
     console.error('✗ Could not load WEB_HTML from the agent:', err.message);
     process.exit(1);
   }
+
+  if (checkDuplicateFunctions(html, 'WEB_HTML')) process.exit(1);
 
   if (typeof html !== 'string' || !html.includes('<!DOCTYPE html>')) {
     console.error('✗ WEB_HTML did not resolve to a dashboard HTML string.');
