@@ -89,6 +89,25 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Raid attendance heatmaps — the /me 📅 section and `/raidhistory` (web
+  1.7.19, 2026-09-03).** Hitya: *"add in raid attendance on a person's /me …
+  with mouse over on dates and raid names and links to the raids … give us a
+  /raidhistory page as well that contains each night and this view with a scale
+  from red at half raiders to green full raiders, orange middle of the way."*
+  Built on the OpenDKP tick mirror, the same reality signal as
+  `/admin/attendance`: a night is the Eastern day of `opendkp_raids.ts` (noon
+  UTC on the raid date; 416 raids on 389 nights, 25 nights carry two raids and
+  fold into one cell); attended = in any tick; per-night raiders = distinct
+  union across the night's ticks; empty-attendee ticks are sync gaps and drop.
+  **"Full" = the 60-man `raid_targets` sum (60 today), fallback 60, `?full=`
+  to what-if.** `opendkp_raids.attendance` is NOT an attendee count (null on
+  406 of 416 rows) and `raid_nights.raid_size_expected` is a stale 30 —
+  neither is read. ⚠ **One thing a cloud session could not verify:** the /me
+  loader's `.neq('attendees', '{}')` PostgREST filter (the ids-only read that
+  keeps the family query narrow) — the REST endpoint is blocked by the egress
+  proxy. It fails soft: no held ticks ⇒ the section hides. If the section is
+  missing for everyone, that filter is the first suspect; the fix is to fetch
+  the arrays and filter in JS as `/raidhistory` does.
 - **⚠ OPEN BUG — the account DKP figure is wrong, and I could not finish
   diagnosing it (2026-08-31).** Hitya: *"i'm noticing that the 192 dkp is wrong.
   i'm actually at 143 total"*. What is established:
