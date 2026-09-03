@@ -101,6 +101,13 @@ const FLAGS: Flag[] = [
     desc: 'Turns ON the P1b buff-landing de-duplication (#72). When checked, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers (synthesized per-observer) always upload regardless. Fail-open — an agent that loses contact with the bot uploads everything, and re-election hands off within ~60s if a reporter leaves the zone. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
   { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
     desc: 'Turns ON the P1c raid-roster de-duplication (#72). Roster composition is identical from every raider’s view, but per-member HP arrives only for the uploader’s own group — so when checked, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent not in a raid, or with no Zeal, is its own group and always uploads). Fail-open — an agent that loses contact with the bot uploads everything, a camping raider hands off ~30s early, and re-election covers a group within ~60s if its reporter leaves. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
+  // /tag channel join specs (agent 3.6.33). Typed here so an officer sets them
+  // in one place and the raider's LOCAL dashboard renders the exact /join line.
+  // These are the ONLY home of the password: never in source, never in a log,
+  // never in an upload. The officer spec is a full "name:password" shown only
+  // to officers by the agent (mimicIdentity.is_officer).
+  { key: 'tag_channel_password', label: '🏷 Tag channel password (raid) — raiders see "/join Ztwolfpacktag:<this>"', danger: false, text: true },
+  { key: 'tag_officer_channel',  label: '🏷 Officer channel spec "name:password" — shown to officers only', danger: false, text: true },
   { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
     desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads and non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant when you clear this. The durable queue HOLDS (nothing dropped) and overlays keep working on each user\'s LOCAL data — nobody\'s HUD blanks. Clearing this resumes the fleet within one heartbeat. Conservative v1 — coordinate with Hitya before flipping. Fail-open: if the bot is unreachable, agents run normally.' },
   { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
