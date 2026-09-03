@@ -1419,7 +1419,25 @@ In-EQ-folder installs can break DX-hook detection — reinstall outside.
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` (`write-bundle`) or
-defers until logout (`defer-save` + background watcher). Skin XML scan caps
+defers until logout (`defer-save` + background watcher).
+⚠ **The bundle is SEVERAL files, and only ONE of them is the one EQ reads.**
+`_readUiBundle` enumerates the per-character inis and then catch-alls any other
+`.ini` belonging to the character (server-suffix variants, `/loadskin`
+leftovers, machine migrations). More than one can carry the same `[Section]`
+with its own geometry, and the parse loop pushes each — Hitya's layout drew
+**258 windows for a file holding ~129**, two of everything stacked on the
+canvas (2026-09-02, with a screenshot). `_dedupeWindows` now keeps one row per
+section, ranked `UI_<char>_pq.proj.ini` → other `UI_*` → `<char>_pq.proj.ini` →
+anything else, and the status line names the file that lost rows.
+⚠ **The duplicate drawing was the visible half, not the harmful half.** Dragging
+one of two copies was a coin flip over whether the edit landed in the file the
+client actually reads; when it lost, Save reported success and nothing moved in
+game — the same silent-no-op class as the filename-case trap `_readUiBundle`
+already warns about. Save is unchanged and non-destructive: it writes each
+surviving window back to its own file, so a shadowed file is left exactly as it
+was rather than being rewritten or deleted.
+Tests: `test/ui-studio-dupe-windows.test.js` (the real `_dedupeWindows`, plus
+its call site — stubbing the call left all eleven behaviour tests green). Skin XML scan caps
 window sizes. Category filter buckets ~130 windows; `offscreen` category
 (default off) hides never-in-game windows (char-select/login surfaces,
 live-era leftovers). **Inspector** ("Hotbar Pages…", `inspect-socials`):

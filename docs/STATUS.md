@@ -236,6 +236,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **UI Studio stopped drawing every window twice (Mimic beta, 2026-09-02).**
+  Hitya, with a screenshot: *"UI studio shows multiple copies of several chats
+  and windows."* Header read "Hitya (2 ini files)" and "loaded 258 windows" for
+  a layout holding ~129 — ZealItemDisplay0-4, Chat 14, Compass, Raid and
+  ZealOptions all stacked on themselves.
+  Cause: the bundle is deliberately several files, and the parse loop pushed
+  every `[Section]` from every one of them. `_dedupeWindows` keeps one row per
+  section, preferring `UI_<char>_pq.proj.ini` — the file EQ actually reads.
+  ⚠ **The duplicate drawing was the visible half, not the harmful half.**
+  Dragging one of two copies was a coin flip over whether the edit reached the
+  file the client reads; when it lost, Save said success and nothing moved in
+  game. Same silent-no-op class as the filename-case trap already documented in
+  `_readUiBundle`.
+  Shadowed rows are COUNTED and named in the status line, never silently
+  dropped, and Save stays non-destructive — a shadowed file is left as it was.
+
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
   3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
   invis."* The four sight flags were already fetched AND already returned — the

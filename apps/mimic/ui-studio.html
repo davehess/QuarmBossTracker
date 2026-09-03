@@ -613,6 +613,56 @@
       '; window positions will be adapted, sizes preserved';
   }
 
+  // ── One window, one row ───────────────────────────────────────────────────
+  // Hitya, 2026-09-02: "UI studio shows multiple copies of several chats and
+  // windows." The bundle is deliberately several files — the enumerated
+  // per-character inis plus a catch-all for any other .ini belonging to this
+  // character (server-suffix variants, /loadskin leftovers, machine
+  // migrations). More than one of them can carry the SAME [Section] with its
+  // own geometry, and the parse loop pushes every one, so the canvas drew two
+  // of everything: 258 windows for a file holding ~129.
+  //
+  // ⚠ THE COSMETIC HALF IS NOT THE DANGEROUS HALF. EQ reads exactly ONE of
+  // these files for window geometry. Dragging a duplicate was a coin flip over
+  // whether the edit landed in the file the client actually reads — and when it
+  // lost, Save reported success and nothing moved in game. That is the same
+  // silent-no-op class as the filename-case trap documented in _readUiBundle.
+  //
+  // Rank the files, keep one row per section, and REPORT what was shadowed.
+  // Never silently drop: a window the user was looking for and cannot find is
+  // its own bug report. Save is unaffected — it writes each surviving window
+  // back to its own file, so a shadowed file is simply left as it was.
+  function _fileRank(fn, character){
+    var f = String(fn || '').toLowerCase();
+    var c = String(character || '').toLowerCase();
+    if (f === 'ui_' + c + '_pq.proj.ini') return 0;   // what EQ reads on Quarm
+    if (/^ui_/.test(f))                   return 1;   // another UI_ variant
+    if (f === c + '_pq.proj.ini')          return 2;   // per-char client ini
+    return 3;
+  }
+  function _dedupeWindows(windows, character){
+    var bySection = {}, shadowed = [];
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i], prev = bySection[w.section];
+      if (!prev) { bySection[w.section] = w; continue; }
+      // Lower rank wins; a tie keeps the one already seen (bundle file order).
+      if (_fileRank(w.file, character) < _fileRank(prev.file, character)) {
+        bySection[w.section] = w; shadowed.push(prev);
+      } else {
+        shadowed.push(w);
+      }
+    }
+    var kept = [];
+    for (var k = 0; k < windows.length; k++) {
+      if (bySection[windows[k].section] === windows[k]) kept.push(windows[k]);
+    }
+    var shadowFiles = {};
+    for (var j = 0; j < shadowed.length; j++) {
+      shadowFiles[shadowed[j].file] = (shadowFiles[shadowed[j].file] || 0) + 1;
+    }
+    return { kept: kept, shadowed: shadowed.length, shadowFiles: shadowFiles };
+  }
+
   // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
   // the local "Load + Rescale" path and the cloud "Restore from backup" path —
   // both end up with a { filename → text } bundle, so the only difference is
@@ -748,6 +798,10 @@
         });
       }
     }
+    var _dedup = _dedupeWindows(STATE.windows, STATE.character);
+    STATE.windows     = _dedup.kept;
+    STATE.shadowed    = _dedup.shadowed;
+    STATE.shadowFiles = _dedup.shadowFiles;
     STATE.autoSwitched = autoSwitched;
     if (STATE.windows.length === 0) {
       // Window-position data lives in EQ's UI_<char>_pq.proj.ini. Quarm has no
@@ -785,6 +839,14 @@
       }
       var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
       if (_warn) msg += ' · ' + _warn;
+      // Duplicates are worth naming, not hiding: the user needs to know a
+      // second file exists, and which one is being written.
+      if (STATE.shadowed) {
+        var _sf = Object.keys(STATE.shadowFiles || {});
+        msg += ' · ' + STATE.shadowed + ' duplicate' + (STATE.shadowed === 1 ? '' : 's') +
+               ' hidden from ' + _sf.join(', ') +
+               ' (EQ reads only one file; Save writes the one shown and leaves the other alone)';
+      }
       setStatus(msg, 'ok');
     }
     buildFilterPanel();
