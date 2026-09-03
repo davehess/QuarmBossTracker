@@ -8317,6 +8317,83 @@ async function _handleAgentTriggerFeedback(req, res) {
 //       (an engaged mob cons scowls/threateningly regardless of faction, so
 //       those are combat noise — and the agent already drops them); we keep
 //       the LATEST standing per (character, mob), overwritten in place.
+// ── Turning a faction hit into a POINT value ─────────────────────────────────
+// Hitya, 2026-09-03: the faction page "is currently not helping" because a
+// -2000 Lord Seru hit and a +5 spire-spirit kill both render as one "hit".
+// Classic prints no magnitude, but the exact per-mob value is in the mirror --
+// so once the agent names the mob that died in the same second (agent 3.6.32),
+// the number is a lookup, not a guess.
+//
+// Validated end to end against Hitya's own client log:
+//   #Lord_Inquisitor_Seru  → -2000 to Seru / Hand / Eye / Heart / Shoulders,
+//                            +200 to four Katta factions   (9 entries, 9 lines)
+//   A_Greater_Spire_Spirit → +5 to six Seru-bloc factions, -5 The Recuso,
+//                            -50 Spire Spirits             (8 entries, 8 lines)
+//
+// ⚠ Names come from eqemu_faction_list_full, NOT eqemu_faction_list — the
+// short table is missing rows (every faction_id on npc_faction 967 resolves to
+// NULL there) and a null name silently drops the value.
+const _FACTION_VALUE_TTL_MS = 6 * 3600 * 1000;
+let _factionValueCache = { at: 0, byMob: null };
+async function _factionValueMap() {
+  if (_factionValueCache.byMob && Date.now() - _factionValueCache.at < _FACTION_VALUE_TTL_MS) {
+    return _factionValueCache.byMob;
+  }
+  const byMob = new Map();   // normMobName → Map(factionLower → value)
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      // ⚠ selectAllPaged, NOT select with a big limit. PostgREST silently caps
+      // a response at 1000 rows, so `limit=20000` returns 1000 and the map
+      // comes out quietly incomplete — most mobs would resolve to no value and
+      // look like "unattributable" rather than like a bug. The repo's
+      // over-cap ratchet test caught this; it is why that test exists.
+      const [names, entries, npcs] = await Promise.all([
+        supabase.selectAllPaged('eqemu_faction_list_full',
+          'id=gt.0&select=id,name', 'id', undefined),
+        supabase.selectAllPaged('eqemu_npc_faction_entries',
+          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id', undefined),
+        // ⚠ Narrow select on purpose: this is an 18k-row table and egress is
+        // the metered thing on our plan, so the default all-columns paged read
+        // would pull the whole NPC catalog to learn two fields.
+        supabase.selectAllPaged('eqemu_npc_types',
+          'npc_faction_id=gt.0&select=id,name,npc_faction_id', 'id', undefined),
+      ]);
+      // A failed page returns null, which is NOT an empty catalog — bail rather
+      // than cache a half-built map for six hours.
+      if (!names || !entries || !npcs) {
+        console.warn('[faction] value map: a catalog page failed; not caching a partial map');
+        return byMob;
+      }
+      const factionName = new Map((names || []).map(r => [Number(r.id), String(r.name || '')]));
+      const byNpcFaction = new Map();
+      for (const e of (entries || [])) {
+        const fn = factionName.get(Number(e.faction_id));
+        if (!fn) continue;
+        const v = Number(e.value);
+        if (!Number.isFinite(v) || v === 0) continue;
+        let m = byNpcFaction.get(Number(e.npc_faction_id));
+        if (!m) { m = new Map(); byNpcFaction.set(Number(e.npc_faction_id), m); }
+        m.set(fn.toLowerCase(), v);
+      }
+      for (const n of (npcs || [])) {
+        const m = byNpcFaction.get(Number(n.npc_faction_id));
+        if (!m) continue;
+        byMob.set(_normFactionMobName(n.name), m);
+      }
+    }
+  } catch (err) {
+    console.warn('[faction] value map build failed:', err && err.message);
+  }
+  _factionValueCache = { at: Date.now(), byMob };
+  return byMob;
+}
+// npc_types stores "A_Greater_Spire_Spirit" and instanced rows carry a leading
+// "#"; the log prints "A Greater Spire Spirit". Normalise both to one key.
+function _normFactionMobName(v) {
+  return String(v || '').trim().replace(/^#/, '').replace(/[\s_]+/g, ' ').toLowerCase();
+}
+
 async function _handleAgentFaction(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -8344,6 +8421,9 @@ async function _handleAgentFaction(req, res) {
 
   // Hits → one aggregate per (character, faction). A 1,500-event backfill
   // chunk collapses to a handful of RPC rows.
+  // Only pay for the catalog map when at least one hit names its kill.
+  const _needValues = events.some(e => e && e.kind === 'hit' && e.mob);
+  const _factionValues = _needValues ? await _factionValueMap() : null;
   const agg = new Map();   // charLower|factionLower → rollup row
   // Cons → latest per (character, mob); a single upsert payload must not
   // contain the same key twice (Postgres rejects double-update in one
@@ -8375,8 +8455,18 @@ async function _handleAgentFaction(req, res) {
       // the web can show actual point swings instead of just hit counts.
       // Clamp to a sane range so a corrupt log line can't poison the rollup.
       const magRaw = Number(e.magnitude);
-      if (Number.isFinite(magRaw) && magRaw > 0 && magRaw < 100000) {
-        const mag = Math.trunc(magRaw);
+      let mag = (Number.isFinite(magRaw) && magRaw > 0 && magRaw < 100000) ? Math.trunc(magRaw) : null;
+      // No magnitude in the line (every classic hit) but the agent named the
+      // kill that caused it → the exact value is a catalog lookup. Sign is
+      // taken from the LINE, not from the catalog: the same kill raises some
+      // factions and lowers others, and the line already tells us which way
+      // this one went.
+      if (mag == null && e.mob) {
+        const fv = (_factionValues && _factionValues.get(_normFactionMobName(e.mob))) || null;
+        const v  = fv ? fv.get(faction.toLowerCase()) : null;
+        if (Number.isFinite(v) && Math.abs(v) > 0 && Math.abs(v) < 100000) mag = Math.abs(Math.trunc(v));
+      }
+      if (mag != null) {
         if (dir > 0) a.better_total += mag; else a.worse_total += mag;
       }
       if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
