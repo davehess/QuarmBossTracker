@@ -675,6 +675,41 @@ prove — but it still goes through the name check, because a cast line can arri
 a beat after they switched target and stamping the new id onto the old target's
 cast is worse than sending nothing.
 
+### Target Info stops hiding a third of the raid's debuffs (bot 3.1.116)
+Hitya, live 2026-09-02: *"Debuffs don't show on Target Info but show on Extended
+Target."* Both read `buff_casts`; they disagreed on one null.
+
+⚠ **`_zoneScopeKeep` DROPS a row whose observer it cannot place — and unknown is
+the ORDINARY case.** `_liveZoneMap` sees only the last **10 minutes** of
+`character_live_state`, while `buff_casts` is queried **3 hours** back, and a
+raider not running Mimic never appears in it at all. **Measured 2026-09-02: 8 of
+the 21 observers** of the previous two hours of debuffs had no resolvable zone —
+so better than a third of the raid's observations were invisible on Target Info.
+Extended Target's own code takes the opposite line and says so: *"a raider whose
+zone we can't resolve rides along rather than vanishing — never hide data on
+missing info."*
+
+**The discriminator #141 actually needed is whether the NAME is ambiguous.**
+`eqemu_npc_types.id` encodes its zone (`id = zoneid*1000 + n`), so the distinct
+zone count is a column read with no join. `_nameZoneCount` (6h cache) feeds
+`_zoneScopeKeepForName`, which relaxes **only** the unknown-observer case and
+**only** for a single-zone name. Grounded, not guessed: `a_geonid` — #141's own
+worked example — really is 2 zones (119 Wakening, 121 Crystal ×2), while
+`The_Avatar_of_War` is 1.
+- `_zoneScopeKeep` itself is **unedited**; it is documented and depended on, so
+  the fix wraps it. A test pins that the two differ on exactly one input.
+- Uncatalogued name, or a lookup that throws → **1 zone, keep**. A name we
+  cannot look up is not evidence against the row.
+⚠ **Query the name as GIVEN, never the lowercased cache key.** `npc_types`
+matches `eq.` case-sensitively, so `the_avatar_of_war` returns 0 rows where
+`The_Avatar_of_War` returns 1 — and 0 rows means "keep", so the guard would have
+silently switched itself off for every capitalised (i.e. every NAMED) mob. Caught
+by a test asserting on the query string, not by review.
+⚠ **`ilike` is NOT the fix**: SQL LIKE treats `_` as a single-character wildcard
+and these names are full of them, so it over-matches, inflates the zone count,
+and drops rows — the dangerous direction.
+Tests: `test/target-info-zone-scope.test.js`.
+
 ### Target Info: effects scoped to the SPAWN, not just the name (bot 3.1.110)
 `buff_casts` keyed a landing by target NAME, so the cross-client Target Info
 relay merged every same-name mob in the zone into one effect list — the mob you
