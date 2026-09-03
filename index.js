@@ -9938,6 +9938,70 @@ function _zoneScopeKeep(requesterZone, observerZone) {
   if (!observerZone)  return false;
   return String(observerZone) === String(requesterZone);
 }
+// How many ZONES does this NPC name exist in? The zone filter above exists to
+// stop a same-name mob in another zone leaking its effects in — but it pays for
+// that with a hard DROP whenever the observer's zone is unknown, and unknown is
+// the ordinary case: `_liveZoneMap` only sees the last 10 minutes of
+// `character_live_state`, while `buff_casts` is queried 3 hours back. Measured
+// 2026-09-02: **8 of the 21 observers** of the last two hours of debuffs had no
+// resolvable zone, so better than a third of the raid's observations were
+// silently invisible on Target Info while Extended Target showed them (Hitya:
+// "Debuffs don't show on Target Info but show on Extended Target" — Extended
+// Target's own comment says it lets null-zone rows ride along rather than
+// vanish, and those two surfaces disagreeing is the bug).
+//
+// The discriminator #141 actually needed is whether the NAME is ambiguous at
+// all. `eqemu_npc_types.id` encodes its zone (`id = zoneid*1000 + n`), so the
+// distinct zone count is a column read with no join. Grounded, not guessed:
+// `a_geonid` — #141's own worked example — really is 2 zones, while
+// `The_Avatar_of_War` is 1.
+//
+//   name in >1 zone  → ambiguous; an unknown observer zone stays suspicious
+//   name in 1 zone   → every observation of it is about the same mob
+//   name not in the catalog → treat as unambiguous and KEEP; a name we cannot
+//     look up is not evidence against the row, and hiding data on missing info
+//     is the failure this whole fix is about
+const _NAME_ZONES_TTL_MS = 6 * 3600 * 1000;
+const _nameZonesCache = new Map();          // nameLower → { at, zones }
+async function _nameZoneCount(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return 1;
+  const hit = _nameZonesCache.get(key);
+  if (hit && Date.now() - hit.at < _NAME_ZONES_TTL_MS) return hit.zones;
+  let zones = 1;
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      // npc_types stores names underscored.
+      // ⚠ Query the name as GIVEN, not the lowercased cache key. npc_types
+      // matches `eq.` case-sensitively, so `the_avatar_of_war` returns 0 rows
+      // where `The_Avatar_of_War` returns 1 — and 0 rows means "unambiguous,
+      // keep", so the guard would have silently switched itself off for every
+      // capitalised (i.e. every NAMED) mob. Caught by a test asserting on the
+      // query string, not by review. `ilike` is NOT the fix: LIKE treats `_` as
+      // a single-character wildcard, and every one of these names is full of
+      // them, so it would over-match and inflate the zone count — which drops
+      // rows, the dangerous direction.
+      const rows = await supabase.select('eqemu_npc_types',
+        `name=eq.${encodeURIComponent(String(name).trim().replace(/\s+/g, '_'))}&select=id&limit=200`);
+      const z = new Set((rows || []).map(r => Math.floor(Number(r.id) / 1000)));
+      zones = z.size || 1;                  // 0 rows → unambiguous, see above
+    }
+  } catch (err) {
+    console.warn('[name-zones] lookup failed:', err && err.message);
+    zones = 1;                              // fail OPEN, same reason
+  }
+  _nameZonesCache.set(key, { at: Date.now(), zones });
+  return zones;
+}
+// Zone scope for a row whose observer we may not be able to place. Keeps
+// `_zoneScopeKeep`'s contract untouched (it is documented and depended on) and
+// only relaxes the UNKNOWN-observer case, and only for a name that cannot be
+// confused across zones in the first place.
+function _zoneScopeKeepForName(requesterZone, observerZone, nameZones) {
+  if (observerZone == null && Number(nameZones) <= 1) return true;
+  return _zoneScopeKeep(requesterZone, observerZone);
+}
 // Sibling of the above, one level down: same NAME, same ZONE, DIFFERENT SPAWN.
 // Zone scoping stopped "a geonid" in Crystal Caverns leaking into The Wakening
 // Land's Target Info; this stops three "a thought horror evoker" standing next
@@ -9986,12 +10050,15 @@ async function _handleAgentTargetCasts(req, res) {
   // requester's zone (see _zoneScopeKeep).
   const zoneMap = await _liveZoneMap();
   const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
+  const _nameZones = await _nameZoneCount(name);   // 6h-cached column read
   const mp = tk ? _castingByTarget.get(tk) : null;
   const casts = [];
   if (mp) {
     for (const c of mp.values()) {
       const casterZone = (zoneMap.get(String(c.caster || '').toLowerCase()) || {}).zone_name || null;
-      if (!_zoneScopeKeep(requesterZone, casterZone)) continue;
+      // Same relaxation as target-buffs: a caster we cannot place only
+      // disqualifies the row for a name that exists in more than one zone.
+      if (!_zoneScopeKeepForName(requesterZone, casterZone, _nameZones)) continue;
       // Spawn id FIRST, name second (Hitya 2026-09-02). Same name, same zone,
       // provably a different spawn → somebody else's mob. _idScopeKeep fails
       // open on either side being unknown, so a fleet with no ids behaves
@@ -10082,6 +10149,7 @@ async function _handleAgentTargetBuffs(req, res) {
   // zones don't share (and cross-contaminate) one cached debuff list.
   const zoneMap = await _liveZoneMap();
   const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
+  const _nameZones = await _nameZoneCount(name);   // 6h-cached column read
   // ⚠ The spawn id belongs in the cache key for the same reason the zone does:
   // without it two raiders targeting DIFFERENT same-name mobs in one zone share
   // a cached list, and the cache silently undoes the filtering below.
@@ -10115,7 +10183,10 @@ async function _handleAgentTargetBuffs(req, res) {
       // #141 — only merge observations from an observer in the requester's zone
       // (a same-name mob in another zone is never our target's data).
       const observerZone = (zoneMap.get(String(r.observer || '').toLowerCase()) || {}).zone_name || null;
-      if (!_zoneScopeKeep(requesterZone, observerZone)) continue;
+      // An observer we cannot place is the ORDINARY case (10-min live-state
+      // window vs a 3-hour row window), so it only disqualifies the row when
+      // the name could belong to another zone's mob at all.
+      if (!_zoneScopeKeepForName(requesterZone, observerZone, _nameZones)) continue;
       // Same name, same zone, provably a different spawn → not our target's.
       if (!_idScopeKeep(targetId, r.target_id)) continue;
       if (_isJunkSpellName(r.spell_name)) continue;   // hide phantom "Kneel Test"

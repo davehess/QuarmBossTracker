@@ -134,7 +134,11 @@ describe('target-casts is spawn-scoped too', () => {
   });
 
   it('applies the id filter after the zone filter, not instead of it', () => {
-    const zoneAt = fn.indexOf('_zoneScopeKeep(requesterZone, casterZone)');
+    // 2026-09-02: the zone filter now goes through _zoneScopeKeepForName, which
+    // relaxes ONLY the unknown-observer case for a name that exists in one zone
+    // (see test/target-info-zone-scope.test.js). The ORDER is what this asserts,
+    // and it still has to hold.
+    const zoneAt = fn.indexOf('_zoneScopeKeepForName(requesterZone, casterZone');
     const idAt   = fn.indexOf('_idScopeKeep(targetId, c.target_id)');
     expect(zoneAt).toBeGreaterThan(-1);
     expect(idAt).toBeGreaterThan(zoneAt);
