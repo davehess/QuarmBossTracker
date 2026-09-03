@@ -5427,6 +5427,32 @@ function _recordProt(key, name, kind, atMs, up, secs) {
     _daBroadcasts.set(key, { name, kind, activeEndsAtMs: atMs, readyAtMs, updatedAtMs: atMs });
   }
 }
+// A class gate on the SHOUT tracker, because it credits whoever SPOKE the line
+// and a box can announce for its owner. Hitya, live 2026-09-02: "Currynote is
+// currygoat's bard, he does not have defensive" — the Command Center had a
+// 10:10 Defensive recharging on a BARD, because Currygoat's announce went out
+// on his bard box and the tracker faithfully credited the speaker.
+//
+// ⚠ DELIBERATELY ONE ENTRY, AND THE ASYMMETRY IS WHY. Suppressing a REAL
+// defensive is the dangerous direction — healers stop seeing that the tank is
+// mitigating — while letting a wrong one through is cosmetic. So this gates
+// only what is certain and class-locked:
+//   • Defensive is a WARRIOR discipline. No item grants it, so a known
+//     non-warrior announcing one is always a box announcing for someone else.
+// It deliberately does NOT gate the spell-backed kinds. Divine Aura and
+// Harmshield have item/clicky sources, so "wrong class" is not proof there:
+// gating those would suppress a genuine invuln, which is exactly the call the
+// rampage bar must never get wrong.
+// Add a kind here only when someone confirms no item can grant it.
+const _PROT_CLASS_LOCK = { Defensive: ['Warrior'] };
+function _protClassAllows(kind, speaker) {
+  const allowed = _PROT_CLASS_LOCK[kind];
+  if (!allowed) return true;                       // ungated kind
+  const who = whoData.get(String(speaker || '').toLowerCase());
+  const cls = who && who.class ? normalizeClass(who.class) : null;
+  if (!cls) return true;                           // unknown class → fail OPEN
+  return allowed.includes(cls);
+}
 function trackDaBroadcastLine(line, character) {
   // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
   // shield word. Only pays the regex when the fast substring misses.
@@ -5446,6 +5472,9 @@ function trackDaBroadcastLine(line, character) {
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
+  // A box announcing its owner's discipline must not put that discipline on the
+  // box. Fails open on an unknown class — see _protClassAllows.
+  if (!_protClassAllows(kind, speaker)) return;
   const key = speaker.toLowerCase() + '|' + kind;
   const secs = _parseProtSeconds(text);
   if (secs != null) {
@@ -5456,6 +5485,8 @@ function trackDaBroadcastLine(line, character) {
     _recordProt(key, speaker, kind, atMs, true, null);                                           // up, default/unknown duration
   }
 }
+
+// ── Protective snapshot for the Command Center ──────────────────────────────
 function daBroadcastsSnapshot() {
   const now = Date.now();
   const out = [];

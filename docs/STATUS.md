@@ -236,6 +236,22 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **A box can no longer take its owner's Defensive (agent beta, 2026-09-02).**
+  Hitya, live, with a Command Center screenshot showing a 10:10 Defensive
+  recharging on Currynote: *"Currynote is currygoat's bard, he does not have
+  defensive."* The protective tracker reads raid-chat announces and credits
+  whoever SPOKE the line — which is right, and is why it works for tanks who run
+  no macro — but Currygoat's announce went out on his bard box.
+  `_protClassAllows` gates on the speaker's `/who` class, folding level titles
+  through `normalizeClass` first (a 65 bard reports "Maestro").
+  ⚠ **The lock has exactly ONE entry and that is deliberate.** Suppressing a
+  REAL defensive is the dangerous direction — healers stop seeing the tank is
+  mitigating — while a wrong one is cosmetic. So it covers only Defensive, a
+  warrior discipline with no item source, and **not** Divine Aura or Harmshield,
+  which have clicky sources where "wrong class" is not proof and a false
+  suppress would blank a genuine invuln on the rampage bar. Unknown class fails
+  OPEN. Add a kind only when someone confirms no item can grant it.
+
 - **A charmer's pet folds into the charmer, even when they never swung (Mimic
   beta, 2026-09-02).** Hitya, live, with a screenshot showing `Vkjor
   (Chadivarius)` as its own row: *"it looks like when Chad charmed him it

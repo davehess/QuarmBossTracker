@@ -41,6 +41,10 @@ function harness() {
     sliceBlock(src, 'const _PROT_ACTIVE_SECS   =', '\nconst _daBroadcasts = new Map();'),
     sliceBlock(src, 'const _INVULN_OBSERVED_TTL_MS', '  return { name: \'Invuln\', seconds: null, critical: false, observed: true };\n}'),
     sliceBlock(src, 'function _recordProt(key, name, kind, atMs, up, secs) {', '\n}'),
+    // The class gate the tracker calls (2026-09-02). Sliced for real rather
+    // than stubbed: a stub would let this suite pass while the shipped gate
+    // suppressed the very announces these tests assert on.
+    sliceBlock(src, 'const _PROT_CLASS_LOCK = { Defensive:', '\n}'),
     sliceBlock(src, 'function trackDaBroadcastLine(line, character) {', '\n}'),
     sliceBlock(src, 'function _daBroadcastForName(name, greenSecs) {', '  return best;\n}'),
   ];
@@ -49,6 +53,11 @@ function harness() {
   const prelude = sliceBlock(src, 'const _CH_SPEAKER_RX = ', '\n') + `
     const DA_BROADCAST_TTL_MS = 30000;
     function parseEqTimestamp() { return new Date(); }
+    // No /who data in this harness, so the class gate fails open — which is
+    // exactly the production behaviour for an un-/who'd tank, and is what
+    // these Harmshield/Defensive announces should hit.
+    const whoData = new Map();
+    function normalizeClass(c){ return c; }
   `;
   // eslint-disable-next-line no-new-func
   return new Function(prelude + blocks.join('\n')
