@@ -4076,6 +4076,58 @@ const CON_STANDINGS = [
 // Phrases are plain prose (no regex metacharacters), so a straight join is
 // safe — keep it that way if new tiers are ever added.
 const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
+// ── Attributing a faction hit to the kill that caused it ────────────────────
+// Hitya, 2026-09-03: "if we don't see the name of the mob that died and still
+// get the faction hit, we can't attribute how much we are getting hit by unless
+// it says that we are at the maximum positive or negative values... If we see
+// the mob that died and at the same time, we end up seeing the faction, then
+// it's not so bad."
+//
+// That is the whole mechanism. Classic prints no magnitude on a faction line,
+// but eqemu_npc_faction_entries holds the exact per-mob value, so naming the
+// mob turns a bare "got worse" into a number. Verified end to end against
+// Hitya's own log: one #Lord_Inquisitor_Seru kill is -2000 to each of Seru /
+// Hand / Eye / Heart / Shoulders and +200 to four Katta factions, and one
+// A_Greater_Spire_Spirit is +5 to six Seru-bloc factions — both matching the
+// live client line for line.
+//
+// ⚠ ORDER-INDEPENDENT ON PURPOSE. The kill's lines all share one timestamp
+// SECOND, but which comes first — the slain line or the faction lines — is a
+// client detail we have not pinned, and the two screenshots that prompted this
+// were separate filtered windows so they cannot settle it. So both directions
+// are handled: a hit looks BACK at a slain line already seen this second, and a
+// slain line reaches FORWARD to patch hits already buffered for the same
+// second. Getting that wrong silently loses attribution on every kill.
+//
+// Keyed to the second, never to a window: two kills in the same second are
+// genuinely ambiguous, and the second one overwrites, so it attributes at most
+// one mob per second rather than guessing across a range.
+const _slainAtSecond = new Map();      // "charLower|<iso second>" → mob name
+const _SLAIN_SECOND_CAP = 400;
+function _secondKey(character, iso) {
+  return String(character || '').toLowerCase() + '|' + String(iso || '').slice(0, 19);
+}
+function noteSlainForFaction(character, mob, iso) {
+  if (!character || !mob || !iso) return;
+  const k = _secondKey(character, iso);
+  _slainAtSecond.set(k, mob);
+  if (_slainAtSecond.size > _SLAIN_SECOND_CAP) {
+    // Oldest-first eviction; insertion order is chronological on a log crawl.
+    const drop = _slainAtSecond.size - _SLAIN_SECOND_CAP;
+    let i = 0;
+    for (const key of _slainAtSecond.keys()) { if (i++ >= drop) break; _slainAtSecond.delete(key); }
+  }
+  // Reach FORWARD: faction lines for this kill may already be buffered.
+  if (typeof factionBuffer !== 'undefined' && Array.isArray(factionBuffer)) {
+    for (const e of factionBuffer) {
+      if (!e || e.kind !== 'hit' || e.mob) continue;
+      if (_secondKey(e.character, e.ts) === k) e.mob = mob;
+    }
+  }
+}
+function _slainForFactionHit(character, iso) {
+  return _slainAtSecond.get(_secondKey(character, iso)) || null;
+}
 function parseFactionLine(line, character) {
   if (!character || line.indexOf('Your faction standing with') === -1) return null;
   // Quarm sometimes prints a magnitude after the line — common shapes:
@@ -4096,6 +4148,7 @@ function parseFactionLine(line, character) {
   const magnitude  = magByWord != null ? magByWord
                     : magInParen != null ? magInParen
                     : null;
+  const iso = ts ? ts.toISOString() : new Date().toISOString();
   return {
     kind:      'hit',
     character,
@@ -4103,7 +4156,13 @@ function parseFactionLine(line, character) {
     direction: dirWord === 'better' ? 1 : -1,
     magnitude,
     capped:    !!m[6],
-    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+    ts:        iso,
+    // The kill this hit came from, when the log shows one in the same second.
+    // null is the ordinary case (someone else landed the killing blow, or the
+    // corpse was out of range) and must stay null rather than guess — an
+    // unattributed hit is still worth recording for its direction and its
+    // at-cap flag, which pins absolute position on its own.
+    mob:       _slainForFactionHit(character, iso) || undefined,
   };
 }
 // Standing-change dedup so /con spam doesn't flood the upload buffer: emit
@@ -27104,6 +27163,14 @@ function runOptinBackfill(files, opts = {}) {
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
+            {
+              const sm = line.match(_SLAIN_YOU_RX);
+              if (sm && sm[1]) {
+                const sts = parseEqTimestamp(line);
+                noteSlainForFaction(f.character, sm[1].trim().replace(/!$/, ''),
+                  sts ? sts.toISOString() : new Date().toISOString());
+              }
+            }
             const facEvt = parseFactionLine(line, f.character);
             if (facEvt) factionBuffer.push(facEvt);
             const conFacEvt = parseConsiderLine(line, f.character);
@@ -37854,6 +37921,17 @@ async function main() {
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
+        // Note the kill BEFORE parsing the faction line so a hit printed after
+        // the slain line attributes immediately; noteSlainForFaction also
+        // patches hits already buffered, covering the opposite order.
+        {
+          const sm = line.match(_SLAIN_YOU_RX);
+          if (sm && sm[1]) {
+            const sts = parseEqTimestamp(line);
+            noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
+              sts ? sts.toISOString() : new Date().toISOString());
+          }
+        }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
@@ -38162,6 +38240,14 @@ async function main() {
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
+        {
+          const sm = line.match(_SLAIN_YOU_RX);
+          if (sm && sm[1]) {
+            const sts = parseEqTimestamp(line);
+            noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
+              sts ? sts.toISOString() : new Date().toISOString());
+          }
+        }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
