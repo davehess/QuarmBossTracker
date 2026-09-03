@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-attendance-heatmap-2026-09-03',
+    title: 'Web 1.7.19',
+    version: 'Web 1.7.19',
+    date: '2026-09-03',
+    headline: 'Your raid attendance as a year-long grid on /me, and a guild-wide Raid history page that shows how full every night was.',
+    features: [
+      {
+        name: 'Raid attendance on /me',
+        blurb: 'A grid of the last year, one square per raid night, across all your characters. Gold means you were there \u2014 brighter the more of the night you stayed \u2014 and an outline is a raid you missed. Hover a square for the date and the raid, click it to open that night\u2019s review.',
+      },
+      {
+        name: 'Raid history',
+        blurb: 'The same grid for the whole guild under Stats \u2192 Raid history: every night coloured from red at half a raid, through orange, to green at a full one, with a list of each night, its raid, and how many raiders came.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pacify-and-see-invis-2026-09-02',
     title: 'Knowing what is safe to walk past',
     version: 'Mimic 2.6.5 \u00b7 Bot 3.1.115',

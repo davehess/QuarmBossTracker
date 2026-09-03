@@ -34,6 +34,7 @@ export const GROUPS: Group[] = [
       { href: '/leaderboards', label: 'Ranks' },
       { href: '/pvp',          label: 'PvP' },
       { href: '/roster',       label: 'Roster' },
+      { href: '/raidhistory',  label: 'Raid history' },
       { href: '/fun',          label: 'Fun' },
     ],
   },

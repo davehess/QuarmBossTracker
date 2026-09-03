@@ -2750,6 +2750,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
 - **Attendance metrics (#92)** — `member_attendance_metrics` view + `/admin/attendance`.
+- **Raid attendance heatmaps (2026-09-03)** — `web/lib/raidHeatmap.ts` (pure:
+  the week grid, Eastern-night bucketing of `opendkp_raids` + `opendkp_ticks`,
+  the red→orange→green fill scale, gold tick-share) and
+  `web/components/RaidHeatmap.tsx` (client grid, one fixed tooltip). Two
+  surfaces: the **/me** 📅 section (family union via `.overlaps('attendees')`,
+  ids-only tick reads) and **`/raidhistory`** (member page: heatmap + per-night
+  table; "full" = the 60-man `raid_targets` sum, `?weeks=` and `?full=`
+  overrides). Every night cell links to `/raid/review/<date>`.
 - **Raid-Helper signup archive** — `utils/raidhelperApi.js` mirrors the Raid-Helper
   board into `rh_events` + `rh_signups` every 30 min (`startRaidHelperSync` in
   `index.js`), upsert-only, feeding `/admin/signups`. **This is the guild's only
