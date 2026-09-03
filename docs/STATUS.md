@@ -236,6 +236,23 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **A charmer's pet folds into the charmer, even when they never swung (Mimic
+  beta, 2026-09-02).** Hitya, live, with a screenshot showing `Vkjor
+  (Chadivarius)` as its own row: *"it looks like when Chad charmed him it
+  attributed to him, but it should be the other way around as Chad +pet."*
+  The fold has existed since 2026-08-13, but it required the owner to ALREADY
+  have a row on the meter — and an enchanter running a charm pet often does
+  little or no direct damage, so they are absent from `perPlayer` entirely and
+  the pet kept its own line. `_foldPetsIntoOwners` now CREATES the owner's row
+  when it is missing, so the damage reads as what that raider brought.
+  ⚠ **The missing case was the common one**, which is why it survived three
+  weeks: it only shows up for a raider whose entire contribution is the pet.
+  ⚠ Unattributed charm mobs (`pet_charm`, no proven owner) are still NOT
+  folded — nobody gets credited for a charm we cannot attribute, and those keep
+  their "(charmed)" row.
+  Extracted from the render into a testable `_foldPetsIntoOwners`; the total is
+  asserted preserved, so a fold can never double-count.
+
 - **UI Studio stopped drawing every window twice (Mimic beta, 2026-09-02).**
   Hitya, with a screenshot: *"UI studio shows multiple copies of several chats
   and windows."* Header read "Hitya (2 ini files)" and "loaded 258 windows" for

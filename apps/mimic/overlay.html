@@ -438,6 +438,61 @@
     });
   }
 
+  function _foldPetsIntoOwners(allRows){
+      // Fold an owned pet INTO its owner. "Shavimo`s warder should be added
+      // to Shavimo's damage and have a little (+pet) next to their name"
+      // (Hitya, live 2026-08-13) — a pet is not a raider, it is part of what
+      // its owner brought.
+      //
+      // This also has to happen BEFORE the guild merge below, and that is the
+      // part that bites: bot 3.1.43 rolls pets into their owner server-side,
+      // so the guild figure ALREADY includes the warder. Left unfolded here,
+      // the pet was counted inside the owner's guild number AND kept its own
+      // local row (the merge only ever ADDS, so a local-only row survives) —
+      // the same damage on screen twice. Folding first makes both sides mean
+      // the same thing: owner + their pets.
+      //
+      // Charm pets with no proven owner (index 6) are deliberately NOT folded
+      // — nobody gets credited for a charm we cannot attribute, so they keep
+      // their own "(charmed)" row exactly as before.
+      //
+      // ⚠ THE OWNER MAY HAVE NO ROW OF THEIR OWN, AND THAT IS THE NORMAL CASE
+      // FOR A CHARMER (Hitya, live 2026-09-02: "it looks like when Chad
+      // charmed him it attributed to him, but it should be the other way
+      // around as Chad +pet"). An enchanter running a charm pet often does
+      // little or no direct damage, so they never appear in perPlayer at all
+      // — and the fold below used to require an existing owner row, so the
+      // pet kept its own "Vkjor (Chadivarius)" line instead. That reads as if
+      // the PET were the raider, which is backwards: the damage is what
+      // Chadivarius brought. So we CREATE the owner's row when it is missing
+      // and fold into that.
+      var _byName = new Map();
+      allRows.forEach(function(r){ _byName.set(String(r[0]).toLowerCase(), r); });
+      var _synth = [];
+      allRows.forEach(function(r){
+        if (!r[3]) return;                                   // not an owned pet
+        var ok = String(r[3]).toLowerCase();
+        if (_byName.has(ok)) return;                         // owner already on the meter
+        // Same tuple shape as the map above, zeroed: name, dmg, tookMax,
+        // pet_owner(null — an owner is not itself a pet), _, _, pet_charm.
+        var row = [String(r[3]), 0, 0, null, 0, 0, false];
+        _byName.set(ok, row);
+        _synth.push(row);
+      });
+      if (_synth.length) allRows = allRows.concat(_synth);
+      var _folded = [];
+      allRows.forEach(function(r){
+        var owner = r[3] && _byName.get(String(r[3]).toLowerCase());
+        if (!owner || owner === r) { _folded.push(r); return; }
+        owner[1] += (r[1] || 0);
+        owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
+        owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
+                                                // (7 is localDmg once the guild merge runs)
+      });
+    return _folded.sort(function(a,b){ return (b[1]||0)-(a[1]||0); });
+  }
+
+  // ── Poll loop ───────────────────────────────────────────────────────────────
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
@@ -524,34 +579,7 @@
           .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || false])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
-        // Fold an owned pet INTO its owner. "Shavimo`s warder should be added
-        // to Shavimo's damage and have a little (+pet) next to their name"
-        // (Hitya, live 2026-08-13) — a pet is not a raider, it is part of what
-        // its owner brought.
-        //
-        // This also has to happen BEFORE the guild merge below, and that is the
-        // part that bites: bot 3.1.43 rolls pets into their owner server-side,
-        // so the guild figure ALREADY includes the warder. Left unfolded here,
-        // the pet was counted inside the owner's guild number AND kept its own
-        // local row (the merge only ever ADDS, so a local-only row survives) —
-        // the same damage on screen twice. Folding first makes both sides mean
-        // the same thing: owner + their pets.
-        //
-        // Charm pets with no proven owner (index 6) are deliberately NOT folded
-        // — nobody gets credited for a charm we cannot attribute, so they keep
-        // their own "(charmed)" row exactly as before.
-        var _byName = new Map();
-        allRows.forEach(function(r){ _byName.set(String(r[0]).toLowerCase(), r); });
-        var _folded = [];
-        allRows.forEach(function(r){
-          var owner = r[3] && _byName.get(String(r[3]).toLowerCase());
-          if (!owner || owner === r) { _folded.push(r); return; }
-          owner[1] += (r[1] || 0);
-          owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
-          owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
-                                                  // (7 is localDmg once the guild merge runs)
-        });
-        allRows = _folded.sort(function(a,b){ return (b[1]||0)-(a[1]||0); });
+        allRows = _foldPetsIntoOwners(allRows);
       }
       // % is scored against the FULL fight total (every witnessed player), so
       // the visible top-N sums to <100% just like EQLogParser — and the footer
