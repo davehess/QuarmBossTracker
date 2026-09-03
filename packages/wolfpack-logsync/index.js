@@ -3012,6 +3012,15 @@ function _catalogDurationSec(spellName) {
 // window. Remaining time here is AUTHORITATIVE — it is the client's own counter,
 // not our arithmetic — which is why the tab shows it in preference to anything
 // we computed.
+// Decoded effect lines for a buff name, from the spell catalog. EQ logs backtick
+// possessives while the catalog stores apostrophes, so both spellings are tried
+// — the same normalisation _charmDurationSec and _healAmtFor already do, and
+// missing it would blank the effects for every "Talisman of ..."-style name.
+function _buffEffectsFor(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  return (e && Array.isArray(e.fx) && e.fx.length) ? e.fx : null;
+}
 function _activeBuffsForDashboard() {
   const out = [];
   const now = Date.now();
@@ -3034,6 +3043,11 @@ function _activeBuffsForDashboard() {
         measured_secs: measured ? measured.median : null,
         measured_n: measured ? measured.n : 0,
         good: _spellGood(b.name),
+        // What the buff actually gives you, decoded by the bot and carried on
+        // the catalog entry (bot 3.1.117). Buff spells only — a name we cannot
+        // resolve, or one the catalog has no effects for, simply has none, and
+        // the card renders exactly as it did before.
+        fx: _buffEffectsFor(b.name),
       });
     }
   }
@@ -14020,6 +14034,65 @@ function _wpDur(secs) {
   var h = Math.floor(m / 60);
   return h + 'h ' + ((m % 60) < 10 ? '0' : '') + (m % 60) + 'm';
 }
+// What a buff gives you, on its own card. Decoded by the bot from the spell
+// catalog (bot 3.1.117) and carried per active buff, so a name the catalog does
+// not know simply renders as it always did rather than as an empty row.
+function _wpBuffFx(fx) {
+  if (!fx || !fx.length) return '';
+  var out = '';
+  for (var i = 0; i < fx.length; i++) {
+    out += '<div style="font-size:10px;color:var(--text);opacity:0.85;line-height:1.45">' + esc(fx[i]) + '</div>';
+  }
+  return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06)">' + out + '</div>';
+}
+// ── "What all of this is actually giving you" ────────────────────────────────
+// Hitya 2026-09-02: "a summary below of all of the things that are provided."
+// Aggregated per character, because buffs are per character — one merged column
+// across five boxes would read as one character with five sets of stats.
+//
+// ⚠ SAME-STAT ENTRIES ARE LISTED, NEVER ADDED. EQ does not stack two buffs of
+// the same kind; the stronger one applies and the other is doing nothing. So
+// two haste buffs show as two lines against one stat, which is the fact worth
+// seeing — summing them would invent a number the game never gives you, and it
+// is exactly the number someone would then plan around.
+function _wpBuffSummary(list) {
+  var byStat = {}, order = [];
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    if (!b.fx || !b.fx.length) continue;
+    for (var j = 0; j < b.fx.length; j++) {
+      // "STR +42" → stat "STR", amount "+42". A flag effect ("Levitate") has no
+      // amount and is its own stat.
+      var line = String(b.fx[j]);
+      var m = line.match(/^(.*?)\\s+([+-]?[\\d.]+.*)$/);
+      var stat = m ? m[1] : line;
+      var amt  = m ? m[2] : null;
+      if (!byStat[stat]) { byStat[stat] = []; order.push(stat); }
+      byStat[stat].push({ amt: amt, from: b.name });
+    }
+  }
+  if (!order.length) return '';
+  order.sort();
+  var rows = '';
+  for (var oi = 0; oi < order.length; oi++) {
+    var stat = order[oi], parts = byStat[stat];
+    var vals = '';
+    for (var pi = 0; pi < parts.length; pi++) {
+      vals += (pi ? '<span class="dim"> · </span>' : '')
+           +  (parts[pi].amt ? '<b>' + esc(parts[pi].amt) + '</b> ' : '')
+           +  '<span class="dim" style="font-size:10px">' + esc(parts[pi].from) + '</span>';
+    }
+    rows += '<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04)">'
+         +    '<div style="min-width:120px;font-size:11px;color:var(--gold)">' + esc(stat) + '</div>'
+         +    '<div style="font-size:11px">' + vals
+         +      (parts.length > 1 ? ' <span class="dim" style="font-size:9px">— these do not stack; the strongest applies</span>' : '')
+         +    '</div></div>';
+  }
+  return '<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">'
+       +   '<div class="dim" style="font-size:10px;margin-bottom:4px">what these are giving you</div>'
+       +   rows + '</div>';
+}
+// ── Buffs tab ───────────────────────────────────────────────────────────────
 function renderBuffsTab(s) {
   var root = document.getElementById('buffs');
   if (!root) return;
@@ -14071,9 +14144,12 @@ function renderBuffsTab(s) {
         +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
                               : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
         +   '</div>'
+        +   _wpBuffFx(b.fx)
         + '</div>';
     }
-    h += '</div></div>';
+    h += '</div>';
+    h += _wpBuffSummary(list);
+    h += '</div>';
   }
   h += '</div>';
 

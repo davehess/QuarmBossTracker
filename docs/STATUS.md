@@ -236,6 +236,28 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **The Buffs tab says what each buff gives you, and sums it up (bot 3.1.117 ·
+  agent beta, 2026-09-02).** Hitya: *"The buffs on the buffs page should give
+  the affects that they're providing each, and then a summary below of all of
+  the things that are provided."*
+  The bot already fetched `effect_id_1..3` + `raw` for every spell and dropped
+  them after deriving the damage-shield magnitude. Now decoded once, bot-side,
+  and attached as `fx` to **beneficial timed buffs only** — 1233 of 3933 spells,
+  ~50KB on an hour-cached ETag'd catalog rather than a third again on all of it.
+  ⚠ **Every SPA label is grounded in the catalog, never remembered.** Girdle of
+  Karana is 4/42 against the game's "Increase Strength by 42"; Mask of the
+  Stalker is 89/125, 87/115, 15/3, 13/1 against its four listed effects (both
+  from Hitya's screenshots). Resists were pinned through the middle, not
+  inferred from the ends. Unrecognised ids fall back to `SPA n: base` — a wrong
+  label is worse than an opaque one.
+  ⚠ **Two encodings would be wrong at face value:** SPA 11/89 store a multiplier
+  (Celerity 128 = **+28%** haste), and SPA 59 is stored NEGATIVE for a real
+  damage shield.
+  ⚠ **The summary LISTS same-stat buffs, never ADDS them** — EQ does not stack
+  them, the strongest applies, and summing would invent a number someone would
+  then plan around. It says so on the row.
+  Per character, not merged across boxes. 27 tests, 19 mutations killed.
+
 - **A box can no longer take its owner's Defensive (agent beta, 2026-09-02).**
   Hitya, live, with a Command Center screenshot showing a 10:10 Defensive
   recharging on Currynote: *"Currynote is currygoat's bard, he does not have
