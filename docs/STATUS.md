@@ -261,6 +261,29 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **"Set up EQ for me" now configures /tag capture (agent 3.6.33 · web 1.7.16,
+  2026-09-03).** Hitya, with a working `zeal.ini`: *"we're going to add some
+  pieces for setup for tagging... we want tooltip and tag enabled."* Eight
+  `NameplateTag*` keys join `_EQ_SETUP_KEYS`, values from that file. Two are
+  REQUIRED for capture at all, grounded in Zeal's source: `Suppress=FALSE`
+  (else PrintChat skips the log write) and `PrettyPrint=FALSE` (else, with
+  Filter, the spawn id is destroyed at the source). The 🏷 card walks the
+  raider through it and renders the exact `/tag channel` and `/join` lines.
+  ⚠ **The password is NOT in source and never will be.** It rides two tuning
+  keys an officer sets on `/admin/overlays` — `tag_channel_password` (raid) and
+  `tag_officer_channel` (a full `name:password` spec, shown only to officers)
+  — into the raider's LOCAL dashboard at render time. `test/tag-setup-keys`
+  asserts source is clean, and the mutation run proved it goes red on a real
+  leak; a first draft's regex was so broad it flagged the pre-existing
+  `tells Wolfpackofficer:` privacy filter — the invariant is "no name:password
+  LITERAL", so it now requires a password character after the colon.
+  ⚠ **Base nameplate keys are deliberately NOT written.** Hitya believes tags
+  may need nameplates on; the Zeal source notes do not settle it and those are
+  a raider's display preferences — the card says "check nameplates" instead.
+  ⚠ **The autojoin FILE WRITE is still blocked.** The upload was `zeal.ini`;
+  the autojoin line lives in the per-character ini and has still never been
+  captured. `_mergeAutojoin` is ready; one `Hitya_pq.proj.ini` unblocks it.
+
 - **The Buffs tab says what each buff gives you, and sums it up (bot 3.1.117 ·
   agent beta, 2026-09-02).** Hitya: *"The buffs on the buffs page should give
   the affects that they're providing each, and then a summary below of all of

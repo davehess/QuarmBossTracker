@@ -4962,6 +4962,21 @@ function renderInfo(s) {
         h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
       }
     }
+    // Setup for tagging (Hitya 2026-09-03). "Set up EQ for me" writes the
+    // zeal.ini keys; the channel JOIN is a per-character thing the raider still
+    // types once. The password comes from bot tuning at render time — it is
+    // never in this file's source. Officer line only for officers.
+    var _zj = s.zealTagJoin || {};
+    h += '<div style="margin:6px 0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px">'
+      +  '<div style="color:var(--gold);font-weight:600;margin-bottom:3px">Set up tagging</div>'
+      +  '<div class="dim">1. Settings → <b>Set up EQ for me</b> writes the tag keys to zeal.ini (enable, tooltip, filter, raid bars; prettyprint + suppress OFF — both would silently kill capture). Close EQ first.</div>'
+      +  '<div class="dim">2. In game, once: <code>/tag channel ztwolfpacktag</code></div>'
+      +  (_zj.raid
+           ? '<div class="dim">3. Join the channel: <code>/join ' + esc(_zj.raid) + '</code></div>'
+           : '<div class="dim">3. Join the channel: <code>/join ztwolfpacktag:&lt;password&gt;</code> — ask an officer for it (they set it on the admin page; it will show here once set).</div>')
+      +  (_zj.officer ? '<div class="dim">Officers also: <code>/join ' + esc(_zj.officer) + '</code></div>' : '')
+      +  '<div class="dim" style="margin-top:3px">⚠ Arrows not drawing? We did <b>not</b> change your nameplate keys (colors, health bars) — those are your display settings. If tags draw nothing, check nameplates are on.</div>'
+      +  '</div>';
     h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
     // The three causes the ini can NOT see. All of them show the nameplate
     // arrow in game and log nothing, which is why "the arrow is right there"

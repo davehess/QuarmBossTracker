@@ -1467,6 +1467,17 @@ declaration** (`checkDuplicateFunctions`) — verified by reintroducing the exac
 collision and watching it exit 1. Nested helpers are exempt: they are properly
 scoped and shadowing one is normal.
 
+### /tag setup via "Set up EQ for me" (agent 3.6.33)
+`_EQ_SETUP_KEYS` carries eight `NameplateTag*` keys (Enable, ToolTip,
+ToolTipAlign, Filter, RaidHealthBars TRUE · PrettyPrint, Suppress FALSE ·
+Channel `Ztwolfpacktag`), written by `_iniSetKey` per EQ folder like the
+original four. `_tagChannelSpecs()` composes the raid join
+(`TAG_CHANNEL_NAME + ':' + tuning.tag_channel_password`) and, for officers
+only, `tuning.tag_officer_channel`; `/api/state` ships them as `zealTagJoin`
+to the 🏷 card. Secrets never in source, logs, or uploads. Base nameplate keys
+untouched (unverified dependency). Autojoin file-write still blocked on a
+character ini. Tests: `test/tag-setup-keys.test.js`.
+
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target

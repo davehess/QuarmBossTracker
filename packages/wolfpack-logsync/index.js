@@ -12226,6 +12226,29 @@ const _EQ_SETUP_KEYS = [
   ['zeal.ini',     'Zeal',     'PipeDelay',    '100'],
   ['zeal.ini',     'Zeal',     'PipeVerbose',  'TRUE'],
   ['eqclient.ini', 'Defaults', 'Log',          'TRUE'],
+  // ── /tag setup (Hitya 2026-09-03: "we're going to add some pieces for setup
+  // for tagging... we want tooltip and tag enabled"). Values taken from Hitya's
+  // own working zeal.ini, and two of them are REQUIRED for capture at all,
+  // grounded in Zeal's source (HOW-ITS-BUILT, #194):
+  //   • NameplateTagSuppress=FALSE — with it on, handle_zeal_spam_filter blanks
+  //     the message and PrintChat skips the log write; nothing ever reaches us.
+  //   • NameplateTagPrettyPrint=FALSE — with Filter on, prettyprint rewrites to
+  //     "text => mob" and DESTROYS the spawn id at the source, which is the one
+  //     thing the /tag channel exists to carry.
+  // The channel is a NAME, not a secret; the password never goes in an ini we
+  // write from source and never appears in this file (see _mergeAutojoin).
+  // ⚠ Base nameplate keys (NameplateColors, NameplateHealthBars, …) are
+  // deliberately NOT written. Hitya believes tags may need nameplates on; the
+  // Zeal source notes do not settle it, and those are a raider's display
+  // preferences. The 🏷 card says so instead of flipping them on a hunch.
+  ['zeal.ini',     'Zeal',     'NameplateTagEnable',       'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagToolTip',      'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagToolTipAlign', 'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagFilter',       'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateRaidHealthBars',  'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagPrettyPrint',  'FALSE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagSuppress',     'FALSE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagChannel',      'Ztwolfpacktag'],
 ];
 // ── /tag channel autojoin ───────────────────────────────────────────────────
 // Hitya, 2026-08-26: "we need to add this channel to people's autojoins if
@@ -12253,6 +12276,20 @@ const _EQ_SETUP_KEYS = [
 //      be corrected, not skipped — and a duplicate entry with a second password
 //      is worse than either.
 const TAG_CHANNEL_NAME = 'Ztwolfpacktag';
+// The join specs a raider actually types, composed at RUNTIME from bot tuning
+// (set by an officer on /admin/overlays): `tag_channel_password` for the raid
+// channel, `tag_officer_channel` (a full "name:password" spec) for officers.
+// Neither value exists in this file, in git, or in any upload/log path — the
+// dashboard renders them on the raider's own machine and nowhere else.
+function _tagChannelSpecs() {
+  const t = _overlayTuning || {};
+  const pw  = (typeof t.tag_channel_password === 'string') ? t.tag_channel_password.trim() : '';
+  const off = (typeof t.tag_officer_channel  === 'string') ? t.tag_officer_channel.trim()  : '';
+  return {
+    raid:    pw ? (TAG_CHANNEL_NAME + ':' + pw) : null,       // null until an officer sets it
+    officer: (off && _mimicIdentity && _mimicIdentity.is_officer) ? off : null,
+  };
+}
 
 // Split "name:password" -> { name, password }. A channel with no colon has no
 // password; a name is never empty.
@@ -12530,6 +12567,8 @@ function _serializeForDashboard() {
     // membership survives once seen), plus live capture stats. The dashboard
     // renders "tag capture: ready" from this instead of assuming.
     zealTagConfig: readZealTagConfig(),
+    // The exact /join lines, from tuning. Local dashboard only (127.0.0.1).
+    zealTagJoin: _tagChannelSpecs(),
     zealTagCount: zealTagsSnapshot().length,
     // Tags the upload cap had to drop, and the last time the SERVER refused a
     // tag broadcast. Both are silent failures otherwise — see the 🏷 card.
@@ -18441,6 +18480,21 @@ function renderInfo(s) {
         h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
       }
     }
+    // Setup for tagging (Hitya 2026-09-03). "Set up EQ for me" writes the
+    // zeal.ini keys; the channel JOIN is a per-character thing the raider still
+    // types once. The password comes from bot tuning at render time — it is
+    // never in this file's source. Officer line only for officers.
+    var _zj = s.zealTagJoin || {};
+    h += '<div style="margin:6px 0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px">'
+      +  '<div style="color:var(--gold);font-weight:600;margin-bottom:3px">Set up tagging</div>'
+      +  '<div class="dim">1. Settings → <b>Set up EQ for me</b> writes the tag keys to zeal.ini (enable, tooltip, filter, raid bars; prettyprint + suppress OFF — both would silently kill capture). Close EQ first.</div>'
+      +  '<div class="dim">2. In game, once: <code>/tag channel ztwolfpacktag</code></div>'
+      +  (_zj.raid
+           ? '<div class="dim">3. Join the channel: <code>/join ' + esc(_zj.raid) + '</code></div>'
+           : '<div class="dim">3. Join the channel: <code>/join ztwolfpacktag:&lt;password&gt;</code> — ask an officer for it (they set it on the admin page; it will show here once set).</div>')
+      +  (_zj.officer ? '<div class="dim">Officers also: <code>/join ' + esc(_zj.officer) + '</code></div>' : '')
+      +  '<div class="dim" style="margin-top:3px">⚠ Arrows not drawing? We did <b>not</b> change your nameplate keys (colors, health bars) — those are your display settings. If tags draw nothing, check nameplates are on.</div>'
+      +  '</div>';
     h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
     // The three causes the ini can NOT see. All of them show the nameplate
     // arrow in game and log nothing, which is why "the arrow is right there"
