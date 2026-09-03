@@ -101,13 +101,6 @@ const FLAGS: Flag[] = [
     desc: 'Turns ON the P1b buff-landing de-duplication (#72). When checked, only the ~3 best-coverage agents per zone upload ordinary observed buff landings; the rest stand down. Charm timers (synthesized per-observer) always upload regardless. Fail-open — an agent that loses contact with the bot uploads everything, and re-election hands off within ~60s if a reporter leaves the zone. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
   { key: 'dedup_roster', label: 'Roster dedup — 1 reporter per group (default off)',
     desc: 'Turns ON the P1c raid-roster de-duplication (#72). Roster composition is identical from every raider’s view, but per-member HP arrives only for the uploader’s own group — so when checked, exactly ONE agent per raid group uploads the Zeal roster snapshot; the rest stand down (an agent not in a raid, or with no Zeal, is its own group and always uploads). Fail-open — an agent that loses contact with the bot uploads everything, a camping raider hands off ~30s early, and re-election covers a group within ~60s if its reporter leaves. Leave OFF to keep today’s every-agent-uploads behavior. Overridden by the disable switch above.' },
-  // /tag channel join specs (agent 3.6.33). Typed here so an officer sets them
-  // in one place and the raider's LOCAL dashboard renders the exact /join line.
-  // These are the ONLY home of the password: never in source, never in a log,
-  // never in an upload. The officer spec is a full "name:password" shown only
-  // to officers by the agent (mimicIdentity.is_officer).
-  { key: 'tag_channel_password', label: '🏷 Tag channel password (raid) — raiders see "/join Ztwolfpacktag:<this>"', danger: false, text: true },
-  { key: 'tag_officer_channel',  label: '🏷 Officer channel spec "name:password" — shown to officers only', danger: false, text: true },
   { key: 'flag_agent_kill', label: '☠ AGENT KILL — pause the ENTIRE fleet', danger: true,
     desc: 'Fleet-wide dormancy (#74). Every agent stops ALL uploads and non-control polls and goes quiet, keeping only its 20s heartbeat so recovery is instant when you clear this. The durable queue HOLDS (nothing dropped) and overlays keep working on each user\'s LOCAL data — nobody\'s HUD blanks. Clearing this resumes the fleet within one heartbeat. Conservative v1 — coordinate with Hitya before flipping. Fail-open: if the bot is unreachable, agents run normally.' },
   { key: 'flag_shed_live_state', label: 'Shed: live-state stream', danger: true,
@@ -138,6 +131,18 @@ const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
 // Version floor is a NUMBER control (not a 0/1 flag) that lives in the same
 // Kill-switches section. Empty = unset. Handled specially in save/render.
 const VERSION_FLOOR_KEY = 'min_agent_ver_num';
+// /tag channel join specs (agent 3.6.33). The ONLY home of the password: it
+// rides the tuning poll into each raider's LOCAL dashboard at render time and
+// is never in source, a log, or an upload. These are STRINGS — every other
+// control on this page saves a number, and a first cut put them in FLAGS,
+// where "checked" saves as 1 and a typed password could never have been stored.
+const TEXT_KEYS = [
+  { key: 'tag_channel_password', label: '🏷 Tag channel password (raid)',
+    hint: 'Raiders\u2019 dashboards render \u201c/join Ztwolfpacktag:<this>\u201d. Clear to unset.' },
+  { key: 'tag_officer_channel',  label: '🏷 Officer channel spec',
+    hint: 'A full \u201cname:password\u201d, e.g. the officer chat channel. The agent shows it only to signed-in officers. Clear to unset.' },
+] as const;
+const TEXT_KEY_SET = new Set<string>(TEXT_KEYS.map(t => t.key));
 
 // ── Per-class default overlay sets (pretty-place phase 2) ────────────────────
 // Which overlays a FRESH Mimic install turns on for each class. Stored in
@@ -188,10 +193,10 @@ async function saveOverlayTuning(formData: FormData) {
   // Only non-empty, in-range numbers become overrides; everything else is
   // omitted so the compiled default applies. Clamp instead of reject — an
   // officer nudging a slider mid-raid should never lose the save to a typo.
-  const tuning: Record<string, number> = {};
+  const tuning: Record<string, number | string> = {};
   for (const [k, v] of Object.entries(existing)) {
-    // passthrough unknown keys, but the version floor is managed below (not a knob/flag)
-    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY) tuning[k] = v;
+    // passthrough unknown keys; the version floor and the text keys are managed below
+    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY && !TEXT_KEY_SET.has(k)) tuning[k] = v;
   }
   for (const k of ALL_KNOBS) {
     const raw = String(formData.get(k.key) ?? '').trim();
@@ -203,6 +208,12 @@ async function saveOverlayTuning(formData: FormData) {
   // Kill switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
   for (const f of FLAGS) {
     if (formData.get(f.key) != null) tuning[f.key] = 1;
+  }
+  // Text tuning (tag channel specs): a non-empty trimmed string is stored as-is;
+  // empty → omitted, which clears it. Bounded so a paste can't bloat the map.
+  for (const t of TEXT_KEYS) {
+    const raw = String(formData.get(t.key) ?? '').trim();
+    if (raw) tuning[t.key] = raw.slice(0, 120);
   }
   // Version floor (#74): a bare integer. Empty/0/non-numeric → omitted (unset =
   // no floor). The bot stands down any agent whose numeric version is below it.
@@ -384,6 +395,20 @@ export default async function OverlayTuningPage() {
                 placeholder="unset"
                 className="w-32 bg-bg border border-border rounded px-3 py-1.5 text-sm text-text font-mono"
               />
+              {TEXT_KEYS.map(t => (
+                <label key={t.key} className="block mt-3">
+                  <div className="text-xs text-text">{t.label} <code className="text-[10px] text-dim">{t.key}</code></div>
+                  <input
+                    type="text"
+                    name={t.key}
+                    autoComplete="off"
+                    spellCheck={false}
+                    defaultValue={typeof tuning[t.key] === 'string' ? tuning[t.key] : ''}
+                    className="mt-1 w-full max-w-md bg-bg border border-border rounded px-2 py-1 text-sm text-text font-mono"
+                  />
+                  <div className="text-[10px] text-dim mt-0.5">{t.hint}</div>
+                </label>
+              ))}
               <p className="text-xs text-dim leading-5 mt-1">
                 Fleet version floor (#74). Enter the numeric form of a version — <b>major×10000 + minor×100 + patch</b>,
                 e.g. agent <b>3.3.85 → 30385</b>. Any agent below the floor pauses uploads exactly like the kill switch
