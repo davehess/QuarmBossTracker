@@ -9377,6 +9377,86 @@ const _healAmtFor = (spell) => {
   const e = _healAmountByName.get(key) || _healAmountByName.get(key.replace(/`/g, "'"));
   return e && e.amount > 0 ? e.amount : 0;
 };
+// ── Buff effect decoding (Hitya 2026-09-02) ─────────────────────────────────
+// "The buffs on the buffs page should give the affects that they're providing
+// each, and then a summary below of all of the things that are provided."
+//
+// Decoded HERE, once, rather than shipping a SPA table to every agent: the
+// catalog is already ETag'd and hour-cached, so the strings ride along for free
+// and there is one place to correct a label.
+//
+// ⚠ EVERY LABEL BELOW IS GROUNDED IN THE CATALOG, NOT REMEMBERED. Each was read
+// off a spell whose in-game text is known — Girdle of Karana is SPA 4 base 42
+// against "Increase Strength by 42"; Mask of the Stalker is 89/125, 87/115,
+// 15/3, 13/1 against "Target Size 25%, Magnification 115%, Mana 3, See
+// Invisible" (both from Hitya's own screenshots). Resists were pinned at BOTH
+// ends and through the middle (Resist Fire 46 … Resist Magic 50, Endure
+// Cold/Poison/Disease 47/48/49) rather than inferred from the two ends.
+//
+// Anything not listed falls back to a raw "SPA <n>: <base>" — the same rule
+// web/lib/spellDecode.ts uses. A wrong label is worse than an opaque one:
+// nobody acts on "SPA 132", but everyone acts on a mislabeled stat.
+const _SPA_LABEL = {
+  0:   (b) => `HP regen ${b >= 0 ? '+' : ''}${b}/tick`,   // Regeneration = 0/5
+  1:   (b) => `AC ${b >= 0 ? '+' : ''}${b}`,              // Bravery 1/20, Aegolism 1/180
+  2:   (b) => `ATK ${b >= 0 ? '+' : ''}${b}`,
+  3:   (b) => `Run speed ${b >= 0 ? '+' : ''}${b}%`,      // Spirit of Wolf = 3/30
+  4:   (b) => `STR ${b >= 0 ? '+' : ''}${b}`,             // Strength / Girdle of Karana = 4/42
+  5:   (b) => `DEX ${b >= 0 ? '+' : ''}${b}`,             // Dexterity
+  6:   (b) => `AGI ${b >= 0 ? '+' : ''}${b}`,             // Agility = 6/21
+  7:   (b) => `STA ${b >= 0 ? '+' : ''}${b}`,
+  8:   (b) => `INT ${b >= 0 ? '+' : ''}${b}`,             // Brilliance
+  9:   (b) => `WIS ${b >= 0 ? '+' : ''}${b}`,             // Brilliance
+  // 10 is the inert filler slot (base 0 on 1166 buffs) — dropped below, never labeled.
+  11:  (b) => `Haste ${b - 100 >= 0 ? '+' : ''}${b - 100}%`,   // Celerity = 11/128 → +28%
+  12:  ()  => 'Invisibility',                            // Invisibility = 12/1
+  13:  ()  => 'See Invisible',                           // See Invisible / Mask of the Stalker
+  15:  (b) => `Mana ${b >= 0 ? '+' : ''}${b}/tick`,       // Clarity = 15/1
+  46:  (b) => `Fire resist ${b >= 0 ? '+' : ''}${b}`,     // Resist Fire
+  47:  (b) => `Cold resist ${b >= 0 ? '+' : ''}${b}`,     // Endure/Resist Cold
+  48:  (b) => `Poison resist ${b >= 0 ? '+' : ''}${b}`,   // Endure/Resist Poison
+  49:  (b) => `Disease resist ${b >= 0 ? '+' : ''}${b}`,  // Endure/Resist Disease
+  50:  (b) => `Magic resist ${b >= 0 ? '+' : ''}${b}`,    // Resist Magic
+  57:  ()  => 'Levitate',                                 // Levitate = 57/1
+  // 59 is stored NEGATIVE for a real damage shield (see _dsMagnitude) — the
+  // number a player cares about is the per-hit damage, so flip it.
+  59:  (b) => `Damage shield ${Math.abs(b)}/hit`,         // Shield of Thorns -24
+  66:  ()  => 'Ultravision',                              // Ultravision = 66/1
+  69:  (b) => `Max HP ${b >= 0 ? '+' : ''}${b}`,          // Skin like Wood 69/10, Aegolism 69/1100
+  79:  (b) => `HP ${b >= 0 ? '+' : ''}${b}`,              // Bravery 79/90 alongside 69/90
+  87:  (b) => `Magnification ${b}%`,                      // Mask of the Stalker = 87/115
+  89:  (b) => `Target size ${b - 100 >= 0 ? '+' : ''}${b - 100}%`,  // Mask of the Stalker 89/125 → +25%
+};
+// Slots that describe STACKING RULES rather than anything the player receives
+// (Aegolism carries 148/69 and 149/69). Listing them would put "SPA 148: 69" on
+// a card next to real stats, which reads as a missing label rather than as
+// something deliberately not shown.
+const _SPA_INTERNAL = new Set([148, 149, 254]);
+function _decodeSpellEffects(r) {
+  const eff  = (r && r.raw && Array.isArray(r.raw.eff))  ? r.raw.eff  : null;
+  const base = (r && r.raw && Array.isArray(r.raw.base)) ? r.raw.base : null;
+  const slots = [];
+  if (eff) {
+    for (let i = 0; i < eff.length; i++) slots.push({ e: Number(eff[i]), b: Number((base && base[i]) || 0) });
+  } else {
+    for (const i of [1, 2, 3]) {
+      const e = r[`effect_id_${i}`];
+      if (e == null) continue;
+      slots.push({ e: Number(e), b: Number(r[`effect_base_value_${i}`] || 0) });
+    }
+  }
+  const out = [];
+  for (const { e, b } of slots) {
+    if (!Number.isFinite(e) || _SPA_INTERNAL.has(e)) continue;
+    if (e === 10 && b === 0) continue;              // the inert filler slot
+    if (e === 0 && b === 0) continue;               // empty HP slot
+    const fn = _SPA_LABEL[e];
+    out.push(fn ? fn(b) : `SPA ${e}: ${b}`);
+  }
+  return out;
+}
+
+// ── Spell catalog endpoint ──────────────────────────────────────────────────
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
 async function _handleAgentSpellCatalog(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
@@ -9564,6 +9644,17 @@ async function _handleAgentSpellCatalog(req, res) {
             // from a raider's CURRENT buff list (Hitya 2026-06-29: "Highlight
             // the DS spells and songs and how much you're getting from each").
             ds: _dsMagnitude(r) || undefined,
+            // Decoded effect strings, for the dashboard's Buffs tab. Attached
+            // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
+            // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
+            // by a third. A debuff or an instant nuke has nothing to show in a
+            // buff window, so it carries no fx at all.
+            fx: (Number(r.good_effect) === 1
+                 && Number(r.buffduration) > 0
+                 && Number(r.buffdurationformula) > 0
+                 && Number(r.buffdurationformula) < 50)
+                  ? (_decodeSpellEffects(r).slice(0, 8) || undefined)
+                  : undefined,
             // Estimated heal amount (SPA 0 / SPA 101). Only heal spells carry
             // it, so the payload barely grows. The agent attaches it to each
             // heal_cast → the bot's heal-attribution join credits a witnessed
