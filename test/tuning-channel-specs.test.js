@@ -17,7 +17,11 @@ const src = readSource(BOT_INDEX);
 function load(env) {
   return evalBlock(
     `const process = { env: ${JSON.stringify(env)} };\n`
-    + sliceBlock(src, "const TAG_CHANNEL_SPEC     = (process.env.TAG_CHANNEL_SPEC", '\nasync function _overlayTuningMap() {'),
+    // ⚠ End anchor is the section comment, never the next function's opening
+    // line — that line is unclosed and turns the whole slice into a SyntaxError,
+    // which reads as "every test fails" and, in a mutation run, as "every
+    // mutation killed". That is exactly how 68f0b792 shipped red.
+    + sliceBlock(src, "const TAG_CHANNEL_SPEC     = (process.env.TAG_CHANNEL_SPEC", '\n// ── The tuning map every agent-facing path reads '),
     ['_withChannelSpecs'],
   )._withChannelSpecs;
 }

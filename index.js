@@ -10475,6 +10475,7 @@ function _withChannelSpecs(values) {
   if (off) out.officer_channel_spec = off; else delete out.officer_channel_spec;
   return out;
 }
+// ── The tuning map every agent-facing path reads ────────────────────────────
 async function _overlayTuningMap() {
   await _refreshOverlayTuningCache();
   return _withChannelSpecs(_overlayTuningCache.values);
