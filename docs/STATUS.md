@@ -280,9 +280,17 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ **Base nameplate keys are deliberately NOT written.** Hitya believes tags
   may need nameplates on; the Zeal source notes do not settle it and those are
   a raider's display preferences — the card says "check nameplates" instead.
-  ⚠ **The autojoin FILE WRITE is still blocked.** The upload was `zeal.ini`;
-  the autojoin line lives in the per-character ini and has still never been
-  captured. `_mergeAutojoin` is ready; one `Hitya_pq.proj.ini` unblocks it.
+  ✅ **The autojoin FILE WRITE is unblocked (agent 3.6.34).** Hitya sent the
+  real line: `[Defaults] ChannelAutoJoin=<officer:pw> <tag:pw> general` in
+  **`eqclient.ini`** — NOT the per-character ini this ledger had claimed since
+  2026-08-26 — and the separator is **whitespace**, not the comma the never-
+  wired `_mergeAutojoin` split on (it would have read that whole line as one
+  channel). `_iniGetKey` + `_applyAutojoin` do a read-merge-write inside "Set
+  up EQ for me", under its existing EQ-running guard (EQ rewrites eqclient.ini
+  on exit). Commas are tolerated on read, spaces always written. Raid spec for
+  everyone once the bot serves it; officer spec only for signed-in officers.
+  Specs are RESOLVED bot-side — env `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC`
+  by default, `/admin/overlays` override — and the agent carries no policy.
 
 - **The Buffs tab says what each buff gives you, and sums it up (bot 3.1.117 ·
   agent beta, 2026-09-02).** Hitya: *"The buffs on the buffs page should give

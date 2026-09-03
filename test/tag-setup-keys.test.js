@@ -59,26 +59,28 @@ describe('the zeal.ini keys the setup writes', () => {
 });
 
 describe('the join specs come from tuning, never from source', () => {
+  // Contract (2026-09-03): the bot serves RESOLVED full "name:password" specs —
+  // tag_channel_spec and officer_channel_spec — from env by default, tuning
+  // override first. The agent carries no policy and no secret of its own. The
+  // earlier tag_channel_password/tag_officer_channel keys are gone.
   function load(tuning, identity) {
     return evalBlock(
       `const _overlayTuning = ${JSON.stringify(tuning)}; const _mimicIdentity = ${JSON.stringify(identity)};\n`
-      + sliceBlock(src, "const TAG_CHANNEL_NAME = 'Ztwolfpacktag';", '\n// Split "name:password"'),
+      + sliceBlock(src, "const TAG_CHANNEL_NAME = 'Ztwolfpacktag';", '\n// Merge `spec` into an existing autojoin list.'),
       ['_tagChannelSpecs'],
     );
   }
 
-  it('composes name:password for the raid channel when an officer has set it', () => {
-    const { _tagChannelSpecs } = load({ tag_channel_password: 'secret' }, null);
-    expect(_tagChannelSpecs().raid).toBe('Ztwolfpacktag:secret');
+  it('passes the raid spec through when it names our channel', () => {
+    expect(load({ tag_channel_spec: 'Ztwolfpacktag:secret' }, null)._tagChannelSpecs().raid).toBe('Ztwolfpacktag:secret');
   });
 
-  it('is null — not a guess — until the password is set', () => {
-    const { _tagChannelSpecs } = load({}, null);
-    expect(_tagChannelSpecs().raid).toBeNull();
+  it('is null — not a guess — until the bot has a value', () => {
+    expect(load({}, null)._tagChannelSpecs().raid).toBeNull();
   });
 
   it('only hands the officer channel to an officer', () => {
-    const t = { tag_channel_password: 'x', tag_officer_channel: 'Off:pw' };
+    const t = { tag_channel_spec: 'Ztwolfpacktag:x', officer_channel_spec: 'Off:pw' };
     expect(load(t, { is_officer: true })._tagChannelSpecs().officer).toBe('Off:pw');
     expect(load(t, { is_officer: false })._tagChannelSpecs().officer).toBeNull();
     expect(load(t, null)._tagChannelSpecs().officer).toBeNull();

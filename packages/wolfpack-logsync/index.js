@@ -12283,11 +12283,17 @@ const TAG_CHANNEL_NAME = 'Ztwolfpacktag';
 // dashboard renders them on the raider's own machine and nowhere else.
 function _tagChannelSpecs() {
   const t = _overlayTuning || {};
-  const pw  = (typeof t.tag_channel_password === 'string') ? t.tag_channel_password.trim() : '';
-  const off = (typeof t.tag_officer_channel  === 'string') ? t.tag_officer_channel.trim()  : '';
+  // Full "name:password" specs, RESOLVED bot-side (env var by default, tuning
+  // key overrides) so this agent carries no policy and no secret of its own.
+  const raid = (typeof t.tag_channel_spec     === 'string') ? t.tag_channel_spec.trim()     : '';
+  const off  = (typeof t.officer_channel_spec === 'string') ? t.officer_channel_spec.trim() : '';
+  const rp = _parseChannelSpec(raid);
+  // The raid spec must name OUR tag channel — a spec for some other channel is
+  // a misconfiguration, not a join we should write into every raider's ini.
+  const raidOk = rp && rp.name.toLowerCase() === TAG_CHANNEL_NAME.toLowerCase();
   return {
-    raid:    pw ? (TAG_CHANNEL_NAME + ':' + pw) : null,       // null until an officer sets it
-    officer: (off && _mimicIdentity && _mimicIdentity.is_officer) ? off : null,
+    raid:    raidOk ? raid : null,                                              // null until set
+    officer: (off && _parseChannelSpec(off) && _mimicIdentity && _mimicIdentity.is_officer) ? off : null,
   };
 }
 
@@ -12303,13 +12309,24 @@ function _parseChannelSpec(spec) {
   return { name, password: raw.slice(i + 1).trim() || null };
 }
 
-// Merge `spec` into an existing comma-separated autojoin list.
+// Merge `spec` into an existing autojoin list.
 // Returns { changed, value, reason }. PURE — no file IO, so it is testable
 // without an EQ install.
+//
+// ⚠ THE SEPARATOR IS WHITESPACE. Grounded 2026-09-03 in Hitya's real
+// eqclient.ini — `[Defaults] ChannelAutoJoin=<spec> <spec> general` — which is
+// the one line this feature waited on since 2026-08-26. The first draft split
+// on commas (never wired, so it never bit) and would have read that whole line
+// as ONE channel, then appended ours with a comma: a join list EQ could not
+// parse. Written blind, it looked complete; it was wrong on the only byte that
+// mattered. Do not "tidy" this back to commas.
 function _mergeAutojoin(existingValue, spec) {
   const want = _parseChannelSpec(spec);
   if (!want) return { changed: false, value: String(existingValue || ''), reason: 'bad channel spec' };
-  const parts = String(existingValue || '').split(',').map(p => p.trim()).filter(Boolean);
+  // Tolerate commas on READ (a hand-edited ini, or the never-shipped comma
+  // draft of this very feature) but always WRITE spaces — the join below is the
+  // one place the separator is chosen, and it must match what EQ parses.
+  const parts = String(existingValue || '').split(/[\s,]+/).map(p => p.trim()).filter(Boolean);
   const wantLc = want.name.toLowerCase();
   const target = want.password ? want.name + ':' + want.password : want.name;
 
@@ -12332,9 +12349,48 @@ function _mergeAutojoin(existingValue, spec) {
     out.push(p);                                       // leave every other channel alone
   }
   if (!found) { out.push(target); changed = true; }
-  return { changed, value: out.join(','), reason: found ? 'already present' : 'added' };
+  return { changed, value: out.join(' '), reason: found ? 'already present' : 'added' };
+}
+// Read one key from one section of an ini. null when the file or key is
+// absent — a caller must not mistake "no line yet" for an empty list.
+function _iniGetKey(filePath, section, key) {
+  let text;
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return null; }
+  const esc = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const secRx = new RegExp('^\\s*\\[' + esc(section) + '\\]\\s*$', 'i');
+  const keyRx = new RegExp('^\\s*' + esc(key) + '\\s*=(.*)$', 'i');
+  let inSec = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*\[.+\]\s*$/.test(line)) { inSec = secRx.test(line); continue; }
+    if (!inSec) continue;
+    const m = line.match(keyRx);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+// Merge the guild channel(s) into eqclient.ini's [Defaults] ChannelAutoJoin —
+// the file-write that was blocked until the real line was seen. Idempotent
+// via _mergeAutojoin; touches nothing else in the value. Returns a per-spec
+// report; never returns, logs, or echoes the password half.
+function _applyAutojoin(dir, specs) {
+  const file = path.join(dir, 'eqclient.ini');
+  const out = [];
+  for (const spec of specs) {
+    const want = _parseChannelSpec(spec);
+    if (!want) continue;
+    const cur = _iniGetKey(file, 'Defaults', 'ChannelAutoJoin');
+    if (cur === null && !fs.existsSync(file)) { out.push({ channel: want.name, result: 'no eqclient.ini' }); continue; }
+    const r = _mergeAutojoin(cur || '', spec);
+    // _iniSetKey is the single idempotence point: it compares the line and
+    // does not touch the file when it already matches. A guard here was
+    // redundant with that and untestable on its own.
+    _iniSetKey(file, 'Defaults', 'ChannelAutoJoin', r.value);
+    out.push({ channel: want.name, result: r.changed ? r.reason : 'already present' });
+  }
+  return out;
 }
 
+// ── Set up EQ for me: the writer ────────────────────────────────────────────
 function _applyEqSetup() {
   const now = Date.now();
   if ((stats.watchedLogs || []).some(w => w && w.lastSeen && (now - w.lastSeen) < 90_000)) {
@@ -12350,10 +12406,16 @@ function _applyEqSetup() {
       if (r === null) { if (!notFound.includes(file)) notFound.push(file); continue; }
       applied.push(key + '=' + value);
     }
-    folders.push({ dir: path.basename(dir), applied, notFound });
+    // Channel autojoin (Hitya 2026-09-03: "Autojoin is part of the eqclient.ini
+    // ... The tagging piece is critical"). The raid tag channel for everyone
+    // it is known for; the officer channel only for a signed-in officer.
+    const specs = _tagChannelSpecs();
+    const wanted = [specs.raid, specs.officer].filter(Boolean);
+    const autojoin = wanted.length ? _applyAutojoin(dir, wanted) : [];
+    folders.push({ dir: path.basename(dir), applied, notFound, autojoin });
   }
   _zealCampAt = 0;   // let the checklist re-probe ExportOnCamp immediately
-  return { ok: true, folders };
+  return { ok: true, folders, tagChannelKnown: !!_tagChannelSpecs().raid };
 }
 
 // One serialized /api/state snapshot shared by every poller for 400ms —

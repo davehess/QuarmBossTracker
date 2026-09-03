@@ -1475,8 +1475,14 @@ original four. `_tagChannelSpecs()` composes the raid join
 (`TAG_CHANNEL_NAME + ':' + tuning.tag_channel_password`) and, for officers
 only, `tuning.tag_officer_channel`; `/api/state` ships them as `zealTagJoin`
 to the 🏷 card. Secrets never in source, logs, or uploads. Base nameplate keys
-untouched (unverified dependency). Autojoin file-write still blocked on a
-character ini. Tests: `test/tag-setup-keys.test.js`.
+untouched (unverified dependency).
+**Autojoin (agent 3.6.34):** `_iniGetKey` reads `[Defaults] ChannelAutoJoin`
+from **`eqclient.ini`** (the real location — grounded in Hitya's file
+2026-09-03; the ledger had said "character ini" since August), `_mergeAutojoin`
+merges on **whitespace** (commas tolerated on read only), `_iniSetKey` writes
+back only on change. Runs inside `_applyEqSetup` for the raid spec and, for
+officers, the officer spec; the report never carries the password half.
+Tests: `test/tag-setup-keys.test.js`, `test/tag-autojoin-file-write.test.js`.
 
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
