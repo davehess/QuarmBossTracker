@@ -35,6 +35,7 @@ import {
   dedupeSlows, isValidDateKey, zonedDayRangeUtc,
   type RawDeath, type SlowCast,
 } from '@/lib/raidReview';
+import { curatedNpcIds } from '@/lib/bossFilter';
 import { ClassificationChip } from '@/components/KillCard';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
@@ -71,6 +72,13 @@ async function load(date: string) {
     const sb = supabaseAdmin();
     const { startIso, endIso } = zonedDayRangeUtc(date, RAID_TZ);
 
+    // Curated bosses only, filtered IN THE QUERY like /parses. Since bot 3.1.52
+    // every exactly-matched mob persists an encounter (first kills are sacred),
+    // so a night's rows are mostly farm trash — a Saturday Ssra farm showed as
+    // "470 kills" here (Hitya, 2026-09-04: "we're still displaying all of these
+    // non-raid mobs"). Trash keeps its own line: the bot's tally in bot_kv.
+    const curated = await curatedNpcIds(sb);
+
     const [encRes, charRes, zoneRes, slowRes, fireRes, lootRes] = await Promise.all([
       sb.from('encounters')
         .select(`
@@ -78,6 +86,7 @@ async function load(date: string) {
           eqemu_npc_types ( id, name, zone_short ),
           encounter_players ( character_name, total_damage, rank )
         `)
+        .in('npc_id', curated)
         .gte('started_at', startIso)
         .lt('started_at', endIso)
         .order('started_at', { ascending: true }),

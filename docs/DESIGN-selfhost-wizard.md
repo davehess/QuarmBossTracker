@@ -287,6 +287,24 @@ and the same never-refetch guarantee.
   raid-day bucket (matches the web's `dayKey`). That is OUR raid timezone — a
   guild setting the wizard must parameterize (same knob as the raid schedule
   and the deploy freeze).
+- **Uncurated-mob collection is a SWITCH now, and the wizard should default it
+  OFF for a new guild** (2026-09-04). The open-collection decision above was
+  measured: in the 30 days to 2026-09-04, **5,789 of 5,969 encounters (97%)
+  were auto-registered farm trash**, ~170 MB across the encounter tables in 18
+  days (threat snapshots ~124 MB of it, rollups ~18 MB, events ~12 MB,
+  contributions ~9 MB, players ~5 MB) — about 9 MB/day, all of it below the
+  display filters. Bot env `TRACK_UNCURATED_MOBS=0` gates it at ingest (no
+  self-registration, no persistence on auto-registered rows; curated bosses
+  and the review's trash tally are untouched; a loot-lockout promotion still
+  curates a row). Tuning `flag_skip_uncurated_mobs=1` flips it live. We keep it
+  ON — first kills in new content are the reason it exists — but that is a
+  Pro-plan choice, and on a Free project the same 9 MB/day is the whole
+  database in under two months.
+- **The guild's raid DAYS are a web setting: `RAID_DAYS` (0 = Sunday, default
+  `0,3,4`)** (2026-09-04). The attendance grids on `/me` and `/raidhistory` draw
+  only those rows (plus any day that actually carries a raid). Same knob family
+  as the raid timezone and the deploy-freeze window — the wizard should ask
+  once and set all three.
 
 - **Crash dumps NEVER leave the machine** (2026-08-12). Zeal writes
   `crashes/<ts>.zip` (minidump + `crash_reason.txt`); the agent uploads only the

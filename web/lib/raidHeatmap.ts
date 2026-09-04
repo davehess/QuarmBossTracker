@@ -11,11 +11,15 @@
 // those three rows ever light up. The cadence is visible in the structure
 // itself; a stray Saturday raid stands out as exactly that.
 //
-// Data model (settled against live rows, 2026-09-03):
-//   · `opendkp_raids.ts` is stamped NOON UTC on the raid's calendar day, so
-//     the Eastern day-key of `ts` is the night. 416 raids fall on 389 nights —
-//     25 nights carry two raids (e.g. "7-22-26 SSRA" and "7-23-26 Seru + Misc"
-//     both stamped 2026-07-22), and both belong to that one night's cell.
+// Data model (settled against live rows, 2026-09-03; corrected 2026-09-04):
+//   · `opendkp_raids.ts` is stamped NOON UTC on the day the row was CREATED,
+//     which is usually the raid day but is the evening BEFORE whenever an
+//     officer pre-creates the next raid ("9-2-26 Seru + Kael" is stamped Sep 1,
+//     "8-23-26 Vex Thal" Aug 22, "7-23-26 Seru + Misc" Jul 22). That is what
+//     put raids on Tuesday and Saturday rows. The officer's own date in the
+//     raid NAME is the night — see raidNightKey.
+//   · Some OpenDKP "raids" are not nights at all: first-time-kill bonus rows,
+//     sign-up bonuses, holiday DKP, the DKP market. See isOfficialRaid.
 //   · "Attended a raid" = present in ANY of its ticks, matching
 //     /admin/attendance and /roster. Per-night raiders is the DISTINCT union
 //     across every tick of every raid that night — a person is one person.
@@ -102,6 +106,68 @@ export function nightLabel(key: string): string {
   });
 }
 
+// ── Which days, which raids, which night ─────────────────────────────────────
+
+// The guild raids Sun/Wed/Thu (CLAUDE.md, "Raid schedule"). Another guild sets
+// RAID_DAYS on its web deployment ("0,3,4"-style, 0 = Sunday). The grid only
+// draws these rows — plus any weekday that actually carries an official raid,
+// so a holiday move is never invisible (see rowsFor).
+export const DEFAULT_RAID_DAYS: readonly number[] = [0, 3, 4];
+export function raidDays(env: string | undefined = process.env.RAID_DAYS): number[] {
+  const parsed = String(env ?? '').split(/[\s,]+/).map(s => parseInt(s, 10)).filter(n => n >= 0 && n <= 6);
+  return parsed.length ? [...new Set(parsed)].sort((a, b) => a - b) : [...DEFAULT_RAID_DAYS];
+}
+
+export function rowsFor(nights: Iterable<{ date: string }>, base: number[] = raidDays()): number[] {
+  const out = new Set(base);
+  for (const n of nights) out.add(weekdayOf(n.date));
+  return [...out].sort((a, b) => a - b);
+}
+
+// OpenDKP rows that are not nights. Hitya, 2026-09-04: "the timeline itself
+// only needs to be our official raid nights … first time kill bonuses don't
+// need to show up." Name-matched: the officer's label has said "Bonus" every
+// time (First Time Kill Bonus, Sign Up Bonus, Thanksgiving Bonus DKP), and the
+// tick descriptions on those rows are boss names rather than "Tick N".
+const NOT_A_NIGHT = /\bbonus\b|\bdkp market\b|\badjust/i;
+export function isOfficialRaid(name: string | null | undefined): boolean {
+  return !NOT_A_NIGHT.test(String(name ?? ''));
+}
+
+// The date an officer typed into the raid name, in any of the four shapes seen
+// in the table: "2026-08-05 - VT", "9-1-26 Seru + Kael", "05/13/2026 - VT 1",
+// "8/9 SSRA" (no year → the stamp's year). Null when there is none.
+export function dateFromName(name: string | null | undefined, fallbackYear: string): string | null {
+  const s = String(name ?? '');
+  let m = s.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (m) return _mkKey(m[1], m[2], m[3]);
+  m = s.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+  if (m) return _mkKey(m[3].length === 2 ? '20' + m[3] : m[3], m[1], m[2]);
+  m = s.match(/\b(\d{1,2})[-/](\d{1,2})\b/);
+  if (m) return _mkKey(fallbackYear, m[1], m[2]);
+  return null;
+}
+function _mkKey(y: string, mo: string, d: string): string | null {
+  const Y = Number(y), M = Number(mo), D = Number(d);
+  if (!(M >= 1 && M <= 12 && D >= 1 && D <= 31)) return null;
+  const key = `${Y}-${String(M).padStart(2, '0')}-${String(D).padStart(2, '0')}`;
+  const dt = new Date(key + 'T12:00:00Z');   // Feb 30 must not become a phantom night
+  return dt.getUTCFullYear() === Y && dt.getUTCMonth() === M - 1 && dt.getUTCDate() === D ? key : null;
+}
+
+// The night a raid belongs to: the name's date when it lands within a few days
+// of the stamp (pre-created the evening before, or entered the morning after);
+// otherwise the stamp — a typo'd year ("1-14-25" on a 2026 raid) must not
+// teleport a night into last year.
+export const NAME_DATE_TOLERANCE_DAYS = 3;
+export function raidNightKey(raid: { ts: string; name: string | null }, tz: string = RAID_TZ): string {
+  const stamp = dayKey(raid.ts, tz);
+  const fromName = dateFromName(raid.name, stamp.slice(0, 4));
+  if (!fromName) return stamp;
+  const diff = Math.abs(Date.parse(fromName + 'T12:00:00Z') - Date.parse(stamp + 'T12:00:00Z')) / 86400_000;
+  return diff <= NAME_DATE_TOLERANCE_DAYS ? fromName : stamp;
+}
+
 // ── Nights ───────────────────────────────────────────────────────────────────
 
 export type NightRaid = { raid_id: number; ts: string; name: string | null };
@@ -118,15 +184,17 @@ export type Night = {
 };
 
 /**
- * Bucket raids + their ticks into Eastern nights. Ticks whose raid is not in
- * `raids` are ignored (they belong to a raid outside the window).
+ * Bucket OFFICIAL raids + their ticks into Eastern nights (raidNightKey).
+ * Bonus rows are dropped here, and so are their ticks. Ticks whose raid is not
+ * in `raids` are ignored (they belong to a raid outside the window).
  */
 export function buildNights(raids: NightRaid[], ticks: NightTick[], tz: string = RAID_TZ): Map<string, Night> {
   const nightOfRaid = new Map<number, string>();
   const nights = new Map<string, Night>();
   for (const r of raids) {
     if (!r || r.raid_id == null || !r.ts) continue;
-    const date = dayKey(r.ts, tz);
+    if (!isOfficialRaid(r.name)) continue;
+    const date = raidNightKey(r, tz);
     nightOfRaid.set(r.raid_id, date);
     let n = nights.get(date);
     if (!n) { n = { date, raids: [], tickIds: [], attendees: [] }; nights.set(date, n); }

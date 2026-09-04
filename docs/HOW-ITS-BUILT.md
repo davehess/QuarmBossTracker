@@ -2698,14 +2698,26 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
 - **Attendance metrics (#92)** — `member_attendance_metrics` view + `/admin/attendance`.
-- **Raid attendance heatmaps (2026-09-03)** — `web/lib/raidHeatmap.ts` (pure:
-  the week grid, Eastern-night bucketing of `opendkp_raids` + `opendkp_ticks`,
-  the red→orange→green fill scale, gold tick-share) and
-  `web/components/RaidHeatmap.tsx` (client grid, one fixed tooltip). Two
-  surfaces: the **/me** 📅 section (family union via `.overlaps('attendees')`,
-  ids-only tick reads) and **`/raidhistory`** (member page: heatmap + per-night
-  table; "full" = the 60-man `raid_targets` sum, `?weeks=` and `?full=`
-  overrides). Every night cell links to `/raid/review/<date>`.
+- **Raid attendance heatmaps (2026-09-03, night rules 2026-09-04)** —
+  `web/lib/raidHeatmap.ts` (pure: the week grid, `isOfficialRaid` — bonus rows
+  and the DKP market are not nights — `raidNightKey` — the night is the date in
+  the raid NAME when it is within 3 days of `opendkp_raids.ts`, because that
+  stamp is the row's CREATION day and officers pre-create — `raidDays()` from
+  env `RAID_DAYS` default Sun/Wed/Thu, `rowsFor` adds any day that carries a
+  raid, the red→orange→green fill scale, gold tick-share) and
+  `web/components/RaidHeatmap.tsx` (client grid, raid-day rows, one fixed
+  tooltip). Two surfaces: the **/me** 📅 section (last 60 days, family union via
+  `.overlaps('attendees')`, ids-only tick reads, rate-first stats) and
+  **`/raidhistory`** (member page: heatmap + per-night table; "full" = the
+  60-man `raid_targets` sum, `?weeks=` and `?full=` overrides). Every night
+  cell links to `/raid/review/<date>`.
+- **Uncurated-mob ingest gate (bot 3.1.122, 2026-09-04)** — env
+  `TRACK_UNCURATED_MOBS=0` or tuning `flag_skip_uncurated_mobs=1`
+  (`/admin/overlays` → Kill switches) stops `_resolveBossForPersist` from
+  self-registering new mobs and from persisting encounters on
+  `auto_registered` rows; curated bosses unaffected. `_trackUncuratedMobs()`
+  in `index.js`. Both `/raid/review` pages filter to `curatedNpcIds` in the
+  query, like `/parses`.
 - **Raid-Helper signup archive** — `utils/raidhelperApi.js` mirrors the Raid-Helper
   board into `rh_events` + `rh_signups` every 30 min (`startRaidHelperSync` in
   `index.js`), upsert-only, feeding `/admin/signups`. **This is the guild's only

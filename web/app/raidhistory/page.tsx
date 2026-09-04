@@ -14,6 +14,11 @@
 // empty the page falls back to 60 rather than to nothing. `?full=` overrides
 // it for a what-if read, `?weeks=` widens the window. Neither writes anything.
 //
+// Only OFFICIAL raid nights (Hitya, 2026-09-04: "it should just be our raid
+// days"): bonus rows are dropped, a raid's night is the date in its name, and
+// the grid draws the guild's raid-day rows (lib/raidHeatmap: isOfficialRaid,
+// raidNightKey, rowsFor).
+//
 // Reads: raids in the window, then their ticks WITH attendee arrays, because
 // the per-night raider count is a distinct union across every tick of every
 // raid that night. That is the one wide read on this page (~150 raids × 4
@@ -28,7 +33,7 @@ import { selectAll } from '@/lib/selectAll';
 import { dayKey, dayLabel, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
 import {
-  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel,
+  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel, rowsFor,
   fillColor, pct, DEFAULT_FULL_RAID, FILL_RED, FILL_ORANGE, FILL_GREEN,
   type Night, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
@@ -149,7 +154,7 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
         {held.length === 0 ? (
           <div className="bg-bg border border-dim/40 rounded p-4 text-sm text-dim">No raid ticks in this window yet.</div>
         ) : (
-          <RaidHeatmap weeks={weeks} months={months} cells={cells}
+          <RaidHeatmap weeks={weeks} months={months} cells={cells} rows={rowsFor(held)}
                        label={`Raid nights by fullness, ${weeksN} weeks`} />
         )}
 

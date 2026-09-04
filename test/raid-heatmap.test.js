@@ -17,7 +17,8 @@ import { describe, it, expect } from 'vitest';
 import {
   addDays, weekdayOf, buildWeeks, gridStart, monthLabels, nightLabel,
   buildNights, nightNames, fillColor, attendedAlpha, pct,
-  FILL_RED, FILL_ORANGE, FILL_GREEN, ATTENDED, DEFAULT_FULL_RAID,
+  isOfficialRaid, dateFromName, raidNightKey, raidDays, rowsFor,
+  FILL_RED, FILL_ORANGE, FILL_GREEN, ATTENDED, DEFAULT_FULL_RAID, DEFAULT_RAID_DAYS,
 } from '../web/lib/raidHeatmap.ts';
 
 describe('calendar arithmetic', () => {
@@ -73,26 +74,83 @@ describe('monthLabels', () => {
   });
 });
 
+describe('which raids are nights (Hitya, 2026-09-04)', () => {
+  it('isOfficialRaid drops bonus rows and the DKP market, keeps real raids', () => {
+    expect(isOfficialRaid("1-8-26 First Time Kill Bonus'")).toBe(false);
+    expect(isOfficialRaid('5-10-26 Mothers Day Sign Up Bonus')).toBe(false);
+    expect(isOfficialRaid('Thanksgiving Bonus DKP (for using Raid Tool)')).toBe(false);
+    expect(isOfficialRaid('DKP Market 6-6-26')).toBe(false);
+    expect(isOfficialRaid('10-15-25 Growth + Yeli + Doze (Gozz First)')).toBe(true);   // a real raid with a first kill IN it
+    expect(isOfficialRaid('8-6-26 Bring out your Alts!')).toBe(true);
+    expect(isOfficialRaid(null)).toBe(true);
+  });
+
+  it('dateFromName reads every shape officers have typed', () => {
+    expect(dateFromName('2026-08-05 - VT', '2026')).toBe('2026-08-05');
+    expect(dateFromName('9-1-26 Seru + Kael', '2026')).toBe('2026-09-01');
+    expect(dateFromName('05/13/2026 - VT 1', '2026')).toBe('2026-05-13');
+    expect(dateFromName('SSRA 7-12-26', '2026')).toBe('2026-07-12');
+    expect(dateFromName('8/9 SSRA', '2026')).toBe('2026-08-09');
+    expect(dateFromName('VT 7/8', '2026')).toBe('2026-07-08');
+    expect(dateFromName('8-16-26 Alt Fun', '2026')).toBe('2026-08-16');
+    expect(dateFromName('Alt Fun', '2026')).toBe(null);
+    expect(dateFromName('2026-02-30 nope', '2026')).toBe(null);
+  });
+
+  it('raidNightKey trusts the name when it is near the stamp — pre-created raids land on their night', () => {
+    // Stamped the evening before, named for the raid day.
+    expect(raidNightKey({ ts: '2026-09-01T12:00:00Z', name: '9-2-26 Seru + Kael' })).toBe('2026-09-02');
+    expect(raidNightKey({ ts: '2026-08-22T12:00:00Z', name: '8-23-26 Vex Thal' })).toBe('2026-08-23');
+    expect(raidNightKey({ ts: '2026-07-22T12:00:00Z', name: '7-23-26 Seru + Misc' })).toBe('2026-07-23');
+  });
+
+  it("raidNightKey falls back to the stamp for a typo'd year or no date at all", () => {
+    expect(raidNightKey({ ts: '2026-01-15T12:00:00Z', name: "1-14-25 First Time Kill Bonus'" })).toBe('2026-01-15');
+    expect(raidNightKey({ ts: '2026-08-16T12:00:00Z', name: 'Alt Fun' })).toBe('2026-08-16');
+    expect(raidNightKey({ ts: '2026-08-28T03:00:00Z', name: null })).toBe('2026-08-27');   // 11pm ET on the 27th
+  });
+
+  it('raidDays defaults to Sun/Wed/Thu and honours a sane env override', () => {
+    expect(raidDays(undefined)).toEqual([0, 3, 4]);
+    expect(raidDays('')).toEqual([0, 3, 4]);
+    expect([...DEFAULT_RAID_DAYS]).toEqual([0, 3, 4]);
+    expect(raidDays('5, 6')).toEqual([5, 6]);
+    expect(raidDays('3,3,0')).toEqual([0, 3]);
+    expect(raidDays('x')).toEqual([0, 3, 4]);
+    expect(raidDays('9')).toEqual([0, 3, 4]);
+  });
+
+  it('rowsFor draws the raid days plus any day that actually carries a raid', () => {
+    expect(rowsFor([{ date: '2026-08-30' }, { date: '2026-09-02' }], [0, 3, 4])).toEqual([0, 3, 4]);
+    expect(rowsFor([{ date: '2026-08-22' }], [0, 3, 4])).toEqual([0, 3, 4, 6]);   // a Saturday raid is visible
+    expect(rowsFor([], [1])).toEqual([1]);
+  });
+});
+
 describe('buildNights — raids + ticks → Eastern nights', () => {
   const raids = [
-    { raid_id: 2, ts: '2026-07-22T12:00:00Z', name: '7-23-26 Seru + Misc' },
+    { raid_id: 2, ts: '2026-07-22T12:00:00Z', name: 'Seru + Misc, second raid' },
     { raid_id: 1, ts: '2026-07-22T12:00:00Z', name: '7-22-26 SSRA' },
     { raid_id: 3, ts: '2026-08-28T03:00:00Z', name: 'late one' },   // 11pm ET on the 27th
+    { raid_id: 4, ts: '2026-01-09T12:00:00Z', name: "1-8-26 First Time Kill Bonus'" },
+    { raid_id: 5, ts: '2026-09-01T12:00:00Z', name: '9-2-26 Seru + Kael' },   // pre-created the evening before
   ];
   const ticks = [
     { raid_id: 1, tick_id: 10, attendees: ['Hitya', 'Canopy'] },
     { raid_id: 1, tick_id: 11, attendees: ['hitya', 'Dant'] },
     { raid_id: 2, tick_id: 20, attendees: ['Uilnayar'] },
     { raid_id: 3, tick_id: 30, attendees: ['Hitya'] },
+    { raid_id: 4, tick_id: 40, attendees: ['Hitya'] },
+    { raid_id: 5, tick_id: 50, attendees: ['Hitya'] },
     { raid_id: 99, tick_id: 90, attendees: ['Nobody'] },          // raid outside the window
   ];
   const nights = buildNights(raids, ticks);
 
-  it('folds two raids on one date into one night, in raid order', () => {
+  it('folds two raids on one night into one cell, in raid order', () => {
     const n = nights.get('2026-07-22');
     expect(n).toBeTruthy();
     expect(n.raids.map(r => r.raid_id)).toEqual([1, 2]);
-    expect(nightNames(n)).toEqual(['7-22-26 SSRA', '7-23-26 Seru + Misc']);
+    expect(nightNames(n)).toEqual(['7-22-26 SSRA', 'Seru + Misc, second raid']);
   });
 
   it('counts a raider once across ticks, raids and letter-case', () => {
@@ -103,6 +161,17 @@ describe('buildNights — raids + ticks → Eastern nights', () => {
   it('buckets by the EASTERN day, not UTC', () => {
     expect(nights.has('2026-08-27')).toBe(true);
     expect(nights.has('2026-08-28')).toBe(false);
+  });
+
+  it('a bonus row is not a night, and its ticks go with it', () => {
+    expect(nights.has('2026-01-09')).toBe(false);
+    expect(nights.has('2026-01-08')).toBe(false);
+    expect([...nights.values()].some(n => n.tickIds.includes(40))).toBe(false);
+  });
+
+  it('a pre-created raid lands on the night in its name', () => {
+    expect(nights.has('2026-09-01')).toBe(false);
+    expect(nights.get('2026-09-02').tickIds).toEqual([50]);
   });
 
   it('ignores ticks whose raid is not in the window', () => {

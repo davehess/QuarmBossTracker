@@ -10529,6 +10529,30 @@ async function _isShedded(kind, res) {
   return false;
 }
 
+// ── Uncurated-mob tracking gate (Hitya, 2026-09-04) ──────────────────────────
+// Since bot 3.1.52 the ingest path self-registers every exactly-matched mob so
+// a first kill can never be lost — and that made encounter collection scale
+// with member FARMING. Measured 2026-09-04: 5,789 of the 5,969 encounters in
+// the trailing 30 days (97%) were auto-registered trash; ~170 MB across the
+// encounter tables in 18 days, threat snapshots most of it. Display filters
+// (`bosses_local.auto_registered`) keep the surfaces readable; THIS is the
+// ingest gate for a deployment that does not want the volume at all ("a flag
+// into the setup to turn those off … for other guilds that may use this").
+//   · env TRACK_UNCURATED_MOBS=0 — off at boot (deployment default);
+//   · tuning flag_skip_uncurated_mobs=1 (/admin/overlays) — off live, ~60s.
+// Off means: no self-registration, and encounters on already auto-registered
+// rows stop persisting. Curated bosses are untouched; the trash tally on the
+// review still runs off the upload stream; _promoteLockoutBoss still curates
+// a row the server hands a loot lockout for, which then persists as normal.
+const TRACK_UNCURATED_MOBS_ENV = String(process.env.TRACK_UNCURATED_MOBS ?? '1').trim() !== '0';
+const _uncuratedGateLogged = new Set();
+async function _trackUncuratedMobs() {
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fall through to the env default */ }
+  if (Number(tune.flag_skip_uncurated_mobs) >= 1) return false;
+  return TRACK_UNCURATED_MOBS_ENV;
+}
+
 // ── Per-uploader admission-control budgets (#73) ─────────────────────────────
 // In-memory, per-uploader × per-endpoint-kind windowed budgets on the ingest
 // surface. A healthy agent never trips these — they exist to stop ONE
@@ -17328,26 +17352,35 @@ function _bossPersistKeys(bossName, matchedBossId) {
 // exact, unambiguous eqemu match — which keeps junk boss names (a mis-parsed
 // player like 'Labanab') out of the table, exactly what the old allowlist was
 // accidentally good at.
-async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
+// With `trackUncurated: false` (the 2026-09-04 gate) an uncurated mob returns
+// { internalId: null, gated: 'uncurated' } instead — distinguishable from the
+// junk null so the call site does not log it as a miss.
+async function _resolveBossForPersist(bossName, matchedBossId, supabase, { trackUncurated = true } = {}) {
   const { keys, rawSlug, eqemuForms } = _bossPersistKeys(bossName, matchedBossId);
   if (!keys.length || !rawSlug) return null;
+  const GATED = { internalId: null, gated: 'uncurated' };
   const rows = await supabase.select(
     'bosses_local',
-    `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&select=internal_id`
+    `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&select=internal_id,auto_registered`
   );
   if (Array.isArray(rows) && rows.length) {
-    const have = new Set(rows.map(r => r.internal_id));
-    for (const k of keys) if (have.has(k)) return { internalId: k, registered: false };
+    const have = new Map(rows.map(r => [r.internal_id, !!r.auto_registered]));
+    for (const k of keys) if (have.has(k)) {
+      if (!trackUncurated && have.get(k)) return GATED;
+      return { internalId: k, registered: false };
+    }
   }
   const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
   const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id&limit=3`);
   const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
-  const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id&limit=1`);
+  const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id,auto_registered&limit=1`);
   if (Array.isArray(byNpc) && byNpc[0]?.internal_id) {
+    if (!trackUncurated && byNpc[0].auto_registered) return GATED;
     return { internalId: byNpc[0].internal_id, registered: false };
   }
+  if (!trackUncurated) return GATED;
   await supabase.insertIgnoreDuplicates('bosses_local', [{
     npc_id: npcId, internal_id: rawSlug, nicknames: [],
     added_at: new Date().toISOString(),
@@ -18679,11 +18712,12 @@ async function _handleAgentUpload(req, res) {
       // article-stripped slug → exact eqemu match with self-registration for
       // first-time content. See _resolveBossForPersist for why (the Final
       // Arbiter P1, 2026-08-16).
+      const trackUncurated = await _trackUncuratedMobs();
       const resolved = await _resolveBossForPersist(
-        encounter.boss_name, matchedBoss?.id || null, supabase);
+        encounter.boss_name, matchedBoss?.id || null, supabase, { trackUncurated });
       const bossInternalId = resolved?.internalId
         || (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
-      if (resolved) {
+      if (resolved?.internalId) {
         const recParseResult = await supabase.recordParse({
           bossInternalId,
           parsed: rawParse,
@@ -18771,6 +18805,13 @@ async function _handleAgentUpload(req, res) {
           } catch (err) {
             console.warn('[agent] charm_sessions upsert failed:', err?.message);
           }
+        }
+      } else if (resolved?.gated) {
+        // The uncurated-mob gate, working as configured — once per mob per
+        // process, or a farm night would write thousands of these.
+        if (!_uncuratedGateLogged.has(bossInternalId)) {
+          _uncuratedGateLogged.add(bossInternalId);
+          console.log(`[agent] "${bossInternalId}" not persisted — uncurated-mob tracking is off (TRACK_UNCURATED_MOBS / flag_skip_uncurated_mobs)`);
         }
       } else {
         // Only reachable when the boss name has no exact, unambiguous eqemu

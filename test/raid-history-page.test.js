@@ -24,6 +24,9 @@ const me    = read('app', 'me', 'page.tsx');
 const grid  = read('components', 'RaidHeatmap.tsx');
 const nav   = read('components', 'Nav.tsx');
 const meta  = read('lib', 'pageMeta.ts');
+const night = read('app', 'raid', 'review', '[date]', 'page.tsx');
+const index = read('app', 'raid', 'review', 'page.tsx');
+const knobs = read('app', 'admin', 'overlays', 'page.tsx');
 
 describe('/raidhistory reads', () => {
   it('is member-gated', () => {
@@ -48,6 +51,10 @@ describe('/raidhistory reads', () => {
     // A raid row with no captured ticks is not a night.
     expect(page).toMatch(/filter\(n => n\.tickIds\.length > 0\)/);
   });
+
+  it('draws only the raid-day rows (plus any day that carries a raid)', () => {
+    expect(page).toMatch(/rows=\{rowsFor\(held\)\}/);
+  });
 });
 
 describe('/me section', () => {
@@ -64,6 +71,14 @@ describe('/me section', () => {
 
   it('hides itself when the tick read failed rather than drawing a year of misses', () => {
     expect(loader).toMatch(/if \(heldTicks\.length === 0\) return null;/);
+  });
+
+  it('reads 60 days, not a year, and shows attendance as a RATE first', () => {
+    expect(me).toMatch(/const ATTENDANCE_DAYS = 60;/);
+    expect(loader).toMatch(/buildWeeks\(todayKey, Math\.ceil\(ATTENDANCE_DAYS \/ 7\)\)/);
+    expect(me).toMatch(/<AttendanceStat label="Last 60 days" attended=\{attendance\.attended60\} held=\{attendance\.held60\} \/>/);
+    expect(me).toMatch(/\$\{pct\(attended, held\)\}%/);
+    expect(me).toMatch(/rows=\{attendance\.rows\}/);
   });
 
   it('a missed night is an outline, an attended one is gold scaled by ticks', () => {
@@ -86,14 +101,29 @@ describe('RaidHeatmap component', () => {
     expect(grid).toMatch(/addEventListener\('scroll', hide/);
   });
 
-  it('labels only the raid days', () => {
-    expect(grid).toMatch(/const ROW_LABELS = \['Sun', '', '', 'Wed', 'Thu', '', ''\];/);
+  it('draws the rows the page hands it, labelled by weekday', () => {
+    expect(grid).toMatch(/rows: number\[\];/);
+    expect(grid).toMatch(/const DAY_NAMES = \['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'\];/);
+    expect(grid).toMatch(/\{rows\.map\(d => \(/);
   });
 
   it('opens on the newest week and makes every night a real link', () => {
     expect(grid).toMatch(/el\.scrollLeft = el\.scrollWidth/);
     expect(grid).toMatch(/<a key=\{key\} href=\{cell\.href\}/);
     expect(grid).toMatch(/onFocus=\{e => onShow\(e\.currentTarget, cell\.lines\)\}/);
+  });
+});
+
+describe('the raid review shows bosses, not farm trash (Hitya, 2026-09-04)', () => {
+  it('both review pages filter to curated npc ids IN THE QUERY', () => {
+    expect(night).toMatch(/const curated = await curatedNpcIds\(sb\);/);
+    expect(night).toMatch(/\.in\('npc_id', curated\)/);
+    expect(index).toMatch(/const curated = await curatedNpcIds\(sb\);/);
+    expect(index).toMatch(/\.in\('npc_id', curated\)/);
+  });
+
+  it('officers get the live ingest switch on /admin/overlays', () => {
+    expect(knobs).toMatch(/key: 'flag_skip_uncurated_mobs'/);
   });
 });
 
