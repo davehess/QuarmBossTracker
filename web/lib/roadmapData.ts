@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'month-blocks-early-nights-2026-09-04b',
+    title: 'Web 1.7.22',
+    version: 'Web 1.7.22',
+    date: '2026-09-04',
+    headline: 'Attendance as month blocks, raid reviews for every night since 2024, mechanics grouped by boss, and an honest leaderboard.',
+    features: [
+      {
+        name: 'Attendance you can read on a phone',
+        blurb: 'Both attendance views are now month blocks of day squares \u2014 weekday, date, and on Raid history the raider count \u2014 that stack on a phone and tile on a desktop.',
+      },
+      {
+        name: 'Every raid night has a review page',
+        blurb: 'Nights from before the parser existed now appear in the review list with the raid\u2019s name, and each night opens with who came, by class, and where. The kills timeline still needs a parse; the raid name says what was on the menu.',
+      },
+      {
+        name: 'Death Touch and mechanics, by boss',
+        blurb: 'The review groups each fire under the fight it landed in, folds repeats, and names anyone who died within seconds of it.',
+      },
+      {
+        name: 'Leaderboards count bosses, not trash',
+        blurb: 'Trash and farm mobs are off the board, fights over 45 minutes are left out, and parses from before mid-July \u2014 when one over-counting parser could double a row \u2014 are hidden unless you ask for them.',
+      },
+    ],
+    fixes: [
+      'The /me banner no longer says the parser is off while Mimic is running \u2014 it watches every stream, not just fights.',
+      'Characters with no uploads are tucked behind a collapsed row; the rest sort by when they were last seen.',
+    ],
+  },
+  {
     key: 'official-nights-and-trash-gate-2026-09-04',
     title: 'Web 1.7.21 \u00b7 Bot 3.1.122',
     version: 'Web 1.7.21 \u00b7 Bot 3.1.122',

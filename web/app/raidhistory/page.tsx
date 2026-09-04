@@ -15,9 +15,9 @@
 // it for a what-if read, `?weeks=` widens the window. Neither writes anything.
 //
 // Only OFFICIAL raid nights (Hitya, 2026-09-04: "it should just be our raid
-// days"): bonus rows are dropped, a raid's night is the date in its name, and
-// the grid draws the guild's raid-day rows (lib/raidHeatmap: isOfficialRaid,
-// raidNightKey, rowsFor).
+// days"): bonus rows are dropped and a raid's night is the date in its name
+// (lib/raidHeatmap: isOfficialRaid, raidNightKey). Nights are drawn as month
+// blocks of day chips, each chip carrying the raider count.
 //
 // Reads: raids in the window, then their ticks WITH attendee arrays, because
 // the per-night raider count is a distinct union across every tick of every
@@ -33,11 +33,11 @@ import { selectAll } from '@/lib/selectAll';
 import { dayKey, dayLabel, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
 import {
-  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel, rowsFor,
+  windowStart, buildNights, nightNames, nightLabel, monthKey,
   fillColor, pct, DEFAULT_FULL_RAID, FILL_RED, FILL_ORANGE, FILL_GREEN,
   type Night, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
-import RaidHeatmap, { type HeatCell } from '@/components/RaidHeatmap';
+import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,25 +92,40 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
   const fullOverride = clampInt(sp.full, 1, 200, 0);
 
   const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
-  const weeks = buildWeeks(todayKey, weeksN);
-  const months = monthLabels(weeks);
-  const { startIso } = zonedDayRangeUtc(gridStart(weeks), RAID_TZ);
+  const startKey = windowStart(todayKey, weeksN * 7);
+  const { startIso } = zonedDayRangeUtc(startKey, RAID_TZ);
 
   const [nights, fullFromTargets] = await Promise.all([loadNights(startIso), loadFullRaid()]);
   const full = fullOverride > 0 ? fullOverride : fullFromTargets;
 
   // Only nights that have a captured tick count as held — a raid row with no
   // valid ticks is a sync gap, and colouring it red would be a lie.
-  const held = [...nights.values()].filter(n => n.tickIds.length > 0).sort((a, b) => b.date.localeCompare(a.date));
+  const held = [...nights.values()]
+    .filter(n => n.tickIds.length > 0 && n.date >= startKey)
+    .sort((a, b) => b.date.localeCompare(a.date));
 
-  const cells: Record<string, HeatCell> = {};
-  for (const n of held) {
+  const chips: NightChip[] = held.map(n => {
     const raiders = n.attendees.length;
-    cells[n.date] = {
+    return {
+      date: n.date,
       color: fillColor(raiders / full),
+      sub: String(raiders),
       lines: [nightLabel(n.date), ...nightNames(n), `${raiders} / ${full} raiders · ${pct(raiders, full)}%`],
       href: `/raid/review/${n.date}`,
     };
+  });
+  // Per-month header: nights and the average raider count that month.
+  const monthSummaries: Record<string, string> = {};
+  {
+    const byMonth = new Map<string, number[]>();
+    for (const n of held) {
+      const k = monthKey(n.date);
+      byMonth.set(k, [...(byMonth.get(k) ?? []), n.attendees.length]);
+    }
+    for (const [k, xs] of byMonth) {
+      const avg = Math.round(xs.reduce((s, x) => s + x, 0) / xs.length);
+      monthSummaries[k] = `${xs.length} night${xs.length === 1 ? '' : 's'} · avg ${avg}`;
+    }
   }
 
   const raiderCounts = held.map(n => n.attendees.length);
@@ -128,8 +143,8 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
         <div>
           <h1 className="text-2xl text-gold">📈 Raid history</h1>
           <p className="text-sm text-dim mt-1">
-            Every raid night in the last {Math.round(weeksN / 4.33)} months, coloured by how full the raid was.
-            Hover a night for the raid; click it for that night&apos;s review.
+            Every raid night in the last {Math.round(weeksN / 4.33)} months &mdash; each square is one night, with the raider
+            count under the date, coloured by how full the raid was. Hover a night for the raid; click it for that night&apos;s review.
           </p>
         </div>
         <div className="text-xs text-dim flex items-center gap-3">
@@ -154,7 +169,7 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
         {held.length === 0 ? (
           <div className="bg-bg border border-dim/40 rounded p-4 text-sm text-dim">No raid ticks in this window yet.</div>
         ) : (
-          <RaidHeatmap weeks={weeks} months={months} cells={cells} rows={rowsFor(held)}
+          <RaidHeatmap nights={chips} monthSummaries={monthSummaries}
                        label={`Raid nights by fullness, ${weeksN} weeks`} />
         )}
 

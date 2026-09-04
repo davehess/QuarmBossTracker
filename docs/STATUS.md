@@ -89,6 +89,33 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Round three, 2026-09-04 afternoon (web 1.7.22): leaderboards, the /me
+  banner, month-block attendance, early-night reviews, mechanics by fight.**
+  Hitya's six: *leaderboards should only count bosses; many parses are
+  severely inflated from the time-offset double/triple counting; the "parser
+  was syncing" message is wrong, Mimic is on; group no-upload characters into
+  a collapsed section sorted by recency; the attendance section looks odd —
+  a better format for mobile and desktop, same for /raidhistory; early raids
+  have very limited data — fill in attendance, classes, bosses; the review's
+  Death Touch line does not say who it landed on — group by boss.*
+  - **Leaderboards:** curated only; fights > 45 min dropped; encounters before
+    the 2026-07-14 max→median merge hidden unless `?legacy=1`. **They cannot
+    be fixed in the data:** all 427 pre-cutover multi-uploader encounters have
+    pruned raw parses (measured), so a re-merge has nothing to rebuild from.
+  - **/me banner:** "last seen" is the freshest of ANY upload stream, not the
+    encounter stream — Mimic uploads faction/inventory/chat while nothing is
+    being fought. Copy says Mimic. No-upload characters are collapsed.
+  - **Month blocks** replace the week×weekday grid on both surfaces; each
+    night is a 44px chip with weekday, day and (on /raidhistory) the raider
+    count. `RAID_DAYS` (added that morning) is gone with the grid.
+  - **Early nights:** `/raid/review` lists every OpenDKP night; a night's page
+    opens with raid name(s), raiders, ticks, zone, class chips and the roster.
+    The raid NAME ("9-8-24 Trak/VS/Faydedar/Hate") is the bosses record for
+    nights with no parses — nothing else from 2024 survives in Supabase
+    (`bot_boards` holds only the latest kill per boss; no chat that night).
+  - **Mechanics by fight** with victims inferred from deaths within 2s
+    before / 8s after the fire — `encounter_events` rows carry `actor: null`.
+    ⚠ Recording the target at ingest is an agent+bot follow-up (open table).
 - **✅ Attendance grids, round two + the uncurated-mob gate (web 1.7.21 · bot
   3.1.122, 2026-09-04).** Hitya's morning-after on the heatmaps: */me is slow;
   60 days by default; only our official raid nights — first-time-kill bonuses

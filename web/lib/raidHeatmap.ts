@@ -3,13 +3,13 @@
 // Two surfaces share this (Hitya, 2026-09-03): the member's own attendance on
 // /me ("mouse over on dates and raid names and links to the raids") and the
 // guild-wide /raidhistory page ("a scale from red at half raiders to green
-// full raiders, orange middle of the way"). Both are a GitHub-style grid — one
-// column per week, one row per weekday — because that is the shape Hitya drew.
+// full raiders, orange middle of the way").
 //
-// What makes the grid ours rather than a generic contribution graph: the
-// guild raids Sun/Wed/Thu, so only those three rows are labelled and only
-// those three rows ever light up. The cadence is visible in the structure
-// itself; a stray Saturday raid stands out as exactly that.
+// Shape (Hitya, 2026-09-04: the week×weekday grid "looks odd … come up with a
+// better format that is both mobile and desktop friendly"): nights are grouped
+// by MONTH, and each night is a chip carrying its weekday and day number. A
+// month block stacks on a phone and tiles on a desktop; with only three raid
+// days a week there is no empty grid to draw around them.
 //
 // Data model (settled against live rows, 2026-09-03; corrected 2026-09-04):
 //   · `opendkp_raids.ts` is stamped NOON UTC on the day the row was CREATED,
@@ -36,9 +36,7 @@ import { dayKey, RAID_TZ } from './format';
 // All day arithmetic is done at NOON UTC on the key so a DST seam can never
 // shift a date by a day (the same trick dayLabel uses).
 
-export const RAID_WEEKDAYS: ReadonlyMap<number, string> = new Map([
-  [0, 'Sun'], [3, 'Wed'], [4, 'Thu'],
-]);
+export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export function addDays(key: string, n: number): string {
   const d = new Date(key + 'T12:00:00Z');
@@ -51,52 +49,45 @@ export function weekdayOf(key: string): number {
   return new Date(key + 'T12:00:00Z').getUTCDay();
 }
 
+/** First day-key of a trailing window of `days` days ending on `endKey`. */
+export function windowStart(endKey: string, days: number): string {
+  return addDays(endKey, -(Math.max(1, Math.floor(days)) - 1));
+}
+
+const MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** 'YYYY-MM' for a day-key. */
+export function monthKey(date: string): string {
+  return date.slice(0, 7);
+}
+
+/** 'August 2026' for 'YYYY-MM'. */
+export function monthTitle(month: string): string {
+  const m = Number(month.slice(5, 7)) - 1;
+  return `${MONTHS_LONG[m] ?? month} ${month.slice(0, 4)}`;
+}
+
+export type MonthGroup<T> = { month: string; title: string; items: T[] };
+
 /**
- * The grid: `weeks` columns, each an array of SEVEN day-keys Sunday → Saturday.
- * The last column is the week containing `endKey`; days after `endKey` in that
- * column are '' so the renderer can leave the future blank rather than drawing
- * cells for nights that have not happened.
+ * Nights bucketed by month. Months come newest first — the recent block is
+ * what anyone opening the page is looking for, and on a phone it is the one
+ * at the top — while the nights inside a month run in date order.
  */
-export function buildWeeks(endKey: string, weeks: number): string[][] {
-  const n = Math.max(1, Math.floor(weeks));
-  const lastSunday = addDays(endKey, -weekdayOf(endKey));
-  const firstSunday = addDays(lastSunday, -7 * (n - 1));
-  const out: string[][] = [];
-  for (let w = 0; w < n; w++) {
-    const sunday = addDays(firstSunday, 7 * w);
-    const col: string[] = [];
-    for (let d = 0; d < 7; d++) {
-      const k = addDays(sunday, d);
-      col.push(k > endKey ? '' : k);
-    }
-    out.push(col);
+export function groupByMonth<T extends { date: string }>(items: T[], newestFirst = true): MonthGroup<T>[] {
+  const by = new Map<string, T[]>();
+  for (const it of items) {
+    const k = monthKey(it.date);
+    let arr = by.get(k);
+    if (!arr) { arr = []; by.set(k, arr); }
+    arr.push(it);
   }
-  return out;
-}
-
-/** First day-key on the grid — the query window's lower bound. */
-export function gridStart(weeks: string[][]): string {
-  return weeks[0]?.[0] ?? '';
-}
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/**
- * One label per column, or null. A column is labelled when its Sunday falls in
- * a different month from the previous column's Sunday. The first column is
- * labelled too, unless the second column already starts a new month — two
- * labels 14px apart would overprint each other.
- */
-export function monthLabels(weeks: string[][]): (string | null)[] {
-  const monthOf = (col: string[]) => Number(col[0].slice(5, 7)) - 1;
-  return weeks.map((col, i) => {
-    const m = monthOf(col);
-    if (i === 0) {
-      const next = weeks[1] ? monthOf(weeks[1]) : m;
-      return next === m ? MONTHS[m] : null;
-    }
-    return m === monthOf(weeks[i - 1]) ? null : MONTHS[m];
-  });
+  const months = [...by.keys()].sort();
+  if (newestFirst) months.reverse();
+  return months.map(month => ({
+    month, title: monthTitle(month),
+    items: by.get(month)!.slice().sort((a, b) => a.date.localeCompare(b.date)),
+  }));
 }
 
 /** "Thu, Aug 27 2026" for a tooltip — weekday first because that IS the raid. */
@@ -106,23 +97,7 @@ export function nightLabel(key: string): string {
   });
 }
 
-// ── Which days, which raids, which night ─────────────────────────────────────
-
-// The guild raids Sun/Wed/Thu (CLAUDE.md, "Raid schedule"). Another guild sets
-// RAID_DAYS on its web deployment ("0,3,4"-style, 0 = Sunday). The grid only
-// draws these rows — plus any weekday that actually carries an official raid,
-// so a holiday move is never invisible (see rowsFor).
-export const DEFAULT_RAID_DAYS: readonly number[] = [0, 3, 4];
-export function raidDays(env: string | undefined = process.env.RAID_DAYS): number[] {
-  const parsed = String(env ?? '').split(/[\s,]+/).map(s => parseInt(s, 10)).filter(n => n >= 0 && n <= 6);
-  return parsed.length ? [...new Set(parsed)].sort((a, b) => a - b) : [...DEFAULT_RAID_DAYS];
-}
-
-export function rowsFor(nights: Iterable<{ date: string }>, base: number[] = raidDays()): number[] {
-  const out = new Set(base);
-  for (const n of nights) out.add(weekdayOf(n.date));
-  return [...out].sort((a, b) => a - b);
-}
+// ── Which raids, which night ─────────────────────────────────────────────────
 
 // OpenDKP rows that are not nights. Hitya, 2026-09-04: "the timeline itself
 // only needs to be our official raid nights … first time kill bonuses don't

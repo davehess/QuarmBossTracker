@@ -2750,19 +2750,37 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Comp matcher (#93)** — `web/lib/comp.ts`, `comp_templates`, `/admin/comp`,
   signups gap panel.
 - **Attendance metrics (#92)** — `member_attendance_metrics` view + `/admin/attendance`.
-- **Raid attendance heatmaps (2026-09-03, night rules 2026-09-04)** —
-  `web/lib/raidHeatmap.ts` (pure: the week grid, `isOfficialRaid` — bonus rows
+- **Raid attendance heatmaps (2026-09-03, night rules + month blocks
+  2026-09-04)** — `web/lib/raidHeatmap.ts` (pure: `isOfficialRaid` — bonus rows
   and the DKP market are not nights — `raidNightKey` — the night is the date in
   the raid NAME when it is within 3 days of `opendkp_raids.ts`, because that
-  stamp is the row's CREATION day and officers pre-create — `raidDays()` from
-  env `RAID_DAYS` default Sun/Wed/Thu, `rowsFor` adds any day that carries a
-  raid, the red→orange→green fill scale, gold tick-share) and
-  `web/components/RaidHeatmap.tsx` (client grid, raid-day rows, one fixed
-  tooltip). Two surfaces: the **/me** 📅 section (last 60 days, family union via
-  `.overlaps('attendees')`, ids-only tick reads, rate-first stats) and
-  **`/raidhistory`** (member page: heatmap + per-night table; "full" = the
-  60-man `raid_targets` sum, `?weeks=` and `?full=` overrides). Every night
-  cell links to `/raid/review/<date>`.
+  stamp is the row's CREATION day and officers pre-create — `buildNights`,
+  `groupByMonth`, the red→orange→green fill scale, gold tick-share) and
+  `web/components/RaidHeatmap.tsx` (client: month blocks of 44px day chips,
+  weekday + day number + optional figure, one fixed tooltip; blocks stack on a
+  phone and tile four-across on desktop). Two surfaces: the **/me** 📅 section
+  (last 60 days, family union via `.overlaps('attendees')`, ids-only tick reads,
+  rate-first stats) and **`/raidhistory`** (member page: month blocks with the
+  raider count on each chip + per-night table; "full" = the 60-man
+  `raid_targets` sum, `?weeks=` and `?full=` overrides). Every chip links to
+  `/raid/review/<date>`.
+- **Raid review for nights before the agent (2026-09-04)** — `/raid/review`
+  index merges OpenDKP nights (raid name + raider count; "no parses" where
+  there are none) with encounter nights; `/raid/review/[date]` opens with a
+  "Raid & attendance" card (raid name(s), raiders, ticks, `raid_nights` zone,
+  class chips, collapsible roster) from `opendkp_raids` ±3 days via
+  `raidNightKey` + `opendkp_ticks`. **Mechanics grouped by fight** (`fightFor`
+  + `mechGroups`): each fire folded ×N under the boss it landed in, with deaths
+  from 2s before to 8s after named beside it — the event row carries no target.
+- **Leaderboards guards (2026-09-04)** — `/leaderboards` single-encounter board
+  ranks curated bosses only (`curatedNpcIds` in the query), drops fights over
+  `MAX_SINGLE_FIGHT_SEC` (45 min), and hides encounters before
+  `MEDIAN_MERGE_CUTOVER` (2026-07-14, the max→median merge) unless `?legacy=1`.
+- **/me sync banner (2026-09-04)** — `loadSyncHeartbeats` reads every
+  `agent_upload_stats` endpoint for the family in one paged read: "last seen" =
+  freshest stream (Mimic streams faction/inventory/chat/live state between
+  fights), "last fight" = the encounter endpoint. Never-uploaded characters sit
+  behind a `<details>`; the rest sort newest-seen first.
 - **Uncurated-mob ingest gate (bot 3.1.122, 2026-09-04)** — env
   `TRACK_UNCURATED_MOBS=0` or tuning `flag_skip_uncurated_mobs=1`
   (`/admin/overlays` → Kill switches) stops `_resolveBossForPersist` from

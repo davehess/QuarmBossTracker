@@ -300,11 +300,6 @@ and the same never-refetch guarantee.
   ON — first kills in new content are the reason it exists — but that is a
   Pro-plan choice, and on a Free project the same 9 MB/day is the whole
   database in under two months.
-- **The guild's raid DAYS are a web setting: `RAID_DAYS` (0 = Sunday, default
-  `0,3,4`)** (2026-09-04). The attendance grids on `/me` and `/raidhistory` draw
-  only those rows (plus any day that actually carries a raid). Same knob family
-  as the raid timezone and the deploy-freeze window — the wizard should ask
-  once and set all three.
 
 - **Crash dumps NEVER leave the machine** (2026-08-12). Zeal writes
   `crashes/<ts>.zip` (minidump + `crash_reason.txt`); the agent uploads only the

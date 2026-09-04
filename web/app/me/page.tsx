@@ -40,10 +40,10 @@ import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 import { dayKey, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
 import {
-  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel, rowsFor,
+  windowStart, buildNights, nightNames, nightLabel,
   attendedAlpha, pct, ATTENDED, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
-import RaidHeatmap, { type HeatCell } from '@/components/RaidHeatmap';
+import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
 
 export const dynamic = 'force-dynamic';
 
@@ -480,19 +480,35 @@ async function loadCharLevels(charNames: string[]): Promise<Map<string, number>>
   return out;
 }
 
-async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { lastUpload: string; agentVersion: string | null }>> {
+// "Last seen" is the freshest upload on ANY stream — Mimic streams faction,
+// inventory, chat, live state and more while the last fight is a memory, so
+// keying the banner on the encounter endpoint alone read "isn't syncing" with
+// Mimic running (Hitya, 2026-09-04: "the parser was syncing message is wrong,
+// mimic is on"). The last fight upload is kept separately for the sub-line.
+type Heartbeat = { lastSeen: string; lastFight: string | null; agentVersion: string | null };
+async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, Heartbeat>> {
   if (charNames.length === 0) return new Map();
   const admin = supabaseAdmin();
-  const out = new Map<string, { lastUpload: string; agentVersion: string | null }>();
-  await Promise.all(charNames.map(async (name) => {
-    const { data } = await admin
-      .from('agent_upload_stats')
-      .select('last_uploaded_at, agent_version')
-      .ilike('character', name)
-      .eq('endpoint', 'encounter')
-      .maybeSingle();
-    if (data?.last_uploaded_at) out.set(name, { lastUpload: data.last_uploaded_at, agentVersion: data.agent_version });
-  }));
+  type StatRow = { character: string | null; endpoint: string | null; last_uploaded_at: string | null; agent_version: string | null };
+  // One read for the whole family; ilike without wildcards is case-insensitive
+  // equality, which is what the per-name lookup did before.
+  const rows = await selectAll<StatRow>((from, to) => admin
+    .from('agent_upload_stats')
+    .select('character, endpoint, last_uploaded_at, agent_version')
+    .or(charNames.map(n => `character.ilike.${n.replace(/[^A-Za-z]/g, '')}`).filter(s => s.length > 'character.ilike.'.length).join(','))
+    .order('character').order('endpoint')
+    .range(from, to));
+  const wanted = new Map(charNames.map(n => [n.toLowerCase(), n]));
+  const out = new Map<string, Heartbeat>();
+  for (const r of rows) {
+    const name = wanted.get(String(r.character || '').toLowerCase());
+    if (!name || !r.last_uploaded_at) continue;
+    const at = new Date(r.last_uploaded_at).toISOString();
+    const cur = out.get(name) ?? { lastSeen: at, lastFight: null, agentVersion: r.agent_version };
+    if (at >= cur.lastSeen) { cur.lastSeen = at; cur.agentVersion = r.agent_version ?? cur.agentVersion; }
+    if (r.endpoint === 'encounter' && (!cur.lastFight || at > cur.lastFight)) cur.lastFight = at;
+    out.set(name, cur);
+  }
   return out;
 }
 
@@ -524,10 +540,7 @@ type ScrapView = {
 // same way /admin/attendance does (verified live 2026-09-03).
 const ATTENDANCE_DAYS = 60;
 type FamilyAttendance = {
-  weeks: string[][];
-  months: (string | null)[];
-  rows: number[];
-  cells: Record<string, HeatCell>;
+  chips: NightChip[];
   held60: number;
   attended60: number;
   held30: number;
@@ -538,8 +551,9 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
   if (names.length === 0) return null;
   const admin = supabaseAdmin();
   const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
-  const weeks = buildWeeks(todayKey, Math.ceil(ATTENDANCE_DAYS / 7));
-  const { startIso } = zonedDayRangeUtc(gridStart(weeks), RAID_TZ);
+  const since60 = windowStart(todayKey, ATTENDANCE_DAYS);
+  const since30 = windowStart(todayKey, 30);
+  const { startIso } = zonedDayRangeUtc(since60, RAID_TZ);
 
   const raids = await selectAll<NightRaid>((from, to) => admin
     .from('opendkp_raids')
@@ -573,28 +587,27 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
   if (heldTicks.length === 0) return null;
   const nights = buildNights(raids, heldTicks);
   const mine = new Set(myTicks.map(t => t.tick_id));
-  const since60 = dayKey(new Date(Date.now() - ATTENDANCE_DAYS * 86400_000).toISOString(), RAID_TZ);
-  const since30 = dayKey(new Date(Date.now() - 30 * 86400_000).toISOString(), RAID_TZ);
 
-  const cells: Record<string, HeatCell> = {};
-  const heldNights: { date: string }[] = [];
+  const chips: NightChip[] = [];
   let held60 = 0, attended60 = 0, held30 = 0, attended30 = 0;
   for (const n of nights.values()) {
     if (n.tickIds.length === 0) continue;   // a raid row with no captured ticks is a sync gap, not a night
-    heldNights.push(n);
+    if (n.date < since60) continue;         // the name-date rule can pull a raid a day past the query edge
     const got = n.tickIds.filter(id => mine.has(id)).length;
     if (n.date >= since60) { held60 += 1; if (got > 0) attended60 += 1; }
     if (n.date >= since30) { held30 += 1; if (got > 0) attended30 += 1; }
     const status = got > 0 ? `You were in ${got} of ${n.tickIds.length} ticks` : 'Missed';
-    cells[n.date] = {
+    chips.push({
+      date: n.date,
       color: ATTENDED,
       alpha: got > 0 ? attendedAlpha(got, n.tickIds.length) : undefined,
       outline: got === 0,
       lines: [nightLabel(n.date), ...nightNames(n), status],
       href: `/raid/review/${n.date}`,
-    };
+    });
   }
-  return { weeks, months: monthLabels(weeks), rows: rowsFor(heldNights), cells, held60, attended60, held30, attended30 };
+  chips.sort((a, b) => a.date.localeCompare(b.date));
+  return { chips, held60, attended60, held30, attended30 };
 }
 
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
@@ -763,20 +776,26 @@ export default async function MePage() {
   const now = Date.now();
   const liveThresholdMs    = 10 * 60 * 1000;     // ≤10 min ago = syncing
   const recentThresholdMs  =  6 * 60 * 60 * 1000; // ≤6h = "recent"
-  type SyncRow = { name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastUpload: string | null; agentVersion: string | null };
+  type SyncRow = { name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastSeen: string | null; lastFight: string | null; agentVersion: string | null };
   const syncRows: SyncRow[] = allChars.map(c => {
     const hb = heartbeats.get(c.name);
-    if (!hb) return { name: c.name, status: 'never', lastUpload: null, agentVersion: null };
-    const age = now - new Date(hb.lastUpload).getTime();
+    if (!hb) return { name: c.name, status: 'never', lastSeen: null, lastFight: null, agentVersion: null };
+    const age = now - new Date(hb.lastSeen).getTime();
     const status: SyncRow['status'] =
       age <= liveThresholdMs   ? 'live'
       : age <= recentThresholdMs ? 'recent'
       : 'stale';
-    return { name: c.name, status, lastUpload: hb.lastUpload, agentVersion: hb.agentVersion };
+    return { name: c.name, status, lastSeen: hb.lastSeen, lastFight: hb.lastFight, agentVersion: hb.agentVersion };
   });
   const liveCount   = syncRows.filter(r => r.status === 'live').length;
   const recentCount = syncRows.filter(r => r.status === 'recent').length;
-  const everSynced  = syncRows.filter(r => r.lastUpload).length;
+  const everSynced  = syncRows.filter(r => r.lastSeen).length;
+  // Most recently seen first; the never-uploaded go behind a disclosure
+  // (Hitya, 2026-09-04: "anyone that has no uploads should be grouped into a
+  // collapsed section … sort by how recently it was seen").
+  const seenRows  = syncRows.filter(r => r.lastSeen).sort((a, b) => b.lastSeen!.localeCompare(a.lastSeen!) || a.name.localeCompare(b.name));
+  const neverRows = syncRows.filter(r => !r.lastSeen).sort((a, b) => a.name.localeCompare(b.name));
+  const mostRecentSeen = seenRows[0]?.lastSeen ?? null;
 
   // Page-level aggregates
   const agg = {
@@ -795,30 +814,34 @@ export default async function MePage() {
   // members see immediately whether their parser is transmitting before they
   // wonder why their stats are empty.
   let bannerColor: 'green'|'orange'|'red'|'dim' = 'dim';
-  let bannerHeadline = 'Your parser isn\'t syncing.';
-  let bannerSub = 'Run the local parser to start streaming.';
+  let bannerHeadline = 'Mimic isn\'t connected.';
+  let bannerSub = 'Launch Mimic (or Parser.bat) to start streaming.';
   if (allChars.length === 0) {
     bannerColor = 'dim';
     bannerHeadline = 'No characters linked yet.';
     bannerSub      = 'Link one below to start syncing.';
   } else if (liveCount > 0) {
     bannerColor = 'green';
+    const live = seenRows.filter(r => r.status === 'live');
     bannerHeadline = liveCount === 1
-      ? `Parser is syncing for ${syncRows.find(r => r.status === 'live')!.name}.`
-      : `Parser is syncing for ${liveCount} characters.`;
-    bannerSub = 'Live in the last 10 minutes.';
+      ? `Mimic is connected on ${live[0].name}.`
+      : `Mimic is connected on ${liveCount} characters.`;
+    const lastFight = live.map(r => r.lastFight).filter((x): x is string => !!x).sort().pop() ?? null;
+    bannerSub = lastFight
+      ? `Streaming in the last 10 minutes · last fight uploaded ${relTime(lastFight)}.`
+      : 'Streaming in the last 10 minutes · no fight uploaded yet this session.';
   } else if (recentCount > 0) {
     bannerColor = 'orange';
-    bannerHeadline = 'Parser was syncing earlier today but isn\'t right now.';
-    bannerSub      = 'Re-launch Parser.bat if you want to keep streaming.';
+    bannerHeadline = 'Mimic was connected earlier today but isn\'t right now.';
+    bannerSub      = `Last seen ${relTime(mostRecentSeen)}. Launch Mimic (or Parser.bat) to keep streaming.`;
   } else if (everSynced > 0) {
     bannerColor = 'orange';
-    bannerHeadline = 'Parser is offline.';
-    bannerSub      = 'Last upload was hours+ ago. Re-launch Parser.bat to resume.';
+    bannerHeadline = 'Mimic is offline.';
+    bannerSub      = `Last seen ${relTime(mostRecentSeen)}. Launch Mimic (or Parser.bat) to resume.`;
   } else {
     bannerColor = 'red';
-    bannerHeadline = 'No parser uploads recorded for your characters.';
-    bannerSub      = 'Make sure the local agent is running — see /parsehelp in Discord.';
+    bannerHeadline = 'No uploads recorded for your characters.';
+    bannerSub      = 'Make sure Mimic is running — see /parsehelp in Discord.';
   }
   const bannerBorderClass =
     bannerColor === 'green'  ? 'border-green/60'   :
@@ -1089,26 +1112,20 @@ export default async function MePage() {
               </a>
             </div>
           </div>
-          {syncRows.length > 0 && (
+          {seenRows.length > 0 && (
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
-              {syncRows.map(r => (
-                <div key={r.name} className="flex items-center justify-between gap-2 bg-bg border border-border/60 rounded px-2 py-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span aria-hidden className={
-                      r.status === 'live'   ? 'text-green'    :
-                      r.status === 'recent' ? 'text-orange'   :
-                      r.status === 'stale'  ? 'text-orange/70' : 'text-dim/60'
-                    }>●</span>
-                    <span className="text-text truncate">{r.name}</span>
-                  </div>
-                  <div className="text-[10px] text-dim whitespace-nowrap">
-                    {r.status === 'never'
-                      ? 'no uploads'
-                      : <>{relTime(r.lastUpload)}{r.agentVersion && <span className="text-dim/70"> · v{r.agentVersion}</span>}</>}
-                  </div>
-                </div>
-              ))}
+              {seenRows.map(r => <SyncCard key={r.name} {...r} />)}
             </div>
+          )}
+          {neverRows.length > 0 && (
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none text-dim hover:text-text">
+                {neverRows.length} character{neverRows.length === 1 ? '' : 's'} with no uploads
+              </summary>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                {neverRows.map(r => <SyncCard key={r.name} {...r} />)}
+              </div>
+            </details>
           )}
         </section>
       )}
@@ -1180,8 +1197,9 @@ export default async function MePage() {
             <div>
               <h2 className="text-xl text-gold mb-1">📅 Raid attendance</h2>
               <p className="text-sm text-dim">
-                Every raid night in the last 60 days, across all your characters. Gold means you were there
-                (brighter = more of the night); an outline is a raid you missed. Hover a night for the raid, click it for the review.
+                Every raid night in the last 60 days, across all your characters &mdash; each square is one night.
+                Gold means you were there (brighter = more of the night); an outline is a raid you missed.
+                Hover a night for the raid, click it for the review.
               </p>
             </div>
             <Link href="/raidhistory" className="text-blue hover:underline text-sm whitespace-nowrap">
@@ -1195,8 +1213,7 @@ export default async function MePage() {
           </div>
 
           <div className="mt-4">
-            <RaidHeatmap weeks={attendance.weeks} months={attendance.months} cells={attendance.cells} rows={attendance.rows}
-                         label="Your raid attendance, one cell per raid night, last 60 days" />
+            <RaidHeatmap nights={attendance.chips} label="Your raid attendance, one square per raid night, last 60 days" />
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-dim">
             <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ backgroundColor: ATTENDED }} />attended, every tick</span>
@@ -1290,6 +1307,29 @@ export default async function MePage() {
       )}
 
       <MeCharacterCards items={cardItems} storageKey={discordId ?? ''} />
+    </div>
+  );
+}
+
+function SyncCard({ name, status, lastSeen, lastFight, agentVersion }: {
+  name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastSeen: string | null; lastFight: string | null; agentVersion: string | null;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 bg-bg border border-border/60 rounded px-2 py-1.5">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span aria-hidden className={
+          status === 'live'   ? 'text-green'    :
+          status === 'recent' ? 'text-orange'   :
+          status === 'stale'  ? 'text-orange/70' : 'text-dim/60'
+        }>●</span>
+        <span className="text-text truncate">{name}</span>
+      </div>
+      <div className="text-[10px] text-dim whitespace-nowrap"
+           title={lastFight ? `Last fight uploaded ${relTime(lastFight)}` : undefined}>
+        {status === 'never'
+          ? 'no uploads'
+          : <>{relTime(lastSeen)}{agentVersion && <span className="text-dim/70"> · v{agentVersion}</span>}</>}
+      </div>
     </div>
   );
 }

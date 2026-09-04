@@ -19,6 +19,8 @@ import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { resolveWindow } from '@/lib/timeWindow';
 import { curatedNpcIds } from '@/lib/bossFilter';
+import { selectAll } from '@/lib/selectAll';
+import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import WindowPicker from '@/components/WindowPicker';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +41,8 @@ type ZoneRow = { short_name: string; long_name: string };
 
 type NightRow = {
   date: string;
+  raidNames: string[];   // OpenDKP's own name(s) for the night — the record for nights with no parses
+  raiders: number;       // distinct attendees across the night's ticks
   kills: number;
   wipes: number;
   totalDamage: number;
@@ -126,11 +130,41 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
       if (short) night.zones.add(zones.get(short)?.long_name || short);
     }
 
+    // OpenDKP nights — the guild raided for a year and a half before anyone
+    // uploaded a parse (Hitya, 2026-09-04: "the early raids have very limited
+    // data … at least have the bosses killed"). Every night OpenDKP ticked
+    // gets a card, its raid name standing in for the kills; bonus rows are
+    // not nights, and the night is the date in the raid's name.
+    const dkpByDate = new Map<string, { raidNames: string[]; raiders: number }>();
+    {
+      const sinceDay = sinceIso ? dayKey(sinceIso) : null;
+      const raids = await selectAll<NightRaid>((from, to) => {
+        let q = sb.from('opendkp_raids').select('raid_id, ts, name');
+        if (sinceIso) q = q.gte('ts', new Date(new Date(sinceIso).getTime() - 3 * 86400_000).toISOString());
+        return q.order('raid_id').range(from, to);
+      });
+      const ticks = raids.length === 0 ? [] : await selectAll<NightTick>((from, to) => sb
+        .from('opendkp_ticks')
+        .select('raid_id, tick_id, attendees')
+        .in('raid_id', raids.map(r => r.raid_id))
+        .order('tick_id')
+        .range(from, to));
+      for (const n of buildNights(raids, ticks.filter(t => Array.isArray(t.attendees) && t.attendees.length > 0)).values()) {
+        if (n.tickIds.length === 0) continue;
+        if (sinceDay && n.date < sinceDay) continue;
+        dkpByDate.set(n.date, { raidNames: nightNames(n), raiders: n.attendees.length });
+        if (!byNight.has(n.date)) byNight.set(n.date, { kills: 0, wipes: 0, totalDamage: 0, zones: new Set(), bosses: new Map() });
+      }
+    }
+
     const nights: NightRow[] = [...byNight.entries()]
       .map(([date, n]) => {
         const loot = lootByDate.get(date);
+        const dkp = dkpByDate.get(date);
         return {
           date,
+          raidNames: dkp?.raidNames ?? [],
+          raiders: dkp?.raiders ?? 0,
           kills: n.kills,
           wipes: n.wipes,
           totalDamage: n.totalDamage,
@@ -186,8 +220,8 @@ export default async function RaidReviewIndex(
 
       {!error && nights.length === 0 && (
         <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          No raid nights with recorded kills in this window. Widen the window, or make sure the
-          wolfpack-logsync agent is running on raid night so encounters get uploaded.
+          No raid nights in this window &mdash; no OpenDKP ticks and no recorded kills. Widen the window, or make sure
+          the wolfpack-logsync agent is running on raid night so encounters get uploaded.
         </section>
       )}
 
@@ -202,10 +236,14 @@ export default async function RaidReviewIndex(
               <span className="text-gold text-sm font-medium">{dayLabel(n.date)}</span>
               <span className="text-dim text-xs">{n.date}</span>
             </div>
+            {n.raidNames.length > 0 && (
+              <div className="text-xs text-text mb-1 line-clamp-2" title={n.raidNames.join(' · ')}>{n.raidNames.join(' · ')}</div>
+            )}
             <div className="text-xs text-dim flex flex-wrap gap-x-3 gap-y-1 mb-2">
-              <span className="text-text">{n.kills} kill{n.kills === 1 ? '' : 's'}</span>
+              {n.raiders > 0 && <span className="text-gold">{n.raiders} raiders</span>}
+              <span className={n.kills > 0 ? 'text-text' : 'text-dim'}>{n.kills > 0 ? `${n.kills} kill${n.kills === 1 ? '' : 's'}` : 'no parses'}</span>
               {n.wipes > 0 && <span className="text-orange">{n.wipes} wipe/engage</span>}
-              <span>{fmtDmg(n.totalDamage)}</span>
+              {n.totalDamage > 0 && <span>{fmtDmg(n.totalDamage)}</span>}
               {n.lootCount > 0 && <span className="text-gold">{n.lootCount} loot · {n.lootDkp} DKP</span>}
             </div>
             {n.zones.length > 0 && (
