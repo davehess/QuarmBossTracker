@@ -49,11 +49,13 @@ describe('/raidhistory reads', () => {
     expect(page).toMatch(/color: fillColor\(raiders \/ full\)/);
     expect(page).toMatch(/href: `\/raid\/review\/\$\{n\.date\}`/);
     // A raid row with no captured ticks is not a night.
-    expect(page).toMatch(/filter\(n => n\.tickIds\.length > 0\)/);
+    expect(page).toMatch(/\.filter\(n => n\.tickIds\.length > 0 && n\.date >= startKey\)/);
   });
 
-  it('draws only the raid-day rows (plus any day that carries a raid)', () => {
-    expect(page).toMatch(/rows=\{rowsFor\(held\)\}/);
+  it('hands the grid one chip per night, raider count on the chip, a summary per month', () => {
+    expect(page).toMatch(/sub: String\(raiders\)/);
+    expect(page).toMatch(/nights=\{chips\} monthSummaries=\{monthSummaries\}/);
+    expect(page).toMatch(/const startKey = windowStart\(todayKey, weeksN \* 7\);/);
   });
 });
 
@@ -75,10 +77,9 @@ describe('/me section', () => {
 
   it('reads 60 days, not a year, and shows attendance as a RATE first', () => {
     expect(me).toMatch(/const ATTENDANCE_DAYS = 60;/);
-    expect(loader).toMatch(/buildWeeks\(todayKey, Math\.ceil\(ATTENDANCE_DAYS \/ 7\)\)/);
+    expect(loader).toMatch(/const since60 = windowStart\(todayKey, ATTENDANCE_DAYS\);/);
     expect(me).toMatch(/<AttendanceStat label="Last 60 days" attended=\{attendance\.attended60\} held=\{attendance\.held60\} \/>/);
     expect(me).toMatch(/\$\{pct\(attended, held\)\}%/);
-    expect(me).toMatch(/rows=\{attendance\.rows\}/);
   });
 
   it('a missed night is an outline, an attended one is gold scaled by ticks', () => {
@@ -88,7 +89,7 @@ describe('/me section', () => {
   });
 
   it('renders the grid and points at the guild page', () => {
-    expect(me).toMatch(/<RaidHeatmap weeks=\{attendance\.weeks\}/);
+    expect(me).toMatch(/<RaidHeatmap nights=\{attendance\.chips\}/);
     expect(me).toMatch(/href="\/raidhistory"/);
   });
 });
@@ -101,16 +102,17 @@ describe('RaidHeatmap component', () => {
     expect(grid).toMatch(/addEventListener\('scroll', hide/);
   });
 
-  it('draws the rows the page hands it, labelled by weekday', () => {
-    expect(grid).toMatch(/rows: number\[\];/);
-    expect(grid).toMatch(/const DAY_NAMES = \['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'\];/);
-    expect(grid).toMatch(/\{rows\.map\(d => \(/);
+  it('lays nights out as month blocks of day chips that tile on desktop and stack on a phone', () => {
+    expect(grid).toMatch(/const months = groupByMonth\(nights\);/);
+    expect(grid).toMatch(/grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4/);
+    expect(grid).toMatch(/DAY_SHORT\[weekdayOf\(n\.date\)\]/);
+    expect(grid).toMatch(/Number\(n\.date\.slice\(8, 10\)\)/);
+    expect(grid).toMatch(/monthSummaries\?\.\[m\.month\]/);
   });
 
-  it('opens on the newest week and makes every night a real link', () => {
-    expect(grid).toMatch(/el\.scrollLeft = el\.scrollWidth/);
-    expect(grid).toMatch(/<a key=\{key\} href=\{cell\.href\}/);
-    expect(grid).toMatch(/onFocus=\{e => onShow\(e\.currentTarget, cell\.lines\)\}/);
+  it('makes every night a real link, reachable by keyboard', () => {
+    expect(grid).toMatch(/<a key=\{n\.date\} href=\{n\.href\}/);
+    expect(grid).toMatch(/onFocus=\{e => show\(e\.currentTarget, n\.lines\)\}/);
   });
 });
 

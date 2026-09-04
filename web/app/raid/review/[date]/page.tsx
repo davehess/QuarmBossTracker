@@ -36,6 +36,8 @@ import {
   type RawDeath, type SlowCast,
 } from '@/lib/raidReview';
 import { curatedNpcIds } from '@/lib/bossFilter';
+import { selectAll } from '@/lib/selectAll';
+import { addDays, isOfficialRaid, raidNightKey, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import { ClassificationChip } from '@/components/KillCard';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
@@ -63,6 +65,11 @@ type FireRow = { at: string; subtype: string | null; actor: string | null; label
 // scoped to the night's encounter ids rather than the day, so the per-fight
 // timelines get raid events (slow/mob-heal/disc) as well as fires.
 type EncEventRow = { encounter_id: string; at: string; kind: string; subtype: string | null; actor: string | null; label: string | null };
+// Who came, from OpenDKP ticks — the one record that exists for every night
+// since 2024, long before anyone uploaded a parse (Hitya, 2026-09-04: "the
+// early raids have very limited data … at least have the bosses killed"). The
+// raid NAME is the officer's own record of what was on the menu.
+type Attendance = { raids: string[]; raiders: string[]; ticks: number; zone: string | null };
 // Trash tally written by the bot (utils/raidReview.js) into bot_kv.
 type TrashMob = { name: string; kills: number; damage: number };
 type TrashTally = { kills: number; damage: number; seconds: number; mobs: TrashMob[]; updated_at?: string };
@@ -79,7 +86,7 @@ async function load(date: string) {
     // non-raid mobs"). Trash keeps its own line: the bot's tally in bot_kv.
     const curated = await curatedNpcIds(sb);
 
-    const [encRes, charRes, zoneRes, slowRes, fireRes, lootRes] = await Promise.all([
+    const [encRes, charRes, zoneRes, slowRes, fireRes, lootRes, raidRes, nightRes] = await Promise.all([
       sb.from('encounters')
         .select(`
           id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, npc_id, classification,
@@ -113,6 +120,19 @@ async function load(date: string) {
         .select('item_name, character_name, dkp, game_item_id, notes')
         .eq('raid_date', date)
         .order('dkp', { ascending: false }),
+      // ±3 days: the row's stamp is its CREATION day and officers pre-create
+      // the evening before; raidNightKey reads the date in the name.
+      sb.from('opendkp_raids')
+        .select('raid_id, ts, name')
+        .gte('ts', `${addDays(date, -3)}T00:00:00Z`)
+        .lte('ts', `${addDays(date, 3)}T23:59:59Z`)
+        .order('raid_id'),
+      sb.from('raid_nights')
+        .select('zone_main')
+        .eq('guild_id', 'wolfpack')
+        .eq('date', date)
+        .limit(1)
+        .maybeSingle(),
     ]);
 
     if (encRes.error) return { ok: false as const, error: encRes.error.message };
@@ -129,6 +149,33 @@ async function load(date: string) {
       (charRes.data ?? []).map((r: { name: string; class: string | null }) => [r.name.toLowerCase(), r.class]),
     );
     const zones = new Map<string, ZoneRow>((zoneRes.data ?? []).map((z: ZoneRow) => [z.short_name, z]));
+
+    // OpenDKP attendance for THIS night: official raids whose night is `date`,
+    // their valid ticks, the distinct union of attendees.
+    let attendance: Attendance | null = null;
+    const nightRaids = ((raidRes.data ?? []) as NightRaid[])
+      .filter(r => isOfficialRaid(r.name) && raidNightKey(r, RAID_TZ) === date);
+    if (nightRaids.length > 0) {
+      const ticks = await selectAll<NightTick>((from, to) => sb
+        .from('opendkp_ticks')
+        .select('raid_id, tick_id, attendees')
+        .in('raid_id', nightRaids.map(r => r.raid_id))
+        .order('tick_id')
+        .range(from, to));
+      const valid = ticks.filter(t => Array.isArray(t.attendees) && t.attendees.length > 0);
+      const seen = new Map<string, string>();
+      for (const t of valid) for (const a of t.attendees ?? []) {
+        const k = String(a).toLowerCase();
+        if (k && !seen.has(k)) seen.set(k, String(a));
+      }
+      const zoneShort = (nightRes.data as { zone_main: string | null } | null)?.zone_main ?? null;
+      attendance = {
+        raids: nightRaids.map(r => (r.name || '').trim()).filter(Boolean),
+        raiders: [...seen.values()].sort((a, b) => a.localeCompare(b)),
+        ticks: valid.length,
+        zone: zoneShort ? (zones.get(zoneShort)?.long_name || zoneShort) : null,
+      };
+    }
 
     // Real (non-foreign) encounters only — same auto-hide rule as /parses.
     const allEncs = (encRes.data as unknown as EncRow[]) ?? [];
@@ -177,7 +224,7 @@ async function load(date: string) {
       slows: (slowRes.data ?? []) as SlowCast[],
       fires: (fireRes.data ?? []) as FireRow[],
       loot: (lootRes.data ?? []) as LootRow[],
-      deathContribs, encEvents, trash,
+      deathContribs, encEvents, trash, attendance,
     };
   } catch (err: unknown) {
     return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
@@ -203,7 +250,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
       </div>
     );
   }
-  const { encs, zones, classByName, excluded, slows, fires, loot, deathContribs, encEvents, trash } = data;
+  const { encs, zones, classByName, excluded, slows, fires, loot, deathContribs, encEvents, trash, attendance } = data;
 
   const bossFor = (e: EncRow) => cleanBossName(e.eqemu_npc_types?.name);
   const zoneFor = (e: EncRow) => {
@@ -331,7 +378,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
     'camo break', 'invis did break', 'invis',
   ]);
   const DT_RE = /death\s*touch|\bdt\b/i;
-  type FireMark = { at: string; label: string; actor: string | null; isDt: boolean };
+  type FireMark = { at: string; t: number; label: string; actor: string | null; isDt: boolean };
   const fireSorted = [...fires]
     .map(f => ({ ...f, t: new Date(f.at).getTime() }))
     .filter(f => Number.isFinite(f.t))
@@ -346,8 +393,55 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
     const prev = fireLast.get(key);
     if (prev != null && Math.abs(f.t - prev) <= 3000) continue;
     fireLast.set(key, f.t);
-    fireMarks.push({ at: f.at, label, actor: f.actor, isDt: DT_RE.test(label) || DT_RE.test(f.subtype || '') });
+    fireMarks.push({ at: f.at, t: f.t, label, actor: f.actor, isDt: DT_RE.test(label) || DT_RE.test(f.subtype || '') });
   }
+
+  // Grouped by the FIGHT each fire landed in, folded by label, with the deaths
+  // that followed within a few seconds named beside it (Hitya, 2026-09-04:
+  // "its just a line of asphyxiate and not who it landed on. We should group
+  // these by boss"). The event row carries no target — the agent relays the
+  // trigger name, not the line — so the victim is inferred from the same
+  // night's deduped deaths: a death from 2s before to 8s after the fire. For a
+  // Death Touch that is the answer; for anything else it is context, and the
+  // header says so.
+  const MECH_VICTIM_BEFORE_MS = 2000;
+  const MECH_VICTIM_AFTER_MS = 8000;
+  type MechRow = { label: string; isDt: boolean; times: number[]; victims: string[] };
+  type MechGroup = { key: string; boss: string; encId: string | null; at: number; rows: MechRow[] };
+  const fightFor = (t: number): EncRow | null => {
+    let best: EncRow | null = null;
+    for (const e of timeline) {
+      const st = new Date(e.started_at).getTime();
+      if (t < st - TIMELINE_GRACE_MS || t > killAtMs(e) + TIMELINE_GRACE_MS) continue;
+      if (!best || st > new Date(best.started_at).getTime()) best = e;
+    }
+    return best;
+  };
+  const mechGroups: MechGroup[] = [];
+  {
+    const byKey = new Map<string, MechGroup>();
+    for (const f of fireMarks) {
+      const enc = fightFor(f.t);
+      const key = enc ? enc.id : 'none';
+      let g = byKey.get(key);
+      if (!g) {
+        g = { key, boss: enc ? bossFor(enc) : 'Outside any recorded fight', encId: enc?.id ?? null, at: enc ? killAtMs(enc) : f.t, rows: [] };
+        byKey.set(key, g);
+        mechGroups.push(g);
+      }
+      const lk = f.label.toLowerCase();
+      let row = g.rows.find(r => r.label.toLowerCase() === lk);
+      if (!row) { row = { label: f.label, isDt: f.isDt, times: [], victims: [] }; g.rows.push(row); }
+      row.times.push(f.t);
+      const pool = enc ? (deathsByEnc.get(enc.id) ?? []) : playerDeaths;
+      for (const d of pool) {
+        const dt = new Date(d.ts).getTime() - f.t;
+        if (dt >= -MECH_VICTIM_BEFORE_MS && dt <= MECH_VICTIM_AFTER_MS && !row.victims.includes(d.name)) row.victims.push(d.name);
+      }
+    }
+  }
+  mechGroups.sort((a, b) => a.at - b.at);
+  for (const g of mechGroups) g.rows.sort((a, b) => Number(b.isDt) - Number(a.isDt) || b.times.length - a.times.length);
 
   // Night summary headline (reuses the /parses NightSummary card).
   let topPlayer: { name: string; damage: number } | null = null;
@@ -384,11 +478,60 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
     <div className="space-y-6">
       <ReviewHeader date={date} tz={tz} />
 
+      {attendance && (() => {
+        const byClass = new Map<string, string[]>();
+        for (const name of attendance.raiders) {
+          const k = classByName.get(name.toLowerCase()) || 'Unknown class';
+          byClass.set(k, [...(byClass.get(k) ?? []), name]);
+        }
+        const classes = [...byClass.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+        return (
+          <section className="bg-panel border border-border rounded-lg p-4">
+            <h3 className="text-sm text-gold mb-2 flex items-center gap-2 flex-wrap">
+              <span aria-hidden>🎟️</span><span>Raid &amp; attendance</span>
+              <span className="text-dim text-xs">· from OpenDKP ticks</span>
+            </h3>
+            <div className="text-sm text-text">{attendance.raids.join(' · ')}</div>
+            <div className="text-xs text-dim mt-1">
+              <span className="text-text">{attendance.raiders.length}</span> raiders · {attendance.ticks} tick{attendance.ticks === 1 ? '' : 's'}
+              {attendance.zone && <> · <span className="text-orange/80">📍 {attendance.zone}</span></>}
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {classes.map(([cls, names]) => (
+                <span key={cls} className="text-[11px] px-1.5 py-0.5 rounded border border-border bg-bg text-text whitespace-nowrap">
+                  <span className="text-gold tabular-nums">{names.length}</span> {cls}
+                </span>
+              ))}
+            </div>
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none text-dim hover:text-text">Who was there</summary>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+                {classes.map(([cls, names]) => (
+                  <div key={cls}>
+                    <div className="text-dim">{cls}</div>
+                    <div className="text-text">
+                      {names.map((n, i) => (
+                        <span key={n}>{i > 0 && ', '}<Link href={`/character/${encodeURIComponent(n)}`} className="hover:text-blue hover:underline">{n}</Link></span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </section>
+        );
+      })()}
+
       {nothing ? (
         <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          Nothing was recorded for this night — no kills, slows, callouts, or loot. If the raid ran, the
-          wolfpack-logsync agent may not have been uploading. Try an adjacent night from the{' '}
-          <Link href="/raid/review" className="text-blue hover:underline">review index</Link>.
+          {attendance ? (
+            <>No parses were uploaded for this night &mdash; it predates the agent, or nobody ran it. OpenDKP still
+            recorded the raid and who came, above{loot.length === 0 ? '' : ', and the loot is below'}.</>
+          ) : (
+            <>Nothing was recorded for this night &mdash; no kills, slows, callouts, or loot. If the raid ran, the
+            wolfpack-logsync agent may not have been uploading. Try an adjacent night from the{' '}
+            <Link href="/raid/review" className="text-blue hover:underline">review index</Link>.</>
+          )}
         </section>
       ) : (
         <>
@@ -557,22 +700,42 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
             </section>
           )}
 
-          {/* 4. Boss mechanics / Death Touch (from encounter_events fires) */}
-          {fireMarks.length > 0 && (
+          {/* 4. Boss mechanics / Death Touch, grouped by the fight they landed in */}
+          {mechGroups.length > 0 && (
             <section className="bg-panel border border-border rounded-lg p-4">
-              <h3 className="text-sm text-orange mb-2 flex items-center gap-2">
+              <h3 className="text-sm text-orange mb-2 flex items-center gap-2 flex-wrap">
                 <span aria-hidden>📢</span><span>Death Touch &amp; boss mechanics</span>
-                <span className="text-dim text-xs">· {fireMarks.length} · from observed trigger fires (personal cast/LoS notices filtered out)</span>
+                <span className="text-dim text-xs">· {fireMarks.length} fire{fireMarks.length === 1 ? '' : 's'} by fight · a name is a death within 8s of the fire</span>
               </h3>
-              <ul className="text-xs space-y-0.5">
-                {fireMarks.map((f, i) => (
-                  <li key={i} className="flex gap-3 flex-wrap">
-                    <span className="text-dim tabular-nums w-14 shrink-0">{fmtTime(f.at, tz)}</span>
-                    <span className={f.isDt ? 'text-red' : 'text-text'}>{f.isDt ? '☠ ' : ''}{f.label}</span>
-                    {f.actor && <span className="text-dim">· {f.actor}</span>}
-                  </li>
+              <div className="space-y-3">
+                {mechGroups.map(g => (
+                  <div key={g.key}>
+                    <div className="text-xs flex items-baseline gap-2 flex-wrap">
+                      {g.encId
+                        ? <Link href={`/parses/${g.encId}`} className="text-text hover:text-blue hover:underline">{g.boss}</Link>
+                        : <span className="text-dim">{g.boss}</span>}
+                      <span className="text-dim tabular-nums">{fmtTime(new Date(g.at).toISOString(), tz)}</span>
+                    </div>
+                    <ul className="mt-1 text-xs space-y-0.5 pl-3 border-l border-border/40">
+                      {g.rows.map(r => (
+                        <li key={r.label} className="flex gap-2 flex-wrap items-baseline">
+                          <span className={r.isDt ? 'text-red' : 'text-text'}>
+                            {r.isDt ? '☠ ' : ''}{r.label}{r.times.length > 1 && <span className="text-dim"> ×{r.times.length}</span>}
+                          </span>
+                          <span className="text-dim tabular-nums">
+                            {r.times.slice(0, 6).map(t => fmtTime(new Date(t).toISOString(), tz)).join(', ')}{r.times.length > 6 ? ` +${r.times.length - 6}` : ''}
+                          </span>
+                          {r.victims.length > 0 && (
+                            <span className={r.isDt ? 'text-red' : 'text-orange'}>
+                              → {r.victims.slice(0, 6).join(', ')}{r.victims.length > 6 ? ` +${r.victims.length - 6}` : ''}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </section>
           )}
 

@@ -86,12 +86,46 @@ never worked (`DECISIONS-2026-09-01.md`).
 query, exactly as `/parses` has since 3.1.52. A night that was only farming no
 longer appears in the review index at all.
 
+## Round three (afternoon): six more, from the screenshots
+
+- **Leaderboard inflation cannot be repaired in the data.** The doubling was the
+  old merge rule — max damage per player across uploaders, one over-counting
+  parser winning every row — replaced by the median on 2026-07-14. Every
+  pre-cutover multi-uploader encounter (427 of 427) has had its raw parses
+  pruned, so `merge_encounter_players` has nothing to rebuild from. Policy on
+  `/leaderboards`: curated bosses only, fights over 45 minutes out (one
+  3.1.45-era parser reported 67-, 105- and 127-minute "fights"), pre-cutover
+  rows hidden unless `?legacy=1`, which shows them with a warning.
+- **"Last seen" is any stream, not the encounter stream.** Hitya's own row read
+  "29m ago" with Mimic running, because faction, inventory, quarmy and chat had
+  all uploaded within the last two minutes and the banner only looked at
+  encounters. One paged read of `agent_upload_stats` for the family now feeds
+  both "last seen" and "last fight".
+- **The week×weekday grid is gone, same day it was reduced to three rows.** At
+  12px a cell cannot carry a date, and three rows in a wide panel read as a
+  strip. Month blocks of 44px chips (weekday, day, raider count) tile
+  four-across on desktop and stack on a phone with one markup. `RAID_DAYS`
+  went with the grid — it only ever chose which rows to draw.
+- **The raid NAME is the record for 2024.** For a 2024 night Supabase holds
+  OpenDKP ticks (who came), loot, and the raid's name ("9-8-24
+  Trak/VS/Faydedar/Hate") — and nothing else: no encounters, `bot_boards` keeps
+  only the latest kill per boss, no guild chat that night. So the review index
+  lists every OpenDKP night and a night's page opens with the raid name, the
+  raiders by class, and the zone from `raid_nights` (2025+). "Bosses killed"
+  for those nights is the officer's own name for the raid; the page says so.
+- **Mechanics group by fight; the victim is inferred.** `encounter_events` fire
+  rows carry `actor: null` — the agent relays the trigger name, not the line.
+  The review names deaths from 2s before to 8s after a fire beside it, which is
+  the answer for a Death Touch and context for anything else. Recording the
+  target at ingest is the proper fix and is an agent+bot change (open table).
+
 ## Open — read this first
 
 | Item | State |
 |---|---|
 | **Flip `flag_skip_uncurated_mobs`?** | Hitya's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
-| ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out, not attendance |
+| ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days and the heartbeat read went from N queries to one paged read; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out |
+| **Record the Death Touch VICTIM at ingest** | `encounter_events` fire rows have `actor: null`; the review infers it from deaths within 8s. The agent's trigger relay would need to carry the captured target and the bot store it — agent + bot change |
 | ✅ **Zeal PR #229 — MERGED** | Waiting on a tagged Zeal RELEASE, then on raiders updating. Everything our side is shipped and inert until a client sends an id |
 | ⚠ **The issue #218 comment, still unposted** | `docs/upstream/zeal-spawn-id/issue-218-comment.md`; drop its stale "no Windows/MSVC setup" paragraph first |
 | **`mob-info` is still name-keyed** | ✅ `target-casts` joined `target-buffs` on spawn-id-first keying (bot 3.1.113 · agent 3.6.24). `mob-info` is the last of the three |

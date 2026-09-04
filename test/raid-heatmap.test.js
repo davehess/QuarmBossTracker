@@ -8,17 +8,17 @@
 //     the same tick attendee;
 //   · the colour scale is Hitya's, not a gradient from zero: red UNTIL half,
 //     orange AT three-quarters, green FROM full;
-//   · the grid's last column must stop at today, or the renderer draws
-//     nights that have not happened.
+//   · nights are shown as month blocks, newest month first, nights in date
+//     order inside a month — the shape that reads on a phone and a desktop.
 //
 // Run: npx vitest run test/raid-heatmap.test.js
 
 import { describe, it, expect } from 'vitest';
 import {
-  addDays, weekdayOf, buildWeeks, gridStart, monthLabels, nightLabel,
+  addDays, weekdayOf, windowStart, monthKey, monthTitle, groupByMonth, nightLabel,
   buildNights, nightNames, fillColor, attendedAlpha, pct,
-  isOfficialRaid, dateFromName, raidNightKey, raidDays, rowsFor,
-  FILL_RED, FILL_ORANGE, FILL_GREEN, ATTENDED, DEFAULT_FULL_RAID, DEFAULT_RAID_DAYS,
+  isOfficialRaid, dateFromName, raidNightKey,
+  FILL_RED, FILL_ORANGE, FILL_GREEN, ATTENDED, DEFAULT_FULL_RAID,
 } from '../web/lib/raidHeatmap.ts';
 
 describe('calendar arithmetic', () => {
@@ -38,39 +38,26 @@ describe('calendar arithmetic', () => {
   });
 });
 
-describe('buildWeeks — the grid', () => {
-  const weeks = buildWeeks('2026-09-03', 3);   // a Thursday
-
-  it('makes N columns of seven, Sunday first', () => {
-    expect(weeks).toHaveLength(3);
-    for (const col of weeks) expect(col).toHaveLength(7);
-    expect(weeks[0][0]).toBe('2026-08-16');
-    expect(gridStart(weeks)).toBe('2026-08-16');
-    expect(weeks[2][0]).toBe('2026-08-30');
+describe('windowStart + month grouping', () => {
+  it('windowStart is a trailing window ending on the key, inclusive', () => {
+    expect(windowStart('2026-09-04', 60)).toBe('2026-07-07');
+    expect(windowStart('2026-09-04', 1)).toBe('2026-09-04');
+    expect(windowStart('2026-09-04', 0)).toBe('2026-09-04');
   });
 
-  it('blanks the days after the end key instead of drawing the future', () => {
-    expect(weeks[2][4]).toBe('2026-09-03');
-    expect(weeks[2][5]).toBe('');
-    expect(weeks[2][6]).toBe('');
-    // Earlier columns are whole.
-    expect(weeks[1].every(Boolean)).toBe(true);
+  it('monthKey / monthTitle', () => {
+    expect(monthKey('2026-08-27')).toBe('2026-08');
+    expect(monthTitle('2026-08')).toBe('August 2026');
+    expect(monthTitle('2025-12')).toBe('December 2025');
   });
 
-  it('never returns fewer than one column', () => {
-    expect(buildWeeks('2026-09-03', 0)).toHaveLength(1);
-  });
-});
-
-describe('monthLabels', () => {
-  it('labels the column where a month begins', () => {
-    // Sundays: Jul 26, Aug 2, 9, 16, 23, 30.
-    expect(monthLabels(buildWeeks('2026-09-03', 6))).toEqual([null, 'Aug', null, null, null, null]);
-  });
-
-  it('labels the first column only when the second does not start a new month', () => {
-    // Sundays: Aug 16, 23, 30 — one month, so the first column carries it.
-    expect(monthLabels(buildWeeks('2026-09-03', 3))).toEqual(['Aug', null, null]);
+  it('groupByMonth: newest month first, nights inside a month in date order', () => {
+    const g = groupByMonth([{ date: '2026-08-27' }, { date: '2026-07-02' }, { date: '2026-08-02' }, { date: '2026-09-02' }]);
+    expect(g.map(m => m.month)).toEqual(['2026-09', '2026-08', '2026-07']);
+    expect(g[1].items.map(i => i.date)).toEqual(['2026-08-02', '2026-08-27']);
+    expect(g[0].title).toBe('September 2026');
+    expect(groupByMonth([{ date: '2026-08-27' }, { date: '2026-07-02' }], false).map(m => m.month)).toEqual(['2026-07', '2026-08']);
+    expect(groupByMonth([])).toEqual([]);
   });
 });
 
@@ -108,22 +95,6 @@ describe('which raids are nights (Hitya, 2026-09-04)', () => {
     expect(raidNightKey({ ts: '2026-01-15T12:00:00Z', name: "1-14-25 First Time Kill Bonus'" })).toBe('2026-01-15');
     expect(raidNightKey({ ts: '2026-08-16T12:00:00Z', name: 'Alt Fun' })).toBe('2026-08-16');
     expect(raidNightKey({ ts: '2026-08-28T03:00:00Z', name: null })).toBe('2026-08-27');   // 11pm ET on the 27th
-  });
-
-  it('raidDays defaults to Sun/Wed/Thu and honours a sane env override', () => {
-    expect(raidDays(undefined)).toEqual([0, 3, 4]);
-    expect(raidDays('')).toEqual([0, 3, 4]);
-    expect([...DEFAULT_RAID_DAYS]).toEqual([0, 3, 4]);
-    expect(raidDays('5, 6')).toEqual([5, 6]);
-    expect(raidDays('3,3,0')).toEqual([0, 3]);
-    expect(raidDays('x')).toEqual([0, 3, 4]);
-    expect(raidDays('9')).toEqual([0, 3, 4]);
-  });
-
-  it('rowsFor draws the raid days plus any day that actually carries a raid', () => {
-    expect(rowsFor([{ date: '2026-08-30' }, { date: '2026-09-02' }], [0, 3, 4])).toEqual([0, 3, 4]);
-    expect(rowsFor([{ date: '2026-08-22' }], [0, 3, 4])).toEqual([0, 3, 4, 6]);   // a Saturday raid is visible
-    expect(rowsFor([], [1])).toEqual([1]);
   });
 });
 
