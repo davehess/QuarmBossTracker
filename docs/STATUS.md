@@ -89,6 +89,27 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Attendance grids, round two + the uncurated-mob gate (web 1.7.21 · bot
+  3.1.122, 2026-09-04).** Hitya's morning-after on the heatmaps: */me is slow;
+  60 days by default; only our official raid nights — first-time-kill bonuses
+  don't need to show up; just our raid days; the review is still displaying
+  non-raid mobs — what does tracking them cost, and add a setup flag.*
+  - **A raid's night is the date in its NAME, not `opendkp_raids.ts`** —
+    the stamp is the row's creation day and officers pre-create the evening
+    before ("9-2-26 Seru + Kael" stamped Sep 1; "8-23-26 Vex Thal" Aug 22;
+    "05/13/2026 - VT 1" May 12), which is what put raids on Tuesday and
+    Saturday rows. `raidNightKey` trusts the name within 3 days of the stamp.
+  - **Bonus rows are not nights** (`isOfficialRaid`: "Bonus", "DKP Market").
+  - **Rows are the raid days** (`RAID_DAYS`, default Sun/Wed/Thu) plus any
+    day that carries a raid. `/me` reads 60 days and shows a rate first.
+  - **The review shows curated bosses only**, filtered in the query like
+    `/parses`; a night that was only farming drops out of the index.
+  - **Cost of uncurated tracking, measured:** 97% of encounters in the last 30
+    days, ~9 MB/day. **Gate:** env `TRACK_UNCURATED_MOBS=0` / tuning
+    `flag_skip_uncurated_mobs=1` (`/admin/overlays`). Left ON for us — Hitya to
+    decide whether to flip it; `docs/DECISIONS-2026-09-04.md`.
+  - ✅ The `.neq('attendees', '{}')` filter flagged unverified on 09-03 rendered
+    live ("83 of 151 held") — closed.
 - **✅ Raid attendance heatmaps — the /me 📅 section and `/raidhistory` (web
   1.7.19, 2026-09-03).** Hitya: *"add in raid attendance on a person's /me …
   with mouse over on dates and raid names and links to the raids … give us a

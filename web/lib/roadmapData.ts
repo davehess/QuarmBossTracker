@@ -37,6 +37,34 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'official-nights-and-trash-gate-2026-09-04',
+    title: 'Web 1.7.21 \u00b7 Bot 3.1.122',
+    version: 'Web 1.7.21 \u00b7 Bot 3.1.122',
+    date: '2026-09-04',
+    headline: 'The attendance grids show only real raid nights on the guild\u2019s raid days, the raid review shows bosses instead of farm trash, and officers can switch off tracking of uncurated mobs.',
+    features: [
+      {
+        name: 'Only official raid nights',
+        blurb: 'First-time-kill bonuses, sign-up bonuses and the DKP market no longer show up as raids. A raid an officer set up the evening before now lands on the night it was named for instead of the day before, so nothing sits on a Tuesday or Saturday row any more.',
+      },
+      {
+        name: 'Raid-day rows',
+        blurb: 'Both grids draw just Sunday, Wednesday and Thursday \u2014 and any other day that actually had a raid. Your /me grid now covers the last 60 days and reads as a percentage first; the full year is on Raid history.',
+      },
+      {
+        name: 'Raid review: bosses, not farm trash',
+        blurb: 'A night\u2019s kills timeline lists curated bosses only. Someone\u2019s Saturday Ssra farm no longer shows as \u201c470 kills\u201d \u2014 trash stays in its own \u201cTrash cleared\u201d line, and a night that was only farming is not a raid night.',
+      },
+      {
+        name: 'Officers can stop tracking uncurated mobs',
+        blurb: 'A new switch under Admin \u2192 Overlays stops the bot recording fights against mobs nobody has curated as a boss. Curated bosses are unaffected. It exists mainly for other guilds running the platform who do not want the volume.',
+      },
+    ],
+    fixes: [
+      '/me loads faster \u2014 the attendance grid reads two months of ticks instead of a year.',
+    ],
+  },
+  {
     key: 'raid-attendance-heatmap-2026-09-03',
     title: 'Web 1.7.19',
     version: 'Web 1.7.19',

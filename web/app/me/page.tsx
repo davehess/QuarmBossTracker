@@ -40,7 +40,7 @@ import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 import { dayKey, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
 import {
-  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel,
+  buildWeeks, gridStart, monthLabels, buildNights, nightNames, nightLabel, rowsFor,
   attendedAlpha, pct, ATTENDED, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
 import RaidHeatmap, { type HeatCell } from '@/components/RaidHeatmap';
@@ -509,23 +509,27 @@ type ScrapView = {
 };
 // ── Raid attendance heatmap (Hitya, 2026-09-03) ──────────────────────────────
 // "add in raid attendance on a person's /me … with mouse over on dates and
-// raid names and links to the raids". One cell per raid night over the last
-// year; gold when ANY of the member's characters was in ANY of the night's
-// ticks, brighter the more of the night they stayed; an outline when a raid was
-// held without them. The family union matters — a person is one person, and
-// their alt-night attendance counts exactly like their main's.
+// raid names and links to the raids". One cell per OFFICIAL raid night (bonus
+// rows dropped, the night taken from the raid's name — lib/raidHeatmap) over
+// the last 60 days; gold when ANY of the member's characters was in ANY of the
+// night's ticks, brighter the more of the night they stayed; an outline when a
+// raid was held without them. The family union matters — a person is one
+// person, and their alt-night attendance counts exactly like their main's.
 //
-// Two narrow tick reads — ids only, no attendee arrays — because this page is
-// per-member and the arrays are the wide part. The overlap filter does the
+// 60 days, not a year (Hitya, 2026-09-04: "/me is slow to load now … load the
+// last 60 days by default") — the year is on /raidhistory for anyone who wants
+// it. Two narrow tick reads — ids only, no attendee arrays — because this page
+// is per-member and the arrays are the wide part. The overlap filter does the
 // membership test server-side; the `<> '{}'` filter drops sync-gap ticks the
-// same way /admin/attendance does.
-const ATTENDANCE_WEEKS = 52;
+// same way /admin/attendance does (verified live 2026-09-03).
+const ATTENDANCE_DAYS = 60;
 type FamilyAttendance = {
   weeks: string[][];
   months: (string | null)[];
+  rows: number[];
   cells: Record<string, HeatCell>;
-  held: number;
-  attended: number;
+  held60: number;
+  attended60: number;
   held30: number;
   attended30: number;
 };
@@ -534,7 +538,7 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
   if (names.length === 0) return null;
   const admin = supabaseAdmin();
   const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
-  const weeks = buildWeeks(todayKey, ATTENDANCE_WEEKS);
+  const weeks = buildWeeks(todayKey, Math.ceil(ATTENDANCE_DAYS / 7));
   const { startIso } = zonedDayRangeUtc(gridStart(weeks), RAID_TZ);
 
   const raids = await selectAll<NightRaid>((from, to) => admin
@@ -569,15 +573,17 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
   if (heldTicks.length === 0) return null;
   const nights = buildNights(raids, heldTicks);
   const mine = new Set(myTicks.map(t => t.tick_id));
+  const since60 = dayKey(new Date(Date.now() - ATTENDANCE_DAYS * 86400_000).toISOString(), RAID_TZ);
   const since30 = dayKey(new Date(Date.now() - 30 * 86400_000).toISOString(), RAID_TZ);
 
   const cells: Record<string, HeatCell> = {};
-  let held = 0, attended = 0, held30 = 0, attended30 = 0;
+  const heldNights: { date: string }[] = [];
+  let held60 = 0, attended60 = 0, held30 = 0, attended30 = 0;
   for (const n of nights.values()) {
     if (n.tickIds.length === 0) continue;   // a raid row with no captured ticks is a sync gap, not a night
+    heldNights.push(n);
     const got = n.tickIds.filter(id => mine.has(id)).length;
-    held += 1;
-    if (got > 0) attended += 1;
+    if (n.date >= since60) { held60 += 1; if (got > 0) attended60 += 1; }
     if (n.date >= since30) { held30 += 1; if (got > 0) attended30 += 1; }
     const status = got > 0 ? `You were in ${got} of ${n.tickIds.length} ticks` : 'Missed';
     cells[n.date] = {
@@ -588,7 +594,7 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
       href: `/raid/review/${n.date}`,
     };
   }
-  return { weeks, months: monthLabels(weeks), cells, held, attended, held30, attended30 };
+  return { weeks, months: monthLabels(weeks), rows: rowsFor(heldNights), cells, held60, attended60, held30, attended30 };
 }
 
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
@@ -1174,7 +1180,7 @@ export default async function MePage() {
             <div>
               <h2 className="text-xl text-gold mb-1">📅 Raid attendance</h2>
               <p className="text-sm text-dim">
-                Every raid night in the last 12 months, across all your characters. Gold means you were there
+                Every raid night in the last 60 days, across all your characters. Gold means you were there
                 (brighter = more of the night); an outline is a raid you missed. Hover a night for the raid, click it for the review.
               </p>
             </div>
@@ -1183,16 +1189,14 @@ export default async function MePage() {
             </Link>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-            <Stat label="Raids attended · 12 months" value={attendance.attended} color="text-gold" />
-            <Stat label={`of ${attendance.held} held`} value={pct(attendance.attended, attendance.held)} color="text-text" />
-            <Stat label="Raids attended · 30 days" value={attendance.attended30} color="text-gold" />
-            <Stat label={`of ${attendance.held30} held`} value={pct(attendance.attended30, attendance.held30)} color="text-text" />
+          <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
+            <AttendanceStat label="Last 60 days" attended={attendance.attended60} held={attendance.held60} />
+            <AttendanceStat label="Last 30 days" attended={attendance.attended30} held={attendance.held30} />
           </div>
 
           <div className="mt-4">
-            <RaidHeatmap weeks={attendance.weeks} months={attendance.months} cells={attendance.cells}
-                         label="Your raid attendance, one cell per raid night, last 52 weeks" />
+            <RaidHeatmap weeks={attendance.weeks} months={attendance.months} cells={attendance.cells} rows={attendance.rows}
+                         label="Your raid attendance, one cell per raid night, last 60 days" />
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-dim">
             <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ backgroundColor: ATTENDED }} />attended, every tick</span>
@@ -1286,6 +1290,17 @@ export default async function MePage() {
       )}
 
       <MeCharacterCards items={cardItems} storageKey={discordId ?? ''} />
+    </div>
+  );
+}
+
+// Attendance reads as a RATE first — "83" next to "of 151 held" read as a
+// count, which is exactly the wrong number to skim (2026-09-04).
+function AttendanceStat({ label, attended, held }: { label: string; attended: number; held: number }) {
+  return (
+    <div className="bg-bg border border-border rounded p-3">
+      <div className="text-2xl text-gold">{held > 0 ? `${pct(attended, held)}%` : '—'}</div>
+      <div className="text-dim text-xs">{label} · {attended} of {held} raids</div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { resolveWindow } from '@/lib/timeWindow';
+import { curatedNpcIds } from '@/lib/bossFilter';
 import WindowPicker from '@/components/WindowPicker';
 
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,10 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
   try {
     const sb = supabaseAdmin();
 
+    // Curated bosses only (same query-level filter as /parses and the night
+    // page) — a night that was only someone's farming is not a raid night.
+    const curated = await curatedNpcIds(sb);
+
     let encQuery = sb
       .from('encounters')
       .select(`
@@ -61,6 +66,7 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
         encounter_players ( character_name, total_damage )
       `)
       .gt('total_damage', 0)
+      .in('npc_id', curated)
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
     if (sinceIso) encQuery = encQuery.gte('started_at', sinceIso);

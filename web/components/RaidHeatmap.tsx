@@ -31,19 +31,22 @@ export type HeatCell = {
   outline?: boolean;
 };
 
-// The guild raids Sun/Wed/Thu. Only those rows get a label — the cadence is
-// readable from the grid itself, and a lit Saturday reads as the exception it is.
-const ROW_LABELS = ['Sun', '', '', 'Wed', 'Thu', '', ''];
+// Rows are the guild's raid days (Hitya, 2026-09-04: "it should just be our
+// raid days") — the page passes them, from lib/raidHeatmap's rowsFor, which
+// adds any other weekday that actually carries a raid so nothing goes unseen.
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const CELL = 12;   // px
 const GAP  = 2;    // px
 
 type Tip = { x: number; y: number; lines: string[] };
 
-export default function RaidHeatmap({ weeks, months, cells, label }: {
+export default function RaidHeatmap({ weeks, months, cells, rows, label }: {
   weeks: string[][];
   months: (string | null)[];
   cells: Record<string, HeatCell>;
+  /** Weekday indices to draw, 0 = Sunday. */
+  rows: number[];
   /** Accessible name for the grid. */
   label: string;
 }) {
@@ -96,8 +99,8 @@ export default function RaidHeatmap({ weeks, months, cells, label }: {
             </span>
           ))}
 
-          {ROW_LABELS.map((rowLabel, d) => (
-            <RowFragment key={`r${d}`} d={d} rowLabel={rowLabel} weeks={weeks} cells={cells} onShow={show} onHide={() => setTip(null)} />
+          {rows.map(d => (
+            <RowFragment key={`r${d}`} d={d} rowLabel={DAY_NAMES[d] ?? ''} weeks={weeks} cells={cells} onShow={show} onHide={() => setTip(null)} />
           ))}
         </div>
       </div>

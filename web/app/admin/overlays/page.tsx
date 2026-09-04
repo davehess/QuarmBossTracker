@@ -125,6 +125,8 @@ const FLAGS: Flag[] = [
     desc: 'Drops encrypted EQ ini-file snapshot uploads. Backups pause; nothing live is affected. Emergency use only.' },
   { key: 'flag_shed_tells', label: 'Shed: tell relay', danger: true,
     desc: 'Drops the opt-in tell-history relay. Emergency use only.' },
+  { key: 'flag_skip_uncurated_mobs', label: 'Stop tracking uncurated mobs (farm trash)',
+    desc: 'Ingest gate for encounter collection. Since bot 3.1.52 every exactly-matched mob persists an encounter so a first kill is never lost — which made collection scale with member farming: 97% of the encounters written in the 30 days to 2026-09-04 were uncurated trash (~9 MB/day across the encounter tables, threat snapshots most of it). Checked: the bot stops self-registering new mobs and stops persisting encounters on already auto-registered rows; curated bosses are untouched, the "Trash cleared" tally on the review still runs off the upload stream, and a mob the server hands a loot lockout for is promoted to curated and starts persisting. Unchecked: the TRACK_UNCURATED_MOBS env default (on for us). Takes effect within ~60s.' },
 ];
 const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
 
