@@ -119,10 +119,27 @@ longer appears in the review index at all.
   the answer for a Death Touch and context for anything else. Recording the
   target at ingest is the proper fix and is an agent+bot change (open table).
 
+## UI ships as options, previewed on beta (a standing rule from tonight)
+
+Hitya, after three UI changes landed on production in one day with no
+alternatives offered: *"When a request involves UI, don't give me one design.
+Give me two or three genuinely different approaches to choose from … deploy
+each variant as its own preview and give me URLs to compare … Never touch
+production or promote a variant without asking me first."* Now a working rule
+in `CLAUDE.md` (with the platform-specific mechanics: `?v=` variants on `beta`,
+read at `b.wolfpack.quest`, because member pages cannot sign in on any other
+preview host). Cost is broken out four ways — build, maintenance, runtime,
+change — never collapsed into "harder".
+
+Applied retroactively to the one design decided unilaterally today, the
+attendance layout: the month blocks stay on production as the baseline, and
+two genuinely different alternatives go up on beta for a side-by-side.
+
 ## Open — read this first
 
 | Item | State |
 |---|---|
+| 🎨 **Pick the attendance layout** | A (month blocks, production) vs B (week strips) vs C (mini calendars) on `b.wolfpack.quest/raidhistory?v=b` / `?v=c` and `/me?v=b` / `?v=c`. Nothing promotes until Hitya picks |
 | **Flip `flag_skip_uncurated_mobs`?** | Hitya's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
 | ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days and the heartbeat read went from N queries to one paged read; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out |
 | **Record the Death Touch VICTIM at ingest** | `encounter_events` fire rows have `actor: null`; the review infers it from deaths within 8s. The agent's trigger relay would need to carry the captured target and the bot store it — agent + bot change |
