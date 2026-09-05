@@ -44,6 +44,15 @@ import {
   attendedAlpha, pct, ATTENDED, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
 import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
+import RaidNightsStrips, { type StripNight } from '@/components/RaidNightsStrips';
+import RaidNightsCalendar, { type CalNight } from '@/components/RaidNightsCalendar';
+
+// Attendance layout variants for the side-by-side on b.wolfpack.quest
+// (CLAUDE.md, "UI gets OPTIONS"): a = month blocks (production), b = week
+// strips, c = mini calendars. Beta only; production ignores ?v=.
+const IS_BETA = process.env.NEXT_PUBLIC_IS_BETA === '1';
+type Variant = 'a' | 'b' | 'c';
+const pickVariant = (v: string | undefined): Variant => (IS_BETA && (v === 'b' || v === 'c') ? v : 'a');
 
 export const dynamic = 'force-dynamic';
 
@@ -541,6 +550,8 @@ type ScrapView = {
 const ATTENDANCE_DAYS = 60;
 type FamilyAttendance = {
   chips: NightChip[];
+  strips: StripNight[];
+  cal: CalNight[];
   held60: number;
   attended60: number;
   held30: number;
@@ -589,6 +600,8 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
   const mine = new Set(myTicks.map(t => t.tick_id));
 
   const chips: NightChip[] = [];
+  const strips: StripNight[] = [];
+  const cal: CalNight[] = [];
   let held60 = 0, attended60 = 0, held30 = 0, attended30 = 0;
   for (const n of nights.values()) {
     if (n.tickIds.length === 0) continue;   // a raid row with no captured ticks is a sync gap, not a night
@@ -597,17 +610,13 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
     if (n.date >= since60) { held60 += 1; if (got > 0) attended60 += 1; }
     if (n.date >= since30) { held30 += 1; if (got > 0) attended30 += 1; }
     const status = got > 0 ? `You were in ${got} of ${n.tickIds.length} ticks` : 'Missed';
-    chips.push({
-      date: n.date,
-      color: ATTENDED,
-      alpha: got > 0 ? attendedAlpha(got, n.tickIds.length) : undefined,
-      outline: got === 0,
-      lines: [nightLabel(n.date), ...nightNames(n), status],
-      href: `/raid/review/${n.date}`,
-    });
+    const look = { date: n.date, color: ATTENDED, alpha: got > 0 ? attendedAlpha(got, n.tickIds.length) : undefined, outline: got === 0, href: `/raid/review/${n.date}` };
+    chips.push({ ...look, lines: [nightLabel(n.date), ...nightNames(n), status] });
+    strips.push({ ...look, name: nightNames(n).join(' · ') || '(unnamed)', figure: got > 0 ? `${got}/${n.tickIds.length}` : 'missed' });
+    cal.push({ ...look, title: [nightLabel(n.date), ...nightNames(n), status].join(' · ') });
   }
   chips.sort((a, b) => a.date.localeCompare(b.date));
-  return { chips, held60, attended60, held30, attended30 };
+  return { chips, strips, cal, held60, attended60, held30, attended30 };
 }
 
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
@@ -716,7 +725,8 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export default async function MePage() {
+export default async function MePage({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
+  const variant = pickVariant((await searchParams)?.v);
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/signin?next=/me');
@@ -1202,9 +1212,19 @@ export default async function MePage() {
                 Hover a night for the raid, click it for the review.
               </p>
             </div>
-            <Link href="/raidhistory" className="text-blue hover:underline text-sm whitespace-nowrap">
-              📈 Guild raid history →
-            </Link>
+            <div className="flex flex-col items-end gap-1">
+              <Link href="/raidhistory" className="text-blue hover:underline text-sm whitespace-nowrap">
+                📈 Guild raid history →
+              </Link>
+              {IS_BETA && (
+                <div className="text-[11px] text-dim flex gap-2">
+                  <span>Layout:</span>
+                  {([['a', 'A'], ['b', 'B'], ['c', 'C']] as [Variant, string][]).map(([v, name]) => (
+                    <Link key={v} href={v === 'a' ? '/me' : `/me?v=${v}`} className={v === variant ? 'text-text underline' : 'text-blue hover:underline'}>{name}</Link>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
@@ -1213,7 +1233,13 @@ export default async function MePage() {
           </div>
 
           <div className="mt-4">
-            <RaidHeatmap nights={attendance.chips} label="Your raid attendance, one square per raid night, last 60 days" />
+            {variant === 'b' ? (
+              <RaidNightsStrips nights={attendance.strips} label="Your raid attendance, one row per week, last 60 days" />
+            ) : variant === 'c' ? (
+              <RaidNightsCalendar nights={attendance.cal} label="Your raid attendance, one calendar per month, last 60 days" />
+            ) : (
+              <RaidHeatmap nights={attendance.chips} label="Your raid attendance, one square per raid night, last 60 days" />
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-dim">
             <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ backgroundColor: ATTENDED }} />attended, every tick</span>
