@@ -27,6 +27,36 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
+### Working rule — UI gets OPTIONS, previewed on beta, never straight to production (Hitya, 2026-09-04)
+Hitya's standing preference: *"When a request involves UI, don't give me one
+design. Give me two or three genuinely different approaches to choose from."*
+- **Web:** each variant is its own preview — `?v=b` / `?v=c` query variants or
+  `/b`, `/c` routes — landed on `beta` and read at `b.wolfpack.quest/<path>`.
+  Hand over the URLs side by side. The default (no `?v=`) on beta stays what
+  production shows, so the comparison has a baseline. **Never promote a
+  variant to `main` without Hitya picking it.** When one is picked, graduate
+  it and delete the others in the same change.
+  ⚠ Why beta and not a `claude/*` preview deployment: member pages need
+  sign-in, and Supabase only honours redirects to `wolfpack.quest` and
+  `b.wolfpack.quest` — on any other host sign-in silently completes on
+  production (the beta-auth note under Release playbook). Separate preview
+  deployments per variant need a wildcard redirect
+  (`https://*-davehess-projects.vercel.app/**`) added in the Supabase
+  dashboard first — Hitya's action, not a session's.
+- **Everything else (Mimic overlays, the agent dashboard, Discord cards):**
+  the framework plus notes on how the designs differ and what each costs.
+- **Cost is FOUR numbers, never one "harder":** build (time to get right),
+  maintenance (how much it breaks when content or requirements change),
+  runtime (bundle, requests, render weight — mobile first), change (how
+  painful to revise later — the one usually underestimated). A CSS-grid layout
+  is cheap to build and cheap to maintain; a JS-driven layout is cheap to
+  build and expensive to maintain.
+- Options must be genuinely different tradeoffs, not one layout in three
+  colours. Two — or one plus why the alternatives are worse — beats a padded
+  three. Inside an established visual family, one consistent design plus one
+  alternative. Small fixes (spacing, one selector) get inline variants, not
+  files: match the ceremony to the size of the change.
+
 ### Working rule — attribution: mostly Hitya, with named exceptions
 **You almost always interact with one person: Hitya.** A decision, a bug report,
 a sketch or a live-test result arriving under one of their characters is still
