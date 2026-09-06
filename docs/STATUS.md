@@ -36,6 +36,7 @@ folly** — it's here.*
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
 | `RUNBOOK-site-access.md` | Officer procedure: getting a member in when Discord sign-in won't work — site invite + Mimic code, reset-via-reinvite, troubleshooting | **The no-Discord door.** First live use 2026-08-25 |
+| `TOWER-coolify-and-supabase-backups.md` | **The overview of Tower** (Hitya's Unraid box): the nightly Supabase backup, the local stack + archive merge, the Coolify VM + local site, what is verified vs ⚠ unverified, the restore cases, a five-minute health check, the open list. Sits on top of the two runbooks below | Written 2026-09-04 at Hitya's request; the runbooks stay authoritative for steps and traps |
 | `BETA-TESTING.md` | Test plan for features in the beta channel (versions + ✅ solo / 👥 multi-person cases) | **Where to verify beta work.** |
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
 | `DESIGN-ch-chain.md` | Design spec for the CH-rotation overlay | CLAUDE.md roadmap ref |

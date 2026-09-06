@@ -1,5 +1,9 @@
 # Runbook — a local copy of wolfpack.quest on Unraid, via Coolify
 
+> **Overview first:** `TOWER-coolify-and-supabase-backups.md` is the one-page
+> picture of everything on the box, with what is verified vs ⚠ unverified.
+> This file is the step-by-step and the traps.
+
 **Decided 2026-08-11 (Hitya):** Coolify in a **VM on Unraid**, and the local site
 points at the **local Supabase stack** (`RUNBOOK-unraid-supabase-replica.md`), so
 nothing clicked locally can touch production.

@@ -287,6 +287,13 @@ and the same never-refetch guarantee.
   raid-day bucket (matches the web's `dayKey`). That is OUR raid timezone — a
   guild setting the wizard must parameterize (same knob as the raid schedule
   and the deploy freeze).
+- **The nightly backup is an egress cost on a hosted project, and the wizard
+  should say so** (2026-09-04, `TOWER-coolify-and-supabase-backups.md` §2). A
+  `pg_dump` moves table data, not indexes: ours is ~1.1 GB a night out of a
+  1.83 GB database, ~33 GB a month, ~13% of Pro's 250 GB. A guild on a Free
+  project (5 GB egress) cannot afford a nightly full dump at all. The lever is
+  a lean nightly (`--exclude-table-data=` the largest ephemeral table) with a
+  full dump weekly — an option the script does not implement yet.
 - **Uncurated-mob collection is a SWITCH now, and the wizard should default it
   OFF for a new guild** (2026-09-04). The open-collection decision above was
   measured: in the 30 days to 2026-09-04, **5,789 of 5,969 encounters (97%)

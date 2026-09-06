@@ -1,5 +1,9 @@
 # Runbook — replicating the Supabase project to an Unraid box
 
+> **Overview first:** `TOWER-coolify-and-supabase-backups.md` is the one-page
+> picture of everything on the box (backup, archive, Coolify), with a
+> five-minute health check. This file is the step-by-step and the traps.
+
 **Status: DECIDED 2026-08-11 (Hitya): backup first, then dev sandbox.** The
 live-mirror replication path below stays documented but is NOT the plan — which
 dissolves its worst constraint: **a plain `pg_dump` rides the SESSION pooler,
