@@ -1,264 +1,28 @@
-// /raid/review — the morning-after Raid Night Review index (#80).
+// web/lib/raidLayout.ts — which attendance layout a member sees.
 //
-// The guild's ask: "review at 9am, not 11:30pm." One page you open the morning
-// after and see, per night, what happened — this is the landing list of recent
-// raid nights (newest first); each links to /raid/review/[date] for the full
-// one-night breakdown. Member-gated like /parses (the WHOLE raid reviews it, not
-// just officers): a signed-in Supabase session means the user passed the guild +
-// role checks at sign-in.
+// Hitya, 2026-09-04, after the A/B/C side-by-side on b.wolfpack.quest: "I like
+// blocks and strips, let's keep both as options, default to strips." So two
+// layouts stay, chosen per browser and remembered in a cookie — the same shape
+// the timezone picker uses (wp_tz) — with a `?layout=` query override so a
+// link can carry the choice. The mini-calendar variant was dropped.
 //
-// Read-only v1: single bounded window, no mutations. Nights are the Eastern
-// raid-day buckets that /parses already uses, so the two pages agree on which
-// kill belongs to which night (and the loot join keys on the same ET date).
+// Client-safe: no next/headers here. The server pages read the cookie
+// themselves and hand the value in; RaidLayoutPicker writes it.
 
-import { redirect } from 'next/navigation';
-import Link from 'next/link';
-import { supabaseServer } from '@/lib/supabase-server';
-import { supabaseAdmin } from '@/lib/supabase';
-import { dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
-import { guildShare, isAutoForeign } from '@/lib/anomalies';
-import { resolveWindow } from '@/lib/timeWindow';
-import { curatedNpcIds } from '@/lib/bossFilter';
-import { selectAll } from '@/lib/selectAll';
-import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
-import WindowPicker from '@/components/WindowPicker';
+export type RaidLayout = 'strips' | 'blocks';
 
-export const dynamic = 'force-dynamic';
+export const RAID_LAYOUT_COOKIE = 'wp_raid_layout';
+export const DEFAULT_RAID_LAYOUT: RaidLayout = 'strips';
+export const RAID_LAYOUTS: { key: RaidLayout; label: string }[] = [
+  { key: 'strips', label: 'Strips' },
+  { key: 'blocks', label: 'Blocks' },
+];
 
-type PlayerRow = { character_name: string; total_damage: number };
-type EncRow = {
-  id: string;
-  started_at: string;
-  ended_at: string | null;
-  duration_sec: number | null;
-  total_damage: number;
-  zone_short: string | null;
-  classification: string | null;
-  eqemu_npc_types: { name: string; zone_short: string | null } | null;
-  encounter_players: PlayerRow[];
-};
-type ZoneRow = { short_name: string; long_name: string };
+const isLayout = (v: unknown): v is RaidLayout => v === 'strips' || v === 'blocks';
 
-type NightRow = {
-  date: string;
-  raidNames: string[];   // OpenDKP's own name(s) for the night — the record for nights with no parses
-  raiders: number;       // distinct attendees across the night's ticks
-  kills: number;
-  wipes: number;
-  totalDamage: number;
-  zones: string[];
-  bosses: string[];
-  lootCount: number;
-  lootDkp: number;
-};
-
-const ROW_LIMIT = 400;
-
-async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]; error: string | null }> {
-  try {
-    const sb = supabaseAdmin();
-
-    // Curated bosses only (same query-level filter as /parses and the night
-    // page) — a night that was only someone's farming is not a raid night.
-    const curated = await curatedNpcIds(sb);
-
-    let encQuery = sb
-      .from('encounters')
-      .select(`
-        id, started_at, ended_at, duration_sec, total_damage, zone_short, classification,
-        eqemu_npc_types ( name, zone_short ),
-        encounter_players ( character_name, total_damage )
-      `)
-      .gt('total_damage', 0)
-      .in('npc_id', curated)
-      .order('started_at', { ascending: false })
-      .limit(ROW_LIMIT);
-    if (sinceIso) encQuery = encQuery.gte('started_at', sinceIso);
-    const { data: encs, error: encErr } = await encQuery;
-    if (encErr) return { nights: [], error: encErr.message };
-
-    const { data: rosterRows } = await sb
-      .from('characters')
-      .select('name')
-      .eq('guild_id', 'wolfpack');
-    const roster = new Set<string>(
-      (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
-    );
-
-    const { data: zoneRows } = await sb
-      .from('eqemu_zone')
-      .select('short_name, long_name');
-    const zones = new Map<string, ZoneRow>((zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]));
-
-    // Per-night loot rollup from OpenDKP (keyed on the same ET raid_date).
-    const since10 = (sinceIso ?? '1970-01-01').slice(0, 10);
-    let lootQuery = sb
-      .from('opendkp_loot_recent')
-      .select('raid_date, dkp');
-    if (sinceIso) lootQuery = lootQuery.gte('raid_date', since10);
-    const { data: lootRows } = await lootQuery;
-    const lootByDate = new Map<string, { count: number; dkp: number }>();
-    for (const l of (lootRows ?? []) as { raid_date: string; dkp: number }[]) {
-      const e = lootByDate.get(l.raid_date) || { count: 0, dkp: 0 };
-      e.count += 1;
-      e.dkp += l.dkp || 0;
-      lootByDate.set(l.raid_date, e);
-    }
-
-    // Bucket encounters into Eastern raid-day nights, dropping foreign raids
-    // (a guildie pugging another guild) exactly like /parses does.
-    const byNight = new Map<string, {
-      kills: number; wipes: number; totalDamage: number;
-      zones: Set<string>; bosses: Map<string, number>;
-    }>();
-    for (const enc of (encs as unknown as EncRow[]) ?? []) {
-      if (enc.classification === 'foreign') continue;
-      if (enc.classification == null && isAutoForeign(guildShare(enc.encounter_players ?? [], roster))) continue;
-      const k = dayKey(enc.started_at);
-      let night = byNight.get(k);
-      if (!night) { night = { kills: 0, wipes: 0, totalDamage: 0, zones: new Set(), bosses: new Map() }; byNight.set(k, night); }
-      const isKill = !enc.classification && enc.ended_at != null;
-      if (isKill) {
-        night.kills += 1;
-        night.totalDamage += enc.total_damage || 0;
-        const boss = cleanBossName(enc.eqemu_npc_types?.name);
-        night.bosses.set(boss, (night.bosses.get(boss) || 0) + 1);
-      } else if (enc.classification === 'wipe' || enc.ended_at == null) {
-        night.wipes += 1;
-      }
-      const short = enc.zone_short || enc.eqemu_npc_types?.zone_short || null;
-      if (short) night.zones.add(zones.get(short)?.long_name || short);
-    }
-
-    // OpenDKP nights — the guild raided for a year and a half before anyone
-    // uploaded a parse (Hitya, 2026-09-04: "the early raids have very limited
-    // data … at least have the bosses killed"). Every night OpenDKP ticked
-    // gets a card, its raid name standing in for the kills; bonus rows are
-    // not nights, and the night is the date in the raid's name.
-    const dkpByDate = new Map<string, { raidNames: string[]; raiders: number }>();
-    {
-      const sinceDay = sinceIso ? dayKey(sinceIso) : null;
-      const raids = await selectAll<NightRaid>((from, to) => {
-        let q = sb.from('opendkp_raids').select('raid_id, ts, name');
-        if (sinceIso) q = q.gte('ts', new Date(new Date(sinceIso).getTime() - 3 * 86400_000).toISOString());
-        return q.order('raid_id').range(from, to);
-      });
-      const ticks = raids.length === 0 ? [] : await selectAll<NightTick>((from, to) => sb
-        .from('opendkp_ticks')
-        .select('raid_id, tick_id, attendees')
-        .in('raid_id', raids.map(r => r.raid_id))
-        .order('tick_id')
-        .range(from, to));
-      for (const n of buildNights(raids, ticks.filter(t => Array.isArray(t.attendees) && t.attendees.length > 0)).values()) {
-        if (n.tickIds.length === 0) continue;
-        if (sinceDay && n.date < sinceDay) continue;
-        dkpByDate.set(n.date, { raidNames: nightNames(n), raiders: n.attendees.length });
-        if (!byNight.has(n.date)) byNight.set(n.date, { kills: 0, wipes: 0, totalDamage: 0, zones: new Set(), bosses: new Map() });
-      }
-    }
-
-    const nights: NightRow[] = [...byNight.entries()]
-      .map(([date, n]) => {
-        const loot = lootByDate.get(date);
-        const dkp = dkpByDate.get(date);
-        return {
-          date,
-          raidNames: dkp?.raidNames ?? [],
-          raiders: dkp?.raiders ?? 0,
-          kills: n.kills,
-          wipes: n.wipes,
-          totalDamage: n.totalDamage,
-          zones: [...n.zones],
-          bosses: [...n.bosses.keys()],
-          lootCount: loot?.count ?? 0,
-          lootDkp: loot?.dkp ?? 0,
-        };
-      })
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-
-    return { nights, error: null };
-  } catch (err: unknown) {
-    return { nights: [], error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-export default async function RaidReviewIndex(
-  { searchParams }: { searchParams: Promise<{ w?: string }> },
-) {
-  const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/raid/review');
-
-  const { w: wParam } = await searchParams;
-  const w = resolveWindow(wParam, '60d');
-  const { nights, error } = await loadNights(w.sinceIso);
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl text-gold">📓 Raid Night Review</h1>
-          <p className="text-sm text-dim mt-1">
-            The morning-after read: pick a night to see the kills, deaths, slows, callouts, and loot —
-            without scrolling Discord.
-          </p>
-        </div>
-        <Link href="/raid" className="text-xs text-blue hover:underline">← live Raid view</Link>
-      </div>
-
-      <section className="bg-panel border border-border rounded-lg p-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-sm text-dim">Recent raid nights</span>
-          <WindowPicker page="raidreview" current={w.key} options={['30d', '60d', '90d', 'life']} />
-        </div>
-      </section>
-
-      {error && (
-        <section className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">
-          Error: {error}
-        </section>
-      )}
-
-      {!error && nights.length === 0 && (
-        <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          No raid nights in this window &mdash; no OpenDKP ticks and no recorded kills. Widen the window, or make sure
-          the wolfpack-logsync agent is running on raid night so encounters get uploaded.
-        </section>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {nights.map((n) => (
-          <Link
-            key={n.date}
-            href={`/raid/review/${n.date}`}
-            className="block bg-panel border border-border rounded-lg p-4 no-underline hover:border-blue hover:bg-[#1a212c] transition-colors"
-          >
-            <div className="flex items-baseline justify-between gap-2 mb-2">
-              <span className="text-gold text-sm font-medium">{dayLabel(n.date)}</span>
-              <span className="text-dim text-xs">{n.date}</span>
-            </div>
-            {n.raidNames.length > 0 && (
-              <div className="text-xs text-text mb-1 line-clamp-2" title={n.raidNames.join(' · ')}>{n.raidNames.join(' · ')}</div>
-            )}
-            <div className="text-xs text-dim flex flex-wrap gap-x-3 gap-y-1 mb-2">
-              {n.raiders > 0 && <span className="text-gold">{n.raiders} raiders</span>}
-              <span className={n.kills > 0 ? 'text-text' : 'text-dim'}>{n.kills > 0 ? `${n.kills} kill${n.kills === 1 ? '' : 's'}` : 'no parses'}</span>
-              {n.wipes > 0 && <span className="text-orange">{n.wipes} wipe/engage</span>}
-              {n.totalDamage > 0 && <span>{fmtDmg(n.totalDamage)}</span>}
-              {n.lootCount > 0 && <span className="text-gold">{n.lootCount} loot · {n.lootDkp} DKP</span>}
-            </div>
-            {n.zones.length > 0 && (
-              <div className="text-[11px] text-orange truncate" title={n.zones.join(', ')}>
-                📍 {n.zones.slice(0, 3).join(' · ')}{n.zones.length > 3 ? ` +${n.zones.length - 3}` : ''}
-              </div>
-            )}
-            {n.bosses.length > 0 && (
-              <div className="text-[11px] text-dim mt-1 line-clamp-2" title={n.bosses.join(', ')}>
-                {n.bosses.slice(0, 6).join(', ')}{n.bosses.length > 6 ? `, +${n.bosses.length - 6} more` : ''}
-              </div>
-            )}
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
+/** Query beats cookie beats default; anything unrecognised is ignored. */
+export function pickRaidLayout(query?: string | null, cookie?: string | null): RaidLayout {
+  if (isLayout(query)) return query;
+  if (isLayout(cookie)) return cookie;
+  return DEFAULT_RAID_LAYOUT;
 }

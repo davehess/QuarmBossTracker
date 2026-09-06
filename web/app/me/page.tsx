@@ -45,14 +45,9 @@ import {
 } from '@/lib/raidHeatmap';
 import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
 import RaidNightsStrips, { type StripNight } from '@/components/RaidNightsStrips';
-import RaidNightsCalendar, { type CalNight } from '@/components/RaidNightsCalendar';
-
-// Attendance layout variants for the side-by-side on b.wolfpack.quest
-// (CLAUDE.md, "UI gets OPTIONS"): a = month blocks (production), b = week
-// strips, c = mini calendars. Beta only; production ignores ?v=.
-const IS_BETA = process.env.NEXT_PUBLIC_IS_BETA === '1';
-type Variant = 'a' | 'b' | 'c';
-const pickVariant = (v: string | undefined): Variant => (IS_BETA && (v === 'b' || v === 'c') ? v : 'a');
+import RaidLayoutPicker from '@/components/RaidLayoutPicker';
+import { cookies } from 'next/headers';
+import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 
 export const dynamic = 'force-dynamic';
 
@@ -551,7 +546,6 @@ const ATTENDANCE_DAYS = 60;
 type FamilyAttendance = {
   chips: NightChip[];
   strips: StripNight[];
-  cal: CalNight[];
   held60: number;
   attended60: number;
   held30: number;
@@ -601,7 +595,6 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
 
   const chips: NightChip[] = [];
   const strips: StripNight[] = [];
-  const cal: CalNight[] = [];
   let held60 = 0, attended60 = 0, held30 = 0, attended30 = 0;
   for (const n of nights.values()) {
     if (n.tickIds.length === 0) continue;   // a raid row with no captured ticks is a sync gap, not a night
@@ -613,10 +606,9 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
     const look = { date: n.date, color: ATTENDED, alpha: got > 0 ? attendedAlpha(got, n.tickIds.length) : undefined, outline: got === 0, href: `/raid/review/${n.date}` };
     chips.push({ ...look, lines: [nightLabel(n.date), ...nightNames(n), status] });
     strips.push({ ...look, name: nightNames(n).join(' · ') || '(unnamed)', figure: got > 0 ? `${got}/${n.tickIds.length}` : 'missed' });
-    cal.push({ ...look, title: [nightLabel(n.date), ...nightNames(n), status].join(' · ') });
   }
   chips.sort((a, b) => a.date.localeCompare(b.date));
-  return { chips, strips, cal, held60, attended60, held30, attended30 };
+  return { chips, strips, held60, attended60, held30, attended30 };
 }
 
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
@@ -725,8 +717,8 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export default async function MePage({ searchParams }: { searchParams?: Promise<{ v?: string }> }) {
-  const variant = pickVariant((await searchParams)?.v);
+export default async function MePage({ searchParams }: { searchParams?: Promise<{ layout?: string }> }) {
+  const layout = pickRaidLayout((await searchParams)?.layout, (await cookies()).get(RAID_LAYOUT_COOKIE)?.value);
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/signin?next=/me');
@@ -1207,23 +1199,16 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             <div>
               <h2 className="text-xl text-gold mb-1">📅 Raid attendance</h2>
               <p className="text-sm text-dim">
-                Every raid night in the last 60 days, across all your characters &mdash; each square is one night.
+                Every raid night in the last 60 days, across all your characters.
                 Gold means you were there (brighter = more of the night); an outline is a raid you missed.
-                Hover a night for the raid, click it for the review.
+                Click a night for its review.
               </p>
             </div>
             <div className="flex flex-col items-end gap-1">
               <Link href="/raidhistory" className="text-blue hover:underline text-sm whitespace-nowrap">
                 📈 Guild raid history →
               </Link>
-              {IS_BETA && (
-                <div className="text-[11px] text-dim flex gap-2">
-                  <span>Layout:</span>
-                  {([['a', 'A'], ['b', 'B'], ['c', 'C']] as [Variant, string][]).map(([v, name]) => (
-                    <Link key={v} href={v === 'a' ? '/me' : `/me?v=${v}`} className={v === variant ? 'text-text underline' : 'text-blue hover:underline'}>{name}</Link>
-                  ))}
-                </div>
-              )}
+              <RaidLayoutPicker current={layout} />
             </div>
           </div>
 
@@ -1233,10 +1218,8 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
           </div>
 
           <div className="mt-4">
-            {variant === 'b' ? (
+            {layout === 'strips' ? (
               <RaidNightsStrips nights={attendance.strips} label="Your raid attendance, one row per week, last 60 days" />
-            ) : variant === 'c' ? (
-              <RaidNightsCalendar nights={attendance.cal} label="Your raid attendance, one calendar per month, last 60 days" />
             ) : (
               <RaidHeatmap nights={attendance.chips} label="Your raid attendance, one square per raid night, last 60 days" />
             )}
