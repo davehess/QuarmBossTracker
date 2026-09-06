@@ -135,11 +135,33 @@ Applied retroactively to the one design decided unilaterally today, the
 attendance layout: the month blocks stay on production as the baseline, and
 two genuinely different alternatives go up on beta for a side-by-side.
 
+## Tower, written down as one picture
+
+Hitya: *"can you give me an MD about coolify and supabase backups on tower."*
+`docs/TOWER-coolify-and-supabase-backups.md` — the overview on top of the two
+2026-08-11 runbooks: what runs on the box and why, the backup's parts and the
+reason for each, the archive merge, the Coolify VM, three restore cases, a
+five-minute health check, and the open list. Two things it surfaces that the
+runbooks did not:
+
+- **The backup is an egress cost.** Table data is 1,162 MB of the 1,833 MB
+  hosted database (indexes are the rest and are not dumped), so each nightly
+  pull is ~1.1 GB — ~33 GB a month, ~13% of Pro's allowance. 754 MB of that is
+  `encounter_threat_snapshots`, the table whose sweep has never run. Fixing the
+  sweep shrinks the database, the wire and the dump in one move; a lean nightly
+  is the fallback lever, recorded not implemented.
+- **What is verified and what is not.** The dump, the restore, the stack and
+  the local site were all proven 2026-08-11. The two User Scripts schedules,
+  the corrected backup copy, local Discord sign-in, and the auto-deploy timer
+  were committed ready but no session has confirmed them on the box. The check
+  in §6 answers each in one command.
+
 ## Open — read this first
 
 | Item | State |
 |---|---|
 | 🎨 **Pick the attendance layout** | A (month blocks, production) vs B (week strips) vs C (mini calendars) on `b.wolfpack.quest/raidhistory?v=b` / `?v=c` and `/me?v=b` / `?v=c`. Nothing promotes until Hitya picks |
+| ⚠ **Tower: are the 05:00 backup and 05:30 merge actually scheduled?** | Unconfirmed since 2026-08-11. `TOWER-coolify-and-supabase-backups.md` §6 — five commands on the box |
 | **Flip `flag_skip_uncurated_mobs`?** | Hitya's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
 | ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days and the heartbeat read went from N queries to one paged read; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out |
 | **Record the Death Touch VICTIM at ingest** | `encounter_events` fire rows have `actor: null`; the review infers it from deaths within 8s. The agent's trigger relay would need to carry the captured target and the bot store it — agent + bot change |
