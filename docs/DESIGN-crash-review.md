@@ -355,3 +355,49 @@ run, never the answer.
 3. **The corpus question was the wrong question here.** §7 spent its effort on
    whether the *signature* was fleet-wide. One dump beat the whole table. Keep
    the corpus for prevalence; use the dump for causation.
+
+## 9. Field note — a UI-ini rebuild that stopped one raider's crashes (2026-09-06)
+
+Chadivarius was crashing constantly, rebuilt his UI files, and has not crashed
+since. Hitya sent both generations of `UI_Chadivarius_pq.proj.ini` and
+`Chadivarius_pq.proj.ini` for a diff. Recorded here because it is the first
+UI-file case with before/after evidence, and because it shows exactly where the
+corpus goes blind: **he has never uploaded a crash report (0 rows), so there is
+no signature to test any of this against.** The upload toggle is off by default.
+
+**Same skin both times** (`NillipussUI_1080p`), so the skin is not the variable;
+the ini contents are. The character ini (socials, hotbuttons, friends) differs
+only in content a social cannot crash the client with — ruled out.
+
+**The old UI ini, ranked by plausibility as the cause:**
+
+1. **`[Chat 4]` was 80×24 px at y=−5** — a chat window (his Auction window) with
+   no usable text area once the title bar and frame are taken out. The client
+   lays out and scrolls text into a client rectangle of zero or negative height;
+   that is the one setting in the file with the shape of a classic crash. The
+   new file's smallest chat window is 153×337.
+2. **`[TargetRing]` enabled** (128 segments, texture `Space`, attack indicator) —
+   Zeal drawing into the D3D path every frame. Absent in the new file. The
+   corpus puts most client crashes in the graphics stack (`dpvs.dll`,
+   `eqgfx_dx8.dll`, the NVIDIA driver), which makes this a real suspect and
+   nothing more than that.
+3. **Ten-second fades on every window** — `GlobalFadeDuration=10000`,
+   `GlobalFadeDelay=10000`, per-window `Delay`/`Duration` 10000, `FadeToAlpha`
+   190. Constant alpha animation on every window; the new file is stock
+   2000/500 with the HUD windows not fading at all. A load, not a known crash.
+4. **Eight resolutions of stored positions** with negative coordinates
+   scattered through them — cruft from monitor changes. The client clamps
+   windows on-screen; not a cause. But the new file is 4K-only, so the monitor
+   may have changed at the same time as the file — a confound, as is the XP
+   compatibility mode this same raider had on in August.
+
+**What would turn this from a story into evidence:** crash uploads on for this
+box (one tray toggle), so the next crash — if there is one — carries a module
+and an address. And the cheap reversible test, if the old file still exists:
+restore it with `[Chat 4]` resized to something sane, and see whether the
+crashes return. Without one of those it is n=1 with three confounds.
+
+**A cheap preventive check that falls out of this:** UI Studio already reads
+every window section to de-duplicate them; a warning on any chat window under
+~100×60 px or positioned off-screen would have named `[Chat 4]` months ago.
+Not built; noted.
