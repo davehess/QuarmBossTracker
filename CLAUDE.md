@@ -139,6 +139,15 @@ They were MERGED into `.claude/settings.json` alongside the existing
 `session-digest.sh`. If the deep pass ever costs more than it returns, delete
 the `Stop` block and keep `PostToolUse`.
 
+### Working rule — this repo is PUBLIC: no addresses or identifiers of anyone's box (Hitya, 2026-09-04)
+LAN IPs, VM UUIDs and MACs, hostnames that identify a home network, tunnel
+URLs, and anything else that describes a member's personal deployment go into
+docs as placeholders (`<tower-ip>`, `<coolify-vm-ip>`, `<project-ref>`), never
+as values. The values live on the box or in a dashboard. Same family as the
+tag-channel passwords: the repo is public, and a doc written for one person's
+network is still published to everyone. Sweep with
+`grep -rn -E '192\.168\.|10\.[0-9]+\.' docs/ scripts/` before committing infra docs.
+
 ### Working rule — commit messages go through a FILE, never `-m`
 `git commit -m "…"` in a double-quoted shell string executes anything in
 backticks. It happened twice on 2026-08-27/28: once eating two words, once

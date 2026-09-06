@@ -6,6 +6,10 @@ it sits on top of stay authoritative for the step-by-step and the traps:
 `RUNBOOK-local-web-coolify.md` (the Coolify VM + the local site). Where this
 file and a runbook disagree, the runbook wins and this file needs the edit.
 
+**This repo is public.** Addresses and identifiers below are placeholders —
+`<tower-ip>`, `<coolify-vm-ip>`, `<project-ref>` — and the real values live on
+the box and in the Supabase dashboard, never here (Hitya, 2026-09-04).
+
 Everything below marked **verified** was proven on the box on 2026-08-11.
 Everything marked **⚠ unverified** was committed copy-paste ready but no session
 has confirmed it is installed and running — a cloud session cannot see Tower.
@@ -15,14 +19,14 @@ The checklist at the end is how to find out in five minutes.
 
 ## 1. What runs on Tower, and why
 
-Tower is the Unraid box on the LAN. It carries three things for the platform,
+Tower is the Unraid box on the home LAN. It carries three things for the platform,
 and they exist for three different reasons:
 
 | Piece | Where on Tower | Why it exists |
 |---|---|---|
 | **Nightly backup of the hosted Supabase project** | `/mnt/user/backups/wolfpack/*.dump` | Disaster recovery. The guild's data lives in one hosted project; this is the copy we own |
 | **A local Supabase stack** (Postgres 17.6 + the full API/auth/Studio set) | Compose Manager project `supabase`, data at `/mnt/cache/appdata/supabase/` | The restore target that PROVES each backup, and the **long-horizon archive** — it keeps rows production prunes |
-| **Coolify in a VM, serving a local copy of wolfpack.quest** | VM `Coolify`, site at `http://192.168.1.163:3000` | The only place the site runs outside Vercel — the canary for Vercel-masked bugs — and a sandbox where officer pages can be clicked without touching production |
+| **Coolify in a VM, serving a local copy of wolfpack.quest** | VM `Coolify`, site at `http://<coolify-vm-ip>:3000` | The only place the site runs outside Vercel — the canary for Vercel-masked bugs — and a sandbox where officer pages can be clicked without touching production |
 
 The shape is the **hybrid** the self-host design calls shape 3
 (`DESIGN-selfhost-wizard.md` §2): hosted production for raid night, on-prem for
@@ -30,7 +34,7 @@ backup and history. Production prunes on timers to keep the hosted bill flat;
 Tower keeps everything for the price of electricity.
 
 ```
- hosted Supabase (Pro, zhtoekwakucbckvatfky)          Tower (Unraid, 192.168.1.5)
+ hosted Supabase (Pro, <project-ref>)                 Tower (Unraid, <tower-ip>)
  ┌──────────────────────────────┐   05:00 pg_dump    ┌────────────────────────────────┐
  │ postgres 17.6 · 1.83 GB      │ ─────────────────▶ │ /mnt/user/backups/wolfpack/    │
  │ prunes buff_casts @7d, who   │  session pooler,   │   wolfpack-<date>-<time>.dump  │
@@ -46,7 +50,7 @@ Tower keeps everything for the price of electricity.
                                                      └───────────────┬────────────────┘
                                                                      │ reads
                                                      ┌───────────────┴────────────────┐
-                                                     │ Coolify VM (192.168.1.163)     │
+                                                     │ Coolify VM (<coolify-vm-ip>)     │
                                                      │ site :3000 · dashboard :8000   │
                                                      │ polls main every 5 min         │
                                                      └────────────────────────────────┘
@@ -64,7 +68,7 @@ Backup path and restore path both exercised on real data the same night.
 What it does, and the reason for each part:
 
 - **Pulls through the SESSION pooler** (`*.pooler.supabase.com:5432`, user
-  `postgres.zhtoekwakucbckvatfky`), whose URI lives in
+  `postgres.<project-ref>`), whose URI lives in
   `/boot/config/wolfpack-db-url` (chmod 600, never in the repo). The pooler has
   IPv4, so the IPv6 caveat that blocks logical replication does not apply. The
   script refuses a `:6543` URI — that is the transaction pooler and `pg_dump`
@@ -149,9 +153,9 @@ stack do not always map), data on the cache pool:
 - Postgres `supabase/postgres 17.6.1.136` — same major as hosted, so it is a
   valid restore target for the dump.
 - Tenant id `wolfpack`, so Studio is
-  `http://192.168.1.5:8000/project/wolfpack` (not `/project/default`), and the
+  `http://<tower-ip>:8000/project/wolfpack` (not `/project/default`), and the
   LAN connection is the pooler in session mode:
-  `postgresql://postgres.wolfpack@192.168.1.5:5432/postgres`.
+  `postgresql://postgres.wolfpack@<tower-ip>:5432/postgres`.
 - **The acceptance test is the role list, not the healthcheck.** A hollow
   database reports `healthy` having run none of its bootstrap. Proof it ran:
   `docker exec supabase-db psql -U postgres -c '\du'` lists
@@ -202,7 +206,7 @@ someone else's problem.
 | | Value | Status |
 |---|---|---|
 | VM | `Coolify` — Debian 13, 2 vCPU, **8 GB** (4 GB OOM-kills `next build`), 40 GB raw vdisk at `/mnt/user/domains/Coolify/`, bridged on `br0` | verified |
-| Coolify | `curl -fsSL https://cdn.coollabs.io/coolify/install.sh \| sudo bash`, dashboard `http://192.168.1.163:8000` | verified |
+| Coolify | `curl -fsSL https://cdn.coollabs.io/coolify/install.sh \| sudo bash`, dashboard `http://<coolify-vm-ip>:8000` | verified |
 | Application | private repo via deploy key, branch `main`, Nixpacks, **Base Directory `/web`**, Ports Mappings **`3000:3000`** (Exposes alone publishes nothing), `NEXT_PUBLIC_*` as **build** variables, pointed at the LOCAL stack's URL and keys | verified — site served `/parses` from the local data 2026-08-11 |
 | Discord sign-in on the local site | a **separate sandbox Discord app** (`Wolfpack Local`) against the local GoTrue; the production app's secret is never reset | ⚠ unverified — gated on creating that app |
 | Auto-deploy | `scripts/coolify-autodeploy.sh` + `scripts/systemd/coolify-autodeploy.{service,timer}` on the VM: polls GitHub every 5 min, hits Coolify's deploy webhook when `main` moves | ⚠ unverified — needs a second read-only deploy key, a Coolify API token, `/etc/coolify-autodeploy.conf` |
@@ -281,8 +285,8 @@ docker compose ls
 docker exec supabase-db psql -U postgres -c '\du' | grep -c -E 'supabase_auth_admin|authenticator|supabase_storage_admin'   # want 3
 
 # 4. Is the local site alive and following main?
-curl -s -o /dev/null -w '%{http_code}\n' http://192.168.1.163:3000/roadmap
-ssh root@192.168.1.163 'systemctl is-active coolify-autodeploy.timer; journalctl -u coolify-autodeploy -n 3 --no-pager'
+curl -s -o /dev/null -w '%{http_code}\n' http://<coolify-vm-ip>:3000/roadmap
+ssh root@<coolify-vm-ip> 'systemctl is-active coolify-autodeploy.timer; journalctl -u coolify-autodeploy -n 3 --no-pager'
 ```
 
 What "good" looks like: a dump dated this morning at ~150–200 MB, a

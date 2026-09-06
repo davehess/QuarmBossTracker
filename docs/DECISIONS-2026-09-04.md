@@ -176,6 +176,19 @@ runbooks did not:
   were committed ready but no session has confirmed them on the box. The check
   in §6 answers each in one command.
 
+## Personal deployment details do not belong in a public repo
+
+Hitya, on the Tower overview: *"that MD is for my personal deployment. if it
+contains personal details or ips or whatnot it should be cleaned up."* It did —
+two LAN addresses, and the two runbooks it points at carried the same ones plus
+the VM's libvirt UUID and MAC in the pasteable XML. All replaced with
+placeholders (`<tower-ip>`, `<coolify-vm-ip>`, `<project-ref>`,
+`REPLACE-WITH-OUTPUT-OF-uuidgen`, `52:54:00:XX:XX:XX`), and the rule is now in
+`CLAUDE.md` next to the commit-message rule. The Supabase project ref stays in
+`CLAUDE.md`'s fixed facts — it is the public API host every browser already
+sees — but the Tower doc uses the placeholder so it reads as one person's
+deployment, not everyone's.
+
 ## Open — read this first
 
 | Item | State |

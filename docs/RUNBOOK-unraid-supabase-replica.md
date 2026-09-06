@@ -167,7 +167,7 @@ compose header now documents the rule so a future edit can't regress it), and
 generated a complete `.env` — every secret filled, ANON/SERVICE keys signed
 against the new `JWT_SECRET` (the env.example demo keys are signed with the
 demo secret; changing one without the others breaks all API auth), LAN URLs
-(`http://192.168.1.5:8000`), tenant id `wolfpack`. One-time setup on the box:
+(`http://<tower-ip>:8000`), tenant id `wolfpack`. One-time setup on the box:
 ```
 mkdir -p /mnt/cache/appdata/supabase
 cp -r /boot/config/plugins/compose.manager/projects/supabase/volumes /mnt/cache/appdata/supabase/
