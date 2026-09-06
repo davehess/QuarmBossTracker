@@ -91,7 +91,7 @@ next touch one rather than assuming a missing row means a missing doc.
 ## The work ledger
 
 - **✅ Attendance layout: strips (default) or blocks, member's choice (web
-  1.7.23, 2026-09-04).** Hitya's pick from the beta side-by-side: *"I like
+  1.7.24, 2026-09-04; 1.7.23 was the docs without the code — see DECISIONS).** Hitya's pick from the beta side-by-side: *"I like
   blocks and strips, let's keep both as options, default to strips."*
   `RaidLayoutPicker` + `wp_raid_layout` cookie + `?layout=`; the calendar
   variant was deleted. First use of the new UI-options rule end to end.

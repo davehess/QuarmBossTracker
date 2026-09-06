@@ -38,8 +38,8 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'attendance-strips-or-blocks-2026-09-04c',
-    title: 'Web 1.7.23',
-    version: 'Web 1.7.23',
+    title: 'Web 1.7.24',
+    version: 'Web 1.7.24',
     date: '2026-09-04',
     headline: 'Attendance comes in two layouts you pick once: strips (the default) or month blocks.',
     features: [
