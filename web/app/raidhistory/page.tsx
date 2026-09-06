@@ -39,15 +39,14 @@ import {
 } from '@/lib/raidHeatmap';
 import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
 import RaidNightsStrips, { type StripNight } from '@/components/RaidNightsStrips';
-import RaidNightsCalendar, { type CalNight } from '@/components/RaidNightsCalendar';
+import RaidLayoutPicker from '@/components/RaidLayoutPicker';
+import { cookies } from 'next/headers';
+import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 
-// Layout variants for the side-by-side on b.wolfpack.quest (CLAUDE.md, "UI
-// gets OPTIONS"): a = month blocks (what production shows), b = week strips,
-// c = mini calendars. The switcher renders on beta only; production ignores
-// ?v= entirely until Hitya picks one.
-const IS_BETA = process.env.NEXT_PUBLIC_IS_BETA === '1';
-type Variant = 'a' | 'b' | 'c';
-const pickVariant = (v: string | undefined): Variant => (IS_BETA && (v === 'b' || v === 'c') ? v : 'a');
+// Two layouts, member's choice (Hitya, 2026-09-04, after the beta side-by-side:
+// "I like blocks and strips, let's keep both as options, default to strips").
+// The choice lives in the wp_raid_layout cookie; ?layout= overrides it for a
+// shared link. lib/raidLayout.ts decides; RaidLayoutPicker writes the cookie.
 
 export const dynamic = 'force-dynamic';
 
@@ -93,15 +92,14 @@ function clampInt(raw: string | undefined, lo: number, hi: number, dflt: number)
   return Math.max(lo, Math.min(hi, n));
 }
 
-export default async function RaidHistoryPage({ searchParams }: { searchParams: Promise<{ weeks?: string; full?: string; v?: string }> }) {
+export default async function RaidHistoryPage({ searchParams }: { searchParams: Promise<{ weeks?: string; full?: string; layout?: string }> }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/raidhistory');
 
   const sp = await searchParams;
   const weeksN = clampInt(sp.weeks, MIN_WEEKS, MAX_WEEKS, DEFAULT_WEEKS);
   const fullOverride = clampInt(sp.full, 1, 200, 0);
-  const variant = pickVariant(sp.v);
-  const qs = (v: Variant) => `/raidhistory?weeks=${weeksN}${fullOverride ? `&full=${fullOverride}` : ''}${v === 'a' ? '' : `&v=${v}`}`;
+  const layout = pickRaidLayout(sp.layout, (await cookies()).get(RAID_LAYOUT_COOKIE)?.value);
 
   const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
   const startKey = windowStart(todayKey, weeksN * 7);
@@ -133,12 +131,6 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
     figure: String(n.attendees.length),
     href: `/raid/review/${n.date}`,
   }));
-  const cal: CalNight[] = held.map(n => ({
-    date: n.date,
-    color: fillColor(n.attendees.length / full),
-    title: [nightLabel(n.date), ...nightNames(n), `${n.attendees.length} / ${full} raiders`].join(' · '),
-    href: `/raid/review/${n.date}`,
-  }));
   // Per-month header: nights and the average raider count that month.
   const monthSummaries: Record<string, string> = {};
   {
@@ -168,26 +160,20 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
         <div>
           <h1 className="text-2xl text-gold">📈 Raid history</h1>
           <p className="text-sm text-dim mt-1">
-            Every raid night in the last {Math.round(weeksN / 4.33)} months &mdash; each square is one night, with the raider
-            count under the date, coloured by how full the raid was. Hover a night for the raid; click it for that night&apos;s review.
+            Every raid night in the last {Math.round(weeksN / 4.33)} months, coloured by how full the raid was, with the raider
+            count on each night. Click a night for its review.
           </p>
         </div>
         <div className="text-xs text-dim flex items-center gap-3 flex-wrap">
           <span>Window:</span>
           {[26, 52, 104].map(w => (
-            <Link key={w} href={`/raidhistory?weeks=${w}${fullOverride ? `&full=${fullOverride}` : ''}${variant === 'a' ? '' : `&v=${variant}`}`}
+            <Link key={w} href={`/raidhistory?weeks=${w}${fullOverride ? `&full=${fullOverride}` : ''}`}
                   className={w === weeksN ? 'text-text underline' : 'text-blue hover:underline'}>
               {w === 26 ? '6mo' : w === 52 ? '1yr' : '2yr'}
             </Link>
           ))}
-          {IS_BETA && (
-            <>
-              <span className="ml-2">Layout:</span>
-              {([['a', 'A · month blocks'], ['b', 'B · week strips'], ['c', 'C · calendars']] as [Variant, string][]).map(([v, name]) => (
-                <Link key={v} href={qs(v)} className={v === variant ? 'text-text underline' : 'text-blue hover:underline'}>{name}</Link>
-              ))}
-            </>
-          )}
+          <span className="ml-2">Layout:</span>
+          <RaidLayoutPicker current={layout} />
         </div>
       </div>
 
@@ -201,10 +187,8 @@ export default async function RaidHistoryPage({ searchParams }: { searchParams: 
 
         {held.length === 0 ? (
           <div className="bg-bg border border-dim/40 rounded p-4 text-sm text-dim">No raid ticks in this window yet.</div>
-        ) : variant === 'b' ? (
+        ) : layout === 'strips' ? (
           <RaidNightsStrips nights={strips} label={`Raid nights by fullness, ${weeksN} weeks`} />
-        ) : variant === 'c' ? (
-          <RaidNightsCalendar nights={cal} label={`Raid nights by fullness, ${weeksN} weeks`} />
         ) : (
           <RaidHeatmap nights={chips} monthSummaries={monthSummaries}
                        label={`Raid nights by fullness, ${weeksN} weeks`} />
