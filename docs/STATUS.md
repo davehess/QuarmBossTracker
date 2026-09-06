@@ -4377,7 +4377,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   `SUPABASE_SERVICE_ROLE_KEY` was Production-scoped only. Rule now in CLAUDE.md:
   every var must be enabled for Preview too. Verify the rest are ticked.
 - **Local copy of wolfpack.quest is LIVE (2026-08-11)** at
-  `http://192.168.1.163:3000`, served by Coolify in an Unraid VM against the
+  `http://<coolify-vm-ip>:3000`, served by Coolify in an Unraid VM against the
   local Supabase stack. Remaining: Part F (Discord sign-in on the local GoTrue),
   gated on having the Discord client secret. Full steps + the four traps hit
   along the way in `docs/RUNBOOK-local-web-coolify.md`.
