@@ -2704,9 +2704,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   the raid NAME when it is within 3 days of `opendkp_raids.ts`, because that
   stamp is the row's CREATION day and officers pre-create — `buildNights`,
   `groupByMonth`, the red→orange→green fill scale, gold tick-share) and
-  `web/components/RaidHeatmap.tsx` (client: month blocks of 44px day chips,
-  weekday + day number + optional figure, one fixed tooltip; blocks stack on a
-  phone and tile four-across on desktop). Two surfaces: the **/me** 📅 section
+  two renderers the member switches between — **`RaidNightsStrips.tsx`** (the
+  DEFAULT: one row per week, newest first, one pill per night with the raid name
+  and a figure read inline; server component, no JS) and
+  **`RaidHeatmap.tsx`** (month blocks of 44px day chips with one fixed
+  tooltip; client) — chosen by `RaidLayoutPicker` → `wp_raid_layout` cookie,
+  `?layout=` override, `lib/raidLayout.ts` decides (Hitya's pick, 2026-09-04;
+  a mini-calendar variant was built and dropped). Two surfaces: the **/me** 📅 section
   (last 60 days, family union via `.overlaps('attendees')`, ids-only tick reads,
   rate-first stats) and **`/raidhistory`** (member page: month blocks with the
   raider count on each chip + per-night table; "full" = the 60-man

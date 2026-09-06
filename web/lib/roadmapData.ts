@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'attendance-strips-or-blocks-2026-09-04c',
+    title: 'Web 1.7.23',
+    version: 'Web 1.7.23',
+    date: '2026-09-04',
+    headline: 'Attendance comes in two layouts you pick once: strips (the default) or month blocks.',
+    features: [
+      {
+        name: 'Strips or blocks, your choice',
+        blurb: 'On /me and Raid history, a Strips / Blocks switch. Strips list each week with the raid\u2019s name and count read straight off the row, no hovering; blocks tile each month as day squares. Your pick is remembered in this browser.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'month-blocks-early-nights-2026-09-04b',
     title: 'Web 1.7.22',
     version: 'Web 1.7.22',

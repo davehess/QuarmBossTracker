@@ -135,6 +135,14 @@ Applied retroactively to the one design decided unilaterally today, the
 attendance layout: the month blocks stay on production as the baseline, and
 two genuinely different alternatives go up on beta for a side-by-side.
 
+**Picked the same evening (Hitya): "I like blocks and strips, let's keep both
+as options, default to strips."** So both ship as a member-facing switch on
+`/me` and `/raidhistory` (web 1.7.23), strips by default, the choice kept in a
+`wp_raid_layout` cookie the way the timezone picker keeps `wp_tz`, with
+`?layout=` for a shared link. The mini-calendar variant is deleted, not
+parked — a variant nobody chose is dead code. Graduated beta → main by
+cherry-pick; the `?v=` preview switcher is gone from both branches.
+
 ## Tower, written down as one picture
 
 Hitya: *"can you give me an MD about coolify and supabase backups on tower."*
@@ -160,7 +168,7 @@ runbooks did not:
 
 | Item | State |
 |---|---|
-| 🎨 **Pick the attendance layout** | A (month blocks, production) vs B (week strips) vs C (mini calendars) on `b.wolfpack.quest/raidhistory?v=b` / `?v=c` and `/me?v=b` / `?v=c`. Nothing promotes until Hitya picks |
+| ✅ **Attendance layout picked** | Strips (default) + blocks as a member switch, web 1.7.23. Calendars dropped |
 | ⚠ **Tower: are the 05:00 backup and 05:30 merge actually scheduled?** | Unconfirmed since 2026-08-11. `TOWER-coolify-and-supabase-backups.md` §6 — five commands on the box |
 | **Flip `flag_skip_uncurated_mobs`?** | Hitya's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
 | ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days and the heartbeat read went from N queries to one paged read; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out |
