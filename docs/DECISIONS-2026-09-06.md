@@ -130,3 +130,34 @@ that test feared still cannot creep back in.
   and its comment claiming the pipe OMITS the field is wrong — Zeal sends 0.
 - The agent's `_provableTargetId` should refuse 0 for the same reason, so we
   stop writing rows that need the read-side guard at all.
+
+## Two that looked like bad data and were not (web 1.7.25)
+
+**The damage-over-the-fight chart drew half a fight.** `encounter_timeline()`
+returns 1,846 rows for encounter `57f45a22`, totalling **1,198,871** damage
+across **340s** — which is the mob's whole 1.2M health bar, so the server-side
+curve was exactly right. The page called the RPC unpaged, PostgREST capped the
+response at **1,000 rows**, and those sum to **663,568** and stop at **195s**.
+The chart rendered that faithfully: "664k total" and bands ending at 3:15.
+
+The lesson is one the repo already learned for selects and never carried over:
+**the 1000-row cap applies to an RPC too, and it truncates silently.** Now paged
+through `selectAll`, whose contract this fits — the function's own
+`order by t_sec, char_name` makes range paging stable. Rows per bucket scale
+with raid size, so this only ever bit the big fights, which is exactly why it
+survived: a 20-man parse fits under the cap and looks perfect.
+⚠ `db-read-discipline.test.js` ratchets `.limit(>1000)` and would never have
+caught this — an unpaged `.rpc()` has no limit to notice.
+
+**The header folded to "Menu" on hover, on desktop.** Nav renders a hovered
+group's links IN FLOW inside the header row, deliberately, so they can never
+cover a phone's first viewport. In flow means they count toward `scrollWidth`,
+so hovering Prep (seven links) was a *real* overflow by the measurement's own
+definition — and because folding to compact REMOVES the overflow, the
+hysteresis that exists to stop oscillation then pinned the bar compact until
+the window grew 64px wider. Hover once, lose the nav for the rest of the visit.
+
+Fixed by marking the revealed row `data-nav-revealed` and having the fit
+measurement skip while it is present: transient chrome is not a claim about
+whether the bar fits. The overflow fold and its hysteresis are untouched —
+this is not a blanket "never fold".
