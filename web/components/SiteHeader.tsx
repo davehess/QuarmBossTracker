@@ -85,6 +85,17 @@ export default function SiteHeader({
     const measure = () => {
       const el = row.current;
       if (!el) return;
+      // ⚠ Skip while a nav group is open (Hitya, 2026-09-06: "the mouseover at
+      // the top of the window immediately shrinks down to menu on desktop").
+      // Nav renders the hovered group's links IN FLOW inside this row, on
+      // purpose, so they can never cover a phone's first viewport. That makes
+      // them count toward scrollWidth: hovering Prep (seven links) is a REAL
+      // overflow, so the bar folded to compact the instant the pointer landed
+      // on a category — and because folding removes the overflow, the
+      // hysteresis below then pinned it there until the window grew 64px.
+      // The revealed row is transient chrome, not a claim about whether the
+      // bar fits, so it must not drive the fold either way.
+      if (el.querySelector('[data-nav-revealed]')) return;
       const w = window.innerWidth;
       if (!tightRef.current) {
         if (el.scrollWidth > el.clientWidth + 1) {

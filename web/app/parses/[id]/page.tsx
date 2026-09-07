@@ -20,6 +20,7 @@ import { ClassificationChip } from '@/components/KillCard';
 import { FightEventLog } from '@/components/FightEventLog';
 import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
+import { selectAll } from '@/lib/selectAll';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -193,10 +194,19 @@ async function load(id: string) {
     // expand first. 5s buckets: finer than the 3.5-6.4s capture cadence buys
     // nothing but noise.
     // Failure here must never take the parse page down; the curve is additive.
+    // ⚠ PAGED, because PostgREST's 1000-row cap applies to an RPC exactly as it
+    // does to a select — and it truncates SILENTLY (Hitya, 2026-09-06: "this
+    // parse appears to be split in half for the damage over the fight bar").
+    // Measured on 57f45a22: the function returns 1,846 rows totalling 1,198,871
+    // damage across 340s — the mob's full 1.2M health bar — and the unpaged call
+    // delivered the first 1,000, which sum to 663,568 and stop at 195s. The
+    // chart drew exactly that and looked like a fight that ended halfway. Rows
+    // per bucket scale with raid size, so this only bites the big fights.
+    // The function's own ORDER BY (t_sec, char_name) makes range paging stable.
     let timelineRows: any[] = [];
     try {
-      const { data: tl } = await sb.rpc('encounter_timeline', { p_encounter_id: id, p_step_sec: 5 });
-      timelineRows = Array.isArray(tl) ? tl : [];
+      timelineRows = await selectAll<any>((from, to) =>
+        sb.rpc('encounter_timeline', { p_encounter_id: id, p_step_sec: 5 }).range(from, to));
     } catch { timelineRows = []; }
     if (encErr || !enc) return { error: encErr?.message || 'not found' };
 

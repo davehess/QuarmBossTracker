@@ -159,9 +159,14 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
       </nav>
 
       {/* The revealed row. Rendered in flow rather than absolutely positioned so
-          it can never cover the page's first viewport on a phone. */}
+          it can never cover the page's first viewport on a phone.
+          ⚠ data-nav-revealed is READ BY SiteHeader's fit measurement. In flow
+          means this row counts toward the header row's scrollWidth, and a wide
+          group (Prep has seven links) overflows it — so without that marker,
+          hovering a category folded the whole bar to "Menu" and the fold
+          hysteresis kept it there. See the measure() guard. */}
       {shown && (
-        <div id={`nav-${shown.id}`}
+        <div id={`nav-${shown.id}`} data-nav-revealed=""
              className="mt-1.5 flex flex-wrap gap-1.5 sm:gap-2 border-t border-border/60 pt-2">
           {shown.items.map(i => {
             const active = path === i.href || path?.startsWith(i.href + '/');
