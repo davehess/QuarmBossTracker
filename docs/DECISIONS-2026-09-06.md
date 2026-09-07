@@ -79,3 +79,54 @@ Supabase live and the fleet picks it up on the ~2-minute poll, so no restart and
 no push. The raid-night freeze covers pushes to `main` (which redeploy Railway
 and Vercel); it does not cover this. **The doc you are reading was committed
 during the freeze and pushed after it lifted at 00:30 ET.**
+
+## Target Info went blank on debuffs, and 0 was the reason (live, mid-fight)
+
+Hitya, on Kaas Thox Xi Aten Ha Ra in Vex Thal: *"not seeing any of this
+target's debuffs at all during this fight"* — Target Info showed three, all
+"fell off", while Extended Target showed eight with live timers.
+
+**The server was fine.** 129 `buff_casts` rows on that exact target name in 24
+minutes, 17 distinct debuffs, still arriving as we looked. Not shed, not a
+keying mismatch, not the ingest.
+
+**`target_id = 0` is what did it.** Zeal reports a target id of **0** when
+there is no target — it does not omit the field, which is what
+`apps/mimic/main.js` still says it does — and `Number.isFinite(0)` is true, so
+the id was stamped onto the row as a real spawn. `_idScopeKeep` only treated
+`null` as unproven, so a requester whose Zeal DID send a real id evaluated
+`0 === 592` and dropped every one of those rows.
+
+The measurement, taken live on that boss:
+
+| `target_id` | rows | observers |
+|---|---|---|
+| **0** | 111 | 13 |
+| 592 | 16 | 1 |
+| 153 | 7 | 1 |
+
+The three debuffs left on screen — Boil Blood, Ignite Blood, Splurt — are
+exactly the spells carried by the id-matching rows. Extended Target sends no
+spawn id, so it never reaches this filter, which is why the same data rendered
+correctly one overlay over.
+
+**Blast radius was one person.** In the trailing hour exactly one client sent
+real ids (Melting), so only that raider saw it. That is not luck, it is the
+leading edge: every raider who updates Zeal walks into it next.
+
+**Fixed in `_idScopeKeep` (bot 3.1.123): 0 is unproven on BOTH sides.** Done in
+the read path rather than the write path deliberately — it repairs the 111 rows
+already stored, and needs no Mimic update.
+
+⚠ **This overrode a test that asserted the opposite** ("spawn id 0 is a real
+slot", guarding a real falsy-zero trap). The premise was wrong, and the live
+data is what settles it: 13 observers wrote ONLY 0, and the one spawn-id-capable
+client wrote 0 on 169 observations against 51 real ids. Nobody targets slot 0
+that often. The guard is an explicit `Number(v) === 0`, never `!v`, so the trap
+that test feared still cannot creep back in.
+
+**Two follow-ups, neither shipped:**
+- `apps/mimic/main.js` should map a pipe `target_id` of 0 to null at the edge,
+  and its comment claiming the pipe OMITS the field is wrong — Zeal sends 0.
+- The agent's `_provableTargetId` should refuse 0 for the same reason, so we
+  stop writing rows that need the read-side guard at all.

@@ -10203,12 +10203,25 @@ function _zoneScopeKeepForName(requesterZone, observerZone, nameZones) {
 // Unproven is not disproven: those rows already matched on name AND zone.
 //
 //   requester has no id     → keep  (every unpatched client; today's behaviour)
-//   row id is null          → keep  (unproven, not disproven)
+//   row id is null OR 0     → keep  (unproven, not disproven)
 //   row id === requester's  → keep  (the mob in front of you)
 //   row id differs          → DROP  (a proven sibling — the whole point)
+//
+// ⚠ ZERO IS UNPROVEN, NOT SPAWN ZERO — and missing that emptied Target Info
+// for the whole raid (Hitya, live on Kaas Thox, 2026-09-06). Zeal reports a
+// target id of 0 when there is no target, `Number.isFinite(0)` is true, so the
+// agent's _provableTargetId stamped 0 onto the row instead of null. Measured
+// that night: 111 of 134 rows on that boss — 13 of 15 observers — carried
+// target_id 0, so a requester whose own Zeal DID send a real id compared
+// `0 === 592` and dropped every one of them. Target Info showed the three
+// debuffs from the single id-matching observer while Extended Target, which
+// sends no id and therefore never reaches this filter, showed all eight.
+// The null check alone is not enough because 0 is not null; both spellings of
+// "I could not prove a spawn" have to pass.
 function _idScopeKeep(requesterId, rowId) {
-  if (requesterId == null) return true;
-  if (rowId == null) return true;
+  const unproven = (v) => v == null || Number(v) === 0;
+  if (unproven(requesterId)) return true;
+  if (unproven(rowId)) return true;
   return Number(rowId) === Number(requesterId);
 }
 

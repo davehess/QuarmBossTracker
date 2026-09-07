@@ -58,6 +58,24 @@ describe('what survives the spawn-id filter', () => {
     expect(_idScopeKeep(undefined, 4471)).toBe(true);
   });
 
+  // ⚠ THE LIVE BUG, 2026-09-06 (Hitya, mid-fight on Kaas Thox Xi Aten Ha Ra).
+  // Zeal reports target id 0 when there is no target, Number.isFinite(0) is
+  // true, so the agent stamped 0 rather than null. 111 of 134 rows on that boss
+  // carried 0; the one raider whose Zeal sent a REAL id compared 0 === 592 and
+  // dropped all of them, leaving Target Info showing three debuffs out of
+  // eight. Zero means UNPROVEN on BOTH sides of the comparison.
+  it('treats 0 as unproven, not as spawn zero', () => {
+    expect(_idScopeKeep(592, 0)).toBe(true);     // the row could not prove a spawn
+    expect(_idScopeKeep(0, 592)).toBe(true);     // the requester could not prove one
+    expect(_idScopeKeep('0', 592)).toBe(true);   // query strings arrive as text
+    expect(_idScopeKeep(592, '0')).toBe(true);
+  });
+
+  // The feature still has to work — 0 is not a blanket "keep everything".
+  it('still drops a proven sibling once BOTH ids are real', () => {
+    expect(_idScopeKeep(592, 153)).toBe(false);
+  });
+
   // ⚠ The other half of the same cliff: an observer who was targeting the tank
   // when the debuff landed cannot prove an id. Unproven is not disproven.
   it('keeps a row whose own id is unknown', () => {
@@ -71,12 +89,21 @@ describe('what survives the spawn-id filter', () => {
     expect(_idScopeKeep('4425', '4471')).toBe(false);
   });
 
-  // Spawn id 0 is a real slot, and `if (!id)` anywhere in this path would treat
-  // it as absent — the same falsy-zero trap that shipped as pet_id: -1.
-  it('treats spawn id 0 as a real id, not a missing one', () => {
+  // ⚠ THIS TEST USED TO ASSERT THE OPPOSITE, and the assumption under it was
+  // wrong. It read "spawn id 0 is a real slot", guarding a falsy-zero trap that
+  // is real elsewhere — but Zeal SENDS 0 for "no target" rather than omitting
+  // the field, which apps/mimic/main.js still documents as an omission. So 0
+  // reaches us meaning unproven, and treating it as a real slot is what emptied
+  // Target Info on 2026-09-06. The measurement that settles it: on one boss,
+  // 13 of 15 observers wrote ONLY 0, and the single client with spawn-id
+  // support wrote 0 on 169 observations and a real id on 51. Nobody targets
+  // slot 0 that often. Kept as an explicit `Number(v) === 0`, never `!v`, so
+  // the falsy-zero trap the old test feared still cannot creep in via a
+  // null/undefined/empty-string shortcut.
+  it('treats 0 as unproven on either side, not as spawn zero', () => {
+    expect(_idScopeKeep(4471, 0)).toBe(true);
+    expect(_idScopeKeep(0, 4471)).toBe(true);
     expect(_idScopeKeep(0, 0)).toBe(true);
-    expect(_idScopeKeep(0, 4471)).toBe(false);
-    expect(_idScopeKeep(4471, 0)).toBe(false);
   });
 
   // Pinned side by side because the asymmetry is the thing most likely to be
