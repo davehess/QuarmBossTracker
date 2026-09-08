@@ -327,10 +327,15 @@ let _eventsMod = null;
 function _events() { return _eventsMod || (_eventsMod = require('./raidEvents')); }
 function _setEventsModule(m) { _eventsMod = m; }
 
-async function planFor(client, ts) {
+// `zoneId` — the kill's eqemu zone id when the caller knows it. It only matters
+// when two events' windows overlap (Hitya 2026-09-07: a Seru mini and a Ring
+// War on the same night, every kill landing by the clock rather than by where
+// it happened); see raidEvents.pickEventAt for the rule.
+async function planFor(client, ts, zoneId = null) {
   const at = Number.isFinite(ts) ? ts : Date.now();
   let ev = null;
-  try { ev = await _events().activeEventAt(client, at); } catch { ev = null; }
+  try { ev = await _events().activeEventAt(client, at, zoneId); } catch { ev = null; }
+  const zoneNote = Number.isFinite(Number(zoneId)) && Number(zoneId) > 0 ? ` · kill in zone ${Number(zoneId)}` : '';
 
   if (ev) {
     if (ev.kind === 'event') {
@@ -339,7 +344,8 @@ async function planFor(client, ts) {
         key:   `evt_${String(ev.id).replace(/\W+/g, '_')}`,
         name:  eventThreadName(ev),
         nightKey: nightKey(ev.startMs),
-        why:   `event window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`,
+        why:   `event window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`
+               + (ev.zoneIds?.length ? ` · event zones ${ev.zoneIds.join(',')}` : '') + zoneNote,
         event: ev,
       };
     }
@@ -350,7 +356,7 @@ async function planFor(client, ts) {
       key:   nightKey(ev.startMs),
       name:  '🗡️ Raid Night — ' + nightLabel(ev.startMs),
       nightKey: nightKey(ev.startMs),
-      why:   `raid event "${ev.title}" window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`,
+      why:   `raid event "${ev.title}" window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}` + zoneNote,
       event: ev,
     };
   }
@@ -374,11 +380,11 @@ async function planFor(client, ts) {
  * (and kind null) when the feature is off, nothing is scheduled, or Discord
  * refused. ALWAYS best-effort: every caller must have a fallback destination.
  */
-async function getRaidNightTarget(client, ts) {
+async function getRaidNightTarget(client, ts, zoneId = null) {
   const none = { thread: null, kind: null, event: null };
   if (!raidNightThreadsEnabled() || !client) return none;
 
-  const plan = await planFor(client, ts).catch(() => null);
+  const plan = await planFor(client, ts, zoneId).catch(() => null);
   if (!plan) return none;
   const { key } = plan;
 

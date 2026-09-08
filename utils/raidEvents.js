@@ -49,6 +49,8 @@
 
 'use strict';
 
+const fs   = require('node:fs');
+const path = require('node:path');
 const { getDefaultTz, partsInTzAt } = require('./timezone');
 
 const MIN = 60 * 1000;
@@ -114,6 +116,14 @@ function normalizeEvent(raw) {
     startMs,
     endMs,
     assumedEnd: !Number.isFinite(Number(raw.endMs)) || Number(raw.endMs) <= startMs,
+    // Zone routing (Hitya 2026-09-07). The calendar entry's free text, and the
+    // zone ids annotateZones() derives from it — carried on the event so the
+    // sticky map, the plan's `why` and the tests all see the same answer.
+    description: raw.description == null ? '' : String(raw.description).slice(0, 1000),
+    location:    raw.location    == null ? '' : String(raw.location).slice(0, 200),
+    zoneIds:     Array.isArray(raw.zoneIds)
+      ? [...new Set(raw.zoneIds.map(Number).filter(n => Number.isFinite(n) && n > 0))].sort((a, b) => a - b)
+      : [],
   };
 }
 
@@ -133,10 +143,33 @@ function windowContains(ev, ts) {
  * nearest `ts` (Hitya: overlapping events → nearest). Ties break on the shorter
  * event, then on id, so the choice is deterministic across bot restarts —
  * otherwise two uploads seconds apart could pick different threads.
+ *
+ * ⚠ THE ZONE COMES FIRST when the caller knows it (Hitya 2026-09-07: "there
+ * are two events going on tonight and mobs are being posted to each one,
+ * instead of specific ones posted per zone"). Nearest-start is the right rule
+ * for one event at a time and exactly the wrong one for two at once: a Seru
+ * mini and a Ring War overlapped, so once the clock passed the midpoint
+ * between their start times every Seru kill went to the Ring War thread. So:
+ *   1. live events that NAME the kill's zone (annotateZones)  → only those
+ *   2. none do, but some name no zone at all                  → only those
+ *      (an event that names a DIFFERENT zone is not this kill's event; one
+ *      that names nothing could be)
+ *   3. otherwise, and whenever the zone is unknown             → today's rule
+ * Never fewer candidates than one: the zone only narrows, it cannot empty.
  */
-function pickEventAt(events, ts) {
-  const live = (Array.isArray(events) ? events : []).filter(e => e && windowContains(e, ts));
+function pickEventAt(events, ts, zoneId) {
+  let live = (Array.isArray(events) ? events : []).filter(e => e && windowContains(e, ts));
   if (live.length === 0) return null;
+  const zid = Number(zoneId);
+  if (live.length > 1 && Number.isFinite(zid) && zid > 0) {
+    const named = (e) => Array.isArray(e.zoneIds) && e.zoneIds.length > 0;
+    const here  = live.filter(e => named(e) && e.zoneIds.includes(zid));
+    if (here.length) live = here;
+    else {
+      const unnamed = live.filter(e => !named(e));
+      if (unnamed.length) live = unnamed;
+    }
+  }
   live.sort((a, b) => {
     const da = Math.abs(ts - a.startMs), db = Math.abs(ts - b.startMs);
     if (da !== db) return da - db;
@@ -229,11 +262,160 @@ async function fetchDiscordEvents(client) {
       title:  e?.name,
       startMs: Number(e?.scheduledStartTimestamp),
       endMs:   Number(e?.scheduledEndTimestamp),
+      // Free text the zone is read from (see zoneIdsForEvent). `location` is
+      // only set on EXTERNAL events — /announce writes the zone there; an
+      // officer's hand-made voice-channel event carries it in the title.
+      description: e?.description,
+      location:    e?.entityMetadata?.location,
     });
     if (ev) out.push(ev);
   }
   return out;
 }
+
+// ── Zone vocabulary ──────────────────────────────────────────────────────────
+// Which zone(s) a calendar entry is about, read from its own text. Whole-phrase
+// matches only — never single tokens ("plane" is in 25 zone names, "temple" in
+// six) — against a vocabulary built from three places:
+//   • eqemu_zone            long name (with and without a leading "The"), short
+//                           name; "(Instanced)" / "(Alt)" rows fold into their
+//                           base name so "Plane of Sky" is {71, 1071}
+//   • data/zones.json       the guild's own names + `shortName` ("seru" for
+//                           Sanctus Seru) + an optional `aliases` list — THIS is
+//                           where guild vocabulary goes ("ring war" → Great
+//                           Divide). Data, hot-read, no code change to extend.
+//   • data/bosses.json      boss names + nicknames → the boss's zone
+// A kill's zone id is `floor(npc_id / 1000)` (the catalog's own scheme, see
+// utils/mobSpecials.zoneIdOf) or the uploader's live-state zone_id, so both
+// sides of the comparison are eqemu zone ids.
+
+const _SHORT_STOP = new Set(['load', 'load2', 'clz', 'tutorial']);   // not places
+
+function _normText(s) {
+  return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+function _stripThe(n) { return n.replace(/^the /, ''); }
+
+/**
+ * alias (normalized phrase) → sorted zone ids. Pure; every input optional.
+ * `eqemuRows` = [[zone_id, short_name, long_name], …].
+ */
+function buildZoneAliasIndex(eqemuRows = [], zonesJson = [], bossesJson = []) {
+  const index  = new Map();
+  const byLong = new Map();   // normalized long name, "the" stripped → ids
+  const byShort = new Map();  // short_name → ids
+  const add = (alias, ids) => {
+    const n = _normText(alias);
+    if (n.length < 3 || !ids?.length) return;
+    const cur = index.get(n) || [];
+    for (const id of ids) if (!cur.includes(id)) cur.push(id);
+    index.set(n, cur.sort((a, b) => a - b));
+  };
+  const remember = (map, key, id) => {
+    if (!key) return;
+    const cur = map.get(key) || [];
+    if (!cur.includes(id)) cur.push(id);
+    map.set(key, cur.sort((a, b) => a - b));
+  };
+  for (const row of (Array.isArray(eqemuRows) ? eqemuRows : [])) {
+    const id = Number(row?.[0]);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const short = _normText(row?.[1]);
+    const long  = _stripThe(_normText(String(row?.[2] || '').replace(/\s*\((instanced|alt|alternate)\)\s*$/i, '')));
+    if (long) remember(byLong, long, id);
+    if (short && !_SHORT_STOP.has(short)) remember(byShort, short, id);
+  }
+  for (const [long, ids] of byLong) { add(long, ids); add('the ' + long, ids); }
+  for (const [short, ids] of byShort) add(short, ids);
+  for (const z of (Array.isArray(zonesJson) ? zonesJson : [])) {
+    const ids = byLong.get(_stripThe(_normText(z?.name))) || byShort.get(_normText(z?.shortName));
+    if (!ids) continue;
+    add(z.name, ids); add(z.shortName, ids);
+    for (const a of (Array.isArray(z?.aliases) ? z.aliases : [])) add(a, ids);
+  }
+  for (const b of (Array.isArray(bossesJson) ? bossesJson : [])) {
+    const ids = byLong.get(_stripThe(_normText(b?.zone)));
+    if (!ids) continue;
+    add(b.name, ids);
+    for (const nick of (Array.isArray(b?.nicknames) ? b.nicknames : [])) add(nick, ids);
+  }
+  return index;
+}
+
+/** Zone ids whose alias appears as a whole phrase in `text`. */
+function zoneIdsInText(text, index) {
+  if (!index || typeof index.entries !== 'function') return [];
+  const t = ' ' + _normText(text) + ' ';
+  if (t.trim() === '') return [];
+  const out = new Set();
+  for (const [alias, ids] of index) {
+    if (t.includes(' ' + alias + ' ')) for (const id of ids) out.add(id);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * The event's zone(s): TITLE first, and only if the title names nothing the
+ * description, then the location. Tiered, not unioned, on purpose — the Ring
+ * War entry that started this read "Directly after Seru Mini heading to Great
+ * Divide", so its description names BOTH zones and a union would have routed
+ * every Seru kill to it all over again. A title is what the officer called
+ * the event; a description is where they explain it.
+ */
+function zoneIdsForEvent(ev, index) {
+  for (const field of [ev?.title, ev?.description, ev?.location]) {
+    const ids = zoneIdsInText(field, index);
+    if (ids.length) return ids;
+  }
+  return [];
+}
+
+/** Stamp `zoneIds` onto each event from its text. No index → leave as-is. */
+function annotateZones(events, index) {
+  const list = Array.isArray(events) ? events : [];
+  if (!index) return list;
+  for (const ev of list) if (ev) ev.zoneIds = zoneIdsForEvent(ev, index);
+  return list;
+}
+
+const ZONE_INDEX_TTL_MS = 6 * 60 * MIN;
+let _zoneIdx = null, _zoneIdxAt = 0, _zoneIdxInflight = null;
+
+function _readData(name) {
+  try { return JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'data', name), 'utf8')); }
+  catch { return []; }
+}
+
+/**
+ * The live vocabulary, built once per 6h from eqemu_zone + the two data files.
+ * Fail-open: no Supabase → an index with no zone ids → every event un-zoned →
+ * exactly today's nearest-start behaviour. An empty result is not cached, so
+ * a transient failure retries on the next event refresh.
+ */
+async function zoneAliasIndex(nowMs = Date.now()) {
+  if (_zoneIdx && nowMs - _zoneIdxAt < ZONE_INDEX_TTL_MS) return _zoneIdx;
+  if (_zoneIdxInflight) return _zoneIdxInflight;
+  _zoneIdxInflight = (async () => {
+    let rows = [];
+    try {
+      const supabase = require('./supabase');
+      if (supabase?.isEnabled?.()) {
+        // ~200 rows — well under PostgREST's silent 1000-row cap.
+        rows = await supabase.select('eqemu_zone', 'select=zone_id,short_name,long_name&order=zone_id.asc&limit=1000') || [];
+      }
+    } catch (err) { console.warn('[raid-events] eqemu_zone read failed:', err?.message); }
+    const idx = buildZoneAliasIndex(
+      rows.map(r => [r?.zone_id, r?.short_name, r?.long_name]), _readData('zones.json'), _readData('bosses.json'));
+    if (idx.size) { _zoneIdx = idx; _zoneIdxAt = nowMs; }
+    return _zoneIdx || idx;
+  })().finally(() => { _zoneIdxInflight = null; });
+  return _zoneIdxInflight;
+}
+
+/** Sync lookup against the loaded vocabulary (empty until the first refresh). */
+function zoneIdsForText(text) { return _zoneIdx ? zoneIdsInText(text, _zoneIdx) : []; }
+/** Test seam — install (or clear, with null) the vocabulary without Supabase. */
+function _setZoneIndex(idx) { _zoneIdx = idx || null; _zoneIdxAt = idx ? Date.now() : 0; }
 
 /**
  * Raid-Helper events, read from the `rh_events` mirror the bot ALREADY syncs
@@ -316,6 +498,9 @@ async function _refresh(client, nowMs) {
     want.rh      ? fetchRaidHelperEvents(nowMs).catch(() => []) : Promise.resolve([]),
   ]);
   const merged = mergeEventSources(discordEvents, rhEventRows);
+  let index = null;
+  try { index = await zoneAliasIndex(nowMs); } catch { index = null; }
+  annotateZones(merged, index);
   _rememberAll(merged, nowMs);
   _lastFetchAt = nowMs;
   return merged;
@@ -338,17 +523,18 @@ async function knownEvents(client, nowMs = Date.now()) {
 
 /**
  * The event whose posting window contains `ts`, with its classification —
- * `{ ...event, kind: 'raid'|'event', window }` — or null.
+ * `{ ...event, kind: 'raid'|'event', window }` — or null. `zoneId` (the kill's
+ * eqemu zone id, optional) breaks a tie between overlapping events.
  */
-async function activeEventAt(client, ts = Date.now()) {
+async function activeEventAt(client, ts = Date.now(), zoneId = null) {
   const events = await knownEvents(client, Date.now());
-  const ev = pickEventAt(events, ts);
+  const ev = pickEventAt(events, ts, zoneId);
   if (!ev) return null;
   return { ...ev, kind: classifyEvent(ev, getDefaultTz()), window: windowFor(ev) };
 }
 
 /** Test seam. */
-function _resetCache() { _sticky.clear(); _lastFetchAt = 0; _inflight = null; }
+function _resetCache() { _sticky.clear(); _lastFetchAt = 0; _inflight = null; _zoneIdx = null; _zoneIdxAt = 0; _zoneIdxInflight = null; }
 /** Test seam — inject events without touching Discord. */
 function _seed(events, nowMs = Date.now()) { _rememberAll(events.map(normalizeEvent).filter(Boolean), nowMs); _lastFetchAt = nowMs; }
 
@@ -358,5 +544,7 @@ module.exports = {
   normalizeEvent, windowFor, windowContains, pickEventAt, classifyEvent,
   fetchDiscordEvents, fetchRaidHelperEvents, mergeEventSources,
   knownEvents, activeEventAt,
-  _resetCache, _seed,
+  buildZoneAliasIndex, zoneIdsInText, zoneIdsForEvent, annotateZones,
+  zoneAliasIndex, zoneIdsForText,
+  _resetCache, _seed, _setZoneIndex,
 };
