@@ -356,6 +356,23 @@ live card rather than adding one. Load-bearing:
   the web review reads the same key. No migration; a durable
   `raid_night_trash` table is proposed (not applied) in the design doc.
 
+### Member network diagnostic (`scripts/mimic-netdiag.ps1` + `.bat`) — 2026-09-07
+A read-only PowerShell bundle a member runs on their own PC when Mimic is
+blamed for a network or hang problem (Ashieron's "internet goes down when I
+zone"). Double-click the `.bat`; output is `Desktop\mimic-netdiag-<date>.zip`
+for the officer. Collects: last boot + relevant processes (handle counts),
+Mimic's redacted config + `agent.log`/`.1` tails and `[zeal]`/`[upload-queue]`/
+error highlights, EQ + Zeal versions, eqgame compat-mode flags, Zeal crash
+bundles' `crash_reason.txt`, zone/connection lines only from the EQ logs (chat
+stripped), Windows System/Application/NetworkProfile/WLAN/DHCP/NDIS event logs
+for the window, adapter driver + power-management + advanced properties, TCP
+dynamic-port range and registry tweaks, Winsock catalog, AV, Fast Startup, and
+a socket snapshot (per-state, per-process, DNS/ping/443 checks). `-Live` is
+the same bundle taken WHILE it is broken; `-Watch` appends socket/handle
+counts to `Desktop\mimic-netwatch.csv` every 20s so a failure is recorded as
+it happens and the bundle picks the CSV up. Credentials are redacted; the
+zip still carries hostname/LAN IPs, so it is for the officer, never a channel.
+
 ### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
 Which thread a timestamp wants is decided by the guild's **Discord scheduled
 events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,
