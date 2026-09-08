@@ -53,6 +53,78 @@ per refresh, so with two events one thread carries both zones' rolls and the
 other none. Same class of bug, different path; it needs `looted_items.zone`
 (a zone-id string) to scope each card. Queued below.
 
+## Ashieron's "Mimic takes my internet down" report — what the bot saw (investigated, no fix)
+
+Ashieron via Mimic 2.6.5, 21:22 ET: zoning out while strafe-running, *"the
+game hangs, then disconnects, and then my internet connection completely goes
+down … Discord disconnects, browser can not connect … adapter looks active.
+Only way to fix is to restart. When I stop running mimic, it does not happen
+again."* Twice ME→DSP, once Seru→DSP. Hitya: *"serious implications here."*
+
+**Tonight's instance, reconstructed from the bot's HTTP log and Supabase.**
+His household's address was identified by pairing his 436-event upload with
+the request that carried it (⚠ the deploy log's timestamps are batched
+flushes, not event times — two uploads from different people share the same
+microsecond — so pair on the HTTP stream, never on `[agent] upload from`).
+
+| ET | What |
+|---|---|
+| 20:27–20:31 | Donaldus (his alt) at the Seru mini, Sanctus Seru; last live-state 20:31:27 |
+| 20:31:31–20:32:47 | Agent still polling the bot at the normal 2/s, every request 200, no retries, no burst — but **no live-state posts** in those 75s: the Zeal-fed stream had gone quiet, i.e. EQ was already hung |
+| **20:32:47.666** | Last request ever from his machine. Clean cut mid-heartbeat |
+| 20:33–21:08 | Nothing from his address, in every sample |
+| 21:09:20 | Ashieron enters Dawnshroud (after his restart); 21:22 files the report |
+
+So this was the **Seru→DSP** case, on the alt, and the hang preceded the
+network death by about 75 seconds.
+
+**What that rules out.** The obvious theory — Mimic exhausting the machine's
+outbound sockets or a router's NAT table — predicts *new* connections failing
+while *established* ones keep working, and the agent rides warm keep-alive
+sockets, so under that failure its polls would have continued. They stopped
+dead instead, in the same second, with no error shape before it. Combined
+with the wire rate (2/s, fleet-wide ~20/s to the bot across ~19 machines) and
+the code review below, the "too many connections" class is refuted for this
+instance.
+
+**Code review, for the record.** Mimic batches the 225-event/s pipe into one
+localhost POST per ~2s and throttled state pushes, all with `res.resume()` and
+3s timeouts; overlays poll the agent at 0.5–2s over keep-alive; the agent's
+outbound goes through a 15s-drain durable queue with flat 30s transport
+backoff and fire-and-forget ephemeral posts with 8s timeouts; no
+immediate-retry patterns, no intervals under 1s. Nothing here can open
+connections at the rate a port or NAT exhaustion needs.
+
+**What is left, honestly.** The bot can only see the wire. A total cut with
+the adapter still "up", fixed only by a reboot, is the signature of a NIC or
+Wi-Fi driver hang or a Winsock-level failure on the box — and those correlate
+with gaming load, which is exactly the kind of correlation that reads as
+"only when Mimic is running" at n=3. The one Mimic mechanism that could
+plausibly touch the *game* at zone time is Zeal-pipe backpressure (Zeal emits
+a burst at zone-in; if its pipe write blocks on a slow reader, EQ's thread
+stalls). Untested; do not assert it.
+
+**Settling it needs the box, not the bot:**
+1. Event Viewer → Windows Logs → System, around 20:32 on 09-07: any adapter
+   reset / link-down / driver event names the real culprit in one line.
+2. `%APPDATA%\wolfpack-mimic\agent.log` (Mimic's `userData/agent.log`) around
+   20:31–20:33: the `[zeal]` disconnect line and its reason.
+3. If it recurs: before rebooting, `netstat -ano | find /c "TIME_WAIT"` and
+   `Get-NetTCPConnection | Group-Object OwningProcess | Sort Count -Desc`.
+   Thousands of TIME_WAITs or one PID with thousands of sockets would revive
+   the exhaustion theory; a normal count buries it.
+4. One question splits the space: **do other devices in the house lose
+   internet at the same time?** Yes → router. No → the PC.
+5. Bisect Mimic, not all-or-nothing: `"zealPipe": false` in
+   `mimic.config.json` (the opt-out exists in `main.js` but is not in
+   Settings). If the zone hang stops with the pipe off, the pipe coupling is
+   real and worth fixing upstream.
+
+**Two product follow-ups this exposed, both queued:** bug feedback attaches
+only the EQ log — the agent log is the one that answers "what was Mimic doing"
+and should ride along; and the Zeal-pipe opt-out should be a Settings toggle
+so members can bisect without editing JSON.
+
 
 ## Open — read this first
 
@@ -63,4 +135,6 @@ other none. Same class of bug, different path; it needs `looted_items.zone`
 | Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested on 2026-09-06 data (`p_started_at > ended_at`); NOT applied, Hitya's call | also two duplicate rows (Thall Xundraux 22:05, Kaas Thox 23:14) untouched — merging is destructive |
 | Loot bidding: update / remove a bid | open — options A (withdraw), B (edit), C (show stack) presented; awaiting pick | first live cancel on a low-stakes bid |
 | Zeal sends target id 0 for "no target" | open — bot guards it (3.1.123); Mimic `main.js` should null a 0 at the edge and its "pipe omits the field" comment is wrong; agent `_provableTargetId` should refuse 0 | beta |
+| Ashieron: "Mimic takes my internet down" | investigated 2026-09-07 — bot-side evidence refutes socket/NAT exhaustion (total cut at 20:32:47 ET, established sockets died too, wire rate normal); root cause is on the box | needs his Event Viewer System log + agent.log around 20:32; the "other devices?" question; `zealPipe:false` bisect |
+| Feedback should attach agent.log; Zeal-pipe opt-out should be a Settings toggle | open — both surfaced by the above | Mimic → beta |
 | P40 / local model | open — assessment given 2026-09-07 (stats first, no GPU; if the card goes anywhere it is Tower, first job voice transcription, gated on a consent call); design doc offered, not written | Tower has no free x16; Hitya may move a card out to make room |
