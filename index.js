@@ -10109,6 +10109,28 @@ async function _liveZoneMap() {
   _liveZoneCache = { at: Date.now(), map };
   return map;
 }
+// Which ZONE a kill happened in, as an eqemu zone id, for routing its card to
+// the right event thread when two events overlap (Hitya 2026-09-07). Two
+// sources, best first, and null when neither knows — null means "route by the
+// clock, as before", never a wrong zone:
+//   1. a curated boss → its bosses.json zone name → the zone vocabulary
+//      (raidEvents.zoneIdsForText; the smallest id is the base zone when an
+//      instanced twin shares the name)
+//   2. the uploader's own live-state zone (10-min freshness, _liveZoneMap)
+async function _killZoneId(bossName, character) {
+  try {
+    const b = bossName ? require('./commands/parse').findBossFromName(bossName, getBosses()) : null;
+    if (b?.zone) {
+      const ids = require('./utils/raidEvents').zoneIdsForText(b.zone);
+      if (ids.length) return ids[0];
+    }
+  } catch { /* fall through to the uploader's zone */ }
+  try {
+    const live = (await _liveZoneMap()).get(String(character || '').toLowerCase());
+    if (live && Number.isFinite(live.zone_id) && live.zone_id > 0) return live.zone_id;
+  } catch { /* unknown */ }
+  return null;
+}
 // Pure predicate: does a cross-client observation belong in the requester's
 // Target Info? (Source-sliced by test/target-info-zone.test.js — keep the
 // signature + body stable.)
@@ -17888,7 +17910,11 @@ async function _handleAgentUpload(req, res) {
       // that finishes at 00:05 still lands in the night it began in), then the
       // original QA thread. Resolution is cached per night — not per card.
       const _rn = require('./utils/raidNight');
-      const _target = await _rn.getRaidNightTarget(client, startedMs)
+      // Which zone the kill was in, so two events running at once each get
+      // their own kills rather than whichever start time is nearer (Hitya
+      // 2026-09-07). Null when unknown → the clock decides, as before.
+      const _zoneId = await _killZoneId(encounter.boss_name, character).catch(() => null);
+      const _target = await _rn.getRaidNightTarget(client, startedMs, _zoneId)
         .catch(() => ({ thread: null, kind: null, event: null }));
       // Volume knob (Hitya 2026-07-31) — 1-player/1-second trash cards flooded
       // night one's thread. Known bosses always pass; everything else has to

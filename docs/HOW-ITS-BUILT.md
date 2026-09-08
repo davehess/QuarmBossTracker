@@ -364,8 +364,19 @@ so no new gateway intent and no new credential; results are cached
 so an event Discord stops listing (status → COMPLETED) still resolves through
 its own tail. **Window = start − `RAID_EVENT_PRE_MIN` (30) … end +
 `RAID_EVENT_POST_MIN` (15)**; an event with no end time is assumed
-`RAID_EVENT_DEFAULT_HOURS` (4) long. Overlapping windows resolve to the event
-whose *start* is nearest the timestamp. **Raid-Helper is enrichment only** —
+`RAID_EVENT_DEFAULT_HOURS` (4) long. **Overlapping windows resolve by ZONE
+first** (Hitya 2026-09-07 — a Seru mini and a Ring War on one night had every
+kill landing by the clock): each event's zone(s) are read from its own text,
+title first, then description, then location (`zoneIdsForEvent`), against a
+vocabulary of eqemu long/short names + `data/zones.json` names/`shortName`/
+**`aliases`** (guild words go there — `"ring war"` → Great Divide) + boss
+names/nicknames (`buildZoneAliasIndex`). A kill's zone is its curated boss's
+zone or the uploader's live-state zone (`_killZoneId` in index.js). Events
+naming that zone win; else events naming no zone; else — and whenever the zone
+is unknown — the event whose *start* is nearest (`pickEventAt`). Tests:
+`test/event-thread-zone-routing.test.js`. ⚠ The 🎲 rolled-loot card still
+resolves ONE event per refresh (`_refreshEventRollCardNow`) — per-event roll
+cards are a queued follow-up. **Raid-Helper is enrichment only** —
 read from the `rh_events` mirror `utils/raidhelperApi.js` already syncs (needs
 the existing `RH_API_KEY`) and it can only fill an end time or add an event
 Discord never got. Everything fails open to "no event scheduled".

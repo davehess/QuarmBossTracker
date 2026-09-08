@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'event-threads-by-zone-2026-09-07',
+    title: 'Bot 3.1.124',
+    version: 'Web 1.7.26 \u00b7 Bot 3.1.124',
+    date: '2026-09-07',
+    headline: 'Two events on one night each get their own kills.',
+    features: [],
+    fixes: [
+      'Kill cards land in the thread for the zone they happened in, not whichever event started nearest the clock \u2014 a Seru mini and a Ring War running together no longer share each other\u2019s kills.',
+      'The parse page\u2019s damage-over-the-fight chart draws the whole fight again on big raids; it used to stop partway through.',
+      'Hovering a menu category no longer collapses the whole top bar to \u201cMenu\u201d on desktop.',
+      'Mob Info shows every debuff on your target again for clients whose Zeal reports spawn ids.',
+    ],
+  },
+  {
     key: 'attendance-strips-or-blocks-2026-09-04c',
     title: 'Web 1.7.24',
     version: 'Web 1.7.24',

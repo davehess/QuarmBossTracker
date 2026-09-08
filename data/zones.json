@@ -795,6 +795,7 @@
     "id": "great_divide",
     "name": "Great Divide",
     "shortName": "greatdivide",
+    "aliases": ["ring war"],
     "expansion": "Velious",
     "continent": "Velious",
     "closestPorts": ["Great Divide"],
