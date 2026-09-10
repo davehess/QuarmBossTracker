@@ -373,6 +373,24 @@ counts to `Desktop\mimic-netwatch.csv` every 20s so a failure is recorded as
 it happens and the bundle picks the CSV up. Credentials are redacted; the
 zip still carries hostname/LAN IPs, so it is for the officer, never a channel.
 
+### Setup checklist: which wall did you hit (`/api/state.eqFolder`) — 2026-09-10
+The checklist used to answer "no live Zeal feed" with **"install/enable Zeal"**
+whatever was on disk, which walked a member with Zeal already installed into a
+second failure. `_eqFolderState()` in the agent (fs-only, 60s cache, mirrors
+`_zealExportOnCampState`) now reports two tri-states over `/api/state.eqFolder`:
+`zealInstalled` (Zeal.asi **or** `uifiles/zeal` present in any known EQ dir) and
+`writable` (**a probe write** — ⚠ never `fs.accessSync(W_OK)`, which on Windows
+reads the read-only *attribute*, not the ACL, so Program Files answers
+"writable" and the write fails anyway), plus `unwritableDir` for the message.
+The **Zeal connected** row branches on the first: absent → the install button;
+present → *ask about compatibility mode and Run as administrator*, the two
+confirmed field causes, both on the same Compatibility tab. A new **EQ folder
+writable** row reports the second and names the folder. Mimic's
+`zeal-install-update` also translates an `EPERM`/`EACCES` into the three real
+fixes via `_friendlyEqWriteError`, keeping the errno for support. Tests:
+`test/setup-checklist-eq-folder.test.js` (rows and the folder check both RUN,
+the latter against a fake fs). Agent 3.6.35, beta.
+
 ### Event-driven posting windows (`utils/raidEvents.js`) — v2, 2026-07-31
 Which thread a timestamp wants is decided by the guild's **Discord scheduled
 events**, not a weekday table. `guild.scheduledEvents.fetch()` is a REST call,

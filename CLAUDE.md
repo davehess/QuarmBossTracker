@@ -558,6 +558,20 @@ Rules that keep them married:
   populated — see the catalog cheat-sheet). Historical rows were backfilled from
   `data/bosses.json`; `find_or_create_encounter` still doesn't set zone on
   insert — new encounters land NULL until the RPC/call-site passes it.
+- ⚠ **SUPERSEDED 2026-09-10 — ZEAL 1.4.6 SHIPS THE SPAWN ID ON THE PIPE.** The
+  whole boundary below was written against pre-1.4.6 Zeal and is no longer the
+  constraint. Measured on our own data the night it landed: **twelve distinct
+  spawn ids for `A Shik`nar Forager` inside one 3-minute window**, 27 debuff
+  landings separated cleanly, straight off the pipe — the exact N≥3 same-name
+  case the old text says that surface cannot support. Adoption is a *fleet*
+  problem now, not a capability one: 11 of 19 uploading raiders were sending
+  ids on 2026-09-10 versus one a week earlier, and ~52% of landings are still
+  name-only because the rest have not updated. The agent stores it as
+  `buff_casts.target_id`, and ⚠ **a `0` there means "no target", not spawn
+  zero** (bot 3.1.123 guards it; the Mimic-side null-at-the-edge is still open).
+  Keep the text below ONLY as the history of why consumers are name-keyed —
+  do not cite it as a live limit, and re-read `docs/zeal-spawn-id-request.md`
+  as closed rather than pending.
 - **Zeal pipe carries no spawn id — same-name mobs are NOT disambiguable.**
   The named pipe's mob surface is the target (gauge slot 6) + pet (slot 16)
   gauges: display **name + HP per-mille only**, no entity id, level, or loc
