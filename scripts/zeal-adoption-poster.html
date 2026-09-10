@@ -21,7 +21,13 @@
          count(distinct observer) filter (where target_id > 0) as with_ids
   from buff_casts where cast_at > now() - interval '7 days' group by 1 order by 1 desc;
 
-  -- the hero: most same-name spawns alive inside one 3-minute window
+  -- the hero: same-name spawns alive at once WITH THE RAID ENGAGED.
+  -- ⚠ Do NOT rank by spawn count alone. The first cut of this poster did, and
+  -- got "A Shik`nar Forager", 12 at once — which Hitya rejected on sight
+  -- because that is a bard kiting trash, i.e. the mundane case, not a raid
+  -- problem. Rank by DISTINCT SPELLS (breadth of raid participation): two
+  -- songs = a kite, twelve spells across five raiders = adds in a real pull.
+  -- require spells >= 5 and read the top by spells, not by spawns.
   with w as (select target,
       date_trunc('hour', cast_at) + (floor(extract(minute from cast_at)/3)*interval '3 min') as bucket,
       count(distinct target_id) filter (where target_id > 0) as spawns, count(*) as landings, min(cast_at) as at
@@ -59,10 +65,16 @@ h1 em{font-style:normal;color:#d29922}
 .mob{background:#0d1117;border:1px solid #30363d;border-radius:7px;padding:11px 8px;text-align:center}
 .mob .n{font-family:"SF Mono",Consolas,monospace;font-size:12px;color:#8b949e;white-space:nowrap}
 .mob .id{font-family:"SF Mono",Consolas,monospace;font-size:11px;color:#484f58;margin-top:4px}
-.mob.hit{border-color:#d29922;background:rgba(210,153,34,.1)}
-.mob.hit .n{color:#d29922;font-weight:600}
-.mob.hit .id{color:#d29922}
-.verdict{display:flex;gap:14px;margin-top:20px}
+.mob.hit{border-color:rgba(63,185,80,.55);background:rgba(63,185,80,.09)}
+.mob.hit .n{color:#3fb950;font-weight:600}
+.mob.hit .id{color:#57a869}
+.pile{display:flex;align-items:center;gap:20px;margin-top:11px;background:rgba(248,81,73,.08);
+ border:1px solid rgba(248,81,73,.42);border-radius:8px;padding:15px 20px}
+.pile-n{font-size:52px;font-weight:800;color:#f85149;line-height:1;letter-spacing:-.02em;flex-shrink:0}
+.pile-h{font-size:16px;color:#f0f6fc;font-weight:700}
+.pile-s{font-family:"SF Mono",Consolas,monospace;font-size:11.5px;color:#8b949e;margin-top:5px;line-height:1.55}
+.pile-s b{color:#c9d1d9}
+.verdict{display:flex;gap:14px;margin-top:16px}
 .v{flex:1;border-radius:8px;padding:14px 16px;font-size:15px;line-height:1.4}
 .v .lbl{font-family:"SF Mono",Consolas,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
  margin-bottom:6px;display:block}
@@ -111,35 +123,36 @@ h1 em{font-style:normal;color:#d29922}
 </style></head><body>
 
 <div class="kicker">Wolf Pack · Zeal 1.4.6</div>
-<h1>Your slow landed.<br>We just can't tell you <em>on what</em>.</h1>
-<div class="sub">Zeal 1.4.6 stamps a <b>spawn ID</b> on your target. Mimic passes it along. Without it every mob
-sharing a name is one blurred row on the raid dashboards — and half our raid data is still that blur.</div>
+<h1>We couldn't tell you which mob<br>your spell landed on. <em>Until now.</em></h1>
+<div class="sub">Zeal <b>1.4.6</b> stamps a <b>spawn ID</b> on your target and Mimic passes it along. Every DoT, snare,
+slow and debuff finally sticks to the mob it actually hit — instead of being averaged across every add that shares its name.
+<b>Half our raid data is still that average.</b></div>
 
 <div class="hero">
   <div class="hero-top">
-    <div class="hero-t">One 3-minute window. Twelve mobs. One name.</div>
-    <div class="hero-when">real spawn IDs · Sun 09-07 22:27 ET · 27 landings</div>
+    <div class="hero-t">One pull. Five Kromrif Veterans. Fifty-five landings.</div>
+    <div class="hero-when">real spawn IDs · Wed 09-09 21:24 ET · raid night</div>
   </div>
-  <div class="hero-s">All twelve were called <span class="mono">A Shik`nar Forager</span>. One bard's <span class="mono">Denon`s Bereavement</span> + <span class="mono">Selo`s Chords</span> landed 27 times across them — and we only know it was twelve <b style="color:#3fb950">because that bard had already updated</b>.</div>
-  <div class="mobs">
-    <div class="mob"><div class="n">1 hit</div><div class="id">#789</div></div>
-    <div class="mob"><div class="n">2 hits</div><div class="id">#964</div></div>
-    <div class="mob"><div class="n">1 hit</div><div class="id">#1168</div></div>
-    <div class="mob"><div class="n">1 hit</div><div class="id">#1459</div></div>
-    <div class="mob"><div class="n">1 hit</div><div class="id">#1488</div></div>
-    <div class="mob"><div class="n">3 hits</div><div class="id">#1754</div></div>
-    <div class="mob"><div class="n">3 hits</div><div class="id">#2657</div></div>
-    <div class="mob hit"><div class="n">4 hits</div><div class="id">#2804 ← yours</div></div>
-    <div class="mob"><div class="n">4 hits</div><div class="id">#3082</div></div>
-    <div class="mob"><div class="n">3 hits</div><div class="id">#3876</div></div>
-    <div class="mob"><div class="n">3 hits</div><div class="id">#4013</div></div>
-    <div class="mob"><div class="n">1 hit</div><div class="id">#4587</div></div>
+  <div class="hero-s">Five giants, one name, adds up at once. The raiders on <span class="mono">1.4.6</span> pinned their casts to a specific giant. Everyone else's fell into the pile below.</div>
+  <div class="mobs" style="grid-template-columns:repeat(5,1fr)">
+    <div class="mob hit"><div class="n">6 landings</div><div class="id">#3508</div></div>
+    <div class="mob hit"><div class="n">3 landings</div><div class="id">#3268</div></div>
+    <div class="mob hit"><div class="n">2 landings</div><div class="id">#3275</div></div>
+    <div class="mob hit"><div class="n">2 landings</div><div class="id">#3505</div></div>
+    <div class="mob hit"><div class="n">1 landing</div><div class="id">#3267</div></div>
+  </div>
+  <div class="pile">
+    <div class="pile-n">41</div>
+    <div class="pile-t">
+      <div class="pile-h">landings we cannot place on any of them</div>
+      <div class="pile-s"><b>12 different spells</b> from <b>5 raiders</b> — Ensnare · Snare · Splurt · Immolate · Shroud of Pain · Shroud of Hate · Tashan · Tashanian · Occlusion of Sound · Fufil`s Curtailing Chant · Instill · Vexing Mordinia</div>
+    </div>
   </div>
   <div class="verdict">
     <div class="v bad"><span class="lbl">Without the spawn ID</span>
-      <div class="t">All 27 debuffs pile onto <b>one name</b>. Target Info shows a mob that is part every Forager in the room. Nobody can see which one you actually landed on.</div></div>
+      <div class="t">Every one of those 41 collapses onto <b>one name</b>. Was the snare on the add the offtank has? Did the slow land on the one being tanked, or the one loose in the raid? <b>Unanswerable.</b></div></div>
     <div class="v good"><span class="lbl">With Zeal 1.4.6 + Mimic</span>
-      <div class="t">Each landing sticks to <b>the mob it hit</b>. Your slow, your mez, your tash — on the right row, for the whole raid to see.</div></div>
+      <div class="t">Each landing sticks to <b>the giant it hit</b>. Target Info, the dashboards and the raid review all read one mob at a time — including the one <i>you</i> are tanking.</div></div>
   </div>
 </div>
 
@@ -164,14 +177,14 @@ sharing a name is one blurred row on the raid dashboards — and half our raid d
 
 <div class="who">
   <h2>Whose casts we need most</h2>
-  <div class="lead">Anything that has to land on <i>a specific mob</i> is the data we are losing. These are the spells our own logs show going blind:</div>
+  <div class="lead">Anything that has to land on <i>one specific mob</i> is data we are currently losing — and that is most of what a raid does to an add:</div>
   <div class="roles">
-    <div class="role"><div class="r">Shaman</div><div class="s">Turgur's Insects · Malosini<br>Did the slow land, on the right one?</div></div>
-    <div class="role"><div class="r">Enchanter</div><div class="s">Tashanian · Cripple · Mesmerize<br>Which add is actually mezzed?</div></div>
-    <div class="role"><div class="r">Bard</div><div class="s">Occlusion of Sound<br>Whose song is on what</div></div>
-    <div class="role"><div class="r">Cleric</div><div class="s">CH chain · Divine Intervention<br>The right tank, on the right mob</div></div>
-    <div class="role"><div class="r">Necro / Mage</div><div class="s">Charm · pet targets<br>Your pet's mob, told apart from its twin</div></div>
-    <div class="role"><div class="r">Everyone else</div><div class="s">Target Info · Extended Target<br>Reads true instead of averaged</div></div>
+    <div class="role"><div class="r">Anyone landing a DoT</div><div class="s">Druid · Bard · Shaman · Necro · SK<br>Splurt, Immolate, Funeral Pyre — on which add?</div></div>
+    <div class="role"><div class="r">Debuffers</div><div class="s">Mage &amp; Shaman Malo · Enchanter Tash<br>Landed, or landed on its twin?</div></div>
+    <div class="role"><div class="r">Snare &amp; root</div><div class="s">Druid · Ranger<br>Which one is actually held in place</div></div>
+    <div class="role"><div class="r">Tanks</div><div class="s">Offtank targeting<br>Your add, told apart from the MT's</div></div>
+    <div class="role"><div class="r">Shaman slows</div><div class="s">Turgur's Insects<br>Did it stick to the one being tanked?</div></div>
+    <div class="role"><div class="r">Clerics &amp; everyone</div><div class="s">CH chain · Target Info<br>Reads one mob, not an average</div></div>
   </div>
 </div>
 
