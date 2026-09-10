@@ -1,4 +1,4 @@
-<#
+﻿<#
 mimic-netdiag.ps1 — one-shot network / Mimic / EverQuest diagnostic bundle.
 
 WHY (Hitya, 2026-09-07): Ashieron reported "when I zone out the game hangs,
