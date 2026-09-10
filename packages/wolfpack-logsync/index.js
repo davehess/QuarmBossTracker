@@ -12041,6 +12041,63 @@ function _zealExportOnCampState() {
   return _zealCampVal;
 }
 
+// ── EQ folder health for the Setup checklist (Hitya, 2026-09-10) ───────────
+// Two facts about the EQ folder that the checklist could not see, and both
+// cost a raider an evening (Abrahms/AirborneSapper, 2026-09-10):
+//
+//   1. IS ZEAL ALREADY THERE? The "Zeal connected" row said "install/enable
+//      Zeal" while Zeal was installed and working — the feed was dead for an
+//      unrelated reason (EQ elevated, Mimic not). He followed the row, clicked
+//      Check / install Zeal, and that failed too. A row that names the wrong
+//      problem walks people into a second one.
+//   2. CAN WE WRITE TO IT? His EQ lives in C:\Program Files (x86)\TAKP, whose
+//      ACL denies a non-elevated Mimic. Zeal installs, UI backups and "Set up
+//      for me" all need that folder, and all of them failed with a raw EPERM
+//      string no member could act on.
+//
+// ⚠ THE WRITE TEST IS A PROBE WRITE, NOT fs.accessSync(W_OK). On Windows Node's
+// access() reflects the read-only ATTRIBUTE, not the ACL — a Program Files
+// folder answers "writable" and the write then fails anyway. Only an actual
+// create tells the truth. The probe is a 0-byte file removed immediately; if
+// the process dies between the two, a stray .mimic-write-test is harmless.
+//
+// Deliberately fs-only and synchronous, like its sibling above: no spawns, no
+// registry reads, no new timers. Compatibility mode and elevation are ASKED
+// about in the row text rather than detected — detection needs child_process
+// on a poll path and can be added later if the question stops being enough.
+let _eqFolderAt  = 0;
+let _eqFolderVal = { zealInstalled: null, writable: null, unwritableDir: null };
+function _eqFolderState() {
+  if (Date.now() - _eqFolderAt < 60_000) return _eqFolderVal;
+  _eqFolderAt = Date.now();
+  const out = { zealInstalled: null, writable: null, unwritableDir: null };
+  try {
+    const dirs = _eqSetupDirs().filter(d => {
+      try { return fs.statSync(d).isDirectory(); } catch { return false; }
+    });
+    if (dirs.length === 0) { _eqFolderVal = out; return out; }   // nulls = cannot tell
+    let withZeal = 0, writable = 0;
+    for (const d of dirs) {
+      // Either half is proof Zeal has been installed here: the loader itself,
+      // or the uifiles/zeal tree the release ships alongside it.
+      if (fs.existsSync(path.join(d, 'Zeal.asi')) ||
+          fs.existsSync(path.join(d, 'uifiles', 'zeal'))) withZeal++;
+      const probe = path.join(d, '.mimic-write-test');
+      try {
+        fs.writeFileSync(probe, '');
+        writable++;
+        try { fs.unlinkSync(probe); } catch { /* stray probe file is harmless */ }
+      } catch {
+        if (!out.unwritableDir) out.unwritableDir = d;
+      }
+    }
+    out.zealInstalled = withZeal > 0;
+    out.writable      = writable === dirs.length;
+  } catch { /* fall through with nulls — never break the state build */ }
+  _eqFolderVal = out;
+  return out;
+}
+
 // EQ install dirs the agent knows about — WOLFPACK_EQ_DIR plus each watched
 // log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
 function _eqSetupDirs() {
@@ -12602,6 +12659,10 @@ function _serializeForDashboard() {
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
     // found (can't tell). Drives the Setup-checklist row.
     zealExportOnCamp:   _zealExportOnCampState(),
+    // Is Zeal on disk, and can we write to the EQ folder? Drives the Setup
+    // checklist's "Zeal connected" wording + the "EQ folder writable" row.
+    // Every field is tri-state; null means we know of no EQ folder to check.
+    eqFolder:           _eqFolderState(),
     // Prefer the focused character's encounter when the agent is watching
     // multiple logs (one player, several characters). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
@@ -15125,6 +15186,24 @@ function _setupCheckRows(s) {
   const freshLog = logs.some(w => w && w.lastSeen && (now - w.lastSeen) < 15 * 60 * 1000);
   const zeal = Array.isArray(s.zealClients) ? s.zealClients : [];
   const zealLive = zeal.some(c => c && c.live);
+  const eqf = (s && s.eqFolder) || {};
+  const zealSeenNotLive = zeal.length > 0 && !zealLive;
+  // ⚠ "install/enable Zeal" is the right answer ONLY when Zeal is genuinely
+  // absent, and until 2026-09-10 this row said it unconditionally. Abrahms had
+  // Zeal installed and a dead feed (EQ elevated, Mimic not); the row sent him
+  // to Check / install Zeal, which then failed on its own unrelated error. A
+  // row that names the wrong problem walks people into a second one — so the
+  // wording branches on what is actually on disk (s.eqFolder.zealInstalled).
+  // The two live causes of "installed but silent" are both on the same
+  // Compatibility tab, and both are confirmed field cases: XP compatibility
+  // mode (Chadivarius, 2026-08-13) and an elevation mismatch (Jankzer
+  // 2026-07-05, Abrahms 2026-09-10). We ask rather than detect — reading the
+  // AppCompatFlags registry needs a spawn on a poll path.
+  const zealBad = eqf.zealInstalled === true
+    ? 'Zeal IS installed in your EQ folder, so this is not an install problem. Are you running EQ in compatibility mode, or as administrator? Right-click eqgame.exe → Properties → Compatibility: untick compatibility mode, and if "Run as administrator" is ticked, either untick it or run Mimic as admin to match. Restart EQ after changing either.'
+    : eqf.zealInstalled === false
+      ? 'no Zeal found in your EQ folder — use Check / install Zeal below (close EQ first), then restart EverQuest to load it.'
+      : 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work';
   const rows = [
     { ok: !!s.mimicSignedIn, label: 'Mimic account linked',
       good: 'signed in — uploads land under your name',
@@ -15140,8 +15219,11 @@ function _setupCheckRows(s) {
       bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
     { ok: zealLive, label: 'Zeal connected',
       good: 'live buff/group data flowing from Zeal',
-      bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
-      info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
+      bad: zealBad,
+      // \`info\` REPLACES the detail when set, so it may only win when it says
+      // more than zealBad does — otherwise the compatibility/admin question
+      // above is silently swallowed for anyone with a stale snapshot.
+      info: (zealSeenNotLive && eqf.zealInstalled !== true) ? 'last-seen snapshots only — log a character in' : null },
   ];
   return rows;
 }
@@ -15173,6 +15255,24 @@ function renderSetupChecks(s) {
     h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
        + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+  }
+  // EQ folder writable — the silent precondition for three buttons on this very
+  // card (Set up for me, Check / install Zeal) plus UI Studio backups. A folder
+  // Mimic cannot write is why they fail, and they used to fail with a raw
+  // EPERM string no member could act on (Abrahms, EQ in Program Files,
+  // 2026-09-10). Tri-state and always shown, like Export on /camp above.
+  if (eqf.writable === true) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px">Mimic can install Zeal, write your settings and back up your UI.</td></tr>';
+  } else if (eqf.writable === false) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px"><b>' + esc(eqf.unwritableDir || 'your EQ folder') + '</b> is read-only for Mimic, so Zeal installs, <b>Set up for me</b> and UI backups will all fail there. Move your EQ folder out of Program Files, or grant your Windows account write access to it. Running Mimic as administrator also works.</td></tr>';
+  } else {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px">No EQ folder known yet — point Mimic at your EverQuest install in Settings.</td></tr>';
   }
   // UI backups — point at UI Studio so a reinstall / new PC restores the EQ
   // window layout + eqclient.ini in one click.
