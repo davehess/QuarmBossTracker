@@ -1,0 +1,192 @@
+<!--
+  zeal-adoption-poster.html — the "update Zeal 1.4.6 + run Mimic" poster
+  (Hitya, 2026-09-10: "render me a convincing image that tells people why they
+  should update zeal and run mimic even if they don't use the overlays").
+
+  Render (Chromium headless; --force-device-scale-factor=2 gives a 2x PNG):
+    chromium --headless --no-sandbox --hide-scrollbars \
+      --force-device-scale-factor=2 --window-size=1200,1566 \
+      --screenshot=zeal-update-why.png file://$PWD/scripts/zeal-adoption-poster.html
+
+  ⚠ EVERY NUMBER BELOW IS HARDCODED AND DATED. It was true for 3–10 Sep 2026.
+  Re-rendering without re-running these does not refresh it, it back-dates it —
+  and the whole argument is that the figures are measured, so shipping a stale
+  one costs more than not shipping at all. Re-run all three, then edit:
+
+  -- headline % + the per-day bars + "N of M raiders"
+  select date_trunc('day', cast_at)::date as day, count(*) as landings,
+         round(100.0 * count(*) filter (where target_id is null or target_id = 0)
+               / nullif(count(*),0), 1) as pct_blind,
+         count(distinct observer) as observers,
+         count(distinct observer) filter (where target_id > 0) as with_ids
+  from buff_casts where cast_at > now() - interval '7 days' group by 1 order by 1 desc;
+
+  -- the hero: most same-name spawns alive inside one 3-minute window
+  with w as (select target,
+      date_trunc('hour', cast_at) + (floor(extract(minute from cast_at)/3)*interval '3 min') as bucket,
+      count(distinct target_id) filter (where target_id > 0) as spawns, count(*) as landings, min(cast_at) as at
+    from buff_casts where cast_at > now() - interval '14 days' group by 1,2)
+  select * from w where spawns > 1 order by spawns desc, landings desc limit 5;
+
+  -- the per-chip ids + hit counts for that exact window
+  select target_id, count(*) as landings, string_agg(distinct spell_name, ', ') as spells
+  from buff_casts where target = '<name>' and target_id > 0
+    and cast_at >= '<window start>' and cast_at < '<window end>'
+  group by target_id order by target_id;
+
+  ⚠ buff_casts.target_id = 0 means "no target", NOT spawn zero — count it as
+  blind alongside NULL, which is what the queries above do.
+-->
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{width:1200px;height:1576px;background:#0d1117;color:#c9d1d9;
+ font-family:-apple-system,"Segoe UI",Roboto,sans-serif;padding:44px 48px;position:relative;overflow:hidden}
+body::before{content:"";position:absolute;inset:0;
+ background:radial-gradient(900px 480px at 78% -8%,rgba(31,111,235,.16),transparent 70%);pointer-events:none}
+.mono{font-family:"SF Mono",Consolas,"Roboto Mono",monospace}
+.kicker{font-family:"SF Mono",Consolas,monospace;font-size:15px;letter-spacing:.22em;color:#a371f7;
+ text-transform:uppercase;margin-bottom:14px}
+h1{font-size:60px;line-height:1.04;letter-spacing:-.022em;color:#f0f6fc;font-weight:800}
+h1 em{font-style:normal;color:#d29922}
+.sub{font-size:22px;line-height:1.45;color:#8b949e;margin-top:16px;max-width:1000px}
+.sub b{color:#c9d1d9;font-weight:600}
+.hero{margin-top:32px;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:26px 28px}
+.hero-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.hero-t{font-size:19px;color:#f0f6fc;font-weight:700}
+.hero-when{font-family:"SF Mono",Consolas,monospace;font-size:13px;color:#6e7681}
+.hero-s{font-size:14px;color:#8b949e;margin-bottom:18px}
+.mobs{display:grid;grid-template-columns:repeat(6,1fr);gap:9px}
+.mob{background:#0d1117;border:1px solid #30363d;border-radius:7px;padding:11px 8px;text-align:center}
+.mob .n{font-family:"SF Mono",Consolas,monospace;font-size:12px;color:#8b949e;white-space:nowrap}
+.mob .id{font-family:"SF Mono",Consolas,monospace;font-size:11px;color:#484f58;margin-top:4px}
+.mob.hit{border-color:#d29922;background:rgba(210,153,34,.1)}
+.mob.hit .n{color:#d29922;font-weight:600}
+.mob.hit .id{color:#d29922}
+.verdict{display:flex;gap:14px;margin-top:20px}
+.v{flex:1;border-radius:8px;padding:14px 16px;font-size:15px;line-height:1.4}
+.v .lbl{font-family:"SF Mono",Consolas,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+ margin-bottom:6px;display:block}
+.v.bad{background:rgba(248,81,73,.09);border:1px solid rgba(248,81,73,.38)}
+.v.bad .lbl{color:#f85149}.v.bad .t{color:#c9d1d9}
+.v.good{background:rgba(63,185,80,.09);border:1px solid rgba(63,185,80,.38)}
+.v.good .lbl{color:#3fb950}.v.good .t{color:#c9d1d9}
+.v .t b{color:#f0f6fc}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:26px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px 26px}
+.card h2{font-size:13px;font-family:"SF Mono",Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;
+ color:#6e7681;margin-bottom:16px;font-weight:600}
+.bigstat{font-size:56px;font-weight:800;color:#f85149;line-height:1;letter-spacing:-.02em}
+.bigstat small{font-size:22px;color:#8b949e;font-weight:500;letter-spacing:0}
+.statnote{font-size:15px;color:#8b949e;margin-top:12px;line-height:1.45}
+.bars{display:flex;flex-direction:column;gap:9px;margin-top:2px}
+.bar{display:grid;grid-template-columns:52px 1fr 52px;align-items:center;gap:10px;
+ font-family:"SF Mono",Consolas,monospace;font-size:12px}
+.bar .d{color:#6e7681}
+.bar .track{height:16px;background:#0d1117;border-radius:4px;overflow:hidden;border:1px solid #21262d}
+.bar .fill{display:block;height:100%;border-radius:3px}
+.bar .p{color:#8b949e;text-align:right}
+.who{margin-top:26px;background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px 26px}
+.who h2{font-size:13px;font-family:"SF Mono",Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;
+ color:#6e7681;margin-bottom:6px;font-weight:600}
+.who .lead{font-size:15px;color:#8b949e;margin-bottom:18px}
+.roles{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+.role{background:#0d1117;border:1px solid #30363d;border-left:3px solid #a371f7;border-radius:7px;padding:13px 15px}
+.role .r{font-size:16px;color:#f0f6fc;font-weight:700}
+.role .s{font-family:"SF Mono",Consolas,monospace;font-size:12px;color:#8b949e;margin-top:5px;line-height:1.5}
+.steps{margin-top:26px;background:linear-gradient(100deg,rgba(31,111,235,.14),rgba(163,113,247,.09));
+ border:1px solid #1f6feb;border-radius:12px;padding:26px 28px;display:flex;align-items:center;gap:28px}
+.steps .l{flex:1}
+.steps h3{font-size:25px;color:#f0f6fc;font-weight:800;letter-spacing:-.01em}
+.steps p{font-size:16px;color:#8b949e;margin-top:9px;line-height:1.5}
+.steps p b{color:#c9d1d9}
+.two{display:flex;gap:12px;flex-shrink:0}
+.step{background:#0d1117;border:1px solid #30363d;border-radius:9px;padding:15px 19px;text-align:center;width:172px}
+.step .num{font-family:"SF Mono",Consolas,monospace;font-size:11px;color:#1f6feb;letter-spacing:.16em;font-weight:700}
+.step .a{font-size:17px;color:#f0f6fc;font-weight:700;margin-top:7px}
+.step .b{font-size:12px;color:#6e7681;margin-top:4px}
+.foot{margin-top:24px;display:flex;justify-content:space-between;
+ align-items:center;font-family:"SF Mono",Consolas,monospace;font-size:12px;color:#6e7681;
+ border-top:1px solid #21262d;padding-top:16px}
+.foot b{color:#8b949e}
+</style></head><body>
+
+<div class="kicker">Wolf Pack · Zeal 1.4.6</div>
+<h1>Your slow landed.<br>We just can't tell you <em>on what</em>.</h1>
+<div class="sub">Zeal 1.4.6 stamps a <b>spawn ID</b> on your target. Mimic passes it along. Without it every mob
+sharing a name is one blurred row on the raid dashboards — and half our raid data is still that blur.</div>
+
+<div class="hero">
+  <div class="hero-top">
+    <div class="hero-t">One 3-minute window. Twelve mobs. One name.</div>
+    <div class="hero-when">real spawn IDs · Sun 09-07 22:27 ET · 27 landings</div>
+  </div>
+  <div class="hero-s">All twelve were called <span class="mono">A Shik`nar Forager</span>. One bard's <span class="mono">Denon`s Bereavement</span> + <span class="mono">Selo`s Chords</span> landed 27 times across them — and we only know it was twelve <b style="color:#3fb950">because that bard had already updated</b>.</div>
+  <div class="mobs">
+    <div class="mob"><div class="n">1 hit</div><div class="id">#789</div></div>
+    <div class="mob"><div class="n">2 hits</div><div class="id">#964</div></div>
+    <div class="mob"><div class="n">1 hit</div><div class="id">#1168</div></div>
+    <div class="mob"><div class="n">1 hit</div><div class="id">#1459</div></div>
+    <div class="mob"><div class="n">1 hit</div><div class="id">#1488</div></div>
+    <div class="mob"><div class="n">3 hits</div><div class="id">#1754</div></div>
+    <div class="mob"><div class="n">3 hits</div><div class="id">#2657</div></div>
+    <div class="mob hit"><div class="n">4 hits</div><div class="id">#2804 ← yours</div></div>
+    <div class="mob"><div class="n">4 hits</div><div class="id">#3082</div></div>
+    <div class="mob"><div class="n">3 hits</div><div class="id">#3876</div></div>
+    <div class="mob"><div class="n">3 hits</div><div class="id">#4013</div></div>
+    <div class="mob"><div class="n">1 hit</div><div class="id">#4587</div></div>
+  </div>
+  <div class="verdict">
+    <div class="v bad"><span class="lbl">Without the spawn ID</span>
+      <div class="t">All 27 debuffs pile onto <b>one name</b>. Target Info shows a mob that is part every Forager in the room. Nobody can see which one you actually landed on.</div></div>
+    <div class="v good"><span class="lbl">With Zeal 1.4.6 + Mimic</span>
+      <div class="t">Each landing sticks to <b>the mob it hit</b>. Your slow, your mez, your tash — on the right row, for the whole raid to see.</div></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <h2>Where we stand right now</h2>
+    <div class="bigstat">52%<small> of landings, still blind</small></div>
+    <div class="statnote">Of every debuff the guild recorded today, more than half still cannot be tied to a specific mob — because the raider who saw it has not updated yet.</div>
+  </div>
+  <div class="card">
+    <h2>It is already working · blind landings per day</h2>
+    <div class="bars">
+      <div class="bar"><span class="d">Sep 3</span><span class="track"><span class="fill" style="width:99.9%;background:#f85149"></span></span><span class="p">99.9%</span></div>
+      <div class="bar"><span class="d">Sep 6</span><span class="track"><span class="fill" style="width:100%;background:#f85149"></span></span><span class="p">100%</span></div>
+      <div class="bar"><span class="d">Sep 7</span><span class="track"><span class="fill" style="width:91.9%;background:#f85149"></span></span><span class="p">91.9%</span></div>
+      <div class="bar"><span class="d">Sep 8</span><span class="track"><span class="fill" style="width:49.3%;background:#d29922"></span></span><span class="p">49.3%</span></div>
+      <div class="bar"><span class="d">Sep 10</span><span class="track"><span class="fill" style="width:51.9%;background:#d29922"></span></span><span class="p">51.9%</span></div>
+    </div>
+    <div class="statnote"><b style="color:#3fb950">11 of 19</b> raiders uploading today were already sending spawn IDs. A week ago it was one.</div>
+  </div>
+</div>
+
+<div class="who">
+  <h2>Whose casts we need most</h2>
+  <div class="lead">Anything that has to land on <i>a specific mob</i> is the data we are losing. These are the spells our own logs show going blind:</div>
+  <div class="roles">
+    <div class="role"><div class="r">Shaman</div><div class="s">Turgur's Insects · Malosini<br>Did the slow land, on the right one?</div></div>
+    <div class="role"><div class="r">Enchanter</div><div class="s">Tashanian · Cripple · Mesmerize<br>Which add is actually mezzed?</div></div>
+    <div class="role"><div class="r">Bard</div><div class="s">Occlusion of Sound<br>Whose song is on what</div></div>
+    <div class="role"><div class="r">Cleric</div><div class="s">CH chain · Divine Intervention<br>The right tank, on the right mob</div></div>
+    <div class="role"><div class="r">Necro / Mage</div><div class="s">Charm · pet targets<br>Your pet's mob, told apart from its twin</div></div>
+    <div class="role"><div class="r">Everyone else</div><div class="s">Target Info · Extended Target<br>Reads true instead of averaged</div></div>
+  </div>
+</div>
+
+<div class="steps">
+  <div class="l">
+    <h3>Two steps. No overlays required.</h3>
+    <p>No DPS meter. No callouts. No text-to-speech. Leave <b>every overlay switched off</b> —
+    Mimic sitting in the tray is enough to forward the spawn ID.</p>
+    <p style="font-family:'SF Mono',Consolas,monospace;font-size:12px;color:#6e7681;margin-top:14px">
+    All figures measured from our own raid logs, 3&ndash;10 September 2026 &middot; wolfpack.quest</p>
+  </div>
+  <div class="two">
+    <div class="step"><div class="num">STEP 1</div><div class="a">Update Zeal</div><div class="b">to 1.4.6 — Mimic has a button</div></div>
+    <div class="step"><div class="num">STEP 2</div><div class="a">Run Mimic</div><div class="b">tray is fine, close EQ first</div></div>
+  </div>
+</div>
+
+</body></html>
