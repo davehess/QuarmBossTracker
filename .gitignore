@@ -66,3 +66,7 @@ gemini-image-*.png
 # not source. The findings live in the commit message and DESIGN.md.
 .impeccable/review/
 .impeccable/mocks/
+
+# Rendered output of scripts/zeal-adoption-poster.html — the GENERATOR is
+# committed, the PNG is derived and ~900KB. Re-render it, do not track it.
+zeal-update-why.png
