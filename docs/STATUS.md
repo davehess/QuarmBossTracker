@@ -334,6 +334,107 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
+- **"Set up EQ for me" now configures /tag capture (agent 3.6.33 · web 1.7.16,
+  2026-09-03).** Hitya, with a working `zeal.ini`: *"we're going to add some
+  pieces for setup for tagging... we want tooltip and tag enabled."* Eight
+  `NameplateTag*` keys join `_EQ_SETUP_KEYS`, values from that file. Two are
+  REQUIRED for capture at all, grounded in Zeal's source: `Suppress=FALSE`
+  (else PrintChat skips the log write) and `PrettyPrint=FALSE` (else, with
+  Filter, the spawn id is destroyed at the source). The 🏷 card walks the
+  raider through it and renders the exact `/tag channel` and `/join` lines.
+  ⚠ **The password is NOT in source and never will be.** It rides two tuning
+  keys an officer sets on `/admin/overlays` — `tag_channel_password` (raid) and
+  `tag_officer_channel` (a full `name:password` spec, shown only to officers)
+  — into the raider's LOCAL dashboard at render time. `test/tag-setup-keys`
+  asserts source is clean, and the mutation run proved it goes red on a real
+  leak; a first draft's regex was so broad it flagged the pre-existing
+  `tells Wolfpackofficer:` privacy filter — the invariant is "no name:password
+  LITERAL", so it now requires a password character after the colon.
+  ⚠ **Base nameplate keys are deliberately NOT written.** Hitya believes tags
+  may need nameplates on; the Zeal source notes do not settle it and those are
+  a raider's display preferences — the card says "check nameplates" instead.
+  ✅ **The autojoin FILE WRITE is unblocked (agent 3.6.34).** Hitya sent the
+  real line: `[Defaults] ChannelAutoJoin=<officer:pw> <tag:pw> general` in
+  **`eqclient.ini`** — NOT the per-character ini this ledger had claimed since
+  2026-08-26 — and the separator is **whitespace**, not the comma the never-
+  wired `_mergeAutojoin` split on (it would have read that whole line as one
+  channel). `_iniGetKey` + `_applyAutojoin` do a read-merge-write inside "Set
+  up EQ for me", under its existing EQ-running guard (EQ rewrites eqclient.ini
+  on exit). Commas are tolerated on read, spaces always written. Raid spec for
+  everyone once the bot serves it; officer spec only for signed-in officers.
+  Specs are RESOLVED bot-side — env `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC`
+  by default, `/admin/overlays` override — and the agent carries no policy.
+
+- **The Buffs tab says what each buff gives you, and sums it up (bot 3.1.117 ·
+  agent beta, 2026-09-02).** Hitya: *"The buffs on the buffs page should give
+  the affects that they're providing each, and then a summary below of all of
+  the things that are provided."*
+  The bot already fetched `effect_id_1..3` + `raw` for every spell and dropped
+  them after deriving the damage-shield magnitude. Now decoded once, bot-side,
+  and attached as `fx` to **beneficial timed buffs only** — 1233 of 3933 spells,
+  ~50KB on an hour-cached ETag'd catalog rather than a third again on all of it.
+  ⚠ **Every SPA label is grounded in the catalog, never remembered.** Girdle of
+  Karana is 4/42 against the game's "Increase Strength by 42"; Mask of the
+  Stalker is 89/125, 87/115, 15/3, 13/1 against its four listed effects (both
+  from Hitya's screenshots). Resists were pinned through the middle, not
+  inferred from the ends. Unrecognised ids fall back to `SPA n: base` — a wrong
+  label is worse than an opaque one.
+  ⚠ **Two encodings would be wrong at face value:** SPA 11/89 store a multiplier
+  (Celerity 128 = **+28%** haste), and SPA 59 is stored NEGATIVE for a real
+  damage shield.
+  ⚠ **The summary LISTS same-stat buffs, never ADDS them** — EQ does not stack
+  them, the strongest applies, and summing would invent a number someone would
+  then plan around. It says so on the row.
+  Per character, not merged across boxes. 27 tests, 19 mutations killed.
+
+- **A box can no longer take its owner's Defensive (agent beta, 2026-09-02).**
+  Hitya, live, with a Command Center screenshot showing a 10:10 Defensive
+  recharging on Currynote: *"Currynote is currygoat's bard, he does not have
+  defensive."* The protective tracker reads raid-chat announces and credits
+  whoever SPOKE the line — which is right, and is why it works for tanks who run
+  no macro — but Currygoat's announce went out on his bard box.
+  `_protClassAllows` gates on the speaker's `/who` class, folding level titles
+  through `normalizeClass` first (a 65 bard reports "Maestro").
+  ⚠ **The lock has exactly ONE entry and that is deliberate.** Suppressing a
+  REAL defensive is the dangerous direction — healers stop seeing the tank is
+  mitigating — while a wrong one is cosmetic. So it covers only Defensive, a
+  warrior discipline with no item source, and **not** Divine Aura or Harmshield,
+  which have clicky sources where "wrong class" is not proof and a false
+  suppress would blank a genuine invuln on the rampage bar. Unknown class fails
+  OPEN. Add a kind only when someone confirms no item can grant it.
+
+- **A charmer's pet folds into the charmer, even when they never swung (Mimic
+  beta, 2026-09-02).** Hitya, live, with a screenshot showing `Vkjor
+  (Chadivarius)` as its own row: *"it looks like when Chad charmed him it
+  attributed to him, but it should be the other way around as Chad +pet."*
+  The fold has existed since 2026-08-13, but it required the owner to ALREADY
+  have a row on the meter — and an enchanter running a charm pet often does
+  little or no direct damage, so they are absent from `perPlayer` entirely and
+  the pet kept its own line. `_foldPetsIntoOwners` now CREATES the owner's row
+  when it is missing, so the damage reads as what that raider brought.
+  ⚠ **The missing case was the common one**, which is why it survived three
+  weeks: it only shows up for a raider whose entire contribution is the pet.
+  ⚠ Unattributed charm mobs (`pet_charm`, no proven owner) are still NOT
+  folded — nobody gets credited for a charm we cannot attribute, and those keep
+  their "(charmed)" row.
+  Extracted from the render into a testable `_foldPetsIntoOwners`; the total is
+  asserted preserved, so a fold can never double-count.
+
+- **UI Studio stopped drawing every window twice (Mimic beta, 2026-09-02).**
+  Hitya, with a screenshot: *"UI studio shows multiple copies of several chats
+  and windows."* Header read "Hitya (2 ini files)" and "loaded 258 windows" for
+  a layout holding ~129 — ZealItemDisplay0-4, Chat 14, Compass, Raid and
+  ZealOptions all stacked on themselves.
+  Cause: the bundle is deliberately several files, and the parse loop pushed
+  every `[Section]` from every one of them. `_dedupeWindows` keeps one row per
+  section, preferring `UI_<char>_pq.proj.ini` — the file EQ actually reads.
+  ⚠ **The duplicate drawing was the visible half, not the harmful half.**
+  Dragging one of two copies was a coin flip over whether the edit reached the
+  file the client reads; when it lost, Save said success and nothing moved in
+  game. Same silent-no-op class as the filename-case trap already documented in
+  `_readUiBundle`.
+  Shadowed rows are COUNTED and named in the status line, never silently
+  dropped, and Save stays non-destructive — a shadowed file is left as it was.
 - **Faction hits get a POINT value, by naming the kill (bot 3.1.118 · agent
   3.6.32, 2026-09-03).** Hitya: the page *"is currently not helping"* — a −2000
   Lord Seru hit and a +5 spire-spirit kill both rendered as one anonymous

@@ -17,7 +17,7 @@ import { readSource, sliceBlock, evalBlock, AGENT_INDEX } from './_source-slice.
 const block = sliceBlock(
   readSource(AGENT_INDEX),
   'const TAG_CHANNEL_NAME',
-  "return { changed, value: out.join(','), reason: found ? 'already present' : 'added' };\n}",
+  "return { changed, value: out.join(' '), reason: found ? 'already present' : 'added' };\n}",
 );
 const { _mergeAutojoin, _parseChannelSpec, TAG_CHANNEL_NAME } =
   evalBlock(block, ['_mergeAutojoin', '_parseChannelSpec', 'TAG_CHANNEL_NAME']);
@@ -45,8 +45,8 @@ describe('merging into an autojoin list', () => {
 
   it('appends without disturbing the channels already there', () => {
     // Someone else's channels are none of our business.
-    const r = _mergeAutojoin('general,auction,Zguildchat:x', SPEC);
-    expect(r.value).toBe('general,auction,Zguildchat:x,' + SPEC);
+    const r = _mergeAutojoin('general auction Zguildchat:x', SPEC);
+    expect(r.value).toBe('general auction Zguildchat:x ' + SPEC);
   });
 
   it('is idempotent — running it twice changes nothing the second time', () => {
@@ -58,9 +58,9 @@ describe('merging into an autojoin list', () => {
     // This is the nastiest real case: the channel looks joined, so nobody
     // investigates, but without the password the join fails and they silently
     // send and receive nothing.
-    const r = _mergeAutojoin('general,' + TAG_CHANNEL_NAME, SPEC);
+    const r = _mergeAutojoin('general ' + TAG_CHANNEL_NAME, SPEC);
     expect(r.changed).toBe(true);
-    expect(r.value).toBe('general,' + SPEC);
+    expect(r.value).toBe('general ' + SPEC);
   });
 
   it('corrects a WRONG password rather than adding a second entry', () => {
@@ -69,9 +69,9 @@ describe('merging into an autojoin list', () => {
   });
 
   it('collapses duplicates of the same channel', () => {
-    const r = _mergeAutojoin(TAG_CHANNEL_NAME + ':a,general,' + TAG_CHANNEL_NAME + ':b', SPEC);
-    expect(r.value).toBe(SPEC + ',general');
-    expect(r.value.split(',').filter(p => p.toLowerCase().startsWith(TAG_CHANNEL_NAME.toLowerCase()))).toHaveLength(1);
+    const r = _mergeAutojoin(TAG_CHANNEL_NAME + ':a general ' + TAG_CHANNEL_NAME + ':b', SPEC);
+    expect(r.value).toBe(SPEC + ' general');
+    expect(r.value.split(' ').filter(p => p.toLowerCase().startsWith(TAG_CHANNEL_NAME.toLowerCase()))).toHaveLength(1);
   });
 
   it('matches the channel name case-insensitively', () => {
@@ -82,14 +82,14 @@ describe('merging into an autojoin list', () => {
   });
 
   it('tolerates whitespace and stray commas in a hand-edited ini', () => {
-    const r = _mergeAutojoin(' general , , auction ', SPEC);
-    expect(r.value).toBe('general,auction,' + SPEC);
+    const r = _mergeAutojoin('  general , auction  ', SPEC);
+    expect(r.value).toBe('general auction ' + SPEC);   // commas tolerated on read, spaces written
   });
 
   it('refuses a bad spec instead of corrupting the list', () => {
-    const r = _mergeAutojoin('general,auction', '');
+    const r = _mergeAutojoin('general auction', '');
     expect(r.changed).toBe(false);
-    expect(r.value).toBe('general,auction');
+    expect(r.value).toBe('general auction');
   });
 });
 

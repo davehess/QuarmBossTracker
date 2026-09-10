@@ -1496,11 +1496,63 @@ connect-then-close with no error — run Mimic as admin (field-diagnosed
 2026-07-05; auto-hint in the Zeal notification + zealhealth.html).
 In-EQ-folder installs can break DX-hook detection — reinstall outside.
 
+### ⚠ Dashboard scope hazard: duplicate `function` names (agent 3.6.31)
+`dashboard.html` is ~8900 lines in ONE script scope. Two top-level `function`
+declarations sharing a name are legal JavaScript and silently resolve to the
+**last** one — nothing throws, and the wrong function is simply used.
+
+It shipped. The Buffs tab added a **seconds** formatter named `_wpDur`, a name
+already taken further down by a **milliseconds** formatter (agent liveness
+ages), so every buff rendered at **1/1000** of its real time: Girdle of Karana's
+56 minutes read `3s`, its 4320-second catalog duration read `~4s`. The numbers
+were plausible enough to read past, and only a screenshot against the in-game
+buff window caught it (Hitya, 2026-09-02). The seconds one is now `_wpSecs`.
+
+**`check-agent-dashboard.js` fails the build on any duplicate top-level
+declaration** (`checkDuplicateFunctions`) — verified by reintroducing the exact
+collision and watching it exit 1. Nested helpers are exempt: they are properly
+scoped and shadowing one is normal.
+
+### /tag setup via "Set up EQ for me" (agent 3.6.33)
+`_EQ_SETUP_KEYS` carries eight `NameplateTag*` keys (Enable, ToolTip,
+ToolTipAlign, Filter, RaidHealthBars TRUE · PrettyPrint, Suppress FALSE ·
+Channel `Ztwolfpacktag`), written by `_iniSetKey` per EQ folder like the
+original four. `_tagChannelSpecs()` composes the raid join
+(`TAG_CHANNEL_NAME + ':' + tuning.tag_channel_password`) and, for officers
+only, `tuning.tag_officer_channel`; `/api/state` ships them as `zealTagJoin`
+to the 🏷 card. Secrets never in source, logs, or uploads. Base nameplate keys
+untouched (unverified dependency).
+**Autojoin (agent 3.6.34):** `_iniGetKey` reads `[Defaults] ChannelAutoJoin`
+from **`eqclient.ini`** (the real location — grounded in Hitya's file
+2026-09-03; the ledger had said "character ini" since August), `_mergeAutojoin`
+merges on **whitespace** (commas tolerated on read only), `_iniSetKey` writes
+back only on change. Runs inside `_applyEqSetup` for the raid spec and, for
+officers, the officer spec; the report never carries the password half.
+Tests: `test/tag-setup-keys.test.js`, `test/tag-autojoin-file-write.test.js`.
+
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` (`write-bundle`) or
-defers until logout (`defer-save` + background watcher). Skin XML scan caps
+defers until logout (`defer-save` + background watcher).
+⚠ **The bundle is SEVERAL files, and only ONE of them is the one EQ reads.**
+`_readUiBundle` enumerates the per-character inis and then catch-alls any other
+`.ini` belonging to the character (server-suffix variants, `/loadskin`
+leftovers, machine migrations). More than one can carry the same `[Section]`
+with its own geometry, and the parse loop pushes each — Hitya's layout drew
+**258 windows for a file holding ~129**, two of everything stacked on the
+canvas (2026-09-02, with a screenshot). `_dedupeWindows` now keeps one row per
+section, ranked `UI_<char>_pq.proj.ini` → other `UI_*` → `<char>_pq.proj.ini` →
+anything else, and the status line names the file that lost rows.
+⚠ **The duplicate drawing was the visible half, not the harmful half.** Dragging
+one of two copies was a coin flip over whether the edit landed in the file the
+client actually reads; when it lost, Save reported success and nothing moved in
+game — the same silent-no-op class as the filename-case trap `_readUiBundle`
+already warns about. Save is unchanged and non-destructive: it writes each
+surviving window back to its own file, so a shadowed file is left exactly as it
+was rather than being rewritten or deleted.
+Tests: `test/ui-studio-dupe-windows.test.js` (the real `_dedupeWindows`, plus
+its call site — stubbing the call left all eleven behaviour tests green). Skin XML scan caps
 window sizes. Category filter buckets ~130 windows; `offscreen` category
 (default off) hides never-in-game windows (char-select/login surfaces,
 live-era leftovers). **Inspector** ("Hotbar Pages…", `inspect-socials`):

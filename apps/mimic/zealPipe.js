@@ -43,6 +43,26 @@
 // the log: Ashieron = never connects (ENOENT / no pipe); this = connects then
 // close/end. The EQ-up-but-no-Zeal-data notification (main.js) and the health
 // overlay's "not running" hint both now lead with this fix.
+//
+// CONFIRMED AGAIN (n=2, Abrahms/AirborneSapper, 2026-09-10) — AND IT TAKES THE
+// OVERLAYS WITH IT, which is the part this note was missing. Same elevation
+// mismatch, but it reached us as three unrelated-looking complaints: no Zeal
+// feed, no overlay visible at all ("hidden/unhidden or docked"), and a Zeal
+// install dying on EPERM. Running Mimic as admin fixed all three in one move.
+// The overlay half is the same Windows rule as the pipe half — a
+// medium-integrity window cannot reliably sit above a high-integrity fullscreen
+// one — and it is the symptom a user notices FIRST, so treat "EQ is running and
+// NO overlay shows" as an elevation mismatch until proven otherwise. He also
+// guessed fullscreen-windowed was the cause, which is the natural wrong answer.
+// ⚠ SHARPEST DIAGNOSTIC DETAIL, recorded verbatim because it narrows this a lot
+// and we have not explained it yet: "I can get em all up when doing the
+// placement mode. and moving/resizing. even the hotkey flip them from on to
+// hidden. but nothing ever makes it to my screen." So the windows exist, render
+// and respond to every control — they are simply never composited above the
+// game. Whatever the mechanism, ANY theory has to survive that: the overlays
+// are not failing to be created, they are failing to be seen.
+// His EQ additionally lived under C:\Program Files (x86), which is what made
+// the install fail separately — see _eqFolderState() in the agent.
 
 'use strict';
 const net  = require('net');

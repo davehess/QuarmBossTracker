@@ -109,6 +109,6 @@ branch already had its own copy before touching the test.
 | **The weekly OpenDKP sweep is TEMPORARY** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` when OpenDKP ships `since` |
 | 🔴 **`encounter_threat_snapshots` retention has never run** | 920 MB / 57% of the DB, 448k rows past cutoff. Needs an index + a batched delete. Destructive — awaiting a go-ahead |
 | ⚠ **Supabase Spend Cap + current egress** | Both dashboard-only, both unread |
-| **Tag channel autojoin file-write** | Still blocked on one line from a real character ini |
+| ✅ **Tag channel autojoin file-write** | Unblocked 2026-09-03: the line is `ChannelAutoJoin` in **eqclient.ini** (not a character ini), space-separated. Wired into Set Up (agent 3.6.34). Passwords via env / `/admin/overlays`, never source |
 
 _Carried forward from `DECISIONS-2026-09-01.md`._

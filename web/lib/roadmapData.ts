@@ -37,6 +37,37 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-6-stable-2026-09-10',
+    title: 'Mimic 2.6.6',
+    version: 'Mimic 2.6.6 \u00b7 Agent 3.6.35',
+    date: '2026-09-10',
+    headline: 'Seven rounds of beta go stable: buff timers that tell the truth, a setup page that names the real problem, and faction hits that say which mob caused them.',
+    features: [
+      {
+        name: 'The setup page tells you what is actually wrong',
+        blurb: 'It used to say \u201cinstall Zeal\u201d whether or not Zeal was there. Now it checks: if Zeal is installed but nothing is coming through, it asks whether you are running EverQuest in compatibility mode or as administrator \u2014 the two things that actually cause it. And a new line warns you if Windows will not let Mimic write to your EverQuest folder, which is what silently breaks Zeal installs and UI backups.',
+      },
+      {
+        name: 'Your buffs say what they are doing for you',
+        blurb: 'Each buff on the Buffs tab now lists its real effects, with a summary under each character totalling everything their buffs are giving them.',
+      },
+      {
+        name: 'Faction hits name the mob that caused them',
+        blurb: 'A faction change now says which kill produced it, so you can tell what is moving your standing instead of guessing.',
+      },
+      {
+        name: 'Set up for me handles /tag',
+        blurb: 'The one-click setup now writes the nameplate tag settings and the channel autojoin line as well, so tagging works without hand-editing two ini files.',
+      },
+    ],
+    fixes: [
+      'Buff timers were showing a thousandth of the real time \u2014 a buff with an hour left read as seconds.',
+      'A boxed character no longer shows as having used its owner\u2019s Defensive.',
+      'A charmed pet\u2019s damage folds into the charmer on the meter, even when the charmer never swung.',
+      'UI Studio stopped drawing every window twice.',
+    ],
+  },
+  {
     key: 'event-threads-by-zone-2026-09-07',
     title: 'Bot 3.1.124',
     version: 'Web 1.7.26 \u00b7 Bot 3.1.124',

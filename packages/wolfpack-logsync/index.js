@@ -3012,6 +3012,15 @@ function _catalogDurationSec(spellName) {
 // window. Remaining time here is AUTHORITATIVE — it is the client's own counter,
 // not our arithmetic — which is why the tab shows it in preference to anything
 // we computed.
+// Decoded effect lines for a buff name, from the spell catalog. EQ logs backtick
+// possessives while the catalog stores apostrophes, so both spellings are tried
+// — the same normalisation _charmDurationSec and _healAmtFor already do, and
+// missing it would blank the effects for every "Talisman of ..."-style name.
+function _buffEffectsFor(name) {
+  const k = String(name || '').toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  return (e && Array.isArray(e.fx) && e.fx.length) ? e.fx : null;
+}
 function _activeBuffsForDashboard() {
   const out = [];
   const now = Date.now();
@@ -3034,6 +3043,11 @@ function _activeBuffsForDashboard() {
         measured_secs: measured ? measured.median : null,
         measured_n: measured ? measured.n : 0,
         good: _spellGood(b.name),
+        // What the buff actually gives you, decoded by the bot and carried on
+        // the catalog entry (bot 3.1.117). Buff spells only — a name we cannot
+        // resolve, or one the catalog has no effects for, simply has none, and
+        // the card renders exactly as it did before.
+        fx: _buffEffectsFor(b.name),
       });
     }
   }
@@ -4062,6 +4076,58 @@ const CON_STANDINGS = [
 // Phrases are plain prose (no regex metacharacters), so a straight join is
 // safe — keep it that way if new tiers are ever added.
 const _CON_RX = new RegExp('\\]\\s+(.+?)\\s+(' + CON_STANDINGS.map(([p]) => p).join('|') + ')', 'i');
+// ── Attributing a faction hit to the kill that caused it ────────────────────
+// Hitya, 2026-09-03: "if we don't see the name of the mob that died and still
+// get the faction hit, we can't attribute how much we are getting hit by unless
+// it says that we are at the maximum positive or negative values... If we see
+// the mob that died and at the same time, we end up seeing the faction, then
+// it's not so bad."
+//
+// That is the whole mechanism. Classic prints no magnitude on a faction line,
+// but eqemu_npc_faction_entries holds the exact per-mob value, so naming the
+// mob turns a bare "got worse" into a number. Verified end to end against
+// Hitya's own log: one #Lord_Inquisitor_Seru kill is -2000 to each of Seru /
+// Hand / Eye / Heart / Shoulders and +200 to four Katta factions, and one
+// A_Greater_Spire_Spirit is +5 to six Seru-bloc factions — both matching the
+// live client line for line.
+//
+// ⚠ ORDER-INDEPENDENT ON PURPOSE. The kill's lines all share one timestamp
+// SECOND, but which comes first — the slain line or the faction lines — is a
+// client detail we have not pinned, and the two screenshots that prompted this
+// were separate filtered windows so they cannot settle it. So both directions
+// are handled: a hit looks BACK at a slain line already seen this second, and a
+// slain line reaches FORWARD to patch hits already buffered for the same
+// second. Getting that wrong silently loses attribution on every kill.
+//
+// Keyed to the second, never to a window: two kills in the same second are
+// genuinely ambiguous, and the second one overwrites, so it attributes at most
+// one mob per second rather than guessing across a range.
+const _slainAtSecond = new Map();      // "charLower|<iso second>" → mob name
+const _SLAIN_SECOND_CAP = 400;
+function _secondKey(character, iso) {
+  return String(character || '').toLowerCase() + '|' + String(iso || '').slice(0, 19);
+}
+function noteSlainForFaction(character, mob, iso) {
+  if (!character || !mob || !iso) return;
+  const k = _secondKey(character, iso);
+  _slainAtSecond.set(k, mob);
+  if (_slainAtSecond.size > _SLAIN_SECOND_CAP) {
+    // Oldest-first eviction; insertion order is chronological on a log crawl.
+    const drop = _slainAtSecond.size - _SLAIN_SECOND_CAP;
+    let i = 0;
+    for (const key of _slainAtSecond.keys()) { if (i++ >= drop) break; _slainAtSecond.delete(key); }
+  }
+  // Reach FORWARD: faction lines for this kill may already be buffered.
+  if (typeof factionBuffer !== 'undefined' && Array.isArray(factionBuffer)) {
+    for (const e of factionBuffer) {
+      if (!e || e.kind !== 'hit' || e.mob) continue;
+      if (_secondKey(e.character, e.ts) === k) e.mob = mob;
+    }
+  }
+}
+function _slainForFactionHit(character, iso) {
+  return _slainAtSecond.get(_secondKey(character, iso)) || null;
+}
 function parseFactionLine(line, character) {
   if (!character || line.indexOf('Your faction standing with') === -1) return null;
   // Quarm sometimes prints a magnitude after the line — common shapes:
@@ -4082,6 +4148,7 @@ function parseFactionLine(line, character) {
   const magnitude  = magByWord != null ? magByWord
                     : magInParen != null ? magInParen
                     : null;
+  const iso = ts ? ts.toISOString() : new Date().toISOString();
   return {
     kind:      'hit',
     character,
@@ -4089,7 +4156,13 @@ function parseFactionLine(line, character) {
     direction: dirWord === 'better' ? 1 : -1,
     magnitude,
     capped:    !!m[6],
-    ts:        ts ? ts.toISOString() : new Date().toISOString(),
+    ts:        iso,
+    // The kill this hit came from, when the log shows one in the same second.
+    // null is the ordinary case (someone else landed the killing blow, or the
+    // corpse was out of range) and must stay null rather than guess — an
+    // unattributed hit is still worth recording for its direction and its
+    // at-cap flag, which pins absolute position on its own.
+    mob:       _slainForFactionHit(character, iso) || undefined,
   };
 }
 // Standing-change dedup so /con spam doesn't flood the upload buffer: emit
@@ -5427,6 +5500,32 @@ function _recordProt(key, name, kind, atMs, up, secs) {
     _daBroadcasts.set(key, { name, kind, activeEndsAtMs: atMs, readyAtMs, updatedAtMs: atMs });
   }
 }
+// A class gate on the SHOUT tracker, because it credits whoever SPOKE the line
+// and a box can announce for its owner. Hitya, live 2026-09-02: "Currynote is
+// currygoat's bard, he does not have defensive" — the Command Center had a
+// 10:10 Defensive recharging on a BARD, because Currygoat's announce went out
+// on his bard box and the tracker faithfully credited the speaker.
+//
+// ⚠ DELIBERATELY ONE ENTRY, AND THE ASYMMETRY IS WHY. Suppressing a REAL
+// defensive is the dangerous direction — healers stop seeing that the tank is
+// mitigating — while letting a wrong one through is cosmetic. So this gates
+// only what is certain and class-locked:
+//   • Defensive is a WARRIOR discipline. No item grants it, so a known
+//     non-warrior announcing one is always a box announcing for someone else.
+// It deliberately does NOT gate the spell-backed kinds. Divine Aura and
+// Harmshield have item/clicky sources, so "wrong class" is not proof there:
+// gating those would suppress a genuine invuln, which is exactly the call the
+// rampage bar must never get wrong.
+// Add a kind here only when someone confirms no item can grant it.
+const _PROT_CLASS_LOCK = { Defensive: ['Warrior'] };
+function _protClassAllows(kind, speaker) {
+  const allowed = _PROT_CLASS_LOCK[kind];
+  if (!allowed) return true;                       // ungated kind
+  const who = whoData.get(String(speaker || '').toLowerCase());
+  const cls = who && who.class ? normalizeClass(who.class) : null;
+  if (!cls) return true;                           // unknown class → fail OPEN
+  return allowed.includes(cls);
+}
 function trackDaBroadcastLine(line, character) {
   // Cheap pre-filter: 'DA' substring (case-sensitive) OR a defensive/weapon-
   // shield word. Only pays the regex when the fast substring misses.
@@ -5446,6 +5545,9 @@ function trackDaBroadcastLine(line, character) {
   const speaker = /^you$/i.test(m[1]) ? (character || 'You') : m[1];
   const ts = parseEqTimestamp(line);
   const atMs = ts ? ts.getTime() : Date.now();
+  // A box announcing its owner's discipline must not put that discipline on the
+  // box. Fails open on an unknown class — see _protClassAllows.
+  if (!_protClassAllows(kind, speaker)) return;
   const key = speaker.toLowerCase() + '|' + kind;
   const secs = _parseProtSeconds(text);
   if (secs != null) {
@@ -5456,6 +5558,8 @@ function trackDaBroadcastLine(line, character) {
     _recordProt(key, speaker, kind, atMs, true, null);                                           // up, default/unknown duration
   }
 }
+
+// ── Protective snapshot for the Command Center ──────────────────────────────
 function daBroadcastsSnapshot() {
   const now = Date.now();
   const out = [];
@@ -11937,6 +12041,63 @@ function _zealExportOnCampState() {
   return _zealCampVal;
 }
 
+// ── EQ folder health for the Setup checklist (Hitya, 2026-09-10) ───────────
+// Two facts about the EQ folder that the checklist could not see, and both
+// cost a raider an evening (Abrahms/AirborneSapper, 2026-09-10):
+//
+//   1. IS ZEAL ALREADY THERE? The "Zeal connected" row said "install/enable
+//      Zeal" while Zeal was installed and working — the feed was dead for an
+//      unrelated reason (EQ elevated, Mimic not). He followed the row, clicked
+//      Check / install Zeal, and that failed too. A row that names the wrong
+//      problem walks people into a second one.
+//   2. CAN WE WRITE TO IT? His EQ lives in C:\Program Files (x86)\TAKP, whose
+//      ACL denies a non-elevated Mimic. Zeal installs, UI backups and "Set up
+//      for me" all need that folder, and all of them failed with a raw EPERM
+//      string no member could act on.
+//
+// ⚠ THE WRITE TEST IS A PROBE WRITE, NOT fs.accessSync(W_OK). On Windows Node's
+// access() reflects the read-only ATTRIBUTE, not the ACL — a Program Files
+// folder answers "writable" and the write then fails anyway. Only an actual
+// create tells the truth. The probe is a 0-byte file removed immediately; if
+// the process dies between the two, a stray .mimic-write-test is harmless.
+//
+// Deliberately fs-only and synchronous, like its sibling above: no spawns, no
+// registry reads, no new timers. Compatibility mode and elevation are ASKED
+// about in the row text rather than detected — detection needs child_process
+// on a poll path and can be added later if the question stops being enough.
+let _eqFolderAt  = 0;
+let _eqFolderVal = { zealInstalled: null, writable: null, unwritableDir: null };
+function _eqFolderState() {
+  if (Date.now() - _eqFolderAt < 60_000) return _eqFolderVal;
+  _eqFolderAt = Date.now();
+  const out = { zealInstalled: null, writable: null, unwritableDir: null };
+  try {
+    const dirs = _eqSetupDirs().filter(d => {
+      try { return fs.statSync(d).isDirectory(); } catch { return false; }
+    });
+    if (dirs.length === 0) { _eqFolderVal = out; return out; }   // nulls = cannot tell
+    let withZeal = 0, writable = 0;
+    for (const d of dirs) {
+      // Either half is proof Zeal has been installed here: the loader itself,
+      // or the uifiles/zeal tree the release ships alongside it.
+      if (fs.existsSync(path.join(d, 'Zeal.asi')) ||
+          fs.existsSync(path.join(d, 'uifiles', 'zeal'))) withZeal++;
+      const probe = path.join(d, '.mimic-write-test');
+      try {
+        fs.writeFileSync(probe, '');
+        writable++;
+        try { fs.unlinkSync(probe); } catch { /* stray probe file is harmless */ }
+      } catch {
+        if (!out.unwritableDir) out.unwritableDir = d;
+      }
+    }
+    out.zealInstalled = withZeal > 0;
+    out.writable      = writable === dirs.length;
+  } catch { /* fall through with nulls — never break the state build */ }
+  _eqFolderVal = out;
+  return out;
+}
+
 // EQ install dirs the agent knows about — WOLFPACK_EQ_DIR plus each watched
 // log's folder (the Logs/ parent). Shared by the checklist + the setup writer.
 function _eqSetupDirs() {
@@ -12122,6 +12283,29 @@ const _EQ_SETUP_KEYS = [
   ['zeal.ini',     'Zeal',     'PipeDelay',    '100'],
   ['zeal.ini',     'Zeal',     'PipeVerbose',  'TRUE'],
   ['eqclient.ini', 'Defaults', 'Log',          'TRUE'],
+  // ── /tag setup (Hitya 2026-09-03: "we're going to add some pieces for setup
+  // for tagging... we want tooltip and tag enabled"). Values taken from Hitya's
+  // own working zeal.ini, and two of them are REQUIRED for capture at all,
+  // grounded in Zeal's source (HOW-ITS-BUILT, #194):
+  //   • NameplateTagSuppress=FALSE — with it on, handle_zeal_spam_filter blanks
+  //     the message and PrintChat skips the log write; nothing ever reaches us.
+  //   • NameplateTagPrettyPrint=FALSE — with Filter on, prettyprint rewrites to
+  //     "text => mob" and DESTROYS the spawn id at the source, which is the one
+  //     thing the /tag channel exists to carry.
+  // The channel is a NAME, not a secret; the password never goes in an ini we
+  // write from source and never appears in this file (see _mergeAutojoin).
+  // ⚠ Base nameplate keys (NameplateColors, NameplateHealthBars, …) are
+  // deliberately NOT written. Hitya believes tags may need nameplates on; the
+  // Zeal source notes do not settle it, and those are a raider's display
+  // preferences. The 🏷 card says so instead of flipping them on a hunch.
+  ['zeal.ini',     'Zeal',     'NameplateTagEnable',       'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagToolTip',      'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagToolTipAlign', 'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagFilter',       'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateRaidHealthBars',  'TRUE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagPrettyPrint',  'FALSE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagSuppress',     'FALSE'],
+  ['zeal.ini',     'Zeal',     'NameplateTagChannel',      'Ztwolfpacktag'],
 ];
 // ── /tag channel autojoin ───────────────────────────────────────────────────
 // Hitya, 2026-08-26: "we need to add this channel to people's autojoins if
@@ -12149,6 +12333,26 @@ const _EQ_SETUP_KEYS = [
 //      be corrected, not skipped — and a duplicate entry with a second password
 //      is worse than either.
 const TAG_CHANNEL_NAME = 'Ztwolfpacktag';
+// The join specs a raider actually types, composed at RUNTIME from bot tuning
+// (set by an officer on /admin/overlays): `tag_channel_password` for the raid
+// channel, `tag_officer_channel` (a full "name:password" spec) for officers.
+// Neither value exists in this file, in git, or in any upload/log path — the
+// dashboard renders them on the raider's own machine and nowhere else.
+function _tagChannelSpecs() {
+  const t = _overlayTuning || {};
+  // Full "name:password" specs, RESOLVED bot-side (env var by default, tuning
+  // key overrides) so this agent carries no policy and no secret of its own.
+  const raid = (typeof t.tag_channel_spec     === 'string') ? t.tag_channel_spec.trim()     : '';
+  const off  = (typeof t.officer_channel_spec === 'string') ? t.officer_channel_spec.trim() : '';
+  const rp = _parseChannelSpec(raid);
+  // The raid spec must name OUR tag channel — a spec for some other channel is
+  // a misconfiguration, not a join we should write into every raider's ini.
+  const raidOk = rp && rp.name.toLowerCase() === TAG_CHANNEL_NAME.toLowerCase();
+  return {
+    raid:    raidOk ? raid : null,                                              // null until set
+    officer: (off && _parseChannelSpec(off) && _mimicIdentity && _mimicIdentity.is_officer) ? off : null,
+  };
+}
 
 // Split "name:password" -> { name, password }. A channel with no colon has no
 // password; a name is never empty.
@@ -12162,13 +12366,24 @@ function _parseChannelSpec(spec) {
   return { name, password: raw.slice(i + 1).trim() || null };
 }
 
-// Merge `spec` into an existing comma-separated autojoin list.
+// Merge `spec` into an existing autojoin list.
 // Returns { changed, value, reason }. PURE — no file IO, so it is testable
 // without an EQ install.
+//
+// ⚠ THE SEPARATOR IS WHITESPACE. Grounded 2026-09-03 in Hitya's real
+// eqclient.ini — `[Defaults] ChannelAutoJoin=<spec> <spec> general` — which is
+// the one line this feature waited on since 2026-08-26. The first draft split
+// on commas (never wired, so it never bit) and would have read that whole line
+// as ONE channel, then appended ours with a comma: a join list EQ could not
+// parse. Written blind, it looked complete; it was wrong on the only byte that
+// mattered. Do not "tidy" this back to commas.
 function _mergeAutojoin(existingValue, spec) {
   const want = _parseChannelSpec(spec);
   if (!want) return { changed: false, value: String(existingValue || ''), reason: 'bad channel spec' };
-  const parts = String(existingValue || '').split(',').map(p => p.trim()).filter(Boolean);
+  // Tolerate commas on READ (a hand-edited ini, or the never-shipped comma
+  // draft of this very feature) but always WRITE spaces — the join below is the
+  // one place the separator is chosen, and it must match what EQ parses.
+  const parts = String(existingValue || '').split(/[\s,]+/).map(p => p.trim()).filter(Boolean);
   const wantLc = want.name.toLowerCase();
   const target = want.password ? want.name + ':' + want.password : want.name;
 
@@ -12191,9 +12406,48 @@ function _mergeAutojoin(existingValue, spec) {
     out.push(p);                                       // leave every other channel alone
   }
   if (!found) { out.push(target); changed = true; }
-  return { changed, value: out.join(','), reason: found ? 'already present' : 'added' };
+  return { changed, value: out.join(' '), reason: found ? 'already present' : 'added' };
+}
+// Read one key from one section of an ini. null when the file or key is
+// absent — a caller must not mistake "no line yet" for an empty list.
+function _iniGetKey(filePath, section, key) {
+  let text;
+  try { text = fs.readFileSync(filePath, 'utf8'); } catch { return null; }
+  const esc = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const secRx = new RegExp('^\\s*\\[' + esc(section) + '\\]\\s*$', 'i');
+  const keyRx = new RegExp('^\\s*' + esc(key) + '\\s*=(.*)$', 'i');
+  let inSec = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*\[.+\]\s*$/.test(line)) { inSec = secRx.test(line); continue; }
+    if (!inSec) continue;
+    const m = line.match(keyRx);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+// Merge the guild channel(s) into eqclient.ini's [Defaults] ChannelAutoJoin —
+// the file-write that was blocked until the real line was seen. Idempotent
+// via _mergeAutojoin; touches nothing else in the value. Returns a per-spec
+// report; never returns, logs, or echoes the password half.
+function _applyAutojoin(dir, specs) {
+  const file = path.join(dir, 'eqclient.ini');
+  const out = [];
+  for (const spec of specs) {
+    const want = _parseChannelSpec(spec);
+    if (!want) continue;
+    const cur = _iniGetKey(file, 'Defaults', 'ChannelAutoJoin');
+    if (cur === null && !fs.existsSync(file)) { out.push({ channel: want.name, result: 'no eqclient.ini' }); continue; }
+    const r = _mergeAutojoin(cur || '', spec);
+    // _iniSetKey is the single idempotence point: it compares the line and
+    // does not touch the file when it already matches. A guard here was
+    // redundant with that and untestable on its own.
+    _iniSetKey(file, 'Defaults', 'ChannelAutoJoin', r.value);
+    out.push({ channel: want.name, result: r.changed ? r.reason : 'already present' });
+  }
+  return out;
 }
 
+// ── Set up EQ for me: the writer ────────────────────────────────────────────
 function _applyEqSetup() {
   const now = Date.now();
   if ((stats.watchedLogs || []).some(w => w && w.lastSeen && (now - w.lastSeen) < 90_000)) {
@@ -12209,10 +12463,16 @@ function _applyEqSetup() {
       if (r === null) { if (!notFound.includes(file)) notFound.push(file); continue; }
       applied.push(key + '=' + value);
     }
-    folders.push({ dir: path.basename(dir), applied, notFound });
+    // Channel autojoin (Hitya 2026-09-03: "Autojoin is part of the eqclient.ini
+    // ... The tagging piece is critical"). The raid tag channel for everyone
+    // it is known for; the officer channel only for a signed-in officer.
+    const specs = _tagChannelSpecs();
+    const wanted = [specs.raid, specs.officer].filter(Boolean);
+    const autojoin = wanted.length ? _applyAutojoin(dir, wanted) : [];
+    folders.push({ dir: path.basename(dir), applied, notFound, autojoin });
   }
   _zealCampAt = 0;   // let the checklist re-probe ExportOnCamp immediately
-  return { ok: true, folders };
+  return { ok: true, folders, tagChannelKnown: !!_tagChannelSpecs().raid };
 }
 
 // One serialized /api/state snapshot shared by every poller for 400ms —
@@ -12399,6 +12659,10 @@ function _serializeForDashboard() {
     // ExportOnCamp=TRUE; false = at least one has it off; null = no zeal.ini
     // found (can't tell). Drives the Setup-checklist row.
     zealExportOnCamp:   _zealExportOnCampState(),
+    // Is Zeal on disk, and can we write to the EQ folder? Drives the Setup
+    // checklist's "Zeal connected" wording + the "EQ folder writable" row.
+    // Every field is tri-state; null means we know of no EQ folder to check.
+    eqFolder:           _eqFolderState(),
     // Prefer the focused character's encounter when the agent is watching
     // multiple logs (one player, several characters). Falls back to the last-write-wins global
     // when no per-character entry exists, preserving single-character UX.
@@ -12426,6 +12690,8 @@ function _serializeForDashboard() {
     // membership survives once seen), plus live capture stats. The dashboard
     // renders "tag capture: ready" from this instead of assuming.
     zealTagConfig: readZealTagConfig(),
+    // The exact /join lines, from tuning. Local dashboard only (127.0.0.1).
+    zealTagJoin: _tagChannelSpecs(),
     zealTagCount: zealTagsSnapshot().length,
     // Tags the upload cap had to drop, and the last time the SERVER refused a
     // tag broadcast. Both are silent failures otherwise — see the 🏷 card.
@@ -13980,7 +14246,14 @@ function _wpBuffProv(kind) {
   return '<span title="' + t + '" style="font-size:9px;border:1px solid ' + c + ';color:' + c
        + ';border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">' + kind + '</span>';
 }
-function _wpDur(secs) {
+// ⚠ NOT _wpDur — that name is already taken further down by a formatter that
+// takes MILLISECONDS (agent liveness ages). Two top-level \`function\` declarations
+// with one name silently resolve to the LAST one, so this used to hand seconds
+// to the ms formatter and every buff on the Buffs tab read 1/1000 of its real
+// time: Girdle of Karana's 56m showed as "3s", its 4320s catalog as "~4s"
+// (Hitya 2026-09-02, with the in-game buff window beside it). check-agent-
+// dashboard.js now fails the build on any duplicate declaration.
+function _wpSecs(secs) {
   if (secs == null) return '—';
   var s = Math.max(0, Math.round(secs));
   if (s < 60) return s + 's';
@@ -13989,6 +14262,65 @@ function _wpDur(secs) {
   var h = Math.floor(m / 60);
   return h + 'h ' + ((m % 60) < 10 ? '0' : '') + (m % 60) + 'm';
 }
+// What a buff gives you, on its own card. Decoded by the bot from the spell
+// catalog (bot 3.1.117) and carried per active buff, so a name the catalog does
+// not know simply renders as it always did rather than as an empty row.
+function _wpBuffFx(fx) {
+  if (!fx || !fx.length) return '';
+  var out = '';
+  for (var i = 0; i < fx.length; i++) {
+    out += '<div style="font-size:10px;color:var(--text);opacity:0.85;line-height:1.45">' + esc(fx[i]) + '</div>';
+  }
+  return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06)">' + out + '</div>';
+}
+// ── "What all of this is actually giving you" ────────────────────────────────
+// Hitya 2026-09-02: "a summary below of all of the things that are provided."
+// Aggregated per character, because buffs are per character — one merged column
+// across five boxes would read as one character with five sets of stats.
+//
+// ⚠ SAME-STAT ENTRIES ARE LISTED, NEVER ADDED. EQ does not stack two buffs of
+// the same kind; the stronger one applies and the other is doing nothing. So
+// two haste buffs show as two lines against one stat, which is the fact worth
+// seeing — summing them would invent a number the game never gives you, and it
+// is exactly the number someone would then plan around.
+function _wpBuffSummary(list) {
+  var byStat = {}, order = [];
+  for (var i = 0; i < list.length; i++) {
+    var b = list[i];
+    if (!b.fx || !b.fx.length) continue;
+    for (var j = 0; j < b.fx.length; j++) {
+      // "STR +42" → stat "STR", amount "+42". A flag effect ("Levitate") has no
+      // amount and is its own stat.
+      var line = String(b.fx[j]);
+      var m = line.match(/^(.*?)\\s+([+-]?[\\d.]+.*)$/);
+      var stat = m ? m[1] : line;
+      var amt  = m ? m[2] : null;
+      if (!byStat[stat]) { byStat[stat] = []; order.push(stat); }
+      byStat[stat].push({ amt: amt, from: b.name });
+    }
+  }
+  if (!order.length) return '';
+  order.sort();
+  var rows = '';
+  for (var oi = 0; oi < order.length; oi++) {
+    var stat = order[oi], parts = byStat[stat];
+    var vals = '';
+    for (var pi = 0; pi < parts.length; pi++) {
+      vals += (pi ? '<span class="dim"> · </span>' : '')
+           +  (parts[pi].amt ? '<b>' + esc(parts[pi].amt) + '</b> ' : '')
+           +  '<span class="dim" style="font-size:10px">' + esc(parts[pi].from) + '</span>';
+    }
+    rows += '<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.04)">'
+         +    '<div style="min-width:120px;font-size:11px;color:var(--gold)">' + esc(stat) + '</div>'
+         +    '<div style="font-size:11px">' + vals
+         +      (parts.length > 1 ? ' <span class="dim" style="font-size:9px">— these do not stack; the strongest applies</span>' : '')
+         +    '</div></div>';
+  }
+  return '<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border)">'
+       +   '<div class="dim" style="font-size:10px;margin-bottom:4px">what these are giving you</div>'
+       +   rows + '</div>';
+}
+// ── Buffs tab ───────────────────────────────────────────────────────────────
 function renderBuffsTab(s) {
   var root = document.getElementById('buffs');
   if (!root) return;
@@ -14029,7 +14361,7 @@ function renderBuffsTab(s) {
         +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
         +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
         +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
-        +       (b.remaining_secs == null ? 'permanent' : _wpDur(b.remaining_secs)) + '</span>'
+        +       (b.remaining_secs == null ? 'permanent' : _wpSecs(b.remaining_secs)) + '</span>'
         +   '</div>'
         +   (pct != null
               ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
@@ -14037,12 +14369,15 @@ function renderBuffsTab(s) {
               : '')
         +   '<div class="dim" style="font-size:9px;margin-top:3px">'
         +     (b.remaining_secs != null ? 'left' + _wpBuffProv('zeal') : '')
-        +     (b.measured_secs ? ' · of ~' + _wpDur(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
-                              : (b.catalog_secs ? ' · of ~' + _wpDur(b.catalog_secs) + _wpBuffProv('db') : ''))
+        +     (b.measured_secs ? ' · of ~' + _wpSecs(b.measured_secs) + _wpBuffProv('log') + '<span class="dim">n=' + b.measured_n + '</span>'
+                              : (b.catalog_secs ? ' · of ~' + _wpSecs(b.catalog_secs) + _wpBuffProv('db') : ''))
         +   '</div>'
+        +   _wpBuffFx(b.fx)
         + '</div>';
     }
-    h += '</div></div>';
+    h += '</div>';
+    h += _wpBuffSummary(list);
+    h += '</div>';
   }
   h += '</div>';
 
@@ -14099,11 +14434,11 @@ function renderBuffsTab(s) {
       var rcol = ratio == null ? 'var(--dim)' : (ratio > 1.08 ? 'var(--green)' : (ratio < 0.92 ? 'var(--orange)' : 'var(--dim)'));
       h += '<tr>'
         + '<td style="text-align:left">' + esc(d.spell) + '</td>'
-        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpDur(d.median) + _wpBuffProv('log') + '</td>'
+        + '<td style="text-align:right;font-variant-numeric:tabular-nums">' + _wpSecs(d.median) + _wpBuffProv('log') + '</td>'
         + '<td style="text-align:right" class="dim">' + d.n + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.p25) + ' – ' + _wpDur(d.p75) + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.min) + ' – ' + _wpDur(d.max) + '</td>'
-        + '<td style="text-align:right" class="dim">' + _wpDur(d.catalog_secs) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.p25) + ' – ' + _wpSecs(d.p75) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.min) + ' – ' + _wpSecs(d.max) + '</td>'
+        + '<td style="text-align:right" class="dim">' + _wpSecs(d.catalog_secs) + '</td>'
         + '<td style="text-align:right;color:' + rcol + '">' + (ratio == null ? '—' : ('×' + ratio.toFixed(2))) + '</td>'
         + '</tr>';
     }
@@ -14851,6 +15186,24 @@ function _setupCheckRows(s) {
   const freshLog = logs.some(w => w && w.lastSeen && (now - w.lastSeen) < 15 * 60 * 1000);
   const zeal = Array.isArray(s.zealClients) ? s.zealClients : [];
   const zealLive = zeal.some(c => c && c.live);
+  const eqf = (s && s.eqFolder) || {};
+  const zealSeenNotLive = zeal.length > 0 && !zealLive;
+  // ⚠ "install/enable Zeal" is the right answer ONLY when Zeal is genuinely
+  // absent, and until 2026-09-10 this row said it unconditionally. Abrahms had
+  // Zeal installed and a dead feed (EQ elevated, Mimic not); the row sent him
+  // to Check / install Zeal, which then failed on its own unrelated error. A
+  // row that names the wrong problem walks people into a second one — so the
+  // wording branches on what is actually on disk (s.eqFolder.zealInstalled).
+  // The two live causes of "installed but silent" are both on the same
+  // Compatibility tab, and both are confirmed field cases: XP compatibility
+  // mode (Chadivarius, 2026-08-13) and an elevation mismatch (Jankzer
+  // 2026-07-05, Abrahms 2026-09-10). We ask rather than detect — reading the
+  // AppCompatFlags registry needs a spawn on a poll path.
+  const zealBad = eqf.zealInstalled === true
+    ? 'Zeal IS installed in your EQ folder, so this is not an install problem. Are you running EQ in compatibility mode, or as administrator? Right-click eqgame.exe → Properties → Compatibility: untick compatibility mode, and if "Run as administrator" is ticked, either untick it or run Mimic as admin to match. Restart EQ after changing either.'
+    : eqf.zealInstalled === false
+      ? 'no Zeal found in your EQ folder — use Check / install Zeal below (close EQ first), then restart EverQuest to load it.'
+      : 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work';
   const rows = [
     { ok: !!s.mimicSignedIn, label: 'Mimic account linked',
       good: 'signed in — uploads land under your name',
@@ -14866,8 +15219,11 @@ function _setupCheckRows(s) {
       bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
     { ok: zealLive, label: 'Zeal connected',
       good: 'live buff/group data flowing from Zeal',
-      bad: 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work',
-      info: zeal.length > 0 && !zealLive ? 'last-seen snapshots only — log a character in' : null },
+      bad: zealBad,
+      // \`info\` REPLACES the detail when set, so it may only win when it says
+      // more than zealBad does — otherwise the compatibility/admin question
+      // above is silently swallowed for anyone with a stale snapshot.
+      info: (zealSeenNotLive && eqf.zealInstalled !== true) ? 'last-seen snapshots only — log a character in' : null },
   ];
   return rows;
 }
@@ -14899,6 +15255,24 @@ function renderSetupChecks(s) {
     h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
        + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+  }
+  // EQ folder writable — the silent precondition for three buttons on this very
+  // card (Set up for me, Check / install Zeal) plus UI Studio backups. A folder
+  // Mimic cannot write is why they fail, and they used to fail with a raw
+  // EPERM string no member could act on (Abrahms, EQ in Program Files,
+  // 2026-09-10). Tri-state and always shown, like Export on /camp above.
+  if (eqf.writable === true) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px">Mimic can install Zeal, write your settings and back up your UI.</td></tr>';
+  } else if (eqf.writable === false) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px"><b>' + esc(eqf.unwritableDir || 'your EQ folder') + '</b> is read-only for Mimic, so Zeal installs, <b>Set up for me</b> and UI backups will all fail there. Move your EQ folder out of Program Files, or grant your Windows account write access to it. Running Mimic as administrator also works.</td></tr>';
+  } else {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">EQ folder writable</td>'
+       + '<td class="dim" style="font-size:11px">No EQ folder known yet — point Mimic at your EverQuest install in Settings.</td></tr>';
   }
   // UI backups — point at UI Studio so a reinstall / new PC restores the EQ
   // window layout + eqclient.ini in one click.
@@ -18268,6 +18642,21 @@ function renderInfo(s) {
         h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
       }
     }
+    // Setup for tagging (Hitya 2026-09-03). "Set up EQ for me" writes the
+    // zeal.ini keys; the channel JOIN is a per-character thing the raider still
+    // types once. The password comes from bot tuning at render time — it is
+    // never in this file's source. Officer line only for officers.
+    var _zj = s.zealTagJoin || {};
+    h += '<div style="margin:6px 0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px">'
+      +  '<div style="color:var(--gold);font-weight:600;margin-bottom:3px">Set up tagging</div>'
+      +  '<div class="dim">1. Settings → <b>Set up EQ for me</b> writes the tag keys to zeal.ini (enable, tooltip, filter, raid bars; prettyprint + suppress OFF — both would silently kill capture). Close EQ first.</div>'
+      +  '<div class="dim">2. In game, once: <code>/tag channel ztwolfpacktag</code></div>'
+      +  (_zj.raid
+           ? '<div class="dim">3. Join the channel: <code>/join ' + esc(_zj.raid) + '</code></div>'
+           : '<div class="dim">3. Join the channel: <code>/join ztwolfpacktag:&lt;password&gt;</code> — ask an officer for it (they set it on the admin page; it will show here once set).</div>')
+      +  (_zj.officer ? '<div class="dim">Officers also: <code>/join ' + esc(_zj.officer) + '</code></div>' : '')
+      +  '<div class="dim" style="margin-top:3px">⚠ Arrows not drawing? We did <b>not</b> change your nameplate keys (colors, health bars) — those are your display settings. If tags draw nothing, check nameplates are on.</div>'
+      +  '</div>';
     h += '<div class="dim" style="font-size:11px">The channel persists in zeal.ini once joined — no per-raid setup. Tags heard in the last 2 min: <b>' + (s.zealTagCount || 0) + '</b>. Tank usage: target the add → <code>/tag chat &lt;Name&gt;-Tanking</code> (shapes: <code>^G^</code> arrows, <code>^P^</code> paw, <code>^S^</code> stop). Any of <code>/tag chat</code>, <code>/tag gsay</code> (group) or <code>/tag rsay</code> (raid) is captured.</div>';
     // The three causes the ini can NOT see. All of them show the nameplate
     // arrow in game and log nothing, which is why "the arrow is right there"
@@ -26990,6 +27379,14 @@ function runOptinBackfill(files, opts = {}) {
             // Faction hits + /con standing transitions — self-only lines; rides
             // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
             // complete-log backfill crawls idempotent.
+            {
+              const sm = line.match(_SLAIN_YOU_RX);
+              if (sm && sm[1]) {
+                const sts = parseEqTimestamp(line);
+                noteSlainForFaction(f.character, sm[1].trim().replace(/!$/, ''),
+                  sts ? sts.toISOString() : new Date().toISOString());
+              }
+            }
             const facEvt = parseFactionLine(line, f.character);
             if (facEvt) factionBuffer.push(facEvt);
             const conFacEvt = parseConsiderLine(line, f.character);
@@ -37740,6 +38137,17 @@ async function main() {
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Bot-side dedup makes
         // complete-log backfill crawls idempotent.
+        // Note the kill BEFORE parsing the faction line so a hit printed after
+        // the slain line attributes immediately; noteSlainForFaction also
+        // patches hits already buffered, covering the opposite order.
+        {
+          const sm = line.match(_SLAIN_YOU_RX);
+          if (sm && sm[1]) {
+            const sts = parseEqTimestamp(line);
+            noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
+              sts ? sts.toISOString() : new Date().toISOString());
+          }
+        }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
@@ -38048,6 +38456,14 @@ async function main() {
         // Faction hits + /con standing transitions — self-only lines; rides
         // the 5s relay flush to /api/agent/faction. Honors the per-character
         // exclude_from_stats opt-out like every other upload stream.
+        {
+          const sm = line.match(_SLAIN_YOU_RX);
+          if (sm && sm[1]) {
+            const sts = parseEqTimestamp(line);
+            noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
+              sts ? sts.toISOString() : new Date().toISOString());
+          }
+        }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);

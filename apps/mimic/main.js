@@ -8705,6 +8705,20 @@ ipcMain.handle('zeal-check-update', async () => {
 });
 // Download + install the latest Zeal into the EQ folder. Refuses while EQ is
 // running (the game holds Zeal.asi; on Windows the write would fail outright).
+// Windows reports an ACL denial as EPERM, and Node hands it straight through as
+// "EPERM: operation not permitted, copyfile '<long path>' -> '<longer path>'".
+// That is what a member sees on the Setup card, and it is unreadable — Abrahms
+// pasted it into Discord asking what the red gobbledygook was (2026-09-10). An
+// unwritable EQ folder is the only realistic cause of a denial here, and it has
+// three real fixes, so lead with those and keep the errno for support.
+function _friendlyEqWriteError(e, eqDir) {
+  const msg = (e && e.message) ? String(e.message) : String(e);
+  if (!/\b(EPERM|EACCES)\b/.test(msg)) return msg;
+  return 'Windows blocked Mimic from writing to ' + (eqDir || 'your EQ folder')
+       + ' — that folder is read-only for Mimic, which is normal when EverQuest lives under Program Files. '
+       + 'Move your EQ folder out of Program Files, grant your Windows account write access to it, '
+       + 'or run Mimic as administrator. (Details: ' + msg + ')';
+}
 ipcMain.handle('zeal-install-update', async () => {
   try {
     const eqDir = _zealEqDir();
@@ -8720,7 +8734,7 @@ ipcMain.handle('zeal-install-update', async () => {
     return { ok: true, tag: res.tag, name: res.name, written: res.written.length, backedUp: res.backedUp.length };
   } catch (e) {
     appendAgentLog(`[zeal-update] install failed: ${e && e.message}\n`);
-    return { ok: false, error: e && e.message ? e.message : String(e) };
+    return { ok: false, error: _friendlyEqWriteError(e, _zealEqDir()) };
   }
 });
 // Background NOTIFY-ONLY check. Never installs on its own — Zeal.asi is a game
