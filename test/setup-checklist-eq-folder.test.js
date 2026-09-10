@@ -246,3 +246,43 @@ describe('the raw EPERM never reaches a member again', () => {
     expect(fn).toMatch(/if \(!\/\\b\(EPERM\|EACCES\)\\b\/\.test\(msg\)\) return msg;/);
   });
 });
+
+describe('the quiet-mode row — the third thing the app knew and never said', () => {
+  // Abrahms, 2026-09-10, after Program Files and elevation were both ruled out:
+  // "I can get em all up when doing the placement mode. and moving/resizing.
+  // even the hotkey flip them from on to hidden. but nothing ever makes it to my
+  // screen." Every overlay is `unlocked || (showX && !quietMode && eqGate)`, and
+  // `unlocked` is placement mode — so quiet mode reproduces that report exactly.
+  const render = stripJs(sliceBlock(dashSrc, 'function renderSetupChecks(s) {', '\n  morphInto(el, h);'));
+  const main   = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+
+  it('says quiet mode is the reason, and where to turn it off', () => {
+    expect(render).toMatch(/_wpMimicCfg && _wpMimicCfg\.quietMode/);
+    expect(render).toMatch(/Quiet mode is ON/);
+    expect(render).toMatch(/EQLogParser/);
+  });
+
+  it('names the symptom that makes it look like a bug', () => {
+    expect(render).toMatch(/positioning them/);
+  });
+
+  it('reassures that uploads keep working — quiet mode is a display switch', () => {
+    expect(render).toMatch(/Uploads are unaffected/);
+  });
+
+  // A browser tab has no overlays; a row about them there is noise.
+  it('renders only when hosted in Mimic', () => {
+    expect(render).toMatch(/\} else if \(_wpMimicCfg\) \{/);
+    expect(stripJs(dashSrc)).toMatch(/var _wpMimicCfg = null;/);
+  });
+
+  it('reads Mimic config through the existing bridge, not a new endpoint', () => {
+    expect(stripJs(dashSrc)).toMatch(/window\.mimic\.getConfig\(\)/);
+    expect(stripJs(dashSrc)).toMatch(/_wpRefreshMimicCfg\(\);\s*const rows = _setupCheckRows\(s\);/);
+  });
+
+  // The row is only true while the gate it describes is shaped this way.
+  it('the gate it describes still bypasses everything when unlocked', () => {
+    expect(main).toMatch(/const shouldShow = unlocked \|\| \(cfg\.showHud && !cfg\.quietMode && _eqGateOk\(cfg\)\)/);
+  });
+});
