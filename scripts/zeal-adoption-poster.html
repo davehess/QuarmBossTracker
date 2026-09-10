@@ -5,7 +5,7 @@
 
   Render (Chromium headless; --force-device-scale-factor=2 gives a 2x PNG):
     chromium --headless --no-sandbox --hide-scrollbars \
-      --force-device-scale-factor=2 --window-size=1200,1566 \
+      --force-device-scale-factor=2 --window-size=1200,1742 \
       --screenshot=zeal-update-why.png file://$PWD/scripts/zeal-adoption-poster.html
 
   ⚠ EVERY NUMBER BELOW IS HARDCODED AND DATED. It was true for 3–10 Sep 2026.
@@ -74,6 +74,17 @@ h1 em{font-style:normal;color:#d29922}
 .pile-h{font-size:16px;color:#f0f6fc;font-weight:700}
 .pile-s{font-family:"SF Mono",Consolas,monospace;font-size:11.5px;color:#8b949e;margin-top:5px;line-height:1.55}
 .pile-s b{color:#c9d1d9}
+.pile-if{font-size:14px;color:#f0f6fc;margin-top:9px;padding-top:9px;
+ border-top:1px solid rgba(248,81,73,.28);line-height:1.45}
+.pile-if b{color:#3fb950}
+.also{display:flex;align-items:center;gap:22px;margin-top:16px;padding-top:16px;
+ border-top:1px solid #21262d}
+.also-l{flex:1}
+.also-h{font-size:15px;color:#c9d1d9;font-weight:700}
+.also-s{font-size:13.5px;color:#8b949e;margin-top:4px;line-height:1.45}
+.also-s b{color:#c9d1d9}
+.also-chips{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;flex-shrink:0;width:196px}
+.also-chips i{display:block;height:22px;border-radius:4px;background:#0d1117;border:1px solid #484f58}
 .verdict{display:flex;gap:14px;margin-top:16px}
 .v{flex:1;border-radius:8px;padding:14px 16px;font-size:15px;line-height:1.4}
 .v .lbl{font-family:"SF Mono",Consolas,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;
@@ -146,6 +157,7 @@ slow and debuff finally sticks to the mob it actually hit — instead of being a
     <div class="pile-t">
       <div class="pile-h">landings we cannot place on any of them</div>
       <div class="pile-s"><b>12 different spells</b> from <b>5 raiders</b> — Ensnare · Snare · Splurt · Immolate · Shroud of Pain · Shroud of Hate · Tashan · Tashanian · Occlusion of Sound · Fufil`s Curtailing Chant · Instill · Vexing Mordinia</div>
+      <div class="pile-if">→ Had the rest of the raid been on 1.4.6, <b>every one of those 41 would have landed on a named giant</b> instead of this pile.</div>
     </div>
   </div>
   <div class="verdict">
@@ -153,6 +165,15 @@ slow and debuff finally sticks to the mob it actually hit — instead of being a
       <div class="t">Every one of those 41 collapses onto <b>one name</b>. Was the snare on the add the offtank has? Did the slow land on the one being tanked, or the one loose in the raid? <b>Unanswerable.</b></div></div>
     <div class="v good"><span class="lbl">With Zeal 1.4.6 + Mimic</span>
       <div class="t">Each landing sticks to <b>the giant it hit</b>. Target Info, the dashboards and the raid review all read one mob at a time — including the one <i>you</i> are tanking.</div></div>
+  </div>
+  <div class="also">
+    <div class="also-l">
+      <div class="also-h">And it is not only raid adds</div>
+      <div class="also-s">Sun 09-07 22:27 — <b>twelve</b> <span class="mono">A Shik`nar Forager</span> up at once on a routine bard kite, 27 landings spread across them. Same blur, any night, any zone.</div>
+    </div>
+    <div class="also-chips">
+      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+    </div>
   </div>
 </div>
 
