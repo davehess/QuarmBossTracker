@@ -85,6 +85,14 @@ describe('page + actions + migration', () => {
     expect(actions).toMatch(/from\('overlay_design_feedback'\)/);
   });
 
+  it('the damage-shield box is per hit, not the running total (Hitya 2026-09-11)', () => {
+    const mocks = stripJs(read('web/app/mimic/mini/mocks.tsx'));
+    expect(mocks).toMatch(/\{DS_PER_HIT\}\/hit/);
+    expect(mocks).not.toMatch(/dsTotal/);
+    const tankA = OVERLAYS.find(o => o.key === 'tank').options[0];
+    expect(tankA.how.join(' ')).toMatch(/one hit returns/);
+  });
+
   it('the clock stops under prefers-reduced-motion', () => {
     expect(review).toMatch(/prefers-reduced-motion: reduce/);
     expect(read('web/app/mimic/mini/mocks.module.css')).toMatch(/@media \(prefers-reduced-motion: reduce\)/);

@@ -27,7 +27,12 @@ function tankHp(t: number) {
   return { hp: clamp(r(100 - 34 * frac + 4 * Math.sin(t * 7)), 10, 100), flash: (t % 5) < 0.35 };
 }
 const mobHp = (t: number) => clamp(r(64 - 0.9 * t), 0, 100);
-const dsTotal = (t: number) => 1420 + Math.floor(t / 0.8) * 112;
+// Damage shield: the box shows what ONE hit returns — the sum of the tank's
+// active DS buffs (Shield of Blades 65 + Barrier of Combustion 20) — not the
+// fight's running total (Hitya 2026-09-11). It pops on each hit; the number
+// only changes when a DS lands or fades.
+const DS_PER_HIT = 85;
+const dsHits = (t: number) => 13 + Math.floor(t / 0.8);
 function ramp(t: number) {
   if (t < 6 || t >= 18) return null;
   const hp = clamp(r(58 - (t - 6) * 2.2 + 3 * Math.sin(t * 5)), 5, 100);
@@ -110,8 +115,8 @@ function Hp({ pct, tail, thick, flash, cls }: { pct: number; tail?: React.ReactN
 }
 const Ctl = () => (<><span className={`${s.ctl} ${s.ctlL}`}>✥</span><span className={`${s.ctl} ${s.ctlR}`}>✕</span></>);
 function Ds({ t, off }: { t: number; off?: boolean }) {
-  const n = Math.floor(t / 0.8);
-  return <span key={n} className={[s.ds, s.dsPop, off ? s.dsOff : ''].join(' ')}>{num(dsTotal(t))}</span>;
+  const n = dsHits(t);
+  return <span key={n} className={[s.ds, s.dsPop, off ? s.dsOff : ''].join(' ')} title="damage returned on each hit — the sum of the tank's damage-shield buffs">{DS_PER_HIT}/hit</span>;
 }
 const Mr = ({ cur, full }: { cur: number; full: number }) => (<span className={s.t}>MR <span className={s.mrDown}>{cur}</span> <span className={s.dim}>({full})</span></span>);
 const Star = () => <span className={s.star}>*</span>;
@@ -125,7 +130,7 @@ function TankFull({ t }: { t: number }) {
       <div className={s.ttl}>🛡 Tank · {CAST.mt}</div>
       <Hp pct={hp} thick flash={flash} tail={<><span className={s.nm}>{CAST.mt}</span><span className={s.dim}>{num(hp * 62)}/6,200</span></>} />
       <div className={`${s.chrow} ${s.casting}`}><span className={s.num}>CH</span><span>← Fargan</span><span>{(10 - (t % 10)).toFixed(1)}s</span><div className={s.cbar}><i style={{ width: `${(t % 10) * 10}%` }} /></div></div>
-      <div style={{ color: '#56d364', fontWeight: 700, fontSize: 13 }}>{num(dsTotal(t))} returned <span style={{ color: '#7ee787' }}>· avg 112</span> <span className={s.dim} style={{ fontWeight: 400, fontSize: 10 }}>· {Math.floor(t / 0.8) + 13} hits</span></div>
+      <div style={{ color: '#56d364', fontWeight: 700, fontSize: 13 }}>{num(DS_PER_HIT * dsHits(t))} returned <span style={{ color: '#7ee787' }}>· {DS_PER_HIT}/hit</span> <span className={s.dim} style={{ fontWeight: 400, fontSize: 10 }}>· {dsHits(t)} hits</span></div>
       <div className={s.foot} style={{ fontStyle: 'normal' }}>Shield of Blades 65 · Barrier of Combustion 20</div>
       {rp && (
         <div className={s.ramp}>

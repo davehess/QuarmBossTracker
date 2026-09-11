@@ -71,7 +71,7 @@ export const OVERLAYS: OverlaySpec[] = [
     options: [
       { key: 'a', name: 'One strip', how: [
           'Tank HP is the bar; the mob is named, not barred (its HP lives on Target info).',
-          'Spiky box is the DS total this fight; it dims when no DS buff is up.',
+          'Spiky box is what one hit returns: the sum of the tank\'s damage-shield buffs (Shield of Blades 65 + Barrier of Combustion 20 = 85/hit). It changes only when a DS lands or fades, and dims when none is up.',
           'Ramp row appears only while rampage has a target. One row, two at worst.',
         ], cost: { build: 'low', maint: 'low', runtime: 'low', change: 'low', why: 'compact template of data the overlay already has' } },
       { key: 'b', name: 'Two lanes', how: [
