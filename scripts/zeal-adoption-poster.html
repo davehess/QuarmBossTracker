@@ -28,6 +28,19 @@
   -- problem. Rank by DISTINCT SPELLS (breadth of raid participation): two
   -- songs = a kite, twelve spells across five raiders = adds in a real pull.
   -- require spells >= 5 and read the top by spells, not by spawns.
+  --
+  -- ⚠ COUNT PEOPLE, NEVER CHARACTERS. buff_casts.observer is a CHARACTER, and
+  -- one member runs several, so a distinct-observer count inflates badly and is
+  -- the wrong unit for an adoption claim. The first cut of this poster said
+  -- "11 of 19 raiders" off a distinct-observer count; the true figure that day
+  -- was 12 of 19 PEOPLE. Join observer -> characters.discord_id and count that.
+  -- CLAUDE.md states this rule outright; I broke it here, so it is restated at
+  -- the point of use.
+  --
+  -- And it is a FLOOR, not an install count: a landing only carries a spawn id
+  -- if the observer was targeting the mob at the time, so someone on 1.4.6 who
+  -- never had a target during an observed landing reads as a non-adopter. Never
+  -- describe this number as "N clients have the new Zeal".
   with w as (select target,
       date_trunc('hour', cast_at) + (floor(extract(minute from cast_at)/3)*interval '3 min') as bucket,
       count(distinct target_id) filter (where target_id > 0) as spawns, count(*) as landings, min(cast_at) as at
@@ -201,7 +214,7 @@ slow and debuff finally sticks to the mob it actually hit — instead of being a
       <div class="bar"><span class="d">Sep 8</span><span class="track"><span class="fill" style="width:49.3%;background:#d29922"></span></span><span class="p">49.3%</span></div>
       <div class="bar"><span class="d">Sep 10</span><span class="track"><span class="fill" style="width:51.9%;background:#d29922"></span></span><span class="p">51.9%</span></div>
     </div>
-    <div class="statnote"><b style="color:#3fb950">11 of 19</b> raiders uploading today were already sending spawn IDs. A week ago it was one.</div>
+    <div class="statnote"><b style="color:#3fb950">12 of 19</b> people who uploaded that day had at least one cast carry a spawn ID. A week earlier it was one.</div>
   </div>
 </div>
 

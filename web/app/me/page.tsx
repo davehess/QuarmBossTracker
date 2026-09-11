@@ -660,7 +660,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
 
   // Paginated — a .limit() above 1000 does NOT lift PostgREST's silent cap
   // (test/db-read-discipline.test.js ratchets on this), and a member with many
-  // boxed characters can exceed it across endpoints.
+  // a member's several characters can exceed it across endpoints.
   const ups = await selectAll<{ character: string; last_uploaded_at: string | null }>(
     (from, to) => admin
       .from('agent_upload_stats')

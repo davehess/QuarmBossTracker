@@ -29,7 +29,7 @@ would report it incapable. All three ids count (`spawn_id` / `target_id` /
 streams its own `spawn_id` every frame.
 
 **Counted in players, never characters** (per the 2026-08-16 rule). One person
-runs 3–12 boxes off ONE Zeal install, so a character count overstates adoption
+runs several characters off ONE Zeal install, so a character count overstates adoption
 roughly tenfold.
 
 **"Not yet proven" renders as nothing, not as a red failure.** It genuinely does

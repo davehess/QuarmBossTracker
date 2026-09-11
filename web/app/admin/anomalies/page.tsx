@@ -8,9 +8,9 @@
 //     from /parses; this page surfaces the whole majority-non-member band so an
 //     officer can Mark Non-Guild (permanent) or Clear (it really was ours).
 //
-//  2. DOUBLE-BOXING — one person's two characters BOTH dealing damage in the
-//     same fight (both actively swinging, not one parked). Surfaced for review;
-//     not auto-actioned.
+//  2. ONE MEMBER, TWO CHARACTERS — both dealing damage in the same fight (both
+//     actively swinging, not one parked). Surfaced for review; not auto-actioned.
+//     ⚠ Describe this only as characters. Keep the naming literal.
 //
 // Auth + officer gate handled by /admin/layout.tsx.
 import { supabaseAdmin } from '@/lib/supabase';
@@ -38,7 +38,7 @@ type CharRow = { name: string; discord_id: string | null; main_name: string | nu
 const LOOKBACK_DAYS = 21;
 const ROW_LIMIT = 500;
 
-// Family key for boxing: discord_id wins (the strongest "same person" signal),
+// Family key for grouping a member's characters: discord_id wins (the strongest "same person" signal),
 // else the main-name chain, else the name itself. Lowercased.
 function buildFamilyKey(chars: CharRow[]): Map<string, string> {
   const keyOf = new Map<string, string>();
@@ -163,9 +163,9 @@ export default async function AnomaliesPage() {
     .slice(0, OFFHOURS_MAX);
   const offPending = offHours.filter(x => !x.e.classification).length;
 
-  // ── Double-boxing — a family with 2+ characters both dealing damage ─────────
-  type BoxHit = { e: Enc; family: string; chars: { name: string; dmg: number }[] };
-  const boxing: BoxHit[] = [];
+  // ── One member, 2+ characters both dealing damage in one fight ─────────────
+  type MultiCharHit = { e: Enc; family: string; chars: { name: string; dmg: number }[] };
+  const multiChar: MultiCharHit[] = [];
   for (const e of encs) {
     const byFam = new Map<string, { name: string; dmg: number }[]>();
     for (const p of (e.encounter_players ?? [])) {
@@ -179,12 +179,12 @@ export default async function AnomaliesPage() {
     }
     for (const [k, arr] of byFam) {
       if (arr.length >= 2) {
-        boxing.push({ e, family: familyDisplay.get(k) || arr[0].name, chars: arr.sort((a, b) => b.dmg - a.dmg) });
+        multiChar.push({ e, family: familyDisplay.get(k) || arr[0].name, chars: arr.sort((a, b) => b.dmg - a.dmg) });
       }
     }
   }
-  boxing.sort((a, b) => +new Date(b.e.started_at) - +new Date(a.e.started_at));
-  const boxingTop = boxing.slice(0, 80);
+  multiChar.sort((a, b) => +new Date(b.e.started_at) - +new Date(a.e.started_at));
+  const multiCharTop = multiChar.slice(0, 80);
 
   const pct = (f: number) => `${Math.round(f * 100)}%`;
 
@@ -338,20 +338,20 @@ export default async function AnomaliesPage() {
         )}
       </section>
 
-      {/* Double-boxing */}
+      {/* One member, two characters */}
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-blue uppercase tracking-wide mb-1">
-          Possible double-boxing · {boxingTop.length}
+          One member, two characters · {multiCharTop.length}
         </h3>
         <p className="text-[11px] text-dim mb-3">
-          One person&apos;s characters BOTH dealing damage in the same fight (both swinging, not one
-          parked). Often legit two-boxing — surfaced for awareness, not auto-actioned.
+          One member&apos;s characters both dealing damage in the same fight (both swinging, not one
+          parked). Usually entirely normal — surfaced for awareness, not auto-actioned.
         </p>
-        {boxingTop.length === 0 ? (
+        {multiCharTop.length === 0 ? (
           <p className="text-xs text-dim italic">No two-character-active fights in the last {LOOKBACK_DAYS} days.</p>
         ) : (
           <div className="space-y-1.5">
-            {boxingTop.map(({ e, family, chars: cs }, i) => (
+            {multiCharTop.map(({ e, family, chars: cs }, i) => (
               <div key={`${e.id}-${i}`} className="border border-border/50 rounded px-2.5 py-1.5 text-xs flex items-baseline justify-between gap-2">
                 <span className="min-w-0">
                   <span className="text-text font-medium">{family}</span>

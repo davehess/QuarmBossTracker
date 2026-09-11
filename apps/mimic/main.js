@@ -2567,7 +2567,7 @@ async function launchAgent() {
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
   if (uploadToken && cfg.botUrl) env.WOLFPACK_TOKEN = uploadToken;
-  // Per-character "do not transmit" list — for friends' boxes that play in
+  // Per-character "do not transmit" list — for friends' characters that play in
   // other guilds, or any toon the user wants kept out of our DB entirely. The
   // agent honors this at the outermost boundary (excluded logs aren't tailed),
   // so nothing about those characters can leave the machine. Set from

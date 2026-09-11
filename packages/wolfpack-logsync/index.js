@@ -5501,7 +5501,7 @@ function _recordProt(key, name, kind, atMs, up, secs) {
   }
 }
 // A class gate on the SHOUT tracker, because it credits whoever SPOKE the line
-// and a box can announce for its owner. Hitya, live 2026-09-02: "Currynote is
+// and one character can announce for another. Hitya, live 2026-09-02: "Currynote is
 // currygoat's bard, he does not have defensive" — the Command Center had a
 // 10:10 Defensive recharging on a BARD, because Currygoat's announce went out
 // on his bard box and the tracker faithfully credited the speaker.
@@ -8678,7 +8678,7 @@ class EncounterBuilder {
     // petLeaders is keyed (and therefore cased) lowercase. _activeCharms and
     // charmSessions are reset() per encounter and per builder, so they need no
     // scoping; _charmTickTracker is MODULE-level (shared by every builder and
-    // every boxed character) and does need it — see below.
+    // every character a member runs) and does need it — see below.
     // Names that actually appear in THIS encounter's events — the scope gate
     // for every source that outlives a single fight (_charmTickTracker and
     // petLeaders below).
@@ -38037,7 +38037,7 @@ async function main() {
 
   // Per-character "do not transmit" list. Set by the user from Mimic
   // (onboarding + Settings) for characters they don't want any data uploaded
-  // about — typically friends' boxes that play in other guilds, alts they
+  // about — typically friends' characters that play in other guilds, alts they
   // share data on, etc. Enforced at the OUTERMOST boundary: an excluded
   // character's log file is never opened, never tailed, never registered as a
   // watchedLog. Nothing about that character can ever leave the machine,

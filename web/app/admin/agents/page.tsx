@@ -581,7 +581,7 @@ export default async function AdminAgentsPage() {
   // ── Zeal: who runs what, and whose client can hand us a spawn id ────────
   //
   // ⚠ COUNTED IN PLAYERS, NEVER CHARACTERS (Hitya, 2026-08-16: "character
-  // counts mean almost nothing"). One person runs 3-12 boxes, so a character
+  // counts mean almost nothing"). One person runs several characters, so a character
   // count inflates roughly 10x and would read as fleet-wide adoption when it is
   // a handful of people. A family here IS a player.
   //
@@ -665,7 +665,7 @@ export default async function AdminAgentsPage() {
           Zeal is the in-game DLL, not ours — it prints its version to the log at
           zone-in, and the agent forwards whatever it sees. Counted in{' '}
           <strong className="text-text">players</strong>, not characters: one person
-          runs several boxes off one Zeal install, so a character count would
+          runs several characters off one Zeal install, so a character count would
           overstate this roughly tenfold.
         </p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4 text-xs">

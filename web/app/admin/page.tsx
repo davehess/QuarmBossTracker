@@ -36,7 +36,7 @@ export default function AdminPage() {
         />
         <Card
           title="🚩 Anomalies"
-          body="Raids that are mostly NOT Wolf Pack members (a guildie pugging another guild — auto-hidden from /parses, confirm or clear here), plus possible double-boxing where one person's two characters were both swinging in the same fight."
+          body="Raids that are mostly NOT Wolf Pack members (a guildie pugging another guild — auto-hidden from /parses, confirm or clear here), plus fights where one member had two characters swinging at once."
           href="/admin/anomalies"
         />
         <Card

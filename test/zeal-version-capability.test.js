@@ -80,7 +80,7 @@ describe('/admin/agents shows it honestly', () => {
   });
 
   // ⚠ Hitya, 2026-08-16: "character counts mean almost nothing." One person
-  // runs 3-12 boxes off ONE Zeal install, so a character count overstates
+  // runs several characters off ONE Zeal install, so a character count overstates
   // adoption ~10x — the exact mistake that made "178 characters on 3.5.80"
   // read as fleet-wide when it was 16 people. A family here IS a player.
   it('counts adoption in PLAYERS, not characters', () => {

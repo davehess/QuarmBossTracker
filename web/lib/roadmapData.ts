@@ -74,7 +74,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'Buff timers were showing a thousandth of the real time \u2014 a buff with an hour left read as seconds.',
-      'A boxed character no longer shows as having used its owner\u2019s Defensive.',
+      'A character no longer shows as having used another character\u2019s Defensive.',
       'A charmed pet\u2019s damage folds into the charmer on the meter, even when the charmer never swung.',
       'UI Studio stopped drawing every window twice.',
     ],

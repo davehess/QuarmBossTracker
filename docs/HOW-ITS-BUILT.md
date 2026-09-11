@@ -126,7 +126,7 @@ always claimable; agents too old to send `last_line_ms` keep last-writer
 behavior between themselves but never displace a signalled incumbent. A refused
 machine loses only the panel row — roles and elections key on the shared
 discord_id either way. Two machines BOTH actively logging still trade the slot
-within the slack; that is genuine two-boxing, not a bug. Behaviour-tested by
+within the slack; that is one member on two characters, not a bug. Behaviour-tested by
 executing the helper (`test/reporter-claim.test.js`).
 
 ### Raid timers & boards
@@ -509,7 +509,7 @@ parked at the guild lobby still streams its own `spawn_id` every frame.
 
 **Board half** (`/admin/agents`, 🧿 Zeal card): players active 24h, players
 reporting a version, players proven capable — **counted in PLAYERS, never
-characters** (one person runs 3–12 boxes off one Zeal install, so a character
+characters** (one person runs several characters off one Zeal install, so a character
 count overstates adoption ~10×). Per-character rows get a `zeal <ver> 🎯` chip.
 ⚠ **"Not yet proven" is rendered as nothing, not as a red failure** — it does
 not distinguish stock Zeal from a patched client that has not fought yet, and

@@ -44,7 +44,7 @@ visual lands as hard as the text.
 >
 > And **nothing leaks** that you don't opt into:
 > - Tells are off by default. Officer chat is filtered at the byte level — it literally cannot leave your machine.
-> - Per-character exclusion: friends' boxes in other guilds, alts you share — flip them off in onboarding, the agent never even opens their log.
+> - Per-character exclusion: friends' characters in other guilds, alts you share — flip them off in onboarding, the agent never even opens their log.
 >
 > Install once. Forget it's there. The whole pack gets stronger every time someone does.
 >

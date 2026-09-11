@@ -387,7 +387,7 @@ next touch one rather than assuming a missing row means a missing doc.
   then plan around. It says so on the row.
   Per character, not merged across boxes. 27 tests, 19 mutations killed.
 
-- **A box can no longer take its owner's Defensive (agent beta, 2026-09-02).**
+- **A character can no longer take another character's Defensive (agent beta, 2026-09-02).**
   Hitya, live, with a Command Center screenshot showing a 10:10 Defensive
   recharging on Currynote: *"Currynote is currygoat's bard, he does not have
   defensive."* The protective tracker reads raid-chat announces and credits
@@ -617,7 +617,7 @@ next touch one rather than assuming a missing row means a missing doc.
   incapable. The version chases adoption; only "this client actually sent an
   id" answers capability. Both facts are sticky (`coalesce` / `greatest`):
   proving it once is enough, and an upload carrying neither must not retract it.
-  ⚠ Counted in **players, not characters** — one person runs 3–12 boxes off one
+  ⚠ Counted in **players, not characters** — one person runs several characters off one
   Zeal install. Details in `HOW-ITS-BUILT.md`.
 - **Extended Target: same-name mobs separated by spawn id (bot 3.1.106 · Mimic
   2.6.4, 2026-09-01).** At ≥2 distinct `(zone, target_id)` pairs for one name,
@@ -2431,16 +2431,9 @@ next touch one rather than assuming a missing row means a missing doc.
   names, ×N run-folding, and per-type dots (`/raid/review` keeps the marker
   chart). Future (denoted in `DESIGN-fight-timeline.md`): per-type/callout
   toggles — "many of these are probably personal to one character."
-- **Boxing-language scrub — DONE (web 1.1.59 main + beta comment pass,
-  2026-08-16).** Hitya: *"not boxing, these are characters that each of the
-  players will play distinctly. It shouldn't ever be talked about in anything
-  on the github either, unless we're specifically looking to suss out
-  boxers."* Every guild-member reference to boxers/multiboxing reworded
-  neutrally (multi-log / second watched log / a player's characters) across
-  docs, web, bot comments, test names (main) and agent + Mimic comments
-  (beta). Deliberately unchanged: `/pvp` (opposing players) and
-  `/admin/anomalies` + its admin-index card (the explicit detection surface —
-  Hitya's stated exception).
+- **Wording — members have *characters*.** Refer to them that way in code,
+  docs, UI copy and release notes. No other shorthand. Grep before shipping
+  anything member-facing.
 - **Kneel Test phantom — FIXED for real (agent 3.5.86 beta, 2026-08-16).**
   Hitya: *"for beta, I'm still seeing kneel test on the target info."* Server
   was clean (0 buff_casts rows — ingest filter works); the phantom was LOCAL:
