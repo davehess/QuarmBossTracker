@@ -286,3 +286,86 @@ describe('the quiet-mode row — the third thing the app knew and never said', (
     expect(main).toMatch(/const shouldShow = unlocked \|\| \(cfg\.showHud && !cfg\.quietMode && _eqGateOk\(cfg\)\)/);
   });
 });
+
+// ── THE TEST THAT SHOULD HAVE EXISTED FIRST ─────────────────────────────────
+// Everything above asserts on SOURCE TEXT, and source text cannot tell you the
+// function throws. It did: `eqf` was declared in _setupCheckRows and used in
+// renderSetupChecks, a ReferenceError that fires MID-RENDER — after the first
+// rows are appended, before the buttons are. The Setup card silently lost "Set
+// up for me", the Defender / Zeal / clock fixers and every row below Zeal, and
+// it rode a stable graduation to the whole fleet before Hitya said "setup lost
+// the buttons on the mimic dashboard".
+//
+// check:dashboard did not catch it either — it proves the script PARSES, and a
+// ReferenceError parses perfectly. So: RUN the renderer, with the smallest DOM
+// stubs that let it complete, and assert on what it actually produced.
+describe('renderSetupChecks actually runs and emits its buttons', () => {
+  function render(state) {
+    const pre = `
+      let captured = null, wired = false;
+      const esc = (v) => String(v == null ? '' : v);
+      const _isPanelHidden = () => false;
+      const morphInto = (el, h) => { captured = h; };
+      const document = { getElementById: () => ({ style: {} }), querySelector: () => null, addEventListener: () => {} };
+      const window = {};
+      const wpWireFixerButtons = () => { wired = true; };
+    `;
+    const post = `
+      renderSetupChecks(S);
+      return { captured, wired };
+    `;
+    const block = pre
+      + 'const S = ' + JSON.stringify(state) + ';\n'
+      + sliceBlock(dashSrc, 'var _wpMimicCfg = null;', '\n  return rows;\n}') + '\n'
+      + sliceBlock(dashSrc, 'function renderSetupChecks(s) {', '\n  wpWireFixerButtons(s);\n}')
+      + post;
+    return new Function(block)();
+  }
+  const healthy = {
+    watchedLogs: [{ logPath: 'x', lastSeen: Date.now() }],
+    zealClients: [{ live: true }], mimicSignedIn: true, localOnly: false,
+    zealExportOnCamp: true,
+    eqFolder: { zealInstalled: true, writable: true, unwritableDir: null },
+  };
+
+  it('completes without throwing — the whole point', () => {
+    expect(() => render(healthy)).not.toThrow();
+  });
+
+  it('emits all four fixer buttons', () => {
+    const { captured } = render(healthy);
+    for (const cls of ['wp-eq-setup', 'wp-defender', 'wp-zeal-install', 'wp-clock-fix']) {
+      expect(captured).toContain(cls);
+    }
+  });
+
+  it('reaches the end and wires the Mimic-only buttons', () => {
+    expect(render(healthy).wired).toBe(true);
+  });
+
+  // The rows that sit BELOW the throw site — their absence was the other half
+  // of the symptom and is what pins the failure to a mid-render abort.
+  it('emits every row after the one that used to throw', () => {
+    const { captured } = render(healthy);
+    expect(captured).toContain('EQ folder writable');
+    expect(captured).toContain('Back up your UI');
+    expect(captured).toContain('miMIC in the Windows taskbar');
+  });
+
+  it('survives the unwritable and unknown folder states too', () => {
+    const bad = { ...healthy, eqFolder: { zealInstalled: false, writable: false, unwritableDir: 'C:/Program Files (x86)/TAKP' } };
+    const unknown = { ...healthy, eqFolder: {} };
+    expect(render(bad).captured).toContain('C:/Program Files (x86)/TAKP');
+    expect(render(unknown).captured).toContain('EQ folder writable');
+    expect(render(bad).wired).toBe(true);
+    expect(render(unknown).wired).toBe(true);
+  });
+
+  // An older agent sends no eqFolder at all; the card must still build.
+  it('survives a state with no eqFolder at all', () => {
+    const legacy = { ...healthy };
+    delete legacy.eqFolder;
+    expect(() => render(legacy)).not.toThrow();
+    expect(render(legacy).captured).toContain('wp-eq-setup');
+  });
+});

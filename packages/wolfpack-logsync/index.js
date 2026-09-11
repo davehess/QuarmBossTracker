@@ -15253,6 +15253,16 @@ function _setupCheckRows(s) {
   return rows;
 }
 function renderSetupChecks(s) {
+  // ⚠ DECLARED AGAIN HERE, ON PURPOSE. _setupCheckRows has its own \`eqf\`, and
+  // reaching for that one from this function is a ReferenceError that throws
+  // MID-RENDER — after the first rows are appended and before the buttons are,
+  // so the Setup card silently loses "Set up for me", the Defender, Zeal and
+  // clock fixers, and every row below Zeal. Shipped in agent 3.6.35 and rode a
+  // stable graduation to the whole fleet (Hitya: "setup lost the buttons on the
+  // mimic dashboard"). It got through because the tests asserted on SOURCE TEXT
+  // and never ran the function — the exact trap CLAUDE.md names — and
+  // check:dashboard only proves the script PARSES, which a ReferenceError does.
+  const eqf = (s && s.eqFolder) || {};
   const el = document.getElementById('wpSetupChecks');
   if (!el) return;
   if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
