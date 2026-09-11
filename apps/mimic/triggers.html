@@ -429,7 +429,10 @@
     return 1;
   }
 
+  // Mute (Settings → "Mute Mimic"): the fire still flashes; only sound stops.
+  function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   function speak(text, meta){
+    if (_wpMutedNow()) return;
     if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
     var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
     if (!_speakingUtt){ _speakNow(item); return; }
@@ -492,7 +495,7 @@
     }
   }
   function playSound(url){
-    if(!url) return;
+    if(!url || _wpMutedNow()) return;
     try{ const a = new Audio(url); a.volume = 0.9; a.play().catch(()=>{}); }catch(e){}
   }
   function flash(text){

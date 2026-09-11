@@ -146,9 +146,14 @@
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
-    <label for="quietMode">I use EQLogParser / another parser — Quiet mode (hide HUD + TTS, still upload)</label>
+    <label for="quietMode">🔇 Mute Mimic — no voice callouts or sounds (overlays still show)</label>
   </div>
-  <div class="hint">Use this if another tool is already showing you a DPS panel and trigger alerts. Mimic keeps uploading silently so your guild stats stay current.</div>
+  <div class="hint">Trigger callouts, CH-chain and charm warnings go silent. Everything still shows and still uploads.</div>
+  <div class="row">
+    <input id="hideOverlays" type="checkbox" />
+    <label for="hideOverlays">🙈 Don't show any overlays — I use EQLogParser / another parser for the display</label>
+  </div>
+  <div class="hint">Hides every overlay. Mimic keeps uploading so guild stats stay current, and voice callouts still play unless you also mute.</div>
 
   <div class="row">
     <input id="showHud" type="checkbox" />
@@ -586,6 +591,7 @@
       ? '•••••••• connected — paste a new token to replace, or leave blank'
       : 'paste from /token in Discord, or leave blank for local-only';
     document.getElementById('quietMode').checked         = !!c.quietMode;
+    document.getElementById('hideOverlays').checked      = !!c.hideOverlays;
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
@@ -644,6 +650,7 @@
         eqPath: null,    // clear the legacy single-folder field
         botUrl, tellsMode,
         quietMode:        document.getElementById('quietMode').checked,
+        hideOverlays:     document.getElementById('hideOverlays').checked,
         showHud:          document.getElementById('showHud').checked,
         enableTriggerTts: document.getElementById('enableTriggerTts').checked,
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,

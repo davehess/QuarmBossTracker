@@ -396,20 +396,20 @@ describe('a hidden overlay holds no renderer', () => {
     expect(h.__destroyed).toEqual([]);
   });
 
-  it('frees them in quiet mode too — same argument', () => {
-    const h = harness({ cfg: { ...RUNNING, quietMode: true }, alive: ['overlayWindow'] });
+  it('frees them when overlays are switched off too — same argument', () => {
+    const h = harness({ cfg: { ...RUNNING, hideOverlays: true }, alive: ['overlayWindow'] });
     h._reapDisabledOverlays();
     expect(h.__destroyed).toEqual(['overlayWindow']);
-    expect(h.__log.join('')).toMatch(/quiet mode/);
+    expect(h.__log.join('')).toMatch(/overlays are switched off/);
   });
 
-  it('NEVER frees the trigger overlay for the EQ gate or quiet mode', () => {
+  it('NEVER frees the trigger overlay for the EQ gate or hidden overlays', () => {
     // #97: TTS fires from the hidden window, and triggers.html polls the agent
     // itself — no window, no voice. Reaping it would trade a missed raid
     // callout for 35 MB at exactly the time nobody cares about 35 MB.
     for (const cfg of [
       { enableTriggerTts: true, overlaysLocked: true },                    // EQ down
-      { enableTriggerTts: true, overlaysLocked: true, quietMode: true },
+      { enableTriggerTts: true, overlaysLocked: true, hideOverlays: true },
     ]) {
       const h = harness({ cfg, eqRunning: false, alive: ['triggerWindow'] });
       h._reapDisabledOverlays();
@@ -431,7 +431,8 @@ describe('a hidden overlay holds no renderer', () => {
     const cases = [
       { cfg: RUNNING, eqRunning: true },
       { cfg: RUNNING, eqRunning: false },
-      { cfg: { ...RUNNING, quietMode: true }, eqRunning: true },
+      { cfg: { ...RUNNING, hideOverlays: true }, eqRunning: true },
+      { cfg: { ...RUNNING, quietMode: true }, eqRunning: true },   // mute alone hides nothing
       { cfg: { ...RUNNING, hideOverlaysWhenEqDown: false }, eqRunning: false },
       { cfg: { overlaysLocked: false }, eqRunning: false },
       { cfg: { enableTriggerTts: true, overlaysLocked: true }, eqRunning: false },

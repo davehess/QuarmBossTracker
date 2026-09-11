@@ -524,6 +524,8 @@
   // no stored value at all (fresh install, or an existing user who never
   // touched this button) now means muted, not unmuted.
   var _muted = true;
+  // Mimic-wide mute (Settings → "Mute Mimic") on top of this overlay's own 🔇.
+  function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   try {
     var _mutedStored = localStorage.getItem('chchain_mute');
     if (_mutedStored === '0') _muted = false;
@@ -811,7 +813,7 @@
   var _spokeLate = false;       // have we said "CH GAP" (overdue) for this key
 
   function speakGap(text){
-    if (_muted) return;
+    if (_muted || _wpMutedNow()) return;
     try {
       if (!window.speechSynthesis) return;
       var u = new SpeechSynthesisUtterance(text);
