@@ -87,6 +87,13 @@ describe('page + actions + migration', () => {
     expect(actions).toMatch(/from\('overlay_design_feedback'\)/);
   });
 
+  it('a pick can be removed — same option again deletes the row (Hitya 2026-09-11)', () => {
+    expect(actions).toMatch(/export async function removeVote/);
+    expect(actions).toMatch(/from\('overlay_design_votes'\)\.delete\(\)[\s\S]{0,120}\.eq\('user_id', me\.id\)/);
+    expect(review).toMatch(/const removing = current === choice/);
+    expect(review).toMatch(/removing \? await removeVote\(\{ overlay \}\) : await castVote/);
+  });
+
   it('the ballot has a spot for every Pack member (Hitya 2026-09-11)', () => {
     // Voters only (Hitya 2026-09-11) — the page fetches no member list.
     expect(page).not.toMatch(/is_member/);

@@ -35,6 +35,17 @@ export async function castVote(input: { overlay: string; choice: string }): Prom
   return { ok: true };
 }
 
+export async function removeVote(input: { overlay: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!isOverlayKey(input?.overlay)) return { ok: false, error: 'Not a valid overlay.' };
+  const me = await whoAmI();
+  if (!me) return { ok: false, error: 'Sign in first.' };
+  const { error } = await supabaseAdmin().from('overlay_design_votes').delete()
+    .eq('overlay', input.overlay).eq('user_id', me.id);
+  if (error) return { ok: false, error: 'Could not remove your pick — try again.' };
+  revalidatePath('/mimic/mini');
+  return { ok: true };
+}
+
 export async function postFeedback(input: { overlay: string; body: string; choice?: string | null }): Promise<{ ok: boolean; row?: FeedbackRow; error?: string }> {
   if (!isOverlayKey(input?.overlay)) return { ok: false, error: 'Not a valid overlay.' };
   const cleaned = cleanFeedback(input?.body);

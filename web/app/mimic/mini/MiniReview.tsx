@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { OVERLAYS, CHOICES, tally, type Choice, type FeedbackRow, type VoteRow, type CostLevel, type OverlaySpec, type Member } from '@/lib/miniReview';
 import { FullMock, MiniMock, MenuMock, BarRuleMock, Stage, LOOP } from './mocks';
-import { castVote, postFeedback } from './actions';
+import { castVote, postFeedback, removeVote } from './actions';
 
 type Me = { id: string; name: string };
 
@@ -90,12 +90,16 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
 
   const go = (i: number) => { setActive(OVERLAYS[(i + OVERLAYS.length) % OVERLAYS.length].key); setDraft(''); setErr(''); topRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 
+  // Picking the option you already picked removes the pick (Hitya 2026-09-11:
+  // "let people remove their votes"). Same path from the cards and the ballot.
   const vote = async (overlay: string, choice: Choice) => {
     if (busy) return;
     const prev = votes;
-    setVotes(vs => [...vs.filter(v => !(v.overlay === overlay && v.user_id === me.id)), { overlay, user_id: me.id, choice, voter_name: me.name }]);
+    const current = pickOf(me.id, overlay);
+    const removing = current === choice;
+    setVotes(vs => [...vs.filter(v => !(v.overlay === overlay && v.user_id === me.id)), ...(removing ? [] : [{ overlay, user_id: me.id, choice, voter_name: me.name }])]);
     setBusy('vote'); setErr('');
-    const r = await castVote({ overlay, choice });
+    const r = removing ? await removeVote({ overlay }) : await castVote({ overlay, choice });
     setBusy(null);
     if (!r.ok) { setVotes(prev); setErr(r.error || 'Vote did not save.'); }
   };
@@ -188,7 +192,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
                   <button type="button" onClick={() => vote(active, o.key)} disabled={busy === 'vote'}
                     className={['w-full px-3 py-2 text-sm border-t transition-colors',
                       isMine ? 'bg-green/15 border-green text-green' : 'border-border text-text hover:bg-accent/20'].join(' ')}>
-                    {isMine ? '✓ your pick' : 'Pick ' + o.key.toUpperCase()} <span className="text-dim">· {n}</span>
+                    {isMine ? '✓ your pick' : 'Pick ' + o.key.toUpperCase()} <span className="text-dim">· {n}</span>{isMine && <span className="block text-[10px] text-dim font-normal">tap again to remove</span>}
                   </button>
                   <div className="px-3 py-1.5 border-t border-border text-[10px] text-dim leading-snug">{who.length ? who.join(', ') : 'no picks yet'}</div>
                   <details open={isMine} className="border-t border-border">
@@ -236,7 +240,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
       {/* the ballot — one spot per Pack member */}
       <section className="space-y-2">
         <h2 className="text-lg text-text">Who has picked what</h2>
-        <p className="text-xs text-dim max-w-3xl">Everyone who has picked something so far. Your row is first once you have, and you can change picks straight from it. A dot is an overlay they have not picked yet.</p>
+        <p className="text-xs text-dim max-w-3xl">Everyone who has picked something so far. Your row is first once you have, and you can change or remove picks straight from it (tap the lit letter to remove). A dot is an overlay they have not picked yet.</p>
         <div className="overflow-x-auto border border-border rounded-lg bg-panel">
           <table className="text-xs w-full min-w-[640px]">
             <thead>
@@ -260,7 +264,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
                           {isMe ? (
                             <span className="inline-flex gap-0.5">
                               {CHOICES.map(c => (
-                                <button key={c} type="button" onClick={() => vote(o.key, c)} disabled={busy === 'vote'}
+                                <button key={c} type="button" onClick={() => vote(o.key, c)} disabled={busy === 'vote'} title={v === c ? 'Remove this pick' : `Pick ${c.toUpperCase()}`}
                                   className={['w-5 h-5 rounded border text-[10px]', v === c ? 'bg-green/20 border-green text-green' : 'border-border text-dim hover:text-text'].join(' ')}>{c.toUpperCase()}</button>
                               ))}
                             </span>
