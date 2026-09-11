@@ -75,11 +75,31 @@ handed to a member would not have parsed at all. Fixed with a BOM (matching
 **Run the full suite before pushing, not the targeted file.** The repo already
 had the guard; I just did not consult it.
 
+## The Tank mini's damage-shield box is PER HIT (Hitya, 2026-09-11)
+
+*"The Damage shield component should be the sum of damage per hit, not the
+total from all the times being hit."* The spiky box on the Tank mini shows
+what ONE hit returns — the sum of the tank's active damage-shield buffs
+(Shield of Blades 65 + Barrier of Combustion 20 → `85/hit`) — pops on each
+hit, and changes only when a DS lands or fades. Today's full overlay keeps
+its running-total line; the two are now computed from the same per-hit
+figure. Landed on `beta` (ea2893c9) in the vote page's mocks and option
+text; it is the spec for the Mimic build once a Tank option is picked.
+
+## The 2.6.7 stable went out Friday morning, not at 00:35
+
+The post-raid push trigger was created Thursday 21:07 ET with `run_once_at`
+a day late (2026-09-12T04:35Z instead of 09-11). Nothing fired at 00:35 ET;
+noticed at 06:55 ET when a beta push showed the clock. Pushed the held batch
+by hand (Friday is not a raid night) and deleted the trigger. Lesson: after
+creating a one-shot trigger, read `next_run_at` back in ET before trusting
+it — the tool echoes it.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
 |---|---|---|
-| Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page on `beta` 2026-09-11 — `b.wolfpack.quest/mimic/mini`, awaiting Hitya's review, then the guild gets the link.** Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya reviews; graduate to `main` (web bump + roadmap entry) so the guild link is production; ⚠ after the 2.6.7 stable push beta is reset to main — cherry-pick `070cdb1e` back before re-parking 2.6.8; build nothing in Mimic until the picks land |
+| Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page on `beta` 2026-09-11 — `b.wolfpack.quest/mimic/mini`, awaiting Hitya's review, then the guild gets the link.** Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya reviews; graduate to `main` (web bump + roadmap entry) so the guild link is production; ⚠ after the 2.6.7 stable push beta is reset to main — cherry-pick `070cdb1e` back before re-parking 2.6.8; build nothing in Mimic until the picks land |
 | Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
 | Zeal spawn id: Mimic should null a pipe `target_id` of 0 at the edge | open — bot guards it (3.1.123), `apps/mimic/main.js` still trusts `Number.isFinite(0)`, and its comment claiming the pipe OMITS the field is wrong | beta, alongside the agent's `_provableTargetId` |
 | Spawn-id adoption is ~half the fleet | open — 11 of 19 on 2026-09-10; poster built to push it | share `zeal-update-why.png`; re-measure the blind % in a week |
