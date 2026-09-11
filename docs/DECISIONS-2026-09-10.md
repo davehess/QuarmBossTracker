@@ -95,6 +95,18 @@ by hand (Friday is not a raid night) and deleted the trigger. Lesson: after
 creating a one-shot trigger, read `next_run_at` back in ET before trusting
 it — the tool echoes it.
 
+## The v2.6.7 release body is the wrong commit (2026-09-11)
+
+`release-mimic.yml` takes the release body from the commit at the TIP of the
+push. The stable cut (`a5017b1f`, with its member-facing bullets) went up
+with four commits above it, so the published body is the docs commit about
+the mis-dated trigger, and the #mimic-releases announcer reposted it. The
+installer and tag are correct; only the text is wrong. Repair: edit the
+v2.6.7 release on GitHub and paste the bullets from the roadmap entry
+("Puts the Setup buttons back" + the quiet-mode line) — Hitya's action, no
+tool here can edit a release. Rule added to CLAUDE.md: the version-bump
+commit is the tip of its own push, or the tip carries `<!--player-notes-->`.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
