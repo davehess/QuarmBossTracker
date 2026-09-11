@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-7-31-mini-mode-vote-2026-09-11',
+    title: 'Pick the Mimic mini modes',
+    version: 'Web 1.7.31',
+    date: '2026-09-11',
+    headline: 'Every overlay is getting a smaller version \u2014 you choose which one.',
+    features: [
+      {
+        name: 'wolfpack.quest/mimic/mini',
+        blurb: 'Each overlay shown as it is today next to three smaller versions, all moving, with our own raiders and the Kaas Thox fight from Sep 10 in them. Vote for the one you would raid with, change your mind any time, and leave a note under each one.',
+      },
+      {
+        name: 'One spot per member',
+        blurb: 'A ballot at the bottom shows who has picked what, so nobody\u2019s voice gets lost.',
+      },
+      {
+        name: 'With or without the new Zeal',
+        blurb: 'A switch shows how each overlay behaves on Zeal 1.4.6 versus older Zeal \u2014 same-name mobs are the big difference.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-6-7-setup-buttons-2026-09-11',
     title: 'Mimic 2.6.7',
     version: 'Mimic 2.6.7 \u00b7 Agent 3.6.37',
