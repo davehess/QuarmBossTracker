@@ -90,6 +90,7 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Mimic mini mode — the guild picks (`/mimic/mini`, on `beta` 2026-09-11, awaiting Hitya's review before the guild is told).** One overlay at a time: today's overlay on the left, three mini renditions on the right with a vote under each, a feedback bar whose notes persist beside the author's pick, and a Zeal 1.4.6 / older-Zeal toggle so the same-name-mob difference is visible. Mocks animate on one scenario clock (frozen under reduced motion) and use real raiders from the 2026-09-10 roster + the real Kaas Thox parse. Tables `overlay_design_votes` / `overlay_design_feedback` (migration `20260911030000`, applied). Read at `b.wolfpack.quest/mimic/mini`; graduation bumps web + adds the roadmap entry. ⚠ Beta is reset to main after the 2.6.7 stable push — cherry-pick the page commit back on before re-parking.
 - **✅ Attendance layout: strips (default) or blocks, member's choice (web
   1.7.24, 2026-09-04; 1.7.23 was the docs without the code — see DECISIONS).** Hitya's pick from the beta side-by-side: *"I like
   blocks and strips, let's keep both as options, default to strips."*
