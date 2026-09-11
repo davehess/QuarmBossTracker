@@ -393,6 +393,8 @@ file-checkout between branches rather than merging whole branches (the beta
 branch must never promote stale bot/web files to `main`). Graduating a Mimic
 beta to stable: merge the Mimic/agent state to `main` with a stable version.
 
+**The stable commit must be the TIP of the push that cuts it (2026-09-11).** `release-mimic.yml` builds the release body from `git log -1 HEAD` — the LAST commit of the push, not the version-bump commit — unless that HEAD carries a `<!--player-notes-->` block. Pushing `mimic v2.6.7` with four docs commits on top of it published a release whose body was a docs commit about a mis-dated trigger, and the #mimic-releases announcer reposts that body verbatim. Push the version-bump commit on its own, or make sure it is the last one; if anything must ride above it, put the member-facing bullets in a `<!--player-notes-->…<!--/player-notes-->` block on the tip commit. A wrong body can only be repaired by editing the release on GitHub (no MCP tool updates releases) — the announcer will not repost.
+
 **Release-visible text is member-facing, not a git log (Hitya 2026-08-07,
 from the v1.1.20 announcement wall-of-text).** The graduation/stable commit
 body becomes the GitHub release body, which the #mimic-releases announcer
