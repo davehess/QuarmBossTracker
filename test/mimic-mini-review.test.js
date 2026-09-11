@@ -85,6 +85,14 @@ describe('page + actions + migration', () => {
     expect(actions).toMatch(/from\('overlay_design_feedback'\)/);
   });
 
+  it('the ballot has a spot for every Pack member (Hitya 2026-09-11)', () => {
+    expect(page).toMatch(/from\('wolfpack_members'\)\.select\('user_id, nickname, global_name'\)\.eq\('is_member', true\)/);
+    expect(page).toMatch(/members=\{ballot\}/);
+    expect(review).toMatch(/Who has picked what/);
+    expect(review).toMatch(/ballotRows\.map/);
+    expect(review).toMatch(/vote\(o\.key, c\)/);
+  });
+
   it('the damage-shield box is per hit, not the running total (Hitya 2026-09-11)', () => {
     const mocks = stripJs(read('web/app/mimic/mini/mocks.tsx'));
     expect(mocks).toMatch(/\{DS_PER_HIT\}\/hit/);

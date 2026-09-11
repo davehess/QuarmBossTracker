@@ -274,6 +274,8 @@ export function cleanFeedback(body: unknown): { ok: true; body: string } | { ok:
   return { ok: true, body: s };
 }
 
+/** A Pack member's row on the ballot; id is null until they have signed in. */
+export type Member = { id: string | null; name: string };
 export type VoteRow = { overlay: string; user_id: string; choice: string; voter_name: string | null };
 export type FeedbackRow = { id: string; overlay: string; user_id: string; author: string; choice: string | null; body: string; created_at: string };
 

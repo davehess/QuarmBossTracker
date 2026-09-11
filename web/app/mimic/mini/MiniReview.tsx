@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { OVERLAYS, CHOICES, tally, type Choice, type FeedbackRow, type VoteRow, type CostLevel, type OverlaySpec } from '@/lib/miniReview';
+import { OVERLAYS, CHOICES, tally, type Choice, type FeedbackRow, type VoteRow, type CostLevel, type OverlaySpec, type Member } from '@/lib/miniReview';
 import { FullMock, MiniMock, MenuMock, BarRuleMock, Stage, LOOP } from './mocks';
 import { castVote, postFeedback } from './actions';
 
@@ -53,7 +53,7 @@ function When({ iso }: { iso: string }) {
   return <span suppressHydrationWarning>{txt}</span>;
 }
 
-export default function MiniReview({ me, votes: initialVotes, feedback: initialFeedback }: { me: Me; votes: VoteRow[]; feedback: FeedbackRow[] }) {
+export default function MiniReview({ me, votes: initialVotes, feedback: initialFeedback, members }: { me: Me; votes: VoteRow[]; feedback: FeedbackRow[]; members: Member[] }) {
   const [active, setActive] = useState(OVERLAYS[0].key);
   const [zeal, setZeal] = useState(true);
   const [votes, setVotes] = useState<VoteRow[]>(initialVotes);
@@ -78,15 +78,18 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
   const myVoteCount = OVERLAYS.filter(o => votes.some(v => v.overlay === o.key && v.user_id === me.id)).length;
   const thread = feedback.filter(f => f.overlay === active);
   const votersFor = (c: Choice) => votes.filter(v => v.overlay === active && v.choice === c).map(v => v.voter_name || 'member');
+  const pickOf = (userId: string | null, overlay: string) => (userId ? votes.find(v => v.overlay === overlay && v.user_id === userId)?.choice ?? null : null);
+  // Ballot rows: you first, then every Pack member by name.
+  const ballotRows: Member[] = [{ id: me.id, name: me.name }, ...members.filter(m => m.id !== me.id).sort((a, b) => a.name.localeCompare(b.name))];
 
   const go = (i: number) => { setActive(OVERLAYS[(i + OVERLAYS.length) % OVERLAYS.length].key); setDraft(''); setErr(''); topRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 
-  const vote = async (choice: Choice) => {
+  const vote = async (overlay: string, choice: Choice) => {
     if (busy) return;
     const prev = votes;
-    setVotes(vs => [...vs.filter(v => !(v.overlay === active && v.user_id === me.id)), { overlay: active, user_id: me.id, choice, voter_name: me.name }]);
+    setVotes(vs => [...vs.filter(v => !(v.overlay === overlay && v.user_id === me.id)), { overlay, user_id: me.id, choice, voter_name: me.name }]);
     setBusy('vote'); setErr('');
-    const r = await castVote({ overlay: active, choice });
+    const r = await castVote({ overlay, choice });
     setBusy(null);
     if (!r.ok) { setVotes(prev); setErr(r.error || 'Vote did not save.'); }
   };
@@ -178,8 +181,8 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
                   <ul className="px-3 py-2 text-xs text-dim space-y-1 list-disc pl-7">{o.how.map((h, i) => <li key={i}>{h}</li>)}</ul>
                   <div className="mt-auto">
                     <Cost o={o} />
-                    <button type="button" onClick={() => vote(o.key)} disabled={busy === 'vote'}
-                      title={votersFor(o.key).join(', ') || 'no votes yet'}
+                    <div className="px-3 py-1.5 border-t border-border text-[10px] text-dim leading-snug">{votersFor(o.key).length ? votersFor(o.key).join(', ') : 'no picks yet'}</div>
+                    <button type="button" onClick={() => vote(active, o.key)} disabled={busy === 'vote'}
                       className={['w-full px-3 py-2 text-sm border-t transition-colors',
                         isMine ? 'bg-green/15 border-green text-green' : 'border-border text-text hover:bg-accent/20'].join(' ')}>
                       {isMine ? '✓ your pick' : 'Pick ' + o.key.toUpperCase()} <span className="text-dim">· {n}</span>
@@ -219,6 +222,50 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
           <button type="button" onClick={() => go(idx - 1)} className="text-blue hover:underline">← {OVERLAYS[(idx + OVERLAYS.length - 1) % OVERLAYS.length].title}</button>
           <span className="text-xs text-dim">you&apos;ve picked {myVoteCount} of {OVERLAYS.length}</span>
           <button type="button" onClick={() => go(idx + 1)} className="text-blue hover:underline">{OVERLAYS[(idx + 1) % OVERLAYS.length].title} →</button>
+        </div>
+      </section>
+
+      {/* the ballot — one spot per Pack member */}
+      <section className="space-y-2">
+        <h2 className="text-lg text-text">Who has picked what</h2>
+        <p className="text-xs text-dim max-w-3xl">One row per Pack member. Your row is first and you can pick straight from it. A dot is no pick yet; a greyed name has not signed in to the site.</p>
+        <div className="overflow-x-auto border border-border rounded-lg bg-panel">
+          <table className="text-xs w-full min-w-[640px]">
+            <thead>
+              <tr className="text-dim">
+                <th className="text-left font-normal px-2 py-1.5">Member</th>
+                {OVERLAYS.map((o, i) => <th key={o.key} className="font-normal px-1 py-1.5"><button type="button" onClick={() => go(i)} className="hover:text-text">{o.title}</button></th>)}
+                <th className="font-normal px-2 py-1.5">✓</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ballotRows.map(m => {
+                const isMe = m.id === me.id;
+                const n = OVERLAYS.filter(o => pickOf(m.id, o.key)).length;
+                return (
+                  <tr key={m.id || m.name} className={['border-t border-border/60', isMe ? 'bg-accent/15' : ''].join(' ')}>
+                    <td className={['px-2 py-1 whitespace-nowrap', m.id ? 'text-text' : 'text-dim'].join(' ')}>{m.name}{isMe ? ' (you)' : ''}</td>
+                    {OVERLAYS.map(o => {
+                      const v = pickOf(m.id, o.key);
+                      return (
+                        <td key={o.key} className="px-1 py-1 text-center">
+                          {isMe ? (
+                            <span className="inline-flex gap-0.5">
+                              {CHOICES.map(c => (
+                                <button key={c} type="button" onClick={() => vote(o.key, c)} disabled={busy === 'vote'}
+                                  className={['w-5 h-5 rounded border text-[10px]', v === c ? 'bg-green/20 border-green text-green' : 'border-border text-dim hover:text-text'].join(' ')}>{c.toUpperCase()}</button>
+                              ))}
+                            </span>
+                          ) : (v ? <span className="text-text">{v.toUpperCase()}</span> : <span className="text-dim">·</span>)}
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1 text-center text-dim">{n || ''}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </section>
 
