@@ -127,12 +127,32 @@ Two options, and the current mode should just mute."* Landed on `beta`
   goes silent, which is what "the current mode should just mute" asks for.
 - The vote page also lets people remove a pick (web 1.7.34).
 
+## The relay scope gate never worked, and now fails closed outside a raid (Hitya, 2026-09-11)
+
+Hitya, alone on Canopy in Vex Thal, kept getting "Shaman Slow" callouts:
+*"I'm not in a zone with another guild member, or in a group, or even a raid.
+These random slips need to stop."* The fires were Lucker's — Turgur's Insects
+landing on Ssraeshza Temple trash every 30–60s from 13:49 UTC — relayed to
+everyone. The 3.1.111 gate resolved the sender's zone from `payload.character`,
+which no agent sends, so the origin was always null and the fail-open branch
+passed every fire since it shipped. The fleet-wide "works the moment the bot
+deploys" design was right; the field it read was wrong.
+
+Bot 3.1.125: origin zones come from the uploading ACCOUNT (`_requesterZones`
+on the sender too), "in a raid" also means "this listener uploaded a raid
+roster in the last 10 min" (off-schedule raids stay raid-wide), and outside a
+raid an unplaceable sender or listener is NOT local — dropped. The
+`test/relay-scope-gate.test.js` fail-open pins were rewritten on purpose.
+Follow-up for beta: the Recent-fires card labels relayed fires "guild", same
+as local ones, which is why this took a code read to diagnose — show "relay".
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
 |---|---|---|
 | Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
+| Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
 | Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
 | Zeal spawn id: Mimic should null a pipe `target_id` of 0 at the edge | open — bot guards it (3.1.123), `apps/mimic/main.js` still trusts `Number.isFinite(0)`, and its comment claiming the pipe OMITS the field is wrong | beta, alongside the agent's `_provableTargetId` |
 | Spawn-id adoption is ~half the fleet | open — 11 of 19 on 2026-09-10; poster built to push it | share `zeal-update-why.png`; re-measure the blind % in a week |

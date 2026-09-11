@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.125': [
+    '**Guild callouts stop leaking between zones \u2014 for real this time.** \u201cShaman Slow\u201d and the other guild-wide callouts were supposed to reach you only during a raid or from the zone you are standing in. The check had a hole and never actually stopped anything, so a slow landed by someone else in Ssraeshza could speak on your screen in Vex Thal. Now a callout relays raid-wide while you are in a raid (raid night, or your Mimic is uploading a raid roster) and otherwise only from your own zone. If either side cannot be placed outside a raid, it stays quiet.',
+  ],
   '3.1.124': [
     '**Two events on one night each get their own kills.** Kill cards now land in the thread for the zone they happened in, instead of whichever event started nearest the clock. Officers: the guild\u2019s own words for a zone (\u201cring war\u201d, \u201cseru\u201d) live in the zone list and can be extended without a code change.',
   ],

@@ -16568,13 +16568,15 @@ async function _handleTriggerRelayPost(req, res) {
   }
 
   const senderOffset = _senderClockOffsetMs(payload);
-  // The sender's zone, for the scope gate. One 2s-cached read shared by every
-  // relay POST; resolved once per request, not per fire.
-  let originZone = null;
-  try {
-    const senderChar = String(payload?.character || '').trim().toLowerCase();
-    if (senderChar) originZone = ((await _liveZoneMap()).get(senderChar) || {}).zone_name || null;
-  } catch { /* fail open — a zone lookup must never reject a fire */ }
+  // The sender's zones, for the scope gate — every live character on the
+  // uploading ACCOUNT, resolved from the identity. The 3.1.111 version read
+  // `payload.character`, which no agent has ever sent, so the origin was null
+  // on every fire and the gate failed open for everyone: Hitya, 2026-09-11,
+  // hearing Lucker's slows from Ssraeshza Temple while alone in Vex Thal.
+  // Resolved once per request (2s-cached live-state read), not per fire.
+  let originZones = [];
+  try { originZones = [...await _requesterZones(identity.discord_id)]; }
+  catch { originZones = []; }   // unknown → the gate treats it as not local
 
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
@@ -16616,9 +16618,9 @@ async function _handleTriggerRelayPost(req, res) {
       // Where the sender was standing, resolved HERE rather than sent by the
       // agent: the bot already knows every character's live zone, so the gate
       // works on the whole fleet the moment this deploys instead of waiting for
-      // ~16 people to update Mimic. Null when live-state is stale — that fails
-      // open at read time (see _relayScopeKeep).
-      origin_zone:         originZone,
+      // ~16 people to update Mimic. Empty when live-state is stale — outside a
+      // raid that reads as "not local" (see _relayScopeKeep).
+      origin_zones:        originZones,
     };
     _triggerRelay.entries.push(entry);
     accepted++;
@@ -16632,7 +16634,7 @@ async function _handleTriggerRelayPost(req, res) {
   return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
 }
 
-// ── Relay scope gate (Hitya, 2026-09-02) ────────────────────────────────────
+// ── Relay scope gate (Hitya, 2026-09-02; tightened 2026-09-11) ──────────────
 // "Every so often we hear Shaman Slow when we're not around combat. These should
 // only trigger for local fights or during raids, not outside."
 //
@@ -16640,17 +16642,25 @@ async function _handleTriggerRelayPost(req, res) {
 // ran on every other Mimic within 15s. Someone soloing an alt in East Commons on
 // a Tuesday landed a slow, and the whole guild heard it.
 //
-// The rule: raid-wide during a raid window, same-zone-only outside it.
+// The rule: raid-wide while you are in a raid — the scheduled window, OR your
+// own Mimic uploading a raid roster in the last 10 minutes (off-schedule raids)
+// — and same-zone-only otherwise.
 //
-// ⚠ FAIL OPEN IN BOTH UNKNOWN CASES, and that is deliberate. This gate decides
-// whether a raid callout is spoken. Dropping a real Death Touch warning because
-// a zone lookup came back empty is far worse than an occasional stray "Shaman
-// Slow", so anything we cannot prove is out-of-zone passes through.
-function _relayScopeKeep({ inRaidWindow, originZone, requesterZones }) {
-  if (inRaidWindow) return true;                                   // raid night: unchanged
-  if (!originZone) return true;                                    // can't place the sender
-  if (!requesterZones || requesterZones.size === 0) return true;   // can't place ourselves
-  return requesterZones.has(originZone);
+// ⚠ OUTSIDE A RAID, UNKNOWN MEANS NOT LOCAL. The 3.1.111 gate failed open when
+// either side could not be placed, and because the ingest read a payload field
+// no agent ever sent, the sender was NEVER placed and the gate never dropped a
+// single fire. Hitya, 2026-09-11, alone in Vex Thal hearing a Ssraeshza slow:
+// "I'm not in a zone with another guild member, or in a group, or even a raid.
+// These random slips need to stop." The raid cases are the safety net for a
+// real callout: inside them nothing is consulted and everything relays.
+function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones }) {
+  if (inRaidWindow || inRaid) return true;                          // in a raid: unchanged, raid-wide
+  const origin = originZones instanceof Set ? originZones
+    : new Set(Array.isArray(originZones) ? originZones : (originZones ? [originZones] : []));
+  if (origin.size === 0) return false;                              // can't place the sender → not local
+  if (!requesterZones || requesterZones.size === 0) return false;   // can't place ourselves → not local
+  for (const z of origin) if (z && requesterZones.has(z)) return true;
+  return false;
 }
 
 // character name (lower) → owning discord id. Cached 5 min: the roster changes on
@@ -16688,6 +16698,29 @@ async function _requesterZones(discordId) {
   return out;
 }
 
+// Accounts whose Mimic uploaded a raid roster in the last 10 minutes — the
+// "I am in a raid right now" signal that keeps the relay raid-wide on an
+// off-schedule night. Newest 500 rows (a few captures of a full raid), cached
+// 30s: one small read per half-minute for the whole fleet, never per poll.
+let _raidUploadersCache = { at: 0, ids: new Set() };
+async function _raidUploaderIds() {
+  if ((Date.now() - _raidUploadersCache.at) < 30_000) return _raidUploadersCache.ids;
+  const supabase = require('./utils/supabase');
+  const ids = new Set();
+  if (supabase.isEnabled()) {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    try {
+      const rows = await supabase.select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
+        `&select=uploaded_by_discord_id&order=captured_at.desc&limit=500`);
+      for (const r of (rows || [])) if (r && r.uploaded_by_discord_id) ids.add(String(r.uploaded_by_discord_id));
+    } catch (err) { console.warn('[relay-scope] raid uploaders fetch failed:', err && err.message); }
+  }
+  _raidUploadersCache = { at: Date.now(), ids };
+  return ids;
+}
+
 // Assemble the recent-fires payload from the in-memory relay ring buffer.
 // Shared by the standalone GET /recent-fires and the multiplexed GET /poll
 // (#106) so both stay byte-identical. Suppresses the caller's own fires — they
@@ -16697,15 +16730,16 @@ async function _requesterZones(discordId) {
 // own `loot_since_id`/`loot_next_id` cursor is independent of the fires cursor
 // (loot events are NOT suppressed by uploader — the officer's own Mimic should
 // announce too, since the post came from Discord/OpenDKP, not a fire it played).
-// `scope` is { inRaidWindow, requesterZones } resolved by the caller (both call
-// sites are async; this stays sync and pure so it can be tested directly).
-// Omitting it keeps every fire — the pre-gate behaviour.
+// `scope` is { inRaidWindow, inRaid, requesterZones } resolved by the caller
+// (both call sites are async; this stays sync and pure so it can be tested
+// directly). Omitting it keeps every fire — the pre-gate behaviour.
 function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
   const inRaidWindow  = scope ? !!scope.inRaidWindow : true;
+  const inRaid        = scope ? !!scope.inRaid : true;
   const requesterZones = scope ? scope.requesterZones : null;
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
-    .filter(e => _relayScopeKeep({ inRaidWindow, originZone: e.origin_zone, requesterZones }))
+    .filter(e => _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones }))
     .map(e => ({
       id:                  e.id,
       name:                e.name,
@@ -16726,15 +16760,20 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
 }
 
 // Resolve the scope inputs once per poll. During a raid window this costs
-// nothing — the zone lookup is skipped entirely, which is also when the fleet
-// polls hardest.
+// nothing — the lookups are skipped entirely, which is also when the fleet
+// polls hardest. Off-schedule, the listener's own fresh raid-roster upload is
+// checked next (30s-cached set), and only then the zones.
 async function _relayScopeFor(identity) {
   const inRaidWindow = _inRaidWindowEt(new Date());
-  if (inRaidWindow) return { inRaidWindow: true, requesterZones: null };
-  let requesterZones = null;
-  try { requesterZones = await _requesterZones(identity && identity.discord_id); }
-  catch { requesterZones = null; }   // fail open
-  return { inRaidWindow: false, requesterZones };
+  if (inRaidWindow) return { inRaidWindow: true, inRaid: true, requesterZones: null };
+  const discordId = String((identity && identity.discord_id) || '');
+  let inRaid = false;
+  try { inRaid = discordId ? (await _raidUploaderIds()).has(discordId) : false; } catch { inRaid = false; }
+  if (inRaid) return { inRaidWindow: false, inRaid: true, requesterZones: null };
+  let requesterZones = new Set();
+  try { requesterZones = await _requesterZones(discordId); }
+  catch { requesterZones = new Set(); }   // unknown → not local (see _relayScopeKeep)
+  return { inRaidWindow: false, inRaid: false, requesterZones };
 }
 
 async function _handleRecentFiresGet(req, res) {
