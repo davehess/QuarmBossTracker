@@ -107,11 +107,32 @@ v2.6.7 release on GitHub and paste the bullets from the roadmap entry
 tool here can edit a release. Rule added to CLAUDE.md: the version-bump
 commit is the tip of its own push, or the tip carries `<!--player-notes-->`.
 
+## Quiet mode is now a mute; hiding overlays is its own switch (Hitya, 2026-09-11)
+
+*"Quiet mode should separate between muted and not seeing overlays at all.
+Two options, and the current mode should just mute."* Landed on `beta`
+(0cd30781, agent 3.6.39, builds 2.6.8-beta.2):
+- `cfg.quietMode` keeps its key and now means MUTE — no voice callouts, no
+  sounds, overlays unchanged. Until today it hid every overlay and silenced
+  nothing (callouts speak from the hidden trigger window), so the old label
+  "hide HUD + TTS" was wrong both ways.
+- `cfg.hideOverlays` (new, default off) is "Don't show any overlays" — the
+  EQLogParser / other-parser case. It owns every visibility gate,
+  `_overlayWanted`, the tray enables and the tooltip. Uploads and voice are
+  unaffected.
+- Mute reaches renderers as one boolean (`wp-mute`, broadcast on every
+  save-config, read once at load) and is checked in the three places that
+  make noise: triggers.html (speak + sound files), chchain.html, charm.html.
+- No migration: someone who had Quiet mode on gets their overlays back and
+  goes silent, which is what "the current mode should just mute" asks for.
+- The vote page also lets people remove a pick (web 1.7.34).
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
 |---|---|---|
 | Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
+| Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
 | Zeal spawn id: Mimic should null a pipe `target_id` of 0 at the edge | open — bot guards it (3.1.123), `apps/mimic/main.js` still trusts `Number.isFinite(0)`, and its comment claiming the pipe OMITS the field is wrong | beta, alongside the agent's `_provableTargetId` |
 | Spawn-id adoption is ~half the fleet | open — 11 of 19 on 2026-09-10; poster built to push it | share `zeal-update-why.png`; re-measure the blind % in a week |
