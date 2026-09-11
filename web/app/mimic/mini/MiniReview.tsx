@@ -53,7 +53,7 @@ function When({ iso }: { iso: string }) {
   return <span suppressHydrationWarning>{txt}</span>;
 }
 
-export default function MiniReview({ me, votes: initialVotes, feedback: initialFeedback, members }: { me: Me; votes: VoteRow[]; feedback: FeedbackRow[]; members: Member[] }) {
+export default function MiniReview({ me, votes: initialVotes, feedback: initialFeedback }: { me: Me; votes: VoteRow[]; feedback: FeedbackRow[] }) {
   const [active, setActive] = useState(OVERLAYS[0].key);
   const [zeal, setZeal] = useState(true);
   const [votes, setVotes] = useState<VoteRow[]>(initialVotes);
@@ -79,8 +79,14 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
   const thread = feedback.filter(f => f.overlay === active);
   const votersFor = (c: Choice) => votes.filter(v => v.overlay === active && v.choice === c).map(v => v.voter_name || 'member');
   const pickOf = (userId: string | null, overlay: string) => (userId ? votes.find(v => v.overlay === overlay && v.user_id === userId)?.choice ?? null : null);
-  // Ballot rows: you first, then every Pack member by name.
-  const ballotRows: Member[] = [{ id: me.id, name: me.name }, ...members.filter(m => m.id !== me.id).sort((a, b) => a.name.localeCompare(b.name))];
+  // Ballot rows: only people who have picked something (Hitya 2026-09-11),
+  // you first once you have, the rest by name.
+  const ballotRows: Member[] = (() => {
+    const byId = new Map<string, string>();
+    for (const v of votes) if (!byId.has(v.user_id)) byId.set(v.user_id, v.voter_name || 'member');
+    const rows = [...byId.entries()].map(([id, name]) => ({ id, name }));
+    return [...rows.filter(r => r.id === me.id), ...rows.filter(r => r.id !== me.id).sort((a, b) => a.name.localeCompare(b.name))];
+  })();
 
   const go = (i: number) => { setActive(OVERLAYS[(i + OVERLAYS.length) % OVERLAYS.length].key); setDraft(''); setErr(''); topRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 
@@ -163,31 +169,33 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
         <p className="text-xs text-dim max-w-3xl"><span className="text-blue">Zeal toggle:</span> {spec.zeal}</p>
         {spec.also && <p className="text-xs text-dim max-w-3xl"><span className="text-purple">Also:</span> {spec.also}</p>}
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(280px,1fr)_3fr]">
-          <div className="bg-panel border border-border rounded-lg overflow-hidden">
+        <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_1fr]">
+          <div className="bg-panel border border-border rounded-lg overflow-hidden self-start">
             <div className="px-3 py-2 border-b border-border text-xs uppercase tracking-wider text-dim">Today · full mode</div>
             <Stage><FullMock overlay={active} t={t} zeal={zeal} /></Stage>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          {/* the three minis side by side; descriptions collapsed under each, opened by your pick */}
+          <div className="grid gap-3 sm:grid-cols-3 items-start">
             {spec.options.map(o => {
-              const n = counts[active][o.key]; const isMine = mine === o.key;
+              const n = counts[active][o.key]; const isMine = mine === o.key; const who = votersFor(o.key);
               return (
                 <div key={o.key} className={['bg-panel border rounded-lg overflow-hidden flex flex-col', isMine ? 'border-green' : 'border-border'].join(' ')}>
-                  <div className="px-3 py-2 border-b border-border flex items-center gap-2">
-                    <span className="inline-grid place-items-center w-5 h-5 rounded bg-accent text-white text-[11px] font-bold">{o.key.toUpperCase()}</span>
-                    <span className="text-sm text-text font-semibold">{o.name}</span>
+                  <div className="px-3 py-2 border-b border-border flex items-center gap-2 min-w-0">
+                    <span className="inline-grid place-items-center w-5 h-5 rounded bg-accent text-white text-[11px] font-bold shrink-0">{o.key.toUpperCase()}</span>
+                    <span className="text-sm text-text font-semibold truncate">{o.name}</span>
                   </div>
                   <Stage><MiniMock overlay={active} choice={o.key} t={t} zeal={zeal} /></Stage>
-                  <ul className="px-3 py-2 text-xs text-dim space-y-1 list-disc pl-7">{o.how.map((h, i) => <li key={i}>{h}</li>)}</ul>
-                  <div className="mt-auto">
+                  <button type="button" onClick={() => vote(active, o.key)} disabled={busy === 'vote'}
+                    className={['w-full px-3 py-2 text-sm border-t transition-colors',
+                      isMine ? 'bg-green/15 border-green text-green' : 'border-border text-text hover:bg-accent/20'].join(' ')}>
+                    {isMine ? '✓ your pick' : 'Pick ' + o.key.toUpperCase()} <span className="text-dim">· {n}</span>
+                  </button>
+                  <div className="px-3 py-1.5 border-t border-border text-[10px] text-dim leading-snug">{who.length ? who.join(', ') : 'no picks yet'}</div>
+                  <details open={isMine} className="border-t border-border">
+                    <summary className="cursor-pointer px-3 py-1.5 text-xs text-dim hover:text-text select-none">{isMine ? 'Why this one, and what it costs' : 'What it does, and what it costs'}</summary>
+                    <ul className="px-3 pb-2 text-xs text-dim space-y-1 list-disc pl-7">{o.how.map((h, i) => <li key={i}>{h}</li>)}</ul>
                     <Cost o={o} />
-                    <div className="px-3 py-1.5 border-t border-border text-[10px] text-dim leading-snug">{votersFor(o.key).length ? votersFor(o.key).join(', ') : 'no picks yet'}</div>
-                    <button type="button" onClick={() => vote(active, o.key)} disabled={busy === 'vote'}
-                      className={['w-full px-3 py-2 text-sm border-t transition-colors',
-                        isMine ? 'bg-green/15 border-green text-green' : 'border-border text-text hover:bg-accent/20'].join(' ')}>
-                      {isMine ? '✓ your pick' : 'Pick ' + o.key.toUpperCase()} <span className="text-dim">· {n}</span>
-                    </button>
-                  </div>
+                  </details>
                 </div>
               );
             })}
@@ -228,7 +236,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
       {/* the ballot — one spot per Pack member */}
       <section className="space-y-2">
         <h2 className="text-lg text-text">Who has picked what</h2>
-        <p className="text-xs text-dim max-w-3xl">One row per Pack member. Your row is first and you can pick straight from it. A dot is no pick yet; a greyed name has not signed in to the site.</p>
+        <p className="text-xs text-dim max-w-3xl">Everyone who has picked something so far. Your row is first once you have, and you can change picks straight from it. A dot is an overlay they have not picked yet.</p>
         <div className="overflow-x-auto border border-border rounded-lg bg-panel">
           <table className="text-xs w-full min-w-[640px]">
             <thead>
@@ -244,7 +252,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
                 const n = OVERLAYS.filter(o => pickOf(m.id, o.key)).length;
                 return (
                   <tr key={m.id || m.name} className={['border-t border-border/60', isMe ? 'bg-accent/15' : ''].join(' ')}>
-                    <td className={['px-2 py-1 whitespace-nowrap', m.id ? 'text-text' : 'text-dim'].join(' ')}>{m.name}{isMe ? ' (you)' : ''}</td>
+                    <td className="px-2 py-1 whitespace-nowrap text-text">{m.name}{isMe ? ' (you)' : ''}</td>
                     {OVERLAYS.map(o => {
                       const v = pickOf(m.id, o.key);
                       return (
@@ -266,6 +274,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
               })}
             </tbody>
           </table>
+          {ballotRows.length === 0 && <div className="px-3 py-3 text-xs text-dim">Nobody has picked yet — be the first.</div>}
         </div>
       </section>
 

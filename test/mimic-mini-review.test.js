@@ -88,11 +88,14 @@ describe('page + actions + migration', () => {
   });
 
   it('the ballot has a spot for every Pack member (Hitya 2026-09-11)', () => {
-    expect(page).toMatch(/from\('wolfpack_members'\)\.select\('user_id, nickname, global_name'\)\.eq\('is_member', true\)/);
-    expect(page).toMatch(/members=\{ballot\}/);
+    // Voters only (Hitya 2026-09-11) — the page fetches no member list.
+    expect(page).not.toMatch(/is_member/);
     expect(review).toMatch(/Who has picked what/);
+    expect(review).toMatch(/for \(const v of votes\) if \(!byId\.has\(v\.user_id\)\)/);
     expect(review).toMatch(/ballotRows\.map/);
     expect(review).toMatch(/vote\(o\.key, c\)/);
+    // Descriptions live in a collapsed section under each choice, opened by your pick.
+    expect(review).toMatch(/<details open=\{isMine\}/);
   });
 
   it('the damage-shield box is per hit, not the running total (Hitya 2026-09-11)', () => {
