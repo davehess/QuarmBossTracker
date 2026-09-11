@@ -632,26 +632,33 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
-### Cross-Mimic trigger relay: scope gate (bot 3.1.111)
+### Cross-Mimic trigger relay: scope gate (bot 3.1.111 · fixed and tightened in 3.1.125)
 The relay had **no scope of any kind** — every guild-trigger fire from any raider
 ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness
 drop. Someone landing a slow while soloing an alt in another zone spoke on the
 whole guild's machines (Hitya, 2026-09-02: *"we hear Shaman Slow when we're not
 around combat"*).
-**The rule: raid-wide during a raid window (`_inRaidWindowEt`), same-zone-only
-outside it.** `_relayScopeKeep()` is the pure predicate; `_relayScopeFor()`
-resolves the inputs once per poll and both poll paths (`/recent-fires` and the
-#106 multiplexed `/poll`) go through it.
-⚠ **The sender's zone is resolved BOT-SIDE at ingest** from `character_live_state`,
-not sent by the agent — so the gate covers the whole fleet the moment the bot
-deploys instead of waiting on ~16 people to update Mimic.
-⚠ **FAIL OPEN in both unknown cases and do not tighten them.** This gate decides
-whether a raid callout is SPOKEN. Dropping a real Death Touch warning because a
-zone lookup came back empty is far worse than a stray "Shaman Slow", so an
-unplaceable sender OR an unplaceable listener both pass through. Tests fail if
-either branch flips.
-⚠ The zone lookup is **skipped entirely inside a raid window**, which is when the
-fleet polls hardest. Tests: `test/relay-scope-gate.test.js`.
+⚠ **3.1.111 never gated a single fire.** Its ingest resolved the sender's zone
+from `payload.character`, a field no agent has ever sent, so the origin was null
+every time and the deliberate fail-open branch passed everything (Hitya,
+2026-09-11, alone in Vex Thal hearing Lucker's Ssraeshza slows: *"these random
+slips need to stop"*).
+**The rule (3.1.125): raid-wide while you are in a raid — the scheduled window
+(`_inRaidWindowEt`) OR your own Mimic uploaded a raid roster in the last 10
+minutes (`_raidUploaderIds`, newest 500 rows, 30s cache) — and same-zone-only
+otherwise, where "same zone" means any live character on the SENDING account
+shares a zone with any live character on the LISTENING account
+(`_requesterZones` on both sides, from `character_live_state`, 10-min fresh).**
+`_relayScopeKeep()` is the pure predicate; `_relayScopeFor()` resolves the
+inputs once per poll (window → roster → zones, each early return skipping the
+rest) and both poll paths (`/recent-fires` and the #106 multiplexed `/poll`) go
+through it. The ring stores `origin_zones` (an array) per fire.
+⚠ **Outside a raid, unknown means NOT local** — flipped from 3.1.111 on Hitya's
+call. The raid cases are the safety net for a real Death Touch warning: inside
+them nothing is consulted and everything relays. A listener with no live-state
+and no raid roster hears no relays off-schedule; that is the intended trade.
+Tests: `test/relay-scope-gate.test.js` (runs the predicate; mutation-checked on
+the fail-closed branch).
 
 ### /platform/architecture — the deep platform page (web 1.7.10)
 `/platform` answers "what is all this?"; this answers "how does it work?" — every

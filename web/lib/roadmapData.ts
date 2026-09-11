@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bot-3-1-125-relay-scope-2026-09-11',
+    title: 'Bot 3.1.125',
+    version: 'Bot 3.1.125',
+    date: '2026-09-11',
+    headline: 'Guild callouts stop leaking between zones, for real this time.',
+    features: [],
+    fixes: [
+      '\u201cShaman Slow\u201d and the other guild-wide callouts were meant to reach you only during a raid or from the zone you are in. The check had a hole and never stopped anything, so a slow landed in Ssraeshza could speak on your screen in Vex Thal.',
+      'Now a callout relays raid-wide while you are in a raid (raid night, or your Mimic is uploading a raid roster) and otherwise only from your own zone. If either side cannot be placed outside a raid, it stays quiet.',
+    ],
+  },
+  {
     key: 'mimic-2-6-8-beta-quiet-mode-split-2026-09-11',
     title: 'Mimic 2.6.8 beta',
     version: 'Mimic 2.6.8 beta \u00b7 Agent 3.6.39',
