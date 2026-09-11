@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-8-beta-quiet-mode-split-2026-09-11',
+    title: 'Mimic 2.6.8 beta',
+    version: 'Mimic 2.6.8 beta \u00b7 Agent 3.6.39',
+    date: '2026-09-11',
+    channel: 'beta',
+    headline: 'Quiet mode now mutes. A separate switch hides overlays.',
+    features: [
+      {
+        name: 'Mute Mimic',
+        blurb: 'Quiet mode now means mute: no voice callouts, no sounds. Your overlays keep showing.',
+      },
+      {
+        name: 'Don\u2019t show any overlays',
+        blurb: 'A new switch in Settings for people who use EQLogParser or another parser for the display. Mimic keeps uploading either way, and voice still plays unless you also mute.',
+      },
+    ],
+    fixes: [
+      'Quiet mode used to hide every overlay and not actually silence anything, because callouts speak from a hidden window. Both switches now do exactly what they say.',
+      'On the vote page, you can remove a pick by tapping it again.',
+    ],
+  },
+  {
     key: 'web-1-7-31-mini-mode-vote-2026-09-11',
     title: 'Pick the Mimic mini modes',
     version: 'Web 1.7.31',

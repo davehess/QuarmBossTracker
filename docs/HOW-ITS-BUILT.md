@@ -1473,6 +1473,22 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### Quiet mode split: mute vs hide overlays (agent 3.6.39 · beta 2.6.8-beta.2, 2026-09-11)
+Two switches in Settings → Local UI. **`cfg.quietMode` = Mute Mimic** — no
+voice callouts, no sounds, overlays unchanged (it kept its key; until this
+change it hid every overlay and silenced nothing, because callouts speak from
+the hidden trigger window). **`cfg.hideOverlays` = Don't show any overlays** —
+the EQLogParser / other-parser case; it owns every `shouldShow` gate,
+`_overlayWanted`, the reap reason (`overlays are switched off`), the tray
+enables and the tooltip (`· Muted` / `· Overlays off`). Mute travels as one
+boolean: `_broadcastMute()` sends `wp-mute` to every overlay on `save-config`;
+`preload.js` caches it (reads `get-config` once at load) and exposes
+`window.mimic.isMuted()`; `_wpMutedNow()` gates `speak()` + `playSound()` in
+`triggers.html`, `speakGap()` in `chchain.html`, `speak()` in `charm.html` —
+fires still flash. The agent dashboard's "Overlays can show" row keys on
+`hideOverlays` and notes when muted. `test/quiet-mode-split.test.js` runs the
+helper and `_overlayWanted` for real.
+
 ### Setup & onboarding (EQ-config writer)
 First-run **gate** lives in `loading.html` (steps: sign-in-or-local-only → EQ
 folder configured → engine up; `cfg.onboarded` flips returning users straight
