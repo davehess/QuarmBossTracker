@@ -83,7 +83,7 @@ outbound sockets or a router's NAT table — predicts *new* connections failing
 while *established* ones keep working, and the agent rides warm keep-alive
 sockets, so under that failure its polls would have continued. They stopped
 dead instead, in the same second, with no error shape before it. Combined
-with the wire rate (2/s, fleet-wide ~20/s to the bot across ~19 machines) and
+with the wire rate (2/s per client, and nothing unusual fleet-wide) and
 the code review below, the "too many connections" class is refuted for this
 instance.
 
