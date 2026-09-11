@@ -37,7 +37,7 @@ function ramp(t: number) {
   if (t < 6 || t >= 18) return null;
   const hp = clamp(r(58 - (t - 6) * 2.2 + 3 * Math.sin(t * 5)), 5, 100);
   const da = t >= 10 ? Math.max(0, 10 - (t - 10)) : null;
-  return { who: CAST.mt2, hp, da, crit: da != null && da <= 3 };
+  return { who: CAST.rampTank, hp, da, crit: da != null && da <= 3 };
 }
 type ChState = 'casting' | 'interrupted' | 'landed' | 'queued';
 function chain(t: number) {

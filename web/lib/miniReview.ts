@@ -43,6 +43,8 @@ export const FEEDBACK_MAX = 1000;
 // /parses and /who. Pet names are from character_live_state.
 export const CAST = {
   mt: 'Currygoat', mt2: 'Hoden',
+  // Rampage tank is a paladin: warriors do not go DA (Hitya 2026-09-11).
+  rampTank: 'Ashieron',
   clerics: ['Stupidrichard', 'Uilnayar', 'Mcdorf', 'Fargan', 'Bwavair'],
   me_cleric: 'Fargan',
   shamans: ['Ghalix', 'Utoh', 'Fungalfist'],

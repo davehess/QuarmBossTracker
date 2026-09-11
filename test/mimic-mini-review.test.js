@@ -62,6 +62,8 @@ describe('catalog', () => {
     expect(KAAS_PARSE.rows.length).toBe(10);
     expect(KAAS_PARSE.rows.map(r => r[0])).toContain(CAST.me_dps);
     expect(CAST.clerics).toContain(CAST.me_cleric);
+    expect(CAST.rampTank).toBe('Ashieron');
+    expect(stripJs(read('web/app/mimic/mini/mocks.tsx'))).toMatch(/who: CAST\.rampTank/);
   });
 });
 
