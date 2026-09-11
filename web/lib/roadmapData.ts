@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-7-setup-buttons-2026-09-11',
+    title: 'Mimic 2.6.7',
+    version: 'Mimic 2.6.7 \u00b7 Agent 3.6.37',
+    date: '2026-09-11',
+    headline: 'Puts the Setup buttons back.',
+    features: [],
+    fixes: [
+      'The Setup page lost its buttons in 2.6.6 \u2014 Set up for me, the Defender exceptions, Check / install Zeal and the clock fix all vanished, along with the rows beneath Zeal. They are back.',
+      'The Setup page also tells you when overlays are switched off because Quiet mode is on, which otherwise looks exactly like the overlays being broken.',
+    ],
+  },
+  {
     key: 'mimic-2-6-6-stable-2026-09-10',
     title: 'Mimic 2.6.6',
     version: 'Mimic 2.6.6 \u00b7 Agent 3.6.35',

@@ -246,3 +246,126 @@ describe('the raw EPERM never reaches a member again', () => {
     expect(fn).toMatch(/if \(!\/\\b\(EPERM\|EACCES\)\\b\/\.test\(msg\)\) return msg;/);
   });
 });
+
+describe('the quiet-mode row — the third thing the app knew and never said', () => {
+  // Abrahms, 2026-09-10, after Program Files and elevation were both ruled out:
+  // "I can get em all up when doing the placement mode. and moving/resizing.
+  // even the hotkey flip them from on to hidden. but nothing ever makes it to my
+  // screen." Every overlay is `unlocked || (showX && !quietMode && eqGate)`, and
+  // `unlocked` is placement mode — so quiet mode reproduces that report exactly.
+  const render = stripJs(sliceBlock(dashSrc, 'function renderSetupChecks(s) {', '\n  morphInto(el, h);'));
+  const main   = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+
+  it('says quiet mode is the reason, and where to turn it off', () => {
+    expect(render).toMatch(/_wpMimicCfg && _wpMimicCfg\.quietMode/);
+    expect(render).toMatch(/Quiet mode is ON/);
+    expect(render).toMatch(/EQLogParser/);
+  });
+
+  it('names the symptom that makes it look like a bug', () => {
+    expect(render).toMatch(/positioning them/);
+  });
+
+  it('reassures that uploads keep working — quiet mode is a display switch', () => {
+    expect(render).toMatch(/Uploads are unaffected/);
+  });
+
+  // A browser tab has no overlays; a row about them there is noise.
+  it('renders only when hosted in Mimic', () => {
+    expect(render).toMatch(/\} else if \(_wpMimicCfg\) \{/);
+    expect(stripJs(dashSrc)).toMatch(/var _wpMimicCfg = null;/);
+  });
+
+  it('reads Mimic config through the existing bridge, not a new endpoint', () => {
+    expect(stripJs(dashSrc)).toMatch(/window\.mimic\.getConfig\(\)/);
+    expect(stripJs(dashSrc)).toMatch(/_wpRefreshMimicCfg\(\);\s*const rows = _setupCheckRows\(s\);/);
+  });
+
+  // The row is only true while the gate it describes is shaped this way.
+  it('the gate it describes still bypasses everything when unlocked', () => {
+    expect(main).toMatch(/const shouldShow = unlocked \|\| \(cfg\.showHud && !cfg\.quietMode && _eqGateOk\(cfg\)\)/);
+  });
+});
+
+// ── THE TEST THAT SHOULD HAVE EXISTED FIRST ─────────────────────────────────
+// Everything above asserts on SOURCE TEXT, and source text cannot tell you the
+// function throws. It did: `eqf` was declared in _setupCheckRows and used in
+// renderSetupChecks, a ReferenceError that fires MID-RENDER — after the first
+// rows are appended, before the buttons are. The Setup card silently lost "Set
+// up for me", the Defender / Zeal / clock fixers and every row below Zeal, and
+// it rode a stable graduation to the whole fleet before Hitya said "setup lost
+// the buttons on the mimic dashboard".
+//
+// check:dashboard did not catch it either — it proves the script PARSES, and a
+// ReferenceError parses perfectly. So: RUN the renderer, with the smallest DOM
+// stubs that let it complete, and assert on what it actually produced.
+describe('renderSetupChecks actually runs and emits its buttons', () => {
+  function render(state) {
+    const pre = `
+      let captured = null, wired = false;
+      const esc = (v) => String(v == null ? '' : v);
+      const _isPanelHidden = () => false;
+      const morphInto = (el, h) => { captured = h; };
+      const document = { getElementById: () => ({ style: {} }), querySelector: () => null, addEventListener: () => {} };
+      const window = {};
+      const wpWireFixerButtons = () => { wired = true; };
+    `;
+    const post = `
+      renderSetupChecks(S);
+      return { captured, wired };
+    `;
+    const block = pre
+      + 'const S = ' + JSON.stringify(state) + ';\n'
+      + sliceBlock(dashSrc, 'var _wpMimicCfg = null;', '\n  return rows;\n}') + '\n'
+      + sliceBlock(dashSrc, 'function renderSetupChecks(s) {', '\n  wpWireFixerButtons(s);\n}')
+      + post;
+    return new Function(block)();
+  }
+  const healthy = {
+    watchedLogs: [{ logPath: 'x', lastSeen: Date.now() }],
+    zealClients: [{ live: true }], mimicSignedIn: true, localOnly: false,
+    zealExportOnCamp: true,
+    eqFolder: { zealInstalled: true, writable: true, unwritableDir: null },
+  };
+
+  it('completes without throwing — the whole point', () => {
+    expect(() => render(healthy)).not.toThrow();
+  });
+
+  it('emits all four fixer buttons', () => {
+    const { captured } = render(healthy);
+    for (const cls of ['wp-eq-setup', 'wp-defender', 'wp-zeal-install', 'wp-clock-fix']) {
+      expect(captured).toContain(cls);
+    }
+  });
+
+  it('reaches the end and wires the Mimic-only buttons', () => {
+    expect(render(healthy).wired).toBe(true);
+  });
+
+  // The rows that sit BELOW the throw site — their absence was the other half
+  // of the symptom and is what pins the failure to a mid-render abort.
+  it('emits every row after the one that used to throw', () => {
+    const { captured } = render(healthy);
+    expect(captured).toContain('EQ folder writable');
+    expect(captured).toContain('Back up your UI');
+    expect(captured).toContain('miMIC in the Windows taskbar');
+  });
+
+  it('survives the unwritable and unknown folder states too', () => {
+    const bad = { ...healthy, eqFolder: { zealInstalled: false, writable: false, unwritableDir: 'C:/Program Files (x86)/TAKP' } };
+    const unknown = { ...healthy, eqFolder: {} };
+    expect(render(bad).captured).toContain('C:/Program Files (x86)/TAKP');
+    expect(render(unknown).captured).toContain('EQ folder writable');
+    expect(render(bad).wired).toBe(true);
+    expect(render(unknown).wired).toBe(true);
+  });
+
+  // An older agent sends no eqFolder at all; the card must still build.
+  it('survives a state with no eqFolder at all', () => {
+    const legacy = { ...healthy };
+    delete legacy.eqFolder;
+    expect(() => render(legacy)).not.toThrow();
+    expect(render(legacy).captured).toContain('wp-eq-setup');
+  });
+});

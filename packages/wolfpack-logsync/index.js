@@ -15180,6 +15180,31 @@ function _isPanelHidden(el) {
 // The five first-run checks, extracted so the Setup summary can count what is
 // outstanding without a second copy of the logic. Two copies drift, and a badge
 // that disagrees with the list underneath it is worse than no badge.
+// Mimic's overlay config, read through the preload bridge (window.mimic.getConfig).
+// The AGENT cannot answer this — quiet mode lives in Mimic's own config and is
+// never sent over /api/state — but the dashboard is hosted inside Mimic, where
+// the bridge is right there. Cached in a module var and refreshed per render;
+// the value changes about once a year, so the byte-stability morphInto needs is
+// free (see the render-rules note in CLAUDE.md).
+//
+// WHY THIS ROW EXISTS (Abrahms, 2026-09-10): every overlay resolves as
+//   shouldShow = unlocked || (cfg.showX && !cfg.quietMode && _eqGateOk(cfg))
+// and \`unlocked\` — placement mode — bypasses the rest. So with quiet mode on, an
+// overlay appears while you position it, the hotkey still flips its show flag,
+// and it vanishes the moment you finish: "I can get em all up when doing the
+// placement mode ... but nothing ever makes it to my screen." Nothing anywhere
+// said why. The app knew.
+var _wpMimicCfg = null;      // null = not hosted in Mimic (a browser tab has no overlays)
+function _wpRefreshMimicCfg() {
+  if (!(window.mimic && window.mimic.getConfig)) return;
+  try {
+    window.mimic.getConfig().then(function (c) {
+      if (!c) return;
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
+    }).catch(function () { /* bridge refused — leave the row out rather than guess */ });
+  } catch (e) { void e; }
+}
+
 function _setupCheckRows(s) {
   const now = Date.now();
   const logs = Array.isArray(s.watchedLogs) ? s.watchedLogs : [];
@@ -15228,9 +15253,20 @@ function _setupCheckRows(s) {
   return rows;
 }
 function renderSetupChecks(s) {
+  // ⚠ DECLARED AGAIN HERE, ON PURPOSE. _setupCheckRows has its own \`eqf\`, and
+  // reaching for that one from this function is a ReferenceError that throws
+  // MID-RENDER — after the first rows are appended and before the buttons are,
+  // so the Setup card silently loses "Set up for me", the Defender, Zeal and
+  // clock fixers, and every row below Zeal. Shipped in agent 3.6.35 and rode a
+  // stable graduation to the whole fleet (Hitya: "setup lost the buttons on the
+  // mimic dashboard"). It got through because the tests asserted on SOURCE TEXT
+  // and never ran the function — the exact trap CLAUDE.md names — and
+  // check:dashboard only proves the script PARSES, which a ReferenceError does.
+  const eqf = (s && s.eqFolder) || {};
   const el = document.getElementById('wpSetupChecks');
   if (!el) return;
   if (!_isPanelHidden(el) && el.style.display === 'none') el.style.display = '';
+  _wpRefreshMimicCfg();
   const rows = _setupCheckRows(s);
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
   for (const r of rows) {
@@ -15255,6 +15291,20 @@ function renderSetupChecks(s) {
     h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
        + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
+  }
+  // Quiet mode — the master "I use another parser" switch hides EVERY overlay,
+  // and until now said so nowhere. Rendered only when hosted in Mimic: a browser
+  // tab has no overlays, so the row would be noise there.
+  if (_wpMimicCfg && _wpMimicCfg.quietMode) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
+       + '<td class="dim" style="font-size:11px"><b>Quiet mode is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>I use EQLogParser / another parser</b>. Uploads are unaffected either way.</td></tr>';
+  } else if (_wpMimicCfg) {
+    h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
+       + '<td class="dim" style="font-size:11px">Quiet mode is off'
+       + (_wpMimicCfg.hideWhenEqDown ? ' — overlays appear once EverQuest is running.' : '.')
+       + '</td></tr>';
   }
   // EQ folder writable — the silent precondition for three buttons on this very
   // card (Set up for me, Check / install Zeal) plus UI Studio backups. A folder
