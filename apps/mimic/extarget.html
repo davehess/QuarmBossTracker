@@ -131,6 +131,9 @@
   .row .mobx>span{white-space:nowrap}
   .row .mobx .vic{color:#c9b389;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .row .mobx .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  .row .mobx .vic.auth{color:#7ee787}
+  .row .mobx .hitby{color:#f0b429;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .row .mobx .hitby .arrow{color:#6e7681;margin-right:2px}
   .row .mobx .mdps{color:#8fb7d6;font-variant-numeric:tabular-nums;flex-shrink:0}
   .row .mobx .mttl{color:#d69a9a;font-variant-numeric:tabular-nums;flex-shrink:0}
   /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
@@ -294,8 +297,18 @@
     if (!t || (t.kind || 'npc') !== 'npc') return '';
     var parts = '';
     if (t.mob_victim) {
-      parts += '<span class="vic" title="This mob is meleeing ' + esc(t.mob_victim) + ' (from the local combat log)">'
-             +   '<span class="arrow">→</span>' + esc(t.mob_victim) + '</span>';
+      // Where the answer came from: Zeal's /assist reply (🎯 — the server's own
+      // word), Zeal's damage packets, or this client's combat log. The first two
+      // exist only on a Zeal that carries the drafted target-of-target change.
+      var vsrc = t.mob_victim_source || 'log';
+      var vtitle = vsrc === 'zeal_assist' ? 'This mob is on ' + esc(t.mob_victim) + ' (Zeal: the server\'s /assist reply)'
+                 : vsrc === 'zeal_damage' ? 'This mob is meleeing ' + esc(t.mob_victim) + ' (Zeal: damage packets)'
+                 : 'This mob is meleeing ' + esc(t.mob_victim) + ' (from the local combat log)';
+      parts += '<span class="vic' + (vsrc === 'zeal_assist' ? ' auth' : '') + '" title="' + vtitle + '">'
+             +   '<span class="arrow">' + (vsrc === 'zeal_assist' ? '🎯' : '→') + '</span>' + esc(t.mob_victim) + '</span>';
+    }
+    if (t.mob_hit_by) {
+      parts += '<span class="hitby" title="Who last hit this mob (Zeal: damage packets)"><span class="arrow">⚔</span>' + esc(t.mob_hit_by) + '</span>';
     }
     if (t.mob_dps != null) {
       parts += '<span class="mdps" title="Raid damage per second on this mob (as observed locally)">' + fmtK(t.mob_dps) + '/s</span>';

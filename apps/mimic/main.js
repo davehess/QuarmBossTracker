@@ -1485,6 +1485,24 @@ function _flushZealToAgent() {
 // (cheap — updated per event) and push a condensed snapshot to the agent at a
 // throttled cadence rather than forwarding 225 raw events/sec.
 const _zealLiveByChar = new Map();   // character → { snapshot, dirty, pid, lastSeen }
+// Spawn ids off the pipe (Zeal PR #229). Absent on every pre-1.4.6 build, and
+// a 0 means "no target", not spawn zero — the bot already guards it (3.1.123);
+// this nulls it at the edge so nothing downstream ever sees a 0 as an identity.
+function _pipeSpawnId(v) {
+  return (typeof v === 'number' && Number.isFinite(v) && v > 0) ? Math.trunc(v) : null;
+}
+// A {id, name, authoritative} candidate off the pipe — the target-of-target
+// keys the drafted Zeal change emits (docs/zeal-tot-pipe.patch). Absent on
+// every released Zeal, so null is the normal case and nothing downstream may
+// require it. Sanitized here, once, so the agent never sees a malformed one.
+function _pipeCandidate(v) {
+  if (!v || typeof v !== 'object') return null;
+  const id = _pipeSpawnId(v.id);
+  const name = typeof v.name === 'string' ? v.name.trim().slice(0, 64) : '';
+  if (id == null || !name) return null;
+  return { id, name, authoritative: v.authoritative === true };
+}
+
 function _zealParseData(obj) {
   // Pipe payload wraps the real data in obj.data as a JSON string.
   let inner = obj && obj.data;
@@ -1618,14 +1636,23 @@ function _zealAbsorb(obj, pid) {
       // ⚠ The pipe OMITS target_id / pet_id when there is no target / no pet,
       // so each is explicitly nulled rather than left at its previous value —
       // otherwise the last target's id would persist after you clear target,
-      // which is exactly the stale-identity bug ids exist to prevent.
+      // which is exactly the stale-identity bug ids exist to prevent. A 0 is
+      // "no target" too (measured 2026-09-10) — _pipeSpawnId nulls it here.
       //
       // ⚠ Key names are NOT final upstream: #218 suggested `NPC_ID`, and the
       // PR offers to rename. They are read in this one place so a rename is a
       // three-line edit here rather than a hunt across four surfaces.
-      s.spawn_id  = Number.isFinite(inner.spawn_id)  ? inner.spawn_id  : null;
-      s.target_id = Number.isFinite(inner.target_id) ? inner.target_id : null;
-      s.pet_id    = Number.isFinite(inner.pet_id)    ? inner.pet_id    : null;
+      s.spawn_id  = _pipeSpawnId(inner.spawn_id);
+      s.target_id = _pipeSpawnId(inner.target_id);
+      s.pet_id    = _pipeSpawnId(inner.pet_id);
+      // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
+      // {id, name, authoritative} for who my target last hit, and who last hit
+      // my target. Omitted upstream when there is no fresh candidate, so both
+      // are assigned unconditionally like the ids above. The agent folds the
+      // first into observed_tanks (raid-wide via the bot) and patches the
+      // Extended Target row that is my own target with both, immediately.
+      s.target_of_target = _pipeCandidate(inner.target_of_target);
+      s.target_hit_by    = _pipeCandidate(inner.target_hit_by);
       // Live position + facing (Zeal named_pipe.cpp player payload:
       // location {x,y,z}, heading). Note EQ's in-game /loc prints as Y, X, Z
       // — these are the raw Zeal Vec3 fields (x,y,z), transpose when matching

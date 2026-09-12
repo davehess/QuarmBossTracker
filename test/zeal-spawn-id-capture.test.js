@@ -36,8 +36,17 @@ const BLOCK = sliceBlock(
   "      // Live position + facing (Zeal named_pipe.cpp player payload:",
 );
 
+// The id/candidate sanitizers the branch calls (2026-09-12) — the real ones,
+// so a change to how a 0 or a string is treated fails HERE, not in a stub.
+const HELPERS = sliceBlock(
+  src,
+  'function _pipeSpawnId(v) {',
+  '\n  return { id, name, authoritative: v.authoritative === true };\n}',
+);
+
 function player(state, payload) {
   const { apply } = evalBlock(`
+    ${HELPERS}
     function apply(s, __payload) {
       const obj = null;
       function _zealParseData() { return __payload; }

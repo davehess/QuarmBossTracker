@@ -24019,8 +24019,8 @@ function startWebDashboard(port) {
         // the local gauge value (updated every ~300ms). All OTHER rows (remote
         // targets nobody local is on) are left exactly as the bot aggregated
         // them — cross-client behaviour is untouched.
+        let selfSt = null;
         try {
-          let selfSt = null;
           if (selfCharacter) {
             const scl = String(selfCharacter).toLowerCase();
             for (const ch of Object.keys(_zealState || {})) {
@@ -24048,6 +24048,13 @@ function startWebDashboard(port) {
         // exactly as aggregated.
         try { outPayload = _enrichExtTargetV2(outPayload, Date.now()); }
         catch { /* leave the rows as-is — never let V2 break V1 */ }
+        // Zeal target-of-target (drafted upstream change): for the row that IS
+        // my current target, my own client's answer overrides the log-inferred
+        // mob_victim and adds who last hit it. Runs AFTER V2 so the pipe wins
+        // for that one row; every other row is exactly as aggregated.
+        try {
+          if (Array.isArray(outPayload.targets)) outPayload = { ...outPayload, targets: _attachPipeTotToExtRows(outPayload.targets, selfSt, Date.now()) };
+        } catch { /* the pipe must never break the proxy */ }
         // #56 — serial-track engine observes each NPC row's HP (K computation +
         // simultaneous same-name detection) and, when the display flag is on,
         // adds the local K≥2 ambiguity marker. Runs after V2 so it sees the same
@@ -34291,6 +34298,58 @@ function _sampleExtMobHp(payload, nowMs) {
 // Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
 // (including "needs attention" hurt rows) are never enriched. Each field is
 // independently optional — a row carries only what's known.
+// ── Zeal target-of-target off the pipe (drafted upstream change) ─────────────
+// docs/zeal-tot-pipe.patch adds two keys to Zeal's player message; Mimic hands
+// them to us as {id, name, authoritative} on the character's Zeal state. Absent
+// on every released Zeal, so null is the normal case throughout.
+function _pipeCandidateOf(st, key) {
+  const c = st && st[key];
+  if (!c || typeof c !== 'object') return null;
+  const id = Number(c.id);
+  const name = typeof c.name === 'string' ? c.name.trim() : '';
+  if (!Number.isFinite(id) || id <= 0 || !name) return null;
+  return { id: Math.trunc(id), name: name.slice(0, 64), authoritative: c.authoritative === true };
+}
+
+// The pipe's target-of-target as an observed_tanks entry: "the mob I am
+// targeting is meleeing <player>". Players only — a mob on a pet or on another
+// mob is not a tank, and the bot re-filters anyway. Feeds the bot's #194
+// clustering, so EVERY raider's Extended Target names that tank, whether or
+// not anyone's combat log saw the swing.
+function _pipeTotObservedTank(st, nowMs) {
+  if (!st || !st.target_name) return null;
+  if ((nowMs - (st.updatedAt || 0)) > 30_000) return null;
+  const tot = _pipeCandidateOf(st, 'target_of_target');
+  if (!tot || !/^[A-Za-z]+$/.test(tot.name)) return null;
+  return { mob: String(st.target_name), tank: tot.name, since: new Date(st.updatedAt || nowMs).toISOString(), authoritative: tot.authoritative };
+}
+
+// Local and immediate: the Extended Target row that IS my current target gets
+// my own client's answer. mob_victim keeps its meaning (who this mob is
+// meleeing) and the pipe overrides the log inference for that one row;
+// mob_victim_source says where it came from so the overlay can mark it.
+// mob_hit_by is who last hit it. Every other row is untouched.
+function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
+  if (!Array.isArray(targets) || !selfSt) return targets;
+  const tot = _pipeCandidateOf(selfSt, 'target_of_target');
+  const hitBy = _pipeCandidateOf(selfSt, 'target_hit_by');
+  if (!tot && !hitBy) return targets;
+  if ((nowMs - (selfSt.updatedAt || 0)) > 60_000) return targets;
+  const myName = String(selfSt.target_name || '').toLowerCase();
+  if (!myName) return targets;
+  const myId = (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null;
+  return targets.map(t => {
+    if (!t || t.stale || (t.kind || 'npc') !== 'npc') return t;
+    if (String(t.name || '').toLowerCase() !== myName) return t;
+    // With a spawn id on both sides only the exact instance; otherwise the name.
+    if (myId != null && t.spawn_id != null && Number(t.spawn_id) !== myId) return t;
+    const patch = {};
+    if (tot)   { patch.mob_victim = tot.name;   patch.mob_victim_source = tot.authoritative ? 'zeal_assist' : 'zeal_damage'; }
+    if (hitBy) { patch.mob_hit_by = hitBy.name; patch.mob_hit_by_source = hitBy.authoritative ? 'zeal_assist' : 'zeal_damage'; }
+    return { ...t, ...patch };
+  });
+}
+
 function _enrichExtTargetV2(payload, nowMs) {
   if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
   _sampleExtMobHp(payload, nowMs);
@@ -35342,6 +35401,13 @@ function flushLiveStateToBot(opts) {
       // Deep are unrelated mobs. Any consumer keys on (zone, target_id) or it
       // will merge two zones' mobs into one row.
       target_id:      Number.isFinite(st.target_id) ? st.target_id : null,
+      // Target of target off the pipe (drafted Zeal change, docs/zeal-tot-pipe
+      // .patch; null on every released Zeal): {id, name, authoritative}. The
+      // bot stores neither yet — the observed_tanks entry below is what reaches
+      // the raid today; these ride along so a bot-side column needs no agent
+      // change later.
+      target_of_target: _pipeCandidateOf(st, 'target_of_target'),
+      target_hit_by:    _pipeCandidateOf(st, 'target_hit_by'),
       // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
       // raid-buff-queue "likely out of range" flag (#117). NOT in the change
       // signature (it churns on every step) — it rides the heartbeat floor
@@ -35371,6 +35437,15 @@ function flushLiveStateToBot(opts) {
           if (!/^[A-Za-z]+$/.test(String(h.tank || ''))) continue;
           const k = String(h.mob) + '|' + String(h.tank).toLowerCase();
           if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
+        }
+        // Zeal's own answer for MY target (drafted upstream change) rides the
+        // same list, so the bot's clustering names that tank for every raider
+        // whether or not anyone's log saw the swing. The bot's sanitizer keeps
+        // mob/tank/since and drops the authoritative flag — a connect either way.
+        const pipeTank = _pipeTotObservedTank(st, now);
+        if (pipeTank) {
+          const pk = String(pipeTank.mob) + '|' + String(pipeTank.tank).toLowerCase();
+          if (!seen.has(pk)) seen.set(pk, pipeTank);
         }
         return seen.size ? [...seen.values()] : null;
       })(),
@@ -35441,6 +35516,10 @@ function flushLiveStateToBot(opts) {
     // not having it. The zone-scoping that actually matters lives at the read
     // side (_extIdInstances).
     const targetIdKey = rec.target_id != null ? rec.target_id : null;
+    // Target of target off the pipe. A change of who my target is ON is the
+    // same kind of event as a tank picking up an add — not something to learn
+    // 45s late — and it moves only on a swap, never per frame.
+    const totKey = (rec.target_of_target && rec.target_of_target.id != null) ? rec.target_of_target.id : null;
     // Who is tanking what (#194). Was heartbeat-only "like loc", which is wrong
     // by analogy: loc churns every step and is advisory, whereas this set only
     // changes when a tank PICKS UP or LOSES a mob — a discrete raid event, and
@@ -35456,6 +35535,7 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
       targetIdKey,
+      totKey,
       targetHpBucket,
       selfManaBucket,
       selfHpBucket,
