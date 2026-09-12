@@ -1480,6 +1480,26 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### Extended Target: the spot for Zeal's target of target (agent 3.6.40 · beta 2.6.8-beta.3, 2026-09-12)
+Consumer side of the drafted upstream change (`docs/zeal-tot-pipe.patch`): the
+pipe's `player` message gains `target_of_target` and `target_hit_by`, each
+`{id, name, authoritative}`, absent on every released Zeal. **Mimic
+`main.js`** sanitizes them through `_pipeCandidate` (and the three spawn ids
+through `_pipeSpawnId`, which nulls a 0 — "no target") and ships them on the
+Zeal state snapshot. **Agent:** `_pipeCandidateOf` re-validates;
+`_pipeTotObservedTank` folds "my target is meleeing <player>" into the
+live-state `observed_tanks` list so the bot's #194 clustering names that tank
+for every raider; `_attachPipeTotToExtRows` patches the `/api/extended-target`
+row that IS my current target (`mob_victim` + `mob_victim_source` =
+`zeal_assist` | `zeal_damage`, `mob_hit_by`) AFTER `_enrichExtTargetV2` so the
+pipe beats log inference for that one row and no other; both keys ride the
+live-state body (the bot stores neither yet) and the target-of-target id is a
+term in the change signature. **`extarget.html`** `mobxLine` marks the source:
+🎯 for the server's /assist reply, → for damage inference or the local log, ⚔
+for who last hit the mob. Tests: `test/zeal-tot-consumer.test.js` (helpers run
+for real), `test/live-state-signature.test.js`, and the spawn-id-capture and
+observed_tanks harnesses now evaluate the real helpers.
+
 ### Quiet mode split: mute vs hide overlays (agent 3.6.39 · beta 2.6.8-beta.2, 2026-09-11)
 Two switches in Settings → Local UI. **`cfg.quietMode` = Mute Mimic** — no
 voice callouts, no sounds, overlays unchanged (it kept its key; until this
