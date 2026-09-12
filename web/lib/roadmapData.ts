@@ -51,11 +51,15 @@ export const releases: Release[] = [
   {
     key: 'mimic-2-6-8-beta-quiet-mode-split-2026-09-11',
     title: 'Mimic 2.6.8 beta',
-    version: 'Mimic 2.6.8 beta \u00b7 Agent 3.6.39',
-    date: '2026-09-11',
+    version: 'Mimic 2.6.8 beta \u00b7 Agent 3.6.40',
+    date: '2026-09-12',
     channel: 'beta',
-    headline: 'Quiet mode now mutes. A separate switch hides overlays.',
+    headline: 'Quiet mode now mutes, a separate switch hides overlays, and Extended Target is ready for Zeal\u2019s target of target.',
     features: [
+      {
+        name: 'A spot for who your target is on',
+        blurb: 'Once the next Zeal carries it, the Extended Target overlay shows who each mob is on straight from the game: a 🎯 when it is the server\u2019s own answer, an arrow when Zeal worked it out from damage, and a ⚔ for who last hit the mob. Until then the arrows keep coming from your combat log as they do today.',
+      },
       {
         name: 'Mute Mimic',
         blurb: 'Quiet mode now means mute: no voice callouts, no sounds. Your overlays keep showing.',
@@ -68,6 +72,7 @@ export const releases: Release[] = [
     fixes: [
       'Quiet mode used to hide every overlay and not actually silence anything, because callouts speak from a hidden window. Both switches now do exactly what they say.',
       'On the vote page, you can remove a pick by tapping it again.',
+      'A Zeal \u201cno target\u201d reading no longer shows up as target number 0.',
     ],
   },
   {
