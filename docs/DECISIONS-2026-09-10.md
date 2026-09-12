@@ -146,11 +146,31 @@ raid an unplaceable sender or listener is NOT local — dropped. The
 Follow-up for beta: the Recent-fires card labels relayed fires "guild", same
 as local ones, which is why this took a code read to diagnose — show "relay".
 
+## Lord Mobsincamp — the assistant is named, configurable, and designed (Hitya, 2026-09-12)
+
+Hitya: *"could we hook up a local LLM agent that would be exposed to our members
+as the search element and run off of the larger local database copy? if we
+experience issues to our supabase hosted database could we fail back to the
+copy on tower and offload? I'd like to name it Lord Mobsincamp and have that be
+a configurable name in the setup."*
+
+Decided: the name is **Lord Mobsincamp**, carried as `ASSISTANT_NAME` (default
+that value; the self-host wizard asks for it). Design + assessment in
+`docs/DESIGN-lord-mobsincamp.md`: model on Tower (P40, 14B tool-caller), a
+read-only allowlisted tool service over the archive (no free SQL, site scopes
+enforced, every Q&A logged), reached through a broker via the bot so Tower
+stays unexposed; the site's search box gains an "Ask" mode. Honest failover:
+READS can fail over to Tower (with a staleness banner), WRITES queue at the
+agents and must not; auth is the wall (local JWT verification first). Offload of
+heavy reads to Tower is the part that pays. The enabler for both freshness and
+failover is a live logical replica, which needs the Supabase IPv4 add-on.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
 |---|---|---|
 | Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
+| Lord Mobsincamp — local assistant as the members' search | **designed 2026-09-12** (`docs/DESIGN-lord-mobsincamp.md`); name decided + configurable (`ASSISTANT_NAME`); nothing built | Hitya's four calls (§9): broker vs tunnel; IPv4 add-on for a live replica; hosted-model bridge before the P40 is in; which card leaves Tower. Then Phase 0 = tool service + site UI |
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
 | Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
@@ -160,4 +180,4 @@ as local ones, which is why this took a code read to diagnose — show "relay".
 | Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested, NOT applied, Hitya's call | plus two duplicate rows from 09-06, untouched (merging is destructive) |
 | Loot bidding: update / remove a bid | open — options A/B/C presented, awaiting pick | first live cancel on a low-stakes bid |
 | Ashieron: "Mimic takes my internet down" | investigated 2026-09-07; `scripts/mimic-netdiag.ps1` collects the evidence and NOW ACTUALLY PARSES (see above) | he runs `-Watch` while playing, `-Live` when it breaks |
-| P40 / local model | open — assessment given 2026-09-07 | Tower has no free x16 |
+| P40 / local model | superseded 2026-09-12 by the Lord Mobsincamp design above; the card's first job is the assistant, not transcription | see that row |
