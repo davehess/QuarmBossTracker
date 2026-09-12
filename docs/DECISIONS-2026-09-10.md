@@ -188,13 +188,31 @@ in #231). Read from the source, not the PR page:
   follow-up: a getter on `AssistTarget` (or the selection lifted out of
   render) and one line in the type-3 player block, e.g.
   `player_data["target_of_target_id"]` + `assist_mode`. Same shape as #229.
-- **New commands:** `/assistbar on|off|toggle · position <left> <top> ·
-  font <size> · mode assist|defend · window <ms> · clickable on|off · refresh
-  on|off [interval_ms] · refresh-now`, hidden `verbose` (prints every
-  OP_Damage to chat — a ready-made probe for what combat a client actually
-  receives), and a new keybind **Assist Refresh** (silent /assist poll). Same
-  release: `/labels showtargetspawnid` appends the target's spawn id to the
-  target label — the human-readable twin of our spawn-id work.
+- **New commands, CORRECTED 2026-09-12** (first pass listed `clickable` as
+  live; it is not — see below): `/assistbar on|off|toggle · position <left>
+  <top> · font <size> · mode assist|defend · window <ms> · refresh on|off
+  [interval_ms]`, plus two that work but are deliberately absent from the
+  in-game usage text — `refresh-now` and `verbose` (prints every OP_Damage to
+  chat, a ready-made probe for what combat a client actually receives) — and a
+  new keybind **Assist Refresh** (silent /assist poll). Same release:
+  `/labels showtargetspawnid` appends the target's spawn id to the target
+  label — the human-readable twin of our spawn-id work.
+- ⚠ **The whole mouse path is compiled out of v1.4.7 — FOUR `#if 0` blocks**,
+  each commented *"Temporarily disable until lmb drag conflict with mouselook
+  is sorted out"*: the `LMouseUp` hook registration (line 65), the
+  `UpdateDrag()` call (273), the `clickable` usage line (393) and the
+  `clickable` command handler itself (467). So in the shipped build
+  `/assistbar clickable on` is not a command, clicking the bar does nothing,
+  and dragging does nothing — while the usage text still says *"or drag the
+  bar with LMB"*, which is exactly what a member hit in #zeal-suggestions.
+  `HandleLMouseUp` is fully written (bounds check, re-validate the entity,
+  `set_target`), so "make the ToT clickable" is *finish the disabled path*,
+  not a new feature; the mouselook conflict is the real blocker.
+- ⚠ **How I got it wrong, because the failure repeats:** I grepped for the
+  command handlers and read the matches. Preprocessor guards sit OUTSIDE a
+  grep window that matches on handler text, so four `#if 0` lines were
+  invisible — the same class as asserting on source text that a comment can
+  satisfy. Reading a C++ feature means reading the block, not the hits.
 - **Cost note:** auto-refresh sends a real /assist request per poll per
   raider; default off. If Mimic ever recommends it, keep the interval long.
 
