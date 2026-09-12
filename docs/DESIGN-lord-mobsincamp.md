@@ -178,28 +178,43 @@ If the hosted project has issues:
 
 ## 7. Hardware reality
 
-The 2026-09-07 assessment stands: if the P40 goes anywhere it is Tower, and
-Tower has no free x16 slot (a card would have to move out). Things to know
-before buying anything else:
+**The P40 is not in Tower. It is in the desktop that runs Canopy** (Hitya,
+2026-09-12). That settles the slot question — nothing moves — and it splits the
+design across two boxes on the same LAN:
 
-- **P40 = Pascal, 24 GB GDDR5, 250 W, passively cooled.** It needs a server-style
-  airflow duct or a shroud + fan in a tower case; it will throttle or die
-  without one. BIOS needs "Above 4G decoding" on. Drivers: Pascal is on
-  NVIDIA's legacy branch now — check the Unraid Nvidia plugin offers a branch
-  that still lists it before the card is in the slot.
-- **No tensor cores, weak fp16.** Run integer-quantised models (Q4/Q5/Q8 in
-  llama.cpp/Ollama). It is fine for an 8–14B assistant at conversational speed;
-  it is not a training or fine-tuning card.
-- **Idle cost is real:** ~50 W idle, 250 W under load, on all the time. Order
-  of $5–10/month of electricity depending on rates — comparable to the
-  hosted-model bridge in §8, which is the honest comparison.
+| Runs on | Piece | Why |
+|---|---|---|
+| **Tower** (always on) | archive Postgres, the tool service, the broker worker | the data and the always-on bits belong on the box that never sleeps |
+| **The desktop** (on when Hitya is) | model serving on the P40, LAN-only OpenAI-compatible endpoint | that is where the card is |
+
+Consequences:
+- **Availability = that desktop's uptime.** When it is off, `ASSISTANT_MODEL_URL`
+  does not answer. The tool service must handle that gracefully: fall back to
+  `hosted` if Hitya allows it (§8), otherwise reply *"Lord Mobsincamp is
+  asleep"* and offer the plain search. A guild-facing assistant that is only up
+  when one member's PC is on is fine as a Phase 1 fact, as long as the site
+  says so instead of hanging.
+- **Raid night.** EQ renders on the main GPU; the P40 is a separate device, so
+  there is no display contention. Ollama with full GPU offload uses little CPU.
+  What to watch is heat: a 250 W passively-cooled card in a desktop case next
+  to a gaming GPU for four hours needs a shroud + fan, and it will throttle
+  quietly if it does not have one. Watch `nvidia-smi` temperatures during the
+  first raid it serves through.
+- **Exposure is unchanged.** The broker worker on Tower calls the desktop over
+  the LAN; nothing inbound reaches either box from outside.
+- **Pascal facts still apply:** integer-quantised models only (Q4/Q5/Q8), no
+  tensor cores, legacy driver branch — on Windows the standard NVIDIA driver
+  still carries it; check before an update. An 8–14B assistant at
+  conversational speed is the realistic ceiling.
+- **If it ever moves to Tower**, the x16 problem from the 2026-09-07
+  assessment returns; nothing above assumes it does.
 
 ## 8. Phases, costs, and the no-GPU bridge
 
 | Phase | What | Build | Maint | Runtime | Change |
 |---|---|---|---|---|---|
 | 0 — prove the layer | Tool service + site UI + broker, model = **hosted API via the bot** (cents per question, no hardware). Everything in §2b–d gets built and used; only the model is remote | med | low | ~cents/question | low |
-| 1 — the card | P40 in Tower, Ollama serving the 14B, tool service pointed at it. Nothing above it changes | med (mostly physical) | med (drivers, model updates) | electricity | low |
+| 1 — the card | Ollama serving the 14B on the desktop's P40 (LAN endpoint); tool service on Tower pointed at it, with the asleep/fallback path. Nothing above it changes | low–med | med (drivers, model updates) | electricity | low |
 | 2 — the replica | IPv4 add-on + logical replication; assistant reads live | med | low | add-on + small egress | low |
 | 3 — read failover | JWT verified locally; `supabaseAdmin()` read fallback + banner | med | low | none | med |
 
@@ -226,7 +241,9 @@ return, which is data the site already shows that member.
    run; without it the assistant reads a day-old archive plus a live overlay.
 3. **Phase 0 bridge:** may member questions go to a hosted model until the P40
    is in? Yes → Lord Mobsincamp ships before the card. No → it waits for Phase 1.
-4. **The card:** which card moves out of Tower to free the x16, and the duct.
+4. **The desktop as model host:** accept that the assistant is up when that
+   PC is (with the hosted fallback or the "asleep" reply), and confirm the
+   card has a shroud + fan for four-hour raids.
 
 Once 1–3 are answered this becomes a build plan with the tool list in §2b as
 the first milestone.
