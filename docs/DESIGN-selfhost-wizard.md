@@ -394,6 +394,29 @@ and the same never-refetch guarantee.
 - **`next build` needs ~8 GB**; 4 GB is OOM-killed during type-checking with no
   error in the log.
 
+### Assistant (Lord Mobsincamp, 2026-09-12)
+- **The assistant's name is a per-deployment value.** `ASSISTANT_NAME`
+  (default `Lord Mobsincamp`) is read by web and bot; the wizard asks "What is
+  your guild's assistant called?" and writes it to both. Never hardcode the
+  name in copy — placeholder, answer card and any Discord command all read it.
+- **Three modes, chosen by the deployer:** `ASSISTANT_MODE=off|hosted|local`.
+  `hosted` answers through a hosted model via the bot (cents per question, no
+  hardware); `local` needs an OpenAI-compatible endpoint (`ASSISTANT_MODEL_URL`,
+  a LAN address, never committed) — for Wolf Pack that is a P40 in Tower.
+  All-on-prem deployments (shape 2) are `local` or `off`; shape 1 is `hosted`
+  or `off`.
+- **The assistant reads the archive tier, not production.** In the hybrid
+  shape (3) that is the on-prem copy; in shape 2 it IS the main DB; in shape 1
+  there is no archive and the tools read production with the retention the
+  deployer chose. Freshness in shape 3 depends on how the copy is fed: nightly
+  dump (a day stale) or logical replication (seconds — needs a direct
+  connection; on Supabase the IPv4 add-on).
+- **Reads may fail over to the archive tier; writes never do.** Agents hold
+  uploads in their durable queue through an outage; the archive is fed one way.
+  A deployment that wants read failover must verify auth JWTs locally
+  (`SUPABASE_JWT_SECRET`) or the failover serves nobody. Design:
+  `DESIGN-lord-mobsincamp.md` §6.
+
 ### Design & UI
 - **One visual language across four surfaces** (2026-08-12). The same twelve hex
   values and the monospace stack appear in `web/`, the agent dashboard's
