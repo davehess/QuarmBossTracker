@@ -1,15 +1,15 @@
 {
-  "last_run": "2026-08-30T10:51:37.463Z",
-  "last_dump": "quarm_2026-08-23-21_47.tar.gz",
-  "last_dump_sha": "9cdb50d4b001438d6d09a15875aed97a2a66ffff",
+  "last_run": "2026-09-13T10:44:56.118Z",
+  "last_dump": "quarm_2026-09-07-00_06.tar.gz",
+  "last_dump_sha": "ee676ac2594a49eda2c5dfe0349ce0e9a455d1e7",
   "counts": {
     "eqemu_zone": 192,
     "eqemu_items": 26972,
     "eqemu_npc_types": 18033,
     "eqemu_loottable": 7276,
-    "eqemu_lootdrop": 11124,
-    "eqemu_loottable_entries": 20780,
-    "eqemu_lootdrop_entries": 44587,
+    "eqemu_lootdrop": 11114,
+    "eqemu_loottable_entries": 20753,
+    "eqemu_lootdrop_entries": 44575,
     "eqemu_spawngroup": 14357,
     "eqemu_spawnentry": 26258,
     "eqemu_spawn2": 43654,
@@ -30,8 +30,8 @@
     "eqemu_forage": 1243,
     "eqemu_fishing": 157,
     "eqemu_merchantlist": 25875,
-    "eqemu_object": 296,
+    "eqemu_object": 281,
     "eqemu_npc_emotes": 4144
   },
-  "total_rows": 349525
+  "total_rows": 349465
 }
