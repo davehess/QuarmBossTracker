@@ -14,7 +14,8 @@
     "drill": "node scripts/preraid-drill.js",
     "lint": "eslint index.js commands utils packages/wolfpack-logsync/index.js",
     "test": "vitest run",
-    "sync:dashboard": "node scripts/sync-dashboard-embed.js"
+    "sync:dashboard": "node scripts/sync-dashboard-embed.js",
+    "graphify": "bash scripts/graphify.sh"
   },
   "engines": {
     "node": ">=18.0.0"

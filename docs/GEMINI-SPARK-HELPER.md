@@ -17,6 +17,8 @@ and write before you finish.
 
 ---
 
+> **A call graph in 30 s:** `bash scripts/graphify.sh` then `graphify explain '<symbol>'` / `graphify path '<A>' '<B>'` — callers and callees with file:line. Structure only; `docs/HOW-ITS-BUILT.md` is the map of intent. See that file's "Code graph on demand" entry for what it cannot see.
+
 ## 1. Boot sequence — read these before touching anything
 
 Claude sessions get this printed automatically by

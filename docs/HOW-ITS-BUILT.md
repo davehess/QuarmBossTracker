@@ -111,6 +111,21 @@ writes.
 
 ---
 
+### Code graph on demand (`scripts/graphify.sh`, 2026-09-13)
+`bash scripts/graphify.sh` (or `npm run graphify`) rebuilds a graphify call
+graph of the TRACKED tree in ~30 s into `graphify-out/` — gitignored on
+purpose, `graph.json` is ~15 MB. Code-only, no LLM. It exports `git archive
+HEAD` to a temp dir, drops the two vendored third-party skills (they otherwise
+top the hub list), and installs `graphifyy[sql]` so migrations count. Then:
+`graphify explain '<symbol>'` (callers/callees with file:line), `graphify path
+'<A>' '<B>'`, and the god-node / import-cycle summary it prints. `--portable`
+writes `graph.portable.html` (vis-network from jsdelivr, no document wrapper)
+for publishing as a claude.ai artifact. **What it does not see:** config keys
+threaded through code, payload contracts across the bot↔agent↔pipe
+boundaries, `#if 0` C++ — the index above stays the map of intent. The
+`graphify claude install` hook is deliberately NOT installed
+(`DECISIONS-2026-09-10.md`).
+
 ## Bot features
 
 ### Reporter fleet: one account, several machines, one slot (bot 3.1.102)
