@@ -21,11 +21,6 @@
 window.POP_RAIDS = {
   imageBase: 'https://www.eqprogression.com/wp-content/uploads/PoTime_Raid_Guide/',
   quarmGlobalNotes: [
-    // Quarm's PoP progression update, 2026-09-13 (docs/QUARM-POP-UPDATE-2026-09-13.md).
-    // Announced, not yet verified live — some of it was still awaiting deployment.
-    'Quarm timers (announced 2026-09-13): standard raid bosses 66h respawn + 66h per-character lockout; the four elemental gods 5d 18h. Fixed schedule, no variance. A wipe does NOT cost the full timer — scripted events have their own shorter retries.',
-    'Quarm trash (no variance): 19.5 min in BoT, CoD, PoN, PoS, PoT, Tower of Sol Ro · 25.5 min in Air, Fire, Water. PoP zones need level 46; PoK is open to all.',
-    'Type #popflags (or #popflags 1..5) for your own progression; #timelockout for the guild\'s Plane of Time timeline.',
     'Access levels differ by source (46 / 55 / 60 / 62 per-zone on TAKP) — verify per zone.',
     'PoStorms flag = Askr collect quest (not a boss kill).',
     'Flag caps: 72 standard · 36 Carprin · 54 Earth A.',
@@ -104,7 +99,6 @@ window.POP_RAIDS = {
         {
           id: 'terris-a', name: 'Terris-Thule (flag)', zone: 'Plane of Nightmare B', npcName: 'Terris Thule',
           callouts: [
-            'Quarm (2026-09-13): Hedge Maze is raid-sized — 24 players per room; unstarted rooms warn and self-clean; Thelin gets SoW when the event starts. Terris Thule is on the 66h cycle.',
             'Requires the 18-man Hedge Maze first. Clear trash to her chamber.',
             '75%: small adds (some mez).',
             '50%: MASS AE DISPEL — all but MT + 2 healers hide behind the wall, wait it out, return.',
@@ -126,7 +120,6 @@ window.POP_RAIDS = {
         {
           id: 'poj-trials', name: 'Plane of Justice Trials', zone: 'Plane of Justice',
           callouts: [
-            'Quarm (2026-09-13): success → trial reopens in 10 min; fail → retry in 1 min. Failed groups get returned after a short cleanup, winners get a warning before the room clears, boss corpses stay 8 min to loot. Seventh Hammer is on the 66h cycle.',
             'One trial flags; all 6 unlock The Seventh Hammer. All minis ~30-40K HP, hit 600+, slowable.',
             'EXECUTION (easiest, DPS check): 4 waves of 4; every kill resets the Executioner\'s walk — don\'t let him reach the guillotines → Prime Executioner Vathoch → loot Mark. (Armor Break PBAE −270 AC)',
             'FLAME: waves → Punisher of Flame (Rain of Molten Lava PBAE 300).',
@@ -200,7 +193,6 @@ window.POP_RAIDS = {
         {
           id: 'bertox-cod', name: 'Bertoxxulous (Event)', zone: 'Crypt of Decay', npcName: 'Bertoxxulous',
           callouts: [
-            'Quarm (2026-09-13): event trash respawns every 3m50s inside the event; opening sequence shortened; win → 66h return + 66h lockout. The fail retry was not captured yet — see docs/QUARM-POP-UPDATE-2026-09-13.md.',
             'Need Carprin flag. Kill Spectre of Corruption to start. Waves of 6-10; 12 NAMED on timers; last 4 spawn TOGETHER in different tunnels.',
             'Pullers bring everything to the main room; CC as needed. Hail Projection center on death.',
             'Named timing (min): Darwol 10 · Feig 11 · Xhut 12 · Kavilis 13 · Raddi 21 · Wavadozzik 22 · Zandal 22 (AE slow) · Akkapan 22 · Meedo/Qezzin/Pzo/Bhaly 29 (Bhaly flurries) · Bert 35.',
