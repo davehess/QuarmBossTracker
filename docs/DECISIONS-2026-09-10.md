@@ -270,6 +270,17 @@ Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
   rule. Verdict: skip. If one piece is wanted (its accessibility list, say),
   vendor that file into `frontend-design`, not the skill.
 
+## Quarm's PoP progression update, consumed (2026-09-13)
+
+Hitya fed the guild-channel post through in screenshots ("Pop items for you
+to consume"). Captured verbatim-as-seen in `docs/QUARM-POP-UPDATE-2026-09-13.md`,
+with the sections that were not in frame marked NOT CAPTURED rather than
+filled in. Acted on the facts that are data: `data/bosses.json` PoP timers to
+66 h (standard cycle) and 138 h (the four elemental gods), and two wrong zones
+(Aerin`Dar is Plane of Valor, Agnarr is Bastion of Thunder). Safe now because
+PoP is locked until 10-01 — no live timer moved. The overlay's Quarm-notes
+strip gets the timer rules on beta. Three things are open below.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
@@ -280,6 +291,9 @@ Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
 | Graphify of the codebase | **decided 2026-09-13 (Hitya): keep a regen script, keep the outputs out, do not install the hook.** `scripts/graphify.sh` (also `npm run graphify`) rebuilds `graphify-out/` (gitignored) in ~30 s from the tracked tree minus the vendored skills; `--portable` writes an artifact-publishable copy. Honest scope: "who calls X / what does X reach" with line numbers, plus import cycles; blind to config keys threaded through code, cross-process payload contracts and `#if 0` C++ | none — rebuild when a call-chain question comes up; HOW-ITS-BUILT stays the index of intent |
+| PoP timers have no variance; our bot applies ±20% to everything | open — `utils/state.js`, `utils/supabase.js` and the kill cards all hard-code 0.8/1.2 | per-boss `variancePct` in `bosses.json` (0 for PoP), honoured in the three sites + card text, before 10-01 |
+| `#popflags` / `#timelockout` → authoritative per-character flags on `/pop` | open — output vocabulary captured (`QUARM-POP-UPDATE` §8); the log-line prefix is NOT | needs a real `eqlog_*` excerpt of a `#popflags` dump (local session or a paste), then agent parser → `pop_flags` |
+| The PoP update post has uncaptured sections | open — Bertoxxulous fail retry, Torment/Innovation/Storms/Valor/HoH/Tactics/Tower/elemental retries, Plane of Time, Guild 1 / PvP | Hitya: the screenshots between "If you fail Bertoxxulous" and "Other Server Cleanup", plus the PvP section |
 | Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
 | Zeal spawn id: Mimic should null a pipe `target_id` of 0 at the edge | **done on `beta` 2026-09-12** — `_pipeSpawnId` in `apps/mimic/main.js` nulls 0 / non-numbers for spawn, target and pet ids (agent 3.6.40); the bot guard (3.1.123) stays for older Mimics | the agent's `_provableTargetId` still trusts a finite 0 from a pre-3.6.40 Mimic — tighten when convenient |
 | Spawn-id adoption is ~half the fleet | open — 11 of 19 on 2026-09-10; poster built to push it | share `zeal-update-why.png`; re-measure the blind % in a week |
