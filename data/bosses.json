@@ -1504,7 +1504,7 @@
     "name": "The Seventh Hammer",
     "zone": "Plane of Justice",
     "expansion": "PoP",
-    "timerHours": 72,
+    "timerHours": 66,
     "nicknames": [
       "seventh hammer",
       "7th hammer",
@@ -1532,7 +1532,7 @@
     "name": "Grummus",
     "zone": "Plane of Disease",
     "expansion": "PoP",
-    "timerHours": 72,
+    "timerHours": 66,
     "nicknames": [
       "grummus"
     ],
@@ -1556,7 +1556,7 @@
     "name": "Bertoxxulous",
     "zone": "Plane of Disease",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 66,
     "nicknames": [
       "berto",
       "bertox",
@@ -1583,7 +1583,7 @@
     "name": "Terris-Thule",
     "zone": "Plane of Nightmare",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 66,
     "nicknames": [
       "terris",
       "tt",
@@ -1595,9 +1595,9 @@
   {
     "id": "agnarr_storm_lord",
     "name": "Agnarr the Storm Lord",
-    "zone": "Plane of Storms",
+    "zone": "Bastion of Thunder",
     "expansion": "PoP",
-    "timerHours": 72,
+    "timerHours": 66,
     "nicknames": [
       "agnarr",
       "storm lord"
@@ -1620,9 +1620,9 @@
   {
     "id": "aerin_dar",
     "name": "Aerin`Dar",
-    "zone": "Plane of Storms",
+    "zone": "Plane of Valor",
     "expansion": "PoP",
-    "timerHours": 72,
+    "timerHours": 66,
     "nicknames": [
       "aerindar",
       "aerin",
@@ -1649,7 +1649,7 @@
     "name": "Saryrn",
     "zone": "Plane of Torment",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 66,
     "nicknames": [
       "saryrn",
       "torment boss"
@@ -1662,7 +1662,7 @@
     "name": "Fennin Ro",
     "zone": "Plane of Fire",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 138,
     "nicknames": [
       "fennin",
       "fennin ro"
@@ -1675,7 +1675,7 @@
     "name": "Xegony the Queen of Air",
     "zone": "Plane of Air",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 138,
     "nicknames": [
       "xegony",
       "queen of air"
@@ -1688,7 +1688,7 @@
     "name": "The Rathe Council",
     "zone": "Plane of Earth",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 138,
     "nicknames": [
       "rathe",
       "council",
@@ -1702,7 +1702,7 @@
     "name": "Coirnav the Avatar of Water",
     "zone": "Plane of Water",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 138,
     "nicknames": [
       "coirnav",
       "avatar of water"
@@ -1715,7 +1715,7 @@
     "name": "Tallon Zek",
     "zone": "Plane of Tactics",
     "expansion": "PoP",
-    "timerHours": 108,
+    "timerHours": 66,
     "nicknames": [
       "tallon",
       "tallon zek",
@@ -1729,7 +1729,7 @@
     "name": "Vallon Zek",
     "zone": "Plane of Tactics",
     "expansion": "PoP",
-    "timerHours": 108,
+    "timerHours": 66,
     "nicknames": [
       "vallon",
       "vallon zek",
@@ -1743,7 +1743,7 @@
     "name": "Rallos Zek the Warlord",
     "zone": "Plane of Tactics",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 66,
     "nicknames": [
       "rallos",
       "rallos zek",
