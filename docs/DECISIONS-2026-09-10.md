@@ -247,6 +247,29 @@ helps with "who calls X / what does X reach" and cycles, and as a first probe
 for an agent with no repo context. **Hitya's call, 2026-09-13: regen script
 in, outputs out, hook not installed** — `scripts/graphify.sh`.
 
+## Two more tools assessed, neither adopted (2026-09-13)
+
+Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
+- **rtk** — a PreToolUse hook that rewrites Bash commands to `rtk <cmd>` and
+  compacts their output (claims 60–90% fewer tokens on dev commands). Its own
+  README says it does not touch `Read`/`Grep`/`Glob`, and in this repo the
+  big context sinks are source reads and MCP results (a GitHub `actions_list`
+  returns every run's full commit body), not Bash output — which sessions
+  already trim with `tail`/`grep`. Cloud containers are ephemeral, so the
+  binary would need a per-session install through a proxy that already blocks
+  some hosts. Verdict: skip for cloud sessions; Hitya may try it on the
+  desktop if a local session feels Bash-heavy. Watch that its error grouping
+  never hides a failing assertion's text.
+- **ui-ux-pro-max-skill** — 79 UI styles, 192 palettes, 74 font pairings,
+  industry rules, auto-activating on any UI request; installs a large data
+  directory into `.claude/skills/`. It is a generator of generic visual
+  identities, which is exactly what `frontend-design` exists to override (the
+  palette and monospace grid are fixed, and the mid-raid constraints are not
+  in any generic catalog). Its UX-guideline half overlaps impeccable's
+  detectors, and a third voice on every UI task would need a third precedence
+  rule. Verdict: skip. If one piece is wanted (its accessibility list, say),
+  vendor that file into `frontend-design`, not the skill.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
