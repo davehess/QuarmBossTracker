@@ -6813,6 +6813,17 @@ function _elapsedSec(fromTs, toTs) {
   return Math.max(0, (b - a) / 1000);
 }
 
+// Damage-shield attribution (Hitya 2026-09-13: "These look like 150 dd procs"
+// — every anonymous non-melee hit that landed within a swing of the tank was
+// being credited to them as a shield). Log timestamps are whole seconds, so
+// "same server tick" is same-or-next second for both pairings: the mob's
+// connect → its DS return, and the DS return → its flavor line.
+const DS_PAIR_WINDOW_MS = 1000;
+// A shield we cannot see on the tank (worn item, AA) on top of the DS buffs we
+// can. Era shields return single digits to a few dozen per hit; a hit further
+// above the tank's known DS buffs than this is a proc or a spell, not a shield.
+const DS_UNLISTED_SLACK = 30;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -6852,10 +6863,12 @@ class EncounterBuilder {
     // credit was landing on a groupmate/box. Resolved to the owner in flush().
     this.killSlayer = null;
     // Mob → last player it landed a hit on, for DS correlation. On Quarm a
-    // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
-    // for N" without naming the wearer, so we credit it to whoever the mob
-    // most recently connected with (within 1500ms). Per-encounter, cleared
-    // on reset since mob identities don't carry across encounters.
+    // damage-shield return logs as the anonymous "<mob> was hit by non-melee
+    // for N" without naming the wearer — the same line a weapon proc or a
+    // direct-damage spell from anyone in range produces. The mob's most
+    // recent connect (same second) names the only candidate wearer; whether
+    // the hit WAS a shield is decided in _settleDsPending. Per-encounter,
+    // cleared on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
     // PvP assist correlation — uploader's outbound damage to player names,
     // rolling 30s window. When a PvP death broadcast names one of these
@@ -6863,13 +6876,12 @@ class EncounterBuilder {
     // Per-builder (per-encounter); cross-fight assists are intentionally
     // missed since 30s comfortably covers any real engagement → death pair.
     this._pvpDamageWindow = new Map();   // victim.toLowerCase() → { tsMs, lineSample }
-    // Pending DS commit — buffered between the damage line and the flavor
-    // line (e.g. "X was hit by non-melee for 14" then "X was pierced by
-    // thorns."). When the flavor lands within 2s, the buffered event's
-    // ability gets retagged from 'non-melee' to the real spell name. If no
-    // flavor arrives, we commit with 'non-melee' once the next add() call
-    // pushes us past the 2s window.
-    this._dsPending = null;              // { eventRef, attacker, mobLower, tsMs }
+    // Held DS candidate — an anonymous non-melee hit that landed within a
+    // second of the mob connecting on a player. It has NOT been added yet:
+    // add() parks it here and returns, and _settleDsPending re-adds it once
+    // the flavor line ("X was pierced by thorns.") has had its second to
+    // arrive — decided as a shield, or left as the anonymous hit it was.
+    this._dsPending = null;              // { eventRef, tank, mobLower, tsMs }
     // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
     // Per-defender shape:
     //   { hits, damageTaken, misses, dodges, parries, ripostes, blocks, invulns,
@@ -7356,24 +7368,44 @@ class EncounterBuilder {
     ba.total += amount;
   }
 
-  // Commit the buffered DS attribution to stats.damageShield. Called when
-  // the flavor line arrives (with the real spell name retagged onto the
-  // eventRef), when a new DS attribution opens (so the previous one isn't
-  // stranded), or when the next damage event's timestamp passes the 2s
-  // window without a flavor line landing. Idempotent — null-out after commit.
-  _commitDsPending() {
+  // Decide the held anonymous non-melee hit and re-add it. `flavor` is the
+  // shield named by "<mob> was <verb> by <spell>." when that line landed for
+  // the same mob within the pair window, else null. Called from the flavor
+  // handler, when a new candidate opens (the previous one isn't stranded),
+  // when the next event's timestamp passes the window, and from flush().
+  //
+  // The hit IS a damage shield when
+  //   a) the log named a shield — and, if we can see DS buffs on the tank,
+  //      the amount is not far above them (a flavor line can land in the same
+  //      second as someone's 150-point proc; the proc is not the shield), or
+  //   b) no flavor line, but the tank wears a known DS buff and the amount
+  //      fits it (+ DS_UNLISTED_SLACK for worn/AA shield we cannot see).
+  // Everything else stays exactly the anonymous hit it was — the parser's own
+  // column, as it is for every anonymous hit outside the swing window — and
+  // never reaches the Tank overlay's shield card. Deciding BEFORE the event
+  // enters add() means threat, DEEPS, the upload rollup and the overlay tally
+  // all see it once, already attributed; nothing is credited then undone.
+  _settleDsPending(flavor) {
     const p = this._dsPending;
-    if (!p || !p.eventRef || p.eventRef.amount <= 0) { this._dsPending = null; return; }
-    const spell = (p.eventRef.ability || 'non-melee').toLowerCase();
-    if (!stats.damageShield[p.attacker]) stats.damageShield[p.attacker] = {};
-    const byTank = stats.damageShield[p.attacker];
-    if (!byTank[spell]) byTank[spell] = { count: 0, total: 0 };
-    byTank[spell].count++;
-    byTank[spell].total += p.eventRef.amount;
-    // Per-fight overlay tally — done here (not in add()) so the flavor-line
-    // retag has already named the real DS spell on the eventRef.
-    this._bumpDsReflect(spell, p.eventRef.amount, p.attacker);
-    this._dsPending = null;
+    this._dsPending = null;                     // before re-add: add() reads this slot
+    if (!p || !p.eventRef) return;
+    const ev = p.eventRef;
+    ev._dsSettled = true;
+    const amount = Number(ev.amount) || 0;
+    const known  = amount > 0 ? this._knownDsPerHit(p.tank) : 0;
+    const fits   = known > 0 && amount <= known + DS_UNLISTED_SLACK;
+    const isDs   = amount > 0 && (flavor ? (known === 0 || fits) : fits);
+    if (isDs) {
+      ev.attacker = p.tank;
+      ev.ds       = true;
+      ev.ability  = flavor ? String(flavor).trim() : 'non-melee';
+    }
+    this.add(ev);
+  }
+  // Per-hit total of the DS buffs we can SEE on a character right now (0 when
+  // none). Instance-level so a test can pin a tank's shield without a catalog.
+  _knownDsPerHit(name) {
+    try { return _knownDsPerHitFor(name); } catch { return 0; }
   }
 
   // Given a PvP broadcast (from parsePvpBroadcast), check whether the
@@ -7464,28 +7496,27 @@ class EncounterBuilder {
       }
     }
 
-    // ── Damage-shield flavor line → retag pending attribution ─────────────
+    // ── Damage-shield flavor line → settle the held candidate ─────────────
     // "X was pierced by thorns." (no number, no points). The DS damage line
-    // landed milliseconds earlier and is buffered in _dsPending; we update
-    // its ability with the real spell name and commit. ds_flavor events are
-    // pure attribution — never added to this.events.
+    // landed milliseconds earlier and is held in _dsPending; the flavor names
+    // the shield and is the positive evidence that it WAS one. ds_flavor
+    // events are pure attribution — never added to this.events.
     if (event.type === 'ds_flavor') {
       const flavorTsMs = Date.parse(event.ts) || Date.now();
       const p = this._dsPending;
-      if (p && p.mobLower === String(event.defender || '').toLowerCase()
-          && flavorTsMs - p.tsMs < 2000) {
-        p.eventRef.ability = String(event.ability || 'non-melee').trim();
-      }
-      // Commit regardless — flavor lines mark the end of the DS pair window.
-      this._commitDsPending();
+      const mine = !!(p && p.mobLower === String(event.defender || '').toLowerCase()
+          && flavorTsMs - p.tsMs <= DS_PAIR_WINDOW_MS);
+      // Settle regardless — a flavor line marks the end of the pair window;
+      // one for another mob (or too late) just settles without the evidence.
+      if (p) this._settleDsPending(mine ? (event.ability || null) : null);
       return;
     }
 
-    // Stale pending DS attribution? Commit before the new event so its
-    // damage doesn't leak into a later mob's flavor line.
+    // Held candidate past its window? Settle it before the new event so it
+    // keeps its place in the fight and can't borrow a later flavor line.
     if (this._dsPending) {
       const evTsMs = Date.parse(event.ts) || Date.now();
-      if (evTsMs - this._dsPending.tsMs > 2000) this._commitDsPending();
+      if (evTsMs - this._dsPending.tsMs > DS_PAIR_WINDOW_MS) this._settleDsPending(null);
     }
 
     // Dire Charm cast → flag the next charm-land within ~10s as a DC
@@ -7748,13 +7779,14 @@ class EncounterBuilder {
     }
 
     // ── Damage-shield correlation (Quarm format) ─────────────────────────────
-    // On Quarm the DS proc logs as "<Mob> was hit by non-melee for N" with NO
-    // wearer attribution. Correlate it with the most recent connecting swing
-    // FROM that same mob: whoever it just hit (within ~1500ms) is the DS
-    // wearer and gets the damage credit. The narrow window matches EQ's combat
-    // tick — DS lands on the same tick as the swing it procced from. Misses
-    // don't proc DS; they come through as type='miss' so they never enter
-    // _lastIncomingHit (only landed damage events do).
+    // On Quarm the DS return logs as "<Mob> was hit by non-melee for N" with NO
+    // wearer attribution — and so does everyone's proc and direct-damage spell.
+    // The most recent connecting swing FROM that same mob (same second — DS
+    // lands on the tick of the swing it answered) names the only possible
+    // wearer; it does NOT prove the hit was a shield. The candidate is held
+    // and decided in _settleDsPending. Misses don't trigger DS; they come
+    // through as type='miss' so they never enter _lastIncomingHit (only
+    // landed damage events do).
     //
     // Runs AFTER the dirge block so the more specific dirge attribution wins
     // when both could match; falls through to DS if no dirge cast is pending.
@@ -7831,27 +7863,19 @@ class EncounterBuilder {
         });
       }
 
-      // 2) DS attribution: anonymous non-melee hit on a mob — if that mob
-      // landed a connect on a player in the last 1500ms, credit the player.
-      // Buffers into _dsPending instead of tallying immediately; the flavor
-      // line ("X was pierced by thorns.") that lands milliseconds later
-      // retags ability with the actual spell name. If no flavor arrives, the
-      // next add() with tsMs > pending.tsMs + 2000 commits 'non-melee' as-is.
-      if (event.attacker === null && def && event.ability === 'non-melee') {
+      // 2) DS candidate: anonymous non-melee hit on a mob that connected on a
+      // player within the same second. HELD, not credited — the event leaves
+      // add() here and re-enters through _settleDsPending once the flavor
+      // line has had its second to arrive (or the fight flushes). A settled
+      // event carries _dsSettled and passes straight through.
+      if (event.attacker === null && def && event.ability === 'non-melee' && !event._dsSettled) {
         const recent = this._lastIncomingHit.get(def.toLowerCase());
-        if (recent && tsMs - recent.tsMs < 1500) {
-          // Commit any older pending before opening a new one (one mob's DS
-          // hit shouldn't be retagged by another mob's flavor line).
-          if (this._dsPending) this._commitDsPending();
-          event.attacker = recent.tank;
-          event.ds = true;
-          event._skipDsAggregate = true;   // suppress the immediate aggregate below
-          this._dsPending = {
-            eventRef: event,
-            attacker: recent.tank,
-            mobLower: def.toLowerCase(),
-            tsMs,
-          };
+        if (recent && tsMs - recent.tsMs <= DS_PAIR_WINDOW_MS) {
+          // Settle any older candidate before opening a new one (one mob's
+          // hit must not borrow another's flavor line).
+          if (this._dsPending) this._settleDsPending(null);
+          this._dsPending = { eventRef: event, tank: recent.tank, mobLower: def.toLowerCase(), tsMs };
+          return;
         }
       }
     }
@@ -8079,15 +8103,15 @@ class EncounterBuilder {
       // Damage-shield reflect accumulation for the Tank overlay — ONLY events
       // the parser/correlator positively identified as DS (`event.ds`), i.e.
       // the curated "is <verb> by <possessive> <SOURCE>" form or the two-line
-      // Quarm pattern resolved via swing-correlation (see _commitDsPending).
+      // Quarm pattern resolved via swing-correlation (see _settleDsPending).
       // The old filter here (`attacker === null && ability && defender is a
       // target`) also matched the uploader's OWN first-person damage — "You
       // slash X for 26" and "X has taken N from your <song>" both parse with
       // attacker=null — so a bard's overlay showed their slashes and songs
-      // as "Damage shield (this fight)" (user report 2026-07-01). Buffered
-      // two-line events (`_skipDsAggregate`) are tallied at commit time
-      // instead, after the flavor line has retagged the real spell name.
-      if (event.ds && !event._skipDsAggregate) {
+      // as "Damage shield (this fight)" (user report 2026-07-01). A two-line
+      // Quarm hit arrives here already settled — attacker, ds and the flavor
+      // spell were decided in _settleDsPending before it re-entered add().
+      if (event.ds) {
         this._bumpDsReflect(event.ability, event.amount, event.attacker);
       }
       // Charm-session damage attribution. If the attacker is a pet with
@@ -8725,9 +8749,9 @@ class EncounterBuilder {
     return out;
   }
   flush() {
-    // Commit any buffered DS attribution so a fight that ends with a damage
-    // line but no flavor line still credits the tank (with ability='non-melee').
-    if (this._dsPending) this._commitDsPending();
+    // Settle a held DS candidate so a fight that ends on it still counts the
+    // hit (as a shield only if the tank's known DS buffs vouch for it).
+    if (this._dsPending) this._settleDsPending(null);
     // Minimum event count — filters out "you took 7 hits and zoned" noise.
     // Real fights (even fast trash kills) typically produce 15+ events.
     if (this.events.length < 10) {
@@ -11393,6 +11417,38 @@ function _resolveBuffsForName(name, active, buffsOut) {
   }
   return { buffs: [...seen.values()], source: 'observed' };
 }
+// Per-hit total of the DS buffs we can SEE on a character: their own Zeal
+// list when they are this client, else their bot-relayed Zeal snapshot, else
+// observed landings + the relay bucket — the three sources _resolveBuffsForName
+// reads, minus its fetches (this runs on the parse path, per anonymous hit).
+// 0 when no currently-up buff is a catalog DS spell (SPA 59 `ds` per-hit).
+// Feeds _settleDsPending: it vouches for a small anonymous hit on the tank and
+// rules out a 150-point proc that a same-second flavor line would otherwise
+// have named as their shield.
+function _knownDsPerHitFor(name) {
+  const nameLower = String(name || '').toLowerCase();
+  if (!nameLower) return 0;
+  let list = null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() === nameLower) { list = (_zealState[ch] || {}).buffs; break; }
+  }
+  if (!Array.isArray(list)) {
+    const live = _mtLiveStateByName.get(nameLower);
+    if (live && live.state && Array.isArray(live.state.buffs)) list = live.state.buffs;
+  }
+  if (!Array.isArray(list)) {
+    list = targetBuffsFor(nameLower).slice();
+    const relay = _targetBuffsByName.get(_relayCacheKey(name));
+    for (const b of ((relay && relay.buffs) || [])) list.push(b);
+  }
+  let sum = 0;
+  for (const b of list) {
+    if (!b || !b.name || b.fell_off) continue;
+    const cat = _spellByNameLower.get(String(b.name).toLowerCase());
+    if (cat && cat.ds > 0) sum += Number(cat.ds) || 0;
+  }
+  return sum;
+}
 // Divine Aura lookup within a buff list — shared by the self DA banner and
 // Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
 // to heal" threshold; the self banner and the ramp bar use different values
@@ -11563,9 +11619,9 @@ function _serializeTankState() {
   // the one place we CAN attribute "how much you're getting from each one" —
   // the combat log can't say which buff fired, but the catalog tells us each
   // known DS buff's DESIGNED per-hit value. Empty when no currently-active
-  // buff is a known DS spell (the true source may be worn gear/an AA, which
-  // never shows up in the buff list at all) — the overlay says so rather than
-  // silently showing nothing. (Hitya 2026-06-29: "Highlight the DS spells
+  // buff is a known DS spell — then the shield card can only hold hits the
+  // log itself named as a shield (_settleDsPending), and the overlay says
+  // exactly that instead of guessing at gear. (Hitya 2026-06-29: "Highlight the DS spells
   // and songs and how much you're getting from each one in the damage shield
   // section.")
   const dsSources = [];
@@ -15188,8 +15244,9 @@ function _isPanelHidden(el) {
 // free (see the render-rules note in CLAUDE.md).
 //
 // WHY THIS ROW EXISTS (Abrahms, 2026-09-10): every overlay resolves as
-//   shouldShow = unlocked || (cfg.showX && !cfg.quietMode && _eqGateOk(cfg))
-// and \`unlocked\` — placement mode — bypasses the rest. So with quiet mode on, an
+//   shouldShow = unlocked || (cfg.showX && !cfg.hideOverlays && _eqGateOk(cfg))
+// and \`unlocked\` — placement mode — bypasses the rest. So with "Don't show any
+// overlays" on (before 2026-09-11 that was quiet mode; quiet mode now only mutes), an
 // overlay appears while you position it, the hotkey still flips its show flag,
 // and it vanishes the moment you finish: "I can get em all up when doing the
 // placement mode ... but nothing ever makes it to my screen." Nothing anywhere
@@ -15200,7 +15257,7 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
     }).catch(function () { /* bridge refused — leave the row out rather than guess */ });
   } catch (e) { void e; }
 }
@@ -15292,18 +15349,20 @@ function renderSetupChecks(s) {
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
        + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
   }
-  // Quiet mode — the master "I use another parser" switch hides EVERY overlay,
-  // and until now said so nowhere. Rendered only when hosted in Mimic: a browser
-  // tab has no overlays, so the row would be noise there.
-  if (_wpMimicCfg && _wpMimicCfg.quietMode) {
+  // "Don't show any overlays" — the master "I use another parser" switch hides
+  // EVERY overlay, and until 2026-09-10 said so nowhere. (Quiet mode used to be
+  // this switch; since 2026-09-11 it only mutes.) Rendered only when hosted in
+  // Mimic: a browser tab has no overlays, so the row would be noise there.
+  if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
-       + '<td class="dim" style="font-size:11px"><b>Quiet mode is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>I use EQLogParser / another parser</b>. Uploads are unaffected either way.</td></tr>';
+       + '<td class="dim" style="font-size:11px"><b>Don\\'t show any overlays is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>Don\\'t show any overlays</b>. Uploads are unaffected either way.</td></tr>';
   } else if (_wpMimicCfg) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
-       + '<td class="dim" style="font-size:11px">Quiet mode is off'
-       + (_wpMimicCfg.hideWhenEqDown ? ' — overlays appear once EverQuest is running.' : '.')
+       + '<td class="dim" style="font-size:11px">Overlays are on'
+       + (_wpMimicCfg.hideWhenEqDown ? ' — they appear once EverQuest is running.' : '.')
+       + (_wpMimicCfg.quietMode ? ' Sounds and voice are muted (Settings → Mute Mimic).' : '')
        + '</td></tr>';
   }
   // EQ folder writable — the silent precondition for three buttons on this very
@@ -15339,7 +15398,11 @@ function renderSetupChecks(s) {
   // One-click writer for the EQ logging + Zeal export/pipe settings. The note
   // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
   // the in-game equivalents are spelled out so a user can act live too.
-  h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+  // The action row sits ABOVE the checklist (Hitya 2026-09-13: "The other
+  // setup items for Quarm should also be at the top there with that main
+  // button") — Set up for me, the Mimic-only fixers and the old-log importer
+  // together, first thing a first-run user sees when the panel opens.
+  const actionsRow = '<div style="margin:2px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
      + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
      // Two more one-click fixers, same row, Mimic-only (they need the Electron
      // bridge — a browser tab cannot elevate or write into the EQ folder).
@@ -15348,10 +15411,12 @@ function renderSetupChecks(s) {
      + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
      + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
+     + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
+     + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
-  morphInto(el, h);
+  morphInto(el, actionsRow + h);
   // Delegated so it survives the morphInto repaint; bound once.
   if (!window.__wpEqSetupBound) {
     window.__wpEqSetupBound = true;
@@ -15388,6 +15453,21 @@ function renderSetupChecks(s) {
 // Re-run after every repaint of the card, so the handlers are bound with a
 // dataset latch rather than a global one — the buttons are re-created by
 // morphInto each time this section re-renders.
+// Shared by the Setup-card buttons and the Logsync tab's pickers + drop zone:
+// hand the paths to the agent (which validates each and rescans) and return a
+// one-line result for whichever surface asked.
+var _wpImportNote = '';   // last import result, rendered into the Logsync card (byte-stable until it changes)
+async function wpImportLogPaths(paths) {
+  var r = await postOptin('import', { paths: paths });
+  var results = (r && r.results) || [];
+  var ok  = results.filter(function (x) { return x.ok; });
+  var bad = results.filter(function (x) { return !x.ok; });
+  var files = ok.reduce(function (n, x) { return n + (x.files || 0); }, 0);
+  try { if (typeof refreshOptin === 'function') refreshOptin(); } catch (e) { void e; }
+  if (ok.length && !bad.length) return { text: '✓ Added ' + files + ' log file' + (files === 1 ? '' : 's') + ' — see the Logsync tab, they are ready to backfill.', color: 'var(--green)' };
+  if (ok.length) return { text: '✓ Added ' + files + ' file(s); skipped ' + bad.map(function (x) { return x.path + ' (' + x.error + ')'; }).join('; '), color: 'var(--orange,#f0b429)' };
+  return { text: 'Nothing added: ' + (bad.map(function (x) { return x.path + ' — ' + x.error; }).join('; ') || 'no reply from the agent'), color: 'var(--red,#f87171)' };
+}
 function wpWireFixerButtons(s) {
   var note = document.querySelector('.wp-fixer-note');
   var dBtn = document.querySelector('.wp-defender');
@@ -15414,6 +15494,24 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+  // Old-log importer — Mimic only (needs the native picker on the bridge).
+  ['.wp-import-dir', '.wp-import-files'].forEach(function (sel) {
+    var iBtn = document.querySelector(sel);
+    if (!(iBtn && window.mimic && window.mimic.pickLogBackups)) return;
+    iBtn.style.display = '';
+    if (iBtn.dataset.wired) return;
+    iBtn.dataset.wired = '1';
+    iBtn.addEventListener('click', function () {
+      var orig = iBtn.textContent;
+      iBtn.disabled = true; iBtn.textContent = 'Choose…';
+      window.mimic.pickLogBackups(sel === '.wp-import-dir' ? 'dir' : 'files').then(function (paths) {
+        if (!paths || !paths.length) { say('Nothing added.'); return; }
+        return wpImportLogPaths(paths).then(function (m) { _wpImportNote = m.text; say(m.text, m.color); });
+      }).catch(function (e) {
+        say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+      }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
+    });
+  });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
     cBtn.style.display = '';
@@ -19232,6 +19330,29 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // Imported log backups (Hitya 2026-09-13). Inside Mimic: native pickers plus
+  // a drop zone that reads real paths through the bridge. A browser tab has
+  // neither, so it only lists what is already imported.
+  const imp = o.importedPaths || [];
+  const hosted = !!(window.mimic && window.mimic.pickLogBackups);
+  h += '<div class="card wide" id="wpImported"><h2>🗂 Imported log backups (' + imp.length + ')</h2>' +
+       '<div class="subtle">Old logs kept outside your EQ folder — a backup drive, a Logs-old folder, a previous PC. Read once for backfill, never tailed. ' +
+       'Files must be named like EverQuest logs (eqlog_&lt;Name&gt;_pq.proj.txt, rotation suffixes fine) so we know whose they are.</div>';
+  if (imp.length) {
+    h += '<table><tr><th>Path</th><th>Kind</th><th>Files</th><th></th></tr>' + imp.map(e =>
+      '<tr><td><code style="font-size:11px">' + esc(e.path) + '</code></td><td>' + (e.kind === 'dir' ? 'folder' : 'file') + '</td><td>' + (e.files || 0) + '</td>' +
+      '<td><button data-unimport="' + esc(e.path) + '" style="font-size:11px;padding:2px 8px">✕ Remove</button></td></tr>').join('') + '</table>';
+  }
+  h += '<div id="wpImportDrop" style="margin-top:8px;padding:14px;border:1px dashed var(--border);border-radius:6px;text-align:center;color:var(--dim);font-size:12px">' +
+       (hosted
+         ? '<b>Drop log files or a folder here</b> &nbsp;— or&nbsp; ' +
+           '<button data-import="dir" style="font-size:11px">🗂 Add folder…</button> ' +
+           '<button data-import="files" style="font-size:11px">📄 Add files…</button>'
+         : 'Open this page inside Mimic to add folders or files — a browser tab cannot see your drive.') +
+       '</div>' +
+       (_wpImportNote ? '<div class="dim" style="font-size:11px;margin-top:6px">' + esc(_wpImportNote) + '</div>' : '') +
+       '</div>';
+
   h += '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
           ' (' + list.length + ')</h2>';
   h += '<div class="subtle">Backfill captures guild/raid chat + boss-matched combat kills (tagged with raid-window status). ' +
@@ -19246,7 +19367,7 @@ function renderOptin(o) {
        '</select>' +
        '<button data-act="select-all">Select all</button>' +
        '<button data-act="select-none">Clear</button>' +
-       '<button data-act="rescan">Rescan dir</button>' +
+       '<button data-act="rescan">Rescan</button>' +
        (_optinPane==='active'
          ? '<button data-act="backfill" ' + (selCount===0?'disabled':'') + ' style="background:#1a7f37;border-color:#1a7f37;color:#fff">' +
              (selCount>0 ? 'Backfill '+selCount+' selected' : 'Backfill selected') + '</button>'
@@ -19283,6 +19404,9 @@ function renderOptin(o) {
     const nameColor = first.requested ? 'var(--blue)' : (first.isAlt ? 'var(--dim)' : 'var(--orange)');
     files.forEach((f, idx) => {
       const fname = f.path.split(/[/\\\\]/).pop();
+      const importedBadge = f.imported
+        ? ' <span class="dim" style="font-size:10px;border:1px solid var(--border);border-radius:3px;padding:0 5px;margin-left:4px" title="From an imported backup folder or file — backfill-only, never tailed">imported</span>'
+        : '';
       const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
       const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
       let resumeStr = '';
@@ -19365,7 +19489,7 @@ function renderOptin(o) {
       h += '<tr>' +
            '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + cbTitle + '></td>' +
            charCell +
-           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + '</td>' +
+           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + importedBadge + '</td>' +
            '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
            '<td class="dim">' + ageStr + '</td>' +
            '<td>' + resumeStr + '</td>' +
@@ -19428,6 +19552,42 @@ function renderOptin(o) {
   // /who-only rescan — fast path that walks the file for /who rows ONLY, skips
   // chat + combat. Use after upgrading past a /who keep-pattern fix (v3.0.35
   // and later) to retroactively capture rows that earlier agents byte-dropped.
+  // Imported log backups — pickers (Mimic only), remove, and the drop zone.
+  root.querySelectorAll('button[data-import]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      if (!(window.mimic && window.mimic.pickLogBackups)) return;
+      const paths = await window.mimic.pickLogBackups(b.dataset.import === 'dir' ? 'dir' : 'files');
+      if (!paths || !paths.length) return;
+      const m = await wpImportLogPaths(paths);
+      _wpImportNote = m.text;
+      refreshOptin();
+    });
+  });
+  root.querySelectorAll('button[data-unimport]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      const p = b.dataset.unimport;
+      if (!p) return;
+      await postOptin('unimport', { paths: [p] });
+      _wpImportNote = 'Removed ' + p + ' — its files left the list; any backfill progress is kept.';
+      refreshOptin();
+    });
+  });
+  if (!window.__wpImportDropBound) {
+    window.__wpImportDropBound = true;
+    const zoneOf = (e) => (e.target && e.target.closest) ? e.target.closest('#wpImportDrop') : null;
+    document.addEventListener('dragover', (e) => { const z = zoneOf(e); if (!z) return; e.preventDefault(); z.style.borderColor = 'var(--blue)'; });
+    document.addEventListener('dragleave', (e) => { const z = zoneOf(e); if (z) z.style.borderColor = 'var(--border)'; });
+    document.addEventListener('drop', (e) => {
+      const z = zoneOf(e);
+      if (!z) return;
+      e.preventDefault(); z.style.borderColor = 'var(--border)';
+      if (!(window.mimic && window.mimic.pathForFile)) { _wpImportNote = 'Drop only works inside Mimic — a browser tab cannot see your drive.'; refreshOptin(); return; }
+      const items = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      const paths = items.map(f => { try { return window.mimic.pathForFile(f); } catch (_) { return null; } }).filter(Boolean);
+      if (!paths.length) { _wpImportNote = 'Nothing usable was dropped.'; refreshOptin(); return; }
+      wpImportLogPaths(paths).then(m => { _wpImportNote = m.text; refreshOptin(); });
+    });
+  }
   root.querySelectorAll('button[data-rescan-who]').forEach(b => {
     _bindOnce(b, 'click', async () => {
       const p = b.dataset.rescanWho;
@@ -22780,6 +22940,7 @@ function _serializeOptinForWeb() {
       path:      f.path,
       character: f.character,
       isAlt:     f.isAlt,
+      imported:  !!f.imported,
       isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
       sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
       sizeMb:    f.sizeMb,       //   so clicks reached the server but were
@@ -22797,6 +22958,10 @@ function _serializeOptinForWeb() {
     pane:     _optinState.pane,
     files:    _optinState.files.map(mapFile),
     ignored:  _optinState.ignored.map(mapFile),
+    importedPaths: (_optinState.importedPaths || []).map(e => ({
+      path: e.path, kind: e.kind, addedAt: e.addedAt || null,
+      files: e.kind === 'dir' ? _importedLogFilesIn(e.path).length : 1,
+    })),
     activeBackfills: [..._activeBackfills.values()],
     // Officer-filed backfill requests targeting any character we watch.
     // Populated by pollBackfillRequests; we expose just the actionable
@@ -24016,8 +24181,8 @@ function startWebDashboard(port) {
         // the local gauge value (updated every ~300ms). All OTHER rows (remote
         // targets nobody local is on) are left exactly as the bot aggregated
         // them — cross-client behaviour is untouched.
+        let selfSt = null;
         try {
-          let selfSt = null;
           if (selfCharacter) {
             const scl = String(selfCharacter).toLowerCase();
             for (const ch of Object.keys(_zealState || {})) {
@@ -24045,6 +24210,13 @@ function startWebDashboard(port) {
         // exactly as aggregated.
         try { outPayload = _enrichExtTargetV2(outPayload, Date.now()); }
         catch { /* leave the rows as-is — never let V2 break V1 */ }
+        // Zeal target-of-target (drafted upstream change): for the row that IS
+        // my current target, my own client's answer overrides the log-inferred
+        // mob_victim and adds who last hit it. Runs AFTER V2 so the pipe wins
+        // for that one row; every other row is exactly as aggregated.
+        try {
+          if (Array.isArray(outPayload.targets)) outPayload = { ...outPayload, targets: _attachPipeTotToExtRows(outPayload.targets, selfSt, Date.now()) };
+        } catch { /* the pipe must never break the proxy */ }
         // #56 — serial-track engine observes each NPC row's HP (K computation +
         // simultaneous same-name detection) and, when the display flag is on,
         // adds the local K≥2 ambiguity marker. Runs after V2 so it sees the same
@@ -25611,6 +25783,22 @@ function startWebDashboard(port) {
             runOptinBackfill(toScan, { whoOnly: true, log: (m) => console.log(`[optin] ${m}`) });
             console.log(`[optin] /who rescan kicked for ${toScan.length} file(s)`);
           }
+        } else if (action === 'import') {
+          // Add folders / files of old logs (Hitya 2026-09-13). Each path is
+          // validated by the helper; the reply carries per-path results so the
+          // dashboard can say exactly which one was refused and why.
+          const results = paths.map(p => _addImportedLogPath(String(p), { save: false }));
+          _saveOptInState();
+          _optinState.scanned = false;
+          _scanOptInFiles();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: results.some(r => r.ok), results, ..._serializeOptinForWeb() }));
+        } else if (action === 'unimport') {
+          // Drop an imported folder/file. Its files leave the list; any saved
+          // backfill progress for them is kept in case it comes back.
+          for (const p of paths) _removeImportedLogPath(String(p));
+          _optinState.scanned = false;
+          _scanOptInFiles();
         } else if (action === 'ack-backfill' || action === 'dismiss-backfill') {
           // Backfill request status transitions — POST to the bot, then
           // re-poll so the local view reflects what the bot sees.
@@ -25770,11 +25958,10 @@ function recordEventForDashboard(event, character) {
   }
 
   // Damage-shield tally — separate from abilityStats so we can break it out
-  // per attacker per spell on the Tanks tab. _skipDsAggregate is set on the
-  // event when DS attribution buffered it into _dsPending — the commit then
-  // tallies once the spell name is known (from the flavor line) or after the
-  // 2s window expires. Skipping here avoids double-counting under that path.
-  if (event.ds && event.amount > 0 && !event._skipDsAggregate) {
+  // per attacker per spell on the Tanks tab. A two-line Quarm hit reaches
+  // here once, after _settleDsPending decided it (the held copy never
+  // enters add() until then), so there is nothing to skip.
+  if (event.ds && event.amount > 0) {
     const spell = event.ability || '(unknown)';
     if (!stats.damageShield[attacker]) stats.damageShield[attacker] = {};
     const byTank = stats.damageShield[attacker];
@@ -26269,6 +26456,10 @@ const _optinState = {
   sortMode: 'date',    // 'date' | 'size' | 'alpha'
   // Per-file backfill progress (persisted): { [path]: { bytePos, totalBytes, lineNum, updatedAt, character } }
   progress: {},
+  // Imported log backups (persisted) — folders or single files the member
+  // added by hand (Hitya 2026-09-13: "import more logs … add that directory
+  // or file"). Backfill-only, never tailed. { path, kind: 'dir'|'file', addedAt }
+  importedPaths: [],
   // Ignored file paths (persisted across runs)
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
@@ -26326,6 +26517,7 @@ function _loadOptInState() {
     const raw = JSON.parse(fs.readFileSync(OPTIN_STATE_FILE, 'utf8'));
     _optinState.progress             = raw.progress             || {};
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
+    _optinState.importedPaths        = Array.isArray(raw.importedPaths) ? raw.importedPaths.filter(e => e && e.path) : [];
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
     // #113 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
@@ -26340,12 +26532,14 @@ function _loadOptInState() {
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
     _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
   } catch { /* missing or unreadable — fresh state */ }
+  _mergeImportedFromEnv();
 }
 function _saveOptInState() {
   try {
     fs.writeFileSync(OPTIN_STATE_FILE, JSON.stringify({
       progress:           _optinState.progress,
       ignoredPaths:       [..._optinState.ignoredPaths],
+      importedPaths:      _optinState.importedPaths || [],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
@@ -26357,6 +26551,75 @@ function _saveOptInState() {
     }, null, 2));
   } catch { /* non-fatal */ }
 }
+
+// ── Imported log backups ─────────────────────────────────────────────────────
+// A member's old logs are not always in the EQ folder — rotated copies, a
+// backup drive, a previous PC's export (Hitya 2026-09-13: "can we add in a
+// command in mimic logsync to import more logs, or a drag to page to allow you
+// to add that directory or file"). A path here is read by the opt-in scan
+// exactly like the EQ folder's logs: backfill-only, never tailed. Folders are
+// read at their top level plus a Logs\ child; files must be NAMED like an EQ
+// log (eqlog_<Name>_pq.proj.txt with any rotation suffix) — the name is what
+// gives the character, and the scan cannot attribute a file without it.
+// The agent's persisted list is the source of truth; Mimic's onboarding hands
+// its picks over once through WOLFPACK_IMPORTED_LOGS (see _mergeImportedFromEnv).
+const IMPORTED_LOG_NAME_RX = /^eqlog_([^_]+)_pq\.proj\.txt(?:[\d.a-z]+)?$/i;
+function _importedLogFilesIn(dir) {
+  const out = [];
+  const walk = (d) => {
+    let entries = [];
+    try { entries = fs.readdirSync(d); } catch { return; }
+    for (const name of entries) if (IMPORTED_LOG_NAME_RX.test(name)) out.push(path.join(d, name));
+  };
+  walk(dir);
+  const logsChild = path.join(dir, 'Logs');
+  try { if (fs.statSync(logsChild).isDirectory()) walk(logsChild); } catch { /* no Logs child */ }
+  return out;
+}
+function _addImportedLogPath(p, opts = {}) {
+  const raw = String(p || '').trim();
+  if (!raw) return { ok: false, path: raw, error: 'empty path' };
+  let st;
+  try { st = fs.statSync(raw); } catch { return { ok: false, path: raw, error: 'not found' }; }
+  const kind = st.isDirectory() ? 'dir' : 'file';
+  if (kind === 'file' && !IMPORTED_LOG_NAME_RX.test(path.basename(raw))) {
+    return { ok: false, path: raw, error: 'not an EverQuest log — expected eqlog_<Name>_pq.proj.txt (rotation suffixes are fine)' };
+  }
+  const files = kind === 'dir' ? _importedLogFilesIn(raw) : [raw];
+  if (kind === 'dir' && files.length === 0) {
+    return { ok: false, path: raw, error: 'no eqlog_*_pq.proj.txt files in that folder (or its Logs child)' };
+  }
+  const key = raw.toLowerCase();
+  if (!_optinState.importedPaths.some(e => String(e.path).toLowerCase() === key)) {
+    _optinState.importedPaths.push({ path: raw, kind, addedAt: Date.now() });
+    if (opts.save !== false) _saveOptInState();
+  }
+  return { ok: true, path: raw, kind, files: files.length };
+}
+function _removeImportedLogPath(p) {
+  const key = String(p || '').trim().toLowerCase();
+  const before = _optinState.importedPaths.length;
+  _optinState.importedPaths = _optinState.importedPaths.filter(e => String(e.path).toLowerCase() !== key);
+  const removed = _optinState.importedPaths.length !== before;
+  if (removed) _saveOptInState();
+  return removed;
+}
+// Onboarding picks arrive from Mimic as WOLFPACK_IMPORTED_LOGS (path-delimited)
+// at spawn. Merged ONCE per process, so a path the member later removes on the
+// Logsync tab does not come back on the next scan.
+let _envImportsMerged = false;
+function _mergeImportedFromEnv() {
+  if (_envImportsMerged) return;
+  _envImportsMerged = true;
+  const raw = String(process.env.WOLFPACK_IMPORTED_LOGS || '').trim();
+  if (!raw) return;
+  let added = 0;
+  for (const p of raw.split(path.delimiter).map(x => x.trim()).filter(Boolean)) {
+    if (_addImportedLogPath(p, { save: false }).ok) added++;
+  }
+  if (added) _saveOptInState();
+}
+// ── end imported log backups ─────────────────────────────────────────────────
 
 // ── #108 Loot bidding — local OpenDKP login gate + bid-character family ─────
 // The Loot bidding dashboard panel gates every bid control behind a REAL
@@ -27198,28 +27461,42 @@ function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
   _optinState.ignored = [];
-  // Derive scan directory from the first watched log path
-  const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
-  let entries;
-  try { entries = fs.readdirSync(dir); } catch { return; }
-
   const requested = new Set((stats.requestedCharacters || []).map(n => n.toLowerCase()));
+  // Candidate files, in order: every watched log's folder (one per EQ install —
+  // this used to read only the FIRST watched log's folder, so a second EQ
+  // install never reached this list), then the imported backups. A path is
+  // listed once, whichever source saw it first.
+  const sources = [];
+  const dirs = new Set();
+  for (const w of (stats.watchedLogs || [])) if (w && w.logPath) dirs.add(path.dirname(w.logPath));
+  for (const d of dirs) {
+    let entries = [];
+    try { entries = fs.readdirSync(d); } catch { continue; }
+    for (const name of entries) sources.push({ fullPath: path.join(d, name), name, imported: false });
+  }
+  for (const e of (_optinState.importedPaths || [])) {
+    const files = e.kind === 'dir' ? _importedLogFilesIn(e.path) : [e.path];
+    for (const fp of files) sources.push({ fullPath: fp, name: path.basename(fp), imported: true });
+  }
+  if (sources.length === 0) return;
+  const seen = new Set();
 
-  for (const name of entries) {
+  for (const src of sources) {
+    const { name, fullPath } = src;
     // Standard logs: eqlog_Name_pq.proj.txt
     const stdM = name.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
     // Alternate/backup: eqlog_Name_pq.proj.txt2, .txt.bak, .txt.old, etc.
     const altM = !stdM && name.match(/^eqlog_([^_]+)_pq\.proj\.txt[\d.a-z]+$/i);
     const match = stdM || altM;
     if (!match) continue;
+    const key = fullPath.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
 
     // Files already being tailed live are still listed here (so the user
     // can see all their characters), but marked isWatched=true so the UI
     // can render a "live" badge and disable the backfill checkbox —
     // backfilling a live file would duplicate events.
-    const fullPath = path.join(dir, name);
     const isWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
 
     // Normalise to PascalCase so 'hitya', 'HITYA', and 'Hitya' all group together
@@ -27237,6 +27514,7 @@ function _scanOptInFiles() {
       character: char,
       isAlt:     !!altM,
       isWatched,
+      imported:  !!src.imported,
       sizeMb,
       sizeBytes,
       mtime,
@@ -34288,6 +34566,58 @@ function _sampleExtMobHp(payload, nowMs) {
 // Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
 // (including "needs attention" hurt rows) are never enriched. Each field is
 // independently optional — a row carries only what's known.
+// ── Zeal target-of-target off the pipe (drafted upstream change) ─────────────
+// docs/zeal-tot-pipe.patch adds two keys to Zeal's player message; Mimic hands
+// them to us as {id, name, authoritative} on the character's Zeal state. Absent
+// on every released Zeal, so null is the normal case throughout.
+function _pipeCandidateOf(st, key) {
+  const c = st && st[key];
+  if (!c || typeof c !== 'object') return null;
+  const id = Number(c.id);
+  const name = typeof c.name === 'string' ? c.name.trim() : '';
+  if (!Number.isFinite(id) || id <= 0 || !name) return null;
+  return { id: Math.trunc(id), name: name.slice(0, 64), authoritative: c.authoritative === true };
+}
+
+// The pipe's target-of-target as an observed_tanks entry: "the mob I am
+// targeting is meleeing <player>". Players only — a mob on a pet or on another
+// mob is not a tank, and the bot re-filters anyway. Feeds the bot's #194
+// clustering, so EVERY raider's Extended Target names that tank, whether or
+// not anyone's combat log saw the swing.
+function _pipeTotObservedTank(st, nowMs) {
+  if (!st || !st.target_name) return null;
+  if ((nowMs - (st.updatedAt || 0)) > 30_000) return null;
+  const tot = _pipeCandidateOf(st, 'target_of_target');
+  if (!tot || !/^[A-Za-z]+$/.test(tot.name)) return null;
+  return { mob: String(st.target_name), tank: tot.name, since: new Date(st.updatedAt || nowMs).toISOString(), authoritative: tot.authoritative };
+}
+
+// Local and immediate: the Extended Target row that IS my current target gets
+// my own client's answer. mob_victim keeps its meaning (who this mob is
+// meleeing) and the pipe overrides the log inference for that one row;
+// mob_victim_source says where it came from so the overlay can mark it.
+// mob_hit_by is who last hit it. Every other row is untouched.
+function _attachPipeTotToExtRows(targets, selfSt, nowMs) {
+  if (!Array.isArray(targets) || !selfSt) return targets;
+  const tot = _pipeCandidateOf(selfSt, 'target_of_target');
+  const hitBy = _pipeCandidateOf(selfSt, 'target_hit_by');
+  if (!tot && !hitBy) return targets;
+  if ((nowMs - (selfSt.updatedAt || 0)) > 60_000) return targets;
+  const myName = String(selfSt.target_name || '').toLowerCase();
+  if (!myName) return targets;
+  const myId = (Number.isFinite(selfSt.target_id) && selfSt.target_id > 0) ? selfSt.target_id : null;
+  return targets.map(t => {
+    if (!t || t.stale || (t.kind || 'npc') !== 'npc') return t;
+    if (String(t.name || '').toLowerCase() !== myName) return t;
+    // With a spawn id on both sides only the exact instance; otherwise the name.
+    if (myId != null && t.spawn_id != null && Number(t.spawn_id) !== myId) return t;
+    const patch = {};
+    if (tot)   { patch.mob_victim = tot.name;   patch.mob_victim_source = tot.authoritative ? 'zeal_assist' : 'zeal_damage'; }
+    if (hitBy) { patch.mob_hit_by = hitBy.name; patch.mob_hit_by_source = hitBy.authoritative ? 'zeal_assist' : 'zeal_damage'; }
+    return { ...t, ...patch };
+  });
+}
+
 function _enrichExtTargetV2(payload, nowMs) {
   if (!payload || !Array.isArray(payload.targets) || !payload.targets.length) return payload;
   _sampleExtMobHp(payload, nowMs);
@@ -35339,6 +35669,13 @@ function flushLiveStateToBot(opts) {
       // Deep are unrelated mobs. Any consumer keys on (zone, target_id) or it
       // will merge two zones' mobs into one row.
       target_id:      Number.isFinite(st.target_id) ? st.target_id : null,
+      // Target of target off the pipe (drafted Zeal change, docs/zeal-tot-pipe
+      // .patch; null on every released Zeal): {id, name, authoritative}. The
+      // bot stores neither yet — the observed_tanks entry below is what reaches
+      // the raid today; these ride along so a bot-side column needs no agent
+      // change later.
+      target_of_target: _pipeCandidateOf(st, 'target_of_target'),
+      target_hit_by:    _pipeCandidateOf(st, 'target_hit_by'),
       // Position (Zeal loc {x,y,z}) → character_live_state.loc_* → the bot's
       // raid-buff-queue "likely out of range" flag (#117). NOT in the change
       // signature (it churns on every step) — it rides the heartbeat floor
@@ -35368,6 +35705,15 @@ function flushLiveStateToBot(opts) {
           if (!/^[A-Za-z]+$/.test(String(h.tank || ''))) continue;
           const k = String(h.mob) + '|' + String(h.tank).toLowerCase();
           if (!seen.has(k)) seen.set(k, { mob: h.mobDisplay || h.mob, tank: h.tank, since: new Date(h.tsMs).toISOString() });
+        }
+        // Zeal's own answer for MY target (drafted upstream change) rides the
+        // same list, so the bot's clustering names that tank for every raider
+        // whether or not anyone's log saw the swing. The bot's sanitizer keeps
+        // mob/tank/since and drops the authoritative flag — a connect either way.
+        const pipeTank = _pipeTotObservedTank(st, now);
+        if (pipeTank) {
+          const pk = String(pipeTank.mob) + '|' + String(pipeTank.tank).toLowerCase();
+          if (!seen.has(pk)) seen.set(pk, pipeTank);
         }
         return seen.size ? [...seen.values()] : null;
       })(),
@@ -35438,6 +35784,10 @@ function flushLiveStateToBot(opts) {
     // not having it. The zone-scoping that actually matters lives at the read
     // side (_extIdInstances).
     const targetIdKey = rec.target_id != null ? rec.target_id : null;
+    // Target of target off the pipe. A change of who my target is ON is the
+    // same kind of event as a tank picking up an add — not something to learn
+    // 45s late — and it moves only on a swap, never per frame.
+    const totKey = (rec.target_of_target && rec.target_of_target.id != null) ? rec.target_of_target.id : null;
     // Who is tanking what (#194). Was heartbeat-only "like loc", which is wrong
     // by analogy: loc churns every step and is advisory, whereas this set only
     // changes when a tank PICKS UP or LOSES a mob — a discrete raid event, and
@@ -35453,6 +35803,7 @@ function flushLiveStateToBot(opts) {
       petBuffs.map(b => b && b.name),
       (rec.target_name || '').toLowerCase(),
       targetIdKey,
+      totKey,
       targetHpBucket,
       selfManaBucket,
       selfHpBucket,

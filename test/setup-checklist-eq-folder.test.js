@@ -247,26 +247,28 @@ describe('the raw EPERM never reaches a member again', () => {
   });
 });
 
-describe('the quiet-mode row — the third thing the app knew and never said', () => {
+describe('the overlays-off row — the third thing the app knew and never said', () => {
   // Abrahms, 2026-09-10, after Program Files and elevation were both ruled out:
   // "I can get em all up when doing the placement mode. and moving/resizing.
   // even the hotkey flip them from on to hidden. but nothing ever makes it to my
-  // screen." Every overlay is `unlocked || (showX && !quietMode && eqGate)`, and
-  // `unlocked` is placement mode — so quiet mode reproduces that report exactly.
+  // screen." Every overlay is `unlocked || (showX && !hideOverlays && eqGate)`, and
+  // `unlocked` is placement mode — so that switch reproduces the report exactly.
+  // (It was quiet mode until 2026-09-11; quiet mode now only mutes.)
   const render = stripJs(sliceBlock(dashSrc, 'function renderSetupChecks(s) {', '\n  morphInto(el, h);'));
   const main   = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
 
-  it('says quiet mode is the reason, and where to turn it off', () => {
-    expect(render).toMatch(/_wpMimicCfg && _wpMimicCfg\.quietMode/);
-    expect(render).toMatch(/Quiet mode is ON/);
-    expect(render).toMatch(/EQLogParser/);
+  it('says the overlays switch is the reason, and where to turn it off', () => {
+    expect(render).toMatch(/_wpMimicCfg && _wpMimicCfg\.hideOverlays/);
+    expect(render).toMatch(/show any overlays is ON/);
+    expect(render).toMatch(/Settings → untick/);
+    expect(render).not.toMatch(/_wpMimicCfg\.quietMode\) \{/);
   });
 
   it('names the symptom that makes it look like a bug', () => {
     expect(render).toMatch(/positioning them/);
   });
 
-  it('reassures that uploads keep working — quiet mode is a display switch', () => {
+  it('reassures that uploads keep working — it is a display switch', () => {
     expect(render).toMatch(/Uploads are unaffected/);
   });
 
@@ -283,7 +285,7 @@ describe('the quiet-mode row — the third thing the app knew and never said', (
 
   // The row is only true while the gate it describes is shaped this way.
   it('the gate it describes still bypasses everything when unlocked', () => {
-    expect(main).toMatch(/const shouldShow = unlocked \|\| \(cfg\.showHud && !cfg\.quietMode && _eqGateOk\(cfg\)\)/);
+    expect(main).toMatch(/const shouldShow = unlocked \|\| \(cfg\.showHud && !cfg\.hideOverlays && _eqGateOk\(cfg\)\)/);
   });
 });
 

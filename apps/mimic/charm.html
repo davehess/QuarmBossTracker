@@ -209,7 +209,9 @@
   try { var saved = localStorage.getItem('wpCharmWarnAt'); if (saved != null && warnAtEl) warnAtEl.value = saved; } catch (e) {}
   if (warnAtEl) warnAtEl.addEventListener('change', function(){ try { localStorage.setItem('wpCharmWarnAt', warnAtEl.value || '0'); } catch (e) {} });
 
+  function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   function speak(text){
+    if (_wpMutedNow()) return;
     try { if (!window.speechSynthesis) return; var u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05; u.volume = 1; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (e) {}
   }

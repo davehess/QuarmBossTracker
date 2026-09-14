@@ -12,9 +12,10 @@
 //      Wolf Pack" and paste a token.
 //   4. Open a transparent, always-on-top, click-through OVERLAY that polls
 //      /api/state for live DPS + boss timers (the DnDOverlay-style parity proof).
-//   5. Tray icon: show/hide window, toggle each overlay independently, master
-//      "Quiet mode" toggle (uploads only, no local UI — for testers running
-//      EQLogParser or GINA in parallel), in-place auto-update via
+//   5. Tray icon: show/hide window, toggle each overlay independently, a
+//      "Mute" switch (cfg.quietMode — no voice or sounds) and a separate
+//      "Don't show any overlays" switch (cfg.hideOverlays — no local UI, for
+//      testers running EQLogParser or GINA in parallel), in-place auto-update via
 //      electron-updater.
 //
 // Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
@@ -209,7 +210,12 @@ function defaultConfig() {
     // the global hotkey (damageAlertHotkey, Ctrl+Shift+D by default), or the
     // dashboard Overlays tab; pushed to the agent on every change + relaunch.
     damageAlert: false,
-    quietMode: false,        // master "I use EQLogParser" — hides all local UI
+    // Split 2026-09-11 (Hitya: "quiet mode should separate between muted and
+    // not seeing overlays at all ... the current mode should just mute").
+    // Until then quietMode hid every overlay and silenced NOTHING — callouts
+    // speak from the hidden trigger window — so the label lied both ways.
+    quietMode: false,        // MUTE — no voice callouts, no sounds; overlays still show
+    hideOverlays: false,     // hide every overlay ("I use EQLogParser / another parser"); uploads + voice unaffected
     // Quiet updates (default ON): a downloaded update applies silently on the
     // next quit (autoInstallOnAppQuit), so the "Restart now?" pop-up is just
     // nagging — especially when releases come in bursts. When true we skip the
@@ -1484,6 +1490,24 @@ function _flushZealToAgent() {
 // (cheap — updated per event) and push a condensed snapshot to the agent at a
 // throttled cadence rather than forwarding 225 raw events/sec.
 const _zealLiveByChar = new Map();   // character → { snapshot, dirty, pid, lastSeen }
+// Spawn ids off the pipe (Zeal PR #229). Absent on every pre-1.4.6 build, and
+// a 0 means "no target", not spawn zero — the bot already guards it (3.1.123);
+// this nulls it at the edge so nothing downstream ever sees a 0 as an identity.
+function _pipeSpawnId(v) {
+  return (typeof v === 'number' && Number.isFinite(v) && v > 0) ? Math.trunc(v) : null;
+}
+// A {id, name, authoritative} candidate off the pipe — the target-of-target
+// keys the drafted Zeal change emits (docs/zeal-tot-pipe.patch). Absent on
+// every released Zeal, so null is the normal case and nothing downstream may
+// require it. Sanitized here, once, so the agent never sees a malformed one.
+function _pipeCandidate(v) {
+  if (!v || typeof v !== 'object') return null;
+  const id = _pipeSpawnId(v.id);
+  const name = typeof v.name === 'string' ? v.name.trim().slice(0, 64) : '';
+  if (id == null || !name) return null;
+  return { id, name, authoritative: v.authoritative === true };
+}
+
 function _zealParseData(obj) {
   // Pipe payload wraps the real data in obj.data as a JSON string.
   let inner = obj && obj.data;
@@ -1617,14 +1641,23 @@ function _zealAbsorb(obj, pid) {
       // ⚠ The pipe OMITS target_id / pet_id when there is no target / no pet,
       // so each is explicitly nulled rather than left at its previous value —
       // otherwise the last target's id would persist after you clear target,
-      // which is exactly the stale-identity bug ids exist to prevent.
+      // which is exactly the stale-identity bug ids exist to prevent. A 0 is
+      // "no target" too (measured 2026-09-10) — _pipeSpawnId nulls it here.
       //
       // ⚠ Key names are NOT final upstream: #218 suggested `NPC_ID`, and the
       // PR offers to rename. They are read in this one place so a rename is a
       // three-line edit here rather than a hunt across four surfaces.
-      s.spawn_id  = Number.isFinite(inner.spawn_id)  ? inner.spawn_id  : null;
-      s.target_id = Number.isFinite(inner.target_id) ? inner.target_id : null;
-      s.pet_id    = Number.isFinite(inner.pet_id)    ? inner.pet_id    : null;
+      s.spawn_id  = _pipeSpawnId(inner.spawn_id);
+      s.target_id = _pipeSpawnId(inner.target_id);
+      s.pet_id    = _pipeSpawnId(inner.pet_id);
+      // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
+      // {id, name, authoritative} for who my target last hit, and who last hit
+      // my target. Omitted upstream when there is no fresh candidate, so both
+      // are assigned unconditionally like the ids above. The agent folds the
+      // first into observed_tanks (raid-wide via the bot) and patches the
+      // Extended Target row that is my own target with both, immediately.
+      s.target_of_target = _pipeCandidate(inner.target_of_target);
+      s.target_hit_by    = _pipeCandidate(inner.target_hit_by);
       // Live position + facing (Zeal named_pipe.cpp player payload:
       // location {x,y,z}, heading). Note EQ's in-game /loc prints as Y, X, Z
       // — these are the raw Zeal Vec3 fields (x,y,z), transpose when matching
@@ -2216,7 +2249,7 @@ function startZealCapture() {
 // can keep doing useful things through the blind without alt-tabbing.
 // State source is the agent's /api/state.blind — it does the log scanning
 // and per-char tracking. We only flip the visibility override on transitions
-// so the rest of the visibility system (quietMode, locked, EQ-running gate)
+// so the rest of the visibility system (hideOverlays, locked, EQ-running gate)
 // keeps working normally outside of a blind window.
 let _blindActive   = false;
 let _blindSource   = null;
@@ -4714,7 +4747,7 @@ function _stopEqPolling() {
   if (_eqPollTimer) { clearTimeout(_eqPollTimer); _eqPollTimer = null; }
 }
 
-// ── Visibility helpers (quiet mode is the master override) ─────────────────
+// ── Visibility helpers (hideOverlays is the master override; quietMode only mutes) ─────────────────
 // When overlays are UNLOCKED (positioning mode) we keep them visible
 // regardless of quiet mode / pref toggles so the user can actually grab them
 // — otherwise "unlock to move" would hide the thing you're trying to move.
@@ -4729,14 +4762,14 @@ function applyOverlayVisibility() {
   if (!overlayWindow) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showHud && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showHud && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
 }
 function createCharmOverlay() {
@@ -4766,7 +4799,7 @@ function applyCharmVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
-  const shouldShow = unlocked || _blindForceOpen('charm') || (cfg.showCharm && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('charm') || (cfg.showCharm && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) charmWindow.showInactive(); else charmWindow.hide();
 }
 
@@ -4800,7 +4833,7 @@ function applyPetsVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
-  const shouldShow = unlocked || _blindForceOpen('pets') || (cfg.showPets && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('pets') || (cfg.showPets && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) petsWindow.showInactive(); else petsWindow.hide();
 }
 
@@ -4835,7 +4868,7 @@ function applyBuffQueueVisibility() {
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — most useful to support classes (clerics, druids,
   // shaman, enchanters, bards). EQ-gated.
-  const shouldShow = unlocked || (cfg.showBuffQueue && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showBuffQueue && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) buffQueueWindow.showInactive(); else buffQueueWindow.hide();
 }
 
@@ -4870,7 +4903,7 @@ function applyPopRaidVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — raid leaders + anyone following the fight plan.
-  const shouldShow = unlocked || (cfg.showPopRaid && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showPopRaid && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) popRaidWindow.showInactive(); else popRaidWindow.hide();
 }
 
@@ -4901,7 +4934,7 @@ function applyMobInfoVisibility() {
   if (!mobInfoWindow) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) mobInfoWindow.showInactive(); else mobInfoWindow.hide();
 }
 
@@ -4932,7 +4965,7 @@ function applyWhoVisibility() {
   if (!whoWindow) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showWho && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showWho && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
 }
 
@@ -4965,7 +4998,7 @@ function applyMelodyVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to bards. EQ-gated.
-  const shouldShow = unlocked || (cfg.showMelody && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showMelody && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
 }
 
@@ -5001,7 +5034,7 @@ function applyZealVisibility() {
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — diagnostic; users only need it during setup
   // or when something else looks broken. EQ-gated.
-  const shouldShow = unlocked || (cfg.showZeal && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showZeal && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) zealWindow.showInactive(); else zealWindow.hide();
 }
 
@@ -5037,7 +5070,7 @@ function applyTankVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
-  const shouldShow = unlocked || (cfg.showTank && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showTank && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) tankWindow.showInactive(); else tankWindow.hide();
 }
 
@@ -5073,7 +5106,7 @@ function applyThreatVisibility() {
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — primarily for tanks but useful to anyone who
   // wants to see if they're about to pull. EQ-gated.
-  const shouldShow = unlocked || (cfg.showThreat && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showThreat && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) threatWindow.showInactive(); else threatWindow.hide();
 }
 
@@ -5107,7 +5140,7 @@ function applyExtTargetVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
-  const shouldShow = unlocked || (cfg.showExtTarget && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showExtTarget && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) extTargetWindow.showInactive(); else extTargetWindow.hide();
 }
 
@@ -5191,7 +5224,7 @@ function applyCommandVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
-  const shouldShow = unlocked || (cfg.showCommand && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showCommand && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) commandWindow.showInactive(); else commandWindow.hide();
 }
 
@@ -5285,7 +5318,7 @@ function applyDockVisibility() {
   // the dock, which you cannot reach while the dock is hidden. Setup mode
   // force-shows everything, which is how it was found at all.
   const wanted = cfg.showDock || _dockedKeys(cfg).length > 0;
-  const shouldShow = unlocked || (wanted && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (wanted && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) dockWindow.showInactive(); else dockWindow.hide();
 }
 
@@ -5294,7 +5327,7 @@ function applyChChainVisibility() {
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — healers + raid leads watching the rotation. EQ-gated.
-  const shouldShow = unlocked || (cfg.showChChain && !cfg.quietMode && _eqGateOk(cfg));
+  const shouldShow = unlocked || (cfg.showChChain && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) chChainWindow.showInactive(); else chChainWindow.hide();
 }
 
@@ -5472,7 +5505,7 @@ function _overlayForcedOn(cfg, e) {
 // "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
 // running', and we should adhere to that" (Uilnayar 2026-08-04). Right: an
 // overlay the EQ gate is hiding has no reason to hold an ~35 MB renderer, and
-// the same argument covers quiet mode. So existence tracks VISIBILITY, not just
+// the same argument covers hideOverlays. So existence tracks VISIBILITY, not just
 // the pref — which is the bulk of the saving, since EQ is closed most of the
 // day.
 //
@@ -5485,7 +5518,7 @@ function _overlayWanted(cfg, e) {
   if (_overlayForcedOn(cfg, e)) return true;
   if (!cfg[e.flag]) return false;
   if (e.key === 'trigger') return true;
-  if (cfg.quietMode) return false;
+  if (cfg.hideOverlays) return false;
   return _eqGateOk(cfg);
 }
 
@@ -5515,7 +5548,7 @@ function _reapDisabledOverlays() {
     try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
     e.drop();
     const why = !cfg[e.flag] ? `${e.flag} is off`
-              : cfg.quietMode ? 'quiet mode'
+              : cfg.hideOverlays ? 'overlays are switched off'
               : 'EverQuest is not running';
     appendAgentLog(`[overlay] freed ${e.key} — ${why}\n`);
   }
@@ -5588,7 +5621,7 @@ function _hideAllHotkeyMenuLabel() {
 //   callout, and Rehearse, goes silent with no error anywhere.
 // Hitya, 2026-08-13: "clicking on rehearse doesn't speak out the TTS if the TTS
 // overlays are hidden. I thought we safeguarded from that." We had - _overlayWanted
-// exempts 'trigger' from quiet mode and the EQ-running gate, and the window
+// exempts 'trigger' from hideOverlays and the EQ-running gate, and the window
 // carries backgroundThrottling:false precisely so a HIDDEN one keeps speaking.
 // Hide-all was the one path that reached past all of it by turning the window
 // off entirely instead of hiding it.
@@ -5849,6 +5882,7 @@ function currentStatus() {
     agentRunning: !!agentProc,
     localOnly,
     quietMode: !!cfg.quietMode,
+    hideOverlays: !!cfg.hideOverlays,
     tellsMode: cfg.tellsMode || 'off',
     tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
@@ -5951,7 +5985,7 @@ function tooltipFor(s) {
       + (_hideAllHotkeyBound() ? '' : ' (hotkey blocked by another app)');
   }
   const mode = s.localOnly ? 'Local only' : 'Uploading';
-  const quiet = s.quietMode ? ' · Quiet mode' : '';
+  const quiet = (s.quietMode ? ' · Muted' : '') + (s.hideOverlays ? ' · Overlays off' : '');
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
   return `Wolf Pack miMIC ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
@@ -6047,93 +6081,93 @@ function buildTrayMenu() {
     // means: a docked overlay's own entry below is disabled, since its window
     // no longer exists and ticking it would be a lie.
     { label: _dockedNow.length ? `◫ Dock (${_dockedNow.length} panes)` : '◫ Dock',
-      type: 'checkbox', checked: !!s.showDock, enabled: !s.quietMode, click: (mi) => {
+      type: 'checkbox', checked: !!s.showDock, enabled: !s.hideOverlays, click: (mi) => {
         const cfg = loadConfig(); cfg.showDock = mi.checked; saveConfig(cfg);
         if (mi.checked && !dockWindow) createDockWindow(); else applyDockVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { type: 'separator' },
-    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.quietMode && !_dockedNow.includes('hud'), click: (mi) => {
+    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.hideOverlays && !_dockedNow.includes('hud'), click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.quietMode, click: (mi) => {
+    { label: 'Trigger alerts (TTS)', type: 'checkbox', checked: s.enableTriggerTts, enabled: !s.hideOverlays, click: (mi) => {
         const cfg = loadConfig(); cfg.enableTriggerTts = mi.checked;
         if (mi.checked) cfg.showTriggerOverlay = true;   // turning on → show the visual too (#97)
         saveConfig(cfg);
         if (mi.checked && !triggerWindow) createTriggerOverlay(); else applyTriggerVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.quietMode && !_dockedNow.includes('charm'), click: (mi) => {
+    { label: 'Charm tracker', type: 'checkbox', checked: s.showCharm, enabled: !s.hideOverlays && !_dockedNow.includes('charm'), click: (mi) => {
         const cfg = loadConfig(); cfg.showCharm = mi.checked; saveConfig(cfg);
         if (mi.checked && !charmWindow) createCharmOverlay(); else applyCharmVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.quietMode && !_dockedNow.includes('pets'), click: (mi) => {
+    { label: 'Pet tracker (summoned pets)', type: 'checkbox', checked: s.showPets, enabled: !s.hideOverlays && !_dockedNow.includes('pets'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPets = mi.checked; saveConfig(cfg);
         if (mi.checked && !petsWindow) createPetsOverlay(); else applyPetsVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.quietMode && !_dockedNow.includes('mobinfo'), click: (mi) => {
+    { label: 'Target Info (target stats)', type: 'checkbox', checked: s.showMobInfo, enabled: !s.hideOverlays && !_dockedNow.includes('mobinfo'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMobInfo = mi.checked; saveConfig(cfg);
         if (mi.checked && !mobInfoWindow) createMobInfoOverlay(); else applyMobInfoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.quietMode && !_dockedNow.includes('buffQueue'), click: (mi) => {
+    { label: 'Buff queue (raid gaps + cures)', type: 'checkbox', checked: s.showBuffQueue, enabled: !s.hideOverlays && !_dockedNow.includes('buffQueue'), click: (mi) => {
         const cfg = loadConfig(); cfg.showBuffQueue = mi.checked; saveConfig(cfg);
         if (mi.checked && !buffQueueWindow) createBuffQueueOverlay(); else applyBuffQueueVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.quietMode && !_dockedNow.includes('who'), click: (mi) => {
+    { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.hideOverlays && !_dockedNow.includes('who'), click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.quietMode && !_dockedNow.includes('melody'), click: (mi) => {
+    { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.hideOverlays && !_dockedNow.includes('melody'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+    { label: '  ↳ Only show on bard characters', type: 'checkbox', checked: s.melodyBardOnly, enabled: !s.hideOverlays && s.showMelody, click: (mi) => {
         const cfg = loadConfig(); cfg.melodyBardOnly = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
-    { label: '  ↳ Show AE song damage (per hit + kite total)', type: 'checkbox', checked: s.melodyDmgTotals, enabled: !s.quietMode && s.showMelody, click: (mi) => {
+    { label: '  ↳ Show AE song damage (per hit + kite total)', type: 'checkbox', checked: s.melodyDmgTotals, enabled: !s.hideOverlays && s.showMelody, click: (mi) => {
         const cfg = loadConfig(); cfg.melodyDmgTotals = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
-    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.quietMode && !_dockedNow.includes('zeal'), click: (mi) => {
+    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.hideOverlays && !_dockedNow.includes('zeal'), click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
         if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.quietMode && !_dockedNow.includes('threat'), click: (mi) => {
+    { label: 'Threat meter', type: 'checkbox', checked: s.showThreat, enabled: !s.hideOverlays && !_dockedNow.includes('threat'), click: (mi) => {
         const cfg = loadConfig(); cfg.showThreat = mi.checked; saveConfig(cfg);
         if (mi.checked && !threatWindow) createThreatMeterOverlay(); else applyThreatVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.quietMode && !_dockedNow.includes('tank'), click: (mi) => {
+    { label: 'Tank HUD (DS, buffs, DA, rampage)', type: 'checkbox', checked: s.showTank, enabled: !s.hideOverlays && !_dockedNow.includes('tank'), click: (mi) => {
         const cfg = loadConfig(); cfg.showTank = mi.checked; saveConfig(cfg);
         if (mi.checked && !tankWindow) createTankOverlay(); else applyTankVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.quietMode && !_dockedNow.includes('chchain'), click: (mi) => {
+    { label: 'CH chain', type: 'checkbox', checked: s.showChChain, enabled: !s.hideOverlays && !_dockedNow.includes('chchain'), click: (mi) => {
         const cfg = loadConfig(); cfg.showChChain = mi.checked; saveConfig(cfg);
         if (mi.checked && !chChainWindow) createChChainOverlay(); else applyChChainVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.quietMode && !_dockedNow.includes('exttarget'), click: (mi) => {
+    { label: 'Extended Target (raid-wide targets)', type: 'checkbox', checked: s.showExtTarget, enabled: !s.hideOverlays && !_dockedNow.includes('exttarget'), click: (mi) => {
         const cfg = loadConfig(); cfg.showExtTarget = mi.checked; saveConfig(cfg);
         if (mi.checked && !extTargetWindow) createExtTargetOverlay(); else applyExtTargetVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.quietMode && !_dockedNow.includes('command'), click: (mi) => {
+    { label: 'Command Center (one-window raid board)', type: 'checkbox', checked: s.showCommand, enabled: !s.hideOverlays && !_dockedNow.includes('command'), click: (mi) => {
         const cfg = loadConfig(); cfg.showCommand = mi.checked; saveConfig(cfg);
         if (mi.checked && !commandWindow) createCommandOverlay(); else applyCommandVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.quietMode && !_dockedNow.includes('popraid'), click: (mi) => {
+    { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.hideOverlays && !_dockedNow.includes('popraid'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -6308,7 +6342,7 @@ function buildTrayMenu() {
     // binding is discoverable without opening the dashboard. Disabled under
     // Quiet mode because the trigger overlay stays silent there anyway.
     { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
-      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.quietMode,
+      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.hideOverlays,
       click: () => { toggleDamageAlert(); } },
     ...(process.platform === 'win32' ? [
       { label: 'Start with Windows', type: 'checkbox', checked: !!s.autoStart, click: (mi) => {
@@ -7886,6 +7920,17 @@ ipcMain.handle('pick-log-backups', async (e, kind) => {
 });
 
 ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
+// Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
+// three places that speak or play a sound (triggers.html, chchain.html,
+// charm.html) check window.mimic.isMuted() with no config round-trip. Sent on
+// every config save; each preload also reads it once at load.
+function _broadcastMute(cfg) {
+  const muted = !!(cfg && cfg.quietMode);
+  for (const [, win] of _overlayEntries()) {
+    try { win.webContents.send('wp-mute', muted); } catch { /* mid-close */ }
+  }
+}
+
 ipcMain.handle('save-config', async (_e, incoming) => {
   const merged = Object.assign(loadConfig(), incoming || {});
   // Manual /token paste comes in as { token: "wpms_..." }. Route it through
@@ -7903,6 +7948,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     tokenChanged = true;
   }
   saveConfig(merged);
+  _broadcastMute(merged);
   // Re-bind the global hotkeys if the user changed any binding OR enable
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).

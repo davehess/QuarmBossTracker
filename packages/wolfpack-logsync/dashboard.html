@@ -1547,8 +1547,9 @@ function _isPanelHidden(el) {
 // free (see the render-rules note in CLAUDE.md).
 //
 // WHY THIS ROW EXISTS (Abrahms, 2026-09-10): every overlay resolves as
-//   shouldShow = unlocked || (cfg.showX && !cfg.quietMode && _eqGateOk(cfg))
-// and `unlocked` — placement mode — bypasses the rest. So with quiet mode on, an
+//   shouldShow = unlocked || (cfg.showX && !cfg.hideOverlays && _eqGateOk(cfg))
+// and `unlocked` — placement mode — bypasses the rest. So with "Don't show any
+// overlays" on (before 2026-09-11 that was quiet mode; quiet mode now only mutes), an
 // overlay appears while you position it, the hotkey still flips its show flag,
 // and it vanishes the moment you finish: "I can get em all up when doing the
 // placement mode ... but nothing ever makes it to my screen." Nothing anywhere
@@ -1559,7 +1560,7 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
     }).catch(function () { /* bridge refused — leave the row out rather than guess */ });
   } catch (e) { void e; }
 }
@@ -1651,18 +1652,20 @@ function renderSetupChecks(s) {
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Export on /camp</td>'
        + '<td class="dim" style="font-size:11px">In Zeal options (left side), enable <b>Export data on /camp</b> so your gear + AAs sync (powers accurate cast bars + MGB detection).</td></tr>';
   }
-  // Quiet mode — the master "I use another parser" switch hides EVERY overlay,
-  // and until now said so nowhere. Rendered only when hosted in Mimic: a browser
-  // tab has no overlays, so the row would be noise there.
-  if (_wpMimicCfg && _wpMimicCfg.quietMode) {
+  // "Don't show any overlays" — the master "I use another parser" switch hides
+  // EVERY overlay, and until 2026-09-10 said so nowhere. (Quiet mode used to be
+  // this switch; since 2026-09-11 it only mutes.) Rendered only when hosted in
+  // Mimic: a browser tab has no overlays, so the row would be noise there.
+  if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
-       + '<td class="dim" style="font-size:11px"><b>Quiet mode is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>I use EQLogParser / another parser</b>. Uploads are unaffected either way.</td></tr>';
+       + '<td class="dim" style="font-size:11px"><b>Don\'t show any overlays is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>Don\'t show any overlays</b>. Uploads are unaffected either way.</td></tr>';
   } else if (_wpMimicCfg) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
-       + '<td class="dim" style="font-size:11px">Quiet mode is off'
-       + (_wpMimicCfg.hideWhenEqDown ? ' — overlays appear once EverQuest is running.' : '.')
+       + '<td class="dim" style="font-size:11px">Overlays are on'
+       + (_wpMimicCfg.hideWhenEqDown ? ' — they appear once EverQuest is running.' : '.')
+       + (_wpMimicCfg.quietMode ? ' Sounds and voice are muted (Settings → Mute Mimic).' : '')
        + '</td></tr>';
   }
   // EQ folder writable — the silent precondition for three buttons on this very

@@ -708,7 +708,9 @@
         if (isNaN(x) || isNaN(y)) continue;
         // Dimensions: bare Width/Height (real Quarm key), then legacy Size.cx/cy.
         // Windows with no size entry use EQ's default size — we DON'T fabricate
-        // a Width/Height for them on save (could pin an auto-sizing window).
+        // a Width/Height for them on save (could pin an auto-sizing window)
+        // UNLESS the user resizes the window here (sizeEdited, set by the
+        // drag handle and the W/H fields): that IS the ask to pin it.
         var rawW = s.props.Width  != null ? s.props.Width  : s.props['Size.cx'];
         var rawH = s.props.Height != null ? s.props.Height : s.props['Size.cy'];
         var hasWH = (rawW != null && rawH != null);
@@ -1236,6 +1238,7 @@
     } else if (DRAG.mode === 'resize-se') {
       w.w = Math.max(16, Math.round(DRAG.origW + dx));
       w.h = Math.max(16, Math.round(DRAG.origH + dy));
+      w.sizeEdited = true;
     }
     // Snap-to-edges of other windows + screen edges (10px tolerance in
     // world coords). Only on move, not resize.
@@ -1294,7 +1297,9 @@
     var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
              + '<br>Read from: <b>' + escapeHtml(w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos') + '</b>'
-             + (w.hasWH ? '' : '<br><span style="color:#8b949e">auto-size (no Width/Height written)</span>')
+             + (w.hasWH ? '' : (w.sizeEdited
+                  ? '<br><span style="color:#56d364">size pinned — Save writes Width/Height</span>'
+                  : '<br><span style="color:#8b949e">auto-size (no Width/Height in the ini) — resize it here to pin one</span>'))
              + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
     if (w.contents && w.contents.length > 0) {
       meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
@@ -1313,8 +1318,9 @@
       var w = STATE.windows[STATE.selected];
       var v = parseInt(this.value, 10) || 0;
       if (id === 'fX') w.x = v; else if (id === 'fY') w.y = v;
-      else if (id === 'fW') w.w = v; else if (id === 'fH') w.h = v;
+      else if (id === 'fW') { w.w = v; w.sizeEdited = true; } else if (id === 'fH') { w.h = v; w.sizeEdited = true; }
       renderStage();
+      updateSidePanel();
     });
   });
 
@@ -1327,6 +1333,7 @@
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       w.x = w.origX; w.y = w.origY; w.w = w.origW; w.h = w.origH;
+      w.sizeEdited = false;
     }
     renderStage();
     setStatus('reset to last load', 'ok');
@@ -1343,7 +1350,13 @@
       var e = {};
       e['XPos' + tgtSuffix] = w.x;
       e['YPos' + tgtSuffix] = w.y;
-      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }   // never fabricate a size
+      // Never fabricate a size for a window the ini left auto-sizing — but a
+      // window the user RESIZED here gets one, or the resize is a silent no-op:
+      // Abrahms + Hitya, 2026-09-13, the Zeal item windows "defaulting to huge
+      // tooltips" every time — their ini sections carried no Width/Height, so
+      // every 100×200 set here was dropped on Save while the same edit on a
+      // character whose ini had the keys stuck.
+      if (w.hasWH || w.sizeEdited) { e.Width = w.w; e.Height = w.h; }
       edits[w.file][w.section] = e;
     }
     var newBundle = {};

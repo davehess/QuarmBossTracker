@@ -525,7 +525,7 @@
           return '<div class="src"><span class="nm">' + esc(src.name) + '</span><span class="val">+' + src.per_hit + '/hit</span></div>';
         }).join('') + '</div>';
       } else {
-        sourcesHtml = '<div class="ds-sources"><div class="none">no known DS buff currently up — likely worn gear/AA</div></div>';
+        sourcesHtml = '<div class="ds-sources"><div class="none">no known DS buff up — counting only hits the log names as a shield</div></div>';
       }
       html += '<div class="card">'
            +    '<div class="head">Damage shield' + dsWho + ' (this fight)</div>'

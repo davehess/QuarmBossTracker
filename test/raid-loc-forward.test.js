@@ -17,7 +17,7 @@
 // Run: npx vitest run test/raid-loc-forward.test.js
 
 import { describe, it, expect } from 'vitest';
-import { readSource, sliceBlock, AGENT_INDEX } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, AGENT_INDEX } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
 
@@ -65,15 +65,33 @@ describe('raid roster forwards loc + heading', () => {
 // ── observed_tanks on the live-state flush ──────────────────────────────────
 describe('observed_tanks — every connect this log saw, compact', () => {
   const block = sliceBlock(src, 'observed_tanks: (() => {', '})(),');
-  const build = (recentTankHits, nowMs) => {
+  // The pipe's target-of-target contribution (2026-09-12) — the real helper,
+  // with its candidate sanitizer, so the builder runs unmodified.
+  const { _pipeTotObservedTank } = evalBlock(
+    sliceBlock(src, 'function _pipeCandidateOf(st, key) {',
+      '\n  return { mob: String(st.target_name), tank: tot.name, since: new Date(st.updatedAt || nowMs).toISOString(), authoritative: tot.authoritative };\n}'),
+    ['_pipeTotObservedTank'],
+  );
+  const build = (recentTankHits, nowMs, st = {}) => {
     const body = block.slice('observed_tanks: '.length).replace(/,$/, '');
     // Tag claims are exercised in test/tag-channel.test.js — stubbed empty here
     // so this file stays about the melee-connect half.
     // eslint-disable-next-line no-new-func
-    return new Function('stats', 'now', 'tagTargetsSnapshot', 'return ' + body)({ recentTankHits }, nowMs, () => []);
+    return new Function('stats', 'now', 'tagTargetsSnapshot', 'st', '_pipeTotObservedTank', 'return ' + body)(
+      { recentTankHits }, nowMs, () => [], st, _pipeTotObservedTank);
   };
   const NOW = 1_000_000_000;
   const hit = (mob, tankName, ageMs) => ({ mob: mob.toLowerCase(), mobDisplay: mob, tank: tankName, tsMs: NOW - ageMs });
+
+  it('adds the pipe\'s target-of-target as a connect for MY target, deduped against the log', () => {
+    const st = { target_name: 'a thall va xakra', updatedAt: NOW - 1000,
+                 target_of_target: { id: 7, name: 'Currygoat', authoritative: true } };
+    const alone = build([], NOW, st);
+    expect(alone).toEqual([{ mob: 'a thall va xakra', tank: 'Currygoat', since: new Date(NOW - 1000).toISOString(), authoritative: true }]);
+    const withLog = build([hit('a thall va xakra', 'Currygoat', 5000)], NOW, st);
+    expect(withLog).toHaveLength(1);   // same (mob, tank) → one entry
+    expect(build([], NOW, {})).toBeNull();   // no pipe answer, no hits → null as before
+  });
 
   it('forwards recent connects for OTHER tanks, not just self', () => {
     const out = build([hit('a thall va xakra', 'Grabthar', 5000), hit('a thall va xakra', 'Borim', 3000)], NOW);

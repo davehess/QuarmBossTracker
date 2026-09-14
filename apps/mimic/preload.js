@@ -144,6 +144,13 @@ function _wpApplyTheme(theme) {
   } catch (e) {}
 }
 ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
+
+// Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
+// on every config save; read once at load so a freshly created overlay starts
+// right. Renderers ask window.mimic.isMuted() before speaking or playing.
+let _wpMuted = false;
+ipcRenderer.on('wp-mute', function (_e, on) { _wpMuted = !!on; });
+try { ipcRenderer.invoke('get-config').then(function (c) { if (c) _wpMuted = !!c.quietMode; }).catch(function () {}); } catch (e) { void e; }
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
@@ -461,6 +468,7 @@ contextBridge.exposeInMainWorld('mimic', {
   openResources:       ()         => ipcRenderer.invoke('open-resources'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
+  isMuted:       () => _wpMuted,
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),

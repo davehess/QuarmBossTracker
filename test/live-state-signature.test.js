@@ -167,3 +167,21 @@ describe('what is deliberately NOT a term', () => {
     expect(sigLit).not.toMatch(/loc_[xyz]|self_hp_cur|self_hp_max/);
   });
 });
+
+describe('target of target off the pipe is a term (drafted Zeal change)', () => {
+  // Who my target is ON changes on a swap, never per frame — the same kind of
+  // event as a tank picking up an add, and one nobody can afford to learn 45s
+  // late. Only the id is a term: the name rides along with it.
+  it('changes the signature when the target-of-target id changes', () => {
+    expect(sigOf({ ...BASE, target_of_target: { id: 77, name: 'Currygoat', authoritative: true } }))
+      .not.toBe(sigOf({ ...BASE, target_of_target: { id: 78, name: 'Hoden', authoritative: true } }));
+  });
+  it('changes when it appears or disappears', () => {
+    expect(sigOf({ ...BASE, target_of_target: null }))
+      .not.toBe(sigOf({ ...BASE, target_of_target: { id: 77, name: 'Currygoat', authoritative: true } }));
+  });
+  it('does not change on the authoritative flag alone', () => {
+    expect(sigOf({ ...BASE, target_of_target: { id: 77, name: 'Currygoat', authoritative: false } }))
+      .toBe(sigOf({ ...BASE, target_of_target: { id: 77, name: 'Currygoat', authoritative: true } }));
+  });
+});
