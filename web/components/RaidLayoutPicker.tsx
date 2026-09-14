@@ -2,19 +2,22 @@
 // RaidLayoutPicker — the Strips / Blocks switch on /me and /raidhistory.
 //
 // Writes the wp_raid_layout cookie (a year, SameSite=Lax, same attributes as
-// the timezone picker) and re-renders the page from the server, dropping any
-// `?layout=` from the address so the cookie is what the page reads next.
-// No local state: the server is the source of truth for which layout is on,
-// and `current` comes from it.
+// the timezone picker). With an `onChange` the caller owns the switch — /me
+// holds both layouts' data and flips locally, no round trip (Hitya,
+// 2026-09-13: the server re-render was two full loads of the whole account
+// per click). Without one it re-renders the page from the server, dropping
+// any `?layout=` from the address so the cookie is what the page reads next —
+// /raidhistory still works that way.
 
 import { useRouter } from 'next/navigation';
 import { RAID_LAYOUTS, RAID_LAYOUT_COOKIE, type RaidLayout } from '@/lib/raidLayout';
 
-export default function RaidLayoutPicker({ current }: { current: RaidLayout }) {
+export default function RaidLayoutPicker({ current, onChange }: { current: RaidLayout; onChange?: (v: RaidLayout) => void }) {
   const router = useRouter();
   const choose = (v: RaidLayout) => {
     if (v === current) return;
     document.cookie = `${RAID_LAYOUT_COOKIE}=${v}; path=/; max-age=31536000; SameSite=Lax`;
+    if (onChange) { onChange(v); return; }
     const url = new URL(window.location.href);
     url.searchParams.delete('layout');
     router.replace(url.pathname + url.search);

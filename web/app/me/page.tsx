@@ -41,11 +41,11 @@ import { dayKey, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
 import {
   windowStart, buildNights, nightNames, nightLabel,
-  attendedAlpha, pct, ATTENDED, type NightRaid, type NightTick,
+  attendedAlpha, ATTENDED, type NightRaid, type NightTick,
 } from '@/lib/raidHeatmap';
-import RaidHeatmap, { type NightChip } from '@/components/RaidHeatmap';
-import RaidNightsStrips, { type StripNight } from '@/components/RaidNightsStrips';
-import RaidLayoutPicker from '@/components/RaidLayoutPicker';
+import { type NightChip } from '@/components/RaidHeatmap';
+import { type StripNight } from '@/components/RaidNightsStrips';
+import AttendanceSection from './AttendanceSection';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 
@@ -246,21 +246,112 @@ async function loadFloorAndCoverage(): Promise<{
   return { floors: new Map(floors), coverage: new Map(coverage) };
 }
 
-async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null): Promise<CharStats> {
+// Everything /me needs per character that can be asked for ONCE per account.
+// Hitya, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
+// page ran a dozen queries per character, and an account can hold 46 of them
+// (mains, alts, mules) — ~550 PostgREST round trips a load, two of them a
+// 385 ms chat count each. Now: chat counts, best-known levels, loot, wishlist
+// and PvP tallies come back for the whole family in one query apiece, and the
+// per-character fan-out below runs only for names that have any parse,
+// upload or rollup row at all (37 of Hitya's 46 have none).
+type LootRow = { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null };
+type FamilyPrefetch = {
+  active:   Set<string>;                                              // lower-cased names with something to fetch
+  chat:     Map<string, { total: number; recent: number }>;           // by lower-cased speaker
+  loot:     Map<string, LootRow[]>;
+  wishlist: Map<string, number>;
+  pvp:      Map<string, { kills: number; deaths: number; assists: number }>;
+};
+
+async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
+  const fam: FamilyPrefetch = { active: new Set(), chat: new Map(), loot: new Map(), wishlist: new Map(), pvp: new Map() };
+  if (names.length === 0) return fam;
   const admin = supabaseAdmin();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const lower = (v: unknown) => String(v ?? '').toLowerCase();
+  const bump = (key: string, field: 'kills' | 'deaths' | 'assists') => {
+    const cur = fam.pvp.get(key) ?? { kills: 0, deaths: 0, assists: 0 };
+    cur[field] += 1;
+    fam.pvp.set(key, cur);
+  };
+  const [activeRes, chatRes, lootRows, wishRes, killRes, deathRes, assistRes] = await Promise.all([
+    admin.rpc('me_active_names', { p_names: names }),
+    admin.rpc('me_chat_counts', { p_names: names, p_since: since30 }),
+    // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
+    // auction-award wiring is stubbed). opendkp_loot_recent resolves the
+    // winner to a character name and carries the DKP spent + item + date.
+    // Paged: a family's loot can pass PostgREST's 1000-row cap.
+    selectAll<LootRow & { character_name: string }>((from, to) => admin
+      .from('opendkp_loot_recent')
+      .select('character_name, item_name, dkp, raid_date, raid_name')
+      .in('character_name', names)
+      .order('raid_date', { ascending: false })
+      .range(from, to)),
+    admin.from('wishlists').select('character_name').in('character_name', names).limit(1000),
+    // PvP tallies — case-insensitive on purpose (the broadcast names are not
+    // canonicalised). Assists are credited to the assister on someone else's
+    // kill (Hitya 2026-06-24: "the /me page should also list assists").
+    admin.from('pvp_kills').select('killer').ilikeAnyOf('killer', names).limit(1000),
+    admin.from('pvp_kills').select('victim').ilikeAnyOf('victim', names).limit(1000),
+    admin.from('pvp_assists').select('assister').ilikeAnyOf('assister', names).limit(1000),
+  ]);
+  for (const r of (activeRes.data ?? []) as { name: string }[]) fam.active.add(lower(r.name));
+  for (const r of (chatRes.data ?? []) as { speaker: string; total: number; recent: number }[]) {
+    fam.chat.set(lower(r.speaker), { total: Number(r.total) || 0, recent: Number(r.recent) || 0 });
+  }
+  for (const r of lootRows) {
+    const key = lower(r.character_name);
+    const list = fam.loot.get(key) ?? [];
+    list.push({ item_name: r.item_name, dkp: r.dkp, raid_date: r.raid_date, raid_name: r.raid_name });
+    fam.loot.set(key, list);
+  }
+  for (const r of (wishRes.data ?? []) as { character_name: string }[]) {
+    const key = lower(r.character_name);
+    fam.wishlist.set(key, (fam.wishlist.get(key) ?? 0) + 1);
+  }
+  for (const r of (killRes.data   ?? []) as { killer: string }[])   bump(lower(r.killer),   'kills');
+  for (const r of (deathRes.data  ?? []) as { victim: string }[])   bump(lower(r.victim),   'deaths');
+  for (const r of (assistRes.data ?? []) as { assister: string }[]) bump(lower(r.assister), 'assists');
+  return fam;
+}
+
+async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null, fam: FamilyPrefetch): Promise<CharStats> {
+  const admin = supabaseAdmin();
   const nameLower = name.toLowerCase();
+
+  const chat     = fam.chat.get(nameLower)     ?? { total: 0, recent: 0 };
+  const lootRows = fam.loot.get(nameLower)     ?? [];
+  const pvp      = fam.pvp.get(nameLower)      ?? { kills: 0, deaths: 0, assists: 0 };
+  const wishlistCount = fam.wishlist.get(nameLower) ?? 0;
+  const dkpSpent = lootRows.reduce((s, r) => s + (r.dkp || 0), 0);
+  const floor = (floorRow ?? null) as { member_since: string | null; floor_source: string | null } | null;
+  const coverage = (coverageRow ?? null) as {
+    encounters_total: number | null;
+    encounters_with_detail: number | null;
+    encounters_resubmittable: number | null;
+  } | null;
+
+  // Nothing parsed, uploaded or rolled up under this name — every per-character
+  // query below would come back empty, so don't send them. Mules and parked
+  // alts land here.
+  if (!fam.active.has(nameLower)) {
+    return {
+      encounterCount: 0, totalDamage: 0, topDmg: 0, topEncounterId: null, recentEncounters: [],
+      uploadCount: 0, lastUpload: null, latestAgentVersion: null,
+      chat30: chat.recent, chatAll: chat.total,
+      pvpKills: pvp.kills, pvpDeaths: pvp.deaths, pvpAssists: pvp.assists,
+      lootCount: lootRows.length, dkpSpent, wishlistCount,
+      rollupHits: 0, rollupDamage: 0, selfAttackCount: 0, topSkills: [],
+      encountersWithDetail:    coverage?.encounters_with_detail   ?? 0,
+      encountersResubmittable: coverage?.encounters_resubmittable ?? 0,
+      memberSince: floor?.member_since ?? null,
+      floorSource: (floor?.floor_source as CharStats['floorSource']) ?? null,
+    };
+  }
 
   const [
     { data: parseRows },
     { data: contribRows },
-    chat30Res,
-    chatAllRes,
-    pvpKillsRes,
-    pvpDeathsRes,
-    pvpAssistsRes,
-    lootRes,
-    wishlistRes,
     { data: rollupRows },
   ] = await Promise.all([
     admin
@@ -274,40 +365,6 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
       .eq('contributor_character', name)
       .order('created_at', { ascending: false })
       .limit(500),
-    admin
-      .from('chat_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('speaker', name)
-      .gte('ts', since30),
-    admin
-      .from('chat_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('speaker', name),
-    admin
-      .from('pvp_kills')
-      .select('id', { count: 'exact', head: true })
-      .ilike('killer', name),
-    admin
-      .from('pvp_kills')
-      .select('id', { count: 'exact', head: true })
-      .ilike('victim', name),
-    // PvP assists — credited to the assister on someone else's kill
-    // (Hitya 2026-06-24: "the /me page should also list assists").
-    admin
-      .from('pvp_assists')
-      .select('id', { count: 'exact', head: true })
-      .ilike('assister', name),
-    // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
-    // auction-award wiring is stubbed). opendkp_loot_recent resolves the
-    // winner to a character name and carries the DKP spent + item + date.
-    admin
-      .from('opendkp_loot_recent')
-      .select('item_name, dkp, raid_date, raid_name')
-      .eq('character_name', name),
-    admin
-      .from('wishlists')
-      .select('id', { count: 'exact', head: true })
-      .eq('character_name', name),
     // Per-encounter verb rollups. Sum locally — typical char has at most ~hundreds
     // of rows, fine to aggregate in JS. by_skill is the jsonb bag per the
     // migration; total_hits / total_damage / self_attack_count are scalar.
@@ -363,8 +420,6 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
   }
 
   const contribs = (contribRows ?? []) as { encounter_id: string; created_at: string; source: string | null; agent_version: string | null; has_ability_detail: boolean | null }[];
-  const lootRows = (lootRes.data ?? []) as { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null }[];
-  const dkpSpent = lootRows.reduce((s, r) => s + (r.dkp || 0), 0);
 
   // ── Aggregate the per-ability rollups ──────────────────────────────────────
   // Each row: { total_hits, total_damage, self_attack_count, by_skill: jsonb }.
@@ -400,13 +455,6 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
   // contributions have null agent_version, so we look for the latest non-null.
   const latestAgentVersion = contribs.find(c => c.agent_version)?.agent_version ?? null;
 
-  const floor = (floorRow ?? null) as { member_since: string | null; floor_source: string | null } | null;
-  const coverage = (coverageRow ?? null) as {
-    encounters_total: number | null;
-    encounters_with_detail: number | null;
-    encounters_resubmittable: number | null;
-  } | null;
-
   return {
     encounterCount: new Set(parses.map(p => p.encounter_id)).size,
     totalDamage,
@@ -416,14 +464,14 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     uploadCount: contribs.length,
     lastUpload: contribs[0]?.created_at ?? null,
     latestAgentVersion,
-    chat30:  chat30Res.count ?? 0,
-    chatAll: chatAllRes.count ?? 0,
-    pvpKills: pvpKillsRes.count ?? 0,
-    pvpDeaths: pvpDeathsRes.count ?? 0,
-    pvpAssists: pvpAssistsRes.count ?? 0,
+    chat30:  chat.recent,
+    chatAll: chat.total,
+    pvpKills: pvp.kills,
+    pvpDeaths: pvp.deaths,
+    pvpAssists: pvp.assists,
     lootCount: lootRows.length,
     dkpSpent,
-    wishlistCount: wishlistRes.count ?? 0,
+    wishlistCount,
     rollupHits,
     rollupDamage,
     selfAttackCount,
@@ -459,28 +507,15 @@ async function loadCharLevels(charNames: string[]): Promise<Map<string, number>>
   const out = new Map<string, number>();
   if (charNames.length === 0) return out;
   const admin = supabaseAdmin();
-  await Promise.all(charNames.map(async (name) => {
-    const [whoRes, bookRes] = await Promise.all([
-      admin.from('who_observations')
-        .select('level')
-        .ilike('character', name)
-        .gte('level', 1)         // implies NOT NULL and dodges the NULLS-FIRST sort trap
-        .limit(500),
-      admin.from('character_spellbook')
-        .select('spell_level')
-        .ilike('character_name', name)
-        .gte('spell_level', 1)
-        .limit(1000),
-    ]);
-    let best = 0;
-    for (const r of (whoRes.data ?? []) as { level: number | null }[]) {
-      if (typeof r.level === 'number' && r.level > best) best = r.level;
-    }
-    for (const r of (bookRes.data ?? []) as { spell_level: number | null }[]) {
-      if (typeof r.spell_level === 'number' && r.spell_level > best) best = r.spell_level;
-    }
-    if (best > 0) out.set(name.toLowerCase(), best);
-  }));
+  // One call for the whole family — the max over both signals is taken in SQL
+  // (me_levels), which also sidesteps the NULLS-FIRST sort trap the old
+  // per-character pair worked around. Two queries × 46 characters, one of them
+  // an 82 ms spellbook scan, was part of the fresh-load spike.
+  const { data } = await admin.rpc('me_levels', { p_names: charNames });
+  for (const r of (data ?? []) as { name: string; level: number }[]) {
+    const lvl = Number(r.level) || 0;
+    if (lvl > 0) out.set(String(r.name).toLowerCase(), lvl);
+  }
   return out;
 }
 
@@ -737,15 +772,18 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   // The floor + coverage views aggregate the WHOLE guild on every call, so we
   // fetch them ONCE here (not per-character) and overlap with the scrap
   // leaderboard. This is the fix for /me crawling for members with many alts.
-  const [scrap, { floors, coverage }, attendance] = await Promise.all([
-    chars.length > 0 ? loadScrap(chars.map(c => c.name)) : Promise.resolve(null),
+  const names = chars.map(c => c.name);
+  const [scrap, { floors, coverage }, attendance, fam] = await Promise.all([
+    chars.length > 0 ? loadScrap(names) : Promise.resolve(null),
     loadFloorAndCoverage(),
-    loadFamilyAttendance(chars.map(c => c.name)),
+    loadFamilyAttendance(names),
+    loadFamilyPrefetch(names),
   ]);
 
-  // Build per-character stats in parallel
+  // Build per-character stats in parallel — only names with something to
+  // fetch actually query (see loadCharStats).
   const stats = await Promise.all(chars.map(c =>
-    loadCharStats(c.name, floors.get(c.name.toLowerCase()) ?? null, coverage.get(c.name.toLowerCase()) ?? null)
+    loadCharStats(c.name, floors.get(c.name.toLowerCase()) ?? null, coverage.get(c.name.toLowerCase()) ?? null, fam)
       .then(s => [c.name, s] as const)));
   const byName = new Map(stats);
 
@@ -1193,45 +1231,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
         )}
       </section>
 
-      {attendance && (
-        <section data-tour="me-attendance" className="bg-panel border border-border rounded-lg p-6">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
-            <div>
-              <h2 className="text-xl text-gold mb-1">📅 Raid attendance</h2>
-              <p className="text-sm text-dim">
-                Every raid night in the last 60 days, across all your characters.
-                Gold means you were there (brighter = more of the night); an outline is a raid you missed.
-                Click a night for its review.
-              </p>
-            </div>
-            <div className="flex flex-col items-end gap-1">
-              <Link href="/raidhistory" className="text-blue hover:underline text-sm whitespace-nowrap">
-                📈 Guild raid history →
-              </Link>
-              <RaidLayoutPicker current={layout} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
-            <AttendanceStat label="Last 60 days" attended={attendance.attended60} held={attendance.held60} />
-            <AttendanceStat label="Last 30 days" attended={attendance.attended30} held={attendance.held30} />
-          </div>
-
-          <div className="mt-4">
-            {layout === 'strips' ? (
-              <RaidNightsStrips nights={attendance.strips} label="Your raid attendance, one row per week, last 60 days" />
-            ) : (
-              <RaidHeatmap nights={attendance.chips} label="Your raid attendance, one square per raid night, last 60 days" />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-dim">
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ backgroundColor: ATTENDED }} />attended, every tick</span>
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ backgroundColor: ATTENDED, opacity: 0.5 }} />attended part of the night</span>
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px]" style={{ boxShadow: `inset 0 0 0 1px ${ATTENDED}` }} />missed</span>
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[2px] bg-border/40" />no raid</span>
-          </div>
-        </section>
-      )}
+      {attendance && <AttendanceSection initial={layout} attendance={attendance} />}
 
       {scrap && scrap.me && (() => {
         const { me, rival, top, contenders } = scrap;
@@ -1345,15 +1345,6 @@ function SyncCard({ name, status, lastSeen, lastFight, agentVersion }: {
 
 // Attendance reads as a RATE first — "83" next to "of 151 held" read as a
 // count, which is exactly the wrong number to skim (2026-09-04).
-function AttendanceStat({ label, attended, held }: { label: string; attended: number; held: number }) {
-  return (
-    <div className="bg-bg border border-border rounded p-3">
-      <div className="text-2xl text-gold">{held > 0 ? `${pct(attended, held)}%` : '—'}</div>
-      <div className="text-dim text-xs">{label} · {attended} of {held} raids</div>
-    </div>
-  );
-}
-
 function Stat({ label, value, color = 'text-text', compact = false }: { label: string; value: number; color?: string; compact?: boolean }) {
   const formatted = compact && value >= 1000
     ? value >= 1_000_000
