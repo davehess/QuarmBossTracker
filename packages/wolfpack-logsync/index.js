@@ -15398,7 +15398,11 @@ function renderSetupChecks(s) {
   // One-click writer for the EQ logging + Zeal export/pipe settings. The note
   // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
   // the in-game equivalents are spelled out so a user can act live too.
-  h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+  // The action row sits ABOVE the checklist (Hitya 2026-09-13: "The other
+  // setup items for Quarm should also be at the top there with that main
+  // button") — Set up for me, the Mimic-only fixers and the old-log importer
+  // together, first thing a first-run user sees when the panel opens.
+  const actionsRow = '<div style="margin:2px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
      + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
      // Two more one-click fixers, same row, Mimic-only (they need the Electron
      // bridge — a browser tab cannot elevate or write into the EQ folder).
@@ -15407,10 +15411,12 @@ function renderSetupChecks(s) {
      + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
      + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
+     + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
+     + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
-  morphInto(el, h);
+  morphInto(el, actionsRow + h);
   // Delegated so it survives the morphInto repaint; bound once.
   if (!window.__wpEqSetupBound) {
     window.__wpEqSetupBound = true;
@@ -15447,6 +15453,21 @@ function renderSetupChecks(s) {
 // Re-run after every repaint of the card, so the handlers are bound with a
 // dataset latch rather than a global one — the buttons are re-created by
 // morphInto each time this section re-renders.
+// Shared by the Setup-card buttons and the Logsync tab's pickers + drop zone:
+// hand the paths to the agent (which validates each and rescans) and return a
+// one-line result for whichever surface asked.
+var _wpImportNote = '';   // last import result, rendered into the Logsync card (byte-stable until it changes)
+async function wpImportLogPaths(paths) {
+  var r = await postOptin('import', { paths: paths });
+  var results = (r && r.results) || [];
+  var ok  = results.filter(function (x) { return x.ok; });
+  var bad = results.filter(function (x) { return !x.ok; });
+  var files = ok.reduce(function (n, x) { return n + (x.files || 0); }, 0);
+  try { if (typeof refreshOptin === 'function') refreshOptin(); } catch (e) { void e; }
+  if (ok.length && !bad.length) return { text: '✓ Added ' + files + ' log file' + (files === 1 ? '' : 's') + ' — see the Logsync tab, they are ready to backfill.', color: 'var(--green)' };
+  if (ok.length) return { text: '✓ Added ' + files + ' file(s); skipped ' + bad.map(function (x) { return x.path + ' (' + x.error + ')'; }).join('; '), color: 'var(--orange,#f0b429)' };
+  return { text: 'Nothing added: ' + (bad.map(function (x) { return x.path + ' — ' + x.error; }).join('; ') || 'no reply from the agent'), color: 'var(--red,#f87171)' };
+}
 function wpWireFixerButtons(s) {
   var note = document.querySelector('.wp-fixer-note');
   var dBtn = document.querySelector('.wp-defender');
@@ -15473,6 +15494,24 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+  // Old-log importer — Mimic only (needs the native picker on the bridge).
+  ['.wp-import-dir', '.wp-import-files'].forEach(function (sel) {
+    var iBtn = document.querySelector(sel);
+    if (!(iBtn && window.mimic && window.mimic.pickLogBackups)) return;
+    iBtn.style.display = '';
+    if (iBtn.dataset.wired) return;
+    iBtn.dataset.wired = '1';
+    iBtn.addEventListener('click', function () {
+      var orig = iBtn.textContent;
+      iBtn.disabled = true; iBtn.textContent = 'Choose…';
+      window.mimic.pickLogBackups(sel === '.wp-import-dir' ? 'dir' : 'files').then(function (paths) {
+        if (!paths || !paths.length) { say('Nothing added.'); return; }
+        return wpImportLogPaths(paths).then(function (m) { _wpImportNote = m.text; say(m.text, m.color); });
+      }).catch(function (e) {
+        say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+      }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
+    });
+  });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
     cBtn.style.display = '';
@@ -19291,6 +19330,29 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // Imported log backups (Hitya 2026-09-13). Inside Mimic: native pickers plus
+  // a drop zone that reads real paths through the bridge. A browser tab has
+  // neither, so it only lists what is already imported.
+  const imp = o.importedPaths || [];
+  const hosted = !!(window.mimic && window.mimic.pickLogBackups);
+  h += '<div class="card wide" id="wpImported"><h2>🗂 Imported log backups (' + imp.length + ')</h2>' +
+       '<div class="subtle">Old logs kept outside your EQ folder — a backup drive, a Logs-old folder, a previous PC. Read once for backfill, never tailed. ' +
+       'Files must be named like EverQuest logs (eqlog_&lt;Name&gt;_pq.proj.txt, rotation suffixes fine) so we know whose they are.</div>';
+  if (imp.length) {
+    h += '<table><tr><th>Path</th><th>Kind</th><th>Files</th><th></th></tr>' + imp.map(e =>
+      '<tr><td><code style="font-size:11px">' + esc(e.path) + '</code></td><td>' + (e.kind === 'dir' ? 'folder' : 'file') + '</td><td>' + (e.files || 0) + '</td>' +
+      '<td><button data-unimport="' + esc(e.path) + '" style="font-size:11px;padding:2px 8px">✕ Remove</button></td></tr>').join('') + '</table>';
+  }
+  h += '<div id="wpImportDrop" style="margin-top:8px;padding:14px;border:1px dashed var(--border);border-radius:6px;text-align:center;color:var(--dim);font-size:12px">' +
+       (hosted
+         ? '<b>Drop log files or a folder here</b> &nbsp;— or&nbsp; ' +
+           '<button data-import="dir" style="font-size:11px">🗂 Add folder…</button> ' +
+           '<button data-import="files" style="font-size:11px">📄 Add files…</button>'
+         : 'Open this page inside Mimic to add folders or files — a browser tab cannot see your drive.') +
+       '</div>' +
+       (_wpImportNote ? '<div class="dim" style="font-size:11px;margin-top:6px">' + esc(_wpImportNote) + '</div>' : '') +
+       '</div>';
+
   h += '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
           ' (' + list.length + ')</h2>';
   h += '<div class="subtle">Backfill captures guild/raid chat + boss-matched combat kills (tagged with raid-window status). ' +
@@ -19305,7 +19367,7 @@ function renderOptin(o) {
        '</select>' +
        '<button data-act="select-all">Select all</button>' +
        '<button data-act="select-none">Clear</button>' +
-       '<button data-act="rescan">Rescan dir</button>' +
+       '<button data-act="rescan">Rescan</button>' +
        (_optinPane==='active'
          ? '<button data-act="backfill" ' + (selCount===0?'disabled':'') + ' style="background:#1a7f37;border-color:#1a7f37;color:#fff">' +
              (selCount>0 ? 'Backfill '+selCount+' selected' : 'Backfill selected') + '</button>'
@@ -19342,6 +19404,9 @@ function renderOptin(o) {
     const nameColor = first.requested ? 'var(--blue)' : (first.isAlt ? 'var(--dim)' : 'var(--orange)');
     files.forEach((f, idx) => {
       const fname = f.path.split(/[/\\\\]/).pop();
+      const importedBadge = f.imported
+        ? ' <span class="dim" style="font-size:10px;border:1px solid var(--border);border-radius:3px;padding:0 5px;margin-left:4px" title="From an imported backup folder or file — backfill-only, never tailed">imported</span>'
+        : '';
       const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
       const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
       let resumeStr = '';
@@ -19424,7 +19489,7 @@ function renderOptin(o) {
       h += '<tr>' +
            '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + cbTitle + '></td>' +
            charCell +
-           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + '</td>' +
+           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + importedBadge + '</td>' +
            '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
            '<td class="dim">' + ageStr + '</td>' +
            '<td>' + resumeStr + '</td>' +
@@ -19487,6 +19552,42 @@ function renderOptin(o) {
   // /who-only rescan — fast path that walks the file for /who rows ONLY, skips
   // chat + combat. Use after upgrading past a /who keep-pattern fix (v3.0.35
   // and later) to retroactively capture rows that earlier agents byte-dropped.
+  // Imported log backups — pickers (Mimic only), remove, and the drop zone.
+  root.querySelectorAll('button[data-import]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      if (!(window.mimic && window.mimic.pickLogBackups)) return;
+      const paths = await window.mimic.pickLogBackups(b.dataset.import === 'dir' ? 'dir' : 'files');
+      if (!paths || !paths.length) return;
+      const m = await wpImportLogPaths(paths);
+      _wpImportNote = m.text;
+      refreshOptin();
+    });
+  });
+  root.querySelectorAll('button[data-unimport]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      const p = b.dataset.unimport;
+      if (!p) return;
+      await postOptin('unimport', { paths: [p] });
+      _wpImportNote = 'Removed ' + p + ' — its files left the list; any backfill progress is kept.';
+      refreshOptin();
+    });
+  });
+  if (!window.__wpImportDropBound) {
+    window.__wpImportDropBound = true;
+    const zoneOf = (e) => (e.target && e.target.closest) ? e.target.closest('#wpImportDrop') : null;
+    document.addEventListener('dragover', (e) => { const z = zoneOf(e); if (!z) return; e.preventDefault(); z.style.borderColor = 'var(--blue)'; });
+    document.addEventListener('dragleave', (e) => { const z = zoneOf(e); if (z) z.style.borderColor = 'var(--border)'; });
+    document.addEventListener('drop', (e) => {
+      const z = zoneOf(e);
+      if (!z) return;
+      e.preventDefault(); z.style.borderColor = 'var(--border)';
+      if (!(window.mimic && window.mimic.pathForFile)) { _wpImportNote = 'Drop only works inside Mimic — a browser tab cannot see your drive.'; refreshOptin(); return; }
+      const items = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      const paths = items.map(f => { try { return window.mimic.pathForFile(f); } catch (_) { return null; } }).filter(Boolean);
+      if (!paths.length) { _wpImportNote = 'Nothing usable was dropped.'; refreshOptin(); return; }
+      wpImportLogPaths(paths).then(m => { _wpImportNote = m.text; refreshOptin(); });
+    });
+  }
   root.querySelectorAll('button[data-rescan-who]').forEach(b => {
     _bindOnce(b, 'click', async () => {
       const p = b.dataset.rescanWho;
@@ -22839,6 +22940,7 @@ function _serializeOptinForWeb() {
       path:      f.path,
       character: f.character,
       isAlt:     f.isAlt,
+      imported:  !!f.imported,
       isWatched: !!f.isWatched,  // ← was omitted; without it the UI couldn't tell
       sizeBytes: f.sizeBytes,    //   the checkbox should render as `disabled`,
       sizeMb:    f.sizeMb,       //   so clicks reached the server but were
@@ -22856,6 +22958,10 @@ function _serializeOptinForWeb() {
     pane:     _optinState.pane,
     files:    _optinState.files.map(mapFile),
     ignored:  _optinState.ignored.map(mapFile),
+    importedPaths: (_optinState.importedPaths || []).map(e => ({
+      path: e.path, kind: e.kind, addedAt: e.addedAt || null,
+      files: e.kind === 'dir' ? _importedLogFilesIn(e.path).length : 1,
+    })),
     activeBackfills: [..._activeBackfills.values()],
     // Officer-filed backfill requests targeting any character we watch.
     // Populated by pollBackfillRequests; we expose just the actionable
@@ -25677,6 +25783,22 @@ function startWebDashboard(port) {
             runOptinBackfill(toScan, { whoOnly: true, log: (m) => console.log(`[optin] ${m}`) });
             console.log(`[optin] /who rescan kicked for ${toScan.length} file(s)`);
           }
+        } else if (action === 'import') {
+          // Add folders / files of old logs (Hitya 2026-09-13). Each path is
+          // validated by the helper; the reply carries per-path results so the
+          // dashboard can say exactly which one was refused and why.
+          const results = paths.map(p => _addImportedLogPath(String(p), { save: false }));
+          _saveOptInState();
+          _optinState.scanned = false;
+          _scanOptInFiles();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ ok: results.some(r => r.ok), results, ..._serializeOptinForWeb() }));
+        } else if (action === 'unimport') {
+          // Drop an imported folder/file. Its files leave the list; any saved
+          // backfill progress for them is kept in case it comes back.
+          for (const p of paths) _removeImportedLogPath(String(p));
+          _optinState.scanned = false;
+          _scanOptInFiles();
         } else if (action === 'ack-backfill' || action === 'dismiss-backfill') {
           // Backfill request status transitions — POST to the bot, then
           // re-poll so the local view reflects what the bot sees.
@@ -26334,6 +26456,10 @@ const _optinState = {
   sortMode: 'date',    // 'date' | 'size' | 'alpha'
   // Per-file backfill progress (persisted): { [path]: { bytePos, totalBytes, lineNum, updatedAt, character } }
   progress: {},
+  // Imported log backups (persisted) — folders or single files the member
+  // added by hand (Hitya 2026-09-13: "import more logs … add that directory
+  // or file"). Backfill-only, never tailed. { path, kind: 'dir'|'file', addedAt }
+  importedPaths: [],
   // Ignored file paths (persisted across runs)
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
@@ -26391,6 +26517,7 @@ function _loadOptInState() {
     const raw = JSON.parse(fs.readFileSync(OPTIN_STATE_FILE, 'utf8'));
     _optinState.progress             = raw.progress             || {};
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
+    _optinState.importedPaths        = Array.isArray(raw.importedPaths) ? raw.importedPaths.filter(e => e && e.path) : [];
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
     // #113 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
@@ -26405,12 +26532,14 @@ function _loadOptInState() {
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
     _optinState.bqShowBurst          = (raw.bqShowBurst !== false);
   } catch { /* missing or unreadable — fresh state */ }
+  _mergeImportedFromEnv();
 }
 function _saveOptInState() {
   try {
     fs.writeFileSync(OPTIN_STATE_FILE, JSON.stringify({
       progress:           _optinState.progress,
       ignoredPaths:       [..._optinState.ignoredPaths],
+      importedPaths:      _optinState.importedPaths || [],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
@@ -26422,6 +26551,75 @@ function _saveOptInState() {
     }, null, 2));
   } catch { /* non-fatal */ }
 }
+
+// ── Imported log backups ─────────────────────────────────────────────────────
+// A member's old logs are not always in the EQ folder — rotated copies, a
+// backup drive, a previous PC's export (Hitya 2026-09-13: "can we add in a
+// command in mimic logsync to import more logs, or a drag to page to allow you
+// to add that directory or file"). A path here is read by the opt-in scan
+// exactly like the EQ folder's logs: backfill-only, never tailed. Folders are
+// read at their top level plus a Logs\ child; files must be NAMED like an EQ
+// log (eqlog_<Name>_pq.proj.txt with any rotation suffix) — the name is what
+// gives the character, and the scan cannot attribute a file without it.
+// The agent's persisted list is the source of truth; Mimic's onboarding hands
+// its picks over once through WOLFPACK_IMPORTED_LOGS (see _mergeImportedFromEnv).
+const IMPORTED_LOG_NAME_RX = /^eqlog_([^_]+)_pq\.proj\.txt(?:[\d.a-z]+)?$/i;
+function _importedLogFilesIn(dir) {
+  const out = [];
+  const walk = (d) => {
+    let entries = [];
+    try { entries = fs.readdirSync(d); } catch { return; }
+    for (const name of entries) if (IMPORTED_LOG_NAME_RX.test(name)) out.push(path.join(d, name));
+  };
+  walk(dir);
+  const logsChild = path.join(dir, 'Logs');
+  try { if (fs.statSync(logsChild).isDirectory()) walk(logsChild); } catch { /* no Logs child */ }
+  return out;
+}
+function _addImportedLogPath(p, opts = {}) {
+  const raw = String(p || '').trim();
+  if (!raw) return { ok: false, path: raw, error: 'empty path' };
+  let st;
+  try { st = fs.statSync(raw); } catch { return { ok: false, path: raw, error: 'not found' }; }
+  const kind = st.isDirectory() ? 'dir' : 'file';
+  if (kind === 'file' && !IMPORTED_LOG_NAME_RX.test(path.basename(raw))) {
+    return { ok: false, path: raw, error: 'not an EverQuest log — expected eqlog_<Name>_pq.proj.txt (rotation suffixes are fine)' };
+  }
+  const files = kind === 'dir' ? _importedLogFilesIn(raw) : [raw];
+  if (kind === 'dir' && files.length === 0) {
+    return { ok: false, path: raw, error: 'no eqlog_*_pq.proj.txt files in that folder (or its Logs child)' };
+  }
+  const key = raw.toLowerCase();
+  if (!_optinState.importedPaths.some(e => String(e.path).toLowerCase() === key)) {
+    _optinState.importedPaths.push({ path: raw, kind, addedAt: Date.now() });
+    if (opts.save !== false) _saveOptInState();
+  }
+  return { ok: true, path: raw, kind, files: files.length };
+}
+function _removeImportedLogPath(p) {
+  const key = String(p || '').trim().toLowerCase();
+  const before = _optinState.importedPaths.length;
+  _optinState.importedPaths = _optinState.importedPaths.filter(e => String(e.path).toLowerCase() !== key);
+  const removed = _optinState.importedPaths.length !== before;
+  if (removed) _saveOptInState();
+  return removed;
+}
+// Onboarding picks arrive from Mimic as WOLFPACK_IMPORTED_LOGS (path-delimited)
+// at spawn. Merged ONCE per process, so a path the member later removes on the
+// Logsync tab does not come back on the next scan.
+let _envImportsMerged = false;
+function _mergeImportedFromEnv() {
+  if (_envImportsMerged) return;
+  _envImportsMerged = true;
+  const raw = String(process.env.WOLFPACK_IMPORTED_LOGS || '').trim();
+  if (!raw) return;
+  let added = 0;
+  for (const p of raw.split(path.delimiter).map(x => x.trim()).filter(Boolean)) {
+    if (_addImportedLogPath(p, { save: false }).ok) added++;
+  }
+  if (added) _saveOptInState();
+}
+// ── end imported log backups ─────────────────────────────────────────────────
 
 // ── #108 Loot bidding — local OpenDKP login gate + bid-character family ─────
 // The Loot bidding dashboard panel gates every bid control behind a REAL
@@ -27263,28 +27461,42 @@ function _scanOptInFiles() {
   _loadOptInState();
   _optinState.files   = [];
   _optinState.ignored = [];
-  // Derive scan directory from the first watched log path
-  const firstLog = stats.watchedLogs[0]?.logPath;
-  if (!firstLog) return;
-  const dir = path.dirname(firstLog);
-  let entries;
-  try { entries = fs.readdirSync(dir); } catch { return; }
-
   const requested = new Set((stats.requestedCharacters || []).map(n => n.toLowerCase()));
+  // Candidate files, in order: every watched log's folder (one per EQ install —
+  // this used to read only the FIRST watched log's folder, so a second EQ
+  // install never reached this list), then the imported backups. A path is
+  // listed once, whichever source saw it first.
+  const sources = [];
+  const dirs = new Set();
+  for (const w of (stats.watchedLogs || [])) if (w && w.logPath) dirs.add(path.dirname(w.logPath));
+  for (const d of dirs) {
+    let entries = [];
+    try { entries = fs.readdirSync(d); } catch { continue; }
+    for (const name of entries) sources.push({ fullPath: path.join(d, name), name, imported: false });
+  }
+  for (const e of (_optinState.importedPaths || [])) {
+    const files = e.kind === 'dir' ? _importedLogFilesIn(e.path) : [e.path];
+    for (const fp of files) sources.push({ fullPath: fp, name: path.basename(fp), imported: true });
+  }
+  if (sources.length === 0) return;
+  const seen = new Set();
 
-  for (const name of entries) {
+  for (const src of sources) {
+    const { name, fullPath } = src;
     // Standard logs: eqlog_Name_pq.proj.txt
     const stdM = name.match(/^eqlog_([^_]+)_pq\.proj\.txt$/i);
     // Alternate/backup: eqlog_Name_pq.proj.txt2, .txt.bak, .txt.old, etc.
     const altM = !stdM && name.match(/^eqlog_([^_]+)_pq\.proj\.txt[\d.a-z]+$/i);
     const match = stdM || altM;
     if (!match) continue;
+    const key = fullPath.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
 
     // Files already being tailed live are still listed here (so the user
     // can see all their characters), but marked isWatched=true so the UI
     // can render a "live" badge and disable the backfill checkbox —
     // backfilling a live file would duplicate events.
-    const fullPath = path.join(dir, name);
     const isWatched = stats.watchedLogs.some(w => w.logPath === fullPath);
 
     // Normalise to PascalCase so 'hitya', 'HITYA', and 'Hitya' all group together
@@ -27302,6 +27514,7 @@ function _scanOptInFiles() {
       character: char,
       isAlt:     !!altM,
       isWatched,
+      imported:  !!src.imported,
       sizeMb,
       sizeBytes,
       mtime,
