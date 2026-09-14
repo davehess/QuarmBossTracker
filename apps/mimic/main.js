@@ -180,6 +180,11 @@ function defaultConfig() {
     eqPath: null,            // legacy single-folder (kept for back-compat read)
     eqPaths: [],             // multi-folder picker — every EQ install to tail
     eqPathsExcluded: [],     // auto-detected paths the user explicitly unchecked
+    // Onboarding "old log backups anywhere else?" picks (Hitya 2026-09-13).
+    // Handed to the agent ONCE at spawn (WOLFPACK_IMPORTED_LOGS); the agent's
+    // own persisted imported-logs list is the source of truth after that, and
+    // the Logsync tab edits that list directly.
+    importedLogPaths: [],
     botUrl: 'https://wolfpackparse.up.railway.app/api/agent/encounter',
     token: null,
     // Overlays default OFF on a fresh install — a brand-new user shouldn't be
@@ -2596,6 +2601,11 @@ async function launchAgent() {
   // Plural, path-delimited. The agent prefers this over its own watched-log
   // inference, which cannot see a folder that has never produced a log.
   if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
+  // Old-log backups picked during onboarding — the agent merges them into its
+  // persisted imported list once per process (see the agent's _mergeImportedFromEnv).
+  if (Array.isArray(cfg.importedLogPaths) && cfg.importedLogPaths.length) {
+    env.WOLFPACK_IMPORTED_LOGS = cfg.importedLogPaths.map(String).join(path.delimiter);
+  }
   // Hand the bearer token to the agent out-of-band (env, not argv). Only set
   // when we have a token + upload URL — local-only installs leave it unset so
   // the agent never tries to upload.
@@ -7883,6 +7893,29 @@ ipcMain.handle('pick-eq-dir', async (e) => {
     return result.filePaths[0];
   } catch (err) {
     return null;
+  }
+});
+
+// Old-log importer pickers (Hitya 2026-09-13: "import more logs … add that
+// directory or file"). Windows cannot offer files AND folders in one dialog,
+// so the caller says which. Files are pre-filtered to EQ log names; the agent
+// validates every path again when it imports.
+ipcMain.handle('pick-log-backups', async (e, kind) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const opts = kind === 'dir'
+      ? { title: 'Select a folder of old EverQuest logs', properties: ['openDirectory'] }
+      : { title: 'Select old EverQuest log files (eqlog_<Name>_pq.proj.txt)',
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            { name: 'EverQuest logs', extensions: ['txt', 'txt2', 'txt3', 'bak', 'old', 'log'] },
+            { name: 'All files', extensions: ['*'] },
+          ] };
+    const result = await dialog.showOpenDialog(win || null, opts);
+    if (result.canceled || !Array.isArray(result.filePaths)) return [];
+    return result.filePaths.slice();
+  } catch (err) {
+    return [];
   }
 });
 
