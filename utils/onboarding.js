@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.126': [
+    '**Tell relay: the arrow now points from whoever spoke.** A tell you received reads \u201c**Fandango** \u2192 Hitya\u201d and one you sent reads \u201cHitya \u2192 **Fandango**\u201d, so the left name is always the speaker. It used to draw received tells as \u201cFandango \u2190 Hitya\u201d, which reads backwards.',
+  ],
   '3.1.125': [
     '**Guild callouts stop leaking between zones \u2014 for real this time.** \u201cShaman Slow\u201d and the other guild-wide callouts were supposed to reach you only during a raid or from the zone you are standing in. The check had a hole and never actually stopped anything, so a slow landed by someone else in Ssraeshza could speak on your screen in Vex Thal. Now a callout relays raid-wide while you are in a raid (raid night, or your Mimic is uploading a raid roster) and otherwise only from your own zone. If either side cannot be placed outside a raid, it stays quiet.',
   ],

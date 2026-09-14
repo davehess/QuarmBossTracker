@@ -17191,7 +17191,10 @@ async function _handleAgentTells(req, res) {
 // DM the owner with the freshly-relayed tells. Batched into one message so a
 // rapid volley of tells doesn't fan out as a wall of pings. Format matches
 // the Mimic dashboard's "Recent Tells" panel — one chronological line per
-// tell, "**Other** ← You" for incoming, "You → **Other**" for outgoing.
+// tell, SPEAKER → LISTENER in both directions: "**Other** → You" for
+// incoming, "You → **Other**" for outgoing. The left name is always who spoke.
+// (It used to draw incoming as "**Other** ← You", which reads as You speaking
+// — Hitya, 2026-09-14: "These are still going the wrong direction.")
 // No header preamble and no per-message mute footer; the bot's name + 📬
 // glyph are the only chrome, and snooze controls live on /me/tells.
 async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
@@ -17214,10 +17217,9 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
     for (let i = 0; i < sorted.length; i++) {
       if (lines.length >= MAX_LINES) { omitted = sorted.length - i; break; }
       const r = sorted[i];
-      const arrow = r.direction === 'outgoing' ? '→' : '←';
       const who   = r.direction === 'outgoing'
-        ? `${ownerCharacter} ${arrow} **${r.other_name}**`
-        : `**${r.other_name}** ${arrow} ${ownerCharacter}`;
+        ? `${ownerCharacter} → **${r.other_name}**`
+        : `**${r.other_name}** → ${ownerCharacter}`;
       lines.push(`${who}: ${r.text}`);
     }
     if (omitted > 0) lines.push(`_…and ${omitted} more — wolfpack.quest/me/tells_`);
