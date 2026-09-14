@@ -6813,6 +6813,17 @@ function _elapsedSec(fromTs, toTs) {
   return Math.max(0, (b - a) / 1000);
 }
 
+// Damage-shield attribution (Hitya 2026-09-13: "These look like 150 dd procs"
+// — every anonymous non-melee hit that landed within a swing of the tank was
+// being credited to them as a shield). Log timestamps are whole seconds, so
+// "same server tick" is same-or-next second for both pairings: the mob's
+// connect → its DS return, and the DS return → its flavor line.
+const DS_PAIR_WINDOW_MS = 1000;
+// A shield we cannot see on the tank (worn item, AA) on top of the DS buffs we
+// can. Era shields return single digits to a few dozen per hit; a hit further
+// above the tank's known DS buffs than this is a proc or a spell, not a shield.
+const DS_UNLISTED_SLACK = 30;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -6852,10 +6863,12 @@ class EncounterBuilder {
     // credit was landing on a groupmate/box. Resolved to the owner in flush().
     this.killSlayer = null;
     // Mob → last player it landed a hit on, for DS correlation. On Quarm a
-    // damage-shield proc logs as the anonymous "<mob> was hit by non-melee
-    // for N" without naming the wearer, so we credit it to whoever the mob
-    // most recently connected with (within 1500ms). Per-encounter, cleared
-    // on reset since mob identities don't carry across encounters.
+    // damage-shield return logs as the anonymous "<mob> was hit by non-melee
+    // for N" without naming the wearer — the same line a weapon proc or a
+    // direct-damage spell from anyone in range produces. The mob's most
+    // recent connect (same second) names the only candidate wearer; whether
+    // the hit WAS a shield is decided in _settleDsPending. Per-encounter,
+    // cleared on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
     // PvP assist correlation — uploader's outbound damage to player names,
     // rolling 30s window. When a PvP death broadcast names one of these
@@ -6863,13 +6876,12 @@ class EncounterBuilder {
     // Per-builder (per-encounter); cross-fight assists are intentionally
     // missed since 30s comfortably covers any real engagement → death pair.
     this._pvpDamageWindow = new Map();   // victim.toLowerCase() → { tsMs, lineSample }
-    // Pending DS commit — buffered between the damage line and the flavor
-    // line (e.g. "X was hit by non-melee for 14" then "X was pierced by
-    // thorns."). When the flavor lands within 2s, the buffered event's
-    // ability gets retagged from 'non-melee' to the real spell name. If no
-    // flavor arrives, we commit with 'non-melee' once the next add() call
-    // pushes us past the 2s window.
-    this._dsPending = null;              // { eventRef, attacker, mobLower, tsMs }
+    // Held DS candidate — an anonymous non-melee hit that landed within a
+    // second of the mob connecting on a player. It has NOT been added yet:
+    // add() parks it here and returns, and _settleDsPending re-adds it once
+    // the flavor line ("X was pierced by thorns.") has had its second to
+    // arrive — decided as a shield, or left as the anonymous hit it was.
+    this._dsPending = null;              // { eventRef, tank, mobLower, tsMs }
     // Defender stats: per-target tanking + accuracy data, scoped to this encounter.
     // Per-defender shape:
     //   { hits, damageTaken, misses, dodges, parries, ripostes, blocks, invulns,
@@ -7356,24 +7368,44 @@ class EncounterBuilder {
     ba.total += amount;
   }
 
-  // Commit the buffered DS attribution to stats.damageShield. Called when
-  // the flavor line arrives (with the real spell name retagged onto the
-  // eventRef), when a new DS attribution opens (so the previous one isn't
-  // stranded), or when the next damage event's timestamp passes the 2s
-  // window without a flavor line landing. Idempotent — null-out after commit.
-  _commitDsPending() {
+  // Decide the held anonymous non-melee hit and re-add it. `flavor` is the
+  // shield named by "<mob> was <verb> by <spell>." when that line landed for
+  // the same mob within the pair window, else null. Called from the flavor
+  // handler, when a new candidate opens (the previous one isn't stranded),
+  // when the next event's timestamp passes the window, and from flush().
+  //
+  // The hit IS a damage shield when
+  //   a) the log named a shield — and, if we can see DS buffs on the tank,
+  //      the amount is not far above them (a flavor line can land in the same
+  //      second as someone's 150-point proc; the proc is not the shield), or
+  //   b) no flavor line, but the tank wears a known DS buff and the amount
+  //      fits it (+ DS_UNLISTED_SLACK for worn/AA shield we cannot see).
+  // Everything else stays exactly the anonymous hit it was — the parser's own
+  // column, as it is for every anonymous hit outside the swing window — and
+  // never reaches the Tank overlay's shield card. Deciding BEFORE the event
+  // enters add() means threat, DEEPS, the upload rollup and the overlay tally
+  // all see it once, already attributed; nothing is credited then undone.
+  _settleDsPending(flavor) {
     const p = this._dsPending;
-    if (!p || !p.eventRef || p.eventRef.amount <= 0) { this._dsPending = null; return; }
-    const spell = (p.eventRef.ability || 'non-melee').toLowerCase();
-    if (!stats.damageShield[p.attacker]) stats.damageShield[p.attacker] = {};
-    const byTank = stats.damageShield[p.attacker];
-    if (!byTank[spell]) byTank[spell] = { count: 0, total: 0 };
-    byTank[spell].count++;
-    byTank[spell].total += p.eventRef.amount;
-    // Per-fight overlay tally — done here (not in add()) so the flavor-line
-    // retag has already named the real DS spell on the eventRef.
-    this._bumpDsReflect(spell, p.eventRef.amount, p.attacker);
-    this._dsPending = null;
+    this._dsPending = null;                     // before re-add: add() reads this slot
+    if (!p || !p.eventRef) return;
+    const ev = p.eventRef;
+    ev._dsSettled = true;
+    const amount = Number(ev.amount) || 0;
+    const known  = amount > 0 ? this._knownDsPerHit(p.tank) : 0;
+    const fits   = known > 0 && amount <= known + DS_UNLISTED_SLACK;
+    const isDs   = amount > 0 && (flavor ? (known === 0 || fits) : fits);
+    if (isDs) {
+      ev.attacker = p.tank;
+      ev.ds       = true;
+      ev.ability  = flavor ? String(flavor).trim() : 'non-melee';
+    }
+    this.add(ev);
+  }
+  // Per-hit total of the DS buffs we can SEE on a character right now (0 when
+  // none). Instance-level so a test can pin a tank's shield without a catalog.
+  _knownDsPerHit(name) {
+    try { return _knownDsPerHitFor(name); } catch { return 0; }
   }
 
   // Given a PvP broadcast (from parsePvpBroadcast), check whether the
@@ -7464,28 +7496,27 @@ class EncounterBuilder {
       }
     }
 
-    // ── Damage-shield flavor line → retag pending attribution ─────────────
+    // ── Damage-shield flavor line → settle the held candidate ─────────────
     // "X was pierced by thorns." (no number, no points). The DS damage line
-    // landed milliseconds earlier and is buffered in _dsPending; we update
-    // its ability with the real spell name and commit. ds_flavor events are
-    // pure attribution — never added to this.events.
+    // landed milliseconds earlier and is held in _dsPending; the flavor names
+    // the shield and is the positive evidence that it WAS one. ds_flavor
+    // events are pure attribution — never added to this.events.
     if (event.type === 'ds_flavor') {
       const flavorTsMs = Date.parse(event.ts) || Date.now();
       const p = this._dsPending;
-      if (p && p.mobLower === String(event.defender || '').toLowerCase()
-          && flavorTsMs - p.tsMs < 2000) {
-        p.eventRef.ability = String(event.ability || 'non-melee').trim();
-      }
-      // Commit regardless — flavor lines mark the end of the DS pair window.
-      this._commitDsPending();
+      const mine = !!(p && p.mobLower === String(event.defender || '').toLowerCase()
+          && flavorTsMs - p.tsMs <= DS_PAIR_WINDOW_MS);
+      // Settle regardless — a flavor line marks the end of the pair window;
+      // one for another mob (or too late) just settles without the evidence.
+      if (p) this._settleDsPending(mine ? (event.ability || null) : null);
       return;
     }
 
-    // Stale pending DS attribution? Commit before the new event so its
-    // damage doesn't leak into a later mob's flavor line.
+    // Held candidate past its window? Settle it before the new event so it
+    // keeps its place in the fight and can't borrow a later flavor line.
     if (this._dsPending) {
       const evTsMs = Date.parse(event.ts) || Date.now();
-      if (evTsMs - this._dsPending.tsMs > 2000) this._commitDsPending();
+      if (evTsMs - this._dsPending.tsMs > DS_PAIR_WINDOW_MS) this._settleDsPending(null);
     }
 
     // Dire Charm cast → flag the next charm-land within ~10s as a DC
@@ -7748,13 +7779,14 @@ class EncounterBuilder {
     }
 
     // ── Damage-shield correlation (Quarm format) ─────────────────────────────
-    // On Quarm the DS proc logs as "<Mob> was hit by non-melee for N" with NO
-    // wearer attribution. Correlate it with the most recent connecting swing
-    // FROM that same mob: whoever it just hit (within ~1500ms) is the DS
-    // wearer and gets the damage credit. The narrow window matches EQ's combat
-    // tick — DS lands on the same tick as the swing it procced from. Misses
-    // don't proc DS; they come through as type='miss' so they never enter
-    // _lastIncomingHit (only landed damage events do).
+    // On Quarm the DS return logs as "<Mob> was hit by non-melee for N" with NO
+    // wearer attribution — and so does everyone's proc and direct-damage spell.
+    // The most recent connecting swing FROM that same mob (same second — DS
+    // lands on the tick of the swing it answered) names the only possible
+    // wearer; it does NOT prove the hit was a shield. The candidate is held
+    // and decided in _settleDsPending. Misses don't trigger DS; they come
+    // through as type='miss' so they never enter _lastIncomingHit (only
+    // landed damage events do).
     //
     // Runs AFTER the dirge block so the more specific dirge attribution wins
     // when both could match; falls through to DS if no dirge cast is pending.
@@ -7831,27 +7863,19 @@ class EncounterBuilder {
         });
       }
 
-      // 2) DS attribution: anonymous non-melee hit on a mob — if that mob
-      // landed a connect on a player in the last 1500ms, credit the player.
-      // Buffers into _dsPending instead of tallying immediately; the flavor
-      // line ("X was pierced by thorns.") that lands milliseconds later
-      // retags ability with the actual spell name. If no flavor arrives, the
-      // next add() with tsMs > pending.tsMs + 2000 commits 'non-melee' as-is.
-      if (event.attacker === null && def && event.ability === 'non-melee') {
+      // 2) DS candidate: anonymous non-melee hit on a mob that connected on a
+      // player within the same second. HELD, not credited — the event leaves
+      // add() here and re-enters through _settleDsPending once the flavor
+      // line has had its second to arrive (or the fight flushes). A settled
+      // event carries _dsSettled and passes straight through.
+      if (event.attacker === null && def && event.ability === 'non-melee' && !event._dsSettled) {
         const recent = this._lastIncomingHit.get(def.toLowerCase());
-        if (recent && tsMs - recent.tsMs < 1500) {
-          // Commit any older pending before opening a new one (one mob's DS
-          // hit shouldn't be retagged by another mob's flavor line).
-          if (this._dsPending) this._commitDsPending();
-          event.attacker = recent.tank;
-          event.ds = true;
-          event._skipDsAggregate = true;   // suppress the immediate aggregate below
-          this._dsPending = {
-            eventRef: event,
-            attacker: recent.tank,
-            mobLower: def.toLowerCase(),
-            tsMs,
-          };
+        if (recent && tsMs - recent.tsMs <= DS_PAIR_WINDOW_MS) {
+          // Settle any older candidate before opening a new one (one mob's
+          // hit must not borrow another's flavor line).
+          if (this._dsPending) this._settleDsPending(null);
+          this._dsPending = { eventRef: event, tank: recent.tank, mobLower: def.toLowerCase(), tsMs };
+          return;
         }
       }
     }
@@ -8079,15 +8103,15 @@ class EncounterBuilder {
       // Damage-shield reflect accumulation for the Tank overlay — ONLY events
       // the parser/correlator positively identified as DS (`event.ds`), i.e.
       // the curated "is <verb> by <possessive> <SOURCE>" form or the two-line
-      // Quarm pattern resolved via swing-correlation (see _commitDsPending).
+      // Quarm pattern resolved via swing-correlation (see _settleDsPending).
       // The old filter here (`attacker === null && ability && defender is a
       // target`) also matched the uploader's OWN first-person damage — "You
       // slash X for 26" and "X has taken N from your <song>" both parse with
       // attacker=null — so a bard's overlay showed their slashes and songs
-      // as "Damage shield (this fight)" (user report 2026-07-01). Buffered
-      // two-line events (`_skipDsAggregate`) are tallied at commit time
-      // instead, after the flavor line has retagged the real spell name.
-      if (event.ds && !event._skipDsAggregate) {
+      // as "Damage shield (this fight)" (user report 2026-07-01). A two-line
+      // Quarm hit arrives here already settled — attacker, ds and the flavor
+      // spell were decided in _settleDsPending before it re-entered add().
+      if (event.ds) {
         this._bumpDsReflect(event.ability, event.amount, event.attacker);
       }
       // Charm-session damage attribution. If the attacker is a pet with
@@ -8725,9 +8749,9 @@ class EncounterBuilder {
     return out;
   }
   flush() {
-    // Commit any buffered DS attribution so a fight that ends with a damage
-    // line but no flavor line still credits the tank (with ability='non-melee').
-    if (this._dsPending) this._commitDsPending();
+    // Settle a held DS candidate so a fight that ends on it still counts the
+    // hit (as a shield only if the tank's known DS buffs vouch for it).
+    if (this._dsPending) this._settleDsPending(null);
     // Minimum event count — filters out "you took 7 hits and zoned" noise.
     // Real fights (even fast trash kills) typically produce 15+ events.
     if (this.events.length < 10) {
@@ -11393,6 +11417,38 @@ function _resolveBuffsForName(name, active, buffsOut) {
   }
   return { buffs: [...seen.values()], source: 'observed' };
 }
+// Per-hit total of the DS buffs we can SEE on a character: their own Zeal
+// list when they are this client, else their bot-relayed Zeal snapshot, else
+// observed landings + the relay bucket — the three sources _resolveBuffsForName
+// reads, minus its fetches (this runs on the parse path, per anonymous hit).
+// 0 when no currently-up buff is a catalog DS spell (SPA 59 `ds` per-hit).
+// Feeds _settleDsPending: it vouches for a small anonymous hit on the tank and
+// rules out a 150-point proc that a same-second flavor line would otherwise
+// have named as their shield.
+function _knownDsPerHitFor(name) {
+  const nameLower = String(name || '').toLowerCase();
+  if (!nameLower) return 0;
+  let list = null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() === nameLower) { list = (_zealState[ch] || {}).buffs; break; }
+  }
+  if (!Array.isArray(list)) {
+    const live = _mtLiveStateByName.get(nameLower);
+    if (live && live.state && Array.isArray(live.state.buffs)) list = live.state.buffs;
+  }
+  if (!Array.isArray(list)) {
+    list = targetBuffsFor(nameLower).slice();
+    const relay = _targetBuffsByName.get(_relayCacheKey(name));
+    for (const b of ((relay && relay.buffs) || [])) list.push(b);
+  }
+  let sum = 0;
+  for (const b of list) {
+    if (!b || !b.name || b.fell_off) continue;
+    const cat = _spellByNameLower.get(String(b.name).toLowerCase());
+    if (cat && cat.ds > 0) sum += Number(cat.ds) || 0;
+  }
+  return sum;
+}
 // Divine Aura lookup within a buff list — shared by the self DA banner and
 // Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
 // to heal" threshold; the self banner and the ramp bar use different values
@@ -11563,9 +11619,9 @@ function _serializeTankState() {
   // the one place we CAN attribute "how much you're getting from each one" —
   // the combat log can't say which buff fired, but the catalog tells us each
   // known DS buff's DESIGNED per-hit value. Empty when no currently-active
-  // buff is a known DS spell (the true source may be worn gear/an AA, which
-  // never shows up in the buff list at all) — the overlay says so rather than
-  // silently showing nothing. (Hitya 2026-06-29: "Highlight the DS spells
+  // buff is a known DS spell — then the shield card can only hold hits the
+  // log itself named as a shield (_settleDsPending), and the overlay says
+  // exactly that instead of guessing at gear. (Hitya 2026-06-29: "Highlight the DS spells
   // and songs and how much you're getting from each one in the damage shield
   // section.")
   const dsSources = [];
@@ -25780,11 +25836,10 @@ function recordEventForDashboard(event, character) {
   }
 
   // Damage-shield tally — separate from abilityStats so we can break it out
-  // per attacker per spell on the Tanks tab. _skipDsAggregate is set on the
-  // event when DS attribution buffered it into _dsPending — the commit then
-  // tallies once the spell name is known (from the flavor line) or after the
-  // 2s window expires. Skipping here avoids double-counting under that path.
-  if (event.ds && event.amount > 0 && !event._skipDsAggregate) {
+  // per attacker per spell on the Tanks tab. A two-line Quarm hit reaches
+  // here once, after _settleDsPending decided it (the held copy never
+  // enters add() until then), so there is nothing to skip.
+  if (event.ds && event.amount > 0) {
     const spell = event.ability || '(unknown)';
     if (!stats.damageShield[attacker]) stats.damageShield[attacker] = {};
     const byTank = stats.damageShield[attacker];
