@@ -37,6 +37,36 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-6-8-stable-2026-09-13',
+    title: 'Mimic 2.6.8',
+    version: 'Mimic 2.6.8 \u00b7 Agent 3.6.42',
+    date: '2026-09-13',
+    headline: 'Old logs from anywhere on your PC, an honest damage-shield card, and quiet mode split in two.',
+    features: [
+      {
+        name: 'Import old logs',
+        blurb: 'Keep log backups on another drive or from a previous PC? Add the folder or the files from the Dashboard\u2019s Setup card, or drop them on the Logsync tab, and backfill your history from them. Read once, never tailed. First-run setup asks about them too.',
+      },
+      {
+        name: 'Setup buttons up top',
+        blurb: 'Set up for me, the Windows Defender exclusion, Zeal install and the clock fix now sit at the top of the Setup card, with the two new import buttons beside them.',
+      },
+      {
+        name: 'Mute Mimic, or hide everything',
+        blurb: 'Quiet mode now means mute: no voice, no sounds, overlays stay. A separate switch hides every overlay for people who display with another parser.',
+      },
+      {
+        name: 'A spot for who your target is on',
+        blurb: 'Once the next Zeal carries it, Extended Target shows who each mob is on straight from the game.',
+      },
+    ],
+    fixes: [
+      'The Tank overlay\u2019s damage-shield card counted other people\u2019s procs as your shield. It now counts only hits the log names as a shield, or that your known DS buffs vouch for.',
+      'UI Studio: resizing a window now sticks. The Zeal item windows that kept coming back huge stay at the size you set.',
+      'Logsync lists logs from every EverQuest folder you have added, not just the first.',
+    ],
+  },
+  {
     key: 'bot-3-1-125-relay-scope-2026-09-11',
     title: 'Bot 3.1.125',
     version: 'Bot 3.1.125',
