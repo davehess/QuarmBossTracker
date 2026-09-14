@@ -1717,7 +1717,9 @@ captures each kill and re-asks `/live-damage` at +40s and +100s; the header says
 `· N clients` once settled, `· settling…` until then), Triggers+timers
 (`triggers.html`), CH chain
 (`chchain.html` — slots, GO pill, beat countdown, pivot, off-heal list),
-Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal),
+Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal;
+the DS card counts only shield hits the log named or the tank's known DS buffs
+vouch for — `_settleDsPending` in the agent, 3.6.41),
 Command Center (`command.html`), Extended Target (`extarget.html` — off-tank
 toggle, stale rows), Charm, Pet, Mob Info, Buff queue, /who, Melody,
 Zeal health, Settings, loading. Overlays poll the local agent
