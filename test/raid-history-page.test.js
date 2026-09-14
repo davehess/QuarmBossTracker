@@ -21,6 +21,7 @@ const read = (...p) => stripJs(fs.readFileSync(path.join(ROOT, 'web', ...p), 'ut
 
 const page  = read('app', 'raidhistory', 'page.tsx');
 const me    = read('app', 'me', 'page.tsx');
+const meAtt = read('app', 'me', 'AttendanceSection.tsx');   // the attendance markup moved here 2026-09-13 (client-side Strips/Blocks)
 const grid  = read('components', 'RaidHeatmap.tsx');
 const nav   = read('components', 'Nav.tsx');
 const meta  = read('lib', 'pageMeta.ts');
@@ -63,7 +64,7 @@ describe('/me section', () => {
   const loader = me.slice(me.indexOf('async function loadFamilyAttendance('), me.indexOf('async function loadScrap('));
 
   it('loads the family union through the overlap filter, ids only', () => {
-    expect(me).toMatch(/loadFamilyAttendance\(chars\.map\(c => c\.name\)\)/);
+    expect(me).toMatch(/loadFamilyAttendance\(names\)/);
     expect(loader).toMatch(/\.overlaps\('attendees', names\)/);
     // Neither tick read pulls the attendee arrays — that is the wide part.
     expect(loader.match(/\.select\('raid_id, tick_id'\)/g) ?? []).toHaveLength(2);
@@ -78,8 +79,8 @@ describe('/me section', () => {
   it('reads 60 days, not a year, and shows attendance as a RATE first', () => {
     expect(me).toMatch(/const ATTENDANCE_DAYS = 60;/);
     expect(loader).toMatch(/const since60 = windowStart\(todayKey, ATTENDANCE_DAYS\);/);
-    expect(me).toMatch(/<AttendanceStat label="Last 60 days" attended=\{attendance\.attended60\} held=\{attendance\.held60\} \/>/);
-    expect(me).toMatch(/\$\{pct\(attended, held\)\}%/);
+    expect(meAtt).toMatch(/<AttendanceStat label="Last 60 days" attended=\{attendance\.attended60\} held=\{attendance\.held60\} \/>/);
+    expect(meAtt).toMatch(/\$\{pct\(attended, held\)\}%/);
   });
 
   it('a missed night is an outline, an attended one is gold scaled by ticks', () => {
@@ -89,8 +90,8 @@ describe('/me section', () => {
   });
 
   it('renders the grid and points at the guild page', () => {
-    expect(me).toMatch(/<RaidHeatmap nights=\{attendance\.chips\}/);
-    expect(me).toMatch(/href="\/raidhistory"/);
+    expect(meAtt).toMatch(/<RaidHeatmap nights=\{attendance\.chips\}/);
+    expect(meAtt).toMatch(/href="\/raidhistory"/);
   });
 });
 

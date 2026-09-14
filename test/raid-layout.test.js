@@ -17,6 +17,7 @@ import { pickRaidLayout, DEFAULT_RAID_LAYOUT, RAID_LAYOUT_COOKIE, RAID_LAYOUTS }
 const read = (...p) => stripJs(fs.readFileSync(path.join(ROOT, 'web', ...p), 'utf8'));
 const history = read('app', 'raidhistory', 'page.tsx');
 const me      = read('app', 'me', 'page.tsx');
+const meAtt   = read('app', 'me', 'AttendanceSection.tsx');
 const picker  = read('components', 'RaidLayoutPicker.tsx');
 
 describe('pickRaidLayout', () => {
@@ -48,10 +49,15 @@ describe('the pages honour the choice', () => {
 
   it('render strips or blocks and nothing else', () => {
     expect(history).toMatch(/layout === 'strips' \? \(\s*<RaidNightsStrips/);
-    expect(me).toMatch(/layout === 'strips' \? \(\s*<RaidNightsStrips/);
+    expect(meAtt).toMatch(/layout === 'strips' \? \(\s*<RaidNightsStrips/);
     expect(history).toMatch(/<RaidLayoutPicker current=\{layout\} \/>/);
-    expect(me).toMatch(/<RaidLayoutPicker current=\{layout\} \/>/);
-    for (const src of [history, me]) {
+    // /me flips locally (Hitya, 2026-09-13: the server round trip re-rendered
+    // the whole account twice per click); the cookie the page reads on the
+    // next fresh load is still written by the picker.
+    expect(meAtt).toMatch(/<RaidLayoutPicker current=\{layout\} onChange=\{setLayout\} \/>/);
+    expect(meAtt).toMatch(/useState<RaidLayout>\(initial\)/);
+    expect(me).toMatch(/<AttendanceSection initial=\{layout\} attendance=\{attendance\} \/>/);
+    for (const src of [history, me, meAtt]) {
       expect(src).not.toMatch(/RaidNightsCalendar|CalNight|IS_BETA|pickVariant/);
     }
     expect(fs.existsSync(path.join(ROOT, 'web', 'components', 'RaidNightsCalendar.tsx'))).toBe(false);
@@ -64,5 +70,14 @@ describe('RaidLayoutPicker', () => {
     expect(picker).toMatch(/url\.searchParams\.delete\('layout'\);/);
     expect(picker).toMatch(/router\.refresh\(\);/);
     expect(picker).toMatch(/aria-pressed=\{key === current\}/);
+  });
+
+  it('hands the switch to the caller when one is listening, after writing the cookie', () => {
+    const cookie = picker.indexOf('document.cookie = `${RAID_LAYOUT_COOKIE}=${v};');
+    const handoff = picker.indexOf('if (onChange) { onChange(v); return; }');
+    const refresh = picker.indexOf('router.refresh();');
+    expect(cookie).toBeGreaterThan(-1);
+    expect(handoff).toBeGreaterThan(cookie);
+    expect(refresh).toBeGreaterThan(handoff);
   });
 });
