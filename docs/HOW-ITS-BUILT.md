@@ -304,6 +304,22 @@ Load-bearing details:
 - `RAID_REVIEW=0` kills the automatic post; `/raidreview [date] [preview]` is the
   officer escape hatch. Regression: `test/raid-review-post.test.js`.
 
+### Imported log backups (agent `_optinState.importedPaths` + Mimic pickers) — 2026-09-13
+Old logs outside the EQ folder reach the opt-in backfill list. The agent owns a
+persisted list (`logsync.optin.json` → `importedPaths`, `{path, kind, addedAt}`);
+`_addImportedLogPath` validates (a folder must hold eqlog-named files at its top
+level or in a `Logs` child; a file must be named `eqlog_<Name>_pq.proj.txt` with
+any rotation suffix), `_scanOptInFiles` folds them in flagged `imported` and now
+reads every watched log's folder rather than only the first. `/api/optin`
+actions `import` (per-path results) and `unimport`. Surfaces: the dashboard
+Setup card's action row (top of the card — Set up for me, Defender, Zeal,
+clock, 🗂 folder / 📄 files), the Logsync tab's Imported card (list, ✕ Remove,
+drop zone reading paths through `window.mimic.pathForFile`), and the
+onboarding card "Old log backups anywhere else?" (`cfg.importedLogPaths`,
+seeded once at spawn via `WOLFPACK_IMPORTED_LOGS`). Mimic IPC
+`pick-log-backups` (`dir` | `files`). Tests: `test/optin-imported-logs.test.js`
+(real temp tree), `test/mimic-log-import.test.js` (wiring).
+
 ### Outcome-driven backfill requests (`utils/backfillScan.js` + `commands/backfillscan.js`)
 Finds fights whose parse is demonstrably wrong and proposes the 2-3 people whose
 log would settle it — then files into the EXISTING `agent_backfill_requests`

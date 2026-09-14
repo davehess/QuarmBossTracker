@@ -1,5 +1,5 @@
 // Preload — minimal contextBridge surface. No nodeIntegration in renderers.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // ── Am I a window, or a pane inside the Dock? ───────────────────────────────
 // The dock (dock.html) hosts overlays as same-origin <iframe>s in ONE window,
@@ -603,6 +603,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
+  // Old-log importer (Hitya 2026-09-13): the native pickers, and the real
+  // path of a File dropped on the dashboard — a plain browser never gets one;
+  // Electron does, through webUtils (31+; `file.path` for anything older).
+  pickLogBackups: (kind) => ipcRenderer.invoke('pick-log-backups', kind),
+  pathForFile:    (file) => {
+    try { if (webUtils && typeof webUtils.getPathForFile === 'function') return webUtils.getPathForFile(file) || null; } catch (_) { /* fall through */ }
+    return (file && file.path) || null;
+  },
   listEqCharacters: () => ipcRenderer.invoke('list-eq-characters'),
 
   // UI Studio — capture / restore EQ ini files (windows, hotkeys, chat

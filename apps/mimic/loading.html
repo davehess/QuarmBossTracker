@@ -190,6 +190,24 @@
     </div>
   </div>
 
+  <!-- OLD LOG BACKUPS ELSEWHERE (optional) — Hitya 2026-09-13: ask on first
+       run whether older logs live somewhere else on the drive, so the backfill
+       can read them too. Read once, never tailed. -->
+  <div class="card" id="cardBackups">
+    <div class="card-h">
+      <span class="ico">🗂</span>
+      <span class="title">Old log backups anywhere else?</span>
+      <span class="badge" id="backupsBadge">Optional</span>
+    </div>
+    <p>If you keep <b>older EverQuest logs</b> outside the EQ folder — a backup drive, a <code>Logs-old</code> folder, files from a previous PC — add them here and Mimic can backfill your history from those too. They are read once for backfill and never tailed. Files need their original names (<code>eqlog_&lt;Name&gt;_pq.proj.txt</code>, rotation suffixes are fine).</p>
+    <div id="backupsList" style="margin-top:4px"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="backupsAddFolder">📁 Add a folder of old logs…</button>
+      <button id="backupsAddFiles">📄 Add log files…</button>
+      <span class="saved" id="backupsSaved"></span>
+    </div>
+  </div>
+
   <!-- STEP 3 — CHARACTERS (per-character "Transmit?" opt-out) -->
   <div class="card" id="cardChars">
     <div class="card-h">
@@ -432,6 +450,8 @@
     // Seed step 2 from saved folders so a returning user isn't re-gated.
     const savedPaths = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
     if (savedPaths.length > 0) eqConfigured = true;
+    _backupPaths = Array.isArray(cfg.importedLogPaths) ? cfg.importedLogPaths.slice() : [];
+    _renderBackups();
     const mode = cfg.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === mode); });
     $('quietMode').checked = !!cfg.quietMode;
@@ -582,6 +602,54 @@
     } finally {
       btn.disabled = false; btn.textContent = 'Save folder';
     }
+  });
+
+  // ── Old log backups (optional) ────────────────────────────────────────────
+  // Saved to cfg.importedLogPaths; the agent takes them on its next start
+  // (relaunched here, the same way a folder save does) and keeps its own list
+  // from then on — the Logsync tab is where they are managed afterwards.
+  let _backupPaths = [];
+  function _renderBackups(){
+    const list = $('backupsList');
+    list.innerHTML = _backupPaths.map((p, i) =>
+      '<div class="row" style="align-items:center;gap:6px"><code style="font-size:11px">' + String(p).replace(/</g,'&lt;') + '</code>' +
+      '<button data-rm-backup="' + i + '" style="font-size:11px;padding:1px 7px">✕</button></div>').join('') ||
+      '<div class="saved" style="color:#8b949e">None added — that is fine for most people.</div>';
+    const b = $('backupsBadge');
+    if (_backupPaths.length) { b.textContent = _backupPaths.length === 1 ? '1 added' : _backupPaths.length + ' added'; b.className = 'badge ok'; }
+    else { b.textContent = 'Optional'; b.className = 'badge'; }
+  }
+  async function _saveBackups(){
+    try {
+      await window.mimic.saveConfig({ importedLogPaths: _backupPaths.slice() });
+      $('backupsSaved').textContent = '✓ saved · engine restarting';
+      await window.mimic.relaunchAgent();
+      agentReady = false;
+      refreshGate();
+      pollEngine();
+      setTimeout(() => { $('backupsSaved').textContent = ''; }, 4000);
+    } catch (e) {
+      $('backupsSaved').textContent = '✕ ' + (e && e.message ? e.message : String(e));
+    }
+  }
+  async function _pickBackups(kind){
+    pingUserInteraction();
+    try {
+      const picked = await window.mimic.pickLogBackups(kind);
+      if (!picked || !picked.length) return;
+      for (const p of picked) if (!_backupPaths.some(x => _norm(x) === _norm(p))) _backupPaths.push(p);
+      _renderBackups();
+      await _saveBackups();
+    } catch (_) {}
+  }
+  $('backupsAddFolder').addEventListener('click', () => _pickBackups('dir'));
+  $('backupsAddFiles').addEventListener('click', () => _pickBackups('files'));
+  $('backupsList').addEventListener('click', async (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('[data-rm-backup]') : null;
+    if (!btn) return;
+    _backupPaths.splice(Number(btn.getAttribute('data-rm-backup')), 1);
+    _renderBackups();
+    await _saveBackups();
   });
 
   // ── Per-character "Transmit?" picker (Step 3) ──────────────────────────────

@@ -1698,7 +1698,11 @@ function renderSetupChecks(s) {
   // One-click writer for the EQ logging + Zeal export/pipe settings. The note
   // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
   // the in-game equivalents are spelled out so a user can act live too.
-  h += '<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+  // The action row sits ABOVE the checklist (Hitya 2026-09-13: "The other
+  // setup items for Quarm should also be at the top there with that main
+  // button") — Set up for me, the Mimic-only fixers and the old-log importer
+  // together, first thing a first-run user sees when the panel opens.
+  const actionsRow = '<div style="margin:2px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
      + '<button class="wp-eq-setup" style="background:#1f6feb;color:#fff;border:0;border-radius:5px;padding:5px 12px;cursor:pointer;font-weight:600;font-size:12px">🔧 Set up for me</button>'
      // Two more one-click fixers, same row, Mimic-only (they need the Electron
      // bridge — a browser tab cannot elevate or write into the EQ folder).
@@ -1707,10 +1711,12 @@ function renderSetupChecks(s) {
      + '<button class="wp-defender" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🛡 Add Windows Defender EQ Exceptions</button>'
      + '<button class="wp-zeal-install" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">⬇ Check / install Zeal</button>'
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
+     + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
+     + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
-  morphInto(el, h);
+  morphInto(el, actionsRow + h);
   // Delegated so it survives the morphInto repaint; bound once.
   if (!window.__wpEqSetupBound) {
     window.__wpEqSetupBound = true;
@@ -1747,6 +1753,21 @@ function renderSetupChecks(s) {
 // Re-run after every repaint of the card, so the handlers are bound with a
 // dataset latch rather than a global one — the buttons are re-created by
 // morphInto each time this section re-renders.
+// Shared by the Setup-card buttons and the Logsync tab's pickers + drop zone:
+// hand the paths to the agent (which validates each and rescans) and return a
+// one-line result for whichever surface asked.
+var _wpImportNote = '';   // last import result, rendered into the Logsync card (byte-stable until it changes)
+async function wpImportLogPaths(paths) {
+  var r = await postOptin('import', { paths: paths });
+  var results = (r && r.results) || [];
+  var ok  = results.filter(function (x) { return x.ok; });
+  var bad = results.filter(function (x) { return !x.ok; });
+  var files = ok.reduce(function (n, x) { return n + (x.files || 0); }, 0);
+  try { if (typeof refreshOptin === 'function') refreshOptin(); } catch (e) { void e; }
+  if (ok.length && !bad.length) return { text: '✓ Added ' + files + ' log file' + (files === 1 ? '' : 's') + ' — see the Logsync tab, they are ready to backfill.', color: 'var(--green)' };
+  if (ok.length) return { text: '✓ Added ' + files + ' file(s); skipped ' + bad.map(function (x) { return x.path + ' (' + x.error + ')'; }).join('; '), color: 'var(--orange,#f0b429)' };
+  return { text: 'Nothing added: ' + (bad.map(function (x) { return x.path + ' — ' + x.error; }).join('; ') || 'no reply from the agent'), color: 'var(--red,#f87171)' };
+}
 function wpWireFixerButtons(s) {
   var note = document.querySelector('.wp-fixer-note');
   var dBtn = document.querySelector('.wp-defender');
@@ -1773,6 +1794,24 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+  // Old-log importer — Mimic only (needs the native picker on the bridge).
+  ['.wp-import-dir', '.wp-import-files'].forEach(function (sel) {
+    var iBtn = document.querySelector(sel);
+    if (!(iBtn && window.mimic && window.mimic.pickLogBackups)) return;
+    iBtn.style.display = '';
+    if (iBtn.dataset.wired) return;
+    iBtn.dataset.wired = '1';
+    iBtn.addEventListener('click', function () {
+      var orig = iBtn.textContent;
+      iBtn.disabled = true; iBtn.textContent = 'Choose…';
+      window.mimic.pickLogBackups(sel === '.wp-import-dir' ? 'dir' : 'files').then(function (paths) {
+        if (!paths || !paths.length) { say('Nothing added.'); return; }
+        return wpImportLogPaths(paths).then(function (m) { _wpImportNote = m.text; say(m.text, m.color); });
+      }).catch(function (e) {
+        say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
+      }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
+    });
+  });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
     cBtn.style.display = '';
@@ -5591,6 +5630,29 @@ function renderOptin(o) {
     h += '</div>';
   }
 
+  // Imported log backups (Hitya 2026-09-13). Inside Mimic: native pickers plus
+  // a drop zone that reads real paths through the bridge. A browser tab has
+  // neither, so it only lists what is already imported.
+  const imp = o.importedPaths || [];
+  const hosted = !!(window.mimic && window.mimic.pickLogBackups);
+  h += '<div class="card wide" id="wpImported"><h2>🗂 Imported log backups (' + imp.length + ')</h2>' +
+       '<div class="subtle">Old logs kept outside your EQ folder — a backup drive, a Logs-old folder, a previous PC. Read once for backfill, never tailed. ' +
+       'Files must be named like EverQuest logs (eqlog_&lt;Name&gt;_pq.proj.txt, rotation suffixes fine) so we know whose they are.</div>';
+  if (imp.length) {
+    h += '<table><tr><th>Path</th><th>Kind</th><th>Files</th><th></th></tr>' + imp.map(e =>
+      '<tr><td><code style="font-size:11px">' + esc(e.path) + '</code></td><td>' + (e.kind === 'dir' ? 'folder' : 'file') + '</td><td>' + (e.files || 0) + '</td>' +
+      '<td><button data-unimport="' + esc(e.path) + '" style="font-size:11px;padding:2px 8px">✕ Remove</button></td></tr>').join('') + '</table>';
+  }
+  h += '<div id="wpImportDrop" style="margin-top:8px;padding:14px;border:1px dashed var(--border);border-radius:6px;text-align:center;color:var(--dim);font-size:12px">' +
+       (hosted
+         ? '<b>Drop log files or a folder here</b> &nbsp;— or&nbsp; ' +
+           '<button data-import="dir" style="font-size:11px">🗂 Add folder…</button> ' +
+           '<button data-import="files" style="font-size:11px">📄 Add files…</button>'
+         : 'Open this page inside Mimic to add folders or files — a browser tab cannot see your drive.') +
+       '</div>' +
+       (_wpImportNote ? '<div class="dim" style="font-size:11px;margin-top:6px">' + esc(_wpImportNote) + '</div>' : '') +
+       '</div>';
+
   h += '<div class="card wide"><h2>Historical Log Opt-in — ' + _optinPane[0].toUpperCase()+_optinPane.slice(1) +
           ' (' + list.length + ')</h2>';
   h += '<div class="subtle">Backfill captures guild/raid chat + boss-matched combat kills (tagged with raid-window status). ' +
@@ -5605,7 +5667,7 @@ function renderOptin(o) {
        '</select>' +
        '<button data-act="select-all">Select all</button>' +
        '<button data-act="select-none">Clear</button>' +
-       '<button data-act="rescan">Rescan dir</button>' +
+       '<button data-act="rescan">Rescan</button>' +
        (_optinPane==='active'
          ? '<button data-act="backfill" ' + (selCount===0?'disabled':'') + ' style="background:#1a7f37;border-color:#1a7f37;color:#fff">' +
              (selCount>0 ? 'Backfill '+selCount+' selected' : 'Backfill selected') + '</button>'
@@ -5642,6 +5704,9 @@ function renderOptin(o) {
     const nameColor = first.requested ? 'var(--blue)' : (first.isAlt ? 'var(--dim)' : 'var(--orange)');
     files.forEach((f, idx) => {
       const fname = f.path.split(/[/\\]/).pop();
+      const importedBadge = f.imported
+        ? ' <span class="dim" style="font-size:10px;border:1px solid var(--border);border-radius:3px;padding:0 5px;margin-left:4px" title="From an imported backup folder or file — backfill-only, never tailed">imported</span>'
+        : '';
       const ageDays = f.mtime ? Math.floor((Date.now()-f.mtime)/86400000) : null;
       const ageStr = ageDays === null ? '?' : ageDays<1 ? 'today' : ageDays<30 ? ageDays+'d ago' : ageDays<365 ? Math.floor(ageDays/30)+'mo ago' : Math.floor(ageDays/365)+'y ago';
       let resumeStr = '';
@@ -5724,7 +5789,7 @@ function renderOptin(o) {
       h += '<tr>' +
            '<td><input type="checkbox" data-path="' + esc(f.path) + '" ' + cbAttrs + cbTitle + '></td>' +
            charCell +
-           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + '</td>' +
+           '<td ' + fnameStyle + '>' + esc(fname) + altBadge + liveBadge + importedBadge + '</td>' +
            '<td class="num">' + sizeFmt(f.sizeBytes) + '</td>' +
            '<td class="dim">' + ageStr + '</td>' +
            '<td>' + resumeStr + '</td>' +
@@ -5787,6 +5852,42 @@ function renderOptin(o) {
   // /who-only rescan — fast path that walks the file for /who rows ONLY, skips
   // chat + combat. Use after upgrading past a /who keep-pattern fix (v3.0.35
   // and later) to retroactively capture rows that earlier agents byte-dropped.
+  // Imported log backups — pickers (Mimic only), remove, and the drop zone.
+  root.querySelectorAll('button[data-import]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      if (!(window.mimic && window.mimic.pickLogBackups)) return;
+      const paths = await window.mimic.pickLogBackups(b.dataset.import === 'dir' ? 'dir' : 'files');
+      if (!paths || !paths.length) return;
+      const m = await wpImportLogPaths(paths);
+      _wpImportNote = m.text;
+      refreshOptin();
+    });
+  });
+  root.querySelectorAll('button[data-unimport]').forEach(b => {
+    _bindOnce(b, 'click', async () => {
+      const p = b.dataset.unimport;
+      if (!p) return;
+      await postOptin('unimport', { paths: [p] });
+      _wpImportNote = 'Removed ' + p + ' — its files left the list; any backfill progress is kept.';
+      refreshOptin();
+    });
+  });
+  if (!window.__wpImportDropBound) {
+    window.__wpImportDropBound = true;
+    const zoneOf = (e) => (e.target && e.target.closest) ? e.target.closest('#wpImportDrop') : null;
+    document.addEventListener('dragover', (e) => { const z = zoneOf(e); if (!z) return; e.preventDefault(); z.style.borderColor = 'var(--blue)'; });
+    document.addEventListener('dragleave', (e) => { const z = zoneOf(e); if (z) z.style.borderColor = 'var(--border)'; });
+    document.addEventListener('drop', (e) => {
+      const z = zoneOf(e);
+      if (!z) return;
+      e.preventDefault(); z.style.borderColor = 'var(--border)';
+      if (!(window.mimic && window.mimic.pathForFile)) { _wpImportNote = 'Drop only works inside Mimic — a browser tab cannot see your drive.'; refreshOptin(); return; }
+      const items = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+      const paths = items.map(f => { try { return window.mimic.pathForFile(f); } catch (_) { return null; } }).filter(Boolean);
+      if (!paths.length) { _wpImportNote = 'Nothing usable was dropped.'; refreshOptin(); return; }
+      wpImportLogPaths(paths).then(m => { _wpImportNote = m.text; refreshOptin(); });
+    });
+  }
   root.querySelectorAll('button[data-rescan-who]').forEach(b => {
     _bindOnce(b, 'click', async () => {
       const p = b.dataset.rescanWho;
