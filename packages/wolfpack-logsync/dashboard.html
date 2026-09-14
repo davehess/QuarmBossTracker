@@ -1397,12 +1397,17 @@ function renderMeCard(s) {
   else {
     h += '<div style="font-size:11px;line-height:1.5">';
     for (const t of tells) {
-      const arrow = t.direction === 'outgoing' ? '→' : '←';
+      // SPEAKER → LISTENER, so the left name is always who spoke (Hitya
+      // 2026-09-14: a received tell drawn as "Other ← You" read as You
+      // speaking). Same convention as the Recent Tells table and the DM relay.
       const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
       // NOTE: t.other is not always a player — keep it a plain span (no
       // class="name") so the /character click-delegation can't misfire on it.
+      const otherSpan = '<span style="color:var(--blue)">' + esc(t.other) + '</span>';
+      const meSpan    = '<span class="dim">' + esc(t.character || 'you') + '</span>';
+      const who = t.direction === 'outgoing' ? meSpan + ' → ' + otherSpan : otherSpan + ' → ' + meSpan;
       h += '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-         + '<span class="dim">' + arrow + '</span> <span style="color:var(--blue)">' + esc(t.other) + '</span>: '
+         + who + ': '
          + esc(String(t.text || '').slice(0, 48))
          + (tsMs ? ' <span class="dim" style="font-size:10px">' + fmtAgo(tsMs) + '</span>' : '')
          + '</div>';
@@ -1943,11 +1948,11 @@ function renderRecentTellsCard(s) {
   const _rtVisible = _rt.slice(-15).reverse();
   for (const t of _rtVisible) {
     const outgoing = t.direction === 'outgoing';
-    const arrow = outgoing ? '→' : '←';
+    // SPEAKER → LISTENER in both directions — the left name is who spoke.
     const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
     const who = outgoing
-      ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' ' + otherLink
-      : otherLink + ' ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
+      ? '<span class="dim">' + esc(t.character) + '</span> → ' + otherLink
+      : otherLink + ' → <span class="dim">' + esc(t.character) + '</span>';
     const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
     h += '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
   }
