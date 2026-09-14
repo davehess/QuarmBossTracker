@@ -62,6 +62,18 @@ describe('hovering a nav category does not fold the header', () => {
     expect(nav).toMatch(/data-nav-revealed=""/);
   });
 
+  // Hitya, 2026-09-13: "the top design jumps around when hovering, it needs to
+  // stay in place." In flow, the revealed row grew the header by a row on every
+  // mouseover. On hover devices it now floats under the chips; touch keeps the
+  // in-flow row (a tap opens it, and it must never cover a phone's first
+  // viewport). The wrap is the containing block, and the row sits flush
+  // (top-full, no margin) so the pointer never crosses a gap that would fire
+  // the wrap's mouseleave.
+  it('the revealed row floats on hover devices and stays in flow on touch', () => {
+    expect(nav).toMatch(/<div ref=\{wrap\} className="relative"/);
+    expect(nav).toMatch(/canHover\s*\n?\s*\? 'absolute left-0 top-full z-40 [^']*'\s*\n?\s*: 'mt-1\.5 border-t border-border\/60 pt-2'/);
+  });
+
   // The fold itself must still work — this is not a blanket "never fold".
   it('keeps the real overflow fold and its hysteresis', () => {
     expect(header).toMatch(/el\.scrollWidth > el\.clientWidth \+ 1/);

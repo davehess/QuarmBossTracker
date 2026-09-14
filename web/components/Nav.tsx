@@ -108,7 +108,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
   const shown = GROUPS.find(g => g.id === open);
 
   return (
-    <div ref={wrap} onMouseLeave={() => { if (canHover) setOpen(null); }}>
+    <div ref={wrap} className="relative" onMouseLeave={() => { if (canHover) setOpen(null); }}>
       {/* ⚠ NOWRAP, deliberately (Hitya, 2026-08-30: "Top nav is broken when you
           log in on desktop in chrome"). This row is only ever the header's
           middle group, and its container can be squeezed thin by a wide
@@ -158,16 +158,22 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
             brief and exactly the 95px that stopped the signed-in bar fitting. */}
       </nav>
 
-      {/* The revealed row. Rendered in flow rather than absolutely positioned so
-          it can never cover the page's first viewport on a phone.
-          ⚠ data-nav-revealed is READ BY SiteHeader's fit measurement. In flow
-          means this row counts toward the header row's scrollWidth, and a wide
-          group (Prep has seven links) overflows it — so without that marker,
-          hovering a category folded the whole bar to "Menu" and the fold
-          hysteresis kept it there. See the measure() guard. */}
+      {/* The revealed row. On hover devices it FLOATS under the chips (Hitya,
+          2026-09-13: "the top design jumps around when hovering, it needs to
+          stay in place") — in flow it grew the header by a row on every
+          mouseover and pushed the whole page down and back. On touch there is
+          no hover, a tap opens it, and it stays in flow so it can never cover a
+          phone's first viewport. Anchored flush to the row (no top margin) so
+          the pointer never crosses a gap that would fire the wrap's mouseleave.
+          ⚠ data-nav-revealed is READ BY SiteHeader's fit measurement. Either
+          way this row can widen the header row's scrollWidth (Prep has seven
+          links) — so without that marker, hovering a category folded the whole
+          bar to "Menu" and the fold hysteresis kept it there. See measure(). */}
       {shown && (
         <div id={`nav-${shown.id}`} data-nav-revealed=""
-             className="mt-1.5 flex flex-wrap gap-1.5 sm:gap-2 border-t border-border/60 pt-2">
+             className={`flex flex-wrap gap-1.5 sm:gap-2 ${canHover
+               ? 'absolute left-0 top-full z-40 w-max max-w-[min(92vw,52rem)] rounded-b-md border border-border bg-bg/95 p-2 backdrop-blur'
+               : 'mt-1.5 border-t border-border/60 pt-2'}`}>
           {shown.items.map(i => {
             const active = path === i.href || path?.startsWith(i.href + '/');
             return (

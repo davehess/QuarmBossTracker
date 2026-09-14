@@ -87,9 +87,9 @@ export default function SiteHeader({
       if (!el) return;
       // ⚠ Skip while a nav group is open (Hitya, 2026-09-06: "the mouseover at
       // the top of the window immediately shrinks down to menu on desktop").
-      // Nav renders the hovered group's links IN FLOW inside this row, on
-      // purpose, so they can never cover a phone's first viewport. That makes
-      // them count toward scrollWidth: hovering Prep (seven links) is a REAL
+      // Nav renders the hovered group's links inside this row — floated on
+      // hover devices, in flow on touch so they never cover a phone's first
+      // viewport. Either way they count toward scrollWidth: hovering Prep (seven links) is a REAL
       // overflow, so the bar folded to compact the instant the pointer landed
       // on a category — and because folding removes the overflow, the
       // hysteresis below then pinned it there until the window grew 64px.
