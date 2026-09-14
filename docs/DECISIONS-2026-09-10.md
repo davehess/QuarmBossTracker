@@ -315,6 +315,21 @@ line at all (one line for sixteen hits says it may be wearer-only). If they
 do not, a tank without Mimic and without an observed DS landing shows no
 shield card on anyone else's overlay — the honest direction.
 
+## Night timeline, Central HUD, reuse timers — asked and designed (Hitya, 2026-09-13)
+
+Hitya, mid-raid: *"we need to plan out a visualization of the mobs and trash in
+the night, full timeline view"*; a *"central hud that would outline your
+character with hits and misses, current target's name and health, your own
+health and mana totals"*; and *"a configurable 'How Many ____ Casts left' or
+timers for critical class components"* — *"mend, kick, etc lay hands AA
+cooldowns, discs"*. Design with options and costs in
+`docs/DESIGN-night-timeline-and-central-hud.md`. Standing constraints carried
+in: the timeline is web (variants on `b.wolfpack.quest`, Hitya picks); the
+overlays wait for the mini-mode picks. The Mend / Lay on Hands / Harm Touch
+lines were read straight from the parser and the spell catalog (Hitya: "these
+could be read directly") — 72-minute recasts on all three touches, landing text
+in `eqemu_spells`; only Divine Arbitration needs an authored reuse.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
@@ -322,6 +337,7 @@ shield card on anyone else's overlay — the honest direction.
 | Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
 | Lord Mobsincamp — local assistant as the members' search | **designed 2026-09-12** (`docs/DESIGN-lord-mobsincamp.md`); name decided + configurable (`ASSISTANT_NAME`); nothing built | Hitya's four calls (§9): broker vs tunnel; IPv4 add-on for a live replica; hosted-model bridge / fallback; accept the desktop (where the P40 actually is, 2026-09-12 — not Tower) as the model host, up when that PC is. Then Phase 0 = tool service + site UI |
 | Zeal: put Target of Target on the pipe | **patch drafted 2026-09-12** (`docs/zeal-tot-pipe.patch`, applies to v1.4.7, NOT compiled here; PR text in `docs/zeal-tot-pipe-request.md`). **Consumer side LIVE on `beta` (agent 3.6.40, 2.6.8-beta.3):** Mimic sanitizes the two keys, the agent folds the answer into `observed_tanks` (raid-wide via the bot's #194 clustering) and patches the Extended Target row that is my own target (`mob_victim_source`, `mob_hit_by`), the overlay marks 🎯 / → / ⚔ | Hitya builds the Zeal patch locally and opens the PR; nothing shows until a Zeal that carries it is released. Bot follow-up (main): store `target_of_target` / `target_hit_by` on `character_live_state` and prefer authoritative connects in the clustering |
+| Night timeline · Central HUD · reuse timers + casts-left | **designed 2026-09-13**, `docs/DESIGN-night-timeline-and-central-hud.md`; nothing built | Hitya picks: ring vs strip HUD; night view on the review page or its own route; Cooldowns class presets. Then timeline first (web, beta `?v=a`/`?v=b`), overlays after the mini picks |
 | Tank overlay shield card credited 150-point procs as the tank's DS | **on `beta` 2026-09-13 (agent 3.6.41, 2.6.8-beta.4).** A hit is a shield only when the log names one on that mob in the same second, or the tank's known DS buffs vouch for the amount; held for the pair window, re-added decided | watch the next raid's Tank overlay + `encounter_combat_rollup` `ds:*` keys — small named shields only; measure whether bystanders ever see the flavor line; graduate with the next stable |
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
