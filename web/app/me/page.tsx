@@ -1284,7 +1284,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               </div>
             </div>
             <p className="text-dim text-[11px] mt-3">
-              Ranked by total damage parsed in the last 30 days. Tanking &amp; healing categories coming once we persist those stats.
+              Ranked by total damage in raid fights (seven or more of us on the mob) over the last 30 days. Tanking &amp; healing categories coming once we persist those stats.
             </p>
           </section>
         );
