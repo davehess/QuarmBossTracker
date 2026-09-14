@@ -283,6 +283,38 @@ against the first live kills after 10-01. The overlay notes that had carried
 the detail on beta were reverted the same day; they return when the notes are
 official.
 
+## Damage shields need evidence, not adjacency (Hitya, 2026-09-13)
+
+Hitya, on the Tank overlay during Kaas Thox: *"This is misleading, i don't
+think he's getting thorns damage returned, or we're not seeing it. These look
+like 150 dd procs."* Confirmed in the rollup: sixteen anonymous hits of exactly
+150, spread over five raiders as `ds:non-melee`, one flavor line all fight.
+The agent had credited any anonymous `was hit by non-melee` on a mob to
+whoever that mob connected on in the last 1.5 s — and a boss connects on the
+tank every second, so nearly every proc and direct-damage spell in range
+became the tank's shield.
+
+**The call:** the swing names the only possible wearer; it never proves the
+hit was a shield. A hit is a damage shield only when the log names one on
+that mob within the one-second pair window (`was pierced by thorns.`), or the
+tank is known to wear a DS buff and the amount fits it (+30 per hit for
+worn/AA shield we cannot see — era shields return single digits to a few
+dozen, so a 150 fails even with a same-second flavor line). Uncorroborated
+hits fall where they always did outside the window: the parser's own column.
+That column's older ambiguity (a bystander's proc looks like mine) is a
+separate, known limitation — not widened, not fixed here. Overlay copy no
+longer guesses "likely worn gear/AA".
+
+Landed on `beta` as agent 3.6.41 (2.6.8-beta.4): the candidate is held out of
+the fight for the pair window and re-added decided, so the live meter, the
+upload rollup and the overlay tally see it once, already attributed
+(`_settleDsPending`, `_knownDsPerHitFor`; `test/ds-attribution.test.js`,
+mutation-checked — the "always credit" mutant fails five of eleven).
+Open question the data cannot answer yet: whether bystanders see the flavor
+line at all (one line for sixteen hits says it may be wearer-only). If they
+do not, a tank without Mimic and without an observed DS landing shows no
+shield card on anyone else's overlay — the honest direction.
+
 ## Open — read this first
 
 | Item | Where it stands | Next |
@@ -290,6 +322,7 @@ official.
 | Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
 | Lord Mobsincamp — local assistant as the members' search | **designed 2026-09-12** (`docs/DESIGN-lord-mobsincamp.md`); name decided + configurable (`ASSISTANT_NAME`); nothing built | Hitya's four calls (§9): broker vs tunnel; IPv4 add-on for a live replica; hosted-model bridge / fallback; accept the desktop (where the P40 actually is, 2026-09-12 — not Tower) as the model host, up when that PC is. Then Phase 0 = tool service + site UI |
 | Zeal: put Target of Target on the pipe | **patch drafted 2026-09-12** (`docs/zeal-tot-pipe.patch`, applies to v1.4.7, NOT compiled here; PR text in `docs/zeal-tot-pipe-request.md`). **Consumer side LIVE on `beta` (agent 3.6.40, 2.6.8-beta.3):** Mimic sanitizes the two keys, the agent folds the answer into `observed_tanks` (raid-wide via the bot's #194 clustering) and patches the Extended Target row that is my own target (`mob_victim_source`, `mob_hit_by`), the overlay marks 🎯 / → / ⚔ | Hitya builds the Zeal patch locally and opens the PR; nothing shows until a Zeal that carries it is released. Bot follow-up (main): store `target_of_target` / `target_hit_by` on `character_live_state` and prefer authoritative connects in the clustering |
+| Tank overlay shield card credited 150-point procs as the tank's DS | **on `beta` 2026-09-13 (agent 3.6.41, 2.6.8-beta.4).** A hit is a shield only when the log names one on that mob in the same second, or the tank's known DS buffs vouch for the amount; held for the pair window, re-added decided | watch the next raid's Tank overlay + `encounter_combat_rollup` `ds:*` keys — small named shields only; measure whether bystanders ever see the flavor line; graduate with the next stable |
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
 | Graphify of the codebase | **decided 2026-09-13 (Hitya): keep a regen script, keep the outputs out, do not install the hook.** `scripts/graphify.sh` (also `npm run graphify`) rebuilds `graphify-out/` (gitignored) in ~30 s from the tracked tree minus the vendored skills; `--portable` writes an artifact-publishable copy. Honest scope: "who calls X / what does X reach" with line numbers, plus import cycles; blind to config keys threaded through code, cross-process payload contracts and `#if 0` C++ | none — rebuild when a call-chain question comes up; HOW-ITS-BUILT stays the index of intent |
