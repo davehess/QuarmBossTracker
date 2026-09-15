@@ -9945,6 +9945,22 @@ const _MOB_CLASS_NAMES = {
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
   13:'Magician', 14:'Enchanter', 15:'Beastlord', 16:'Berserker',
 };
+// eqemu_npc_types.gender — the one field that tells Plane of Hate's two
+// a_forsaken_revenant bodies apart (Hitya 2026-09-15: "Female forsaken
+// revenant are enchanters, but show up as magicians"). 76004 is male +
+// Magician, 76005 female + Enchanter, identical in every other stat.
+const _GENDER_NAMES = { 0: 'male', 1: 'female', 2: 'neuter' };
+// A `gender` hint on the mob-info request: 0/1/2 or male/female/neuter.
+// Nothing sends it yet — the Zeal pipe's target object is {id, name} — but
+// the moment it does, the exact body wins over the class-ambiguous pair.
+function _parseGender(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase();
+  if (t === '' ) return null;
+  if (t === '0' || t === 'male' || t === 'm') return 0;
+  if (t === '1' || t === 'female' || t === 'f') return 1;
+  if (t === '2' || t === 'neuter' || t === 'n') return 2;
+  return null;
+}
 function _normMobName(n) {
   // Strip the "'s corpse" suffix BEFORE normalizing punctuation so a target
   // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
@@ -13945,7 +13961,8 @@ async function _handleAgentMobInfo(req, res) {
   // same-name mob in another zone re-resolves instead of serving a stale row.
   const zoneMap = await _liveZoneMap();
   const reqZoneId = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_id ?? null) : null;
-  const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*');
+  const reqGender = _parseGender(new URL(req.url, 'http://x').searchParams.get('gender'));
+  const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '');
 
   const cached = _mobInfoCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < (cached.ttl || _MOB_INFO_TTL_MS)) {
@@ -13972,7 +13989,7 @@ async function _handleAgentMobInfo(req, res) {
     // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
     // ceiling over the catalog's largest real-name cluster (34 rows; only the
     // junk "_" names go higher) so the payload stays bounded.
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=200`;
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,gender&limit=200`;
     const rows = await supabase.select('eqemu_npc_types',
       `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
     // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
@@ -13981,7 +13998,25 @@ async function _handleAgentMobInfo(req, res) {
     // zone that holds ONLY the placeholder body can fall through to the real
     // row instead of serving the un-killable one.
     const picked = mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId });
-    const r = picked.row;
+    let r = picked.row;
+    // Same name, different CLASS, told apart in game only by sex (Hitya
+    // 2026-09-15, Plane of Hate's revenants). List every (class, sex) the
+    // candidates carry; when they disagree on class the overlay shows the
+    // pair rather than the winner's class as fact, and a `gender` hint on
+    // the request picks the exact body once the pipe can supply one.
+    const cands = Array.isArray(picked.candidates) && picked.candidates.length ? picked.candidates : (r ? [r] : []);
+    const classVariants = [];
+    for (const c of cands) {
+      const cls = _MOB_CLASS_NAMES[c.class] || null;
+      if (!cls) continue;
+      const g = _GENDER_NAMES[c.gender] ?? null;
+      if (!classVariants.some(v => v.class === cls && v.gender === g)) classVariants.push({ class: cls, gender: g, id: c.id ?? null });
+    }
+    const classAmbiguous = new Set(classVariants.map(v => v.class)).size > 1;
+    if (classAmbiguous && reqGender != null) {
+      const exact = cands.find(c => Number(c.gender) === reqGender && _MOB_CLASS_NAMES[c.class]);
+      if (exact) r = exact;
+    }
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
       // real published drop rate accounting for table_probability + lootdrop
@@ -14208,6 +14243,11 @@ async function _handleAgentMobInfo(req, res) {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
+        gender:  _GENDER_NAMES[r.gender] ?? null,
+        // Every (class, sex) this name resolves to; class_ambiguous is true
+        // when they disagree on class — the overlay then shows the pair.
+        class_variants:  classVariants,
+        class_ambiguous: classAmbiguous,
         level:    r.level ?? null,
         maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,

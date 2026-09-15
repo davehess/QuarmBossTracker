@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.127': [
+    '**Mob Info stops guessing between two bodies with one name.** Plane of Hate\u2019s forsaken revenants are a male Magician and a female Enchanter with nothing else different. When a name is two classes, Mob Info now shows both (\u201cMagician \u2642 / Enchanter \u2640\u201d) instead of picking one; the exact body comes once Zeal sends the target\u2019s sex.',
+  ],
   '3.1.126': [
     '**Tell relay: the arrow now points from whoever spoke.** A tell you received reads \u201c**Fandango** \u2192 Hitya\u201d and one you sent reads \u201cHitya \u2192 **Fandango**\u201d, so the left name is always the speaker. It used to draw received tells as \u201cFandango \u2190 Hitya\u201d, which reads backwards.',
   ],
