@@ -76,3 +76,26 @@ arrow becomes authoritative for your own target, and the cross-Mimic relay makes
 every raider's answer visible to everyone. Ties into the open "null a
 `target_id` of 0 at the edge" item — the new keys use omission, not 0, so no
 sentinel handling is needed for them.
+
+
+---
+
+## Second ask, same message: the target's race and gender (2026-09-15)
+
+**Why.** Plane of Hate's `a forsaken revenant` is two NPCs with one name — a
+male Magician and a female Enchanter, identical in level, HP, model and
+specials. The only in-game tell is the sex of the body you are looking at, and
+the pipe's target object is `{id, name}`, so a companion tool cannot say which
+one you have. It is not a one-off: any zone that reuses a name across two class
+variants has the same hole, and the catalog rows differ only in `gender`.
+
+**What.** Two more keys on the `player` message's `target` object, both from
+the target `Entity`: its race id and its gender (0 male, 1 female, 2 neuter —
+the same values the server's `npc_types` uses). Omit them when there is no
+target, like `target_id`. No new packets, no new state — the entity is already
+in hand where `target_id` is written.
+
+**Our side.** Mimic passes `target.gender` / `target.race` to the agent; the
+agent adds `gender=` to its mob-info lookup; the bot already honours that hint
+(3.1.127) and picks the exact catalog body. Until then Mob Info shows both
+classes on a disagreement.
