@@ -515,7 +515,19 @@
     emptyEl.style.display = 'none';
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
-    var cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
+    // Two bodies share this name and differ in CLASS; only the sex tells them
+    // apart in game (Hitya 2026-09-15, Plane of Hate's forsaken revenants:
+    // male Magician, female Enchanter). Until Zeal puts the target's sex on
+    // the pipe, show the pair rather than one class as fact.
+    var cls = '';
+    if (mob && mob.class_ambiguous && mob.class_variants && mob.class_variants.length > 1) {
+      var sym = { male: '\u2642', female: '\u2640', neuter: '\u26b2' };
+      cls = ' <span class="cls" title="Two versions of this mob share the name; the sex tells them apart in game">('
+          + mob.class_variants.map(function (v) { return esc(v.class) + (sym[v.gender] ? ' ' + sym[v.gender] : ''); }).join(' / ')
+          + ')</span>';
+    } else if (mob && mob.class) {
+      cls = ' <span class="cls">(' + esc(mob.class) + ')</span>';
+    }
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
