@@ -300,6 +300,11 @@ function pickAndMergeMobRows(rows, opts) {
 
   return {
     row: primary.row,
+    // The candidate rows in primacy order — so a caller can see when the
+    // same name is several bodies that differ in CLASS (Plane of Hate's
+    // a_forsaken_revenant: male Magician, female Enchanter, nothing else
+    // different) and say so instead of showing the winner's class as fact.
+    candidates: ordered.map((a) => a.row),
     specials,
     scope,
     variants: ordered.length,
