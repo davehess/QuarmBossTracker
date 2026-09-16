@@ -41,10 +41,10 @@ release, no new stream, and it works on **history**.
 
 | install | rows | `min(lag)` | consensus estimate |
 |---|---:|---:|---:|
-| `2722…6416` (Fargan) | 3,744 | **43.5s** | 42.3s |
-| `1706…9824` (Bardtholemu) | 7,950 | **10.2s** | 14.0s |
-| `6333…7023` (**Stupidrichard**/Calador/Tildias) | 4,591 | **3.3s** | **none — never measured** |
-| every other install (18) | — | ≤ 1.8s | ≈ 0 |
+| install A | 3,744 | **43.5s** | 42.3s |
+| install B | 7,950 | **10.2s** | 14.0s |
+| install C | 4,591 | **3.3s** | **none — never measured** |
+| every other install | — | ≤ 1.8s | ≈ 0 |
 
 Two things fall out:
 

@@ -54,7 +54,7 @@ Consequences worth planning around:
 
 Assembled 2026-07-08 from CoastalRedwood/Zeal `named_pipe.cpp` (the
 `LabelNames` / `GaugeNames` maps) cross-checked against live side-by-side
-captures (Canopy the druid, Manamana the cleric — dashboard char-info dump vs
+captures (a druid and a cleric — dashboard char-info dump vs
 the in-game stats window). **The label/gauge ids are NOT Zeal inventions and
 are not documented in Zeal's repo** — they are the classic EQ client UI
 "EQType" ids from the original UI XML system. Zeal iterates its fixed maps,
