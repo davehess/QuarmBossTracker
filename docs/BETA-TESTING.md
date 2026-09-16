@@ -67,7 +67,7 @@ backlog rather than scrolling the whole ledger.
 
 | Row | Why it is still open |
 |---|---|
-| **#74 / #118 kill switch + version floor** | Hitya 2026-08-09: *"I have not messed with kill switches."* `flag_agent_kill` and `min_agent_ver_num` have never appeared in the tuning map. The conservative-v1 sign-off never happened. **The lever you'd reach for in an incident is the one nobody has pulled.** |
+| **#74 / #118 kill switch + version floor** | the guild lead 2026-08-09: *"I have not messed with kill switches."* `flag_agent_kill` and `min_agent_ver_num` have never appeared in the tuning map. The conservative-v1 sign-off never happened. **The lever you'd reach for in an incident is the one nobody has pulled.** |
 | **#115 reporter swap / include** | No `reporter_pin_*` or `reporter_extra_*` key has ever been written |
 | **#72 P1b `dedup_buffs`** | Flag never set, defaults OFF → buff-landing election has never run |
 | **#72 P1c `dedup_roster`** | Flag never set, defaults OFF → roster election has never run |
@@ -200,11 +200,11 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
 
 **1. Clock skew is visible and actionable — and the clocks are DRIFTING.**
 - ⚠️ **Do this before the raid.** Three machines, everyone else fine (18 of 21
-  uploaders sit within ±3s): **Fargan's** is **~56s behind** and has been
+  uploaders sit within ±3s): **a member's** is **~56s behind** and has been
   sliding for **at least a month** without ever being corrected;
-  **Bardtholemu's** is ~22s behind — and here's the kicker: it **was synced to
+  **a member's** is ~22s behind — and here's the kicker: it **was synced to
   correct on Jul 26–27 and was 11s off again two days later**, so a one-time
-  "fix your clock" provably does not hold; the third is **Stupidrichard's**
+  "fix your clock" provably does not hold; the third is **a member's**
   machine (~7s, same sync-then-drift cycle — and he's on the DI callout
   roster). They need Windows time sync ON, not a one-off sync: Settings → Time
   & language → Date & time → "Sync now" + "Set time automatically"; if it
@@ -228,11 +228,11 @@ Mimic **2.3.0** (**beta** — testers must update) · web **1.1.2**.
   (`utils/clockOffset.js` + `_resolveClockOffsetMs`), so death dedup, phantom
   suppression, the Discord card, the parse page and the timelines all became
   correct with no consumer changes — that is what closed the death **overcount**
-  (`STATUS.md` R1; Fargan measured at 59,224 ms, nearly double the 30s dedup
+  (`STATUS.md` R1; a member measured at 59,224 ms, nearly double the 30s dedup
   window). It does **not** close this row: offsets are a drifting time series,
   the correction is only as good as the current pulse estimate, and the
   `consensus` estimator has **zero write sites** and is frozen at 2026-08-04
-  (it reads Fargan at 42s where pulse reads 63.5s) — so the "both rows agree"
+  (it reads a member at 42s where pulse reads 63.5s) — so the "both rows agree"
   check above cannot pass on its own terms right now. The three machines still
   need Windows time sync **ON**, not a one-off sync.
 - **This row is load-bearing elsewhere, which is why it stays open.** Bot
@@ -255,7 +255,7 @@ below stay as stable-fleet regression checks. Post-raid audit query is still
   `confirmed`** (the corpse-run tail back-patches it). Get a rez instead and it
   stays unconfirmed — **that's correct**, not a bug.
 - 👥 **Multi:** one player dies with 5+ Mimic users present. **Pass = ONE row on
-  the parse card, not one per observer.** This is the Uilnayar case; it may still
+  the parse card, not one per observer.** This is the a member case; it may still
   fail until #202 lands, and if it does, capture the timestamps — that IS the
   measurement #201 needs.
   - **Update 2026-08-09:** #202 **did** land, as ingest-time correction in bot
@@ -310,7 +310,7 @@ night's tally.
   all 89 trash entries landed **after** the last boss died, because
   `isRaidNightAt()` is deliberately open-ended at the tail. `trashBoundsFor()`
   now bounds the tally to [first pull, last CONFIRMED kill] ± a 15-min grace —
-  the DKP-tick line, per Hitya — and returns `{}` mid-raid when nothing is dead
+  the DKP-tick line, per the guild lead — and returns `{}` mid-raid when nothing is dead
   yet. `STATUS.md` R4.
 
 **5. `raid_nights` links the night's encounters.** After the raid, the night row
@@ -363,7 +363,7 @@ match. Don't score this row until then.
   ⏳ **Still unscored**: Vex Thal ran on 08-05, before the fix.
 
 **12. Feeblemind in/out will NOT be exercised** — that's Thought Horror
-Overfiend, and Hitya's note was "at least a week and a half" out. Don't score
+Overfiend, and the guild lead's note was "at least a week and a half" out. Don't score
 it as a failure this week.
 - **2026-08-09:** still no recorded Overfiend pull, so still unscored — but the
   reason has changed. It is no longer *structurally* dead (same anchor fix as
@@ -592,7 +592,7 @@ has no recorded result.
 
 **What changed:** the DKP figure on the 💰 Loot bidding card used to be an
 estimate our server pieced together from the OpenDKP mirror (ticks + adjustments
-− loot), which could be well off — Hitya's family showed **−123** (and a
+− loot), which could be well off — the guild lead's family showed **−123** (and a
 recompute **711**) when the real OpenDKP balance was **171**. It now comes
 straight from OpenDKP's standings — your account's **Current DKP** — so it
 matches the OpenDKP site to the number. If OpenDKP can't be reached for a moment
@@ -625,7 +625,7 @@ catch it**:
 > ⚠ **"Wishlist prune" (case 2) was BROKEN from the day it shipped.**
 > `bid-history` seeded the already-won set from `wins` — an
 > `opendkp_loot … order=fetched_at.desc&limit=100` query. Any family past 100
-> awards (Hitya's has **187**) had the other 87 come back as "bid on but not yet
+> awards (the guild lead's has **187**) had the other 87 come back as "bid on but not yet
 > won" *and* as Recent misses; the three reported items sat at rows 101, 120 and
 > 184. Worse, `fetched_at` is the **mirror sync** time, so *which* 100 survived
 > would reshuffle on every weekly sync. **A capped DISPLAY query must never
@@ -715,7 +715,7 @@ character now, so the 🐺 lights on the alt you are actually online as.
    goes stale (unchanged).
 3. **The fleet table + /who 🐺 name the character you're actually on.** The
    heartbeat reports the live character; the 📡 Reporters CHARACTER column shows
-   "**Canopy (Hitya)**" (alt with the main in parens) while you're on the alt and
+   "**a member (the guild lead)**" (alt with the main in parens) while you're on the alt and
    the plain primary when idle, and the /who wolf lights on the alt you're online
    as, not just your primary. The main-in-parens honors the same officer
    `hide_main_names` list as #111.
@@ -891,7 +891,7 @@ particular raider's zone is unknown, that data is shown, never hidden.
   zone: their target drops off the other's list within a couple of seconds.
 - Turn the toggle **OFF** on one raider while they're in a different zone from the
   other — they should now see the other raider's target again (all zones), while
-  the raider who left it ON still sees only their own zone.
+  The raider who left it ON still sees only their own zone.
 
 ## #118 — In-console officer kill switches + Mimic version in the fleet table
 
@@ -900,7 +900,7 @@ Officer-only — you must be signed into Mimic as an officer to see any of this.
 
 > ### ⏳ STILL UNVERIFIED as of 2026-08-09 — and now confirmed, not assumed
 >
-> **Hitya, 2026-08-09: *"I have not messed with kill switches."*** The code has
+> **the guild lead, 2026-08-09: *"I have not messed with kill switches."*** The code has
 > been live for the whole fleet for weeks (agent 3.3.95 → **3.5.54**), but
 > **nobody has ever flipped one.**
 >
@@ -1010,7 +1010,7 @@ the `who.html` overlay in Mimic **1.9.6** beta.
 **Status (2026-08-09): ✅ live for the whole fleet** (agent 3.3.93 →
 **3.5.54**). ⏳ No result recorded, but the officer hide-list case has a real
 value to check against: `overlay_tuning.hide_main_names` is live in production
-and currently holds exactly **`Tildias,Serreth`** (verified 2026-08-09) — so
+and currently holds the opted-out names (verified 2026-08-09) — so
 those two must show no main on anyone's /who, and adding/removing a third name
 is the round-trip test.
 ⚠ **The "Known limit" paragraph at the end of this entry is OBSOLETE** — #119
@@ -1026,7 +1026,7 @@ the guild tag. (3) A guildmate who's /anon shows the level we know from our own
 who history, rendered dimmed/italic so you can tell it didn't come from the game.
 (4) Wolf Pack alts show their main in parentheses after the character name, from
 `characters.main_name` — with a server-enforced privacy exception (`hide_main_names`
-tuning key; seeded with **Tildias** and **Serreth**, who never show a main). The
+tuning key; seeded with **a member** and **a member**, who never show a main). The
 bot supplies all four via the existing `who-lookup` endpoint; if the bot is
 unreachable the overlay renders exactly as it did before.
 
@@ -1048,7 +1048,7 @@ unreachable the overlay renders exactly as it did before.
 - Two raiders on separate machines both running Mimic: each sees the OTHER's 🐺
   on their /who within ~a minute of both being live.
 - **Hide list (officer):** add a name to `hide_main_names` in the `overlay_tuning`
-  row (MCP/SQL update — comma-separated, e.g. `Tildias,Serreth,Newname`). Within
+  row (MCP/SQL update — comma-separated list of character names). Within
   ~60s (bot tuning cache) + the agent's who-lookup refresh, that character's **(Main)
   disappears** from everyone's /who while its 🐺 (if running Mimic) stays. Removing
   the name brings the main back.
@@ -1152,7 +1152,7 @@ widget).
 > used it.** Production `overlay_tuning.tuning` carries no `reporter_pin_*` and
 > no `reporter_extra_*` key — the only two keys in the row are
 > `hide_main_names` and `flag_ext_pos_off` — so no swap and no include has ever
-> been written. Hitya, 2026-08-09: *"I have not messed with kill switches"*
+> been written. The guild lead, 2026-08-09: *"I have not messed with kill switches"*
 > covers this panel; it lives in the same 🛡 Admin tab and writes the same tuning
 > map.
 >
@@ -1203,7 +1203,7 @@ Mimic/agent change.
 > (`GREATEST(window_start, first_attended)`, per-family), where before every
 > member was measured against all 1,492 guild ticks ever. That under-reported
 > everyone who joined after the guild started, worst for the newest people —
-> Gonner went **64% → 100%**, which matches ground truth (he has never missed a
+> a member went **64% → 100%**, which matches ground truth (he has never missed a
 > tick). Migration
 > `20260808030000_attendance_denominator_member_floor.sql`;
 > `DECISIONS-2026-08-07.md` → Attendance. **Do not compare the Family RA% table
@@ -1578,7 +1578,7 @@ floor** on `/admin/overlays` → 🛑 Kill switches, served over the agent's 20s
 reporter-poll (and the 2-min guild-trigger backup). Beta Mimic installs now
 **hot-swap along the beta agent line** via the per-channel manifest, guarded by
 crash-loop **auto-rollback to last-known-good**. **⚠ Policy semantics are
-conservative v1 — Hitya to sign off before relying on kill/floor in a real raid.**
+conservative v1 — the guild lead to sign off before relying on kill/floor in a real raid.**
 
 ### ✅ Solo (one machine)
 1. **Kill switch pauses the fleet, cleanly.** On `/admin/overlays`, check
@@ -1621,11 +1621,11 @@ conservative v1 — Hitya to sign off before relying on kill/floor in a real rai
 
 **Status:** ⏳ **STILL UNVERIFIED as of 2026-08-09, and the sign-off never
 happened.** Three things, all confirmed rather than assumed:
-1. **The kill switch and the version floor have never been used.** Hitya,
+1. **The kill switch and the version floor have never been used.** the guild lead,
    2026-08-09: *"I have not messed with kill switches."* Production
    `overlay_tuning.tuning` has never carried `flag_agent_kill` or
    `min_agent_ver_num` — the row holds two unrelated keys. The **"⚠ Policy
-   semantics are conservative v1 — Hitya to sign off"** caveat above therefore
+   semantics are conservative v1 — the guild lead to sign off"** caveat above therefore
    **still stands, unchanged, weeks later**. Nothing should depend on this lever
    in a real raid until solo cases 1–2 have been run once, off-raid.
 2. **The 👥 beta hot-swap case has effectively no testers.** Beta adoption is
@@ -1756,7 +1756,7 @@ with no evidence at all.
    "pattern not exercised (gauge condition)".
 3. **Sticky critical callouts** — an officer can tick **📌 Sticky** on a guild
    trigger (`/admin/triggers`); the alert then pins on the trigger overlay until
-   the raider clicks it away (or ~5 min), instead of the 3.5s fade. Backward-
+   The raider clicks it away (or ~5 min), instead of the 3.5s fade. Backward-
    compatible — older agents ignore the field.
 4. **Ghost-callout TTL** — a relayed fire that arrives >15s after it originally
    fired (queue backlog replayed late) is dropped and journalled "stale-skipped"

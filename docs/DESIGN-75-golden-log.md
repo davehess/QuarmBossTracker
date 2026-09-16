@@ -302,7 +302,7 @@ raid to prove the whole chain is alive". Splitting it by side effects:
 
 ### Already exists (found while building this — index it)
 
-`_preRaidHealthCheck()` in `index.js` (~line 9260, Hitya 2026-07-13) already
+`_preRaidHealthCheck()` in `index.js` (~line 9260, the guild lead 2026-07-13) already
 runs at 19:30 ET on raid nights and posts one green/red line to Discord, probing
 the Discord gateway, Supabase REST, GoTrue, and `wolfpack.quest/api/health`, with
 a `bot_kv` once-per-day latch. **It is not in `docs/HOW-ITS-BUILT.md`** — which is
@@ -330,7 +330,7 @@ deploy freeze. Exits non-zero if any probe is red.
    Skipped (not failed) without a token.
 5. **`GET wolfpack.quest/api/health`.**
 
-### Designed, NOT enabled — the write-path drill (needs Hitya's sign-off)
+### Designed, NOT enabled — the write-path drill (needs the guild lead's sign-off)
 
 The read-only drill cannot prove the half that actually breaks: agent → bot →
 Supabase → Discord parse card. The natural extension is to POST the golden log's
@@ -348,7 +348,7 @@ proof and reuse the fixture that already exists. It is not enabled because it
   `/parsestats`, leaderboards, and the data floor).
 
 Those are all bot-side (`index.js`) changes, which this task deliberately did not
-touch. **Officer call for Hitya: do we want a write-path drill at all, given it
+touch. **Officer call for Guild lead: do we want a write-path drill at all, given it
 puts synthetic rows in `encounters`?** The read-only drill plus the golden CI
 already covers the failure modes we have actually seen; the write drill covers
 "the bot accepted it but Discord never showed a card", which we have not.

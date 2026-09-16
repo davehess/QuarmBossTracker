@@ -36,7 +36,7 @@ folly** — it's here.*
 |---|---|---|
 | `DESIGN-platform-queue.md` | The post-audit wave plan + agreed execution order | **The live queue.** |
 | `RUNBOOK-site-access.md` | Officer procedure: getting a member in when Discord sign-in won't work — site invite + Mimic code, reset-via-reinvite, troubleshooting | **The no-Discord door.** First live use 2026-08-25 |
-| `TOWER-coolify-and-supabase-backups.md` | **The overview of Tower** (Hitya's Unraid box): the nightly Supabase backup, the local stack + archive merge, the Coolify VM + local site, what is verified vs ⚠ unverified, the restore cases, a five-minute health check, the open list. Sits on top of the two runbooks below | Written 2026-09-04 at Hitya's request; the runbooks stay authoritative for steps and traps |
+| `TOWER-coolify-and-supabase-backups.md` | **The overview of Tower** (the guild lead's Unraid box): the nightly Supabase backup, the local stack + archive merge, the Coolify VM + local site, what is verified vs ⚠ unverified, the restore cases, a five-minute health check, the open list. Sits on top of the two runbooks below | Written 2026-09-04 at the guild lead's request; the runbooks stay authoritative for steps and traps |
 | `DESIGN-lord-mobsincamp.md` | The members' assistant: local model on Tower over the archive, tool-only reads, broker exposure, read failover + offload, `ASSISTANT_NAME` | **Designed 2026-09-12; four calls pending** |
 | `BETA-TESTING.md` | Test plan for features in the beta channel (versions + ✅ solo / 👥 multi-person cases) | **Where to verify beta work.** |
 | `DESIGN-buff-debuff-queue.md` | Design spec for the raid buff/debuff/cure queue overlay | CLAUDE.md roadmap ref; feature is live but spec still guides changes |
@@ -65,7 +65,7 @@ folly** — it's here.*
 | `DECISIONS-2026-08-07.md` | **The decision record** for the 2026-08-07→09 sessions: storage/threat, attendance, release process, Zeal `/tag`, loot bidding, the `{s}` P1, the beta re-sync — each as *the call · why · where it landed*, with an "Open — read this first" table at the bottom | Read FIRST via the SessionStart digest; newest `DECISIONS-*.md` wins |
 | `DECISIONS-2026-08-13.md` | Dashboard navigation: the sidebar + the tab split, why the split carves by the QUESTION a card answers rather than by card count, and what deliberately stayed put (crash card on Info, the whole Dashboard tab) | Current — carries the live "Open — read this first" table |
 | `DESIGN-SKILLS.md` | Which design skills are installed, what each ACTUALLY earned (incl. impeccable's 357k-line documenter failure and its one real finish-review catch), what to load for a new dashboard, and the open palette question | Written 2026-09-16 |
-| `DESIGN-night-timeline-and-central-hud.md` | Night timeline (web), Central HUD + reuse timers / casts-left (Mimic) — inventory of what exists, options with four-number costs, order | Designed 2026-09-13; nothing built; Hitya's picks pending |
+| `DESIGN-night-timeline-and-central-hud.md` | Night timeline (web), Central HUD + reuse timers / casts-left (Mimic) — inventory of what exists, options with four-number costs, order | Designed 2026-09-13; nothing built; the guild lead's picks pending |
 | `DESIGN-fight-timeline.md` | Fight timeline v2 — boss HP curve + MT/RAMP swimlanes + class/player highlighting; the data audit, the two paid-for correctness traps, and the two-tier storage model | Data layer BUILT 2026-08-09; chart unbuilt. ⚠ its 2026-08-06 "CORRECTION" block is WRONG and is flagged in-place |
 | `zeal-tag-spawn-id-collision.md` | Measured upstream bug report: why `/tag` spawn ids collide across zones, quantified, with N=5+ same-name evidence | Drafted, NOT sent (with `zeal-spawn-id-request.md`) |
 
@@ -93,32 +93,32 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
-- **✅ Code graph on demand (`scripts/graphify.sh`, 2026-09-13).** Rebuilds a graphify call graph of the tracked tree in ~30 s into gitignored `graphify-out/`; outputs stay out of the repo and the Claude hook is not installed (Hitya's call). Good for "who calls X" and cycles; blind to config keys, cross-process payloads and `#if 0`.
-- **📐 Design-skill ledger written (2026-09-16).** Hitya, starting a dashboard in another session: *"can you outline those … which you'd use if we rearchitected with more stylization and less generic AI formatting."* `docs/DESIGN-SKILLS.md`: the three vendored skills and their precedence, an honest per-skill impact ledger (impeccable's finish reviewer caught four shipped hero defects on 2026-08-28; its documenter produced 357,109 unusable lines; its two hooks surfaced nothing in a heavy UI session), the load order for a dashboard (`frontend-design` first, `dataviz` before the first chart, detectors + finish review, `ponytail` last), and the one decision that gates real stylization — our palette is GitHub Primer dark and that is Hitya's call, not a refactor to slip in.
-- **✅ Mob Info: a name that is two bodies of two classes shows both (bot 3.1.127 + Mimic 2.6.9-beta.3, 2026-09-15).** Hitya, Plane of Hate: *"Female forsaken revenant are enchanters, but show up as magicians … we have the model ID and sex, we should be able to differentiate."* `a_forsaken_revenant` is 76004 (male, Magician) and 76005 (female, Enchanter), identical otherwise; the row-picker returned one and mob-info reported its class as fact. Now `pickAndMergeMobRows` also returns its candidates, mob-info lists every (class, sex) as `class_variants` with `class_ambiguous`, and the overlay shows "Magician ♂ / Enchanter ♀" on a disagreement. Exact pick needs the target's sex: the Zeal pipe's target object is `{id, name}` today, so a `gender` hint on the request is wired and waiting (added to the Zeal ask in `docs/zeal-tot-pipe-request.md`). `test/mobinfo-class-variants.test.js` runs the real picker on the two live rows.
-- **✅ Tell relay arrows point from the speaker (bot 3.1.126 + agent 3.6.43, 2026-09-14).** Hitya: *"These are still going the wrong direction"* — a tell Fandango sent read "**Fandango** ← Hitya". The stored rows matched the raw log on every line (classification was right); only the drawing was backwards. Both the Discord DM relay and the dashboard's Recent Tells now read SPEAKER → LISTENER: "**Fandango** → Hitya" received, "Hitya → **Fandango**" sent. `test/tell-relay-direction.test.js` runs the real relay against a fake client. Noted, not changed: the DM batches only when at least one tell was received, so your own replies that sit in a batch with no incoming tell are never DMed — by design, the DM is a "you got a tell" nudge; /me/tells has the whole conversation.
-- **⏳ Logsync: import old logs from anywhere on the drive (agent 3.6.42 + Mimic 2.6.8-beta.8 on `beta`, then stable 2.6.8 on `main` the same night, 2026-09-13).** Hitya: *"can we add in a command in mimic logsync to import more logs, or a drag to page to allow you to add that directory or file"*, *"In the onboarding flow we should ask if there are log file backups anywhere else on the drive"*, and *"The other setup items for Quarm should also be at the top there with that main button."* Shipped: the agent keeps a persisted imported-paths list (folders one level deep + a Logs child, or single eqlog-named files; backfill-only, never tailed) and the opt-in scan now reads EVERY watched log's folder, not just the first; `/api/optin` gained `import` / `unimport`; the Setup card's action row (Set up for me + fixers) moved to the top of the card and gained 🗂 Add old log folder / 📄 Add old log files (Mimic-only, native pickers); the Logsync tab lists imports with ✕ Remove and a drop zone (Electron hands real paths via `webUtils.getPathForFile`); onboarding has an optional "Old log backups anywhere else?" card that saves `cfg.importedLogPaths`, handed to the agent once at spawn (`WOLFPACK_IMPORTED_LOGS`). Real-filesystem tests: `test/optin-imported-logs.test.js`; wiring: `test/mimic-log-import.test.js`.
-- **📐 Logsync: import extra logs — asked 2026-09-13 (superseded by the entry above).** Hitya: *"can we add in a command in mimic logsync to import more logs, or a drag to page to allow you to add that directory or file."* Today the opt-in list is only what the EQ folders in Settings contain (`cfg.eqPaths`, each must hold `eqlog_*` files, and each is also live-tailed); there is no single-file import. Two shapes: (A) point the existing multi-folder EQ picker at an archive folder — works now for folders, but that folder is then tailed too; (B) an "Imported logs" list on the Logsync tab — Add folder / Add files via Mimic's native picker (`dialog.showOpenDialog` already exists for folders) plus a drop zone (Electron hands the page real paths; a plain browser cannot), persisted as `cfg.importedLogPaths`, backfill-only, never tailed. Cost B: build med · maint low · runtime low · change low. Recommend B.
-- **✅ The Scrap counts raid fights only (web 1.7.39 + migration `20260914030500`, applied 2026-09-13).** Hitya: *"Chadivarius's 26.8M damage on a non-raid swarm shouldn't be in here for the leaderboards"* — 25.96M of it was one-to-two-player Shik`nar farming. `scrap_damage_leaderboard` admits a fight only when seven or more damage-dealers were credited on it (more than one group) and drops officer-classified encounters as /leaderboards does. Not the raid-night binding: it covers only the scheduled window and 655 raid-sized fights this month sat outside it; floors of 6 and 12 give the same top five. `test/scrap-leaderboard-raid-fights.test.js`.
-- **✅ Header nav: the hovered group floats instead of pushing the page down (web 1.7.39, 2026-09-13).** Hitya: *"the top design on wolfpack.quest jumps around when hovering, it needs to stay in place."* The revealed row was in flow, so every mouseover grew the header by a row. On hover devices it is now absolutely positioned under the chips, flush to the row; touch keeps it in flow so it never covers a phone's first viewport. `test/parse-curve-and-header-fit.test.js`.
-- **✅ /me: the attendance switch is local and the page loads per family, not per character (web 1.7.39, 2026-09-13).** Hitya: *"/me's page is having issues with raid attendance displaying from strips to blocks and when the page loads fresh i get a huge lag spike."* Two causes. The Strips/Blocks picker wrote a cookie and then re-rendered the page from the server — two full loads per click; it is now client state in `app/me/AttendanceSection.tsx` (both layouts' data were already on the page). The fresh load ran ~12 queries per character and the account holds 46 (mains, alts, mules): ~550 round trips, two of them a 385 ms chat count each (stale visibility map on `chat_messages` — vacuumed, now 1.5 ms). Now three family-wide RPCs (`me_chat_counts`, `me_levels`, `me_active_names`, migration `20260914043000`) plus batched loot / wishlist / PvP reads, and the per-character fan-out runs only for names with any parse, upload or rollup row (9 of the 46). `test/me-family-prefetch.test.js`, `test/raid-layout.test.js`. Open: `chat_messages` autovacuum never ran between Aug 9 and today (59k dead rows) — the same heap-fetch cost will creep back; tune its autovacuum or vacuum it from the nightly chain.
-- **⏳ UI Studio: a resize now pins the window (Mimic 2.6.8-beta.7 on `beta`, 2026-09-13).** Abrahms in Discord: *"anyone know how to get these to stop defaulting to huge tooltips. I reset em to small each time"*; Hitya: *"Mine shows similarly."* The Zeal item windows (`ZealItemDisplayN`) carry no Width/Height in their ini sections, and `_buildSaveBundle` wrote a size only for sections that already had one ("never fabricate a size") — so every resize of those windows was dropped on Save, while the same edit on a character whose ini had the keys stuck (Abrahms's paladin vs ranger). A window the user resizes (drag handle or the W/H fields) now gets Width/Height written; untouched auto-size windows still do not. Side panel says which state a window is in. `test/ui-studio-pin-size.test.js` runs the real `_buildSaveBundle`. Workaround on older Mimic: add `Width=`/`Height=` lines under each `[ZealItemDisplayN]` in `UI_<char>_pq.proj.ini` while logged out.
-- **📐 Night timeline, Central HUD, reuse timers — designed (2026-09-13).** Three asks from Hitya on the Sunday raid: a full-night timeline of every mob and trash pull; a central HUD outlining the character with incoming hits/misses plus target name+HP and own HP/mana; configurable "casts left" and reuse timers (Mend, Kick, Lay Hands, AA cooldowns, discs). `docs/DESIGN-night-timeline-and-central-hud.md`: what already exists for each (encounters per night, pipe HP/mana, `defenderStats`, the disc tracker, catalog mana/recast), two or three costed options per piece, recommendation = night strip on the review page · ring HUD with a strip mini · a Cooldowns overlay with class presets, personal triggers as the zero-build interim. Nothing built.
-- **⏳ The Tank overlay's shield card is evidence-based now (agent 3.6.41 on `beta`, 2.6.8-beta.6, 2026-09-13; stable 2.6.8 the same night).** Hitya, reading it on Kaas Thox: *"This is misleading, i don't think he's getting thorns damage returned … These look like 150 dd procs."* The rollup agreed — sixteen hits of exactly 150 spread over five raiders as `ds:non-melee`, one flavor line all fight. Every proc and direct-damage spell from anyone in range logs the same anonymous `was hit by non-melee` line a shield return does, and a boss connects on the tank every second, so the old swing-correlation credited nearly all of them. Now the swing only names the candidate wearer; the hit is a shield when the log names one (`was pierced by thorns.`) or the tank is known to wear a DS buff and the amount fits it (+30 for worn/AA shield). The candidate is held out of the fight for the one-second pair window and re-added decided, so meter, rollup and overlay never see a credit that is later taken back (`_settleDsPending`, `_knownDsPerHitFor`; `test/ds-attribution.test.js`, mutation-checked). Overlay copy no longer guesses "likely worn gear/AA". Uncorroborated anonymous hits fall where they always did outside the window — the parser's own column — which is the older `non-melee` ambiguity, not touched here.
+- **✅ Code graph on demand (`scripts/graphify.sh`, 2026-09-13).** Rebuilds a graphify call graph of the tracked tree in ~30 s into gitignored `graphify-out/`; outputs stay out of the repo and the Claude hook is not installed (the guild lead's call). Good for "who calls X" and cycles; blind to config keys, cross-process payloads and `#if 0`.
+- **📐 Design-skill ledger written (2026-09-16).** the guild lead, starting a dashboard in another session: *"can you outline those … which you'd use if we rearchitected with more stylization and less generic AI formatting."* `docs/DESIGN-SKILLS.md`: the three vendored skills and their precedence, an honest per-skill impact ledger (impeccable's finish reviewer caught four shipped hero defects on 2026-08-28; its documenter produced 357,109 unusable lines; its two hooks surfaced nothing in a heavy UI session), the load order for a dashboard (`frontend-design` first, `dataviz` before the first chart, detectors + finish review, `ponytail` last), and the one decision that gates real stylization — our palette is GitHub Primer dark and that is the guild lead's call, not a refactor to slip in.
+- **✅ Mob Info: a name that is two bodies of two classes shows both (bot 3.1.127 + Mimic 2.6.9-beta.3, 2026-09-15).** the guild lead, Plane of Hate: *"Female forsaken revenant are enchanters, but show up as magicians … we have the model ID and sex, we should be able to differentiate."* `a_forsaken_revenant` is 76004 (male, Magician) and 76005 (female, Enchanter), identical otherwise; the row-picker returned one and mob-info reported its class as fact. Now `pickAndMergeMobRows` also returns its candidates, mob-info lists every (class, sex) as `class_variants` with `class_ambiguous`, and the overlay shows "Magician ♂ / Enchanter ♀" on a disagreement. Exact pick needs the target's sex: the Zeal pipe's target object is `{id, name}` today, so a `gender` hint on the request is wired and waiting (added to the Zeal ask in `docs/zeal-tot-pipe-request.md`). `test/mobinfo-class-variants.test.js` runs the real picker on the two live rows.
+- **✅ Tell relay arrows point from the speaker (bot 3.1.126 + agent 3.6.43, 2026-09-14).** Guild lead: *"These are still going the wrong direction"* — a tell Fandango sent read "**Fandango** ← the guild lead". The stored rows matched the raw log on every line (classification was right); only the drawing was backwards. Both the Discord DM relay and the dashboard's Recent Tells now read SPEAKER → LISTENER: "**Fandango** → the guild lead" received, "the guild lead → **Fandango**" sent. `test/tell-relay-direction.test.js` runs the real relay against a fake client. Noted, not changed: the DM batches only when at least one tell was received, so your own replies that sit in a batch with no incoming tell are never DMed — by design, the DM is a "you got a tell" nudge; /me/tells has the whole conversation.
+- **⏳ Logsync: import old logs from anywhere on the drive (agent 3.6.42 + Mimic 2.6.8-beta.8 on `beta`, then stable 2.6.8 on `main` the same night, 2026-09-13).** Guild lead: *"can we add in a command in mimic logsync to import more logs, or a drag to page to allow you to add that directory or file"*, *"In the onboarding flow we should ask if there are log file backups anywhere else on the drive"*, and *"The other setup items for Quarm should also be at the top there with that main button."* Shipped: the agent keeps a persisted imported-paths list (folders one level deep + a Logs child, or single eqlog-named files; backfill-only, never tailed) and the opt-in scan now reads EVERY watched log's folder, not just the first; `/api/optin` gained `import` / `unimport`; the Setup card's action row (Set up for me + fixers) moved to the top of the card and gained 🗂 Add old log folder / 📄 Add old log files (Mimic-only, native pickers); the Logsync tab lists imports with ✕ Remove and a drop zone (Electron hands real paths via `webUtils.getPathForFile`); onboarding has an optional "Old log backups anywhere else?" card that saves `cfg.importedLogPaths`, handed to the agent once at spawn (`WOLFPACK_IMPORTED_LOGS`). Real-filesystem tests: `test/optin-imported-logs.test.js`; wiring: `test/mimic-log-import.test.js`.
+- **📐 Logsync: import extra logs — asked 2026-09-13 (superseded by the entry above).** Guild lead: *"can we add in a command in mimic logsync to import more logs, or a drag to page to allow you to add that directory or file."* Today the opt-in list is only what the EQ folders in Settings contain (`cfg.eqPaths`, each must hold `eqlog_*` files, and each is also live-tailed); there is no single-file import. Two shapes: (A) point the existing multi-folder EQ picker at an archive folder — works now for folders, but that folder is then tailed too; (B) an "Imported logs" list on the Logsync tab — Add folder / Add files via Mimic's native picker (`dialog.showOpenDialog` already exists for folders) plus a drop zone (Electron hands the page real paths; a plain browser cannot), persisted as `cfg.importedLogPaths`, backfill-only, never tailed. Cost B: build med · maint low · runtime low · change low. Recommend B.
+- **✅ The Scrap counts raid fights only (web 1.7.39 + migration `20260914030500`, applied 2026-09-13).** Guild lead: *"a member's 26.8M damage on a non-raid swarm shouldn't be in here for the leaderboards"* — 25.96M of it was one-to-two-player Shik`nar farming. `scrap_damage_leaderboard` admits a fight only when seven or more damage-dealers were credited on it (more than one group) and drops officer-classified encounters as /leaderboards does. Not the raid-night binding: it covers only the scheduled window and 655 raid-sized fights this month sat outside it; floors of 6 and 12 give the same top five. `test/scrap-leaderboard-raid-fights.test.js`.
+- **✅ Header nav: the hovered group floats instead of pushing the page down (web 1.7.39, 2026-09-13).** Guild lead: *"the top design on wolfpack.quest jumps around when hovering, it needs to stay in place."* The revealed row was in flow, so every mouseover grew the header by a row. On hover devices it is now absolutely positioned under the chips, flush to the row; touch keeps it in flow so it never covers a phone's first viewport. `test/parse-curve-and-header-fit.test.js`.
+- **✅ /me: the attendance switch is local and the page loads per family, not per character (web 1.7.39, 2026-09-13).** Guild lead: *"/me's page is having issues with raid attendance displaying from strips to blocks and when the page loads fresh i get a huge lag spike."* Two causes. The Strips/Blocks picker wrote a cookie and then re-rendered the page from the server — two full loads per click; it is now client state in `app/me/AttendanceSection.tsx` (both layouts' data were already on the page). The fresh load ran ~12 queries per character and the account holds 46 (mains, alts, mules): ~550 round trips, two of them a 385 ms chat count each (stale visibility map on `chat_messages` — vacuumed, now 1.5 ms). Now three family-wide RPCs (`me_chat_counts`, `me_levels`, `me_active_names`, migration `20260914043000`) plus batched loot / wishlist / PvP reads, and the per-character fan-out runs only for names with any parse, upload or rollup row (9 of the 46). `test/me-family-prefetch.test.js`, `test/raid-layout.test.js`. Open: `chat_messages` autovacuum never ran between Aug 9 and today (59k dead rows) — the same heap-fetch cost will creep back; tune its autovacuum or vacuum it from the nightly chain.
+- **⏳ UI Studio: a resize now pins the window (Mimic 2.6.8-beta.7 on `beta`, 2026-09-13).** a member in Discord: *"anyone know how to get these to stop defaulting to huge tooltips. I reset em to small each time"*; Guild lead: *"Mine shows similarly."* The Zeal item windows (`ZealItemDisplayN`) carry no Width/Height in their ini sections, and `_buildSaveBundle` wrote a size only for sections that already had one ("never fabricate a size") — so every resize of those windows was dropped on Save, while the same edit on a character whose ini had the keys stuck (a member's paladin vs ranger). A window the user resizes (drag handle or the W/H fields) now gets Width/Height written; untouched auto-size windows still do not. Side panel says which state a window is in. `test/ui-studio-pin-size.test.js` runs the real `_buildSaveBundle`. Workaround on older Mimic: add `Width=`/`Height=` lines under each `[ZealItemDisplayN]` in `UI_<char>_pq.proj.ini` while logged out.
+- **📐 Night timeline, Central HUD, reuse timers — designed (2026-09-13).** Three asks from the guild lead on the Sunday raid: a full-night timeline of every mob and trash pull; a central HUD outlining the character with incoming hits/misses plus target name+HP and own HP/mana; configurable "casts left" and reuse timers (Mend, Kick, Lay Hands, AA cooldowns, discs). `docs/DESIGN-night-timeline-and-central-hud.md`: what already exists for each (encounters per night, pipe HP/mana, `defenderStats`, the disc tracker, catalog mana/recast), two or three costed options per piece, recommendation = night strip on the review page · ring HUD with a strip mini · a Cooldowns overlay with class presets, personal triggers as the zero-build interim. Nothing built.
+- **⏳ The Tank overlay's shield card is evidence-based now (agent 3.6.41 on `beta`, 2.6.8-beta.6, 2026-09-13; stable 2.6.8 the same night).** the guild lead, reading it on Kaas Thox: *"This is misleading, i don't think he's getting thorns damage returned … These look like 150 dd procs."* The rollup agreed — sixteen hits of exactly 150 spread over five raiders as `ds:non-melee`, one flavor line all fight. Every proc and direct-damage spell from anyone in range logs the same anonymous `was hit by non-melee` line a shield return does, and a boss connects on the tank every second, so the old swing-correlation credited nearly all of them. Now the swing only names the candidate wearer; the hit is a shield when the log names one (`was pierced by thorns.`) or the tank is known to wear a DS buff and the amount fits it (+30 for worn/AA shield). The candidate is held out of the fight for the one-second pair window and re-added decided, so meter, rollup and overlay never see a credit that is later taken back (`_settleDsPending`, `_knownDsPerHitFor`; `test/ds-attribution.test.js`, mutation-checked). Overlay copy no longer guesses "likely worn gear/AA". Uncorroborated anonymous hits fall where they always did outside the window — the parser's own column — which is the older `non-melee` ambiguity, not touched here.
 - **⏳ Extended Target has its spot for Zeal's target of target (agent 3.6.40 on `beta`, 2.6.8-beta.3, 2026-09-12).** Consumer side of `docs/zeal-tot-pipe.patch`: Mimic sanitizes the keys (and nulls a 0 spawn id at the edge — the open 3.1.123 twin), the agent feeds `observed_tanks` + patches my own target's row, the overlay marks 🎯/→/⚔. Shows nothing until a Zeal carrying the patch ships. Bot follow-up: store the two fields on `character_live_state`.
-- **📐 Zeal PR drafted: Target of Target on the named pipe (2026-09-12).** `docs/zeal-tot-pipe.patch` + `docs/zeal-tot-pipe-request.md` against v1.4.7; two optional `player` keys with `{id,name,authoritative}`; damage inference runs whenever a pipe client is attached, the `/assist` poll stays tied to the bar. Needs a local build before Hitya opens it.
-- **📐 Lord Mobsincamp designed (2026-09-12).** Hitya named the members' assistant and asked for it to run on Tower off the archive, with failover + offload. `docs/DESIGN-lord-mobsincamp.md`: tool-only read layer, broker via the bot, site "Ask" mode, honest failover (reads yes / writes no / auth first), live replica as the enabler. Four calls outstanding before Phase 0.
-- **✅ Relay scope gate actually gates now (bot 3.1.125, 2026-09-11).** The 3.1.111 gate read a payload field no agent sends, so every relayed callout passed; Hitya heard Ssraeshza slows in Vex Thal. Origin zones now resolve from the sending account; "in a raid" = scheduled window OR a fresh raid-roster upload from the listener; outside a raid, unknown = not local. `test/relay-scope-gate.test.js` rewritten.
-- **⏳ Quiet mode split: mute vs hide overlays (agent 3.6.39 on `beta`, 2.6.8-beta.2, 2026-09-11).** Hitya: *"quiet mode should separate between muted and not seeing overlays at all… the current mode should just mute."* `quietMode` is now the mute (it never actually silenced anything — voice fires from the hidden trigger window); new `hideOverlays` owns visibility. One `wp-mute` boolean to every overlay, checked at the three noise sites. `test/quiet-mode-split.test.js` runs the helper and `_overlayWanted` for real. Graduates with the next stable.
-- **✅ Mimic mini mode — the guild picks (`/mimic/mini`, web 1.7.31, 2026-09-11; reviewed on beta, then graduated the same morning so members vote with their existing sign-in).** One overlay at a time: today's overlay on the left, three mini renditions on the right with a vote under each, a feedback bar whose notes persist beside the author's pick, and a Zeal 1.4.6 / older-Zeal toggle so the same-name-mob difference is visible. Mocks animate on one scenario clock (frozen under reduced motion) and use real raiders from the 2026-09-10 roster + the real Kaas Thox parse. Tables `overlay_design_votes` / `overlay_design_feedback` (migration `20260911030000`, applied). A ballot at the bottom gives every Pack member a row (their own row votes directly). DS box on the Tank mini is per hit (Hitya's clarification). Live at `wolfpack.quest/mimic/mini`; nothing in Mimic is built until the picks land.
+- **📐 Zeal PR drafted: Target of Target on the named pipe (2026-09-12).** `docs/zeal-tot-pipe.patch` + `docs/zeal-tot-pipe-request.md` against v1.4.7; two optional `player` keys with `{id,name,authoritative}`; damage inference runs whenever a pipe client is attached, the `/assist` poll stays tied to the bar. Needs a local build before the guild lead opens it.
+- **📐 Lord Mobsincamp designed (2026-09-12).** the guild lead named the members' assistant and asked for it to run on Tower off the archive, with failover + offload. `docs/DESIGN-lord-mobsincamp.md`: tool-only read layer, broker via the bot, site "Ask" mode, honest failover (reads yes / writes no / auth first), live replica as the enabler. Four calls outstanding before Phase 0.
+- **✅ Relay scope gate actually gates now (bot 3.1.125, 2026-09-11).** The 3.1.111 gate read a payload field no agent sends, so every relayed callout passed; the guild lead heard Ssraeshza slows in Vex Thal. Origin zones now resolve from the sending account; "in a raid" = scheduled window OR a fresh raid-roster upload from the listener; outside a raid, unknown = not local. `test/relay-scope-gate.test.js` rewritten.
+- **⏳ Quiet mode split: mute vs hide overlays (agent 3.6.39 on `beta`, 2.6.8-beta.2, 2026-09-11).** Guild lead: *"quiet mode should separate between muted and not seeing overlays at all… the current mode should just mute."* `quietMode` is now the mute (it never actually silenced anything — voice fires from the hidden trigger window); new `hideOverlays` owns visibility. One `wp-mute` boolean to every overlay, checked at the three noise sites. `test/quiet-mode-split.test.js` runs the helper and `_overlayWanted` for real. Graduates with the next stable.
+- **✅ Mimic mini mode — the guild picks (`/mimic/mini`, web 1.7.31, 2026-09-11; reviewed on beta, then graduated the same morning so members vote with their existing sign-in).** One overlay at a time: today's overlay on the left, three mini renditions on the right with a vote under each, a feedback bar whose notes persist beside the author's pick, and a Zeal 1.4.6 / older-Zeal toggle so the same-name-mob difference is visible. Mocks animate on one scenario clock (frozen under reduced motion) and use real raiders from the 2026-09-10 roster + the real Kaas Thox parse. Tables `overlay_design_votes` / `overlay_design_feedback` (migration `20260911030000`, applied). A ballot at the bottom gives every Pack member a row (their own row votes directly). DS box on the Tank mini is per hit (the guild lead's clarification). Live at `wolfpack.quest/mimic/mini`; nothing in Mimic is built until the picks land.
 - **✅ Attendance layout: strips (default) or blocks, member's choice (web
-  1.7.24, 2026-09-04; 1.7.23 was the docs without the code — see DECISIONS).** Hitya's pick from the beta side-by-side: *"I like
+  1.7.24, 2026-09-04; 1.7.23 was the docs without the code — see DECISIONS).** the guild lead's pick from the beta side-by-side: *"I like
   blocks and strips, let's keep both as options, default to strips."*
   `RaidLayoutPicker` + `wp_raid_layout` cookie + `?layout=`; the calendar
   variant was deleted. First use of the new UI-options rule end to end.
 - **✅ Round three, 2026-09-04 afternoon (web 1.7.22): leaderboards, the /me
   banner, month-block attendance, early-night reviews, mechanics by fight.**
-  Hitya's six: *leaderboards should only count bosses; many parses are
+  The guild lead's six: *leaderboards should only count bosses; many parses are
   severely inflated from the time-offset double/triple counting; the "parser
   was syncing" message is wrong, Mimic is on; group no-upload characters into
   a collapsed section sorted by recency; the attendance section looks odd —
@@ -144,7 +144,7 @@ next touch one rather than assuming a missing row means a missing doc.
     before / 8s after the fire — `encounter_events` rows carry `actor: null`.
     ⚠ Recording the target at ingest is an agent+bot follow-up (open table).
 - **✅ Attendance grids, round two + the uncurated-mob gate (web 1.7.21 · bot
-  3.1.122, 2026-09-04).** Hitya's morning-after on the heatmaps: */me is slow;
+  3.1.122, 2026-09-04).** the guild lead's morning-after on the heatmaps: */me is slow;
   60 days by default; only our official raid nights — first-time-kill bonuses
   don't need to show up; just our raid days; the review is still displaying
   non-raid mobs — what does tracking them cost, and add a setup flag.*
@@ -160,12 +160,12 @@ next touch one rather than assuming a missing row means a missing doc.
     `/parses`; a night that was only farming drops out of the index.
   - **Cost of uncurated tracking, measured:** 97% of encounters in the last 30
     days, ~9 MB/day. **Gate:** env `TRACK_UNCURATED_MOBS=0` / tuning
-    `flag_skip_uncurated_mobs=1` (`/admin/overlays`). Left ON for us — Hitya to
+    `flag_skip_uncurated_mobs=1` (`/admin/overlays`). Left ON for us — the guild lead to
     decide whether to flip it; `docs/DECISIONS-2026-09-04.md`.
   - ✅ The `.neq('attendees', '{}')` filter flagged unverified on 09-03 rendered
     live ("83 of 151 held") — closed.
 - **✅ Raid attendance heatmaps — the /me 📅 section and `/raidhistory` (web
-  1.7.19, 2026-09-03).** Hitya: *"add in raid attendance on a person's /me …
+  1.7.19, 2026-09-03).** Guild lead: *"add in raid attendance on a person's /me …
   with mouse over on dates and raid names and links to the raids … give us a
   /raidhistory page as well that contains each night and this view with a scale
   from red at half raiders to green full raiders, orange middle of the way."*
@@ -184,12 +184,12 @@ next touch one rather than assuming a missing row means a missing doc.
   missing for everyone, that filter is the first suspect; the fix is to fetch
   the arrays and filter in JS as `/raidhistory` does.
 - **⚠ OPEN BUG — the account DKP figure is wrong, and I could not finish
-  diagnosing it (2026-08-31).** Hitya: *"i'm noticing that the 192 dkp is wrong.
+  diagnosing it (2026-08-31).** Guild lead: *"i'm noticing that the 192 dkp is wrong.
   i'm actually at 143 total"*. What is established:
   - The **mirror estimate computes 817** for the family, not 192 and not 143.
     So the pill's 192 came from the OpenDKP standings path, not the fallback.
     (`_familyDkpFromMirror`: earned 6167 / adj −15 / spent 5335.)
-  - **All characters are on ONE OpenDKP account** (Hitya, confirmed), so
+  - **All characters are on ONE OpenDKP account** (the guild lead, confirmed), so
     pooling across the family is correct and is not the error.
   - `_familyDkpFromMirror` adds a tick's value **once per attending family
     character**, so the 50 ticks with two family members present are counted
@@ -227,7 +227,7 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-08-30 decision made authoritative, instead of walking 12 pages upstream
   for an answer already mirrored locally.
 - **📨 The upstream ask to Moncs is REFRESHED and ready to send
-  (`docs/DESIGN-opendkp-audit-cursor.md`, 2026-08-31).** Hitya: *"we should give
+  (`docs/DESIGN-opendkp-audit-cursor.md`, 2026-08-31).** Guild lead: *"we should give
   an upstream request that would find the outliers for a cheaper cost than the
   full rip."* It existed but was unsendable: its numbers were from 2026-08-27,
   before we cut our own traffic 60% (116 → 46 MB/day), and quoting stale figures
@@ -244,7 +244,7 @@ next touch one rather than assuming a missing row means a missing doc.
   the top line. Retitled *"Which Thing Changed"*. **Nothing is blocking the
   send.**
 - **📋 OpenDKP API review, against MEASURED spend
-  (`docs/opendkp-api-review-2026-08-31.md`, 2026-08-31).** Hitya supplied the
+  (`docs/opendkp-api-review-2026-08-31.md`, 2026-08-31).** the guild lead supplied the
   full API reference and asked whether we target OpenDKP well. Real 7-day cost:
   **≈325 MB**, of which `/audits` is **189 MB (58%)** and `/characters` 60 MB —
   the two are 76% of everything. Ranked findings, none yet actioned:
@@ -271,7 +271,7 @@ next touch one rather than assuming a missing row means a missing doc.
   deletions. Implements the PIPE half of upstream issue #218 (open since
   2026-06-29), whose author is running the same `/tag` workaround we are;
   `Refs`, not `Closes`, because their target-bar display half is not in it.
-  ✅ **COMPILED AND VERIFIED 2026-08-31** (Hitya, VS Build Tools, Release|x86):
+  ✅ **COMPILED AND VERIFIED 2026-08-31** (the guild lead, VS Build Tools, Release|x86):
   `0 Warning(s) 0 Error(s)`; the artifact is PE32/Intel 80386 and carries
   `spawn_id`/`target_id`/`pet_id` as string literals (checked against
   `autoattack`/`heading` as a control); linker 14.44 = the v143 family CI uses;
@@ -280,7 +280,7 @@ next touch one rather than assuming a missing row means a missing doc.
   ✅ **ALL FIVE KEYS OBSERVED LIVE** (2026-08-31): `player.spawn_id` 2354,
   `target_id` 3385, `pet_id` 3005, `raid[]` 2533+1027, `group[]` 3385.
   Cross-checked against `/tag` on the same mobs from independent code paths —
-  `Hawkner|3385` = target_id + group[], `Canopy|2354` = player.spawn_id,
+  `<mob>|3385` = target_id + group[], `<self>|2354` = player.spawn_id,
   `Jayson Bri\`Tian|10` = target_id. That is the #218 corroboration: the pipe
   id IS the tag id.
   🐞 **Live testing found a real bug**: `pet_id` emitted `-1` with no pet
@@ -298,7 +298,7 @@ next touch one rather than assuming a missing row means a missing doc.
   ➡️ **Only remaining step: post `pr-229-build-report.md` as a PR comment**, and
   `issue-218-comment.md` on #218. After that it is purely waiting on upstream.
   ⚠ **No session can watch it.** GitHub tooling here is scoped to
-  `davehess/quarmbosstracker`, so review comments must be relayed by Hitya.
+  `davehess/quarmbosstracker`, so review comments must be relayed by the guild lead.
   **Expect slow:** #227 has been open since Aug 1 and #218 sat two months.
   Most likely asks back: key naming (#218 suggested `NPC_ID`) or gating the
   fields behind `pipe_verbose` — both one-liners.
@@ -333,7 +333,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⚠ Needs a local session — the pacify FAILURE message (one string).**
   Harmony is `resist_type 0` (unresistable), so the resist branch of
   `notePacifyMiss` can never fire for it — but it still fails against a
-  too-high-level mob, and Hitya confirms *"it will give a message if the mob
+  too-high-level mob, and the guild lead confirms *"it will give a message if the mob
   cannot be pacified"* (2026-09-02). We do not have that string, and a
   synthesized Harmony timer is a phantom until we do.
   **The ask:** the exact server text, from `D:\EQServer` (EQEmu `spells.cpp`,
@@ -356,7 +356,7 @@ next touch one rather than assuming a missing row means a missing doc.
 ### ✅ Done — major shipped features (not exhaustive; see git + roadmapData.ts)
 
 - **"Set up EQ for me" now configures /tag capture (agent 3.6.33 · web 1.7.16,
-  2026-09-03).** Hitya, with a working `zeal.ini`: *"we're going to add some
+  2026-09-03).** the guild lead, with a working `zeal.ini`: *"we're going to add some
   pieces for setup for tagging... we want tooltip and tag enabled."* Eight
   `NameplateTag*` keys join `_EQ_SETUP_KEYS`, values from that file. Two are
   REQUIRED for capture at all, grounded in Zeal's source: `Suppress=FALSE`
@@ -371,10 +371,10 @@ next touch one rather than assuming a missing row means a missing doc.
   leak; a first draft's regex was so broad it flagged the pre-existing
   `tells Wolfpackofficer:` privacy filter — the invariant is "no name:password
   LITERAL", so it now requires a password character after the colon.
-  ⚠ **Base nameplate keys are deliberately NOT written.** Hitya believes tags
+  ⚠ **Base nameplate keys are deliberately NOT written.** the guild lead believes tags
   may need nameplates on; the Zeal source notes do not settle it and those are
   a raider's display preferences — the card says "check nameplates" instead.
-  ✅ **The autojoin FILE WRITE is unblocked (agent 3.6.34).** Hitya sent the
+  ✅ **The autojoin FILE WRITE is unblocked (agent 3.6.34).** the guild lead sent the
   real line: `[Defaults] ChannelAutoJoin=<officer:pw> <tag:pw> general` in
   **`eqclient.ini`** — NOT the per-character ini this ledger had claimed since
   2026-08-26 — and the separator is **whitespace**, not the comma the never-
@@ -387,7 +387,7 @@ next touch one rather than assuming a missing row means a missing doc.
   by default, `/admin/overlays` override — and the agent carries no policy.
 
 - **The Buffs tab says what each buff gives you, and sums it up (bot 3.1.117 ·
-  agent beta, 2026-09-02).** Hitya: *"The buffs on the buffs page should give
+  agent beta, 2026-09-02).** Guild lead: *"The buffs on the buffs page should give
   the affects that they're providing each, and then a summary below of all of
   the things that are provided."*
   The bot already fetched `effect_id_1..3` + `raw` for every spell and dropped
@@ -397,7 +397,7 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ **Every SPA label is grounded in the catalog, never remembered.** Girdle of
   Karana is 4/42 against the game's "Increase Strength by 42"; Mask of the
   Stalker is 89/125, 87/115, 15/3, 13/1 against its four listed effects (both
-  from Hitya's screenshots). Resists were pinned through the middle, not
+  from the guild lead's screenshots). Resists were pinned through the middle, not
   inferred from the ends. Unrecognised ids fall back to `SPA n: base` — a wrong
   label is worse than an opaque one.
   ⚠ **Two encodings would be wrong at face value:** SPA 11/89 store a multiplier
@@ -409,8 +409,8 @@ next touch one rather than assuming a missing row means a missing doc.
   Per character, not merged across boxes. 27 tests, 19 mutations killed.
 
 - **A character can no longer take another character's Defensive (agent beta, 2026-09-02).**
-  Hitya, live, with a Command Center screenshot showing a 10:10 Defensive
-  recharging on Currynote: *"Currynote is currygoat's bard, he does not have
+  The guild lead, live, with a Command Center screenshot showing a 10:10 Defensive
+  recharging on A member: *"a member is currygoat's bard, he does not have
   defensive."* The protective tracker reads raid-chat announces and credits
   whoever SPOKE the line — which is right, and is why it works for tanks who run
   no macro — but that announce went out from a different character.
@@ -425,8 +425,8 @@ next touch one rather than assuming a missing row means a missing doc.
   OPEN. Add a kind only when someone confirms no item can grant it.
 
 - **A charmer's pet folds into the charmer, even when they never swung (Mimic
-  beta, 2026-09-02).** Hitya, live, with a screenshot showing `Vkjor
-  (Chadivarius)` as its own row: *"it looks like when Chad charmed him it
+  beta, 2026-09-02).** the guild lead, live, with a screenshot showing `Vkjor
+  (a member)` as its own row: *"it looks like when Chad charmed him it
   attributed to him, but it should be the other way around as Chad +pet."*
   The fold has existed since 2026-08-13, but it required the owner to ALREADY
   have a row on the meter — and an enchanter running a charm pet often does
@@ -442,8 +442,8 @@ next touch one rather than assuming a missing row means a missing doc.
   asserted preserved, so a fold can never double-count.
 
 - **UI Studio stopped drawing every window twice (Mimic beta, 2026-09-02).**
-  Hitya, with a screenshot: *"UI studio shows multiple copies of several chats
-  and windows."* Header read "Hitya (2 ini files)" and "loaded 258 windows" for
+  The guild lead, with a screenshot: *"UI studio shows multiple copies of several chats
+  and windows."* Header read "the guild lead (2 ini files)" and "loaded 258 windows" for
   a layout holding ~129 — ZealItemDisplay0-4, Chat 14, Compass, Raid and
   ZealOptions all stacked on themselves.
   Cause: the bundle is deliberately several files, and the parse loop pushed
@@ -457,11 +457,11 @@ next touch one rather than assuming a missing row means a missing doc.
   Shadowed rows are COUNTED and named in the status line, never silently
   dropped, and Save stays non-destructive — a shadowed file is left as it was.
 - **Faction hits get a POINT value, by naming the kill (bot 3.1.118 · agent
-  3.6.32, 2026-09-03).** Hitya: the page *"is currently not helping"* — a −2000
+  3.6.32, 2026-09-03).** Guild lead: the page *"is currently not helping"* — a −2000
   Lord Seru hit and a +5 spire-spirit kill both rendered as one anonymous
   "hit", with `+586 / −97` hit COUNTS shown in a way that reads like points
   (`better_total`/`worse_total` existed and were all zero).
-  Hitya's own diagnosis is the mechanism: *"If we see the mob that died and at
+  The guild lead's own diagnosis is the mechanism: *"If we see the mob that died and at
   the same time, we end up seeing the faction, then it's not so bad."* Every
   line of a kill shares one timestamp SECOND, so the agent stamps the slain mob
   onto the faction hits from that second and the bot resolves the exact value
@@ -472,7 +472,7 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ Keyed to the SECOND, never a window; an existing attribution is never
   overwritten; unattributable hits keep `mob` undefined and still record
   direction + at-cap, which pin position on their own.
-  **Validated against Hitya's live log before any code**: `#Lord_Inquisitor_Seru`
+  **Validated against the guild lead's live log before any code**: `#Lord_Inquisitor_Seru`
   = −2000 to Seru/Hand/Eye/Heart/Shoulders + 200 to four Katta factions (9
   entries, 9 lines); `A_Greater_Spire_Spirit` = +5 to six Seru-bloc factions,
   −5 The Recuso, −50 Spire Spirits (8 entries, 8 lines).
@@ -482,7 +482,7 @@ next touch one rather than assuming a missing row means a missing doc.
   silently caps at 1000 rows, so the first cut's `limit=20000` would have built
   a quietly incomplete map — caught by the over-cap ratchet test, which is
   exactly what it is for.
-  ✅ **Web page done (web 1.7.14 · bot 3.1.119).** Hitya: *"how many positive
+  ✅ **Web page done (web 1.7.14 · bot 3.1.119).** Guild lead: *"how many positive
   and negative hits total in parentheses for raised and lowered, and the
   raised/lowered should specifically call out how much the faction has been
   raised or lowered."* Cells now read **`+228 (586)`** — points, then hits — and
@@ -500,7 +500,7 @@ next touch one rather than assuming a missing row means a missing doc.
   history will DOUBLE every count and total. Do not recommend a re-run until a
   dedup key (character, faction, ts) exists on the ingest.
   ✅ **Repair table, unconfirmed hits, and cons-per-faction (web 1.7.15).**
-  Hitya: *"add the repair table to factions, but also we can have an
+  Guild lead: *"add the repair table to factions, but also we can have an
   'unconfirmed hits' section on the table also. The Conning of npcs on those
   factions is important."* Every faction row opens into three blocks:
   **Unconfirmed hits** (count − priced, per direction — each moved it by ≥1),
@@ -518,7 +518,7 @@ next touch one rather than assuming a missing row means a missing doc.
   earned its place twice today.
 
 - **Mob Info answers "will invis hide me from this?" (bot 3.1.115 · agent
-  3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info needs to also denote if a mob can see
+  3.6.28 · STABLE in Mimic 2.6.5, 2026-09-02).** Guild lead: *"mob info needs to also denote if a mob can see
   invis."* The four sight flags were already fetched AND already returned — the
   bot comment has said "drive Mob Info chips" since they were added — but no
   surface rendered them.
@@ -535,7 +535,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `HOW-ITS-BUILT.md`.
 
 - **Pacify gets its own line, and the silent ones get a timer at all (agent
-  3.6.25–3.6.27 · STABLE in Mimic 2.6.5, 2026-09-02).** Hitya: *"mob info is important to
+  3.6.25–3.6.27 · STABLE in Mimic 2.6.5, 2026-09-02).** Guild lead: *"mob info is important to
   distinguish buffs and debuffs... things like pacifying where we lower aggro
   radius for a mob and don't engage. but keep the timer is vital for certain
   operations."*
@@ -557,7 +557,7 @@ next touch one rather than assuming a missing row means a missing doc.
   - **Own line above both sections, blue, "WORE OFF" in red on expiry.** Left
     alone it renders green among the mob's own buffs (the catalog is right:
     it IS good for the mob), which is not where you look before a pull.
-  ⚠ **HARMONY IS NOT PACIFY — corrected by Hitya the same day, after a first cut
+  ⚠ **HARMONY IS NOT PACIFY — corrected by the guild lead the same day, after a first cut
   shipped them as interchangeable.** `targettype` proves it: Pacify is 5
   (single) and the mob **will not attack even if you are colliding with it**;
   Harmony and Wake of Tranquility are **8, targeted AE** — they only SHRINK the
@@ -569,7 +569,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `resist_type 0` but simply does not work on many mobs — EQEmu NPC special
   ability **31, Immune Pacify**, which we already decode and chip. The synthesis
   now records nothing when the cached catalog row carries it.
-  **Plane of Sky is the case that proves it is not a zone rule** (Hitya): it is
+  **Plane of Sky is the case that proves it is not a zone rule** (the guild lead): it is
   `cast_outdoor = 1` — flagged outdoors, so the usual heuristic says Harmony
   works — and **116 of its 118 NPCs carry ability 31**.
   ⚠ Stamped at cast begin and reverted on interrupt/fizzle/resist — there is no
@@ -578,7 +578,7 @@ next touch one rather than assuming a missing row means a missing doc.
   Details in `HOW-ITS-BUILT.md`. 31 tests, every assertion mutation-checked.
 
 - **Mimic 2.6.4 STABLE — feedback from inside Mimic, a Buffs tab, a nav that
-  stays put (Mimic 2.6.4 · agent 3.6.24 · bot 3.1.113, 2026-09-02).** Hitya:
+  stays put (Mimic 2.6.4 · agent 3.6.24 · bot 3.1.113, 2026-09-02).** Guild lead:
   *"give mimic a feedback entry point that allows for direct log collection
   timeframe / move buffs to the buffs tab and give it a more robust view of
   effects and timeframes / also provide an estimate of how long cast buffs will
@@ -610,14 +610,14 @@ next touch one rather than assuming a missing row means a missing doc.
   Mutation testing found it the wrong way round; a guard on `prev` is a no-op
   that reads exactly like a working one.
 - **Guild trigger relays are scoped to the fight you are in (bot 3.1.110–3.1.113,
-  2026-09-02).** Hitya: *"Every so often we hear 'Shaman Slow' when we're not
+  2026-09-02).** Guild lead: *"Every so often we hear 'Shaman Slow' when we're not
   around combat. It's a guildwide scope. These should only trigger for local
   fights or during raids, not outside."* `_relayScopeKeep` keeps a relay when
   the requester is in the origin zone, OR inside the raid window. Fail-open by
   construction: unknown zone on either side keeps the relay, so the failure mode
   is the status quo (a spurious callout), never a swallowed one.
 - **`target-buffs` and `target-casts` are spawn-id-first, name-keyed second
-  (bot 3.1.113 · agent 3.6.24, 2026-09-02).** Hitya: *"those two relays should
+  (bot 3.1.113 · agent 3.6.24, 2026-09-02).** Guild lead: *"those two relays should
   be spawn id first if available, then name keying."* Both share one
   `_idScopeKeep(requesterId, rowId)`: when the requester proves an id AND the
   row carries one, they must match; either side missing falls back to the name.
@@ -625,7 +625,7 @@ next touch one rather than assuming a missing row means a missing doc.
   PR #229 is still unreleased, so no client sends an id and every row takes the
   name path byte-identically.
 - **Zeal version + spawn-id capability tracking (bot 3.1.107 · agent 3.6.16 ·
-  web 1.7.7, 2026-09-01).** Hitya: *"let me start tracking zeal versions so we
+  web 1.7.7, 2026-09-01).** Guild lead: *"let me start tracking zeal versions so we
   can work towards knowing when someone has that Target and spawn ID. fall back
   is if they tag."* Two columns on `agent_upload_stats` (migration
   `20260901160000`), both riding the existing `agent_state` decoration so no
@@ -647,7 +647,7 @@ next touch one rather than assuming a missing row means a missing doc.
   today) — returns `[]` below 2 ids, so the old path runs byte-identically.
 
 - **Five eaten backslashes, and a build check so they cannot come back (agent
-  3.6.12, beta, 2026-08-30).** Hitya: *"this upload did not work from the raid
+  3.6.12, beta, 2026-08-30).** Guild lead: *"this upload did not work from the raid
   tick that was taken. copying directly in worked."* The DKP tick card listed
   the RaidTick file and its 44 players correctly, but clicking a slot said "No
   attendees in that source" — because `/^file:(d+)$/` matches a literal "d" and
@@ -660,7 +660,7 @@ next touch one rather than assuming a missing row means a missing doc.
   was created by the escaping scheme the slice retired, and was invisible to
   review for months because a lost backslash is still valid regex.
 - **Discipline cooldown on the Command Center (agent 3.6.12, beta,
-  2026-08-30).** Hitya: *"discipline cooldowns should be tracked on the command
+  2026-08-30).** Guild lead: *"discipline cooldowns should be tracked on the command
   center for the user only."* Parses the client's own refusal line, which is
   the only exact statement of the shared melee reuse timer and is self-only by
   construction. Not on the raid-wide defensives board, and no "ready" line
@@ -681,7 +681,7 @@ next touch one rather than assuming a missing row means a missing doc.
   20, actually 7) — that is a bot fix, held for the raid freeze. See the open
   table at the bottom.
 - **Dashboard slice — Decision #3 step 1 (agent 3.6.9, beta, 2026-08-30).**
-  Hitya: *"do the dashboard slice."* `WEB_HTML` is now GENERATED from
+  Guild lead: *"do the dashboard slice."* `WEB_HTML` is now GENERATED from
   `packages/wolfpack-logsync/dashboard.html` (`npm run sync:dashboard`); the
   escape-hazard class that blanked the page four times is retired — proven by
   authoring the three historical killers naively and serving them byte-correct.
@@ -690,7 +690,7 @@ next touch one rather than assuming a missing row means a missing doc.
   when earned:** extract-on-touch for the bot monolith (rule, not project), and
   full agent modularisation only after this build step survives a stable
   graduation.
-- **Zeal spawn-id PR prepared (2026-08-31).** Hitya: *"I think we should prepare
+- **Zeal spawn-id PR prepared (2026-08-31).** Guild lead: *"I think we should prepare
   the pull request for Zeal to include spawn id in pipes. It's not happening
   otherwise."* Two softer routes got no response (forum post 2026-07-20; the
   issue draft that was never filed), so the ask is now a diff:
@@ -703,12 +703,12 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ **NOT compiled** — no Windows/MSVC x86 here; the PR body says so plainly and
   offers to test their build. Field names/offsets, signatures and thread context
   were each verified against the 1.4.5 tree rather than from notes.
-  **Needs a human:** the PR must be opened from Hitya's own GitHub account —
+  **Needs a human:** the PR must be opened from the guild lead's own GitHub account —
   this session's GitHub tooling is scoped to `davehess/quarmbosstracker` and
   cannot fork or file on `CoastalRedwood/Zeal`.
 
 - **"End raid" button, and the top bar fits again signed in (bot 3.1.104 ·
-  web 1.7.6 · 2026-08-30).** (1) Hitya: *"We need a button on the raid night
+  web 1.7.6 · 2026-08-30).** (1) Guild lead: *"We need a button on the raid night
   thread for officers and leaders to be able to click to end the raid."* It
   stops the automatic attendance ticks for the rest of the night — the real gap
   since alt/Seru nights run three ticks over two hours while the slots fire
@@ -748,13 +748,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 - **Auction bids: full histories backfilled (bot 3.1.99, 2026-08-30).** The
   mirror was winners-only and RECENT MISSES was blind to ~92% of losses —
-  Hitya's field report (missing Vengeful Mail row, blank runner-up on a 15/15
-  tie, Rockin's win shown as a miss with CHAR "—") diagnosed to three causes:
+  The guild lead's field report (missing Vengeful Mail row, blank runner-up on a 15/15
+  tie, a member's win shown as a miss with CHAR "—") diagnosed to three causes:
   the list payload carries only winning bids, `syncAuctionBids` had NO callers,
   and the MODE name heuristic failed where `characters.opendkp_id` had the
   answer. Fix + traffic contract in `DECISIONS-2026-08-30.md`; details in
   `HOW-ITS-BUILT.md`. **Verify after tonight's raid:** Vengeful Mail shows
-  Utoh · 8 · 24 · 22, the Thorny row is GONE (Rockin won it), and the backfill
+  a member · 8 · 24 · 22, the Thorny row is GONE (a member won it), and the backfill
   log lines look sane. **(3.1.100, same day)** detail rows carry no CharacterId,
   so the builder now keys by NAME — without this the backfilled losses stayed
   invisible even once mirrored. First pass lands ~14:00 ET (post-deploy slot
@@ -766,7 +766,7 @@ next touch one rather than assuming a missing row means a missing doc.
   source can ever clear it — manual dismiss is the honest mechanism and should
   survive a reinstall.
 
-- **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Hitya: the
+- **`/start` install walkthrough (web 1.6.0, beta, 2026-08-28).** Guild lead: the
   landing page's *"Run with us."* needed to link to "a getting started page with
   a click by click on what to do to get installed, setup buttons mentioned and
   deep linked to." Built as **Phase 1 of `docs/DESIGN-onboarding-overhaul.md`
@@ -804,7 +804,7 @@ next touch one rather than assuming a missing row means a missing doc.
   is in the "Failed Tests" section and re-running loses it.
 
 - **Landing page + nav redesign (web 1.2.7 → 1.7.0, GRADUATED TO `main`
-  2026-08-29 — live on `wolfpack.quest`).** Hitya asked for a huge wolf face with the
+  2026-08-29 — live on `wolfpack.quest`).** the guild lead asked for a huge wolf face with the
   pack appearing behind it, then specified the order: *"make the yellow of the
   eyes pop out of the darkness first, then the yellow of the eyes of the wolves
   behind, then the front wolf's lines come into focus, then each of the wolves
@@ -816,7 +816,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/wolf-eyeglow.test.js`:** (1) the eye glow sat BEHIND the plate on the
   assumption keying left the eye slits transparent — it does not, the eye
   interior is opaque and only the linework was cut, so the light came out in the
-  brow (Hitya, with a zoomed screenshot: *"this is the area that should
+  brow (the guild lead, with a zoomed screenshot: *"this is the area that should
   glow"*). It is now its own plate (`wolf-eyes.png`, computed from `wolf.png` by
   connected-component labelling, same canvas so it cannot drift) composited on
   top. (2) The reveal filter written as `.wolf-alpha img` also matched the glow,
@@ -825,7 +825,7 @@ next touch one rather than assuming a missing row means a missing doc.
   not ghost.
   ⚠ **A third trap, found on a phone (web 1.4.2):** brightness-not-opacity was
   necessary but not sufficient. Only the bone is opaque, so every dark line was
-  a hole and the wolves showed through each other's linework (Hitya: *"the
+  a hole and the wolves showed through each other's linework (Guild lead: *"the
   transparency overlap looks bad"*). Each wolf now carries `wolf-solid.png`, its
   own filled silhouette in the page ground, beneath its plate. Same round fixed
   87px of horizontal page scroll on a 390px phone (`overflow-x: clip` + she is
@@ -835,14 +835,14 @@ next touch one rather than assuming a missing row means a missing doc.
   was 357,109 lines — one paragraph repeated 23,774 times, once per character of
   a string a loop walked — and still asserted the eye slits were transparent,
   which is what caused trap (1). Do not restore it from git.
-  **Graduated 2026-08-29 at web 1.7.0** (Hitya: *"push this all up to main"*).
+  **Graduated 2026-08-29 at web 1.7.0** (Guild lead: *"push this all up to main"*).
   File-level promotion, not a branch merge — `beta` still carries the Mimic park
   and the agent 3.6.x line, so `apps/mimic/**`, `packages/wolfpack-logsync/**`,
   their two tests, and the `docs/PRIVACY.md` note that belongs to agent 3.6.4
   were deliberately held back. The four roadmap entries lost their `beta` pill
   in the same commit; a graduated feature still flagged beta is a release
   surface telling members something false.
-  Nav grouping was a guess; Hitya has since ruled on three (2026-08-28): Buffs →
+  Nav grouping was a guess; the guild lead has since ruled on three (2026-08-28): Buffs →
   Raid, Quartermaster and `/who` → Prep. `/me` is now rendered unconditionally —
   it had been gated on being signed in, which silently made the four doors three
   for exactly the visitor the landing page is written for. The header chrome above the nav is **done**
@@ -850,7 +850,7 @@ next touch one rather than assuming a missing row means a missing doc.
   collapsed, with nothing removed — see `HOW-ITS-BUILT.md`. The beta bar is now
   dismissible to a 20px strip that still reads BETA.
 
-- **/tag channel autojoin — merge logic (agent, 2026-08-26).** Hitya: *"we need
+- **/tag channel autojoin — merge logic (agent, 2026-08-26).** Guild lead: *"we need
   to add this channel to people's autojoins if they don't have them in their ini
   file."* `_mergeAutojoin()` merges the guild tag channel into a character's
   existing autojoin list: appends without disturbing other channels, idempotent,
@@ -871,7 +871,7 @@ next touch one rather than assuming a missing row means a missing doc.
   mobs) is designed but unbuilt.
 
 - **Bid assist — roaming planned bids (bot 3.1.77, 2026-08-26).** ⚠ **This
-  feature was described in an earlier session and NEVER WRITTEN DOWN** — Hitya:
+  feature was described in an earlier session and NEVER WRITTEN DOWN** — Guild lead:
   *"the local mimic bidding piece I described and queued up with you
   disappeared."* It had: nothing in STATUS, the platform queue, any DECISIONS
   file, or git history on any branch. The spec now lives in
@@ -883,7 +883,7 @@ next touch one rather than assuming a missing row means a missing doc.
   Local file stays the LIVE source of truth; last-writer-wins on `updated_at`,
   deliberately not a merge (a stale Deck must not resurrect a bid the desktop
   just cleared).
-  **Autobid's gate is ANSWERED and built** — Hitya, in two passes: *"you have to
+  **Autobid's gate is ANSWERED and built** — the guild lead, in two passes: *"you have to
   be in the raid for it to fire"*, then *"one of your characters needs to be in
   the raid currently or have been on a tick so far that night"*.
   `_familyInRaidTonight()` passes if ANY family member (root = `main_name ||
@@ -900,7 +900,7 @@ next touch one rather than assuming a missing row means a missing doc.
   wired to the gate above.
 
 - **PoP page: My Characters tab + mains-default scope (web 1.1.97, 2026-08-26,
-  Hitya: "due to the nature of pop flagging they may do it for many of their
+  Guild lead: "due to the nature of pop flagging they may do it for many of their
   toons and we shouldn't only track mains").** `pop_spell_needs` v4 (migration
   `20260826010000`) drops the mains-only filter and returns `is_main` per row;
   guild-wide surfaces (chart/matrix/planner/spell-needs) default to
@@ -917,7 +917,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `DECISIONS-2026-08-26.md`.
 
 - **Adjustments: the decay is AUTOMATED, and our cadence already catches it
-  (measured + corrected 2026-08-27).** Hitya: *"all of this dkp work was
+  (measured + corrected 2026-08-27).** Guild lead: *"all of this dkp work was
   happening manually beforehand and the decay happens automatically based on
   settings that we've deployed in open dkp."* Confirmed in the data: **165 of
   the 168 inactivity-decay rows landed at exactly 12:00 UTC across 62 days** — a
@@ -952,7 +952,7 @@ next touch one rather than assuming a missing row means a missing doc.
   the earlier "more calls, 2,300× less data" ask was not.
   Supersedes the earlier per-endpoint `?since` request.
 
-- **Vendored two agent skills: `impeccable` + `ponytail` (2026-08-28).** Hitya
+- **Vendored two agent skills: `impeccable` + `ponytail` (2026-08-28).** the guild lead
   asked to start using both. Vendored into `.claude/skills/` (committed, so
   cloud sessions get them) rather than installed per-machine — impeccable
   Apache-2.0, ponytail MIT, both LICENSE files kept alongside.
@@ -972,17 +972,17 @@ next touch one rather than assuming a missing row means a missing doc.
   deciding first.
 
 - **`/admin/attendance` hides inactive members by default (web 1.2.6,
-  2026-08-28).** Hitya: *"if someone falls off of the 30 day list (no ticks in
+  2026-08-28).** Guild lead: *"if someone falls off of the 30 day list (no ticks in
   30 days) they become inactive. we should filter by default on that page by
-  that stat. Topflight is an example."* Measured: **290 rows, 218 with zero
+  that stat. a member is an example."* Measured: **290 rows, 218 with zero
   ticks in 30 days** — three quarters of the page was people not raiding, which
-  is what made a real signal (Topflight: 30% 90d RA, no tick since 2026-07-22)
+  is what made a real signal (A member: 30% 90d RA, no tick since 2026-07-22)
   something you had to hunt for. Default is now active-only, with the counts and
   a `?show=all` toggle in the header; inactive rows render dimmed and labelled
   with their last tick date when shown.
   ⚠ **Inactive is defined on TICKS, not RA%** — a returning member can sit at 0%
   for a window and still have raided this week, and someone at 40% 90d RA can
-  have stopped a month ago (which is precisely Topflight). Filtering on the
+  have stopped a month ago (which is precisely a member). Filtering on the
   percentage hides the wrong people.
   8 mutation-checked tests in `test/attendance-active-filter.test.js`, incl. the
   filter-computed-but-table-still-unfiltered case and dropping query params on
@@ -1048,7 +1048,7 @@ next touch one rather than assuming a missing row means a missing doc.
   tonight's raid + ticks landed once the sync catches up.
 
 - **`/opendkp` gained a raid view and finer resolution (web 1.2.4, migration
-  `20260827233000`, 2026-08-27).** Hitya, 25 min before the Thursday pull:
+  `20260827233000`, 2026-08-27).** the guild lead, 25 min before the Thursday pull:
   *"we're probably about to spike, right? give me more notches on that graph,
   and a breakdown view of the calls during this raid."*
   `opendkp_traffic_summary()` now also returns **`fine`** (10-min buckets over
@@ -1065,7 +1065,7 @@ next touch one rather than assuming a missing row means a missing doc.
   every off-raid hour.
 
 - **⚠ `/opendkp` was under-reporting by ~36%, in our favour (web 1.2.3,
-  migration `20260827220000`, 2026-08-27).** Hitya: *"haven't seen any opendkp
+  migration `20260827220000`, 2026-08-27).** Guild lead: *"haven't seen any opendkp
   calls on here for a while."* Not a quiet bot — a **broken page**. It selected
   raw rows with `.order('minute', { ascending: true }).limit(1000)`: ascending
   WITH a limit, so it kept the OLDEST 1000 rows of the 48h window and silently
@@ -1084,7 +1084,7 @@ next touch one rather than assuming a missing row means a missing doc.
   server-side traffic and that the desktop app no longer calls OpenDKP at all.
 
 - **Off-raid mirror-sync backoff + the stranded beta line (bot 3.1.89 · beta
-  agent 3.6.5 / Mimic park 2.6.3 · 2026-08-27).** Hitya: *"cut down the number
+  agent 3.6.5 / Mimic park 2.6.3 · 2026-08-27).** Guild lead: *"cut down the number
   of calls as much as possible outside of raid times."* With the agent's direct
   calls gone, the 30-min mirror sync was the bulk of our OpenDKP traffic
   (12h: `/auctions` 26 calls/11.9 MB, `/characters` 65/8.9 MB, `/raids/{id}`
@@ -1096,7 +1096,7 @@ next touch one rather than assuming a missing row means a missing doc.
   restarting faster than the interval never syncs at all, silently.
   ⚠ `/syncopendkp` passes `force: true` — caught pre-ship that the officer
   command would otherwise have been silently swallowed off-raid.
-  ⚠ **No boot pull as of bot 3.1.90** (Hitya: *"take the opendkp pull out of
+  ⚠ **No boot pull as of bot 3.1.90** (Guild lead: *"take the opendkp pull out of
   main redeploy"*) — the 45s post-start sync was a per-deploy fetch of data the
   replaced process had just mirrored. The interval is the only trigger; after a
   deploy the mirror waits one pass. A bids-only boot pass was considered and
@@ -1128,14 +1128,14 @@ next touch one rather than assuming a missing row means a missing doc.
   `utils/opendkp.js`, which is BOT code. The agent's calls went direct, so they
   were off the counter, outside the outbound governor, and scaled with how many
   people had Mimic open — the one dimension a server-side number cannot see.
-  Hitya: *"agents shouldnt be reaching out to opendkp like this."*
+  Guild lead: *"agents shouldnt be reaching out to opendkp like this."*
   **Rule now in force: the agent does not call third-party APIs; the bot does
   and the agent asks the bot.** Not a slower cache — the hostname is gone, and
   `test/opendkp-standings-cache.test.js` fails the build if it returns. The bot
   serves `server-panel/account-dkp` from `_panelStandings`: one fetch for the
   whole guild, counted, governed, haltable.
   ⚠ **The live check is RAIDS-ONLY; an open auction only sets the pace inside a
-  raid** (Hitya, same day, correcting the first cut: *"the live dkp checkin
+  raid** (the guild lead, same day, correcting the first cut: *"the live dkp checkin
   should be raids-only since users are getting more dkp with each tick. the rest
   of the time the checkin should be just to the bot and database"*). DKP moves
   per TICK and ticks only happen while raiding, so an off-raid live call buys a
@@ -1157,7 +1157,7 @@ next touch one rather than assuming a missing row means a missing doc.
   property a reader cannot see.
 
 - **OpenDKP audits: the full download is once a week now, and the redeploy walk
-  was the real bill (bot 3.1.84 → 3.1.85, 2026-08-27).** Hitya, twice: *"we
+  was the real bill (bot 3.1.84 → 3.1.85, 2026-08-27).** the guild lead, twice: *"we
   don't need a full download that often, just before a raid. three times a
   week"*, then *"let's make the full audit once per week then until we have the
   new version that has the since tag."* The gap-healing full sweep now anchors
@@ -1215,7 +1215,7 @@ next touch one rather than assuming a missing row means a missing doc.
     live fleet-wide via the trigger poll — and a gated `require_raid_member`
     fire on a timer-bearing trigger now ARMS the timer (cycle state), only
     suppressing the callout. Inverts the Aug-09 note, recorded in the row.
-  - **`/ai` — the methodology, published (web 1.1.92, Hitya: "publish all of
+  - **`/ai` — the methodology, published (web 1.1.92, Guild lead: "publish all of
     this detail to wolfpack.quest/ai … human and agent readable").** One data
     module (`web/lib/aiMethodology.ts`) renders three ways: the page, `/ai.json`
     and `/ai.txt`. 16 rules each paired with the incident that caused it, 16
@@ -1224,7 +1224,7 @@ next touch one rather than assuming a missing row means a missing doc.
     back to April. `test/ai-methodology.test.js` holds the published copy to the
     source docs (every quote must still appear verbatim) — and had to be fixed
     once for passing vacuously. Linked from the front page and `/platform`.
-  - **`docs/GEMINI-SPARK-HELPER.md` (docs only, Hitya: "a starter/help file
+  - **`docs/GEMINI-SPARK-HELPER.md` (docs only, Guild lead: "a starter/help file
     that Gemini spark could use to operate similarly to how we do here").**
     Boot order (CLAUDE.md → STATUS → HOW-ITS-BUILT → newest DECISIONS), the
     per-task loop, branch routing + version bumping, the full verification gate
@@ -1256,7 +1256,7 @@ next touch one rather than assuming a missing row means a missing doc.
     against Quarm's Lua quest fork (HANDOFF-pop-quest-extract.md route);
     also queued: character_missing_spells has the same 'Spell: %'-only
     filter — bards under-served on the non-PoP path too.
-  - **Officer-assisted Mimic linking (bot 3.1.70 + web 1.1.93, Hitya via
+  - **Officer-assisted Mimic linking (bot 3.1.70 + web 1.1.93, the guild lead via
     a member without working Discord auth).** The device-code flow's
     missing half: the poll handler accepted discord-only authorizations since
     2026-07-31 but nothing could write them. Officers now stamp a member's
@@ -1269,7 +1269,7 @@ next touch one rather than assuming a missing row means a missing doc.
     SUCCEEDED 2026-08-25. Officer procedure:
     RUNBOOK-site-access.md; design + merge story: DECISIONS-2026-08-24;
     self-host choices: DESIGN-selfhost-wizard.md §3.
-  - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
+  - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Guild lead:
     "taeya reported this Ventani kill so they should have a lockout").**
     `character_lockouts` shipped 2026-08-21 reading only the `/sll` relay and
     held ZERO rows — /sll needs a human to type it, and none had arrived since
@@ -1284,7 +1284,7 @@ next touch one rather than assuming a missing row means a missing doc.
     briefing now reports `actionable` (locked to a target that is UP) rather
     than a raw headcount, and non-roster characters from joint raids are
     counted, not listed.
-    Same-evening corrections from Hitya ("Friday was a guild rolling event, so
+    Same-evening corrections from the guild lead ("Friday was a guild rolling event, so
     internal… only the lockouts from current era or night's targets really
     matter, and as long as mains are good to go"): `ours` now also comes out
     true on a majority-roster share, so an off-calendar guild event is internal
@@ -1294,25 +1294,25 @@ next touch one rather than assuming a missing row means a missing doc.
     itself at the PoP unlock); and the verdict is `mainsBlocked`, not a
     headcount. Net effect: 753 rows → six that matter for Sunday, four of them
     mains.
-  - **Buff queue overhaul (mimic beta + agent 3.5.92 + bot 3.1.59, Hitya:
+  - **Buff queue overhaul (mimic beta + agent 3.5.92 + bot 3.1.59, Guild lead:
     "buff queue is off the page").** Overlay type-groups collapse by default
     with name previews; Feral Avatar/Savagery carried targets stay listed with
     ⏳ remaining (soonest-to-drop = recast order); dashboard 🛡 options card
     adds cures-only / Feral-only section filters served on `/api/buff-queue`.
-  - **/parses trash-flood fix (web 1.1.77 + bot 3.1.60/61, Hitya: "not the
+  - **/parses trash-flood fix (web 1.1.77 + bot 3.1.60/61, Guild lead: "not the
     right parses for nonbosses").** Cards = curated bosses
     (`bosses_local.auto_registered`, filtered in-query); farm/trash/uncurated
     nameds roll up to one 🗡 line per zone per night (`parses_offcard_rollup`
     RPC, zones finally resolve via npc_id = zone_id*1000+n). Lockout-named
     mobs self-promote to cards (`_promoteLockoutBoss` — "if they have a loot
     lockout we can keep them on"). Landing Recent Kills widget same filter.
-  - **Deferred /announce parse sessions (bot 3.1.62, Hitya: "it hasn't
+  - **Deferred /announce parse sessions (bot 3.1.62, Guild lead: "it hasn't
     happened yet!").** Announcing a future event no longer opens the session
     at announce time (the 12:21 AM All-Night-Leaderboard-of-farm-kills
     incident) — pending record in `bot_kv`, opened by the spawn checker 30
     min before start; adjusttime/adjustdate/cancel keep it honest.
   - **Inventory auto-upload — STABLE (Mimic 2.6.0 · agent 3.6.0 + web
-    1.1.78, Hitya: "are we not consuming inventory files?" → "this is pretty
+    1.1.78, Guild lead: "are we not consuming inventory files?" → "this is pretty
     important", same day).** The `/api/agent/inventory` endpoint existed
     since June but its agent-side scan was never built — inventories were
     manual-/me-only and frozen (2/122 characters fresh). Now
@@ -1323,9 +1323,9 @@ next touch one rather than assuming a missing row means a missing doc.
     2.6.1. Details + lesson in `DECISIONS-2026-08-20.md`.
 
 - **Add mules/alts from their inventory file — STABLE (web 1.1.54,
-  2026-08-14).** Hitya: *"can you make it so that anyone can upload additional
+  2026-08-14).** Guild lead: *"can you make it so that anyone can upload additional
   inventory files from the /me page and have it bring in their other
-  characters/mules?"* Pyxil has six bank toons Mimic can see in
+  characters/mules?"* a member has six bank toons Mimic can see in
   `C:\TAKPv22` but that nothing else can — no logs, no `/who`, no OpenDKP row.
   The existing per-character 🎒 upload could not help: it is gated on the
   character ALREADY being in `characters` AND linked to you, which is exactly
@@ -1339,7 +1339,7 @@ next touch one rather than assuming a missing row means a missing doc.
     nothing to claim; **linked to another member → refuse**; everything else —
     brand new, or in `characters` but unclaimed — becomes yours. Created rows
     and claimed-existing rows both stamp `registered_via_web_*`.
-  - ⚠ **Widened the same day, by Hitya, over my narrower first cut.** I refused
+  - ⚠ **Widened the same day, by the guild lead, over my narrower first cut.** I refused
     to claim an unclaimed row that carried an `opendkp_id`, on the reasoning
     that the shape means a real member who simply hasn't linked Discord.
     Overruled: *"We should at least take the data and allow them to see their
@@ -1355,7 +1355,7 @@ next touch one rather than assuming a missing row means a missing doc.
     those two rather than failing as a whole.
 
 - **⚠ OPEN — guild membership gates personal tooling site-wide.** Raised by
-  Hitya in the same breath as the claim widening: *"Being in the guild should
+  The guild lead in the same breath as the claim widening: *"Being in the guild should
   not be a limiter for someone making a new character and trying to use the
   inventory function or target info overlays or any of those things outside of
   raids."* The claim rule is fixed; **the sign-in gates are not.**
@@ -1365,11 +1365,11 @@ next touch one rather than assuming a missing row means a missing doc.
   Splitting *personal* surfaces (inventory, quests, `/character`, Mob Info) from
   *guild* surfaces (parses, DKP, raid, boards, `/admin`) is a real change to who
   can see guild data, not a flag flip, so it is **not** bundled into the
-  inventory work. Needs Hitya's call on scope: guest role? separate personal
+  inventory work. Needs the guild lead's call on scope: guest role? separate personal
   tier? Mimic-only (no web account)? See `docs/DECISIONS-2026-08-14.md`.
 
 - **A configured EQ folder counts as known, logs or not — BETA (Mimic
-  2.5.4-beta / agent 3.5.83, 2026-08-14).** Pyxil's onboarding: she pointed
+  2.5.4-beta / agent 3.5.83, 2026-08-14).** a member's onboarding: she pointed
   Mimic at `C:\TAKPv22`, Settings listed it ticked as *"eqclient.exe · no logs
   yet"*, and the dashboard still said **"No EQ folder selected"** while *Set up
   EQ for me* answered **"No EQ folder known yet — point Mimic at your EverQuest
@@ -1393,7 +1393,7 @@ next touch one rather than assuming a missing row means a missing doc.
     a folder present it now names the real fix (`/log on`, or the setup button
     with EQ closed).
 
-- **The Dock — BETA (Mimic 2.5.1-beta / agent 3.5.81, 2026-08-14).** Hitya:
+- **The Dock — BETA (Mimic 2.5.1-beta / agent 3.5.81, 2026-08-14).** Guild lead:
   *"a dock overlay that lets the user attach/consume the overlays together and
   have it use one chromium browser."* One window hosting overlays as
   same-origin iframe panes; docking clears the overlay's `show*` flag so the
@@ -1406,7 +1406,7 @@ next touch one rather than assuming a missing row means a missing doc.
     Command Center is dockable via an `agentPath` so its pane resolves the
     agent-served copy — the need for that was found BY the test pinning every
     pane file against the window's `loadFile()`.
-  - **Round two, ten findings from the first live look (Hitya, 2026-08-14),
+  - **Round two, ten findings from the first live look (guild lead, 2026-08-14),
     all addressed in Mimic 2.5.3-beta:** reachable without setup mode (holding
     panes now implies being wanted — before, the only ways to turn it on were
     unreachable from a hidden dock); Command Center dockable; pane drag
@@ -1438,7 +1438,7 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-08-14).** Mob Info's "N× won" counts read `loot_observations`, and the
   only thing that ever wrote the OpenDKP half of that table was an officer
   typing `/backfillopendkploot`. Somebody last ran it on 2026-06-04, so the tab
-  was missing **758 awards across 28 raids** — Kazmodon won Silver Band of
+  was missing **758 awards across 28 raids** — a member won Silver Band of
   Secrets at raid 98561 for 150 DKP and the item still read as never dropped.
   `foldLootObservations()` now runs at the end of every `runSync`, 40 raids per
   pass, newest first, as a set difference over raid ids rather than a watermark.
@@ -1479,7 +1479,7 @@ next touch one rather than assuming a missing row means a missing doc.
   - Posts to `OFFICER_ALERT_CHANNEL_ID` → `AUDIT_TRAIL_THREAD_ID` → log-only.
 
 - **Live combined damage → a History tab — STABLE (Mimic 2.5.0 / agent 3.5.80, 2026-08-14).**
-  Hitya, watching the guild column double people mid-fight: *"instead of
+  The guild lead, watching the guild column double people mid-fight: *"instead of
   displaying the combined damage during the fight, perhaps we just have the
   overlay give the last few mobs in a history tab that can be opened up once
   it's properly deduped."*
@@ -1488,7 +1488,7 @@ next touch one rather than assuming a missing row means a missing doc.
     falls back to max, which is exactly the doubling. Readings arrive on the
     upload queue's 15s drain from twenty machines, so mid-fight most players have
     one or two. Post-fight the same estimator landed within ~1% of three
-    independent sources (Atlasius 99,979 vs his own 100k). **The fix is about
+    independent sources (a member 99,979 vs his own 100k). **The fix is about
     WHEN the number is shown, not whether it works** — don't "restore" the live
     merge.
   - Agent keeps a 6-deep ring of finished fights (`_recordFightHistory`), each
@@ -1508,11 +1508,11 @@ next touch one rather than assuming a missing row means a missing doc.
 
 - **CH chain: un-numbered shouts never take a slot, and a ✕ removes anyone who
   shouldn't be on it — STABLE (Mimic 2.5.0 / agent 3.5.79, 2026-08-14).** Live during the Aten
-  Ha Ra pull: Pyxil was spot-healing the RAMPAGE target and shouting
-  `TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left` on each heal. Tunare's
+  Ha Ra pull: a member was spot-healing the RAMPAGE target and shouting
+  `TUNARE'S RENEWAL Inc to Lorne - 98% Mana Left` on each heal. Tunare's
   Renewal is a CH-equivalent, so the agent auto-assigned her a chain slot — 006,
-  where Mcdorf actually was — lighting ORDER CONFLICT and dropping a druid who
-  was nowhere near the rotation into the middle of it. Hitya: *"she shouldn't be
+  where a member actually was — lighting ORDER CONFLICT and dropping a druid who
+  was nowhere near the rotation into the middle of it. Guild lead: *"she shouldn't be
   placed back onto the CH chain even though she's posting CHs."*
   - **The number is what makes it a chain.** The auto-slot branch is gone; an
     un-numbered personal-macro shout now lands on the spot-heal banner whatever
@@ -1535,7 +1535,7 @@ next touch one rather than assuming a missing row means a missing doc.
     18px right padding is the reserved gutter that keeps it off the countdown.
 
 - **Dashboard navigation: sidebar + tab split — STABLE (Mimic 2.5.0 / agent
-  3.5.72, graduated 2026-08-14).** Hitya: *"having to scroll in our dashboard is somewhat annoying
+  3.5.72, graduated 2026-08-14).** Guild lead: *"having to scroll in our dashboard is somewhat annoying
   to navigate."* Two halves, shipped together because the second needs the
   first. (1) The tab strip became a **left rail** — `.shell` is a flex row with a
   sticky 168px `.nav` beside a `.panes` column; under 700px it collapses back to
@@ -1545,7 +1545,7 @@ next touch one rather than assuming a missing row means a missing doc.
   top abilities, spell casts, resists, rolls, inbound spell damage, loadouts +
   pets); new **🩺 Diagnostics** takes the is-it-working cards (Zeal pipe, charm
   and pet-buff diagnostics, trigger journal, boss mechanics, Zeal explorer, raw
-  Zeal capture). Info keeps the parser facts + the crash card (Hitya put that one
+  Zeal capture). Info keeps the parser facts + the crash card (the guild lead put that one
   on Info deliberately, so it stayed); Triggers keeps recent fires, replay and the
   three trigger lists. Guided tour gained a stop for each — 8 stops now.
   - **Only the markup moved.** Every card's own render fn and placeholder id is
@@ -1574,9 +1574,9 @@ next touch one rather than assuming a missing row means a missing doc.
   and the five pq-companion-derived parser fixes (3.5.44–3.5.48). Its bot-side
   half had already shipped straight to main on 2026-08-07 — **bot 3.1.31**, where
   the tag upload cap was keeping the OLDEST 24 tags and dropping the boss.
-  **Version call (Hitya): shipped as 2.3.4, not 2.4.0 — the park IS the
+  **Version call (the guild lead): shipped as 2.3.4, not 2.4.0 — the park IS the
   line's target**, cut stable at whatever the line was parked at rather than
-  re-deriving a number from how big the feature set feels. Named by Hitya; there
+  re-deriving a number from how big the feature set feels. Named by the guild lead; there
   is no standing theme system, names stay ad-hoc per release.
   - **Graduation was FILE-LEVEL, never a branch merge** — `beta` was 79,199 lines
     behind on bot/web/docs and a merge would have deleted live surfaces.
@@ -1629,7 +1629,7 @@ next touch one rather than assuming a missing row means a missing doc.
   on main, agent 3.5.53).**
   - **bot 3.1.33 — a capped DISPLAY query was doubling as a SET.** `bid-history`
     seeded the already-won set from `wins`
-    (`opendkp_loot … order=fetched_at.desc&limit=100`). The Hitya/Melting/Canopy
+    (`opendkp_loot … order=fetched_at.desc&limit=100`). The the guild lead/a member/a member
     family has **187 awards, so 87 read as unwon** and came back as "bid on but
     not yet won" and as RECENT MISSES; the three items reported sat at rows 101,
     120 and 184. Worse, `fetched_at` is the MIRROR SYNC time, so *which* 100
@@ -1650,7 +1650,7 @@ next touch one rather than assuming a missing row means a missing doc.
     hard-coded, so it advances by itself when PoP unlocks.
 - **Web 1.1.23 → 1.1.35 — the beta mirror, and the page that explains the
   platform (2026-08-08/09).**
-  - **`b.wolfpack.quest`** (Hitya): put a `b.` in front of any page to see it as
+  - **`b.wolfpack.quest`** (the guild lead): put a `b.` in front of any page to see it as
     it stands on `beta`. Beta banner linking back to the same path on production,
     `noindex, nofollow` (load-bearing — same pages on another host is duplicate
     content), "(beta)" titles; `NEXT_PUBLIC_IS_BETA` comes from
@@ -1665,7 +1665,7 @@ next touch one rather than assuming a missing row means a missing doc.
     `CLAUDE.md` → Branches; the DNS/registrar step is human-only — **no Porkbun
     integration exists** and cloud sessions cannot reach the API or read the zone.
   - **`/about`** — the walkthrough page, with live numbers and three verified
-    overlay demos (Peopleslayer, the Ashieron DA, the CH chain, Shei Vinitras).
+    overlay demos (a member, the a member DA, the CH chain, Shei Vinitras).
     Headline stats: OpenDKP attendance **avg 49 · biggest 67 · 132 raids · 21
     parsers in the busiest night**; since-April combat **650 fights · 288.3M
     damage · 88 bosses**; **612 PvP broadcasts**. **`/shortabout`** tells the same
@@ -1743,25 +1743,24 @@ next touch one rather than assuming a missing row means a missing doc.
     (`GREATEST(window_start, first_attended)` — the same rule OpenDKP applies),
     for every window. Previously every member was measured against all 1,492
     guild ticks ever, so everyone who joined after the guild started was
-    under-reported, worst for the newest people: Gonner went **64% → 100%**,
+    under-reported, worst for the newest people: a member went **64% → 100%**,
     which matches ground truth (he has never missed a tick). Note the two roster
     counts are two different right answers — the leader's sheet filters to ≥50%
-    RA over 30 days (41 people), ours counts every raiding rank (64); Dant and
-    Denniker sit at exactly 50%, which is where 41-vs-42 comes from.
+    RA over 30 days (41 people), ours counts every raiding rank (64); a member and
+    a member sit at exactly 50%, which is where 41-vs-42 comes from.
   - **Chat history stays in Postgres** — not moving `chat_messages` to object
     storage; ~79 MB/year is a decade from mattering.
   - Shipped the same day: **project memory** — `docs/DECISIONS-<date>.md`, the
     `.claude/hooks/session-digest.sh` SessionStart digest, and `/recall`.
-- **Attribution normalised to Hitya (2026-08-09) — 523 mentions across 160
-  files.** Every decision, bug report, sketch and live-test result credited to
-  Uilnayar, Canopy, Rockin, vj, Hopeya, Utoh or Melting is **Hitya** — one
-  person, many characters. The ONLY genuine other names are the `feedback`-table
-  submitters (`Wabumkin/Adiwen`, `Jankzer`, `Ashieron/Donaldus/Oravayne`), who
-  keep theirs. Character names in fixtures, golden logs and worked examples were
-  deliberately NOT touched — this was an attribution sweep, not a rename. Rule +
-  the complete feedback list live in `CLAUDE.md`; check that table rather than
+- **Attribution normalised (2026-08-09) — 523 mentions across 160 files**, then
+  **superseded 2026-09-16**: the repo is public, so documentation and comments
+  now credit by ROLE and name nobody. The character-to-person mapping that the
+  2026-08-09 sweep relied on has been removed from the repo entirely. Character
+  names in fixtures, golden logs and worked examples were deliberately NOT
+  touched then and must not be now — that is data, not attribution. Rule lives
+  in `CLAUDE.md`; check that rather than
   trusting an existing comment, since a stale comment is exactly what was wrong.
-- **Mimic 2.3 line — NAMED "Quick Setup and Save Memory Update" by Hitya
+- **Mimic 2.3 line — NAMED "Quick Setup and Save Memory Update" by the guild lead
   (2026-08-04). GRADUATED to stable on 2026-08-09 as part of 2.3.4 (see the top
   of this section); it ran beta-only from 2.3.0-beta.22 → .25 (agent 3.5.29).**
   Carries, in order shipped: the one-click fixers
@@ -1775,7 +1774,7 @@ next touch one rather than assuming a missing row means a missing doc.
   EQLegends client was being tracked as Quarm) and `--wp-window=` tags so Task
   Manager's Command line column can name each renderer. Details per feature in
   `docs/HOW-ITS-BUILT.md` (five 2026-08-04 entries). *(The standing rule that
-  graduation is Hitya's call still holds for every future line — it was
+  graduation is the guild lead's call still holds for every future line — it was
   exercised, not retired, when 2.3.4 was cut on 2026-08-09.)*
 - **#141 zone-scope the cross-client Target Info / Mob Info merge — DONE
   (2026-07-22, bot 3.0.226 on main + agent 3.4.4 beta; Mimic parked 2.0.2; web
@@ -1852,7 +1851,7 @@ next touch one rather than assuming a missing row means a missing doc.
     it via `_cancelTimersOnMobDeath`. Callouts ride `_pushOverlay`
     (the `_announceRampage` precedent); timers ride `_startTimer` with
     `target=boss`. Cadence is **60s** (guild-lead corrected the trigger's 55s
-    placeholder). Regex field-verify of the imported trigger is Hitya's live step
+    placeholder). Regex field-verify of the imported trigger is the guild lead's live step
     and is now moot for firing (the code detector is the signal); the imported
     trigger's text/regex was NOT touched.
   - **#143 MEZ/SLOW badges.** Pure DISPLAY classification in `apps/mimic/
@@ -1892,7 +1891,7 @@ next touch one rather than assuming a missing row means a missing doc.
     were being dropped). Note: dead `syncAuctionBids` (unexported, uncalled)
     already had its own dedup — left as-is.
   - **#134 Discord auto-parse death over-count.** The card SUMMED each parser's
-    sighting of the same death ("Melting ×3" when 3 parsers each saw it once).
+    sighting of the same death ("a member ×3" when 3 parsers each saw it once).
     Ported the web page's dedup+suppress (`web/app/parses/[id]/page.tsx` ~369-418)
     into a shared pure `utils/parseDeaths.js` (`dedupParseDeaths`): accumulate
     raw per-contributor sightings on the card, derive counted display rows via
@@ -1949,8 +1948,8 @@ next touch one rather than assuming a missing row means a missing doc.
   for the shakedown: LKG crash-loop rollback, revert-to-stable, kill switches.
   Agent graduated to the **3.4.0** minor as the line marker (fleet hot-swaps
   via the manifest; installer carries 3.3.100-identical code). ⚠ DKP SEMANTIC
-  (Hitya 2026-07-20, verbatim intent): OpenDKP keeps **ONE pooled DKP total
-  per person, shared across all their characters** — "if Hitya and Canopy both
+  (guild lead 2026-07-20, verbatim intent): OpenDKP keeps **ONE pooled DKP total
+  per person, shared across all their characters** — "if the guild lead and a member both
   show 100 next to their name, that means 100 total available for them to bid,
   NOT 200." The bidding panel must display ONE shared figure (never sum
   per-character displays), labeled as account-wide; verify the shipped
@@ -1960,7 +1959,7 @@ next touch one rather than assuming a missing row means a missing doc.
   docs on main). No DB change.** The panel's DKP was mirror-derived
   (`_familyDkpTotals` via bot `server-panel/bid-history`) and structurally can't
   reach OpenDKP's number: a fully-computed mirror cross-check (no `limit=3000`
-  truncation) puts Hitya's family at **−125** (main-only, GetSummary-style) /
+  truncation) puts the guild lead's family at **−125** (main-only, GetSummary-style) /
   **+858** (family-sum) while the OpenDKP standings show **171** — none of the
   mirror numbers can equal it. Fix: the agent reads OpenDKP's OWN standings
   (`GET /clients/{name}/dkp` — the hosted route for the GetSummary lambda, legacy
@@ -2008,7 +2007,7 @@ next touch one rather than assuming a missing row means a missing doc.
      name ∈ `attendees[]` + `adjustments.raw.Value` − `loot.dkp`), labelled with
      freshness (`max(fetched_at)`). **Grounding:** there is NO characters-balance
      mirror; and OpenDKP links alts to a shared pool — per-character is
-     misleading (main `Hitya` computes to −125 while the family nets +860), so we
+     misleading (the main computes to −125 while the account nets +860), so we
      ship the family sum (the balance you actually bid against). **Adjustable**;
      officers verify vs the OpenDKP UI in BETA.
   7. **Family auto-prefill after login:** `suggested_family` (main = most auction
@@ -2055,7 +2054,7 @@ next touch one rather than assuming a missing row means a missing doc.
      stale, so the #112 logged-out-reporter protection is unchanged), and it
      reports **`live_character`** (the most-recently-active watched char, null
      when idle). The bot stores it and: the 📡 Reporters fleet CHARACTER column
-     shows "**Alt (Main)**" ("Canopy (Hitya)") when the live char differs from
+     shows "**Alt (Main)**" ("a member (the guild lead)") when the live char differs from
      the main, the primary alone when idle; the /who **🐺** keys on
      `live_character` AND primary, so playing an alt lights the wolf on the toon
      actually online. The parenthetical obeys the SAME server-side
@@ -2141,7 +2140,7 @@ next touch one rather than assuming a missing row means a missing doc.
     on main — `index.js:8863` uses `new EmbedBuilder()` with no local/top-level
     require (Harmonic Howl announce fn, bot 3.0.222). Genuine runtime
     ReferenceError on next bot restart; needs a bot hotfix, untouched here.
-  - **⚠ Board 1 narrowed to the viewer (web 1.1.55, 2026-08-14).** Hitya:
+  - **⚠ Board 1 narrowed to the viewer (web 1.1.55, 2026-08-14).** Guild lead:
     *"quartermaster should display raider information for that user not for
     everyone. it can display for everyone for admins."* As shipped, Board 1
     named **every** owner of every kit item to **every** signed-in member — a
@@ -2158,7 +2157,7 @@ next touch one rather than assuming a missing row means a missing doc.
     own blind spot. Six tests in `test/quartermaster.test.js`, one of which
     serializes the scoped row and asserts no outsider's name appears **anywhere**
     in it, so a future name-carrying field fails there rather than in production.
-- **Fight Cards v1 — SHIPPED (web 1.1.61, 2026-08-16, task #43 on Hitya's
+- **Fight Cards v1 — SHIPPED (web 1.1.61, 2026-08-16, task #43 on the guild lead's
   "continue with the bits for 75").** `/raid/plan`: one pre-raid readiness
   card per fight — officer-authored comp/kit/tactics text, callouts resolved
   LIVE against `guild_triggers` by id (✓ armed / ○ denoted / ⚠ MISSING —
@@ -2170,10 +2169,10 @@ next touch one rather than assuming a missing row means a missing doc.
   increment (in `DESIGN-fight-cards.md`): comp/kit live joins (#93/#82),
   the Discord pre-pull projection (bot, post-freeze), drill result on-page.
 - **Overlay scale 50%–200% (mimic + agent 3.5.88, beta, 2026-08-18/19 —
-  Fittir's 5K monitor, via Hitya).** zoomFactor per overlay window, hooked
+  a member's 5K monitor, via the guild lead).** zoomFactor per overlay window, hooked
   into applyOverlayOpacity's shared ready-to-show lifecycle (zero per-HTML
   changes; future overlays inherit it). v1 was a Settings-only global
-  slider; Hitya corrected the placement same night ("It should be a slider
+  slider; the guild lead corrected the placement same night ("It should be a slider
   on the overlays page and one on each individual one" — he was also on
   beta.8, which predates the whole feature). Now THREE surfaces: 🔍 "Size —
   all overlays" on the dashboard Overlays tab (drives the same
@@ -2185,7 +2184,7 @@ next touch one rather than assuming a missing row means a missing doc.
   it would scale every pane). overlay-auto-height + ensure-min-height now
   multiply CSS px by the window's zoomFactor so scaled overlays don't clip
   or lose their right-click menu. **Round 2 (agent 3.5.89, same day, from
-  Hitya's live beta.9 testing):** a scale change now resizes the WINDOW
+  The guild lead's live beta.9 testing):** a scale change now resizes the WINDOW
   BOUNDS with the zoom (center-anchored, work-area clamped, ~180ms
   ease-out glide — zoom in a fixed box left card edges/centering wrong);
   sliders apply on RELEASE (mid-drag apply rescaled the setup bar under
@@ -2208,13 +2207,13 @@ next touch one rather than assuming a missing row means a missing doc.
   drag controls get the same treatment and park below it. "Smooth slider"
   now IS the glide and defaults ON (`cfg.overlayScaleGlide`; off = snap)
   — the live-follow mode it used to toggle is gone, it's what made the
-  label read backwards (Hitya: "being off to glide doesn't make sense").
+  label read backwards (Guild lead: "being off to glide doesn't make sense").
   The dock sits OUT of the global scale by default (`overlayScaleFor`
   returns 1.0 for `dock` unless `cfg.overlayScaleDock`; "Scale the dock
   too" checkbox re-applies on toggle). Beta test: setup bars one readable
   size at 50% and 200%; smooth checkbox pre-checked; dock ignores the
   slider until its checkbox is on.
-- **Guide high-MR warning corrected (web 1.1.76, 2026-08-19 — Hitya, on
+- **Guide high-MR warning corrected (web 1.1.76, 2026-08-19 — the guild lead, on
   the Emperor Ssraeshza guide: "Tash is unresistable. Same with Malo.
   Slow is a disease slow").** The Catalog card's MR≥500 warning claimed
   tash/slows/charms are all resisted and said "do not plan around a
@@ -2226,7 +2225,7 @@ next touch one rather than assuming a missing row means a missing doc.
   is the play, checks DR N"; ≥500 → "plan without a slow"). General
   logic, not an Emperor override — applies to every high-MR guide page.
 - **✨ smoOOTH SCAlers — Mimic 2.5.4 STABLE (agent 3.5.91), 2026-08-19.**
-  Hitya named it and called the graduation same-day ("lets roll the
+  The guild lead named it and called the graduation same-day ("lets roll the
   resizing update into main in a fun way"); the name renders its own size
   wave as a case-wave on every text surface. The whole 2.5.4 beta line
   went to the fleet: overlay size sliders ×3 surfaces + glide + counter-
@@ -2244,11 +2243,11 @@ next touch one rather than assuming a missing row means a missing doc.
   release: tag exists, prerelease false, /releases/latest resolves to it.
   Lesson for monitors: a green release run is not a release — check the
   tag. Field-pass items that stay open:
-  pane inner-✕ retest (Hitya), Fittir's 5K 200% hover-target check, the
+  pane inner-✕ retest (the guild lead), a member's 5K 200% hover-target check, the
   #52 parity-audit remainder, the #54 design-consistency pass.
-- **Change time on a sent request (bot 3.1.58, 2026-08-19 — Hitya:
-  Hawkner "can't change time").** The nudge flow's ✅ done card was
-  one-shot (`components: []`) — Hawkner submitted "tomorrow 8pm ET",
+- **Change time on a sent request (bot 3.1.58, 2026-08-19 — Guild lead:
+  a member "can't change time").** The nudge flow's ✅ done card was
+  one-shot (`components: []`) — a member submitted "tomorrow 8pm ET",
   actually wanted 10:30pm ET after Thursday's alt raid, and had no way
   back. Now the done card carries **🕐 Change time** (requester-or-officer
   only): re-opens the time step in change mode (context =
@@ -2258,12 +2257,12 @@ next touch one rather than assuming a missing row means a missing doc.
   (`updateEventRequestTime` in `commands/suggest.js`;
   `postEventRequest` now returns the posted Message). A ≤92-char guard on
   the button id keeps every derived customId under Discord's 100 cap.
-  Cards posted before 3.1.58 have no button — Hawkner's existing request
+  Cards posted before 3.1.58 have no button — a member's existing request
   needs a fresh tap-through (or an officer word). 2 tests added.
-- **Seru Minis group event (bot 3.1.56/57, 2026-08-19 — Hitya, from
-  Hawkner's thread).** The **four Praesertum** house leaders of Sanctus
+- **Seru Minis group event (bot 3.1.56/57, 2026-08-19 — the guild lead, from
+  a member's thread).** The **four Praesertum** house leaders of Sanctus
   Seru — Bikun (NW, Shard of the Shoulder), Vantorus (SW, Hand), Rhugol
-  (NE, Eye), Matpa (SE, Heart); roster corrected by Hitya ("they are these
+  (NE, Eye), Matpa (SE, Heart); roster corrected by the guild lead ("they are these
   four") after a first pass wrongly fingered the city's 20-named office
   tier — are now a first-class suggest-flow EVENT (`GROUP_EVENTS` /
   `evt_seru_minis` in `utils/suggestNudge.js`): the nudge card detects
@@ -2296,10 +2295,10 @@ next touch one rather than assuming a missing row means a missing doc.
   to stretch across columns/rows, snapping to whole grid cells (live
   preview, `dock-span` write on release, same 3×4 caps as the ≡ presets;
   the grip suppresses the reorder drag). **Remaining from #53:** pane
-  inner-✕ needs Hitya's retest post-CSS-scoping; dock layouts on the
+  inner-✕ needs the guild lead's retest post-CSS-scoping; dock layouts on the
   dashboard rides the #52 parity audit.
 - **Dock/setup bug batch (mimic, beta, 2026-08-19 — four field bugs from
-  Hitya's dock deep-dive).** (1) Dock runaway growth: auto-fit measured
+  The guild lead's dock deep-dive).** (1) Dock runaway growth: auto-fit measured
   `shell.scrollHeight` with `#shell{height:100%}` — at LEAST the viewport,
   so `want = winH + 10` sat a rounding coin-flip past the 8px hysteresis
   and crept +10px/s to the 1600 cap (machine-dependent, which is why it
@@ -2323,14 +2322,14 @@ next touch one rather than assuming a missing row means a missing doc.
   plate/card system, honest 100% opacity; today 100% = opaque card
   SURFACES, the chrome around them differs per overlay by design drift).
 - **Tray↔dashboard parity batch (agent 3.5.91 + mimic, beta, 2026-08-19).**
-  New RULE (Hitya, now in CLAUDE.md): "Anything that's available from the
+  New RULE (the guild lead, now in CLAUDE.md): "Anything that's available from the
   taskbar should be available from the dashboard as well." Shipped: 💾
   Per-character overlay layouts card on the Overlays tab (auto-swap toggle,
   save-for-active-toon, saved chips + forget ✕ — `char-profiles-enable` /
   `char-profile-save` / `char-profile-forget` IPC, state on the status
   push); Lock/Unlock + Setup-mode + Hide-all buttons on the actions row
   (`hide-all-toggle` IPC + existing bridges); a Dock row in BUILT-IN
-  OVERLAYS (Hitya: "Dock isn't available from the built in overlays
+  OVERLAYS (Guild lead: "Dock isn't available from the built in overlays
   page"). Plus `_healMootHideAll`: flags re-enabled one-by-one bypass
   `toggleHideAllOverlays`, leaving persisted `hideAllActive` + snapshot
   lying ("it says hideall is on but its not" / the "0 marked HIDDEN"
@@ -2342,7 +2341,7 @@ next touch one rather than assuming a missing row means a missing doc.
   toggles, auto-arrange-on-show, start-with-Windows, check-for-updates
   are still tray-only; port in one pass.
 - **/who class titles fold to base classes (bot 3.1.55, 2026-08-19 —
-  Hitya: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
+  Guild lead: "Warlock on Anon", Syczlak).** who-lookup's Supabase passes
   (who_directory / characters) served stored class strings raw, and history
   harvested before agent-side normalization still holds EQ level titles.
   Now folded through `utils/classTitles.normalizeClass` at the serve
@@ -2351,7 +2350,7 @@ next touch one rather than assuming a missing row means a missing doc.
   files said "keep in sync", nothing enforced it. Web + /whois + agent
   parse were already normalized; this was the one raw hole.
 - **Melody AE badge: pulse merge fix + kite damage totals (agent 3.5.88 +
-  mimic, beta, 2026-08-19 — Fittir via Hitya).** Fittir's overlay read
+  mimic, beta, 2026-08-19 — a member via the guild lead).** a member's overlay read
   ⚔123/12 / ⚔152/12 — "it's adding the number of hits." Root cause: pulse
   bursts in noteSongAoeLine were bounded by wall-clock arrival, and the EQ
   client flushes the log in multi-second batches under swarm-kite load, so
@@ -2368,7 +2367,7 @@ next touch one rather than assuming a missing row means a missing doc.
   confirm the badge stays ≤12 and Σ climbs; toggle off hides both damage
   chips but keeps hits/12.
 - **Spellbook "where from" + zone shopping list (web 1.1.67, 2026-08-18).**
-  Hitya: the missing-spells page's PQDI links "don't work. We should say
+  Guild lead: the missing-spells page's PQDI links "don't work. We should say
   where it's from" + a shopping-list mode. Root enablement: the eqmac dump
   ALWAYS carried `npc_types.merchant_id` — the sync transform never picked
   it, which is why vendor→zone could not resolve (the page's old "we don't
@@ -2382,7 +2381,7 @@ next touch one rather than assuming a missing row means a missing doc.
   `web/lib/spellSources.ts` + 5 tests (the only-here rule: a spell's WHOLE
   vendor footprint in one zone, not merely sold-in-this-zone).
 - **/admin/adoption — the PM product-health page (web 1.1.66, 2026-08-18).**
-  Hitya: *"take your framing of the adoption bit as the PM and update the
+  Guild lead: *"take your framing of the adoption bit as the PM and update the
   adoption page."* Players-not-characters throughout; three funnels kept
   separate (conversion / new-raider adoption / raid-night coverage). Tiles:
   WAU, 4-week retention, all-time activated, raided-never-uploaded. Sections:
@@ -2398,14 +2397,14 @@ next touch one rather than assuming a missing row means a missing doc.
   20260819010500, applied + committed), read via selectAll; math in
   `web/lib/adoption.ts` (10 tests incl. the ET raid-night keying and the
   partial-week flag). Follow-ups queued in the page itself: agent_sessions
-  roll-up, first-boot ping (privacy call: Hitya), feature telemetry.
+  roll-up, first-boot ping (privacy call: the guild lead), feature telemetry.
 - **Task #47 SHIPPED — self-healing encounter persistence (bot 3.1.52,
   2026-08-17).** The Final Arbiter P1's full root cause was TWO-layered: (1)
   first-time content had no `bosses_local` row (the allowlist refusal), and
   (2) **backfill uploads skip the bosses.json match by design** (replays must
   not re-arm timers) and slug the display name, which never equals a curated
   id — so even patched bosses could not be backfilled ('the_final_arbiter' ≠
-  'final_arbiter'; Hitya's morning replay had Progenitor + Master of the
+  'final_arbiter'; the guild lead's morning replay had Progenitor + Master of the
   Guard refused this way). `_resolveBossForPersist` now resolves curated id →
   slug → article-stripped slug → exact eqemu name match (reusing a curated
   row by npc_id) → self-registers genuinely new mobs; refusal remains only
@@ -2414,7 +2413,7 @@ next touch one rather than assuming a missing row means a missing doc.
   drop is structurally gone; the #42 sentinel invariant ("combat uploads
   arriving, zero encounters persisted") remains as the alarm layer.
 - **⚠ Needs a local session — `dot_stacking_exempt` backfill (2026-08-16).**
-  Hitya, from Partil's bug-reports post on Quarm's DoT stacking
+  The guild lead, from Partil's bug-reports post on Quarm's DoT stacking
   (buffstacking.cpp:654): the server carries a per-spell flag — 0 = the DoT
   stacks with itself across casters (Immolate), 1 = it does not (Breath of
   Ro) — and our mirror carries it NOWHERE (no column, no `raw` key; verified
@@ -2427,7 +2426,7 @@ next touch one rather than assuming a missing row means a missing doc.
   the free test vectors. Details in `docs/DESIGN-mobinfo-dot-groups.md`.
 - **Fight timeline list, round two — STAGED during the freeze (web 1.1.62,
   2026-08-16 ~20:00 ET, on `claude/sharp-lamport-dC0TW`; lands on main after
-  00:30 ET).** Hitya reviewed `/parses/d951b081` mid-raid-prep: *"the
+  00:30 ET).** the guild lead reviewed `/parses/d951b081` mid-raid-prep: *"the
   timeline view was fine to have it just needed a better look"* + hide the
   too far/can't-see callouts + "so many ramp calls at 00:00 sounds wrong."
   Root causes measured: 67 of 126 events predate `started_at` (trash-merge
@@ -2437,7 +2436,7 @@ next touch one rather than assuming a missing row means a missing doc.
   is windowed per-target so alternating rampages collapse. New pure module
   `web/lib/fightEvents.ts` + 11 tests pinned to that card's failure modes;
   browser-verified at phone width.
-- **Parse page reshaped by Hitya's first-format review — DONE (web 1.1.60,
+- **Parse page reshaped by the guild lead's first-format review — DONE (web 1.1.60,
   2026-08-16).** Five asks on `/parses/4d0d6dd2` (the restless burrower), all
   shipped + harness-verified against that fight's real rows: the damage chart
   stacks BY CLASS with right-edge `class + %` labels; clicking a class drills
@@ -2446,7 +2445,7 @@ next touch one rather than assuming a missing row means a missing doc.
   chip/band/legend row highlights its region; the MT strip explains its gaps
   (1-bucket sampling holes bridged in `mainTankLane` — measured aliasing;
   REAL gaps get dashed hover rects — the 385s→end gap was the mob dealing
-  zero damage while the raid kept hitting it, Hitya's "it ran" confirmed);
+  zero damage while the raid kept hitting it, the guild lead's "it ran" confirmed);
   and the FightTimeline marker chart on that page is replaced by
   `FightEventLog.tsx`, a collapsible list of deaths/events/callouts with
   names, ×N run-folding, and per-type dots (`/raid/review` keeps the marker
@@ -2456,7 +2455,7 @@ next touch one rather than assuming a missing row means a missing doc.
   docs, UI copy and release notes. No other shorthand. Grep before shipping
   anything member-facing.
 - **Kneel Test phantom — FIXED for real (agent 3.5.86 beta, 2026-08-16).**
-  Hitya: *"for beta, I'm still seeing kneel test on the target info."* Server
+  Guild lead: *"for beta, I'm still seeing kneel test on the target info."* Server
   was clean (0 buff_casts rows — ingest filter works); the phantom was LOCAL:
   the junk-landing guard counted family size WITHIN each index, and of the 33
   catalog spells sharing "is struck by a sudden force." exactly one (Kneel
@@ -2470,7 +2469,7 @@ next touch one rather than assuming a missing row means a missing doc.
   keys on the observed CASTER's class, with a local-session spell-class
   backfill as enrichment.
 - **U1 + U2 landed; Discord-projection ratified; advisor sweep — DONE (bot
-  3.1.49 / web 1.1.58, 2026-08-16).** Hitya: *"do U1 and land the unique
+  3.1.49 / web 1.1.58, 2026-08-16).** Guild lead: *"do U1 and land the unique
   index"* + *"discord was a source of semi-truth. now it should just be a
   projection"* + *"let's start looking at the database read/write layers as
   that is complexity I have not designed in."*
@@ -2496,7 +2495,7 @@ next touch one rather than assuming a missing row means a missing doc.
     advisor items + full component review (Mimic overlay-parity gate, web env
     parity, post-deploy smoke, unindexed FKs) outlined in ARCHITECT Part II.
 - **Architect's rebuild assessment — DONE docs (2026-08-16).**
-  `docs/ARCHITECT-REBUILD-2026-08-16.md`, on Hitya's ask: rebuild from scratch
+  `docs/ARCHITECT-REBUILD-2026-08-16.md`, on the guild lead's ask: rebuild from scratch
   knowing everything, name the first decision changed, split "couldn't have
   known" from "didn't want to know", and find the most over-/under-engineered
   things with what each costs. Headlines: **first change = durable state gets
@@ -2511,10 +2510,10 @@ next touch one rather than assuming a missing row means a missing doc.
   complexity. Verdict: under-engineering costs ~an order of magnitude more
   (≈8–11h/fortnight documented vs sunk cost + zero claims). Three metrics
   proposed (U1 unpaged-read call sites → CI gate; U2 dup groups → 0 via #39's
-  index; O1 enforce armed-days, review 2026-12-01) — task #41, needs Hitya.
+  index; O1 enforce armed-days, review 2026-12-01) — task #41, needs the guild lead.
   Also corrected CLAUDE.md's 2.2×-stale line counts (bot 17,706; agent 35,234).
 - **Who else rolled — DONE web (1.1.57) / BETA Command Center (agent 3.5.85),
-  2026-08-14.** Hitya: *"can we start having a drop-down to open up lower rolls
+  2026-08-14.** Guild lead: *"can we start having a drop-down to open up lower rolls
   on the page and see who else rolled? may make sense to have this and a
   dismiss button on the command center where this lives."* Both surfaces showed
   winners only; the losing rolls had been captured all along and simply were
@@ -2545,7 +2544,7 @@ next touch one rather than assuming a missing row means a missing doc.
     project's own Tailwind config, since `group-open:` variants only exist if
     Tailwind actually emitted them and a typecheck cannot tell you that.
 - **Roll calls get their item name without a `|` — BETA (agent 3.5.84,
-  2026-08-14).** Hitya, on the night's /rolls page: *"These rolls didn't get
+  2026-08-14).** the guild lead, on the night's /rolls page: *"These rolls didn't get
   consolidated to loot in the website but did on here."* Eleven sessions, all
   **unlabeled roll**, LOOTED BY empty. Cause: `trackRollItemLine` opened with
   `if (line.indexOf('|') === -1) return;` and the caller had used commas.
@@ -2670,7 +2669,7 @@ next touch one rather than assuming a missing row means a missing doc.
   — DONE (2026-07-19, agent 3.3.94 beta + Mimic 1.9.6 beta; bot 3.0.216 + web
   1.0.248 on main).** Two halves.
   - **Half 1 — pet buffs weren't showing (PROVEN cause, two prior guesses were
-    wrong).** Repro: Canopy (druid) casts **Girdle of Karana** on her summoned
+    wrong).** Repro: a member (druid) casts **Girdle of Karana** on her summoned
     pet Kabn; the in-game pet window + Zeal show the buff, but the Mimic Pet
     tracker shows only Kabn's HP. The earlier clicky-path and charm-pet-
     misclassification theories were both wrong. **Real cause (fixture-proven,
@@ -2688,7 +2687,7 @@ next touch one rather than assuming a missing row means a missing doc.
     fixture reproduces both: the WORKING path (pet targeted → buff shows) and the
     BUG (pet not the live target → empty). It also explains **#116's phantom
     "Girdle of Karana ×1 · 71:48" melody card** — 71:48 ≈ the 720-tick catalog
-    max, i.e. the buff riding Canopy's OWN Zeal buff list into the bard melody
+    max, i.e. the buff riding a member's OWN Zeal buff list into the bard melody
     overlay (already fixed separately in #116). **Fix (log-path, evidence-
     supported — NOT pipe-side, since the land IS in the log and resolves
     correctly): in `resolveSelfCastLanding`, when the resolved land names one of
@@ -2742,8 +2741,8 @@ next touch one rather than assuming a missing row means a missing doc.
     tonight's beta with no schema change) and edited with no code release. Enforced
     SERVER-side: a hidden name never has a main emitted (matched by its own name OR
     its main's name, so listing either the alt or the main hides the link).
-    **Seeded `hide_main_names = "Tildias,Serreth"`** via the Supabase MCP (both are
-    alts — Tildias→Stupidrichard, Serreth→Peopleslayer — the explicit privacy
+    **Seeded `hide_main_names = "Faelan,Galen"`** via the Supabase MCP (both are
+    alts — a member→a member, a member→a member — the explicit privacy
     exception). Editing the list today is an MCP/SQL update to that row (like the
     #115 pins before they got their Mimic panel); a dedicated officer input is the
     natural fast-follow.
@@ -2812,7 +2811,7 @@ next touch one rather than assuming a missing row means a missing doc.
     Attendee names not in `characters` become singleton families so no attendance
     is dropped. Small addition to `/admin/attendance`: a "Family RA%" table
     reading the view (sorted by 90d RA%). **Verified live:** family rollup
-    matched an independent DISTINCT-union cross-check exactly (Peopleslayer family
+    matched an independent DISTINCT-union cross-check exactly (a member family
     `raids_att_lifetime=229`). **Consumers (seating, #80 review cards) should read
     RA% + tick counts from `member_attendance_metrics`.**
 - **Rules-mechanization thread R.3 (#95) + R.4 (#93) v1 — DONE (2026-07-18, web
@@ -2836,7 +2835,7 @@ next touch one rather than assuming a missing row means a missing doc.
     (13 — MR edge cases, no-snapshot, opt-out, See-Invisible≠invis, scribed/item
     ladder, necro coffin + poison-bottle false positive + level-title fold).
     **Live-verified:** 16 roster chars have snapshots, all meet the 100 floor
-    (lowest Squeekie 108; Hitya 158). *Member-facing — roadmap entry added.*
+    (lowest a member 108; the guild lead 158). *Member-facing — roadmap entry added.*
   - **#93 comp template + planned-vs-actual matcher.** Pure lib `web/lib/comp.ts`
     — the ONE class→archetype map (tank/healer/support/melee/ranged), template
     validation, and gap math (`computeCompGaps`: archetype + per-class deltas,
@@ -3198,7 +3197,7 @@ next touch one rather than assuming a missing row means a missing doc.
      (kill = scary checkbox, floor = number input, empty = unset; merge-preserving
      save intact). **Fail-open everywhere** (missing/unparseable = no effect; the
      agent only stands down on a FRESH reading — bot down = runs normally after a
-     5-min TTL). **⚠ These are POLICY semantics — conservative v1, Hitya to sign
+     5-min TTL). **⚠ These are POLICY semantics — conservative v1, the guild lead to sign
      off.**
   3. **LKG crash-loop auto-rollback (#74 Part 3, Mimic beta).** Before any agent
      hot-swap Mimic snapshots the working agent to `index.lkg.js` + `package.lkg.json`
@@ -3323,7 +3322,7 @@ next touch one rather than assuming a missing row means a missing doc.
   smoke-tested `eq_class_bit`/`character_missing_spells`/`turnins_by_id`/
   `item_card_info`/`who_directory_json` still resolve their tables (write RPCs
   verified by static body inspection — not executed against prod).
-  **⚠ Pending dashboard action (Hitya):** enable Auth leaked-password protection
+  **⚠ Pending dashboard action (the guild lead):** enable Auth leaked-password protection
   (HaveIBeenPwned check) — Dashboard → Authentication → password settings. No
   MCP/SQL toggle exists; it's an Auth config flip.
 
@@ -3346,7 +3345,7 @@ next touch one rather than assuming a missing row means a missing doc.
   bot `/health` + `latest-version` (both channels) + bearer ingest-auth +
   wolfpack.quest. Zero agent edits (agent file byte-identical). Design + the six
   defects it PINS: `docs/DESIGN-75-golden-log.md`.
-  **⚠ Needs Hitya's call:** (a) do we want a *write-path* drill (POSTs a
+  **⚠ Needs the guild lead's call:** (a) do we want a *write-path* drill (POSTs a
   synthetic encounter end-to-end → puts drill rows in `encounters`)? (b) the
   three `KEEP_PATTERNS` gaps it found are real data loss today — Quarm two-line
   DS flavor lines, bystander exceptional heals, and spell crits all parse fine
@@ -3431,7 +3430,7 @@ next touch one rather than assuming a missing row means a missing doc.
   - **`golden-log.yml` had never run once** — invalid YAML (colon-space in a
     plain scalar) since the day it was added. Fixed, plus
     `test/workflow-yaml.test.js` so no workflow can silently not-exist again.
-  **⚠ Two things deliberately NOT done, both need Hitya's call** — see the Open
+  **⚠ Two things deliberately NOT done, both need the guild lead's call** — see the Open
   TODO section: cleaning feigns out of the stored history, and re-deriving the
   death dedup window.
 
@@ -3491,7 +3490,7 @@ here — corrected 2026-08-09, this line still read "#208"):
   One-line fix (`^` → `^\[.+?\]\s+`) restores matching and captures cleanly
   including multi-word/backtick names; **deleting the `^` instead is wrong** —
   `{s}` allows spaces, so it captures a leading space and corrupts every
-  name-keyed consumer. **Not applied — needs Hitya's go-ahead**, and the runbook
+  name-keyed consumer. **Not applied — needs the guild lead's go-ahead**, and the runbook
   stages it: the 8 from this session (requested work, boss-scoped, low noise)
   vs the other 29 (long dormant; six slow-landed callouts firing on every pull
   is a real noise risk the day before a Vex Thal night).
@@ -3503,7 +3502,7 @@ here — corrected 2026-08-09, this line still read "#208"):
   token, which by design does not trigger other workflows — so it will never fire
   on its own. **Not filed as a bug:** if the intent is "dispatch manually when we
   want a CLI release", this is working as designed. Needs a one-line answer from
-  Hitya — *does anyone still run `Parser.bat` standalone?* If yes, they are two
+  The guild lead — *does anyone still run `Parser.bat` standalone?* If yes, they are two
   months behind and the feign fix has not reached them. Noticed during the
   2026-08-04 workflow sweep (the rest are main-only, tag, scheduled or manual —
   `test.yml`/`golden-log.yml` were the only two declaring a branch they were
@@ -3514,7 +3513,7 @@ here — corrected 2026-08-09, this line still read "#208"):
   **phases 0-1 + the phase-2 coverage forwards SHIPPED 2026-08-05** (bot
   3.1.10 main, agent 3.5.30 beta) for the Thall Va Xakra twin-add pull;
   remaining: feed K_pos into the agent's #56 local tracks, N>2 soak,
-  per-instance HP history. Hitya 2026-08-04: upstream Zeal ask has zero
+  per-instance HP history. The guild lead 2026-08-04: upstream Zeal ask has zero
   traction — the end-around is now the plan of record
 - **#195** UI Studio web viewer/editor + UI/eqclient.ini cloud backups
 - **#196** /me advisors (spells / tradeskill / faction)
@@ -3532,7 +3531,7 @@ Discord #feedback thread + /admin/feedback automatically.
 
 **R1. Death OVERCOUNT is clock skew, and it is now fully diagnosed — SHIPPABLE.**
 `DEATH_DEDUP_MS = 30_000` (`web/lib/raidReview.ts:26`) merges two uploaders' view
-of the same death only when their timestamps are within 30s. Fargan's measured
+of the same death only when their timestamps are within 30s. a member's measured
 offset is **59,224 ms** — nearly DOUBLE the window — so every death his log sees
 is counted twice. The 2026-08-05 review shows 17 deaths where 8 names each appear
 twice at 8:41 PM, once flagged `riposte kill` and once bare.
@@ -3541,11 +3540,11 @@ twice at 8:41 PM, once flagged `riposte kill` and once bare.
 rewritten to server time and the original kept as `tsRaw`, so dedup, phantom
 suppression, the Discord card, the web parse page and the timelines all become
 correct with no consumer changes. Pulse only — the `consensus` rows have zero
-write sites and are frozen at 2026-08-04 (that estimator reads Fargan at 42s
+write sites and are frozen at 2026-08-04 (that estimator reads a member at 42s
 where pulse, still measuring, reads 63.5s). Spread gate is 30s and the
 calibration is pinned by a test: fleet spread is a record of the worst ROUND
 TRIP, median 7.2s and 15 of 28 installs above 5s, so a "conservative" 5s gate
-would have rejected Fargan's 10.3s machine — the one it exists to fix.
+would have rejected a member's 10.3s machine — the one it exists to fix.
 Do NOT fix by widening DEATH_DEDUP_MS: real deaths 30–60s apart in a long fight
 would silently merge, trading a visible overcount for an invisible undercount.
 
@@ -3555,7 +3554,7 @@ set it from the fight's own `/parses/[id]` page (the design's open question,
 resolved that way — no new admin surface, and the page already knows the
 encounter, its npc_id and who died). Excluded from `worstFights` and NOWHERE
 else: the death keeps its place in the headline count, the deaths list and the
-timelines, and the header now reads "5 deaths (2 on purpose)". Fawx + Dant on
+timelines, and the header now reads "5 deaths (2 on purpose)". a member + a member on
 Kaas Thox Xi Ans Dyek (158444) seeded from the report. The phase-2
 `intentional_death_overrides` table is still unbuilt on purpose.
 
@@ -3578,7 +3577,7 @@ midnight — right for routing threads, wrong for "what did the raid clear".
 `trashBoundsFor()` now bounds the tally to [first pull, last CONFIRMED kill] ±
 grace, and returns `{}` mid-raid when nothing is dead yet (bounding to a kill
 that does not exist would erase legitimate pre-first-pull trash). Grace is 15
-per Hitya — the line is the last DKP tick. Deliberately tighter than web
+per the guild lead — the line is the last DKP tick. Deliberately tighter than web
 `activitySpan()`'s 30-min pad, which pads fight EDGES where erring wide is free;
 this one decides membership, where erring wide IS the bug.
 
@@ -3605,7 +3604,7 @@ fight was too short to flush, or the encounter split.
 
 ### 🔴 Raid-night queue — opened 2026-08-05/06 (Vex Thal)
 
-Hitya, 2026-08-06: *"I'm mostly queueing things up to work on while we have
+The guild lead, 2026-08-06: *"I'm mostly queueing things up to work on while we have
 live data to work on."* So this section is split by WHAT IS PERISHABLE. The fix
 is almost never the scarce part — the OBSERVATION is. Anything under "capture
 next raid" cannot be reproduced cold and should be grabbed on the next
@@ -3615,7 +3614,7 @@ Sun/Wed/Thu window before touching the code.
 
 0. **Zeal `/tag` TTL is 120s and a boss fight is 5–10 min.** CONFIRMED WORKING
    2026-08-06: six uploaders independently captured
-   `{mob:"Thall Va Xakra", text:"KILL AND SLEEP", tagger:"Melting", spawn_id:360}`
+   `{mob:"Thall Va Xakra", text:"KILL AND SLEEP", tagger:"Bexley", spawn_id:360}`
    — the spawn id is real and arriving. Then it expired mid-fight. Raise
    `_TAG_FRESH_MS` (agent) AND `ext_tag_fresh_sec` (bot tuning, live-settable);
    the agent expires first, so the bot knob alone will not help.
@@ -3668,19 +3667,19 @@ Sun/Wed/Thu window before touching the code.
    `engaged.length >= 2`, so it needs two tanks genuinely hit by two same-name
    mobs. Tunes `ext_pos_cluster_units` from measurement instead of the 25 guess.
 2b. **🐞 P1 — agent emitted a SESSION-CUMULATIVE encounter payload (found
-   2026-08-09, encounter `3b1069fd…`).** Smokestomp (agent 3.5.54, queue
+   2026-08-09, encounter `3b1069fd…`).** a member (agent 3.5.54, queue
    drained ~11h late) uploaded a Breakfast Club Sat-morning Diabo Xi Xin
    fight TWICE: first a correct 31-player/1.01M/943s payload (preserved in
    the Discord 📊 Parse Log), then a corrupted 95-player/2.55M payload —
    same 943s duration, every number ≥ the first, per-player values matching
    **the whole day's witnessed damage** (his own 239k → 868k; the WP
-   Saturday-EVENING dragon crew — Tycon/Timberowl/Alondra/Uilz/Fargan —
+   Saturday-EVENING dragon crew — a member/a member/a member/a member/a member —
    appear with plausible evening totals despite never being in the fight;
-   Hitya confirms they were not there). Max-merge folded it in; the inflated
+   The guild lead confirms they were not there). Max-merge folded it in; the inflated
    roster share (0.400) also defeated the auto-foreign hide. **Done same
    day:** encounter marked `foreign` (reason on the row); classification now
    excluded from /leaderboards (web 1.1.36) and `about_stats()` (migration
-   20260809140000). **Root cause needs Smokestomp's machine**: his
+   20260809140000). **Root cause needs a member's machine**: his
    `logsync.log`/queue remnants + the Sat eqlog segment — which code path
    built a payload from day-cumulative per-player state? Note his OTHER
    morning fights (BC cleared several VT bosses) never uploaded at all —
@@ -3691,7 +3690,7 @@ Sun/Wed/Thu window before touching the code.
    - **The upload came from an account whose linked characters include both
      names seen on the two payloads** — i.e. the same uploader
      whose morning pug created the original foreign-raid problem
-     (`web/lib/anomalies.ts` header, Hitya 2026-06-29). Same account, same
+     (`web/lib/anomalies.ts` header, the guild lead 2026-06-29). Same account, same
      behaviour, second incident. Any future foreign-raid tuning should assume
      this is a recurring pattern from ONE member, not a fleet-wide issue.
    - **The corrupted payload is a singleton.** Exactly one contribution
@@ -3704,7 +3703,7 @@ Sun/Wed/Thu window before touching the code.
    - **The WP names in the payload were not in the fight** — settled
      independently of memory: chat capture was live through that window (29
      distinct speakers, 20 of them also in the parse), and of the 38
-     roster-matching names in the payload **only `Smokestomp` ever spoke**.
+     roster-matching names in the payload **only ONE ever spoke**.
      Combined with the Wednesday cooldown, the WP evening crew were absent.
    - Their **July 22 09:02 ET Kaas Thox morning raid** (`2d58dba8`, 47
      players, 55% roster) was ALSO re-uploaded on 3.5.54 an hour after the
@@ -3712,7 +3711,7 @@ Sun/Wed/Thu window before touching the code.
      officer call, and the reason a time-of-day signal was proposed.
 3. ~~**Healer-mana: were the shamans missing MID-FIGHT or between pulls?**~~
    **ANSWERED 2026-08-06 23:26 ET — NOT A BUG.** Observed mid-fight on Diabo Xi
-   Va Temariel: Fungalfist (12%) and Ghalix (100%) both present. The earlier
+   Va Temariel: a member (12%) and a member (100%) both present. The earlier
    absence was the macro-roster's 5-minute between-pulls GC working as designed.
    No code change. (Same session also confirmed the druid class labels reading
    correctly — but that does NOT validate the 3.5.38 fix, which was not
@@ -3742,7 +3741,7 @@ Sun/Wed/Thu window before touching the code.
 
 7. **Extended Target over-split — KILL SWITCH IS ON** (`flag_ext_pos_off=1` set
    in `overlay_tuning` 2026-08-05 mid-raid). A unique boss split into 6 then 8
-   rows, all at identical HP and DPS. Hitya's diagnosis is the root cause:
+   rows, all at identical HP and DPS. The guild lead's diagnosis is the root cause:
    *"the boss we just fought has a larger melee range because it's a larger
    mob"* — `ext_pos_cluster_units` is a flat 25, but a big model lets melee
    stand far wider while on ONE mob. Two fixes: scale the radius by
@@ -3766,7 +3765,7 @@ Sun/Wed/Thu window before touching the code.
    from 114,444 rows → 1,087 (31 MB → 4.8 MB, ~49 MB/yr). **Still open: raw
    retention, at its default 120 days** — and the comment justifying that number
    estimates ~7 MB/week against an actual ~90 MB/week, so the decision was never
-   really made. Hitya has chosen a **2-month hot window** for the two-tier model
+   really made. The guild lead has chosen a **2-month hot window** for the two-tier model
    (~730 MB steady state, vs ~170 MB at the originally-proposed 14 days) — *"I'd
    like to keep 2 months full before tuning down."* Order: hot-tier retention
    FIRST (one policy, no code), roll-up + cold `encounter_series` next, and **do
@@ -3781,7 +3780,7 @@ Sun/Wed/Thu window before touching the code.
     binding root cause (name FORMAT) is found and fixed at read time, and the two
     capture-side pieces are in flight tonight (agent `ramp` on beta 3.5.55, bot
     `encounter_id`-at-close 3.1.34). What is left: the chart on `/parses/[id]`,
-    and **one decision from Hitya** — the sketch says class toggles *or* a
+    and **one decision from the guild lead** — the sketch says class toggles *or* a
     searchable damage-dealer list; recommendation is BOTH against one selection
     model (a set of highlighted characters, class buttons as bulk selectors over
     that set), so there is one highlight mechanism and no second code path.
@@ -3794,7 +3793,7 @@ Sun/Wed/Thu window before touching the code.
     spawn id — so it also covers pet-tanked mobs, which the position path can
     never place. Backtestable over 36,784 fights of durable `took` history
     BEFORE shipping. Solve the repeated-`821` stale-delta anomaly first.
-14. **The "tanking check"** (deferred by Hitya 2026-08-05): concurrent
+14. **The "tanking check"** (deferred by the guild lead 2026-08-05): concurrent
     connect streams as a K signal, plus recording mobs that hit our PETS —
     `recentTankHits` drops them today because `_isPlayer` rejects multi-word
     names, so a charm pet tanking contributes zero evidence.
@@ -3806,7 +3805,7 @@ Sun/Wed/Thu window before touching the code.
     ids are per-zone and structurally collide (ids allocated in spawn order from
     a low base in every zone; 14 named NPCs inside ids 11–45 in one zone alone) —
     is also **drafted and unsent** as of 2026-08-07. Neither has been sent to
-    upstream; Hitya's read is that the ask has zero traction, so the end-around
+    upstream; the guild lead's read is that the ask has zero traction, so the end-around
     (#194) is the plan of record either way.
 
 ### 🧾 2026-08-10 → 08-11 — Ssra review night, graduation, and the sync rule
@@ -3837,7 +3836,7 @@ Sun/Wed/Thu window before touching the code.
   bosses (Galiel filed under mischiefplane since ≥March); fixed those 6 + 35
   encounter rows back to Jan 2025. Three PoP rows deliberately untouched
   (bertoxxulous / aerin_dar / agnarr) — on the PoP-unlock checklist.
-- **Playbooks live on `/guide`**: `emperor_ssraeshza` (full strategy — Luter's
+- **Playbooks live on `/guide`**: `emperor_ssraeshza` (full strategy — a member's
   writeup + catalog-verified numbers + spell 2310 decode incl. the −95% aggro
   curse and the Diminutive Stature proc) and `blood_ssraeshza` (Blood is the
   clock, not the fight). `data/bosses.json` seed was RIGHT throughout.
@@ -3864,7 +3863,7 @@ Sun/Wed/Thu window before touching the code.
 - Task #27 UNBLOCKED: restore the 8 muted trash triggers once raiders are on
   2.3.5 (the timer-identity fix is stable now).
 
-**RULE (Hitya, 2026-08-11): implementation updates its documentation at BOTH
+**RULE (guild lead, 2026-08-11): implementation updates its documentation at BOTH
 gates** — when a feature/fix lands on beta, its docs (this ledger + the relevant
 design/HOW-ITS-BUILT entry) are updated in the same change; when it graduates to
 main, the entry is updated again with the stable release version. A doc that
@@ -3878,14 +3877,14 @@ listed #202 as blocked when it had shipped.
 | Item | State / next step |
 |---|---|
 | ~~**PR #78**~~ | **CLOSED 2026-08-11.** Verified live first: still open, and its diff had collapsed to exactly the park bump (`apps/mimic/package.json` 2.3.5→2.3.6) — merging would have cut an unintended stable 2.3.6 to the whole fleet. Its original content (the /who menu clip fix) had already graduated |
-| **Kill switches untested** | The #74/#118 control plane (`flag_agent_kill`, `min_agent_ver_num`, the shed flags) has never been exercised in the field. Shipped as a conservative v1 pending Hitya's sign-off — a switch nobody has pulled is not a switch you can pull mid-raid |
-| **Threat raw retention** | Untouched at 120 days; the justifying comment is off by ~13× (~7 MB/week claimed vs ~90 MB/week actual). Hitya has chosen a 2-month hot window — see Cold work #10 |
+| **Kill switches untested** | The #74/#118 control plane (`flag_agent_kill`, `min_agent_ver_num`, the shed flags) has never been exercised in the field. Shipped as a conservative v1 pending the guild lead's sign-off — a switch nobody has pulled is not a switch you can pull mid-raid |
+| **Threat raw retention** | Untouched at 120 days; the justifying comment is off by ~13× (~7 MB/week claimed vs ~90 MB/week actual). The guild lead has chosen a 2-month hot window — see Cold work #10 |
 | **`opendkp_raids` / `_auctions` rewrite** | Still re-upserting themselves every sync (1.5M and 3.7M updates). Decision made, NOT implemented: re-upsert a closed raid only when its upstream `Version` moves; ticks/DKP/attendance corrections still flow |
 | **Other capped-query-as-a-set risks** | The bot 3.1.33 loot bug's shape is generic — **23 other `limit=####` queries in `index.js`**, none audited for whether they feed a *set* rather than a *list*. Cheap sweep, real payoff |
 | **Archived logs vanish from the backfill picker** | Log archiving is ON by default at 500 MB (idle 15 min, `WP_LOG_ROTATE_MB=0` disables) and archives rather than culls — but an archived log drops out of the smart-backfill picker until it is moved back. Archive, never cull, was the point |
 | **Zone map overlay** | Blocked on a 1–2h **in-game coordinate spike**: the docs say Zeal transposes x/y, the dashboard path disagrees, and only a live client settles it. `docs/pq-companion/03-zone-maps.md` |
 | **Report 04 P3–P5** | `docs/pq-companion/04-combat-parse-accuracy.md`, the three unshipped items: P3 bystander taunt-emote → per-player taunt threat (a `says` line — belongs in `PRIORITY_KEEP_PATTERNS`, watch the privacy filter), P4 wildcard-verb fallback for incoming damage (**must stay LAST** among damage patterns), P5 real hate for non-damaging detrimentals (`maxHP/15`) + miss hate + backstab cap |
-| **Fight timeline chart** | Data layer done; chart unbuilt, and it needs one call from Hitya (class toggles vs player search — recommendation: both, one selection model). The two formerly in-flight pieces LANDED: agent `ramp` reached stable in 3.5.58 (Mimic 2.3.5, 2026-08-10) and bot `encounter_id`-at-close shipped in 3.1.34 |
+| **Fight timeline chart** | Data layer done; chart unbuilt, and it needs one call from the guild lead (class toggles vs player search — recommendation: both, one selection model). The two formerly in-flight pieces LANDED: agent `ramp` reached stable in 3.5.58 (Mimic 2.3.5, 2026-08-10) and bot `encounter_id`-at-close shipped in 3.1.34 |
 | **Both Zeal upstream asks unsent** | `zeal-spawn-id-request.md` still aims at the gauges (rewrite against `named_pipe.cpp` first) and `zeal-tag-spawn-id-collision.md` has never been sent. See Cold work #15 |
 | ~~Beta adoption near zero~~ | Addressed twice: graduated 2026-08-09 AND again 2026-08-10 (Mimic 2.3.5 / agent 3.5.58 — the whole Ssra fix batch went stable within a day instead of waiting on beta users who don't exist). `sync-beta.yml` now keeps beta = main + park continuously. **Standing posture: short beta lines, graduate fast** |
 
@@ -3895,7 +3894,7 @@ listed #202 as blocked when it had shipped.
 **Fight timeline v2 — boss HP curve + MT/RAMP lanes + class/player highlighting.
 DATA LAYER BUILT 2026-08-09, CHART NOT BUILT. Full spec + data audit:
 `docs/DESIGN-fight-timeline.md`; what shipped is in the Done section above.**
-Hitya's napkin sketch 2026-08-06. The load-bearing finding is that the series
+The guild lead's napkin sketch 2026-08-06. The load-bearing finding is that the series
 already exists: `encounter_threat_snapshots` holds **490,850 rows across 36,784
 fights** of cumulative per-player `dmg`/`took`/`tookMax`/`pet_owner`, at a
 measured 3.5–6.4s cadence. The area chart, the class filtering AND the MT lane
@@ -3911,7 +3910,7 @@ bot 3.1.34, in flight. Remaining: the chart itself. Do not re-derive this audit;
 it is in the design doc.
 
 **#208 Item pages under-reported — and NO DROP rendered BACKWARDS. DONE
-(2026-08-04, web 1.1.8).** Found by Hitya comparing `/db/item/8733` with
+(2026-08-04, web 1.1.8).** Found by the guild lead comparing `/db/item/8733` with
 pqdi.cc. Every missing field was already in `eqemu_items`; it was a rendering
 gap, not a sync gap.
 - **`nodrop` is INVERTED** — the column means "can be traded", so `false` =
@@ -3963,9 +3962,9 @@ before anyone touches them.** All four exist because of the two bugs found
   ever retuning the window. Original reasoning kept below because the method
   matters ("do not retune by eye — that's how we got 30s"). The 30s same-name collapse
   (`utils/parseDeaths.js`) was fitted against feign-inflated, skew-spread data.
-  **Worked example**: Uilnayar died ONCE on 2026-08-03 and seven machines saw it
-  — six agree inside 6 seconds, and Fargan's is **45 seconds early**, because
-  Fargan's install is the `+42.3s` one. 45s > the 30s window, so the card said
+  **Worked example**: a member died ONCE on 2026-08-03 and seven machines saw it
+  — six agree inside 6 seconds, and a member's is **45 seconds early**, because
+  a member's install is the `+42.3s` one. 45s > the 30s window, so the card said
   she died twice. Correcting that one stamp puts it 2.7s ahead of the cluster and
   it collapses correctly with the window *unchanged*. So: apply offsets first,
   then measure what spread is left, then set the window from that. **Do not
@@ -3974,13 +3973,13 @@ before anyone touches them.** All four exist because of the two bugs found
   **`docs/DESIGN-clock-correction.md`. The premise changed: the bad clocks are
   DRIFTING continuously (~1.5–3 s/day), not set wrong once — and a one-time sync
   provably doesn't hold.** 30-day history (morning re-verification, 2026-08-04):
-  Fargan's install has slid **uninterrupted for ≥ a month** (7.5s Jul 8 → 56.5s
-  Aug 4, never corrected, last day +8s); **Bardtholemu's was manually synced to
+  a member's install has slid **uninterrupted for ≥ a month** (7.5s Jul 8 → 56.5s
+  Aug 4, never corrected, last day +8s); **a member's was manually synced to
   ~0 on Jul 26–27 and was 11s off again by Jul 29** — we watched the fix fail.
   So a single stored `offset_ms` is stale within a week and corrections must
   resolve an offset *near the event's own timestamp* — offsets are a time
   series, not a number, **and interpolation must not span a sync-reset step**
-  (Bardtholemu's 39s → 0 overnight). **By Wednesday Fargan's install will be
+  (a member's 39s → 0 overnight). **By Wednesday a member's install will be
   ~1 minute off**, enough to move a kill across the 19:30 raid boundary by
   itself.
   **A third estimator fell out of data we already have and costs nothing:**
@@ -3997,7 +3996,7 @@ before anyone touches them.** All four exist because of the two bugs found
   within **0.1–0.4s on every day for all three installs** — pipeline latency
   can't do that; a clock does. Control group (18 of 21 uploaders with volume,
   last 4 days) sits between −2.9s and +1.8s, which rules out a global upload
-  slowdown. **Pulse is live**: the first 3.5.15 install (Hitya's) began
+  slowdown. **Pulse is live**: the first 3.5.15 install (the guild lead's) began
   heartbeating 2026-08-04 ~11:30 UTC — pulse +0.4s vs consensus −1.3s, agreeing
   within spread, so all three estimators now cross-check.
   **SHIPPED — the call was made and the design landed exactly as recommended.**
@@ -4013,10 +4012,10 @@ before anyone touches them.** All four exist because of the two bugs found
   is on the STABLE fleet as of Mimic 2.3.5. Remaining from this family: #201's
   spread re-measurement (below) and #203 (telling the three installs).
 - **#203 Tell the THREE drifting installs — and the advice is not "fix your
-  clock", because we have now WATCHED a fix fail to hold.** Fargan **+56s and
-  climbing** (≥ a month, never corrected), Bardtholemu **+22s** (synced to ~0 on
+  clock", because we have now WATCHED a fix fail to hold.** a member **+56s and
+  climbing** (≥ a month, never corrected), a member **+22s** (synced to ~0 on
   Jul 26–27, 11s off again two days later), and the third install is
-  **Stupidrichard's machine** (+7s, synced ~Jul 25, drifting again) — **who is
+  **a member's machine** (+7s, synced ~Jul 25, drifting again) — **who is
   one of the four clerics on the DI callout roster**, so his cast/callout
   stamps carry that skew. The actual fix is **Windows time sync**: Settings →
   Time & language → Date & time → "Sync now", with "Set time automatically" ON;
@@ -4113,19 +4112,19 @@ Stable stamp pending graduation, per the both-gates rule.**
   fire's counter is `0`) and could double a relayed callout again. Write-up:
   `FINDINGS-2026-08-10-trigger-overlay.md` §P1b.
 
-**Raid-night 2026-07-30 field reports (Hitya) — all still OPEN, each blocked on
+**Raid-night 2026-07-30 field reports (the guild lead) — all still OPEN, each blocked on
 one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Charm pets missing from the /rs parse + Discord autoparse, and owner
   attribution collapsing.** They DO render on the local DPS HUD, so the
   `petLeaders` / `_activeCharms` / `_charmTickTracker` bypass is working on the
   threat side — it's the ENCOUNTER PAYLOAD path that drops them, so the parse
   card and `encounter_players` never see them. Separately, three distinct pets
-  all displayed as one "Bardtholemu's pet", i.e. the label collapses by OWNER
+  all displayed as one "a member's pet", i.e. the label collapses by OWNER
   rather than per-pet. Start at the encounter-builder player rollup vs the
   threat rows that carry `pet_owner`; the HUD and the upload disagree.
 - **Death Touch not captured when the victim is a PET.** The guild trigger's
   victim group is `(?<target>[A-Z][\w'`]+)` — capital-initial, no spaces — so a
-  player (Currygoat) matches and a pet (`a glyph covered serpent`, or a
+  player (a member) matches and a pet (`a glyph covered serpent`, or a
   possessive `X\`s warder`) cannot. This is task #169. NEEDS: the verbatim log
   line for a pet DT before widening the pattern — loosening it blind risks
   eating real Death Touches.
@@ -4138,7 +4137,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   trigger with no `timer_duration_sec` — hence a callout on the hit but no
   countdown to the next one. NEEDS a decision: point the dance at Dragon Roar
   (clean, unambiguous signature, `burst_n: 1`) or at the real Caustic Mist
-  text, and confirm the wording — Hitya asked for "MELEE OUT / MELEE IN", which
+  text, and confirm the wording — the guild lead asked for "MELEE OUT / MELEE IN", which
   is more accurate than the current "DPS OUT/IN" since casters needn't move.
 - **Death Touch false positive — FIXED 2026-07-30, server-side.** A Cleric
   hammer pet self-destructing (`Vobeker hit Vobeker for 20000 points of
@@ -4164,9 +4163,9 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   2m10s.** Wants the DA callout 10s ahead of the spawn. Needs whichever
   trigger/timer owns that callout re-timed to a 130s cycle with the warning at
   120s.
-- **Rampage card showed no HP for the victim.** Rampage on Stupidrichard
+- **Rampage card showed no HP for the victim.** Rampage on a member
   rendered "130 / 180 · 72%" — those are not player HP numbers (raiders run
-  thousands; Hitya shows 6512/6512), so the card is displaying something other
+  thousands; the guild lead shows 6512/6512), so the card is displaying something other
   than his real HP. Likely the same non-Mimic gap as the cure item: no client
   reporting his live cur/max, leaving a placeholder or a mis-sourced value.
   Related to #144 (targeted raider cur/max HP) and #179 (rampage card scoping).
@@ -4198,16 +4197,16 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   moot the "DT missed pet victims" item — Death touch — RIP is one of the dead.
 - ~~**`state.petOwners` night-accumulation risk** (rn-pets-payload)~~ **HIT
   LIVE 2026-07-30 (Blood of Ssraeshza) and FIXED across four releases.** The
-  predicted misattribution landed exactly as written: Jankzer top DPS while
+  predicted misattribution landed exactly as written: a member top DPS while
   mezzing (41.7k phantom "pet damage" from his early-evening Revenant/Lich
-  charm cycling), byte-identical pet buckets on Rorschach + Dabamf (one mob's
+  charm cycling), byte-identical pet buckets on a member + Dabamf (one mob's
   bucket split between two stale claimants — Dabamf was in Haven), encounter
   total 70k past the boss HP pool. One corrupted uploader per fight (whoever's
-  stale residue matched that fight's mob names): Hawkner on Blood, Bardtholemu
-  3.05M on the 02:42 fight, Uilnayar at 01:05. Fixes: **bot 3.0.239** (never
+  stale residue matched that fight's mob names): a member on Blood, a member
+  3.05M on the 02:42 fight, a member at 01:05. Fixes: **bot 3.0.239** (never
   split across the accumulated list), **bot 3.0.240** (timestamped
   declarations; equal split among CURRENT claimants — declared within 15 min
-  of fight start — per Hitya's interim call for simultaneous same-named
+  of fight start — per the guild lead's interim call for simultaneous same-named
   charms; single-newest fallback), **agent 3.4.41** (scope the petLeaders
   dump out of uploads: in-fight names only, article-prefixed charm residue
   dropped), **agent 3.4.42** (HUD/threat meter: live charm proofs outrank the
@@ -4243,7 +4242,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   Remove Greater Curse would wrongly retire a 12-counter curse still on them.
 - **"Eye of <player>" must never appear on the DPS meter.** Eye of Zomm is a
   VISION pet — it deals no damage at all. Observed on a `/rs` meter as an
-  indented pet row "Eye of Syphon" carrying 110 dmg / 3 dps / 38s — byte-for-byte
+  indented pet row "Eye of a member" carrying 110 dmg / 3 dps / 38s — byte-for-byte
   the owner's own numbers, so it isn't merely cosmetic: the owner's damage is
   being duplicated into a phantom pet row, which inflates the pet-attribution
   side of the parse. Fix is a name filter (`/^Eye of /i`) wherever pets are
@@ -4251,7 +4250,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   charm-pet bypass uses. Cheap and unambiguous; do it with the pet-attribution
   work above, since both live in that rollup.
 - **Same-name mob serialization — position clustering + HP continuity (NEW
-  IDEA, 2026-07-30, Hitya).** Four `a crypt guardian` pulled at once collapse
+  IDEA, 2026-07-30, the guild lead).** Four `a crypt guardian` pulled at once collapse
   into one NPC in the parse. Triangulating the MOB is impossible — the pipe's
   mob surface is name + HP per-mille, with no distance or bearing to solve
   against. But we don't need the mob's position: we need to know which players
@@ -4310,7 +4309,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   per-expansion grouping (needs item→expansion map — UNCERTAIN); local log-browser
   tab in Mimic.
 - **Onboarding overhaul — "New Here?" walkthrough on web + Discord.** Design:
-  **`DESIGN-onboarding-overhaul.md`** (proposal, awaiting Hitya sign-off; asked
+  **`DESIGN-onboarding-overhaul.md`** (proposal, awaiting the guild lead sign-off; asked
   for 2026-07-31). Slims the Discord welcome card to a hook + link + the four
   persona buttons, adds a `/start` web walkthrough that **auto-checks off** steps
   from signals we already store (`wolfpack_members.role_names`, `mimic_sessions`,
@@ -4331,7 +4330,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   "…NN older → /roadmap" tail + move the call inside the `try`); also delete the
   dead `handleWelcome*` trio (`index.js:1669`/`:1690`/`:1704`). Routes to `main`.
 
-- **Item icons: packer written, needs the client files (2026-08-13).** Hitya's
+- **Item icons: packer written, needs the client files (2026-08-13).** the guild lead's
   call, and it is the right one — PQDI has hosted EQ's icons since the server
   opened, every long-running EQ community site does, and there is no commercial
   angle here. Site now carries the standard Daybreak trademark/ownership notice
@@ -4358,7 +4357,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   Needs no new capture: `encounter_threat_snapshots` already arrives live at
   3.5-6.4s. What is missing is a READ - `/api/agent/threat-snapshot` is
   ingest-only. DECIDED 2026-08-13: guild-merged number is the headline with YOUR observed
-  amount in parentheses per player (`Wabumkin 164k (0)` is the whole feature in
+  amount in parentheses per player (`Harlowe 164k (0)` is the whole feature in
   one line) - which supersedes the coverage-line recommendation. Exclusions
   stay upload-side and already work that way, so the live view must NOT filter
   on read; doing so would hide a player from observers who legitimately saw
@@ -4380,8 +4379,8 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 - **Unraid Supabase stack: UP 12/12 and verified 2026-08-11** (roles present, so
   the bootstrap really ran). It is now the restore-test target for Phase 1 —
   same Postgres major (17.6) as the hosted project.
-- **Crash reports: parser fixed, diagnostics added, Razek's crash identified
-  (2026-08-12).** Razek reported crashing twice while zoning with Mimic running.
+- **Crash reports: parser fixed, diagnostics added, a member's crash identified
+  (2026-08-12).** a member reported crashing twice while zoning with Mimic running.
   Three fixes, then an answer:
   1. **Parser bug** that hit hardest on exactly this case — `\s` matches
      newlines, so a blank `Character:` (what a zoning crash produces) swallowed
@@ -4400,7 +4399,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 
   **The answer:** zoning is the single largest crash class in the whole corpus —
   **212 of 393 (54%)**, every one with `Self`/`SpawnInfo` `0x0` (player entity
-  gone), across every Zeal version for 19 months. Razek's 29 reports are all one
+  gone), across every Zeal version for 19 months. a member's 29 reports are all one
   signature (`0x6ef @ kernelbase.dll +9f54`, Zeal 1.4.2) and the four that kept
   context all read zoning. **But it is not a 1.4.2 regression** — the other
   uploader ran the same Zeal build with zero `0x6ef`; what differs is Windows
@@ -4409,7 +4408,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   today (`main.js:5797`) is off by default and never surfaced.
 
   ✅ **SOLVED the same night, from the minidump — it is the Windows audio stack,
-  not Zeal.** Hitya sent the actual crash zip. `0x6ef` is
+  not Zeal.** the guild lead sent the actual crash zip. `0x6ef` is
   `RPC_X_SS_IN_NULL_CONTEXT`, raised NONCONTINUABLE — not an access violation
   like everything else in the corpus. The stack is
   `eqgame.exe → mss32.dll (Miles) → winmmbase.dll → wdmaud2.drv → rpcrt4.dll`,
@@ -4476,7 +4475,7 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   `trigger_timing_feedback`) — out-of-band applies never committed as files.
   `supabase/bootstrap/` + `scripts/selfhost-bootstrap-db.sh` → 190 clean / 3
   partial / 0 failed, 124 tables. Guide: `docs/SELFHOSTING.md`.
-  ⚠ **Decision needed from Hitya:** do those six get committed as real migrations
+  ⚠ **Decision needed from the guild lead:** do those six get committed as real migrations
   (or squashed into a baseline), or does `supabase/bootstrap/` stay the fresh-install
   path? Today production and the repo still disagree.
 - **Local mirror automation shipped (2026-08-11)** — `scripts/coolify-autodeploy.sh`

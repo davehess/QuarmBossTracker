@@ -20,7 +20,7 @@ The sections below are kept for future capture sessions or schema changes.
 
 ## ⚠ The two DKP endpoints, and which one is a balance (2026-08-31)
 
-From OpenDKP's own API documentation, via Hitya. Recorded because we had been
+From OpenDKP's own API documentation, via the guild lead. Recorded because we had been
 reading the wrong number out of the first one for an unknown length of time.
 
 | Endpoint | What it returns | Use |
@@ -103,7 +103,7 @@ Capture:
 ### 3. End all auctions
 
 Trigger: with one or more active auctions open, click the "End All" button (or whatever
-the officer-facing button is that closes the current bidding round).
+The officer-facing button is that closes the current bidding round).
 
 Capture:
   - Request URL + method

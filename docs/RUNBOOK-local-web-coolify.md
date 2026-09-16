@@ -4,7 +4,7 @@
 > picture of everything on the box, with what is verified vs ⚠ unverified.
 > This file is the step-by-step and the traps.
 
-**Decided 2026-08-11 (Hitya):** Coolify in a **VM on Unraid**, and the local site
+**Decided 2026-08-11 (the guild lead):** Coolify in a **VM on Unraid**, and the local site
 points at the **local Supabase stack** (`RUNBOOK-unraid-supabase-replica.md`), so
 nothing clicked locally can touch production.
 
@@ -19,7 +19,7 @@ gateway, but they are different hosts so there is no clash.)
 ## Part A — the VM
 
 Unraid → **VMS** → Add VM → **Debian 13 (trixie)**. Not bookworm: Debian 12 hit
-end of regular support in 2026 and is LTS-only now (Hitya spotted it, 2026-08-11)
+end of regular support in 2026 and is LTS-only now (the guild lead spotted it, 2026-08-11)
 — nothing on fire, but a fresh build should start on current stable. A ready-made
 libvirt XML is in the appendix below; paste it into Add VM → **XML View**.
 Settings:
@@ -158,7 +158,7 @@ rewrites the request first. Now `web/lib/request-origin.ts` prefers
 local mirror predates that version, redeploy it before debugging redirects.
 
 ⚠ **`ADDITIONAL_REDIRECT_URLS` is the same trap that broke beta sign-in**
-(Hitya, 2026-08-10). `SignInButton` sends `redirectTo = window.location.origin +
+(guild lead, 2026-08-10). `SignInButton` sends `redirectTo = window.location.origin +
 '/auth/callback'`, and GoTrue **silently ignores a redirectTo that is not on the
 allow list and uses SITE_URL instead** — nothing errors, sign-in just never takes.
 

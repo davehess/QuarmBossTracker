@@ -2,7 +2,7 @@
 
 Five deep-dive analyses of [jasonsoprovich/pq-companion](https://github.com/jasonsoprovich/pq-companion),
 a Go + Electron companion for Project Quarm, against our own stack. Commissioned
-by Hitya: *"see how similar we are, what things we're missing, and what else we
+by Guild lead: *"see how similar we are, what things we're missing, and what else we
 could pull in"*, with a heavy emphasis on GINA / EQLogParser trigger regex.
 
 **⚠ LEGAL — read before using any of this.** pq-companion has **no license

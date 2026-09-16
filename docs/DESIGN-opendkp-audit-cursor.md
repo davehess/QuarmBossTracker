@@ -169,7 +169,7 @@ the choice.
 
 | Item | State |
 |---|---|
-| **Not sent** | ✅ Artifact REFRESHED 2026-08-31 and now matches this doc — live 24h figures, the three-rung ladder, the bid-detail case. Retitled *"Which Thing Changed"* (was *"Two Fields on the Audit Feed"*, which stopped being true once the ask became a ladder). Needs Hitya to send it |
+| **Not sent** | ✅ Artifact REFRESHED 2026-08-31 and now matches this doc — live 24h figures, the three-rung ladder, the bid-detail case. Retitled *"Which Thing Changed"* (was *"Two Fields on the Audit Feed"*, which stopped being true once the ask became a ladder). Needs the guild lead to send it |
 | **`EntityType` may be unnecessary** | If `Action` → type is one-to-one upstream, the id alone suffices. Stated as optional in the ask so it can't become a reason to decline |
 | **Tier 0 assumes `?count=` can sort newest-first** | Our own probe proved `/audits` page 1 is OLDEST-first, so a `count` that returns the oldest N would be useless. Ask for newest-first explicitly rather than assuming `count` implies it |
 | **Assumes `AuditId` is monotonic per client** | Consistent with everything observed (ids are global across OpenDKP clients — page 1 held 1,669,729–1,968,002 against our watermark 4,635,602), but worth confirming with him rather than relying on it |

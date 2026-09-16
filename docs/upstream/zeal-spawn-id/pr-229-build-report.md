@@ -57,8 +57,8 @@ the tag broadcast and the pipe agree on the same mob, from independent code
 paths:
 
 ```
-ZEALTAG | hawknizzle | Hawkner | 3385     ->  target_id 3385, group[] 3385
-ZEALTAG | canoopp | Canopy | 2354         ->  player.spawn_id 2354
+ZEALTAG | hawknizzle | a member | 3385     ->  target_id 3385, group[] 3385
+ZEALTAG | canoopp | a member | 2354         ->  player.spawn_id 2354
 ZEALTAG | hi | Jayson Bri`Tian | 10       ->  target_id 10
 ```
 

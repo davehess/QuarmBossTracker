@@ -2,52 +2,52 @@
 
 *Written 2026-08-04 (overnight). **Rehearsed, not executed.** Every query below
 was run read-only against prod; nothing was written. This stops at a confirm
-gate because #200 is Hitya's call, not mine.*
+gate because #200 is the guild lead's call, not mine.*
 
 ---
 
 ## 0. The original complaint, fully explained
 
-Uilnayar, 2026-08-03, on a Vex Thal parse card:
+a member, 2026-08-03, on a Vex Thal parse card:
 
 > the deaths on this parse aren't accurate. dongru did not die twice at the
 > beginning of the fight. Uilinayer didn't either
 
 Three names, **three different causes**. Here is the evidence.
 
-### Uilnayar — one death, seven observers, one bad clock
+### a member — one death, seven observers, one bad clock
 
-Uilnayar died **once**. Seven machines recorded it:
+a member died **once**. Seven machines recorded it:
 
 | observer | stamp | corrected (`+offset`) |
 |---|---|---|
-| **Fargan** | **00:52:32** | **00:53:14** |
-| Seaman | 00:53:17 | 00:53:17 |
-| Ikibob | 00:53:17 | 00:53:17 |
-| Ashieron | 00:53:19 | 00:53:19 |
-| Hitya | 00:53:19 | 00:53:19 |
-| Menttok | 00:53:20 | 00:53:20 |
-| Dant | 00:53:23 | 00:53:23 |
+| **a member** | **00:52:32** | **00:53:14** |
+| a member | 00:53:17 | 00:53:17 |
+| a member | 00:53:17 | 00:53:17 |
+| a member | 00:53:19 | 00:53:19 |
+| the guild lead | 00:53:19 | 00:53:19 |
+| a member | 00:53:20 | 00:53:20 |
+| a member | 00:53:23 | 00:53:23 |
 
-Six observers agree inside **6 seconds**. Fargan is **45 seconds early** — and
-Fargan's install is the one measured at `offset_ms = +42,280` (their clock runs
+Six observers agree inside **6 seconds**. a member is **45 seconds early** — and
+a member's install is the one measured at `offset_ms = +42,280` (their clock runs
 42.3s slow). The dedup window is **30s**, so the 45s gap read as two separate
-deaths and the card said Uilnayar died twice.
+deaths and the card said a member died twice.
 
-**Correcting Fargan's stamp moves it to 00:53:14 — 2.7s before the cluster, well
+**Correcting a member's stamp moves it to 00:53:14 — 2.7s before the cluster, well
 inside the 30s window, and it collapses to one death.** No window retune needed.
 This is the whole argument for doing #202 (apply the offset) *before* #201 (retune
 the window): with the timestamps corrected, the existing window is already right.
 
-Uilnayar is a **Cleric** and cannot feign. This one is pure clock skew.
+a member is a **Cleric** and cannot feign. This one is pure clock skew.
 
-### Syko — feign spam
+### a member — feign spam
 
 119 death rows, 15 observers, 5 fights. Shadow Knight. `"<Name> dies."` is the
 `cast_on_other` of Death Peace. Worst single fight: **63 "deaths" for one
 character**. Nobody dies 63 times in a fight.
 
-### Dongru — both
+### a member — both
 
 Shadow Knight, 13 rows / 10 observers / 3 fights. Some feign, some multi-observer
 skew. Needs the feign fix *and* the offset correction to come out right.
@@ -87,7 +87,7 @@ Two consequences, and they point in opposite directions:
 ### The phantom rule was doing the right thing for the wrong reason
 
 `utils/parseDeaths.js` drops a name entirely from a fight if **any single
-contributor** reported it dying ≥2 times — written for the "Syphon" NPC-namesake
+contributor** reported it dying ≥2 times — written for the "a member" NPC-namesake
 bug (2026-06-25). It also happened to absorb most feign spam, which is why the
 cards weren't showing 63 deaths.
 
@@ -137,7 +137,7 @@ Recommended: `corrected_at` alongside `at`, applied at ingest, with a read-time
 fallback for existing rows. Read-time-only means every consumer must remember,
 and they won't.
 
-*Sanity check after:* re-run the Uilnayar query in §0 and confirm the seven
+*Sanity check after:* re-run the a member query in §0 and confirm the seven
 stamps collapse to one cluster.
 
 ### Step 3 — remove feigns from the stored window (#200) ← **CONFIRM GATE**
@@ -161,7 +161,7 @@ evidence:
 the display filter it. A deletion is unreviewable and unwindable; a flag can be
 audited on Wednesday and flipped back.
 
-> **⚠ STOP HERE.** Three options for Hitya:
+> **⚠ STOP HERE.** Three options for Guild lead:
 > **(a)** do nothing — the window self-clears ~2026-08-10;
 > **(b)** flag + a roadmap note explaining that death counts changed *(recommended)*;
 > **(c)** flag silently.

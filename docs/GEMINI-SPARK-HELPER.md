@@ -54,19 +54,12 @@ A feature can live on **four** surfaces and often spans several:
 from one grep of one file. Check `docs/HOW-ITS-BUILT.md`, then grep all four.
 
 ### Who you are talking to
-Almost always **Hitya**. Their characters, **confirmed by Hitya 2026-08-28**:
-`Canopy` · `Rockin` · `Manamana` · `Utoh` · `vj` · `Melting` · `Hopeya`.
-A report under one of THOSE names is still Hitya, and gets credited to Hitya.
-
-⚠ **`Uilnayar` is a DIFFERENT PERSON, not Hitya** (corrected 2026-08-28; this
-file wrongly listed them as an alt before that). They keep their own name.
-Existing `(Uilnayar <date>)` credits in code comments are correct — do not
-rewrite them.
-
-⚠ **`Dant` is also treated as a different person** — absent from the confirmed
-list, and they @-mention Hitya in Discord. For any name not on the confirmed
-list: keep the name. Crediting a real member by their own name costs nothing if
-wrong; collapsing them into Hitya erases them, silently.
+Almost always **the guild lead**. ⚠ **This repo is public, so nothing you write
+names a member.** Credit the guild lead as "the guild lead" and anyone else by
+role — "a member", "a raider", "an officer". Do not record which characters
+belong to which person anywhere in the repo; the database knows and the
+published docs do not need to. Character names inside test fixtures, golden
+logs and worked log lines are DATA — never blanket-rename those.
 
 The other exception is the `feedback` table (the wolfpack.quest form and
 `/feedback`), whose submitters are real other members and keep their own names.
@@ -154,7 +147,7 @@ reposted verbatim to raiders. Write it for someone on a phone: **one `- ` bullet
 per user-facing item**, no prose paragraphs, and **no code identifiers or
 library names**. EverQuest terms (rampage, DA, slow, CH chain, mez) are fine.
 Detailed technical commits stay technical — this applies only to release
-surfaces. **Never name a release without asking Hitya first.**
+surfaces. **Never name a release without asking the guild lead first.**
 
 ---
 
@@ -228,7 +221,7 @@ Supabase injected through a `require` shim.
 changing anything**; it explains the outage it was written for.
 
 Conventions that matter:
-- Test the **behavior Hitya described**, and quote them in the test name or a
+- Test the **behavior the guild lead described**, and quote them in the test name or a
   comment. Tests here double as the record of why a rule exists.
 - Use **real fixtures**. A hand-written fixture that is subtly unlike production
   has shipped bugs here (a header parser silently dropped `"Raid Set 1 - Vex
@@ -245,7 +238,7 @@ Not optional polish. A feature that ships without its doc edit is what made
 
 In the same commit:
 
-- **`docs/DECISIONS-<YYYY-MM-DD>.md`** — every call Hitya makes (a default, a
+- **`docs/DECISIONS-<YYYY-MM-DD>.md`** — every call the guild lead makes (a default, a
   threshold, a policy, a "we don't do that"), with **why** and where it landed.
   Append to today's file, creating it if needed.
 - **`docs/HOW-ITS-BUILT.md`** — add or refresh the feature's row. A stale index
@@ -353,7 +346,7 @@ ratchet that fails CI when a new over-cap `.limit()` appears.
 `m`, so `^` anchors before the **timestamp**, not the message. Write patterns
 unanchored or anchored as `^\[.+?\]\s+`. **Never "fix" one by deleting the `^`**
 — `{s}` expands to a class that includes space, so an unanchored pattern
-captures `" Uilnayar"` with a leading space and corrupts every name-keyed
+captures `" Aramil"` with a leading space and corrupts every name-keyed
 consumer downstream.
 
 **Every `<details>` the dashboard emits needs `wpKeep(...)`.** Sections repaint
@@ -395,7 +388,7 @@ Say so plainly and write it down rather than guessing.
   unreachable from cloud sessions.
 - **Dashboard-only settings** — Vercel domains, Supabase auth redirect URLs.
   There is no MCP tool for them; they are human-only steps.
-- **Naming a release** — always Hitya's call. Propose, don't pick.
+- **Naming a release** — always the guild lead's call. Propose, don't pick.
 
 ---
 

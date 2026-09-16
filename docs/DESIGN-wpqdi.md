@@ -9,7 +9,7 @@ in-house so a raider looking up an item/mob/spell never hits a third-party
 outage.
 
 **Status:** design / not started. Author: cloud session 2026-07-27.
-**Product name + route are Hitya's call** (see Open Questions) — "wpqdi" is a
+**Product name + route are the guild lead's call** (see Open Questions) — "wpqdi" is a
 working title.
 
 ---
@@ -169,14 +169,14 @@ Covers ~80% of PQDI traffic.
 - Item icon atlas (after the local-session extraction lands).
 - Quest pages — **data-limited**: our `quest_catalog` is officer-curated, not a
   full quest DB; `scripted_npc_turnins` (4,473) is the raw material. Not full
-  PQDI parity; scope with Hitya.
+  PQDI parity; scope with the guild lead.
 - Global cross-link polish + response caching.
 
 **~3–4 weeks to broad parity; real downtime relief in week one.**
 
 ---
 
-## Open questions (for Hitya)
+## Open questions (for the guild lead)
 
 1. **Product name + base route.** "wpqdi" working title; route `/db` vs
    `/wpqdi` vs `/library` etc. (Naming is the guild lead's call per CLAUDE.md.)

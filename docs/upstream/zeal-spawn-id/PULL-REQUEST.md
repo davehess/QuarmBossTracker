@@ -8,7 +8,7 @@ submitted; the steps are kept because a follow-up PR (the target-bar half of
 
 ⚠ **We cannot watch it from here.** This repo's GitHub tooling is scoped to
 `davehess/quarmbosstracker`, so review comments on `CoastalRedwood/Zeal` will
-not reach a session automatically — Hitya needs to relay them.
+not reach a session automatically — the guild lead needs to relay them.
 
 Everything needed to open this on
 [CoastalRedwood/Zeal](https://github.com/CoastalRedwood/Zeal). The two commits

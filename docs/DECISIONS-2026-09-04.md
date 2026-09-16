@@ -2,7 +2,7 @@
 
 ## Attendance grids, round two: what a night actually is
 
-Hitya's morning-after on the 09-03 heatmaps, verbatim: *"me is slow to load
+The guild lead's morning-after on the 09-03 heatmaps, verbatim: *"me is slow to load
 now … load the last 60 days by default. the timeline itself only needs to be
 our official raid nights and we have others included. first time kill bonuses
 don't need to show up … same thing on the raid history it should just be our
@@ -38,7 +38,7 @@ raid days."* Shipped web 1.7.21.
 
 ## Uncurated mobs: what tracking them costs, and the gate
 
-Hitya: *"we're still displaying all of these non-raid mobs that people are
+Guild lead: *"we're still displaying all of these non-raid mobs that people are
 fighting. how much is it costing us to track these and can we add a flag into
 the setup to turn those off to minimize additional tracking for other guilds
 that may use this."* The Saturday Aug 22 review showed **470 kills** — one
@@ -79,7 +79,7 @@ never worked (`DECISIONS-2026-09-01.md`).
   upload stream and is untouched; `_promoteLockoutBoss` still curates a row the
   server hands a loot lockout for, and it persists from then on.
 - **Left ON for us.** First kills in new content are why open collection
-  exists (the 2026-08-16 Final Arbiter miss). Whether to flip it is Hitya's
+  exists (the 2026-08-16 Final Arbiter miss). Whether to flip it is the guild lead's
   call — the number to weigh is 9 MB/day against 8 GB.
 
 **Display:** both `/raid/review` pages now filter to `curatedNpcIds` in the
@@ -96,7 +96,7 @@ longer appears in the review index at all.
   `/leaderboards`: curated bosses only, fights over 45 minutes out (one
   3.1.45-era parser reported 67-, 105- and 127-minute "fights"), pre-cutover
   rows hidden unless `?legacy=1`, which shows them with a warning.
-- **"Last seen" is any stream, not the encounter stream.** Hitya's own row read
+- **"Last seen" is any stream, not the encounter stream.** the guild lead's own row read
   "29m ago" with Mimic running, because faction, inventory, quarmy and chat had
   all uploaded within the last two minutes and the banner only looked at
   encounters. One paged read of `agent_upload_stats` for the family now feeds
@@ -121,7 +121,7 @@ longer appears in the review index at all.
 
 ## UI ships as options, previewed on beta (a standing rule from tonight)
 
-Hitya, after three UI changes landed on production in one day with no
+The guild lead, after three UI changes landed on production in one day with no
 alternatives offered: *"When a request involves UI, don't give me one design.
 Give me two or three genuinely different approaches to choose from … deploy
 each variant as its own preview and give me URLs to compare … Never touch
@@ -135,7 +135,7 @@ Applied retroactively to the one design decided unilaterally today, the
 attendance layout: the month blocks stay on production as the baseline, and
 two genuinely different alternatives go up on beta for a side-by-side.
 
-**Picked the same evening (Hitya): "I like blocks and strips, let's keep both
+**Picked the same evening (the guild lead): "I like blocks and strips, let's keep both
 as options, default to strips."** So both ship as a member-facing switch on
 `/me` and `/raidhistory` (web 1.7.23), strips by default, the choice kept in a
 `wp_raid_layout` cookie the way the timezone picker keeps `wp_tz`, with
@@ -157,7 +157,7 @@ are the same trap as green tests on a SyntaxError slice.
 
 ## Tower, written down as one picture
 
-Hitya: *"can you give me an MD about coolify and supabase backups on tower."*
+Guild lead: *"can you give me an MD about coolify and supabase backups on tower."*
 `docs/TOWER-coolify-and-supabase-backups.md` — the overview on top of the two
 2026-08-11 runbooks: what runs on the box and why, the backup's parts and the
 reason for each, the archive merge, the Coolify VM, three restore cases, a
@@ -178,7 +178,7 @@ runbooks did not:
 
 ## Personal deployment details do not belong in a public repo
 
-Hitya, on the Tower overview: *"that MD is for my personal deployment. if it
+The guild lead, on the Tower overview: *"that MD is for my personal deployment. if it
 contains personal details or ips or whatnot it should be cleaned up."* It did —
 two LAN addresses, and the two runbooks it points at carried the same ones plus
 the VM's libvirt UUID and MAC in the pasteable XML. All replaced with
@@ -195,7 +195,7 @@ deployment, not everyone's.
 |---|---|
 | ✅ **Attendance layout picked** | Strips (default) + blocks as a member switch, web 1.7.24 (1.7.23 was the docs without the code). Calendars dropped |
 | ⚠ **Tower: are the 05:00 backup and 05:30 merge actually scheduled?** | Unconfirmed since 2026-08-11. `TOWER-coolify-and-supabase-backups.md` §6 — five commands on the box |
-| **Flip `flag_skip_uncurated_mobs`?** | Hitya's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
+| **Flip `flag_skip_uncurated_mobs`?** | the guild lead's call. ON today; 97% of encounter writes, ~9 MB/day. `docs/DECISIONS-2026-09-04.md` |
 | ⚠ **Is /me fast enough now?** | The attendance reads dropped to 60 days and the heartbeat read went from N queries to one paged read; the page was not timed before or after. If still slow, the next suspect is the per-character stats fan-out |
 | **Record the Death Touch VICTIM at ingest** | `encounter_events` fire rows have `actor: null`; the review infers it from deaths within 8s. The agent's trigger relay would need to carry the captured target and the bot store it — agent + bot change |
 | ✅ **Zeal PR #229 — MERGED** | Waiting on a tagged Zeal RELEASE, then on raiders updating. Everything our side is shipped and inert until a client sends an id |
@@ -211,6 +211,6 @@ deployment, not everyone's.
 | 🔴 **`encounter_threat_snapshots` retention has never run** | 946 MB, 897k rows. Needs an index + a batched delete. Destructive — awaiting a go-ahead |
 | ⚠ **Supabase Spend Cap + current egress** | Both dashboard-only, both unread |
 | ✅ **Tag channel autojoin file-write** | Shipped (agent 3.6.34). Still needs `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC` set on Railway or in `/admin/overlays` |
-| **Silverwing encounter d78bcea4 (2025-03-21)** | Players wiped by the old merge RPC; restore via the Parses Log `/restore` is Hitya's call |
+| **Silverwing encounter d78bcea4 (2025-03-21)** | Players wiped by the old merge RPC; restore via the Parses Log `/restore` is the guild lead's call |
 
 _Carried forward from `DECISIONS-2026-09-03.md`._

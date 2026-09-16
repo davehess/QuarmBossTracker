@@ -2,7 +2,7 @@
 
 ## Zeal 1.4.6 ships the spawn id, and it changes a CLAUDE.md scope boundary
 
-Hitya: *"zeal 1.4.6 was released so spawn ID is now exposed for anyone that's on
+Guild lead: *"zeal 1.4.6 was released so spawn ID is now exposed for anyone that's on
 that version and has named pipes exposed and sending data."* Confirmed in our
 own data, not taken on faith:
 
@@ -31,7 +31,7 @@ Hence the poster (`zeal-update-why.png`), built entirely from the figures above.
 
 ## The Setup checklist now says WHICH wall you hit (agent 3.6.35, beta)
 
-Two members lost an evening to the same page. Abrahms/AirborneSapper had Zeal
+Two members lost an evening to the same page. One had Zeal
 installed and a dead feed; the checklist said *"install/enable Zeal"* regardless
 of what was on disk, so he clicked **Check / install Zeal** — which failed with a
 raw `EPERM: operation not permitted, copyfile …` because his EQ lives in
@@ -47,8 +47,8 @@ gobbledygook was. Two separate walls; the checklist pointed at neither.
 - The install handler translates a permission denial into the three real fixes
   and keeps the errno for support.
 
-**Root cause of the dead feed was the elevation mismatch, now n=2** (Jankzer
-2026-07-05, Abrahms 2026-09-10) — and it takes the OVERLAYS with it, which we
+**Root cause of the dead feed was the elevation mismatch, now n=2** (2026-07-05 and
+2026-09-10) — and it takes the OVERLAYS with it, which we
 had never written down. All three of his symptoms (no Zeal, no overlays, EPERM
 install) cleared the moment Mimic ran as admin. His own words, recorded in
 `zealPipe.js` because they narrow it further than anything we had: *"I can get
@@ -75,7 +75,7 @@ handed to a member would not have parsed at all. Fixed with a BOM (matching
 **Run the full suite before pushing, not the targeted file.** The repo already
 had the guard; I just did not consult it.
 
-## The Tank mini's damage-shield box is PER HIT (Hitya, 2026-09-11)
+## The Tank mini's damage-shield box is PER HIT (guild lead, 2026-09-11)
 
 *"The Damage shield component should be the sum of damage per hit, not the
 total from all the times being hit."* The spiky box on the Tank mini shows
@@ -103,11 +103,11 @@ with four commits above it, so the published body is the docs commit about
 the mis-dated trigger, and the #mimic-releases announcer reposted it. The
 installer and tag are correct; only the text is wrong. Repair: edit the
 v2.6.7 release on GitHub and paste the bullets from the roadmap entry
-("Puts the Setup buttons back" + the quiet-mode line) — Hitya's action, no
+("Puts the Setup buttons back" + the quiet-mode line) — the guild lead's action, no
 tool here can edit a release. Rule added to CLAUDE.md: the version-bump
 commit is the tip of its own push, or the tip carries `<!--player-notes-->`.
 
-## Quiet mode is now a mute; hiding overlays is its own switch (Hitya, 2026-09-11)
+## Quiet mode is now a mute; hiding overlays is its own switch (guild lead, 2026-09-11)
 
 *"Quiet mode should separate between muted and not seeing overlays at all.
 Two options, and the current mode should just mute."* Landed on `beta`
@@ -127,11 +127,11 @@ Two options, and the current mode should just mute."* Landed on `beta`
   goes silent, which is what "the current mode should just mute" asks for.
 - The vote page also lets people remove a pick (web 1.7.34).
 
-## The relay scope gate never worked, and now fails closed outside a raid (Hitya, 2026-09-11)
+## The relay scope gate never worked, and now fails closed outside a raid (guild lead, 2026-09-11)
 
-Hitya, alone on Canopy in Vex Thal, kept getting "Shaman Slow" callouts:
+The guild lead, alone on a member in Vex Thal, kept getting "Shaman Slow" callouts:
 *"I'm not in a zone with another guild member, or in a group, or even a raid.
-These random slips need to stop."* The fires were Lucker's — Turgur's Insects
+These random slips need to stop."* The fires were a member's — Turgur's Insects
 landing on Ssraeshza Temple trash every 30–60s from 13:49 UTC — relayed to
 everyone. The 3.1.111 gate resolved the sender's zone from `payload.character`,
 which no agent sends, so the origin was always null and the fail-open branch
@@ -146,9 +146,9 @@ raid an unplaceable sender or listener is NOT local — dropped. The
 Follow-up for beta: the Recent-fires card labels relayed fires "guild", same
 as local ones, which is why this took a code read to diagnose — show "relay".
 
-## Lord Mobsincamp — the assistant is named, configurable, and designed (Hitya, 2026-09-12)
+## Lord Mobsincamp — the assistant is named, configurable, and designed (guild lead, 2026-09-12)
 
-Hitya: *"could we hook up a local LLM agent that would be exposed to our members
+Guild lead: *"could we hook up a local LLM agent that would be exposed to our members
 as the search element and run off of the larger local database copy? if we
 experience issues to our supabase hosted database could we fail back to the
 copy on tower and offload? I'd like to name it Lord Mobsincamp and have that be
@@ -167,7 +167,7 @@ failover is a live logical replica, which needs the Supabase IPv4 add-on.
 
 ## Zeal 1.4.7 review: Target of Target is client-side only, not on the pipe (2026-09-12)
 
-Hitya asked for a review of Larcen22's PR #228 ("Target of Target Assistbar",
+The guild lead asked for a review of Larcen22's PR #228 ("Target of Target Assistbar",
 merged 2026-09-09 as `b7a61d1`, shipped in **Zeal v1.4.7, 2026-09-10**, README
 in #231). Read from the source, not the PR page:
 - **How it works.** The legacy client does not store other entities' targets,
@@ -216,9 +216,9 @@ in #231). Read from the source, not the PR page:
 - **Cost note:** auto-refresh sends a real /assist request per poll per
   raider; default off. If Mimic ever recommends it, keep the interval long.
 
-## Graphify run on the codebase (Hitya, 2026-09-13)
+## Graphify run on the codebase (guild lead, 2026-09-13)
 
-Hitya: *"Please graphify our codebase"* (Graphify-Labs/graphify, PyPI
+Guild lead: *"Please graphify our codebase"* (Graphify-Labs/graphify, PyPI
 `graphifyy` 0.9.61). Run locally, code-only (no LLM, no API key), on a
 `git archive` export of the tracked tree with the two vendored third-party
 skills (`.claude/skills/impeccable`, `ponytail`) removed and the SQL grammar
@@ -244,12 +244,12 @@ split (a config key through 16 gates — the graph has zero nodes for
 `quietMode`), the `#if 0` miss (tree-sitter does not evaluate the
 preprocessor) and the target-of-target spot (grep + the index did it). It
 helps with "who calls X / what does X reach" and cycles, and as a first probe
-for an agent with no repo context. **Hitya's call, 2026-09-13: regen script
+for an agent with no repo context. **the guild lead's call, 2026-09-13: regen script
 in, outputs out, hook not installed** — `scripts/graphify.sh`.
 
 ## Two more tools assessed, neither adopted (2026-09-13)
 
-Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
+The guild lead asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
 - **rtk** — a PreToolUse hook that rewrites Bash commands to `rtk <cmd>` and
   compacts their output (claims 60–90% fewer tokens on dev commands). Its own
   README says it does not touch `Read`/`Grep`/`Glob`, and in this repo the
@@ -257,7 +257,7 @@ Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
   returns every run's full commit body), not Bash output — which sessions
   already trim with `tail`/`grep`. Cloud containers are ephemeral, so the
   binary would need a per-session install through a proxy that already blocks
-  some hosts. Verdict: skip for cloud sessions; Hitya may try it on the
+  some hosts. Verdict: skip for cloud sessions; the guild lead may try it on the
   desktop if a local session feels Bash-heavy. Watch that its error grouping
   never hides a failing assertion's text.
 - **ui-ux-pro-max-skill** — 79 UI styles, 192 palettes, 74 font pairings,
@@ -272,9 +272,9 @@ Hitya asked about `rtk-ai/rtk` and `nextlevelbuilder/ui-ux-pro-max-skill`.
 
 ## PoP timers set from leadership guidance ahead of the official notes (2026-09-13)
 
-Hitya passed along pre-release PoP guidance that guild leadership holds ahead
+The guild lead passed along pre-release PoP guidance that guild leadership holds ahead
 of Quarm's official notes. **It is not public and the finals are not out**, so
-the capture itself stays OUT of this repo — Hitya holds it. What landed here
+the capture itself stays OUT of this repo — the guild lead holds it. What landed here
 is only our own configuration: `data/bosses.json` PoP timers set to the
 guided values (standard cycle and the elemental gods), and two zone
 corrections (Aerin`Dar is Plane of Valor, Agnarr is Bastion of Thunder).
@@ -283,9 +283,9 @@ against the first live kills after 10-01. The overlay notes that had carried
 the detail on beta were reverted the same day; they return when the notes are
 official.
 
-## Damage shields need evidence, not adjacency (Hitya, 2026-09-13)
+## Damage shields need evidence, not adjacency (guild lead, 2026-09-13)
 
-Hitya, on the Tank overlay during Kaas Thox: *"This is misleading, i don't
+The guild lead, on the Tank overlay during Kaas Thox: *"This is misleading, i don't
 think he's getting thorns damage returned, or we're not seeing it. These look
 like 150 dd procs."* Confirmed in the rollup: sixteen anonymous hits of exactly
 150, spread over five raiders as `ds:non-melee`, one flavor line all fight.
@@ -315,18 +315,18 @@ line at all (one line for sixteen hits says it may be wearer-only). If they
 do not, a tank without Mimic and without an observed DS landing shows no
 shield card on anyone else's overlay — the honest direction.
 
-## Night timeline, Central HUD, reuse timers — asked and designed (Hitya, 2026-09-13)
+## Night timeline, Central HUD, reuse timers — asked and designed (guild lead, 2026-09-13)
 
-Hitya, mid-raid: *"we need to plan out a visualization of the mobs and trash in
+The guild lead, mid-raid: *"we need to plan out a visualization of the mobs and trash in
 the night, full timeline view"*; a *"central hud that would outline your
 character with hits and misses, current target's name and health, your own
 health and mana totals"*; and *"a configurable 'How Many ____ Casts left' or
 timers for critical class components"* — *"mend, kick, etc lay hands AA
 cooldowns, discs"*. Design with options and costs in
 `docs/DESIGN-night-timeline-and-central-hud.md`. Standing constraints carried
-in: the timeline is web (variants on `b.wolfpack.quest`, Hitya picks); the
+in: the timeline is web (variants on `b.wolfpack.quest`, the guild lead picks); the
 overlays wait for the mini-mode picks. The Mend / Lay on Hands / Harm Touch
-lines were read straight from the parser and the spell catalog (Hitya: "these
+lines were read straight from the parser and the spell catalog (Guild lead: "these
 could be read directly") — 72-minute recasts on all three touches, landing text
 in `eqemu_spells`; only Divine Arbitration needs an authored reuse.
 
@@ -334,22 +334,22 @@ in `eqemu_spells`; only Divine Arbitration needs an authored reuse.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (Hitya 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (Hitya 2026-09-11). Rampage tank on the Tank mocks is Ashieron, a paladin — warriors do not go DA (Hitya 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | Hitya notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
-| Lord Mobsincamp — local assistant as the members' search | **designed 2026-09-12** (`docs/DESIGN-lord-mobsincamp.md`); name decided + configurable (`ASSISTANT_NAME`); nothing built | Hitya's four calls (§9): broker vs tunnel; IPv4 add-on for a live replica; hosted-model bridge / fallback; accept the desktop (where the P40 actually is, 2026-09-12 — not Tower) as the model host, up when that PC is. Then Phase 0 = tool service + site UI |
-| Zeal: put Target of Target on the pipe | **patch drafted 2026-09-12** (`docs/zeal-tot-pipe.patch`, applies to v1.4.7, NOT compiled here; PR text in `docs/zeal-tot-pipe-request.md`). **Consumer side LIVE on `beta` (agent 3.6.40, 2.6.8-beta.3):** Mimic sanitizes the two keys, the agent folds the answer into `observed_tanks` (raid-wide via the bot's #194 clustering) and patches the Extended Target row that is my own target (`mob_victim_source`, `mob_hit_by`), the overlay marks 🎯 / → / ⚔ | Hitya builds the Zeal patch locally and opens the PR; nothing shows until a Zeal that carries it is released. **Second ask added 2026-09-15: the target's race + gender on the same message** (Plane of Hate's revenants — one name, two classes, only the sex differs; bot 3.1.127 already honours a `gender` hint). Bot follow-up (main): store `target_of_target` / `target_hit_by` on `character_live_state` and prefer authoritative connects in the clustering |
-| Old-log importer + onboarding backups question + Setup row on top | **on `beta` 2026-09-13 (agent 3.6.42, 2.6.8-beta.8), stable 2.6.8 cut on `main`, beta re-parked at 2.6.9**; Hitya: *"After that's set, lets push to main as well and get the split set up"* → cut stable 2.6.8, re-park beta at 2.6.9 | Malthur and others add archive folders from the Setup card or the Logsync tab; watch the first imports' validation messages |
-| Night timeline · Central HUD · reuse timers + casts-left | **designed 2026-09-13**, `docs/DESIGN-night-timeline-and-central-hud.md`; nothing built | Hitya picks: ring vs strip HUD; night view on the review page or its own route; Cooldowns class presets. Then timeline first (web, beta `?v=a`/`?v=b`), overlays after the mini picks |
+| Mimic mini mode — every overlay in a less-tall version, right-click ▭ toggle, per-overlay 📌 lock, Minimize-all hotkey (Ctrl+Shift+M) | **guild vote page LIVE on `main` 2026-09-11 — `wolfpack.quest/mimic/mini` (web 1.7.31); reviewed on beta first, graduated so nobody re-signs-in; the guild gets the link today.** Ballot lists only people who have picked; the three minis sit side by side with their descriptions collapsed underneath, opened by your pick (guild lead 2026-09-11). Full mode left, THREE options right (a third was added to every overlay), vote + persistent feedback per overlay, animated mocks with real raiders, Zeal 1.4.6 vs older-Zeal toggle. DS box on the Tank mini = damage returned PER HIT, not the running total (guild lead 2026-09-11). Rampage tank on the Tank mocks is a member, a paladin — warriors do not go DA (guild lead 2026-09-11). Copy button shrinks to tab size, copied line carries `\| local` / `\| merged` (parser tolerance must be checked first); Target-info resists show current-after-debuffs over full | the guild lead notifies the guild; watch the votes + feedback (`overlay_design_votes` / `_feedback`); re-park beta at 2.6.8 (page is on main now, nothing to carry); build nothing in Mimic until the picks land |
+| Lord Mobsincamp — local assistant as the members' search | **designed 2026-09-12** (`docs/DESIGN-lord-mobsincamp.md`); name decided + configurable (`ASSISTANT_NAME`); nothing built | the guild lead's four calls (§9): broker vs tunnel; IPv4 add-on for a live replica; hosted-model bridge / fallback; accept the desktop (where the P40 actually is, 2026-09-12 — not Tower) as the model host, up when that PC is. Then Phase 0 = tool service + site UI |
+| Zeal: put Target of Target on the pipe | **patch drafted 2026-09-12** (`docs/zeal-tot-pipe.patch`, applies to v1.4.7, NOT compiled here; PR text in `docs/zeal-tot-pipe-request.md`). **Consumer side LIVE on `beta` (agent 3.6.40, 2.6.8-beta.3):** Mimic sanitizes the two keys, the agent folds the answer into `observed_tanks` (raid-wide via the bot's #194 clustering) and patches the Extended Target row that is my own target (`mob_victim_source`, `mob_hit_by`), the overlay marks 🎯 / → / ⚔ | the guild lead builds the Zeal patch locally and opens the PR; nothing shows until a Zeal that carries it is released. **Second ask added 2026-09-15: the target's race + gender on the same message** (Plane of Hate's revenants — one name, two classes, only the sex differs; bot 3.1.127 already honours a `gender` hint). Bot follow-up (main): store `target_of_target` / `target_hit_by` on `character_live_state` and prefer authoritative connects in the clustering |
+| Old-log importer + onboarding backups question + Setup row on top | **on `beta` 2026-09-13 (agent 3.6.42, 2.6.8-beta.8), stable 2.6.8 cut on `main`, beta re-parked at 2.6.9**; Guild lead: *"After that's set, lets push to main as well and get the split set up"* → cut stable 2.6.8, re-park beta at 2.6.9 | a member and others add archive folders from the Setup card or the Logsync tab; watch the first imports' validation messages |
+| Night timeline · Central HUD · reuse timers + casts-left | **designed 2026-09-13**, `docs/DESIGN-night-timeline-and-central-hud.md`; nothing built | the guild lead picks: ring vs strip HUD; night view on the review page or its own route; Cooldowns class presets. Then timeline first (web, beta `?v=a`/`?v=b`), overlays after the mini picks |
 | Tank overlay shield card credited 150-point procs as the tank's DS | **on `beta` 2026-09-13 (agent 3.6.41, 2.6.8-beta.6); stable 2.6.8 on `main` the same night.** A hit is a shield only when the log names one on that mob in the same second, or the tank's known DS buffs vouch for the amount; held for the pair window, re-added decided | watch the next raid's Tank overlay + `encounter_combat_rollup` `ds:*` keys — small named shields only; measure whether bystanders ever see the flavor line; graduate with the next stable |
 | Quiet mode split — mute vs hide overlays | **on `beta` 2026-09-11 (agent 3.6.39, 2.6.8-beta.2).** Quiet mode = mute only; new "Don't show any overlays" switch owns visibility; Setup row follows it | beta testers confirm voice stops with Mute on and overlays stay; graduate with the next stable |
 | Recent-fires card cannot tell a relayed fire from a local one | open — `dashboard.html` collapses `guild_relay` into "guild" (line ~2973); it hid which side the Shaman Slow leak was on | beta, agent bump: label relays "relay · from <name>" |
-| Graphify of the codebase | **decided 2026-09-13 (Hitya): keep a regen script, keep the outputs out, do not install the hook.** `scripts/graphify.sh` (also `npm run graphify`) rebuilds `graphify-out/` (gitignored) in ~30 s from the tracked tree minus the vendored skills; `--portable` writes an artifact-publishable copy. Honest scope: "who calls X / what does X reach" with line numbers, plus import cycles; blind to config keys threaded through code, cross-process payload contracts and `#if 0` C++ | none — rebuild when a call-chain question comes up; HOW-ITS-BUILT stays the index of intent |
+| Graphify of the codebase | **decided 2026-09-13 (the guild lead): keep a regen script, keep the outputs out, do not install the hook.** `scripts/graphify.sh` (also `npm run graphify`) rebuilds `graphify-out/` (gitignored) in ~30 s from the tracked tree minus the vendored skills; `--portable` writes an artifact-publishable copy. Honest scope: "who calls X / what does X reach" with line numbers, plus import cycles; blind to config keys threaded through code, cross-process payload contracts and `#if 0` C++ | none — rebuild when a call-chain question comes up; HOW-ITS-BUILT stays the index of intent |
 | PoP timers: fixed schedule vs our ±20% | open — guidance says fixed; `utils/state.js`, `utils/supabase.js` and the kill cards hard-code 0.8/1.2 | per-boss `variancePct` in `bosses.json` (0 for PoP), honoured in the three sites + card text, before 10-01; confirm against the official notes |
-| A per-character PoP progression dump command is coming → authoritative flags on `/pop` | open — Hitya holds the pre-release detail; the log-line format is unknown until it is live | when live: a real `eqlog_*` excerpt, then agent parser → `pop_flags` |
-| Mimic-wide audit of raw `try/catch` error text + a way to submit errors to Hitya | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; Hitya wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
+| A per-character PoP progression dump command is coming → authoritative flags on `/pop` | open — the guild lead holds the pre-release detail; the log-line format is unknown until it is live | when live: a real `eqlog_*` excerpt, then agent parser → `pop_flags` |
+| Mimic-wide audit of raw `try/catch` error text + a way to submit errors to the guild lead | **requested 2026-09-10, NOT started.** The Zeal-install `EPERM` is one instance, now fixed; the guild lead wants every surface swept and a submit path | scope it as its own pass — inventory the catch sites first, then decide the submit channel (the `feedback` table + `/api/agent/feedback-send` already exist and could carry it) |
 | Zeal spawn id: Mimic should null a pipe `target_id` of 0 at the edge | **done on `beta` 2026-09-12** — `_pipeSpawnId` in `apps/mimic/main.js` nulls 0 / non-numbers for spawn, target and pet ids (agent 3.6.40); the bot guard (3.1.123) stays for older Mimics | the agent's `_provableTargetId` still trusts a finite 0 from a pre-3.6.40 Mimic — tighten when convenient |
 | Spawn-id adoption is ~half the fleet | open — 11 of 19 on 2026-09-10; poster built to push it | share `zeal-update-why.png`; re-measure the blind % in a week |
 | 🎲 rolled-loot card is still ONE event per refresh | open (2026-09-07) | per-event cards filtered by `looted_items.zone` |
-| Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested, NOT applied, Hitya's call | plus two duplicate rows from 09-06, untouched (merging is destructive) |
+| Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested, NOT applied, the guild lead's call | plus two duplicate rows from 09-06, untouched (merging is destructive) |
 | Loot bidding: update / remove a bid | open — options A/B/C presented, awaiting pick | first live cancel on a low-stakes bid |
-| Ashieron: "Mimic takes my internet down" | investigated 2026-09-07; `scripts/mimic-netdiag.ps1` collects the evidence and NOW ACTUALLY PARSES (see above) | he runs `-Watch` while playing, `-Live` when it breaks |
-| P40 / local model | superseded 2026-09-12 by the Lord Mobsincamp design above; the card is in the Canopy desktop, not Tower, and stays there — no slot swap | see that row |
+| A member: "Mimic takes my internet down" | investigated 2026-09-07; `scripts/mimic-netdiag.ps1` collects the evidence and NOW ACTUALLY PARSES (see above) | he runs `-Watch` while playing, `-Live` when it breaks |
+| P40 / local model | superseded 2026-09-12 by the Lord Mobsincamp design above; the card is in the a member desktop, not Tower, and stays there — no slot swap | see that row |

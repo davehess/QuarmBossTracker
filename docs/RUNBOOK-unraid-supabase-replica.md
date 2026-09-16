@@ -4,7 +4,7 @@
 > picture of everything on the box (backup, archive, Coolify), with a
 > five-minute health check. This file is the step-by-step and the traps.
 
-**Status: DECIDED 2026-08-11 (Hitya): backup first, then dev sandbox.** The
+**Status: DECIDED 2026-08-11 (the guild lead): backup first, then dev sandbox.** The
 live-mirror replication path below stays documented but is NOT the plan — which
 dissolves its worst constraint: **a plain `pg_dump` rides the SESSION pooler,
 which has IPv4, so the IPv6/IPv4-add-on caveat does not apply to Phase 1 at
@@ -161,7 +161,7 @@ drive would be slow and would wear the drive out.) The first-guess shfs
 diagnosis was the right family, wrong filesystem — the rule covers both:
 **databases go on absolute pool paths, never `/boot`, never `/mnt/user`.**
 
-**Fix (applied 2026-08-11, files handed to Hitya):** rewrote every
+**Fix (applied 2026-08-11, files handed to the guild lead):** rewrote every
 `./volumes/…` bind to `/mnt/cache/appdata/supabase/volumes/…` (19 rewrites;
 compose header now documents the rule so a future edit can't regress it), and
 generated a complete `.env` — every secret filled, ANON/SERVICE keys signed
@@ -273,7 +273,7 @@ self-host docs quote) makes Studio query a project that does not exist here, and
 it answers truthfully but misleadingly: the account menu shows *"You do not have
 access to this project"* and Connect shows *"Project is currently not active and
 cannot be connected"*. Both errors vanish at
-**`http://<lan-ip>:8000/project/wolfpack`** (Hitya found this 2026-08-11 — an
+**`http://<lan-ip>:8000/project/wolfpack`** (the guild lead found this 2026-08-11 — an
 earlier note in this runbook wrongly wrote both off as cosmetic self-hosted
 artifacts; they were real and the ref was the cause). If the tenant id is ever
 changed, the Studio URL changes with it. Real connection paths:

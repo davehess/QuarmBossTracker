@@ -2,7 +2,7 @@
 
 ## The website checklist: four real gaps, and the rest is marketing advice
 
-Hitya brought a "your vibe coded site is missing 20 things" checklist and asked
+The guild lead brought a "your vibe coded site is missing 20 things" checklist and asked
 what we have, what we lack, and what matters. Audited against the real `web/`.
 
 **Had already:** custom 404, CTA above the fold, alt text on **12 of 12** real

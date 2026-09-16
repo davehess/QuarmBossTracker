@@ -9,7 +9,7 @@ one it needs no Zeal, no position, and no spawn id.
 
 ## What the twins actually are
 
-Corrected on the spot by Hitya: the same-name pair is **`Va Xakra`**, and they
+Corrected on the spot by Guild lead: the same-name pair is **`Va Xakra`**, and they
 spawn *with* `Thall Va Xakra`. The boss is a different name, so the ambiguity is
 between the two adds, not with the boss.
 
@@ -33,15 +33,15 @@ Measured, 5-second buckets, encounter `7dfe09b3`:
 
 ```
 sec  concurrent  who (damage taken this bucket)
- 10      1       Hawkner:1668
- 15      1       Hawkner:1163
- 20      2       Atlasius:1622   Hawkner:1362      ← TWO ADDS
- 30      2       Hawkner:1402    Atlasius:1055     ← TWO ADDS
- 35      1       Atlasius:388
- 40      5       Abrahms:2190  Syphon:495  Gyik:310  Atlasius:299  Hawkner:266
- 65      3       Abrahms:5396  Syphon:1556  Currygoat:821
- 90      3       Abrahms:4325  Syphon:990   Currygoat:821
-120      3       Abrahms:3835  Syphon:1445  Currygoat:821
+ 10      1       Cordove:1668
+ 15      1       Cordove:1163
+ 20      2       Elowen:1622   Cordove:1362      ← TWO ADDS
+ 30      2       Cordove:1402    Elowen:1055     ← TWO ADDS
+ 35      1       Elowen:388
+ 40      5       Fenwick:2190  Gwynne:495  Sable:310  Elowen:299  Cordove:266
+ 65      3       Fenwick:5396  Gwynne:1556  Jorrel:821
+ 90      3       Fenwick:4325  Gwynne:990   Jorrel:821
+120      3       Fenwick:3835  Gwynne:1445  Jorrel:821
 ```
 
 ## Why the OBVIOUS version of this fails
@@ -87,7 +87,7 @@ everyone else's `took` is rampage/AE spatter, which is structurally smaller.
 
 ## Known problems to solve first
 
-**The repeated `821`.** Currygoat shows a delta of exactly `821` at 45s, 65s, 90s
+**The repeated `821`.** a member shows a delta of exactly `821` at 45s, 65s, 90s
 AND 120s. Real damage does not produce four identical deltas. That is almost
 certainly a stale value being re-counted (a snapshot re-sent, or an uploader
 whose counter froze), and it would corrupt any ratio test that treats it as a
@@ -119,13 +119,13 @@ tightened later.
 ## Adjacent live findings from the same session
 
 - **Zeal `/tag` capture WORKS** — six uploaders independently captured
-  `{mob: "Thall Va Xakra", text: "KILL AND SLEEP", tagger: "Melting", spawn_id: 360}`.
+  `{mob: "Thall Va Xakra", text: "KILL AND SLEEP", tagger: "Bexley", spawn_id: 360}`.
   The spawn id is real and arriving. **But the tag expires in 120s**
   (`_TAG_FRESH_MS`, and the bot's `ext_tag_fresh_sec` matches), while a boss
   fight runs 5–10 minutes. A tag is a deliberate, fight-long mark; expiring it at
   2 minutes throws away the only field that carries true mob identity for most of
   the encounter. **Raise both.**
-- **Clock skew is real and unapplied.** Fargan's uploader carries
+- **Clock skew is real and unapplied.** a member's uploader carries
   `offset_ms = 59224` — 59.2 seconds, 213 pulse samples. Against a 90s DI recast
   that alone explains a DI reading ready ~59s early. We MEASURE this and never
   APPLY it (STATUS "Apply clock offset at ingest, keep raw", still pending).

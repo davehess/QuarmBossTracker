@@ -29,7 +29,7 @@ depend on this being the surface their callouts land on.*
 > "fast dismissal = didn't want it" threshold: it stores the latency
 > (`voted_at − fired_at`) and leaves the interpretation to whoever reads it.
 
-**The ask (Hitya, 2026-08-03):**
+**The ask (guild lead, 2026-08-03):**
 
 > the TTS messages need to have their messages with countdowns reflected visually
 > on that overlay. the AOE dodges/dance should be on there. and those line should
@@ -195,7 +195,7 @@ and high dismissal rate are the two failure modes, and one page can show both.
 5. Only then: suggestions ("this callout is dismissed 80% of the time — retire
    it?").
 
-## 6. Open questions for Hitya
+## 6. Open questions for the guild lead
 
 - **Is a dismissal a vote?** I've assumed *"dismissed fast = didn't want it"*. It
   could equally mean *"got it, thanks, clearing my screen"* — which is a

@@ -2,7 +2,7 @@
 
 ## Raid attendance heatmaps: what a night is, and what "full" means
 
-Hitya asked for a GitHub-style attendance grid on `/me` and a guild-wide
+The guild lead asked for a GitHub-style attendance grid on `/me` and a guild-wide
 `/raidhistory` page coloured "red at half raiders to green full raiders, orange
 middle of the way." Shipped web 1.7.19. The calls that had to be made, and why:
 
@@ -76,6 +76,6 @@ JS as `/raidhistory` does.
 | 🔴 **`encounter_threat_snapshots` retention has never run** | 920 MB / 57% of the DB, 448k rows past cutoff. Needs an index + a batched delete. Destructive — awaiting a go-ahead |
 | ⚠ **Supabase Spend Cap + current egress** | Both dashboard-only, both unread |
 | ✅ **Tag channel autojoin file-write** | Shipped (agent 3.6.34): `_applyAutojoin` writes `[Defaults] ChannelAutoJoin` in eqclient.ini. Still needs `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC` set on Railway or in `/admin/overlays` |
-| **Silverwing encounter d78bcea4 (2025-03-21)** | Players wiped by the old merge RPC; restore via the Parses Log `/restore` is Hitya's call |
+| **Silverwing encounter d78bcea4 (2025-03-21)** | Players wiped by the old merge RPC; restore via the Parses Log `/restore` is the guild lead's call |
 
 _Carried forward from `DECISIONS-2026-09-02.md`._

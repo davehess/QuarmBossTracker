@@ -1,7 +1,7 @@
 # DESIGN — Faction attribution and inference
 
 **Status:** specified 2026-08-26. Data availability VERIFIED; UI not built.
-Owner: Hitya.
+Owner: the guild lead.
 
 > "our faction page needs some love. if we know the positive and native amounts
 > for mob kills we see we should attribute the amount of faction. if we just see

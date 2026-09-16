@@ -15,7 +15,7 @@ measured on a live client with `/tag` (which broadcasts the same
 
 **A spawn id is a slot in the ZONE's entity table, not an identity.**
 
-Three observations of one character, `Mycorpseishere`, and its corpse:
+Three observations of one character, `Yarrow`, and its corpse:
 
 | event | own id | corpse id |
 |---|---|---|
@@ -110,8 +110,8 @@ explorer shows Y, X, Z to match what players read in EQ).
 | 3   | Class | display string ("Druid") |
 | 4   | Deity | |
 | 5-11 | STR / STA / DEX / AGI / WIS / INT / CHA | note DEX=7, AGI=8 (client order, not UI window order) |
-| 12  | Poison resist | confirmed distinct values (Manamana 76) |
-| 13  | Disease resist | (Manamana 66) |
+| 12  | Poison resist | confirmed distinct values (a member 76) |
+| 13  | Disease resist | (a member 66) |
 | 14  | Fire resist | (171) |
 | 15  | Cold resist | (169) |
 | 16  | Magic resist | (97) |
@@ -119,7 +119,7 @@ explorer shows Y, X, Z to match what players read in EQ).
 | 18  | **HP max** | |
 | 19  | HP % | integer percent (gauge 1 gives per-mille) |
 | 20  | Mana % | integer percent — **no raw mana here** |
-| 21  | Endurance % | drains when overweight (Canopy 0 at 135/108 wt) |
+| 21  | Endurance % | drains when overweight (a member 0 at 135/108 wt) |
 | 22  | AC ("CurrentMitigation") | |
 | 23  | ATK ("CurrentOffense") | |
 | 24  | Weight current | |

@@ -1,6 +1,6 @@
 # Design skills — what is installed, what each one earned, what to load next
 
-**Written 2026-09-16** for Hitya, who asked which design skills this platform
+**Written 2026-09-16** for the guild lead, who asked which design skills this platform
 actually uses before starting a dashboard rearchitecture "with more stylization
 and less generic AI formatting."
 
@@ -155,7 +155,7 @@ Our palette is essentially GitHub's Primer dark. It reads as a developer tool,
 not as a 1999 fantasy MMO, and `frontend-design` flags this itself as an open
 question: the identity does not come from the subject's own world. That may
 still be the right call, because the audience is raiders reading parse tables
-and it matches the agent dashboard — but it is **Hitya's call, and not a
+and it matches the agent dashboard — but it is **the guild lead's call, and not a
 refactor to slip into an unrelated change**.
 
 If the goal is a dashboard that feels authored rather than generated, decide

@@ -1,6 +1,6 @@
 # Decisions — 2026-08-27
 
-Written the same session, per CLAUDE.md. Everything here is Hitya unless it
+Written the same session, per CLAUDE.md. Everything here is the guild lead unless it
 came through the `feedback` table.
 
 ---
@@ -20,7 +20,7 @@ was mid-raid.
 
 It first became **6pm ET on Sun/Wed/Thu** — two hours ahead of the pull, clear
 of the 19:30 deploy freeze, three times a week instead of seven. An hour later
-Hitya cut it again:
+The guild lead cut it again:
 
 > "let's make the full audit once per week then until we have the new version
 > that has the since tag."
@@ -155,36 +155,38 @@ paths give `[0]`. Empty segments are now dropped before `Number()`, and the test
 asserts the fallback by **identity** (`toBe(_SWEEP_ANCHOR_DAYS_DEFAULT)`), which
 distinguishes the two paths.
 
-## ⚠ Uilnayar is NOT Hitya — the attribution rule was wrong for three weeks
+## ⚠ a member is NOT the guild lead — the attribution rule was wrong for three weeks
 
-Hitya, seeing the rule quoted back in `GEMINI-SPARK-HELPER.md`:
+The guild lead, seeing the rule quoted back in `GEMINI-SPARK-HELPER.md`:
 
-> "this helper file still references me as Uilnayar. they are not me, different
+> "this helper file still references me as a member. they are not me, different
 > person"
 
-From 2026-08-09 until now, `CLAUDE.md` and the Gemini helper both listed
-`Uilnayar` as one of Hitya's alts, and instructed every agent reading them to
-re-credit anything under that name to Hitya. **Uilnayar is a separate member.**
+From 2026-08-09 until now, `CLAUDE.md` and the Gemini helper both carried a
+character-to-person mapping that was wrong for one name, and instructed every
+agent reading them to re-credit anything under that name to the guild lead.
+**That member is a separate person.**
 
 Corrected in both files. What the fix has to preserve, in both directions:
 
-- **Existing `(Uilnayar <date>)` credits in code comments are CORRECT** and must
-  not be rewritten. They predate or survived the bad rule, and they name the
+- **Existing dated credits in code comments were CORRECT** and must not be
+  rewritten to the guild lead. They predate or survived the bad rule, and they name the
   right person. The death-awareness design, the group-death watcher, the clock-
-  correction clerics roster and the trigger scanner all carry real Uilnayar
+  correction clerics roster and the trigger scanner all carry real a member
   attributions.
-- **Attributions TO Hitya dated 2026-08-09 → 2026-08-28 are now suspect** —
+- **Attributions TO the guild lead dated 2026-08-09 → 2026-08-28 are now suspect** —
   there are 234 of them and they cannot be audited from here. Most are genuinely
-  Hitya. The rule now says to treat that window as uncertain and prefer the
+  The guild lead. The rule now says to treat that window as uncertain and prefer the
   original report where one can be found, rather than trusting the comment.
-- Uilnayar remains a real character name in fixtures, golden logs and the
+- a member remains a real character name in fixtures, golden logs and the
   `{s}`-capture worked example. Attribution text only — never a blanket rename.
 
-**Confirmed the next morning** — Hitya: *"canopy, rockin, manamana, Utoh, vj,
-melting, Hopeya, all me."* Note `Manamana`, which had never been on the list at
-all: the list was wrong in both directions, carrying someone who did not belong
-and missing someone who did. It is now marked as ASKED AND ANSWERED rather than
-assembled by inference, which is the only thing that makes it trustworthy.
+**Confirmed the next morning** by asking outright rather than inferring. The
+list we had been carrying was wrong in BOTH directions — it held a name that did
+not belong and missed one that did — which is the whole point: a mapping built
+by inference is wrong in ways nobody notices. ⚠ **The list itself is no longer
+recorded anywhere in this repo** (2026-09-16); attribution is by role now, and
+the database is the only place that knows.
 
 **The lesson is about the rule's shape, not this one name.** A rule that
 collapses many names into one person fails in the direction that *erases other
@@ -203,7 +205,7 @@ not evidence either, because this one sat there wrongly for nearly three weeks.
 | ⚠ **One unexplained full sweep at 00:02 ET on 2026-08-27** | Ruled out restart / env / version / another code path; the shipped decision replays as `false` for that instant. A diagnostic log line now prints every input on any sweep — **read it the next time one fires** (expected Sunday 18:00 ET). Bounded cost: one extra 6.2 MB read. See the section above |
 | **Otherwise 3.1.85 is behaving** | Verified: boot 2 calls / 403 KB, routine passes 1 call / 7.3 KB. Overnight `/audits` total 20 calls / 6.10 MB, against 381 / 140 MB the day before |
 | **The weekly sweep is a TEMPORARY setting** | Revert to `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` the moment OpenDKP ships a `since` parameter — and it is also the first thing to try if audit rows go missing |
-| **Alt list — CONFIRMED 2026-08-28** | Hitya: *"canopy, rockin, manamana, Utoh, vj, melting, Hopeya, all me."* `Manamana` was missing from the list entirely; `Uilnayar` is off it. `Dant` is absent from the confirmed list and @-mentions Hitya, so is treated as a distinct person by default — not confirmed either way, but that is the safe direction |
+| **Attribution: by role, not by character name** | The alt list that used to sit here has been removed; the repo does not publish which characters belong to which person. Credit the guild lead as "the guild lead" and everyone else by role. See the attribution rule in `CLAUDE.md`. |
 | **The API request to Moncs** | Not sent. Framed as "one full pull a week + deltas in between" — artifact updated |
 | **`OPENDKP_HALT` is OFF** (unblocked 2026-08-26) | Stats flowing. The kill switch still works from `/admin` without a deploy if he reports trouble again |
 | **`/characters` (85 calls / 12.1 MB per day) and the mirror `/auctions` (34 / 22.3 MB)** | Untouched. Next two candidates once audits is confirmed settled |

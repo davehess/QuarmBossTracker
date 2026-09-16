@@ -477,12 +477,13 @@ export default async function RaidHubPage() {
   // logged back in, and the swap is over.
   //
   // Without this the marker just sat there for its full 6 hours. Live case
-  // (Hitya, 2026-08-14): Bwavair is Bardtholemu's wife and plays her own cleric;
-  // he had played her toon on HIS client earlier in the night, which stamped a
-  // legitimate swap at 00:12. At 02:59 she was in Group 2 with her position
-  // updating every second — while Bardtholemu was simultaneously in Group 8 at
-  // a different loc, which one client cannot do — and /raid still had her filed
-  // under "Not seen / offline (swapped to Bardtholemu)", missing from her group.
+  // (2026-08-14): a character was played from a second client earlier in the
+  // night, which stamped a legitimate swap at 00:12. By 02:59 that character
+  // was back on its own client, in its own group, with its position updating
+  // every second — while the swapped-to character was at a different loc in a
+  // different group, which a single client cannot produce. The swap was
+  // therefore long dead, yet /raid still filed the live character under
+  // "Not seen / offline (swapped to …)", missing from its group.
   // A cleric vanishing off the raid view is the expensive version of this bug.
   const SWAP_FRESH_MS = 6 * 60 * 60 * 1000;
   // Small grace so the last in-flight sample from just BEFORE the swap can't

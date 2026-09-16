@@ -1,6 +1,6 @@
 # Dedup, load-shedding, and same-name mob serialization — the bounds
 
-*Written 2026-07-17 pm, from Hitya's Rathe-Council question. This is the mental
+*Written 2026-07-17 pm, from the guild lead's Rathe-Council question. This is the mental
 model for where deduplication is safe, where it silently drops data, and what we
 can and cannot do about identically-named mobs without a spawn id from Zeal.*
 
@@ -17,7 +17,7 @@ Split every stream we collect into two classes:
   are N *different facts*. Dedup = **data loss**. These must take **every**
   observer and merge.
 
-The failure mode Hitya flagged — "if we're not pulling from each of those groups
+The failure mode the guild lead flagged — "if we're not pulling from each of those groups
 we're missing this" — is what happens when you dedup a *per-observer* stream. So
 the guardrail is: **the reporter election never touches a per-observer stream.**
 
@@ -174,7 +174,7 @@ pending.
 
 ## Serial tracks on Extended Target / Target Info (#56 design, 2026-07-19)
 
-*From Hitya's risk framing: in-game mob HP is the same for every observer — the
+*From the guild lead's risk framing: in-game mob HP is the same for every observer — the
 variance is OURS (sampling moments + sink latency). A mob we recorded at 86–88%
 may truly be at 84%, and a DIFFERENT same-name mob passing through that window
 must never capture the first one's debuff timers. False positives are the
@@ -193,7 +193,7 @@ mobs). No signal we have is a trustworthy **joiner**:
 | Victim positions far apart (victim XYZ ≈ mob XYZ while meleeing; we have raider loc, never mob loc) | strong (beyond melee reach + noise, same-zone; rampage-safe — rampage victims are also in melee range, so they cluster, no false split) | proximity proves nothing (camps overlap) |
 | Death line | closes exactly one track | — |
 
-### The rampage/riposte correction (Hitya, 2026-07-19 — the naive victim rule is WRONG)
+### The rampage/riposte correction (guild lead, 2026-07-19 — the naive victim rule is WRONG)
 
 A mob does NOT melee only one target:
 - **Rampage** hits the main tank AND whoever holds the rampage slot — typically

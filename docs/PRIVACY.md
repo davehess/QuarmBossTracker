@@ -96,18 +96,18 @@ mobs apart by where their tanks stand. Scope and limits:
 
 Public `says` chat is dropped at the byte filter and always has been. ONE
 narrow exception was added 2026-08-20: a line whose say-body begins with
-**Hail** — `Fittir says, 'Hail, Seer Mal Nae'`.
+**Hail** — `Thorne says, 'Hail, Seer Mal Nae'`.
 
 Why: PoP flags are granted by hailing an NPC, and the authoritative
 confirmation line ("You have received a character flag!") is a SELF message,
 so it only ever reaches us for people running Mimic. A hail is visible to
 everyone in range, so one Mimic user in the zone can cover raiders who don't
-run it — which is the whole point (Hitya: "we need people that don't use mimic
+run it — which is the whole point (Guild lead: "we need people that don't use mimic
 to be covered as well").
 
 Scope of the exception:
 - ONLY the greeting form. Ordinary say-chat, shouts, OOC and auctions stay
-  dropped. "Dant says, 'we should hail him after'" is NOT kept.
+  dropped. "a member says, 'we should hail him after'" is NOT kept.
 - What is stored: the hailer's name, the NPC hailed, the zone, and when.
   No other say-chat, and no message body beyond the hailed name.
 - It is EVIDENCE, not proof: hailing only grants a flag if the person already

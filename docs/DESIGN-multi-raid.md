@@ -1,10 +1,10 @@
 # DESIGN — Multi-raid awareness (board #114)
 
-*Written 2026-07-19 (Fable design pass, Hitya's direction). Implementation is
+*Written 2026-07-19 (Fable design pass, the guild lead's direction). Implementation is
 deferred to a later session — this doc is the contract. Read
 `DESIGN-dedup-and-mob-serialization.md` first; its bounds apply throughout.*
 
-## 0. The operating principle (Hitya, verbatim intent)
+## 0. The operating principle (the guild lead, verbatim intent)
 
 Multiple concurrent raids are **one of the most atypical things that will
 happen** — usually OFF-schedule, small-group split ops (epic fights, backflag

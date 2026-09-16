@@ -119,7 +119,7 @@ symptom (aged buckets are not smaller — the 50-59 day bucket is the LARGEST).
 and irreversible, and it wants a decision on shape: add the index and let one
 sweep run, or batch the delete so it never depends on a single statement
 finishing inside the timeout — probably both, plus a row count in the log line so
-a future failure is visible. Awaiting Hitya.
+a future failure is visible. Awaiting the guild lead.
 
 **The transferable lesson, already written into the wizard doc:** a retention
 sweep whose predicate has no index looks *exactly* like a sweep with nothing to
@@ -128,7 +128,7 @@ actually removed.
 
 ## Free tier vs paid, written down for other guilds
 
-Hitya, 2026-09-01: *"we should denote the difference between free and paid for
+The guild lead, 2026-09-01: *"we should denote the difference between free and paid for
 others' implementation expectations."* Written into
 `docs/DESIGN-selfhost-wizard.md` §2a rather than here, since that is the doc the
 wizard gets built from. The load-bearing findings:

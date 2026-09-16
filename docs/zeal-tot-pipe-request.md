@@ -5,7 +5,7 @@
 (`git apply docs/zeal-tot-pipe.patch`). It has NOT been compiled here — a cloud
 session has no MSVC — so build it once locally before opening the PR.*
 
-**Opened by:** Hitya, under their own GitHub account (same as #229).
+**Opened by:** the guild lead, under their own GitHub account (same as #229).
 **Upstream:** https://github.com/CoastalRedwood/Zeal — the assist bar is #228
 (Larcen22), the spawn ids on the pipe are #229.
 

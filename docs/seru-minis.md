@@ -1,10 +1,10 @@
 # Seru Minis — the four Praesertum of Sanctus Seru
 
-Guild name for the group event (Hitya, 2026-08-19, from Hawkner's "Seru
-Mini's" forum thread; roster corrected by Hitya same day — **"they are these
+Guild name for the group event (guild lead, 2026-08-19, from a member's "Seru
+Mini's" forum thread; roster corrected by the guild lead same day — **"they are these
 four"**): the Praesertum house leaders, one per city quadrant, each dropping
 one Shard. **Deliberately NOT on the boss board** — 18-hour respawns per
-Hitya, and the group is the event. The suggest-nudge flow knows them as the
+The guild lead, and the group is the event. The suggest-nudge flow knows them as the
 `evt_seru_minis` group event (`GROUP_EVENTS` in `utils/suggestNudge.js`, bot
 3.1.56/57); individual kills persist to `encounters` via the bot 3.1.52
 self-registration path, so parses and kill cards work without board entries.
@@ -44,8 +44,8 @@ template) is a different, lesser hunt — don't confuse either with the event.
 
 - **Respawn:** the four's spawn rows carry ~19.7-day parked timers
   (1,700,000s) — script/park convention, not the live cadence. **18h live on
-  Quarm per Hitya**; trust the live observation.
-- Hawkner's quest **"reports"** don't exist in the mirror at all —
+  Quarm per the guild lead**; trust the live observation.
+- a member's quest **"reports"** don't exist in the mirror at all —
   Quarm-custom quest items. Killing them is the only source of truth.
 - The four's own loot tables (above) look era-correct, unlike the junk-era
   tables on the office-named tier — but verify against real drops on the

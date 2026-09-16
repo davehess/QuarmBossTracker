@@ -2,7 +2,7 @@
 
 ## A trigger placeholder only resolves if its capture group ALWAYS participates
 
-Hitya, mid-raid: *"this one trigger is showing {tank} instead of the tank's name
+The guild lead, mid-raid: *"this one trigger is showing {tank} instead of the tank's name
 on the overlay. what should the syntax be?"*
 
 **The syntax was never wrong — the capture was conditional.** The old pattern:
@@ -70,7 +70,7 @@ live edits during a raid:
   cannot match, so this trigger has never fired. It is the self-side of the pair
   above, which is why nobody noticed: the other one fires and shows `${name}`.
 
-Both are one-field updates whenever Hitya wants them.
+Both are one-field updates whenever the guild lead wants them.
 
 ## Note — the D.I. row was edited during a raid, deliberately
 
@@ -82,7 +82,7 @@ during the freeze and pushed after it lifted at 00:30 ET.**
 
 ## Target Info went blank on debuffs, and 0 was the reason (live, mid-fight)
 
-Hitya, on Kaas Thox Xi Aten Ha Ra in Vex Thal: *"not seeing any of this
+The guild lead, on Kaas Thox Xi Aten Ha Ra in Vex Thal: *"not seeing any of this
 target's debuffs at all during this fight"* — Target Info showed three, all
 "fell off", while Extended Target showed eight with live timers.
 
@@ -111,7 +111,7 @@ spawn id, so it never reaches this filter, which is why the same data rendered
 correctly one overlay over.
 
 **Blast radius was one person.** In the trailing hour exactly one client sent
-real ids (Melting), so only that raider saw it. That is not luck, it is the
+real ids (a member), so only that raider saw it. That is not luck, it is the
 leading edge: every raider who updates Zeal walks into it next.
 
 **Fixed in `_idScopeKeep` (bot 3.1.123): 0 is unproven on BOTH sides.** Done in

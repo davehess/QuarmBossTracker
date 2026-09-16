@@ -74,10 +74,10 @@ QueueItem = {
    MANUAL layer on top ("Sue cursed", "kite help") with one-click resolve.
 2. **Which auto-enqueue** — OVERTAKEN: the curated list exists bot-side
    (`_CURSE_COUNTERS` + the queue's sort rules) and is editable there.
-3. **Who can resolve** — **ANYONE (Hitya, 2026-08-11).** Same philosophy as the
+3. **Who can resolve** — **ANYONE (guild lead, 2026-08-11).** Same philosophy as the
    Wrong-button everyone-workflow call: a wrong resolve costs one re-enqueue, a
    locked resolve costs a stale queue mid-fight.
-4. **Durable or ephemeral** — **EPHEMERAL (Hitya, 2026-08-11).** In-memory ring
+4. **Durable or ephemeral** — **EPHEMERAL (guild lead, 2026-08-11).** In-memory ring
    on the bot, ~1h TTL, same shape as the trigger-relay ring. No table, no
    migration; a shared scratchpad has no business surviving a deploy.
 5. **Real log lines** — SATISFIED: detectors ground in `eqemu_spells`

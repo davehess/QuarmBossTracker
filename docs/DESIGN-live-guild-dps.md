@@ -1,6 +1,6 @@
 # DESIGN — guild-reported vs locally-captured DPS, live
 
-**Ask (Hitya, 2026-08-13):** *"Can the DPS meter have the guild-reported version
+**Ask (guild lead, 2026-08-13):** *"Can the DPS meter have the guild-reported version
 as well as the locally captured while the fight is going and show the diff?"*
 
 **Status: BUILT 2026-08-13** - bot 3.1.41 (`GET /api/agent/live-damage`),
@@ -87,13 +87,13 @@ the frontend-design constraints are explicit that the reader is being hit by a
 dragon.
 
 The question the measurement above says people actually have is not
-*"how does my Wabumkin number compare?"* — it is **"am I even seeing this
+*"how does my a member number compare?"* — it is **"am I even seeing this
 fight?"** So lead with coverage:
 
 ```
 DAMAGE                    ⚠ you are seeing 38% of raid damage
 1  You          51 dps
-2  Statlander   44 dps
+2  Mirabel   44 dps
 ...
 ```
 
@@ -120,7 +120,7 @@ agent, thanks to the memo), against a table already being written 3.5–6.4s per
 uploader. That is small — but it is a NEW read on the hot path during a raid, so
 it belongs behind the same `flag_shed_*` treatment as everything else.
 
-## 6. DECIDED (Hitya, 2026-08-13)
+## 6. DECIDED (guild lead, 2026-08-13)
 
 ### Display: guild number primary, your own observation in parentheses
 
@@ -129,15 +129,15 @@ it belongs behind the same `flag_shed_*` treatment as everything else.
 
 ```
 DAMAGE
-1  Statlander    212k (44k)
+1  Mirabel    212k (44k)
 2  You           187k (187k)
-3  Wabumkin      164k (0)
+3  Harlowe      164k (0)
 ```
 
 **Guild-merged is the headline; the parenthetical is what THIS machine saw.**
 That is better than the coverage line I proposed in §4, and it supersedes it:
 one aggregate percentage tells you that you are missing something, whereas the
-parenthetical tells you *which players* you are blind to. The Wabumkin row above
+parenthetical tells you *which players* you are blind to. The Harlowe row above
 is the whole feature in one line - he did 164k and this client saw none of it.
 
 It also means the per-player comparison is the DEFAULT rather than a toggle, so

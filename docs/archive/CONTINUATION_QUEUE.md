@@ -419,8 +419,8 @@ exact Quarm log wording for spell-detector regexes from the DB. Two follow-ups:
 1. **Fix the sync** (`scripts/sync-from-eqmac.js`) to populate `eqemu_spells`.
    Also unblocks PoP-flagging tracker's spell-effect lookups.
 2. **Source cast strings**: either scrape PQDI per spell page, or sample real
-   Quarm logs from members (Hitya/Canopy/Malthur). Current detectors (Harm
-   Touch, Lay on Hands, Malthur Harvest/Storm) are best-guess against typical
+   Quarm logs from members (the guild lead/a member/a member). Current detectors (Harm
+   Touch, Lay on Hands, a member Harvest/Storm) are best-guess against typical
    EQ phrasing — loosened in 2.4.33 to accept both "blessing of the X" and bare
    "X" wording until a real sample arrives.
 
@@ -454,13 +454,13 @@ small task; for now, manual diff inspection of `WEB_HTML` changes is the only gu
 - `/me` UI toggle to set the flags (officer or self-serve for own chars).
 
 ### 4. EQ UI / macro editor (files in hand)
-Hitya + Melting full sets received, incl. per-server variants (`144.217`/`192.99`),
+The guild lead + a member full sets received, incl. per-server variants (`144.217`/`192.99`),
 `Default`/`duxaUI`/`NillipussUI` skins, bandolier + spellsets + socials.
 - (A) **Resolution-fit sync** — EQ stores per-resolution `XPos/YPos`; compute a
   missing resolution from a tuned one with edge anchoring.
 - (B) **Channel/spam-window router** — from `[ChatManager]` ChannelMap0-55 + named
-  windows (Hitya has 14, incl. Auction/Tells); "verify what's filtered/missed".
-- (C) **Presets + clone "save multiple views"** + **bard melody macro** (Melting:
+  windows (the guild lead has 14, incl. Auction/Tells); "verify what's filtered/missed".
+- (C) **Presets + clone "save multiple views"** + **bard melody macro** (A member:
   `/stopsongs` before items, `/melody resume` after) as a social-macro preset target.
 - Needs agent UI-file read/write API: **back up every file** (`*.bak-<ts>`),
   **refuse to write while EQ is running**, validate before write, never touch a
@@ -492,13 +492,13 @@ drifts again.
   arg; the backfill pauses the file read at 90% of the 5000 cap (HIGH=4500) and
   resumes below 60% (LOW=3000), so a big `--since` replay no longer FIFO-evicts
   good data. Verified pause/resume hysteresis. Live tail unaffected.
-- **Malthur recipient detectors** — `parseMalthurProvision` (`malthur_food_received`
+- **a member recipient detectors** — `parseMalthurProvision` (`malthur_food_received`
   / `malthur_water_received`) + `parseCursorFull` (`provisions_cursor_full`). Wired
   into live tail + backfill, gated by `exclude_from_stats`. Detectors verified
   against sample lines. **⚠️ NEEDS REVIEW:** caster is attributed to the RECIPIENT
-  (the only name the recipient line carries), not "Malthur". If the intended fun
-  stat is "stacks Malthur summoned" attributed to Malthur, switch to caster-side
-  `You begin casting Blessing of the Harvest/Storm` detection (only Malthur's own
+  (the only name the recipient line carries), not "a member". If the intended fun
+  stat is "stacks a member summoned" attributed to a member, switch to caster-side
+  `You begin casting Blessing of the Harvest/Storm` detection (only a member's own
   agent logs that). Recipient-side chosen because it works from every member's
   logs. The web `/fun` aggregation/display for these event types is not built yet.
 
