@@ -119,7 +119,7 @@ describe('_resolveBossForPersist — resolution order', () => {
     expect(r).toEqual({ internalId: 'master_of_the_guard', registered: true });
     expect(sb.inserts).toEqual([expect.objectContaining({
       npc_id: 128120, internal_id: 'master_of_the_guard',
-      // Provenance flag: display surfaces filter on it (Hitya 2026-08-19,
+      // Provenance flag: display surfaces filter on it (the guild lead, 2026-08-19,
       // the /parses trash-card flood) — a self-registered row must never
       // masquerade as curated.
       auto_registered: true,

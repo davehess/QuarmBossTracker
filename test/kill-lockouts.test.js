@@ -47,7 +47,7 @@ describe('participantsFromUpload', () => {
   });
 
   it('includes the uploader even when they dealt no damage', () => {
-    // The whole point: Taeya is a cleric, so she has no encounter_players row.
+    // The whole point: a member is a cleric, so she has no encounter_players row.
     const got = participantsFromUpload({ contributor: 'Taeya', players: [{ name: 'Badcop' }] });
     expect(got).toContain('Taeya');
   });
@@ -87,7 +87,7 @@ describe('classifyOurs', () => {
   });
 
   it('is true for an off-calendar guild event — most of the raid is ours', () => {
-    // Hitya 2026-08-22: "Friday was a guild rolling event, so internal, but
+    // The guild lead 2026-08-22: "Friday was a guild rolling event, so internal, but
     // still a lockout." Measured, our raids run 0.75-0.89 roster share.
     expect(classifyOurs({
       inRaidNight: false, inRaidWindow: false, memberFrac: 0.78, playerCount: 9,

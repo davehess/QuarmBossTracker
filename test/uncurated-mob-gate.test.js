@@ -1,5 +1,5 @@
 // test/uncurated-mob-gate.test.js — the ingest gate on uncurated-mob
-// encounter collection (Hitya, 2026-09-04: "how much is it costing us to track
+// encounter collection (the guild lead, 2026-09-04: "how much is it costing us to track
 // these and can we add a flag into the setup to turn those off").
 //
 // SOURCE-SLICE fidelity tier: the resolver and the flag reader are sliced out

@@ -1,5 +1,5 @@
 // Target of target off the Zeal pipe — the consumer side of the drafted
-// upstream change (docs/zeal-tot-pipe.patch). Hitya, 2026-09-12: "Make a spot
+// upstream change (docs/zeal-tot-pipe.patch). The guild lead, 2026-09-12: "Make a spot
 // in mimic beta for those to get exposed in extended target overlay."
 //
 // The keys are ABSENT on every released Zeal, so the whole path must be a

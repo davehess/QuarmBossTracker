@@ -3,11 +3,11 @@
 // Bring in characters we have never seen — bank mules, alts on a box that
 // never raids, anything that exists only as a file on your disk.
 //
-// Hitya, 2026-08-14: "can you make it so that anyone can upload additional
+// The guild lead, 2026-08-14: "can you make it so that anyone can upload additional
 // inventory files from the /me page and have it bring in their other
 // characters/mules?" The per-character 🎒 upload cannot: it is gated on the
 // character already being in the roster AND already linked to you, which is
-// precisely what a mule is not. Pyxil's bank toons have no logs, no /who
+// precisely what a mule is not. A member's bank toons have no logs, no /who
 // sighting and no OpenDKP row — the file is the only proof they exist.
 //
 // So this one is keyed on the FILE, not on a character you pick: drop in as

@@ -2,7 +2,7 @@
 //
 // ⚠ Moved surface, 2026-08-14 (agent 3.5.80). This merge used to run LIVE on the
 // DPS tab against `s.guildDamage`. It now runs only on the **History** tab,
-// against a captured fight whose numbers have settled. Hitya, watching the live
+// against a captured fight whose numbers have settled. The guild lead, watching the live
 // version double people's damage: "the overcount from time skew and whatnot is
 // too much to account for in a live stat review and it is legitimately doubling
 // damage." Mid-fight the bot has under three independent readings of most
@@ -100,7 +100,7 @@ describe('merge behaviour', () => {
   });
 
   it('re-sorts on the GUILD number, not the local one', () => {
-    // Locally Hitya looks like the top damage; guild-wide Wabumkin is.
+    // Locally the guild lead looks like the top damage; guild-wide a member is.
     expect(mergeRows(entry).rows[0][0]).toBe('Wabumkin');
   });
 

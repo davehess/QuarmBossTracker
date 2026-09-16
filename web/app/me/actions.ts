@@ -40,7 +40,7 @@ export async function setCharacterExclusion(
   // the main, and weekly roster syncs reset alt rows. Without the family-root
   // fallback, toggling Tells/Stats/Inventory on any alt silently fails (the UI
   // optimistically shows "ON" then never persists) while only the main works,
-  // which is the exact symptom that left Canopy stuck OFF in production.
+  // which is the exact symptom that left a member stuck OFF in production.
   const { data: target } = await admin
     .from('characters')
     .select('name, discord_id, main_name')

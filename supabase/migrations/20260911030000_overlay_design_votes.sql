@@ -1,4 +1,4 @@
--- Mimic mini-mode review page (wolfpack.quest/mimic/mini, Hitya 2026-09-11:
+-- Mimic mini-mode review page (wolfpack.quest/mimic/mini, the guild lead 2026-09-11:
 -- "the guild's opinions matter here"). Each overlay is shown in full next to
 -- three mini renditions; members vote for one and leave feedback that stays
 -- on the page. One vote per member per overlay, changeable. Writes go through

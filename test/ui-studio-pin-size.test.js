@@ -1,13 +1,13 @@
 // test/ui-studio-pin-size.test.js — a resize in UI Studio must reach the ini.
 //
-// Abrahms, 2026-09-13, in Discord: "anyone know how to get these to stop
+// A member, 2026-09-13, in Discord: "anyone know how to get these to stop
 // defaulting to huge tooltips. I reset em to small each time." Hitya: "Mine
 // shows similarly." The Zeal item windows (ZealItemDisplayN) had no
 // Width/Height in their ini sections, and _buildSaveBundle wrote a size ONLY
 // for sections that already carried one ("never fabricate a size") — so every
 // resize of those windows was dropped on Save, while the same edit on a
 // character whose ini had the keys stuck. That is the paladin-vs-ranger split
-// Abrahms saw. A window the user resized (sizeEdited) now gets Width/Height;
+// A member saw. A window the user resized (sizeEdited) now gets Width/Height;
 // an untouched auto-size window still does not.
 //
 // Run: npx vitest run test/ui-studio-pin-size.test.js

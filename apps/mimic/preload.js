@@ -103,7 +103,7 @@ document.addEventListener('mouseout', function (ev) {
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
-// ── Solid backdrop (Uilnayar 2026-07-10) ────────────────────────────────────
+// ── Solid backdrop (a member, 2026-07-10) ────────────────────────────────────
 // One injected rule + a body class = every overlay gets a toggleable opaque
 // plate with zero per-HTML changes. Main pushes 'wp-backdrop' on toggle; the
 // load-time pull covers windows created after the last push. Gated to overlay
@@ -114,7 +114,7 @@ ipcRenderer.on('wp-backdrop', function (_e, on) {
 // Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
 // and tween step. Feeds the counter-zoom rules injected below that keep the
 // setup bar at one painted size spanning the window width no matter the
-// overlay's scale (Hitya 2026-08-19: "the actual slider sizing shouldn't
+// overlay's scale (the guild lead, 2026-08-19: "the actual slider sizing shouldn't
 // change on the overlays — it should be the width of the window").
 ipcRenderer.on('wp-zoom', function (_e, z) {
   try {
@@ -122,7 +122,7 @@ ipcRenderer.on('wp-zoom', function (_e, z) {
     if (document.documentElement) document.documentElement.style.setProperty('--wp-zoom', String(v));
   } catch (e) {}
 });
-// ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
+// ── Overlay color themes (a member, 2026-07-11: "alternative color schemes
 // for people that prefer brighter colors") ─────────────────────────────────
 // One body-level CSS filter per theme restyles EVERY overlay at once with
 // zero per-page changes. 'light' uses the invert+hue-rotate(180) pair so
@@ -159,7 +159,7 @@ document.addEventListener('DOMContentLoaded', function () {
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
-      // Counter-zoom for the setup chrome (Hitya 2026-08-19): the bar keeps
+      // Counter-zoom for the setup chrome (the guild lead, 2026-08-19): the bar keeps
       // ONE painted size at every overlay scale and spans the full window
       // width. --wp-zoom is pushed by main on every scale apply/tween step;
       // width × z then scale(1/z) cancels the page zoom exactly. The drag
@@ -193,7 +193,7 @@ document.addEventListener('DOMContentLoaded', function () {
   } catch (e) {}
 });
 
-// ── Per-overlay size slider (Hitya 2026-08-19: "a slider on the overlays
+// ── Per-overlay size slider (the guild lead, 2026-08-19: "a slider on the overlays
 // page and one on each individual one") ─────────────────────────────────────
 // Injected into every overlay's existing #setupbar (next to its opacity
 // slider) so each overlay gets a "size" control with zero per-HTML changes.
@@ -229,7 +229,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     // Label follows the drag; the scale itself applies on RELEASE ('change')
     // — applying mid-drag rescales this very setup bar and yanks the thumb
-    // out from under the cursor (Hitya 2026-08-19). Keyboard steps fire
+    // out from under the cursor (the guild lead, 2026-08-19). Keyboard steps fire
     // 'change' per press, so arrow keys still apply immediately; main glides
     // the window to the new size.
     slider.addEventListener('input', function () {
@@ -246,7 +246,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     // Own full-width row (order:99 sorts it after Done without touching DOM
     // order) — inline the four controls and narrow overlays wrap the setup
-    // bar into a jumble of half-rows (Hitya 2026-08-19, setup-ALL screenshot).
+    // bar into a jumble of half-rows (the guild lead, 2026-08-19, setup-ALL screenshot).
     // Row 1 stays "🛠 Setup · opacity · Done"; row 2 is "size · slider · % · ↺".
     const row = document.createElement('span');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-basis:100%;min-width:0;order:99';
@@ -294,7 +294,7 @@ function _buildOverlayMenu(onClose, state) {
   // "Setup ALL" first — the most-used entry sits at the top.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
-  // Visibility + layout actions (Uilnayar 2026-07-10). `state` comes from
+  // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
@@ -325,7 +325,7 @@ function _buildOverlayMenu(onClose, state) {
 // Chrome-menu open state. While the menu is open, the page's auto-fit calls
 // are SUPPRESSED — overlays that re-fit every poll tick (Target Info, CH
 // chain, /who…) were shrinking the window right back down while the menu was
-// still open, clipping it to the first two items (Uilnayar 2026-07-11). The
+// still open, clipping it to the first two items (a member, 2026-07-11). The
 // deferred fit runs once on close so the window snaps back to content size.
 let _wpMenuOpen = false;
 let _wpMenuOpenAt = 0;             // #159: when suppression began — bounds the pause
@@ -449,7 +449,7 @@ function _autoFitOverlay(wrapEl) {
     // body is height:100% on every overlay — measuring it returns the current
     // WINDOW height, so a body-fallback fit (e.g. the menu-close replay with no
     // suppressed element) re-asserts a menu-grown 420px window instead of
-    // shrinking back to content (Hitya's full-height DPS-HUD backdrop).
+    // shrinking back to content (the guild lead's full-height DPS-HUD backdrop).
     const w = wrapEl || _wpLastFitEl || document.getElementById('wrap') || document.body;
     if (!w) return;
     const h = (w.scrollHeight || 0) + 12;
@@ -540,10 +540,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✥ move icon. Doesn't flip the global setupMode.
   setSetupModeThis: (on)          => ipcRenderer.invoke('set-setup-mode-this', on === undefined ? true : !!on),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
-  // Global overlay scale (50%–200%) — Fittir's-5K-monitor knob in Settings.
+  // Global overlay scale (50%–200%) — a member's-5K-monitor knob in Settings.
   setOverlayScale:  (value)       => ipcRenderer.invoke('set-overlay-scale', value),
   getOverlayScale:  ()            => ipcRenderer.invoke('get-overlay-scale'),
-  // Tray-parity controls for the dashboard Overlays tab (Hitya 2026-08-19).
+  // Tray-parity controls for the dashboard Overlays tab (the guild lead, 2026-08-19).
   hideAllToggle:      ()     => ipcRenderer.invoke('hide-all-toggle'),
   charProfilesEnable: (on)   => ipcRenderer.invoke('char-profiles-enable', !!on),
   charProfileSave:    ()     => ipcRenderer.invoke('char-profile-save'),
@@ -598,7 +598,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // The dock reports its own content height; main resizes the window, keeping
   // the BOTTOM edge fixed when grow-upward is on.
   dockAutoHeight: (h)         => ipcRenderer.invoke('dock-auto-height', h),
-  // Named dock layouts + rename (Hitya 2026-08-19).
+  // Named dock layouts + rename (the guild lead, 2026-08-19).
   dockLayoutSave:   (name) => ipcRenderer.invoke('dock-layout-save', name),
   dockLayoutLoad:   (name) => ipcRenderer.invoke('dock-layout-load', name),
   dockLayoutDelete: (name) => ipcRenderer.invoke('dock-layout-delete', name),
@@ -611,7 +611,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
-  // Old-log importer (Hitya 2026-09-13): the native pickers, and the real
+  // Old-log importer (the guild lead, 2026-09-13): the native pickers, and the real
   // path of a File dropped on the dashboard — a plain browser never gets one;
   // Electron does, through webUtils (31+; `file.path` for anything older).
   pickLogBackups: (kind) => ipcRenderer.invoke('pick-log-backups', kind),
@@ -694,7 +694,7 @@ contextBridge.exposeInMainWorld('mimic', {
 // dashboard was the ONLY http page Mimic loaded, so "protocol is http" meant
 // "this is the dashboard". #65 broke that assumption by serving real overlays
 // from the agent so they ride agent hot-swaps — and the Command Center then
-// picked up a ⚙ that opened Mimic Settings from inside a raid overlay (Hitya,
+// picked up a ⚙ that opened Mimic Settings from inside a raid overlay (the guild lead,
 // 2026-08-13). Those overlays ship their own chrome per the parity checklist
 // (✥ move, ✕ hide, right-click resize/Setup), so injected chrome is not just
 // redundant, it is a second way to do the same thing that looks like a bug.
@@ -890,7 +890,7 @@ if (location.protocol === 'http:' && !_isAgentServedOverlay) {
         // and nobody quits Mimic — that was the whole reason the EQ-close path
         // was built. Telling a raider "close Mimic" sends them to do the one
         // thing they never do, and makes a working auto-update look broken
-        // (Uilnayar, 2026-08-04: "it did not update in place").
+        // (a member, 2026-08-04: "it did not update in place").
         updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Nothing to do — it installs by itself next time you close EverQuest. Or restart now:';
         upd.style.display = 'flex';
       } else {

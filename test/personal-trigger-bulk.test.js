@@ -1,6 +1,6 @@
 // Personal triggers: bulk management, and two bugs the field report surfaced.
 //
-// Uilnayar imported a large trigger pack into miMIC and asked how to undo it;
+// A member imported a large trigger pack into miMIC and asked how to undo it;
 // the only answer was one ✕ at a time (Discord, 2026-08-29). Looking into it
 // turned up two things that had nothing to do with the bulk gap:
 //

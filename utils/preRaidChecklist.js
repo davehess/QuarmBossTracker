@@ -1,7 +1,7 @@
 // Pre-raid checklist — the officer-chat post that answers "is tonight going to
 // work?" while there is still time to fix it.
 //
-// Hitya 2026-08-21: "let's build an admin-facing officer-chat pre-raid
+// The guild lead 2026-08-21: "let's build an admin-facing officer-chat pre-raid
 // checklist, active mimics, class shortages below our average, lockouts, other
 // pertinent details."
 //
@@ -93,7 +93,7 @@ function buildPreRaidChecklist({
   if (shortages.length) flags.push(`${shortages.length} class shortage${shortages.length === 1 ? '' : 's'}`);
   if (targetStatus.down.length) flags.push(`${targetStatus.down.length} target${targetStatus.down.length === 1 ? '' : 's'} not up`);
   // MAINS on an UP target — the only lockout shape that is a problem with
-  // tonight (Hitya 2026-08-22: "as long as mains are good to go"). A blocked
+  // tonight (the guild lead, 2026-08-22: "as long as mains are good to go"). A blocked
   // alt is a swap, and a lockout on a boss still on cooldown is the expected
   // aftermath of our own kill.
   if (lockouts.mainsBlocked) {

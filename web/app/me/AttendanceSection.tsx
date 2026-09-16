@@ -2,7 +2,7 @@
 // AttendanceSection — the raid-attendance block on /me, with the Strips /
 // Blocks switch held as CLIENT state.
 //
-// Hitya, 2026-09-13: "/me's page is having issues with raid attendance
+// The guild lead, 2026-09-13: "/me's page is having issues with raid attendance
 // displaying from strips to blocks." The picker used to write the cookie and
 // then re-render the page from the server — a router.replace plus a
 // router.refresh, two full renders of a page that loads every character on

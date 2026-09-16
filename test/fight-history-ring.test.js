@@ -1,6 +1,6 @@
 // test/fight-history-ring.test.js — the last few mobs, captured at the kill.
 //
-// Hitya, 2026-08-14: "instead of displaying the combined damage during the
+// The guild lead, 2026-08-14: "instead of displaying the combined damage during the
 // fight, perhaps we just have the overlay give the last few mobs in a history
 // tab that can be opened up once it's properly deduped — the overcount from
 // time skew and whatnot is too much to account for in a live stat review and

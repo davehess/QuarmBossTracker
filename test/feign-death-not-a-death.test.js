@@ -13,7 +13,7 @@
 // in range. The fingerprint was unmistakable once looked for: 175 death records
 // across 3 Shadow Knights (58 each) and 58 across 4 Necromancers, against 5.5
 // for a Cleric and 1 for a Bard — 44% of every death ever stored came from the
-// only two classes that can feign (Hitya 2026-08-03).
+// only two classes that can feign (the guild lead, 2026-08-03).
 //
 // The golden log contained no "dies."/"died." line at all, which is exactly why
 // this survived a parser regression suite. These cases exist so it cannot again.
@@ -102,8 +102,8 @@ describe('_deadMobNameFromLine — the timer/observation-clearing gate', () => {
   });
 
   it('THE FIX: "dies." is a feign and must not name a dead entity', () => {
-    // Before 3.5.14 this returned 'Syko', cancelling Syko's timers and clearing
-    // Syko's tracked buffs every time they threw Death Peace.
+    // Before 3.5.14 this returned the feigning player's NAME, cancelling their
+    // timers and clearing their tracked buffs every time they threw Death Peace.
     expect(agent._deadMobNameFromLine(P + 'Syko dies.')).toBeNull();
     expect(agent._deadMobNameFromLine(P + 'Dongru dies.')).toBeNull();
   });

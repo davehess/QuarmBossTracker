@@ -9,7 +9,7 @@ name: Import Quest Scripts
 #   • zone — restrict to one zone short_name (e.g. "kael", "akheva") for a
 #     fast sanity check before unleashing the full sweep
 #   • limit — cap the file count for debugging
-# (Uilnayar 2026-06-24: "can you run it via GitHub script".)
+# (a member, 2026-06-24: "can you run it via GitHub script".)
 
 on:
   workflow_dispatch:

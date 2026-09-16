@@ -1,7 +1,7 @@
 // test/dashboard-topbar.test.js — the top bar stays put, and carries the
 // controls you reach for repeatedly.
 //
-// Hitya, 2026-09-02: "Lets also lock the top nav as we scroll. move panels and
+// The guild lead, 2026-09-02: "Lets also lock the top nav as we scroll. move panels and
 // tour up there, as well as the feedback."
 //
 // Tour and Panels lived at the bottom of the left rail, so on a long page you

@@ -137,7 +137,7 @@ Recommended: `corrected_at` alongside `at`, applied at ingest, with a read-time
 fallback for existing rows. Read-time-only means every consumer must remember,
 and they won't.
 
-*Sanity check after:* re-run the a member query in §0 and confirm the seven
+*Sanity check after:* re-run the per-character query in §0 and confirm the seven
 stamps collapse to one cluster.
 
 ### Step 3 — remove feigns from the stored window (#200) ← **CONFIRM GATE**

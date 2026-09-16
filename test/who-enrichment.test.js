@@ -39,7 +39,7 @@ describe('_assembleWhoEnrichment (real index.js)', () => {
   });
 
   it('HIDE LIST: a hidden name NEVER emits a main, even when requested + known', () => {
-    // Seed shape: Serreth → Peopleslayer, but Serreth is on the hide list.
+    // Seed shape: Serreth → a member, but Serreth is on the hide list.
     const r = _assembleWhoEnrichment({
       names:    ['Serreth'],
       mainMap:  mapOf({ Serreth: 'Peopleslayer' }),
@@ -59,7 +59,7 @@ describe('_assembleWhoEnrichment (real index.js)', () => {
       hideSet:  lower(['peopleslayer']),   // hide by the MAIN's name
       base:     {},
     });
-    expect(r.altone).toBeUndefined();      // main is Peopleslayer → suppressed
+    expect(r.altone).toBeUndefined();      // main is a member → suppressed
     expect(r.alttwo.main).toBe('Someoneelse');   // unrelated main → still shown
   });
 

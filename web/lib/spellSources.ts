@@ -1,5 +1,5 @@
 // web/lib/spellSources.ts — grouping behind the spellbook "where from"
-// dropdowns and the zone-by-zone shopping list (Hitya 2026-08-18: "say where
+// dropdowns and the zone-by-zone shopping list (the guild lead, 2026-08-18: "say where
 // it's from in a dropdown … then a shopping list mode where you can go zone
 // by zone for ones that are only in a certain place").
 //

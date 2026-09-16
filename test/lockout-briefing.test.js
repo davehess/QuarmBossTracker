@@ -1,7 +1,7 @@
 // test/lockout-briefing.test.js — the pre-raid lockout briefing.
 // Real-imports the pure builder (utils/lockoutBriefing.js).
 //
-// Hitya 2026-08-21: "put it into a post in officer chat about characters
+// The guild lead 2026-08-21: "put it into a post in officer chat about characters
 // currently locked out for the upcoming night's raid by zone from the raid
 // planner's event" — and, correcting my model the same day: "characters are
 // locked from engaging that specific mob and get teleported out of the zone on
@@ -174,7 +174,7 @@ describe('buildLockoutBriefing', () => {
       targetBossIds: ['aten_ha_ra'],
       bosses: BOSSES,
       lockouts: [lk('Hitya', 'aten_ha_ra'), lk('Melting', 'aten_ha_ra'), lk('Rockin', 'aten_ha_ra')],
-      kindOf,   // Hitya = main, the rest = alt
+      kindOf,   // The guild lead = main, the rest = alt
     });
     expect(out.mainsBlocked).toBe(1);
     expect(out.altsBlocked).toBe(2);

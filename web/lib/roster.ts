@@ -3,10 +3,9 @@
 // and anywhere else that aggregates by character but should display by main.
 //
 // The classic trap this closes: parse-derived names can include stray-log
-// ghosts (an old/foreign eqlog_<Name> file a member's agent tailed — e.g.
-// "Ashaiya" from Chadivarius's machine), which are NOT roster characters and
-// should not appear as raiders. isKnown() drops them; mainOf() folds real
-// alts (Chadivarius → Moash) so cards match their detail pages.
+// ghosts (an old/foreign eqlog_<Name> file a member's agent tailed), which are
+// NOT roster characters and should not appear as raiders. isKnown() drops them;
+// mainOf() folds real alts into their main so cards match their detail pages.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 

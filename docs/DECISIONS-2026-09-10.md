@@ -352,4 +352,4 @@ in `eqemu_spells`; only Divine Arbitration needs an authored reuse.
 | Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested, NOT applied, the guild lead's call | plus two duplicate rows from 09-06, untouched (merging is destructive) |
 | Loot bidding: update / remove a bid | open — options A/B/C presented, awaiting pick | first live cancel on a low-stakes bid |
 | A member: "Mimic takes my internet down" | investigated 2026-09-07; `scripts/mimic-netdiag.ps1` collects the evidence and NOW ACTUALLY PARSES (see above) | he runs `-Watch` while playing, `-Live` when it breaks |
-| P40 / local model | superseded 2026-09-12 by the Lord Mobsincamp design above; the card is in the a member desktop, not Tower, and stays there — no slot swap | see that row |
+| P40 / local model | superseded 2026-09-12 by the Lord Mobsincamp design above; the card is in a member's desktop, not Tower, and stays there — no slot swap | see that row |

@@ -45,7 +45,7 @@ const FIX_CATALOG = [
 
 describe('computeKitCoverage', () => {
   const rows = [
-    // Fronzz owns the cure shield in two slots + via both variant ids → ONE owner.
+    // A member owns the cure shield in two slots + via both variant ids → ONE owner.
     { itemId: 10, character: 'Fronzz', main: 'Squeekie', className: 'Cleric' },
     { itemId: 11, character: 'Fronzz', main: 'Squeekie', className: 'Cleric' },
     { itemId: 10, character: 'Fargan', main: 'Fargan', className: 'Cleric' },
@@ -94,7 +94,7 @@ describe('computeKitCoverage', () => {
 
 // ── Board 1 — who may see an owner's NAME ────────────────────────────────────
 //
-// Hitya, 2026-08-14: "quartermaster should display raider information for that
+// The guild lead, 2026-08-14: "quartermaster should display raider information for that
 // user not for everyone. it can display for everyone for admins."
 //
 // Board 1 shipped naming every owner of every utility item to every signed-in

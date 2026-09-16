@@ -2,7 +2,7 @@
 //
 // "the wishlist on the loot section just needs to show the fields from the
 // Recent misses, should say character, your last, last win, second place,
-// planned" (Hitya, 2026-08-31).
+// planned" (the guild lead, 2026-08-31).
 //
 // The two lists overlap almost entirely — anything inferred "from bid history"
 // is by definition something you bid on and lost — so the figures are JOINED

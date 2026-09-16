@@ -1,7 +1,7 @@
 // test/shared-bank.test.js — clustering characters into game accounts by their
 // shared bank. Real-imports the pure lib (web/lib/sharedBank.ts).
 //
-// The bug this pins (Hitya 2026-08-20): "Fairly certain that these are
+// The bug this pins (the guild lead, 2026-08-20): "Fairly certain that these are
 // duplicates for the shared bank bits of 1 or 3 items." Ten characters each
 // reported SharedBank6-Slot9 = Words of the Spectre x3 — ONE physical stack,
 // counted ten times, because the first implementation hashed the WHOLE bank
@@ -135,7 +135,7 @@ describe('guards against over-merging', () => {
   });
 
   it('THE MEASURED CASE: 8 tight + 2 looser split into two accounts, not one of 10', () => {
-    // Real numbers from Hitya's family: the true account agrees at >=0.99
+    // Real numbers from the guild lead's family: the true account agrees at >=0.99
     // internally, while two characters transferred to another game account
     // (#charactertransfer) still carry a near-copy of the old bank in a stale
     // export — 0.97 with each other, <=0.95 with the account. A 10-member

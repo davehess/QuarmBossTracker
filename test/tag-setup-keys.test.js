@@ -1,13 +1,13 @@
 // test/tag-setup-keys.test.js — "Set up EQ for me" configures tagging, and the
 // password never touches source.
 //
-// Hitya, 2026-09-03, with a working zeal.ini: "we're going to add some pieces
+// The guild lead, 2026-09-03, with a working zeal.ini: "we're going to add some pieces
 // for setup for tagging... we want tooltip and tag enabled".
 //
 // Two of the keys are REQUIRED for capture at all, from Zeal's source:
 // NameplateTagSuppress=FALSE (else PrintChat skips the log write) and
 // NameplateTagPrettyPrint=FALSE (else, with Filter on, the spawn id is
-// destroyed at the source). Everything else is Hitya's working config.
+// destroyed at the source). Everything else is the guild lead's working config.
 //
 // Run: npx vitest run test/tag-setup-keys.test.js
 

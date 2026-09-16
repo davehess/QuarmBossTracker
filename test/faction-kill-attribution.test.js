@@ -1,14 +1,14 @@
 // test/faction-kill-attribution.test.js — naming the kill that caused a faction
 // hit is what turns "got worse" into a number.
 //
-// Hitya, 2026-09-03: "if we don't see the name of the mob that died and still
+// The guild lead, 2026-09-03: "if we don't see the name of the mob that died and still
 // get the faction hit, we can't attribute how much we are getting hit by unless
 // it says that we are at the maximum positive or negative values... If we see
 // the mob that died and at the same time, we end up seeing the faction, then
 // it's not so bad."
 //
 // Classic prints no magnitude on a faction line, but eqemu_npc_faction_entries
-// holds the exact per-mob value. Validated end to end against Hitya's own log:
+// holds the exact per-mob value. Validated end to end against the guild lead's own log:
 // one #Lord_Inquisitor_Seru kill is -2000 to each of Seru/Hand/Eye/Heart/
 // Shoulders and +200 to four Katta factions; one A_Greater_Spire_Spirit is +5
 // to six Seru-bloc factions, -5 The Recuso, -50 Spire Spirits.
@@ -66,7 +66,7 @@ describe('the kill and the hit arrive in the same second', () => {
   });
 
   it('attributes the whole burst of one kill, capped lines included', () => {
-    // Hitya's log: 5 "got better", 1 "could not possibly get any better",
+    // The guild lead's log: 5 "got better", 1 "could not possibly get any better",
     // 2 "could not possibly get any worse" — all one second, all one kill.
     const h = load();
     const lines = [

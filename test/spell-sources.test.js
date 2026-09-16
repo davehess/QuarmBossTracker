@@ -1,5 +1,5 @@
 // test/spell-sources.test.js — the spellbook where-from grouping + the
-// zone-by-zone shopping list (Hitya 2026-08-18). The claim that must hold:
+// zone-by-zone shopping list (the guild lead, 2026-08-18). The claim that must hold:
 // "only here" means the spell's ENTIRE vendor footprint is one zone — not
 // merely that a vendor in this zone sells it — and zones you must visit sort
 // first.

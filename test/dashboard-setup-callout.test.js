@@ -1,6 +1,6 @@
 // test/dashboard-setup-callout.test.js — the first-run checklist is findable.
 //
-// Hitya, 2026-09-02: "The main dashboard says Engine and is by default minimized
+// The guild lead, 2026-09-02: "The main dashboard says Engine and is by default minimized
 // where the setup is. We should callout that it's the setup for first time
 // users."
 //

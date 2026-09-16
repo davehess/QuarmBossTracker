@@ -1,6 +1,6 @@
 // Where do officer-facing posts go?
 //
-// Hitya 2026-08-21: "wire it to officer channel." The reason this needs a
+// The guild lead 2026-08-21: "wire it to officer channel." The reason this needs a
 // resolver rather than an env var: OFFICER_CHAT_CHANNEL_ID is NOT set on
 // Railway (checked, 2026-08-21), so every officer post was silently skipping —
 // the same "shipped but never fires" failure as the inventory uploader. And an

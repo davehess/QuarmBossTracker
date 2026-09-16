@@ -1,6 +1,6 @@
 // One-shot latches: "already done?" must never be answered from a failed read.
 //
-// Uilnayar, 2026-08-06: "Why are these reposting in Raid Chat?" — the Mimic
+// A member, 2026-08-06: "Why are these reposting in Raid Chat?" — the Mimic
 // 2.0.0 announcement, a one-shot from 2026-07-20, posted twice in 22 minutes on
 // a completely unrelated release. Both posts landed within 90 seconds of a bot
 // restart, during the Supabase brownout that was running at the time.

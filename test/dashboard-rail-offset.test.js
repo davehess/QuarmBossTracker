@@ -1,6 +1,6 @@
 // test/dashboard-rail-offset.test.js — the tab rail must clear the sticky bar.
 //
-// Hitya, 2026-09-02: "Noticed that scrolling down will lose just the first few
+// The guild lead, 2026-09-02: "Noticed that scrolling down will lose just the first few
 // tabs and those should stay in place (dashboard, overlays, raid, buffs, etc"
 //
 // A REGRESSION I CAUSED. The rail was already `position:sticky; top:8px`. Making

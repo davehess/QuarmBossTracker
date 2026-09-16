@@ -1,5 +1,5 @@
 // test/leaderboard-guards.test.js — what the single-encounter board will and
-// will not rank (Hitya, 2026-09-04: "Leaderboards should only count bosses,
+// will not rank (the guild lead, 2026-09-04: "Leaderboards should only count bosses,
 // not trash. Many of parses are severely inflated from the time offset issues
 // we had where people were being double or triple counted").
 //

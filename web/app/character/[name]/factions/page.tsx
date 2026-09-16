@@ -63,7 +63,7 @@ export type ConEnriched = {
 // eqemu_npc_faction_entries (value > 0) via npc_faction → npc_types, zone from
 // the id encoding (id = zoneid*1000 + n). Validated on live rows 2026-09-03:
 // Heart of Seru → Grieg Veneficus +1000 (Grieg's End), Lcea Katta +500,
-// Praesertum ×4 +200 — matching Hitya's own repair arithmetic.
+// Praesertum ×4 +200 — matching the guild lead's own repair arithmetic.
 export type RepairSource = { mob: string; value: number; zone: string | null; npcId: number | null };
 
 const STANDING_COLORS: Record<string, string> = {
@@ -149,7 +149,7 @@ async function load(decoded: string) {
       // our mirror (0 rows; the _full variant carries all 2,123 factions and
       // covers every npc_faction.primaryfaction). Reading the empty table
       // meant no con ever resolved a faction name, so the cons table's
-      // Faction column never rendered (Hitya 2026-07-09).
+      // Faction column never rendered (the guild lead, 2026-07-09).
       const { data } = await sb.from('eqemu_faction_list_full').select('id, name').in('id', factionIds);
       for (const r of ((data ?? []) as { id: number; name: string }[])) if (r.name) factionNameById.set(r.id, r.name);
     }
@@ -242,7 +242,7 @@ async function load(decoded: string) {
   const standings = (standingRes.data ?? []) as StandingRow[];
 
   // ── Repair sources: what RAISES each faction the character has hit, and by
-  // how much (Hitya 2026-09-03: "add the repair table to factions"). The chain
+  // how much (the guild lead, 2026-09-03: "add the repair table to factions"). The chain
   // is faction name → faction_list_full id → npc_faction_entries (value > 0)
   // → npc_faction_id → npc_types (mob, and zone from id/1000).
   //
@@ -324,7 +324,7 @@ async function load(decoded: string) {
     }
   }
 
-  // ── Cons grouped by the faction they pin (Hitya 2026-09-03: "The Conning of
+  // ── Cons grouped by the faction they pin (the guild lead, 2026-09-03: "The Conning of
   // npcs on those factions is important"). A /con is the only log-visible way
   // to read the REAL tier: hit counts say which way it moved, a con says where
   // it IS. Best tier first, then most recent.
@@ -435,7 +435,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                   <tbody className="divide-y divide-border/50">
                     {rows.map(f => {
                       // POINTS, then HITS in parentheses — always both, never one
-                      // standing in for the other (Hitya 2026-09-03: "how many
+                      // standing in for the other (the guild lead, 2026-09-03: "how many
                       // positive and negative hits total in parentheses for
                       // raised and lowered, and the raised/lowered should
                       // specifically call out how much the faction has been
@@ -498,7 +498,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                         <td className="py-1.5 pr-3">
                           {(() => {
                             // A position can't be at both caps — when both
-                            // stamps exist (Bardtholemu's Seru rows: floored
+                            // stamps exist (a member's Seru rows: floored
                             // Jun 26 grinding Katta, then raise-capped Jul 6
                             // re-raising), the MOST RECENT signal is the
                             // current state and the older one is history.
@@ -529,7 +529,7 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
                       </tr>
                       {(() => {
                         // ── Per-faction detail: unconfirmed hits · cons · repair ──
-                        // (Hitya 2026-09-03). Collapsed by default; one <details>
+                        // (the guild lead, 2026-09-03). Collapsed by default; one <details>
                         // per faction row so a 55-faction page stays scannable.
                         const key = f.faction.toLowerCase();
                         const unB = Math.max(0, f.better_count - (f.better_priced ?? 0));

@@ -1,6 +1,6 @@
 // test/officer-channel.test.js — where officer posts go.
 //
-// Hitya 2026-08-21: "wire it to officer channel." OFFICER_CHAT_CHANNEL_ID is
+// The guild lead 2026-08-21: "wire it to officer channel." OFFICER_CHAT_CHANNEL_ID is
 // not set on Railway, so every officer post was silently skipping — and an env
 // var needs a human in the Railway UI plus a redeploy. The resolver lets an
 // officer point the bot at a channel from Discord instead, storing it in

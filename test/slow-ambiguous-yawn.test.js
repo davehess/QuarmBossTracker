@@ -1,7 +1,7 @@
 // test/slow-ambiguous-yawn.test.js — a shared landing emote must not be
 // presented as an identified slow with a percentage.
 //
-// The bug (Hitya, 2026-08-10): Ashieron — a PALADIN, who cannot cast a shaman
+// The bug (the guild lead, 2026-08-10): a member — a PALADIN, who cannot cast a shaman
 // slow at all — procced Willsapper and Mob Info showed "SHM SLOW Turgur's 75%".
 // Verified against eqemu_spells, the two spells are indistinguishable on a mob:
 //

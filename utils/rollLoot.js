@@ -1,6 +1,6 @@
 // utils/rollLoot.js — the off-night event thread's loot content.
 //
-// Hitya 2026-07-31: a non-raid guild event gets NO DKP loot posts. What it
+// The guild lead 2026-07-31: a non-raid guild event gets NO DKP loot posts. What it
 // gets instead is "the items that dropped with their assigned roll ranges,
 // the night's parses, then the rolled loot (winners)".
 //
@@ -123,7 +123,7 @@ function attributeLooters(session, lootedRows) {
 
 /**
  * The embed body for the event thread's rolled-loot card. Pure string work so
- * it is unit-testable without discord.js. Sections, in the order Hitya asked
+ * it is unit-testable without discord.js. Sections, in the order the guild lead asked
  * for: what dropped + its range, then who won it, then who actually looted it
  * when that differs.
  */

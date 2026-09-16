@@ -434,7 +434,7 @@ describe('fleet CHARACTER label (#119) — live character + main in parens', () 
   const mainOf = (obj) => new Map(Object.entries(obj).map(([k, v]) => [k.toLowerCase(), v]));
 
   it('shows "Alt (Main)" when the live character differs from the family main', () => {
-    // Agent's primary IS the main Hitya; the player is on the alt Canopy.
+    // Agent's primary IS the main the guild lead; the player is on the alt a member.
     const label = _reporterCharacterLabel(
       { primary: 'Hitya', live_character: 'Canopy' },
       mainOf({ Canopy: 'Hitya' }), new Set());

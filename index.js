@@ -257,7 +257,7 @@ const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, Gate
 if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
 const client = new Client({ intents: _intents });
 
-// ── SUNO-link mover (Hitya 2026-07-19) ──────────────────────────────────────
+// ── SUNO-link mover (the guild lead, 2026-07-19) ──────────────────────────────────────
 // Suno links from configured members belong in #the-slop: repost there with
 // attribution, delete the original, leave a short self-deleting pointer.
 // Requires MESSAGE_CONTENT_INTENT=1 (see above) — without it content is empty
@@ -665,7 +665,7 @@ function startOpenDkpSync() {
     return;
   }
   const { runSync } = require('./utils/openDkpSync');
-  // ⚠ NO BOOT PULL. Hitya, 2026-08-27: "can we take the opendkp pull out of
+  // ⚠ NO BOOT PULL. The guild lead, 2026-08-27: "can we take the opendkp pull out of
   // main redeploy? we have the data that isn't stale prior to the raid, save
   // for peoples saved bids and wishlists."
   //
@@ -740,7 +740,7 @@ async function _processRegisterQueue(client) {
     const dmBatch = new Map();
     // Ranks that should STAY OFF the OpenDKP roster — Non-raid Alts and
     // Traders end up cluttering the top-nav "your characters" list with
-    // bank/mule characters that have no DKP relevance (Hitya 2026-06-23).
+    // bank/mule characters that have no DKP relevance (the guild lead, 2026-06-23).
     // We still record the family linkage on our side so /admin/links and the
     // upload picture reflect reality; just skip the OpenDKP createCharacter
     // call and the claim DM (nothing to claim).
@@ -768,7 +768,7 @@ async function _processRegisterQueue(client) {
 
           // Link the new character under its OpenDKP parent. createCharacter's
           // ParentId field does NOT establish the family link (confirmed
-          // 2026-06-23 — Dwaalin came up un-parented), so the separate
+          // 2026-06-23 — a member came up un-parented), so the separate
           // /characters/links PUT is required. Best-effort: if it fails the
           // character still exists and an officer can link manually, so we log
           // and continue rather than failing the whole registration.
@@ -864,7 +864,7 @@ async function _processRegisterQueue(client) {
           // OpenDKP claim flow lives on the LIST page — the per-character
           // page (#/characters/<id>) has no claim button. So link to the
           // list and tell them which name to type into the search box.
-          // Query-string pre-fill on the hash route doesn't work (Hitya
+          // Query-string pre-fill on the hash route doesn't work (the guild lead
           // 2026-06-23 confirmed manually), so this is the cleanest path.
           const nameList = chars.length === 1
             ? `**${chars[0].name}**${chars[0].parentName ? ` _(alt of ${chars[0].parentName})_` : ''}`
@@ -1180,7 +1180,7 @@ async function handleBoardButton(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
-  // EVERY kill button confirms before it records (Hitya 2026-08-09: a phone
+  // EVERY kill button confirms before it records (the guild lead, 2026-08-09: a phone
   // left within reach of the dog recorded a Thall Va Xakra (North) kill nobody
   // meant to press). /announce messages have always confirmed; the BOARD
   // buttons recorded on the first tap, and a stray tap there starts a respawn
@@ -1301,12 +1301,12 @@ async function handleLootPost(interaction) {
     await interaction.editReply({ embeds: [posted], components: [] });
     clearPendingLoot(msgId);
 
-    // Raid-facing copy into tonight's raid-night thread (Hitya 2026-07-31).
+    // Raid-facing copy into tonight's raid-night thread (the guild lead, 2026-07-31).
     // The /loot message itself is the officer's staging UI and has to stay in
     // the channel it was invoked from (interaction.editReply owns it), so the
     // announcement raiders read is a separate post. Best-effort — the auctions
     // are already live, and a failure here must not look like a failed post.
-    // NOTE (Hitya 2026-07-31): DKP/bidding posts belong to the RAID flow only.
+    // NOTE (the guild lead, 2026-07-31): DKP/bidding posts belong to the RAID flow only.
     // A non-raid guild event threads in #event-chat and gets roll loot instead
     // (utils/rollLoot.js), so an 'event' target is skipped here entirely.
     try {
@@ -2500,7 +2500,7 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     starterContent = starter?.content || '';
   } catch {}
 
-  // Tap-through request flow (Hitya 2026-08-17): the card used to DESCRIBE
+  // Tap-through request flow (the guild lead, 2026-08-17): the card used to DESCRIBE
   // the /suggest command, which is more effort than members put together —
   // now it IS the flow. Buttons for the detected bosses, a picker fallback,
   // then time buttons; the formal officer request posts on the second tap.
@@ -2524,7 +2524,7 @@ const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
 const PVP_SOON_MS  = 30 * 60 * 1000;
 const SOON_WARN_MS = 30 * 60 * 1000;
 
-// Deferred /announce parse session (Hitya 2026-08-20): a future announce parks
+// Deferred /announce parse session (the guild lead, 2026-08-20): a future announce parks
 // its session in bot_kv instead of opening it immediately; open it here once
 // the event is PENDING_SESSION_ARM_MS out. Pure decision in
 // pendingSessionAction (commands/raidnight.js), so this stays a thin shell.
@@ -2547,7 +2547,7 @@ async function _maybeOpenPendingSession(readyClient) {
   }
 }
 
-// Pre-raid checklist (Hitya 2026-08-21). Posted to officer chat in the 90
+// Pre-raid checklist (the guild lead, 2026-08-21). Posted to officer chat in the 90
 // minutes before a raid night starts, once per night, while there is still
 // time to act: signups, class shortages vs our own average, Mimic coverage,
 // lockouts (an ENGAGE lock — it has to arrive BEFORE the pull), and whether
@@ -2586,7 +2586,7 @@ async function _maybePreRaidChecklist(readyClient) {
   }
 }
 
-// Midday raid-info post (Hitya 2026-08-21: "post the raid info midday to our
+// Midday raid-info post (the guild lead, 2026-08-21: "post the raid info midday to our
 // channel"). Member-facing, to the raid channel, once per raid day in the
 // noon hour — re-surfacing the header block officers already typed into the
 // signup post plus which classes are still wanted, while there's most of a day
@@ -3215,7 +3215,7 @@ function scheduleMidnightSummary(readyClient) {
       }
 
       // ── Retention sweep: who_observations ─────────────────────────────────
-      // Keep the who INFORMATION but not every instance (Hitya 2026-07-07):
+      // Keep the who INFORMATION but not every instance (the guild lead, 2026-07-07):
       // everything from the last N days stays raw (feeds the ±3-min Zek
       // proximity inference + the ±15-min raid-attendance reconstruction on
       // /admin/encounters + /admin/signups), and before that each character
@@ -3237,7 +3237,7 @@ function scheduleMidnightSummary(readyClient) {
 
       // ── ARI staleness sweep ───────────────────────────────────────────────
       // Auto-raid-invite state hangs around until an officer manually
-      // clears it. Stale ARI confuses members ("ARI via Hitya · 6/4/2026"
+      // clears it. Stale ARI confuses members ("ARI via Rethlan · 6/4/2026"
       // when it's now late June and someone else has run /ari since,
       // per the user's report 2026-06-21). Clear here if the ARI is
       // more than 12 hours old — long enough that a raid set right
@@ -3542,7 +3542,7 @@ const CHAT_SKEW_FLUSH_MS = 5 * 60 * 1000;
 const _chatDedup = new Map(); // key: "channel|speaker|normtext" → { at, ts, by }
 // Relay-only dedup. The same in-game line captured by two different uploaders
 // can arrive with DIFFERENT speaker attribution (self "You say to your guild"
-// vs third-person "Canopy tells the guild", or a multi-log mis-attribution) —
+// vs third-person "Hessmoor tells the guild", or a multi-log mis-attribution) —
 // so the speaker-keyed dedup above sees two distinct keys and double-posts to
 // Discord. This text-only window collapses the relay POST regardless of who it
 // was attributed to. It deliberately does NOT gate the Supabase mirror, which
@@ -3558,7 +3558,7 @@ const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 // ("FUCK ZERG" → "Esev ZERG", "Ljyu ZERG", "Nnqj ZERG", "Tgfq ZERG"…). The
 // exact-text key above doesn't catch these — Discord gets every variant.
 // Same problem for the censor filter ("F*** ZERG" vs "FUCK ZERG" — only the
-// uncensored receiver gets the real text). (Hitya 2026-06-26.)
+// uncensored receiver gets the real text). (the guild lead, 2026-06-26.)
 //
 // Strategy: per-speaker rolling buffer of recent message shapes. A new
 // message is a "near-dupe" of a buffered one when the messages have the same
@@ -3646,8 +3646,8 @@ setInterval(() => {
 // A misconfigured agent tails a stray log (an old / foreign eqlog_<Name> file
 // still in the watched folder), so guild chat the player actually typed on
 // their REAL character gets stamped with that stray name. Observed repeatedly:
-// Wabumkin's machine emitting "Dopefiend" (a Freedom player), earlier
-// "Facehack"; Chadivarius's machine emitting "Ashaiya" (Hitya 2026-06-23).
+// A member's machine emitting "Dopefiend" (a Freedom player), earlier
+// "Facehack"; Ithren's machine emitting "Ashaiya" (Rethlan 2026-06-23).
 //
 // Guild/raid chat is WP-only, so a speaker we can't vouch for is suspect. We
 // trust a speaker when ANY of:
@@ -3664,7 +3664,7 @@ setInterval(() => {
 // include the EQ-second, but each agent stamps the line with its OWN
 // machine's clock — 2-5s of skew between machines meant two perspectives of
 // the same broadcast almost never landed on the same key, so corroboration
-// silently never fired (found 2026-07-07: the same Wabumkin line arrived at
+// silently never fired (found 2026-07-07: the same a member line arrived at
 // :51 from one machine and :54 from another). The 90s slot window bounds
 // unification now; two people genuinely typing the same word close together
 // share a slot, which is safe because relabeling only ever applies to
@@ -3764,8 +3764,8 @@ const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per rai
 const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
 const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms, live_character})
 // One account, several machines: may THIS heartbeat claim the account's fleet
-// slot? (Hitya, 2026-08-30: two PCs both on, Canopy idle on one at 320h since
-// its last log line, Rockin live on the other at 4s — the panel flip-flopped
+// slot? (the guild lead, 2026-08-30: two PCs both on, a member idle on one at 320h since
+// its last log line, a member live on the other at 4s — the panel flip-flopped
 // between them because the ingest was last-writer-wins on discord_id.)
 //
 // Rule: the freshest LOG wins the slot, not the latest heartbeat. Ages are
@@ -3810,7 +3810,7 @@ function _reporterRank(a, b) {
 function _reporterZoneKey(e)  { const z = e.zone && String(e.zone).trim(); return z ? z.toLowerCase() : `__solo__${e.id}`; }
 function _reporterGroupKey(e) { return Number.isFinite(e.group_num) ? `g${e.group_num}` : `__solo__${e.id}`; }
 // #119 — the fleet table's CHARACTER cell. Show the LIVE character the agent is
-// actively playing with the family MAIN in parens ("Canopy (Hitya)") when they
+// actively playing with the family MAIN in parens ("Hessmoor (Rethlan)") when they
 // differ; fall back to the primary alone when the agent is idle (live_character
 // null) or on their main. The parenthetical is a main name, so it obeys the
 // SAME server-side hide_main_names rule as the #111 /who enrichment — a hidden
@@ -4290,7 +4290,7 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
 }
 
 // Self-reported "% mana" macro call-outs riding the relayed /gu + /rs chat —
-// "Kazmodon has 45% Mana", "-= Ethereal Light Abrahms =- 45% Mana", "cleric
+// "Ulmarr has 45% Mana", "-= Ethereal Light Aldenmar =- 45% Mana", "cleric
 // mana 45%". Every observed variant is the SPEAKER's own mana with a percent
 // near the word "mana" in either order (same shape the agent's Command Center
 // tracks locally). Extracted here into mana_reports so the /raid Mana list +
@@ -4370,7 +4370,7 @@ async function _handleAgentChat(req, res) {
   const supabaseChatRows = [];
   // fun_events emitted from this batch — pottymouth + drunkard. Persisted at
   // the end of the handler with the same idempotent unique on
-  // (guild, event_type, caster, event_ts) used elsewhere. (Hitya 2026-06-26.)
+  // (guild, event_type, caster, event_ts) used elsewhere. (the guild lead, 2026-06-26.)
   const funEventRows = [];
   // "% mana" self-reports in this batch — keyed by speaker so a multi-line
   // batch keeps only the newest, upserted fire-and-forget after the loop.
@@ -4471,9 +4471,9 @@ async function _handleAgentChat(req, res) {
     //
     // ⚠ The casing difference is NOT EQ auto-capitalizing on the wire — that
     // was this comment's claim until 2026-08-13 and it is wrong. Measured:
-    // Hitya's own client, as a BYSTANDER, shows the raw line verbatim
+    // The guild lead's own client, as a BYSTANDER, shows the raw line verbatim
     // ("its usually 5-7 k per full clear"). Instead, two specific uploaders
-    // (Hawkner, Syko) ship a REWRITTEN copy of lines they merely witnessed:
+    // ship a REWRITTEN copy of lines they merely witnessed:
     // first letter capitalized, and `-` `!` `/` `=` turned into spaces or
     // dropped — "5-7 k" → "5 7 k", "ok!/camp" → "Ok camp", "=x" → "x".
     // NOT our code: uploaders on the SAME agent build (3.5.58) sit on both
@@ -4498,7 +4498,7 @@ async function _handleAgentChat(req, res) {
     // the good text alongside the bad one.
     const textScore = (s) => (String(s || '').match(/[^a-z0-9\s]/gi) || []).length;
     const myTextScore = textScore(text);
-    // Speaker safeguard: relabel a stray-log ghost name (e.g. Wabumkin's agent
+    // Speaker safeguard: relabel a stray-log ghost name (e.g. A member's agent
     // emitting "Dopefiend") to a trusted alternative witnessed on the same
     // line. See the _safeguardSpeaker comment above.
     const witnessSlot = _recordWitness(_witnessKey(channel, msgTs, normText), speaker, identity.discord_id, speakerSource);
@@ -4506,8 +4506,8 @@ async function _handleAgentChat(req, res) {
     // to any witness of the same line whose name was IN the line ('line' —
     // server truth). This is what the roster-trust check below can't catch:
     // the stale-log ghost is usually the player's OWN other character, which
-    // passes every trust test (Starrburst — roster member, linked to the same
-    // Discord account — posting Wabumkin's words, 2026-07-07).
+    // passes every trust test (a member — roster member, linked to the same
+    // Discord account — posting a member's words, 2026-07-07).
     let effectiveSpeaker = speaker;
     if (speakerIsGuess) {
       for (const [otherLc, w] of witnessSlot.bySpeaker) {
@@ -4518,12 +4518,12 @@ async function _handleAgentChat(req, res) {
     effectiveSpeaker = _safeguardSpeaker(witnessSlot, effectiveSpeaker, identity.discord_id, rosterSet, uploaderCharacters);
     // The agent-attached who block describes the ORIGINAL name — never let it
     // decorate a relabeled speaker (it's what stamped "[48 Troll Shaman]" on
-    // Wabumkin's words).
+    // A member's words).
     const whoForSpeaker = effectiveSpeaker.toLowerCase() === speaker.toLowerCase() ? uploadedWho : null;
     const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${dedupText}`;
     const _dupOf = _chatDedup.get(key);
     if (_dupOf) {
-      // ── Free clock-skew sample (Hitya 2026-08-14) ───────────────────────────
+      // ── Free clock-skew sample (the guild lead, 2026-08-14) ───────────────────────────
       // This `continue` used to be where a thousand measurements a night went
       // in the bin. The EQ server broadcast this line to every client at once;
       // we are holding the FIRST uploader's stamp for it and, right now, a
@@ -4554,7 +4554,7 @@ async function _handleAgentChat(req, res) {
     // mutation of the same line to each receiver, so each agent ships a
     // different normText and the exact-match key above lets them all through.
     // Tokens are same length + ≥50% identical word positions ⇒ same line.
-    // (Hitya 2026-06-26.)
+    // (the guild lead, 2026-06-26.)
     const tokens   = _fuzzyTokenize(text);
     const nowMs    = Date.now();
     const slurHit  = _findSlurVariant(channel, effectiveSpeaker, tokens, nowMs);
@@ -4637,12 +4637,12 @@ async function _handleAgentChat(req, res) {
     // Class/level tag: try server-side whoData first, fall back to what the agent sent.
     // Only render the tag when we actually have level/race/class content —
     // otherwise an empty whoEntry produced a bare " []" after the name
-    // (the bug behind "Wabumkin []: no :(").
+    // (the bug behind "Dunstan []: no :(").
     const { getWhoEntry } = require('./utils/state');
     const whoEntry = getWhoEntry(effectiveSpeaker) || whoForSpeaker || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     let whoTag     = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
-    // Sticky tags (Hitya 2026-07-12: "why does this sometimes show info
+    // Sticky tags (the guild lead, 2026-07-12: "why does this sometimes show info
     // and sometimes not"): once a speaker resolves to a FULL [lvl race class]
     // tag, reuse it for the rest of the session instead of flickering back to
     // bare/partial whenever the /who data ages out mid-conversation. A fresh
@@ -4671,7 +4671,7 @@ async function _handleAgentChat(req, res) {
     // window. Usually skip the duplicate post — but two repairs live here:
     //   • HEAL: the posted copy ran under a filename-guessed name and THIS
     //     copy carries the server-authoritative in-line name → edit the posted
-    //     Discord message to the true speaker (the Starrburst→Wabumkin case).
+    //     Discord message to the true speaker (the stray-log ghost-name case).
     //   • DISTINCT REPEAT: both copies are authoritative with different names
     //     → two people genuinely typed the same text; post this one too
     //     (the old text-only dedup silently swallowed raid "111" count-offs).
@@ -4813,7 +4813,7 @@ const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 // bucket (deduped), but the same killer killing the same victim in the same
 // zone on a DIFFERENT day is many buckets away (kept). This is the fix for
 // the regression where a pure text-only key collapsed a backfill's worth of
-// identical-text historical kills into one row (Malthur's "1 kill" bug).
+// identical-text historical kills into one row (a member's "1 kill" bug).
 //
 // CRITICAL: backfill uploads skip this entirely (see _isPvpDupe). A backfill
 // replays months of kills in one batch — wall-clock Date.now() bucketing is
@@ -4849,7 +4849,7 @@ function _isPvpDupe(b) {
 }
 
 // Note: earlier versions had a rate-limited "@PVP fyi-ping" on non-WP
-// deaths plus a raid-window suppressor. Per Dant's feedback ("don't like
+// deaths plus a raid-window suppressor. Per a member's feedback ("don't like
 // getting a ping every kill"), all non-WP-involvement events now post
 // silently as plain death notices. Pings are reserved for Wolf Pack kills
 // + Wolf Pack deaths only.
@@ -4916,7 +4916,7 @@ async function _handleAgentPvp(req, res) {
       // genuinely lack it; we still want the name + zone observation.
       if (!name) continue;
       if (side === 'killer' && b?.killer_is_npc) continue;
-      // VICTIM-side NPC filter (Hitya 2026-06-21 — Praesertums leaking
+      // VICTIM-side NPC filter (the guild lead, 2026-06-21 — Praesertums leaking
       // into /who from Sanctus Seru kill broadcasts). When the parser
       // matched the BOSS_ACTIVE pattern ("X of <G> has killed Boss in
       // Zone!"), victim is the NPC's name and victimGuild is NULL by
@@ -4973,10 +4973,10 @@ async function _handleAgentPvp(req, res) {
     // (Instanced) [PVP]-channel kill echoes — recorded + posted informational,
     // NEVER tick the open-world respawn timer (instances have private spawns —
     // "this was a PVP instance kill, doesn't count towards our guild's
-    // resources or timer", Hitya 2026-07-05). This USED to drop OWN-guild
+    // resources or timer", the guild lead 2026-07-05). This USED to drop OWN-guild
     // instance echoes here, assuming a Druzzil → /bosskill path already had
     // them. It doesn't when the killer runs no Mimic and no Mimic guildmate is
-    // in the instance: Timberr's Lord of Ire instance kill was lost entirely
+    // in the instance: a member's Lord of Ire instance kill was lost entirely
     // (zero records anywhere). So own-guild instance echoes now flow through
     // exactly like foreign-guild ones — the boss auto-track below mirrors them
     // to pvp_boss_kills for /pvp/hate and posts an informational #pvp notice,
@@ -4990,7 +4990,7 @@ async function _handleAgentPvp(req, res) {
       // True PvP requires BOTH sides to have a real player guild. Druzzil Ro
       // broadcasts NPC kills with empty/null/<null> victim guilds — those
       // should never trigger AWROOOO celebrations or backup-requested pings
-      // even when a Wolf Pack member is the killer (e.g. "Adiwen killed
+      // even when a Wolf Pack member is the killer (e.g. "a member killed
       // Lord of Ire of <null>"). The plain death-notice fallback handles
       // them as informational posts.
       const _hasRealGuild = (g) => typeof g === 'string' && g.length > 0 && g.toLowerCase() !== 'null' && g !== '<>' && g.toLowerCase() !== '<null>';
@@ -5034,7 +5034,7 @@ async function _handleAgentPvp(req, res) {
       let content;
       if (isWpKill) {
         // Celebrate — Wolf Pack got a PvP kill. Ping @PVP so the pack joins the
-        // howl. The previous "no ping on our kills" rule (Dant, 2026-06-01) is
+        // howl. The previous "no ping on our kills" rule (a member, 2026-06-01) is
         // reversed: Wolf Pack PvP kills are the rallying moment, not the
         // afk-able ones. Deaths still ping for backup; other-guild / NPC kills
         // remain informational with no mention.
@@ -5052,7 +5052,7 @@ async function _handleAgentPvp(req, res) {
         // reserved for events where Wolf Pack is actually involved
         // (our kill or our death); anything else is just a death notice
         // people can scroll past. ("Hmm don't like getting a ping every
-        // kill" — Dant, 2026-06-01)
+        // kill" — a member, 2026-06-01)
         content = `☠️ ${text}`;
       }
 
@@ -5180,7 +5180,7 @@ async function _handleAgentPvp(req, res) {
       // data recorded above only — same policy as historical chat backfill
       // ("collection IS in scope, display is NOT"). Without this, a single
       // --since backfill run replays months of PvP kills into #pvp live, as
-      // if they all just happened (Hitya 2026-07-01: a backfill flooded
+      // if they all just happened (the guild lead, 2026-07-01: a backfill flooded
       // #pvp with dozens of old Zek/Eclipse/Nocturnal kill notices at once).
       if (!b?.backfill) {
         // Deferred post-ack (task #44). Capture this iteration's channel +
@@ -5438,8 +5438,8 @@ async function _handleAgentPvpAssists(req, res) {
           if (g.assisters.length === 0) continue;
           const dedupKey = (g.victim.toLowerCase()) + '|' + g.killedAt.slice(0, 19);
           if (_recentPvpAssistPost(dedupKey)) continue;
-          // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Hopeya, Hitya (3)
-          //   killed by Adiwen". Zone + killed-by lines included when known.
+          // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Sorvane, Rethlan (3)
+          //   killed by a member". Zone + killed-by lines included when known.
           const victimLine = g.victim + (g.victimGuild ? ` of <${g.victimGuild}>` : '');
           const zoneLine   = g.zone ? ` in ${g.zone}` : '';
           const killerLine = g.killer
@@ -5539,7 +5539,7 @@ async function _handleAgentBossKill(req, res) {
     // /updatetimer) already enforce this, but this automated relay didn't,
     // and PVP-event content shares names with PoP bosses (the war gods:
     // "Tallon Zek" / "Vallon Zek" are both PVP-event entities AND Plane of
-    // Tactics bosses in bosses.json). Hitya 2026-07-13: bogus Tactics
+    // Tactics bosses in bosses.json). The guild lead 2026-07-13: bogus Tactics
     // timers appeared on the locked PoP board. Date-gated, so this relay
     // starts working for PoP the moment the expansion unlocks.
     if (boss && isPopLocked(boss)) {
@@ -5599,7 +5599,7 @@ async function _handleAgentBossKill(req, res) {
 // ── /api/agent/hatekill ─────────────────────────────────────────────────────
 // Agent forwards Plane-of-Hate mini-boss kills it sees in the [PVP] channel
 // (and Druzzil broadcasts for foreign-guild instance kills, which we never
-// hear about otherwise). Per the user spec 2026-06-21 (Hitya's missed
+// hear about otherwise). Per the user spec 2026-06-21 (the guild lead's missed
 // Lord-of-Ire-Singzu screenshot): own-guild PvP open-world kills get a row
 // + an instant spot-picker so a guildmate can assign which spot died.
 // Foreign-guild kills get a row with spot_num=NULL + an info-only post — the
@@ -5751,14 +5751,14 @@ async function _handleAgentHateKill(req, res) {
 const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical_chat.jsonl');
 
 // ── Fun-events ingestion ────────────────────────────────────────────────────
-// Receives tagged "just for fun" occurrences (Peopleslayer LD counter,
+// Receives tagged "just for fun" occurrences (a member LD counter,
 // future CoH/DI/Aegolism/Rune) and upserts into the fun_events Supabase
 // table. The table's unique constraint on (guild_id, event_type, caster,
 // event_ts) makes backfill replays idempotent — re-running the same opt-in
 // ── Server-view panels for the local dashboard (increment 2f) ──────────────
 // ── Web UI Studio (/me/ui) support ──────────────────────────────────────────
 // ui_snapshots payloads are encrypted with the bot's key, so the WEB can't
-// read them. The bot extracts what /me/ui needs (Hitya 2026-07-06):
+// read them. The bot extracts what /me/ui needs (the guild lead, 2026-07-06):
 //   • ui_socials_index — [Socials] macros per character, written in plaintext
 //     at UPLOAD time (we hold the plaintext right before encrypting) and
 //     backfilled once from each character's latest snapshot on startup.
@@ -6097,7 +6097,7 @@ async function _handleAgentUiEditResult(req, res) {
 //     sync exploits), so its per-auction getAuction() N+1 and per-request
 //     getCharacters() are gone entirely (roster cached 1h below).
 //
-// ⚠ THE IDLE TTL USED TO BE THE ENTIRE BIDDING WINDOW (Hitya, 2026-08-30: "The
+// ⚠ THE IDLE TTL USED TO BE THE ENTIRE BIDDING WINDOW (the guild lead, 2026-08-30: "The
 // loot is not posted quickly on the channel"). Every auction opened on that
 // raid ran for 2 MINUTES and the idle TTL was 120s — so from the moment an
 // officer opened bidding, a raider's panel could sit on a cached EMPTY list
@@ -6196,7 +6196,7 @@ function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
 // adjustments, minus loot spent. No upstream call: it reads the Supabase tables
 // the 30-minute sync fills.
 //
-// This is the off-raid answer (Hitya, 2026-08-27: "the live dkp checkin should
+// This is the off-raid answer (the guild lead, 2026-08-27: "the live dkp checkin should
 // be raids-only since users are getting more dkp with each tick. the rest of
 // the time the checkin should be just to the bot and database"). Between raids
 // nobody is earning ticks, so the mirror is not merely an acceptable
@@ -6223,7 +6223,7 @@ async function _familyDkpFromMirror(family) {
     // OpenDKP's OWN automated inactivity decay, which fires at 12:00 UTC and
     // wrote 165 rows across 62 days — ~2.6 on a day it runs at all. (An earlier
     // comment here called it a Friday burst by officers; that was a day-of-week
-    // rollup flattening a recurring job into a fake spike. Hitya: the decay
+    // rollup flattening a recurring job into a fake spike. The guild lead: the decay
     // "happens automatically based on settings that we've deployed in open
     // dkp". The handful of 2024 rows at other times are the manual era.)
     supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
@@ -6300,7 +6300,7 @@ function _pickAccountDkpFromModels(models, main, familyNames) {
 // OPENDKP_HALT stops it. Agents read the answer from the bot and never speak to
 // OpenDKP themselves.
 //
-// ⚠ THE REFRESH TRIGGER IS AN OPEN AUCTION, NOT A MOB KILL (Hitya, 2026-08-27:
+// ⚠ THE REFRESH TRIGGER IS AN OPEN AUCTION, NOT A MOB KILL (the guild lead, 2026-08-27:
 // "maybe there's a better design than those two given what we know about loot
 // being posted from trash mobs as well"). Keying off named-mob kills would have
 // been wrong on both sides: loot gets posted off trash too, so it would MISS
@@ -6322,7 +6322,7 @@ let _panelStandingsCache = null;  // { at, models, failed }
 // Split out so the policy is testable without a clock, a network or a raid.
 function _standingsRefreshDecision({ cache, nowMs, auctionsLive, inRaid }) {
   // ⚠ RAID WINDOW IS THE GATE, and an open auction only sets the pace inside
-  // it. Hitya, 2026-08-27: "the live dkp checkin should be raids-only since
+  // it. The guild lead, 2026-08-27: "the live dkp checkin should be raids-only since
   // users are getting more dkp with each tick. the rest of the time the
   // checkin should be just to the bot and database."
   //
@@ -6370,7 +6370,7 @@ async function _panelStandings(deps = {}) {
 }
 
 // ── One-shot shape probe for /clients/{client}/dkp ─────────────────────────
-// Hitya, 2026-08-31: the panel showed 192 where OpenDKP says 143. OpenDKP's own
+// The guild lead, 2026-08-31: the panel showed 192 where OpenDKP says 143. OpenDKP's own
 // docs describe this endpoint as returning "current DKP ... and calculated
 // values for different time periods (30, 60, 90 days, and lifetime)", so the
 // right number IS in the response we already fetch and _pickAccountDkpFromModels
@@ -6440,20 +6440,20 @@ function _lootItemSummary(auctionsDesc, bidsByAuction) {
   const bids = (bidsByAuction && bidsByAuction[auc.auction_id]) || [];
   // ⚠ SECOND PLACE COMES FROM `position`, NOT FROM THE VALUES.
   //
-  // Verified against OpenDKP's own results pages (Hitya, 2026-08-30):
-  //   Thorny Chain Sleeves 1068644 — FawxFF@10 AND Fawx@10 both at position 1
+  // Verified against OpenDKP's own results pages (the guild lead, 2026-08-30):
+  //   Thorny Chain Sleeves 1068644 — the same bidder at 10 TWICE at position 1
   //     (the account login and the character name are the SAME bid, mirrored
-  //     twice), real second = Fittir@5 at position 2. We showed 10.
-  //   Bone Chill Shield  1068673 — fromuthman@20 and SuperBloodWolf@20 both at
-  //     position 1, real second = Ellah@7 at position 2. We showed 20.
+  //     twice), real second = 5 at position 2. We showed 10.
+  //   Bone Chill Shield  1068673 — two logins of one account both at 20 in
+  //     position 1, real second = 7 at position 2. We showed 20.
   // The old rule dropped ONE instance of the winning value and took the max of
   // the rest, so the winner's duplicate row became "second place" every time an
   // auction had one — which is most of them.
   //
   // Position is OpenDKP's own ranking from the per-auction detail, so it also
-  // keeps a GENUINE tie correct: Thorny Chain HELM 1010784 is Fayce@15 (1),
-  // Philomena@15 (2), Smokestomp@7 (3) — a real second bidder at the same
-  // value, and position 2 still reports 15, which is what Hitya asked for on
+  // keeps a GENUINE tie correct: Thorny Chain HELM 1010784 is 15 (1),
+  // 15 (2), 7 (3) — a real second bidder at the same
+  // value, and position 2 still reports 15, which is what the guild lead asked for on
   // 2026-08-30. A value-based rule cannot tell these two shapes apart.
   const ranked = bids.filter(b => Number.isFinite(Number(b.position)) && Number(b.position) > 1
                                 && Number.isFinite(Number(b.value)));
@@ -6512,13 +6512,14 @@ function _ilikeAnyClause(col, names) {
 
 // ── #121 loot bidding v2 pure helpers (source-sliced by test/loot-bidding.test.js) ──
 // Resolve an OpenDKP character_id → real in-game name. The mirror stores the
-// ACCOUNT LOGIN (e.g. "vaporjesus") in opendkp_auctions.winner AND
+// ACCOUNT LOGIN (not a character name) in opendkp_auctions.winner AND
 // opendkp_auction_bids.character_name, and opendkp_character_id_to_name is
 // empty in prod — so the only ground truth for a char_id's real name is the
 // LOOT it won: a won auction (winner_character_id) joins opendkp_loot on
 // (raid_id,item_id) → loot.character_name. The same raid can award one item to
 // two chars (2× drop), so take the MODE (most-frequent) name per char_id.
-// Confirmed 2026-07-19 vs vaporjesus: 108064→Hitya, 100899→Melting, 94318→Canopy.
+// Confirmed 2026-07-19 against one account's three char_ids — each resolved to
+// the right character name.
 function _resolveCharIdNames(wonAuctions, lootRows) {
   const lootIdx = new Map(); // "raid|item" → [name,…]
   for (const l of (lootRows || [])) {
@@ -6546,7 +6547,7 @@ function _resolveCharIdNames(wonAuctions, lootRows) {
 }
 
 // Suggested bid family (auto-prefill after login). main = the char_id with the
-// most auction wins (field-confirmed: vaporjesus → main Hitya), alts = the
+// most auction wins (field-confirmed: vaporjesus → main the guild lead), alts = the
 // rest, name-resolved + de-duped. Never invents names it can't resolve.
 function _suggestFamily(charWins) {
   const named = (charWins || []).filter(c => c && c.name);
@@ -6587,7 +6588,7 @@ function _eraFromPool(poolName) {
 // char's best bid), and the most-recent auction end (ordering + raid deep-link).
 // last_winning_bid / last_second_bid are attached by the caller from the item's
 // MOST-RECENT auction (via _lootItemSummary) — not from the specific loss.
-// ⚠ PER CHARACTER, not per family (Hitya, 2026-08-29: "removed for that
+// ⚠ PER CHARACTER, not per family (the guild lead, 2026-08-29: "removed for that
 // character after that character wins that item").
 //
 // This used to group by item and drop anything ANY family character owned. The
@@ -6595,7 +6596,7 @@ function _eraFromPool(poolName) {
 // already hold is not a miss — but wrong about WHOSE. EverQuest items belong to
 // a character, and one alt looting a Cloak does not give it to your main.
 //
-// Measured on Hitya's own account before changing it: 20 items bid on and lost,
+// Measured on the guild lead's own account before changing it: 20 items bid on and lost,
 // 19 of them hidden because some character in the family had looted that item at
 // some point. The panel showed ONE row — which is exactly what they reported.
 // Keying on (item, character) and only dropping what THAT character owns puts
@@ -6617,7 +6618,7 @@ function _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }) {
     const cid = (b.character_id != null && Number.isFinite(Number(b.character_id))) ? Number(b.character_id) : null;
     // ⚠ DETAIL-sourced bid rows have NO CharacterId — OpenDKP's per-auction
     // bid history is Name/Rank/Value/Date. Dropping id-less rows silently
-    // hid every backfilled loss (Utoh's Vengeful Mail bid, 2026-08-30), which
+    // hid every backfilled loss (a member's Vengeful Mail bid, 2026-08-30), which
     // is precisely the data the backfill exists to surface. Key by the
     // character NAME when the id is absent; a row with neither is unusable.
     const nameLower = String(b.character_name || '').toLowerCase();
@@ -6652,7 +6653,7 @@ function _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }) {
 // Family-pooled current DKP from mirror parts (ask #6). OpenDKP links alts to a
 // SHARED pool, so per-character is misleading (the main runs deep negative — it
 // spends the pool the alts fill); the real bidding balance is the family SUM.
-// Confirmed 2026-07-19: vaporjesus family nets +860 while main Hitya alone
+// Confirmed 2026-07-19: vaporjesus family nets +860 while main the guild lead alone
 // computes to −125. perName: [{ name, earned, adjustments, spent }].
 function _familyDkpTotals(perName) {
   let earned = 0, adj = 0, spent = 0;
@@ -7097,7 +7098,7 @@ async function _handleAgentServerPanel(req, res) {
         wins = winRows.map(r => ({ character: r.character_name, item_id: r.item_id, item_name: r.item_name, dkp: r.dkp, raid_id: r.raid_id, when: r.fetched_at }));
       }
       // ⚠ The "already won" SET is a SEPARATE, UNCAPPED sweep — never derive it
-      // from `wins` above. `wins` is capped at 100 for display, and Hitya's
+      // from `wins` above. `wins` is capped at 100 for display, and the guild lead's
       // family alone has 187 awards; building the set from the capped list left
       // 87 genuinely-won items looking unwon, so they came back as "bid on but
       // not yet won" and as RECENT MISSES (reported 2026-08-09). item_id only,
@@ -7107,7 +7108,7 @@ async function _handleAgentServerPanel(req, res) {
       if (famClause) {
         // character_name comes along so ownership can be answered PER CHARACTER.
         // The family-wide set below still prunes the wishlist; RECENT MISSES
-        // uses the per-character map instead (Hitya, 2026-08-29).
+        // uses the per-character map instead (the guild lead, 2026-08-29).
         const wonIdRows = await supabase.select(
           'opendkp_loot',
           `select=item_id,character_name&${famClause}&limit=5000`
@@ -7141,7 +7142,7 @@ async function _handleAgentServerPanel(req, res) {
         // character_name comes along because DETAIL-sourced bid rows have no
         // CharacterId — OpenDKP's per-auction bid history is Name/Rank/Value/
         // Date only. Without the name those rows are unkeyable and every miss
-        // they witness is silently invisible (Utoh's Vengeful Mail loss,
+        // they witness is silently invisible (a member's Vengeful Mail loss,
         // 2026-08-30 — present in the mirror, skipped by the builder).
         const rawBids = await supabase.select(
           'opendkp_auction_bids',
@@ -7186,10 +7187,10 @@ async function _handleAgentServerPanel(req, res) {
       // char_id → real name. characters.opendkp_id is AUTHORITATIVE (473 rows
       // maintained by the character sync) — the MODE-over-loot heuristic below
       // stays only as a fallback for ids the table doesn't know. The heuristic
-      // failing silently is what showed CHAR "—" on Hitya's misses AND broke
-      // per-character ownership: Rockin (opendkp_id 144802) WON a Thorny Chain
-      // Helm, but with no name for 144802 the loot join never connected, so
-      // her win rendered as a family miss (2026-08-30).
+      // failing silently is what showed CHAR "—" on the guild lead's misses AND broke
+      // per-character ownership: a member WON a Thorny Chain Helm, but with no
+      // name for that opendkp_id the loot join never connected, so the win
+      // rendered as a family miss (2026-08-30).
       let nameByCharId = {};
       if (famCharIds.length) {
         const mapped = await supabase.select(
@@ -7350,7 +7351,7 @@ async function _handleAgentServerPanel(req, res) {
           discord_id:       rid,
           character:        e.primary || null,   // primary is the election identity — swap/pin resolve by it
           live_character:   e.live_character || null,
-          character_label:  _reporterCharacterLabel(e, mainMap, hideSet),   // "Canopy (Hitya)" / primary when idle
+          character_label:  _reporterCharacterLabel(e, mainMap, hideSet),   // "Hessmoor (Rethlan)" / primary when idle
           zone:             e.zone || null,
           group_num:        Number.isFinite(e.group_num) ? e.group_num : null,
           agent_version:    e.ver || null,
@@ -7499,7 +7500,7 @@ async function _handleAgentThreatSnapshot(req, res) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'empty' }));
   }
   // ── Is this worth keeping at all? ───────────────────────────────────────
-  // Threat only means something when the guild is together (Hitya
+  // Threat only means something when the guild is together (the guild lead
   // 2026-08-07: "most of those fights outside of raiding time aren't things
   // we need to count... we can still include trash when we're all together").
   // Measured before building this: snapshots from outside raid time were 54%
@@ -7540,7 +7541,7 @@ async function _handleAgentThreatSnapshot(req, res) {
 }
 
 // POST /api/agent/dkp-tick — OFFICER-ONLY DKP tick from the Mimic dashboard
-// (Hitya 2026-07-16: "do ticks from here"). Reuses the shared submitRaidTick
+// (the guild lead, 2026-07-16: "do ticks from here"). Reuses the shared submitRaidTick
 // util so the OpenDKP write is byte-identical to the Discord /tick command.
 // body: { slot:'1'..'4'|'bonus'|'ot', players:[names], points?, description?,
 //         raid_name?, dry_run }. dry_run resolves the target raid + attendee
@@ -7584,7 +7585,7 @@ async function _handleAgentDkpTick(req, res) {
     return res.end(JSON.stringify(result));
   } catch (err) {
     const msg = err?.message || 'unknown';
-    // Name the config gap so the officer (Hitya) knows exactly what to set on
+    // Name the config gap so the officer (the guild lead) knows exactly what to set on
     // Railway rather than seeing a generic failure.
     const hint = /OPENDKP_RAIDS_URL/.test(msg)
       ? 'The bot needs OPENDKP_RAIDS_URL set on Railway (the raids API Gateway URL — see .env.example) to WRITE ticks. Reads/preview work without it.'
@@ -7624,7 +7625,7 @@ async function _resolveItemIds(items) {
 }
 
 // POST /api/agent/loot-post — OFFICER-ONLY. Create CLOSED OpenDKP auctions for
-// the selected loot straight from the Mimic dashboard (Hitya 2026-07-16: "i
+// the selected loot straight from the Mimic dashboard (the guild lead, 2026-07-16: "i
 // want a button to post from dashboard"). Body: { items:[{name,quantity}],
 // duration? (minutes), boss? }. Resolves names → GameItemId, builds the exact
 // captured auction shape, PUTs them (createAuctions), announces to the loot
@@ -7702,7 +7703,7 @@ async function _handleAgentLootPost(req, res) {
     // when night threads are off/unresolvable (best-effort — the auctions are
     // already live either way).
     // Raid flow only — an off-night event thread never carries DKP bidding
-    // (Hitya 2026-07-31); it falls back to the loot thread instead.
+    // (the guild lead, 2026-07-31); it falls back to the loot thread instead.
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
     try {
       const _t = await require('./utils/raidNight').getRaidNightTarget(client)
@@ -7732,7 +7733,7 @@ async function _handleAgentLootPost(req, res) {
 }
 
 // POST /api/agent/place-bid
-// Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
+// Body: { character: "Rethlan", auction_id: 993920, value: 50, priority?: 1 }
 // ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
 // Mimic POSTs a JSON bundle of UI / chat / hotkey / bandolier / socials
 // files. Bot encrypts with WISHLIST_BID_KEY before storing — even DB admins
@@ -7753,7 +7754,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
     req.on('data', (chunk) => {
       body += chunk;
       // UI bundles can include hundreds of small ini files; 8MB is a comfortable
-      // ceiling. (Hitya's full set was ~600KB pre-encryption.)
+      // ceiling. (the guild lead's full set was ~600KB pre-encryption.)
       if (body.length > 8 * 1024 * 1024) { req.destroy(); resolve(); }
     });
     req.on('end',   resolve);
@@ -7772,7 +7773,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
   const files         = (payload?.files && typeof payload.files === 'object') ? payload.files : null;
   const agentVersion  = (payload?.agent_version || null) && String(payload.agent_version).slice(0, 32);
   // Which computer took this backup. Older agents don't send it — the restore
-  // picker shows "unknown machine" rather than guessing (Hitya 2026-08-09:
+  // picker shows "unknown machine" rather than guessing (the guild lead, 2026-08-09:
   // with several machines backing up the same character, the timestamp alone
   // can't tell you which box a snapshot came from).
   const machineName   = (payload?.machine_name || null) && String(payload.machine_name).trim().slice(0, 64);
@@ -7985,7 +7986,7 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
 // ── Autobid gate ────────────────────────────────────────────────────────────
-// Hitya, 2026-08-26, twice — the second time correcting my first build:
+// The guild lead, 2026-08-26, twice — the second time correcting my first build:
 //   "you have to be in the raid for it to fire"
 //   "one of your characters needs to be in the raid currently OR have been on a
 //    tick so far that night"
@@ -8236,7 +8237,7 @@ async function _handleAgentFunEvent(req, res) {
 // (<< Earlier / ✓ Good! / >> Too early). Each call is one or more vote rows
 // into trigger_timing_feedback. No dedup — the overlay debounces locally; we
 //'d rather honestly count three quick clicks than risk losing a real burst
-// of disagreement. (Hitya 2026-06-26 — v1.1.2.)
+// of disagreement. (the guild lead, 2026-06-26 — v1.1.2.)
 //
 // #207 adds two IMPLICIT directions on the same table: `dismissed` (the raider
 // cleared the callout) and `expired` (it aged out untouched). The second is the
@@ -8318,13 +8319,13 @@ async function _handleAgentTriggerFeedback(req, res) {
 //       those are combat noise — and the agent already drops them); we keep
 //       the LATEST standing per (character, mob), overwritten in place.
 // ── Turning a faction hit into a POINT value ─────────────────────────────────
-// Hitya, 2026-09-03: the faction page "is currently not helping" because a
+// The guild lead, 2026-09-03: the faction page "is currently not helping" because a
 // -2000 Lord Seru hit and a +5 spire-spirit kill both render as one "hit".
 // Classic prints no magnitude, but the exact per-mob value is in the mirror --
 // so once the agent names the mob that died in the same second (agent 3.6.32),
 // the number is a lookup, not a guess.
 //
-// Validated end to end against Hitya's own client log:
+// Validated end to end against the guild lead's own client log:
 //   #Lord_Inquisitor_Seru  → -2000 to Seru / Hand / Eye / Heart / Shoulders,
 //                            +200 to four Katta factions   (9 entries, 9 lines)
 //   A_Greater_Spire_Spirit → +5 to six Seru-bloc factions, -5 The Recuso,
@@ -8613,7 +8614,7 @@ async function _handleAgentPopFlags(req, res) {
 const _QUARMY_BANNED_SLOT_RX = /^(bank|sharedbank)|coin/i;
 // AA-catalog memo for ingest validation (eqmacid → { max_level, classes }).
 // Quarmy's in-game exporter writes JUNK AA rows for some indices — rank-255
-// sentinels and stray bytes (Hitya the monk uploaded "Jewelcraft Mastery
+// sentinels and stray bytes (the guild lead the monk uploaded "Jewelcraft Mastery
 // r255", "Elemental Form: Fire r79", bard-only "Fleet of Foot", 2026-07-09).
 // A row is only stored when the catalog knows the index, the rank fits
 // max_level, and the character's class can actually train it.
@@ -8751,7 +8752,7 @@ async function _handleAgentQuarmy(req, res) {
 
 // POST /api/agent/inventory
 //
-// Mimic-auto-uploaded inventory snapshot (Hitya 2026-06-23: "load the
+// Mimic-auto-uploaded inventory snapshot (the guild lead, 2026-06-23: "load the
 // inventory, spellbook, and quarmy files via mimic the way we are the logs").
 // EQ writes <Char>-Inventory.txt on /outputfile inventory; the agent watches
 // the file and POSTs pre-parsed rows here on mtime change. Shape matches the
@@ -9266,7 +9267,7 @@ async function _handleAgentLockout(req, res) {
     // PoP locked until 2026-10-01: /sll lockout entries from PVP events carry
     // the war gods' names ("Tallon Zek"/"Vallon Zek") and name-match the
     // Plane of Tactics bosses — without this gate the relay SYNTHESIZED kills
-    // for locked PoP bosses from those lockouts (Hitya 2026-07-13, the
+    // for locked PoP bosses from those lockouts (the guild lead, 2026-07-13, the
     // exact source of the bogus 17h Tactics timers). Date-gated; goes live
     // for PoP automatically at unlock.
     if (isPopLocked(boss)) {
@@ -9278,7 +9279,7 @@ async function _handleAgentLockout(req, res) {
     const existing    = getBossState(boss.id);
 
     // Record the lockout itself, not just what it implies for the timer
-    // (Hitya 2026-08-21: capture lockouts from raids that weren't ours). A
+    // (the guild lead, 2026-08-21: capture lockouts from raids that weren't ours). A
     // lockout binds US even when the kill wasn't ours — they cannot loot that
     // boss on our night. `ours` is three-state and NEVER guessed:
     //   • our board has a kill whose respawn matches theirs → ours
@@ -9355,7 +9356,7 @@ async function _handleAgentLockout(req, res) {
 // each post a fresh card.
 const _liveCards = new Map();
 
-// GET /api/agent/incomplete-encounters?characters=Hitya,Statlander[&limit=20]
+// GET /api/agent/incomplete-encounters?characters=Aldenmar,Brackwyn[&limit=20]
 //
 // Returns the list of encounters flagged data_incomplete that include any of
 // the queried characters in encounter_players. Sorted newest-first. The agent
@@ -9472,7 +9473,7 @@ const _healAmtFor = (spell) => {
   const e = _healAmountByName.get(key) || _healAmountByName.get(key.replace(/`/g, "'"));
   return e && e.amount > 0 ? e.amount : 0;
 };
-// ── Buff effect decoding (Hitya 2026-09-02) ─────────────────────────────────
+// ── Buff effect decoding (the guild lead, 2026-09-02) ─────────────────────────────────
 // "The buffs on the buffs page should give the affects that they're providing
 // each, and then a summary below of all of the things that are provided."
 //
@@ -9484,7 +9485,7 @@ const _healAmtFor = (spell) => {
 // off a spell whose in-game text is known — Girdle of Karana is SPA 4 base 42
 // against "Increase Strength by 42"; Mask of the Stalker is 89/125, 87/115,
 // 15/3, 13/1 against "Target Size 25%, Magnification 115%, Mana 3, See
-// Invisible" (both from Hitya's own screenshots). Resists were pinned at BOTH
+// Invisible" (both from the guild lead's own screenshots). Resists were pinned at BOTH
 // ends and through the middle (Resist Fire 46 … Resist Magic 50, Endure
 // Cold/Poison/Disease 47/48/49) rather than inferred from the two ends.
 //
@@ -9604,7 +9605,7 @@ async function _handleAgentSpellCatalog(req, res) {
       // are just |base|. The Illusion DS line scales: Illusion: Fire Elemental
       // is base -1 / formula 109 = |base| + level/4, i.e. 1 + 60/4 = 16 at L60
       // (matches the in-game "9 (L34) to 17 (L64)"; the old |base| showed 1).
-      // Hitya 2026-07-14. Only formulas verified/canonical are scaled; any
+      // The guild lead 2026-07-14. Only formulas verified/canonical are scaled; any
       // other falls back to |base| (no worse than before) and is logged once.
       const _dsFormulaWarned = new Set();
       function _dsFormulaValue(base, formula, level, maxAbs) {
@@ -9651,7 +9652,7 @@ async function _handleAgentSpellCatalog(req, res) {
         return null;
       }
       // Estimated heal magnitude for the heal-attribution join + the tank
-      // overlay's inbound-heal amounts (Hitya 2026-07-14: heal amounts are
+      // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
       // catalog value). SPA 0 (current HP) with a POSITIVE base is a direct
       // heal — level-scaled by the same formula math as DS, capped at max.
@@ -9736,7 +9737,7 @@ async function _handleAgentSpellCatalog(req, res) {
             // Damage-shield per-hit magnitude (SPA 59) — omitted entirely for
             // the ~99% of spells that aren't a DS, so the wire payload barely
             // grows. Lets the Tank overlay attribute "Legacy of Thorn +28/hit"
-            // from a raider's CURRENT buff list (Hitya 2026-06-29: "Highlight
+            // from a raider's CURRENT buff list (the guild lead, 2026-06-29: "Highlight
             // the DS spells and songs and how much you're getting from each").
             ds: _dsMagnitude(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
@@ -9867,7 +9868,7 @@ async function _handleAgentItemClickies(req, res) {
 //
 // The wishlist picker's universe: every item any catalogued NPC can drop, with
 // its expansion. Agents cache it on disk and search it locally, so choosing a
-// wishlist item costs nothing at the time you choose it (Hitya, 2026-08-30).
+// wishlist item costs nothing at the time you choose it (the guild lead, 2026-08-30).
 //
 // Measured before building it: 11,099 rows, ~380 kB of JSON, ~130 kB gzipped.
 // At ~16 players and a source that only moves on the weekly sync, that is
@@ -9946,7 +9947,7 @@ const _MOB_CLASS_NAMES = {
   13:'Magician', 14:'Enchanter', 15:'Beastlord', 16:'Berserker',
 };
 // eqemu_npc_types.gender — the one field that tells Plane of Hate's two
-// a_forsaken_revenant bodies apart (Hitya 2026-09-15: "Female forsaken
+// a_forsaken_revenant bodies apart (the guild lead, 2026-09-15: "Female forsaken
 // revenant are enchanters, but show up as magicians"). 76004 is male +
 // Magician, 76005 female + Enchanter, identical in every other stat.
 const _GENDER_NAMES = { 0: 'male', 1: 'female', 2: 'neuter' };
@@ -10126,7 +10127,7 @@ async function _liveZoneMap() {
   return map;
 }
 // Which ZONE a kill happened in, as an eqemu zone id, for routing its card to
-// the right event thread when two events overlap (Hitya 2026-09-07). Two
+// the right event thread when two events overlap (the guild lead, 2026-09-07). Two
 // sources, best first, and null when neither knows — null means "route by the
 // clock, as before", never a wrong zone:
 //   1. a curated boss → its bosses.json zone name → the zone vocabulary
@@ -10169,7 +10170,7 @@ function _zoneScopeKeep(requesterZone, observerZone) {
 // `character_live_state`, while `buff_casts` is queried 3 hours back. Measured
 // 2026-09-02: **8 of the 21 observers** of the last two hours of debuffs had no
 // resolvable zone, so better than a third of the raid's observations were
-// silently invisible on Target Info while Extended Target showed them (Hitya:
+// silently invisible on Target Info while Extended Target showed them (The guild lead:
 // "Debuffs don't show on Target Info but show on Extended Target" — Extended
 // Target's own comment says it lets null-zone rows ride along rather than
 // vanish, and those two surfaces disagreeing is the bug).
@@ -10229,7 +10230,7 @@ function _zoneScopeKeepForName(requesterZone, observerZone, nameZones) {
 // Sibling of the above, one level down: same NAME, same ZONE, DIFFERENT SPAWN.
 // Zone scoping stopped "a geonid" in Crystal Caverns leaking into The Wakening
 // Land's Target Info; this stops three "a thought horror evoker" standing next
-// to each other from sharing one pooled effect list (Hitya, 2026-09-02).
+// to each other from sharing one pooled effect list (the guild lead, 2026-09-02).
 //
 // ⚠ ITS NULL RULE IS THE OPPOSITE OF _zoneScopeKeep'S, ON PURPOSE — COPYING
 // THAT FUNCTION'S SHAPE HERE WOULD EMPTY TARGET INFO FOR THE WHOLE GUILD.
@@ -10246,7 +10247,7 @@ function _zoneScopeKeepForName(requesterZone, observerZone, nameZones) {
 //   row id differs          → DROP  (a proven sibling — the whole point)
 //
 // ⚠ ZERO IS UNPROVEN, NOT SPAWN ZERO — and missing that emptied Target Info
-// for the whole raid (Hitya, live on Kaas Thox, 2026-09-06). Zeal reports a
+// for the whole raid (the guild lead, live on Kaas Thox, 2026-09-06). Zeal reports a
 // target id of 0 when there is no target, `Number.isFinite(0)` is true, so the
 // agent's _provableTargetId stamped 0 onto the row instead of null. Measured
 // that night: 111 of 134 rows on that boss — 13 of 15 observers — carried
@@ -10296,7 +10297,7 @@ async function _handleAgentTargetCasts(req, res) {
       // Same relaxation as target-buffs: a caster we cannot place only
       // disqualifies the row for a name that exists in more than one zone.
       if (!_zoneScopeKeepForName(requesterZone, casterZone, _nameZones)) continue;
-      // Spawn id FIRST, name second (Hitya 2026-09-02). Same name, same zone,
+      // Spawn id FIRST, name second (the guild lead, 2026-09-02). Same name, same zone,
       // provably a different spawn → somebody else's mob. _idScopeKeep fails
       // open on either side being unknown, so a fleet with no ids behaves
       // exactly as it does today and a mixed fleet gets the benefit per client.
@@ -10354,7 +10355,7 @@ const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 // — without this relay, only the caster's Mimic ever sees the charm timer.
 // Filtered to entries not yet past their catalog duration. Each row carries
 // `owner` (the caster — observer field on the original landing) so Mob Info
-// can render "Allure (Hopeya)".
+// can render "Allure (Sorvane)".
 // Short-TTL per-target cache (#73) — target-buffs was the only hot-path GET
 // that hit Supabase on EVERY request (audit); at 60 raiders a shared boss is
 // polled by everyone at once. Mirror the character-live-state relay cache: 2s
@@ -10495,7 +10496,7 @@ async function _refreshOverlayTuningCache() {
     _overlayTuningCache.at = Date.now();   // don't hammer on failure
   }
 }
-// ── /tag + officer channel join specs (Hitya 2026-09-03) ────────────────────
+// ── /tag + officer channel join specs (the guild lead, 2026-09-03) ────────────────────
 // "We can save the channel:pass as an environmental variable for officer chat
 // and for tagging. The tagging piece is critical."
 //
@@ -10535,7 +10536,7 @@ async function _overlayClassSets() {
   await _refreshOverlayTuningCache();
   return _overlayTuningCache.classSets;
 }
-// ── Mid-raid load-shed kill switches (Hitya 2026-07-13; #74 full coverage 2026-07-18) ──
+// ── Mid-raid load-shed kill switches (the guild lead, 2026-07-13; #74 full coverage 2026-07-18) ──
 // Officers can shed a misbehaving/flooding ingest stream DURING a raid with
 // no deploy and no agent update: set `flag_shed_<kind>` to 1 in the tuning
 // editor (/admin/overlays — same numbers-only jsonb the overlay knobs use;
@@ -10580,7 +10581,7 @@ async function _isShedded(kind, res) {
   return false;
 }
 
-// ── Uncurated-mob tracking gate (Hitya, 2026-09-04) ──────────────────────────
+// ── Uncurated-mob tracking gate (the guild lead, 2026-09-04) ──────────────────────────
 // Since bot 3.1.52 the ingest path self-registers every exactly-matched mob so
 // a first kill can never be lost — and that made encounter collection scale
 // with member FARMING. Measured 2026-09-04: 5,789 of the 5,969 encounters in
@@ -10745,7 +10746,7 @@ setInterval(() => {
     for (const [k, b] of book) if (b.windowStart < cutoff) book.delete(k);
   }
 }, 5 * 60_000).unref?.();
-// ── Mimic Mail — guild notices (Hitya 2026-07-07) ────────────────────────
+// ── Mimic Mail — guild notices (the guild lead, 2026-07-07) ────────────────────────
 // Officer broadcasts from /admin/notices (mimic_notices table). Served to
 // every agent alongside the overlay tuning (same poll, zero new timers) →
 // pulsing ✉ on the dashboard. CRITICAL notices additionally post to Discord
@@ -10788,7 +10789,7 @@ async function _postCriticalNotices() {
 }
 setInterval(() => { _postCriticalNotices().catch(() => {}); }, 60_000);
 
-// ── Mimic release announcements (Hitya 2026-07-11; re-homed to Supabase
+// ── Mimic release announcements (the guild lead, 2026-07-11; re-homed to Supabase
 // 2026-07-13) ────────────────────────────────────────────────────────────────
 // Posts one embed in MIMIC_RELEASE_CHANNEL_ID when a new STABLE Mimic release
 // ships. The dedup cursor (last-announced tag) lives in Supabase bot_kv — the
@@ -10843,13 +10844,13 @@ async function _announceMimicReleases() {
   const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
   // The release body leads with the actual changelog (from the release commit
   // message) with install boilerplate below a `---` rule — show the changelog
-  // part only (Hitya 2026-07-14). Falls back to the whole body for older
+  // part only (the guild lead, 2026-07-14). Falls back to the whole body for older
   // releases that have no rule.
   // The card is read by RAIDERS, but the body it renders is a release COMMIT
   // MESSAGE written for `git log` — file-checkout rationale, blast-radius
   // notes, test counts. At 20 lines / 1550 chars that produced an unreadable
   // wall, truncated mid-sentence, with the bold subject repeated verbatim
-  // under a title already derived from it (Hitya 2026-08-05, screenshot of
+  // under a title already derived from it (the guild lead, 2026-08-05, screenshot of
   // the v2.3.0 + v2.3.1 cards). Budgeting by LINE was the 2026-07-15 fix for a
   // mid-sentence cut; the real problem is that the whole body was never the
   // right thing to show.
@@ -10893,7 +10894,7 @@ async function _announceMimicReleases() {
   // Title carries the release's NAME when the body leads with the bold
   // commit subject ("**mimic v1.9.0 — the healing release (stable)**" →
   // "✅ Mimic v1.9.0 — the healing release"), so the notice reads like a
-  // release, not a tag (Hitya 2026-07-15). Falls back to the tag-only
+  // release, not a tag (the guild lead, 2026-07-15). Falls back to the tag-only
   // title for bodies without one.
   const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
   if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
@@ -10904,7 +10905,7 @@ async function _announceMimicReleases() {
       if (nm) stableTitle = ('✅ Mimic ' + nm).slice(0, 250);
     }
     // v2.0.0's release name changed AFTER the tag was cut (Full Cry → Harmonic
-    // Howl, Hitya 2026-07-19); release bodies are immutable via our tooling,
+    // Howl, the guild lead 2026-07-19); release bodies are immutable via our tooling,
     // so rename at render time.
     stableTitle = stableTitle.replace(/Full Cry/g, 'Harmonic Howl');
     const emb = new EmbedBuilder()
@@ -10914,7 +10915,7 @@ async function _announceMimicReleases() {
     const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
     if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
   }
-  // BETA — ONE rolling card edited in place (Hitya 2026-07-15: "none of
+  // BETA — ONE rolling card edited in place (the guild lead, 2026-07-15: "none of
   // these betas have posted"). Betas auto-increment several times a day, so
   // per-beta posts are the exact spam the stable-only rule was written
   // against — instead the channel keeps a single 🧪 card that always shows
@@ -10948,7 +10949,7 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
 }
 
 // ── Mimic 2.0 "Harmonic Howl" one-shot raid-chat announcement (2026-07-20) ──
-// Hitya: post the release card to #raid-chat with the expected release channel.
+// The guild lead: post the release card to #raid-chat with the expected release channel.
 // One post ever — the latch lives in bot_kv (survives restarts, the announcer's
 // re-homed pattern). Needs RAID_CHAT_CHANNEL_ID set (skips with a log if not,
 // so setting the env on Railway later still fires it on that restart).
@@ -10966,7 +10967,7 @@ async function _announceHarmonicHowlOnce() {
     if (kvLatch.latchState(rows) === 'unknown') console.warn('[howl-announce] latch unreadable — NOT posting');
     return;
   }
-  // Channel: env wins; else resolve #raid-chat by NAME (Hitya 2026-07-19:
+  // Channel: env wins; else resolve #raid-chat by NAME (the guild lead, 2026-07-19:
   // "deploy that image to raid chat" — the id was never captured as an env).
   let ch = process.env.RAID_CHAT_CHANNEL_ID
     ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
@@ -11049,7 +11050,7 @@ async function _fixV200CardNameOnce() {
 }
 setTimeout(() => { _fixV200CardNameOnce().catch(err => console.warn('[howl-card]', err?.message)); }, 120_000);
 
-// ── PoP-lock timer sweep (Hitya 2026-07-13) ──────────────────────────────
+// ── PoP-lock timer sweep (the guild lead, 2026-07-13) ──────────────────────────────
 // One-shot at startup: clear any active timer on a PoP-locked boss. The
 // automated ingest relays (bosskill + /sll lockout) historically had no lock
 // gate, and PVP-event lockouts named for the war gods ("Tallon Zek" /
@@ -11082,7 +11083,7 @@ setTimeout(() => {
   }
 }, 60_000);
 
-// ── Pre-raid health check (Hitya 2026-07-13, raid-night hardening) ───────
+// ── Pre-raid health check (the guild lead, 2026-07-13, raid-night hardening) ───────
 // At 7:30pm ET on raid nights (Sun/Wed/Thu), probe every dependency the raid
 // leans on and post ONE green/red line to Discord — so a wedged GoTrue or a
 // slow DB surfaces at setup time, not at the first CH chain. Probes:
@@ -11170,7 +11171,7 @@ setInterval(async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const rows = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_PRERAID_KV_KEY}&select=value&limit=1`);
-    // A FAILED READ IS NOT "HASN'T RUN TONIGHT" (Hitya 2026-08-06: this posted
+    // A FAILED READ IS NOT "HASN'T RUN TONIGHT" (the guild lead, 2026-08-06: this posted
     // FIVE times at 19:30, once per minute of the firing window). supabase.select
     // returns null on a timeout or an open breaker, `|| {}` turned that into an
     // empty state, `st.lastRunDate` was undefined, and the check ran again — then
@@ -11192,7 +11193,7 @@ setInterval(async () => {
   }
 }, 60_000);
 
-// ── Staged raid-attendance tick capture (Hitya 2026-08-06) ───────────────
+// ── Staged raid-attendance tick capture (the guild lead, 2026-08-06) ───────────────
 // "can we put in the automatic raid tick capture (without submission) at
 // 830/930/1030/1130" — following "sometimes we will take the 'last tick' before
 // the end of the raid, though, so we're not missing people."
@@ -11307,7 +11308,7 @@ async function _captureRaidTickIfDue() {
   }
 }
 
-// Put the captured tick in the night's thread, in its reserved slot (Hitya
+// Put the captured tick in the night's thread, in its reserved slot (the guild lead
 // 2026-08-06: "can you add the captured raid ticks for now in the raid thread?
 // and put them as reserved posts 3-6"). Slots 1-2 are the review, 3-6 are these
 // four ticks in order, so the top of the thread reads review → 8:30 → 9:30 →
@@ -11318,7 +11319,7 @@ async function _captureRaidTickIfDue() {
 // an attendance record. It says NOT SUBMITTED on its face because that is the
 // one thing an officer must not have to guess about.
 // ── "End raid" — an officer says the night is over ──────────────────────────
-// Hitya, 2026-08-30: "We need a button on the raid night thread for officers
+// The guild lead, 2026-08-30: "We need a button on the raid night thread for officers
 // and leaders to be able to click to end the raid."
 //
 // WHAT IT ACTUALLY DOES: stops the automatic attendance ticks for the rest of
@@ -11448,7 +11449,7 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
     .setDescription([
       `<t:${when}:t> · seen by ${uploaders} Mimic${uploaders === 1 ? '' : 's'}`,
       '',
-      // One name per LINE, not the middot the rest of the cards use (Hitya
+      // One name per LINE, not the middot the rest of the cards use (the guild lead
       // 2026-08-06). This list gets copied out of Discord and pasted into bulk
       // entry, which splits on newlines — so the separator is not decoration,
       // it is the paste format. Keep it a bare `\n`: no bullets, no numbering,
@@ -11478,7 +11479,7 @@ if (process.env.RAID_TICK_CAPTURE !== '0') {
 
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
-// Hitya 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
+// The guild lead 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
 // report the hold from their update gate, so agent hot-swaps wait out the
 // whole raid instead of firing between pulls. Automatic on the standing
 // schedule (Sun/Wed/Thu, 19:00 ET → 00:30 ET — 30 min of pre-raid buffer);
@@ -11742,7 +11743,7 @@ async function _handleAgentDiStatus(req, res) {
   ]);
   const healerClassByName = new Map((healers || []).map(c => [String(c.name || '').toLowerCase(), String(c.class || '')]));
   const out = [];
-  // Piggybacked healer mana (Hitya 2026-07-15: "Command center should have
+  // Piggybacked healer mana (the guild lead, 2026-07-15: "Command center should have
   // all healer mana … if they're in mimic") — every Mimic-running priest's
   // exact self mana, same freshness window, zero extra polls for the raid.
   const healerMana = [];
@@ -12028,7 +12029,7 @@ function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
 
 // Previously-targeted mobs that drop off everyone's target gauge (an
 // off-tank's brief targeting gap, a target swap mid-fight) stay on the
-// board for a grace window if they were last seen hurt — Uilnayar
+// board for a grace window if they were last seen hurt — a member
 // 2026-07-04: "keep non-targeted but previously targeted mobs that had
 // less than 100% health." Only unique (non-ambiguous, non-duplicate) mobs
 // are cached — a generic "a wolf" name can't be reliably re-identified
@@ -12037,7 +12038,7 @@ function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
 const _extMobLastSeen = new Map();
 // Grace for a mob that dropped off every target gauge (a targeting gap on a mob
 // still being fought). 5 min was far too long — a killed mob lingered as a
-// "corpse" on the tracker (Hitya 2026-07-06). 90s covers a real target swap;
+// "corpse" on the tracker (Rethlan 2026-07-06). 90s covers a real target swap;
 // genuinely off-tanked mobs are kept alive independently by the off-tank path.
 const EXT_STALE_GRACE_MS = 90 * 1000;
 // Evict a mob from that cache the moment we KNOW it died, instead of waiting
@@ -12045,7 +12046,7 @@ const EXT_STALE_GRACE_MS = 90 * 1000;
 //
 // ⚠ The grace window is a timeout, not a death signal, and shortening it was
 // never a fix. The 5min → 90s cut above was made for exactly this report on
-// 2026-07-06; Hitya hit the same thing again on 2026-09-01 (Lord of Ire, Plane
+// 2026-07-06; the guild lead hit the same thing again on 2026-09-01 (Lord of Ire, Plane
 // of Hate, killed at 5% and still sitting on the board at "last seen 56s ago"
 // carrying its whole debuff list). The bot ALREADY knew — it had announced the
 // kill — the board just had no way to hear about it.
@@ -12088,7 +12089,7 @@ const EXT_OFFTANK_FRESH_MS = 30_000;
 //
 // ⚠ NO exclusion filter here, deliberately. `exclude_from_stats` is enforced
 // UPSTREAM: the agent suppresses its own outbound uploads. If another raider
-// observed you, that observation is theirs and is shown (Hitya, 2026-08-13).
+// observed you, that observation is theirs and is shown (the guild lead, 2026-08-13).
 // Filtering on read would hide a player from the people who legitimately saw
 // them, which is the opposite of what the opt-out means. Do not "fix" this.
 // Reduce many observers' readings of ONE player's damage to a single number.
@@ -12096,12 +12097,12 @@ const EXT_OFFTANK_FRESH_MS = 30_000;
 // Max was the obvious choice and is wrong. An observer can only ever MISS
 // damage, never invent it — so max WOULD be right if every client were honest.
 // They are not, and max is maximally sensitive to whichever one is least
-// honest. Measured on Va Xi Aten Ha Ra: seven independent clients put Atlasius
-// at ~100,000 while an uploader calling itself "Atlasius2" reported 250,060.
+// honest. Measured on Va Xi Aten Ha Ra: seven independent clients put a member
+// at ~100,000 while an uploader calling itself "Dunmara2" reported 250,060.
 // We shipped the 250,060.
 //
-// "Atlasius2" is not a character — EQ names cannot contain digits (Hitya) — so
-// it is a name the agent derived from a stray log FILE (eqlog_Atlasius2_…),
+// "Dunmara2" is not a character — EQ names cannot contain digits (Rethlan) — so
+// it is a name the agent derived from a stray log FILE (eqlog_<Name>2_…),
 // i.e. a copy or backup someone left in their Logs folder, replayed as if it
 // were a separate raider. That specific cause is guarded at the source in the
 // agent, but this estimator must not depend on having anticipated the cause:
@@ -12195,15 +12196,15 @@ async function _handleAgentLiveDamage(req, res) {
 
   const best = new Map();       // character -> best OBSERVER figure
   // A player's OWN client is authoritative for their own damage and outranks
-  // every observer (Hitya, 2026-08-13). Only that log carries their damage
+  // every observer (the guild lead, 2026-08-13). Only that log carries their damage
   // spells, DoT ticks, procs and pets in full, so an observer can never see
   // more of it — and when an observer reports MORE, that is over-counting, not
   // extra detail.
   //
-  // Measured on Diabo Xi Xin Thall: five independent clients agreed Wabumkin
+  // Measured on Diabo Xi Xin Thall: five independent clients agreed a member
   // did 96,241 while his own client said 153,115 — the gap is his damage
-  // spells, and HIS number is the right one. In the other direction Hitya's own
-  // log said 57,848 while Hawkner read 61,085 and Squeekie 70,559 for the same
+  // spells, and THEIR number is the right one. In the other direction the guild lead's own
+  // log said 57,848 while two observers read 61,085 and 70,559 for the same
   // player, which is observers counting hits that did not happen.
   //
   // The max-across-everyone rule got the first case right by accident and the
@@ -12220,7 +12221,7 @@ async function _handleAgentLiveDamage(req, res) {
     const pp = r.per_player && typeof r.per_player === 'object' ? r.per_player : {};
     // Roll up THIS uploader's view first: a player's total from one client is
     // their own row PLUS every pet row that client attributes to them. Your
-    // pet's damage is your damage (Hitya, 2026-08-13) — the old code took
+    // pet's damage is your damage (the guild lead, 2026-08-13) — the old code took
     // max(owner, pet) and silently dropped whichever was smaller, so a pet
     // class was under-reported by however much its pet contributed.
     //
@@ -12241,8 +12242,8 @@ async function _handleAgentLiveDamage(req, res) {
     // ⚠ 3.1.43 gave a player's OWN client the last word, on the reasoning that
     // only their log carries their damage spells in full so an observer can
     // never see MORE. EQLogParser ground truth on Va Xi Aten Ha Ra disproved it:
-    // Hitya's own client reported 118,192 against a true 59,504 — 1.99x — and
-    // Wabumkin's own 153,115 against a true 58,355. Their own clients were not
+    // The guild lead's own client reported 118,192 against a true 59,504 — 1.99x — and
+    // A member's own 153,115 against a true 58,355. Their own clients were not
     // more complete, they were double-counting, so "self wins" promoted the
     // error instead of correcting it.
     for (const [who, dmg] of perUploader) {
@@ -12290,7 +12291,7 @@ async function _handleAgentLiveDamage(req, res) {
 // look identical by NAME — but if raiders report DIFFERENT HP for the same
 // name, those are provably different mobs. We sub-cluster each name by HP (a
 // gap > EXT_HP_SPLIT_TOL splits a cluster) so multiple same-name mobs at
-// different health show as separate rows (Hitya: "track non-unique named
+// different health show as separate rows (The guild lead: "track non-unique named
 // NPCs as well if they have different health totals"). Clusters are still
 // asterisked — coincidentally-equal HP still merges, and debuffs can't be
 // pinned to one of several same-name mobs.
@@ -12319,7 +12320,7 @@ async function _handleAgentExtendedTarget(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // Officer knob overrides (see _overlayTuningMap) — numbers only, compiled
   // defaults when unset. Lets raid leadership move these mid-raid from
-  // /admin/overlays without waiting on a redeploy (Hitya 2026-07-06).
+  // /admin/overlays without waiting on a redeploy (the guild lead, 2026-07-06).
   const _tune = await _overlayTuningMap();
   const tn = (k, d) => { const v = _tune[k]; return (typeof v === 'number' && isFinite(v)) ? v : d; };
   const extOnlineMs      = tn('ext_online_sec', EXT_ONLINE_MS / 1000) * 1000;
@@ -12380,7 +12381,7 @@ async function _handleAgentExtendedTarget(req, res) {
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
     // Durable guild roster — raiders who've dropped out of the 60s live-state
     // window are still PCs, not named NPCs. Without this they get misread as
-    // mobs and surface at full health (Hitya 2026-07-06: "too many PCs with
+    // mobs and surface at full health (the guild lead, 2026-07-06: "too many PCs with
     // full health on Extended Target"). 10-min cached, shared with chat safeguard.
     const knownPlayers = await _rosterNameSet();
 
@@ -12393,7 +12394,7 @@ async function _handleAgentExtendedTarget(req, res) {
       if (raiderNames.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
       if (petNames.has(key))    return { kind: 'pet',    is_named: true, ambiguous: false };
       if (knownPlayers.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
-      // Possessive pet — "Kravenn`s warder" / "Shavimo's pet": when the owner
+      // Possessive pet — "Wyldane`s warder" / "Irwyn's pet": when the owner
       // before the 's is a known raider, it's OUR pet (a real mob would never
       // be possessed by a player name), so treat it like a pet — off the bar
       // unless it's hurt, not a full-health "mob".
@@ -12615,7 +12616,7 @@ async function _handleAgentExtendedTarget(req, res) {
       // Only MOBS earn a target row. Allies (players/pets) are surfaced solely
       // by the hurt-tracking pass below (<85% HP for 10s) — a healer targeting a
       // tank, or the whole raid sitting at Zeal's 99.9%-"full", was flooding the
-      // bar with a corpse-length roster (Hitya 2026-07-06: "way too many
+      // bar with a corpse-length roster (the guild lead, 2026-07-06: "way too many
       // people ... we don't need corpses"). "<100%" was the wrong cut: Zeal
       // reports full HP as 99.9, so it matched everyone.
       if (cls.kind !== 'npc') continue;
@@ -12700,13 +12701,13 @@ async function _handleAgentExtendedTarget(req, res) {
       }
       // ── #194 Zeal tags: label rows, pool what can't be welded ────────────
       // A tag welds to a row when its text mentions that row's tank by name
-      // ("Naggato-Tanking" → the row tanked by Naggato). Unweldable tags pool
+      // ("Drayvon-Tanking" → the row tanked by a member). Unweldable tags pool
       // on the group's first row — shown as "tags on this name", never pinned
       // to a guessed row. Tags do not change K in v1 (an unwelded tag cannot
       // say WHICH HP band is its mob); the shadow log records K_tags for the
       // soak that decides whether spawn-id counting should raise K next.
       //
-      // Deliberate deviation from the strict K=1 byte-law (Hitya 2026-08-05,
+      // Deliberate deviation from the strict K=1 byte-law (the guild lead, 2026-08-05,
       // "if we could add that into our target info/extended target display
       // that would be fabulous"): a tagged SINGLE-instance mob does show its
       // tag — the assist-arrow-on-the-boss case is mostly a K=1 case. Additive
@@ -12767,7 +12768,7 @@ async function _handleAgentExtendedTarget(req, res) {
     // Persist unique (non-ambiguous, non-duplicate) NPC rows this poll so a
     // brief targeting gap doesn't drop them off the board, then restore any
     // cached mob NOT seen this poll that's still within its grace window and
-    // was last known hurt — Hitya 2026-07-04: "keep non-targeted but
+    // was last known hurt — the guild lead 2026-07-04: "keep non-targeted but
     // previously targeted mobs that had less than 100% health."
     const scopeKeyPrefix = guildId + '|' + (scopeZone || '*') + '|';
     for (const t of targets) {
@@ -12787,7 +12788,7 @@ async function _handleAgentExtendedTarget(req, res) {
       if (now - cached.lastSeenMs > extStaleGraceMs) { _extMobLastSeen.delete(k); continue; }
       const key = k.slice(scopeKeyPrefix.length);
       if (byName.has(key)) continue;                       // already fresh this poll
-      // A TAGGED mob stays on the board at ANY health (Hitya 2026-08-10: "for
+      // A TAGGED mob stays on the board at ANY health (the guild lead, 2026-08-10: "for
       // these tagged mobs I think we should keep them on extended target so we
       // can still see their timers"). A tag is a deliberate mark someone put on
       // a specific spawn — "DON'T FRICKIN TOUCH THIS MOB", "<Tank> TANK" — and
@@ -13658,7 +13659,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
         // Already carrying the burst buff: KEEP the row, with time remaining
-        // (Hitya 2026-08-19, mid-raid: "should have timers left on feral
+        // (the guild lead, 2026-08-19, mid-raid: "should have timers left on feral
         // avatar targets"). Silently dropping the target meant the shaman/BL
         // never saw the recast coming — carried rows now list after the
         // needs-it rows, soonest-to-expire first, so the next recast is
@@ -13807,7 +13808,7 @@ function _castingOnTarget(name) {
     let effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
     // Focus spell haste from the caster's Quarmy gear (worn Enhancement
     // Haste etc.). The agent relays the CATALOG cast time — it doesn't know
-    // the caster's gear — so Utoh's Khura's Focusing (26s catalog) ran ~7s
+    // the caster's gear — so a member's Khura's Focusing (26s catalog) ran ~7s
     // past the real 18.2s cast (30% Enhancement Haste III). Apply the best
     // applicable focus whenever the value we're about to use IS the catalog
     // number (agent stub or catalog match); if a future agent ships a
@@ -13999,7 +14000,7 @@ async function _handleAgentMobInfo(req, res) {
     // row instead of serving the un-killable one.
     const picked = mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId });
     let r = picked.row;
-    // Same name, different CLASS, told apart in game only by sex (Hitya
+    // Same name, different CLASS, told apart in game only by sex (the guild lead
     // 2026-09-15, Plane of Hate's revenants). List every (class, sex) the
     // candidates carry; when they disagree on class the overlay shows the
     // pair rather than the winner's class as fact, and a `gender` hint on
@@ -14267,7 +14268,7 @@ async function _handleAgentMobInfo(req, res) {
         see_hide:            !!r.see_hide,
         see_improved_hide:   !!r.see_improved_hide,
         // Undead-ness, because the sight flags are only READABLE with it
-        // (Hitya 2026-09-02, asking for see-invis on Mob Info). Measured over
+        // (the guild lead, 2026-09-02, asking for see-invis on Mob Info). Measured over
         // the 18,033-row catalog:
         //   • non-undead: see_invis 11%, see_invis_undead 96%
         //   • UNDEAD (bodytype 3): see_invis 98%, see_invis_undead 15%
@@ -14309,7 +14310,7 @@ async function _handleAgentMobInfo(req, res) {
   // catastrophic for nulls, because a single transient failure — a Supabase
   // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
   // target" for six hours on a mob whose row exists and whose query works.
-  // Uilnayar hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
+  // A member hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
   _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ ok: true, mob }));
@@ -14329,7 +14330,7 @@ async function _handleAgentMobInfo(req, res) {
 // Officer-curated /who overrides (class + Zek, set on /admin/who) cached with a
 // SHORT TTL just for the de-anon path. state.whoData only pulls who_overrides
 // every 30 min (fine for /whois), but that made an officer's just-set class take
-// up to ~30 min to reach the in-game /who overlay (Hitya 2026-07-14, set a
+// up to ~30 min to reach the in-game /who overlay (the guild lead, 2026-07-14, set a
 // dozen classes by inspecting gear, none showed up). This makes /who-lookup read
 // who_overrides directly on a 60s cache, so a curation reaches the overlay within
 // the agent's own 5-min lookup cache instead of behind the 30-min refresh.
@@ -14353,7 +14354,7 @@ async function _freshWhoOverrides() {
 
 // POST /api/agent/who-override  { character, class }
 // Crowd-sourced /who de-anon: ANY guild member running Mimic (the shared agent
-// token is the gate — not officer-only, Hitya 2026-07-14) can set a player's
+// token is the gate — not officer-only, the guild lead 2026-07-14) can set a player's
 // class from the in-game /who overlay when they know it (e.g. they inspected
 // gear). Writes who_overrides — the same table /admin/who uses — so the
 // /who-lookup fast path (60s cache) propagates it to every overlay within
@@ -14528,9 +14529,9 @@ async function _handleAgentWhoLookup(req, res) {
   // Pass 2: who_directory — the DURABLE de-anon source, best-ever-seen
   // class/level/guild per character from who_observations (survives bot
   // restarts, covers CROSS-GUILD raiders the roster/characters tables never
-  // hold). This is the source that was missing entirely: Hitya 2026-07-14
+  // hold). This is the source that was missing entirely: the guild lead 2026-07-14
   // saw Cataran (Wizard/Savage), Jinroh (Enchanter/Eclipse) and even the
-  // guild's own Camping (Necro, but recently-gone) render as bare "anon"
+  // guild's own a member (Necro, but recently-gone) render as bare "anon"
   // though the who DB had every class. Runs for any requested name still
   // without a class — INCLUDING names pass 1 skipped for having no in-memory
   // or roster row (a cross-guild toon has neither), so this pass can CREATE a
@@ -14603,7 +14604,7 @@ async function _handleAgentWhoLookup(req, res) {
   } catch (err) { console.warn('[who-lookup] enrichment failed:', err?.message); }
 
   // Fold EQ level titles back to base classes at the serve boundary
-  // ("Warlock" = a 60 Necromancer — Hitya 2026-08-19, Syczlak on the /who
+  // ("Warlock" = a 60 Necromancer — the guild lead 2026-08-19, Syczlak on the /who
   // overlay). who_observations keeps whatever the /who line said, so rows
   // harvested before agent-side normalization (or from older agents) still
   // hold titles, and who_directory carries them into pass 2 above. The
@@ -14625,7 +14626,7 @@ async function _handleAgentWhoLookup(req, res) {
 // user can also dismiss the request from the dashboard.
 //
 // GET  /api/agent/backfill-requests?character=X[,Y]  — list pending for char(s)
-// GET /api/agent/character-prefs?characters=Hitya,Canopy
+// GET /api/agent/character-prefs?characters=Aldenmar,Brackwyn
 //
 // Returns the per-character data-handling preferences the owner has set on
 // `characters` (exclude_from_stats, exclude_inventory). The agent polls this
@@ -14732,7 +14733,7 @@ async function _noteTargetSwitches(rows) {
 
 // ── #194 Zeal /tag observations — append the evidence before it evaporates ───
 //
-// Hitya 2026-08-06: "let's craft a table to store these tags into to verify
+// The guild lead 2026-08-06: "let's craft a table to store these tags into to verify
 // how this operates … we need to determine if those spawn IDs are unique or
 // random or per person."
 //
@@ -14759,7 +14760,7 @@ function _zealTagKey(guildId, observer, spawnId, tagger, taggedAt) {
 
 // How many tags survive one live-state upload. Was 24, and a full-zone tagging
 // sweep in The Deep hit it EXACTLY — 24/24 on two independent agents, with the
-// rest silently gone (Hitya 2026-08-07). Worse, the old slice took the array
+// rest silently gone (the guild lead, 2026-08-07). Worse, the old slice took the array
 // as given, which from the agent is Map INSERTION order: the oldest tags were
 // kept and the newest dropped, so `Thought Horror Overfiend` — tagged last, and
 // the one mob in the zone anybody needed identified — fell off the end.
@@ -15035,7 +15036,7 @@ async function _handleAgentLiveState(req, res) {
 // log, that a character is BOTH the raid leader ("You are now the leader of
 // the raid.") AND has in-game Auto-Raid invite enabled ("Auto-Raid invite
 // enabled."). That character IS who members should /who for an auto-invite,
-// so we auto-set the ARI to them (Hitya 2026-07-13: "this is what we go off
+// so we auto-set the ARI to them (the guild lead, 2026-07-13: "this is what we go off
 // of for autoraidinvite"). Body: { character, active }. active:false (they
 // disabled ARI or lost raid lead) clears an AUTO-set ARI for that character —
 // never clobbers a manual /autoraidinvite set by an officer.
@@ -15349,7 +15350,7 @@ function _pruneCasts(now) {
       // lingers landed heals as a "+N healed" cue, and its poll cadence
       // (1s tick + 2s fetch TTL) needs the entry to survive a couple of
       // cycles past the land or a cross-client spot heal vanishes before the
-      // recipient ever fetches it (Hitya 2026-07-15).
+      // recipient ever fetches it (the guild lead, 2026-07-15).
       const grace = (c.heal_amount != null && c.heal_amount > 0) ? 9000 : 3000;
       const done = c.started_at_ms + (c.cast_secs || 6) * 1000 + grace;
       if (now > done || (now - c.received_at) > 30000) mp.delete(ck);
@@ -15376,7 +15377,7 @@ function _pruneCasts(now) {
 const _cureCastByTarget = new Map();
 const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
 
-// Manual "✓ cured" overrides from the buff-queue overlay (Hitya
+// Manual "✓ cured" overrides from the buff-queue overlay (the guild lead
 // 2026-07-07: "need a way to prune curse/poison/disease cure needs when both
 // the curer and the affected player are not using Mimic"). When NEITHER party
 // uploads, no agent can observe the cure landing, so the inferred debuff chip
@@ -15644,7 +15645,7 @@ async function _handleAgentRaidRoster(req, res) {
     // hp_max must be > 100: the EQ client only knows REAL cur/max for the
     // uploader themself — raid members arrive as a percent with hp_max=100,
     // and storing that as "exact" made the Tank overlay read "88 / 100 · 88%"
-    // (Hitya 2026-07-09). A ≤100 pool means "that's a %, keep hp_pct only".
+    // (the guild lead, 2026-07-09). A ≤100 pool means "that's a %, keep hp_pct only".
     const hpc = Number.parseInt(m?.hp_current, 10);
     const hpm = Number.parseInt(m?.hp_max, 10);
     const hasExact = Number.isFinite(hpc) && Number.isFinite(hpm) && hpm > 100;
@@ -15735,7 +15736,7 @@ function _dedupFlags(tune) {
 // from the same 60s tuning map and served on BOTH the reporter-poll (20s primary
 // control channel) AND the guild-trigger (2-min backup) responses so an agent
 // honors it via whichever channel it has. These are OFFICER-FACING POLICY
-// semantics — conservative v1, Hitya to sign off (STATUS + BETA-TESTING).
+// semantics — conservative v1, the guild lead to sign off (STATUS + BETA-TESTING).
 // FAIL-OPEN by construction: a missing/0 key = no effect (kill=false, floor=0),
 // and the agent only stands down while it has a FRESH reading — bot down = agents
 // run normally.
@@ -15874,7 +15875,7 @@ async function _handleAgentReporterPoll(req, res) {
   // timestamps with that same clock — so an install running 48s slow reports
   // deaths 48s slow. That is not a rounding nuisance: death dedup collapses
   // reports within 30s, so a skewed observer's copy escapes as a phantom second
-  // death (Dongru + Uilnayar, 2026-08-02 Seru parse).
+  // death (two raiders, 2026-08-02 Seru parse).
   //
   // The heartbeat is already a 20s unqueued round trip, so the offset comes free
   // — no new stream, no new timer. One-way latency contaminates it by tens of
@@ -16148,7 +16149,7 @@ async function _handleAgentFlagOverride(req, res) {
 }
 
 // ── Off-night event thread: the 🎲 rolled-loot card ──────────────────────────
-// Hitya 2026-07-31: a NON-raid guild event gets no DKP loot posts. Instead the
+// The guild lead 2026-07-31: a NON-raid guild event gets no DKP loot posts. Instead the
 // thread carries the items that dropped with their assigned roll ranges, the
 // night's parses (the autoparse cards already land there), and the rolled loot
 // with its winners.
@@ -16611,8 +16612,8 @@ async function _handleTriggerRelayPost(req, res) {
   // The sender's zones, for the scope gate — every live character on the
   // uploading ACCOUNT, resolved from the identity. The 3.1.111 version read
   // `payload.character`, which no agent has ever sent, so the origin was null
-  // on every fire and the gate failed open for everyone: Hitya, 2026-09-11,
-  // hearing Lucker's slows from Ssraeshza Temple while alone in Vex Thal.
+  // on every fire and the gate failed open for everyone: the guild lead, 2026-09-11,
+  // hearing a member's slows from Ssraeshza Temple while alone in Vex Thal.
   // Resolved once per request (2s-cached live-state read), not per fire.
   let originZones = [];
   try { originZones = [...await _requesterZones(identity.discord_id)]; }
@@ -16674,7 +16675,7 @@ async function _handleTriggerRelayPost(req, res) {
   return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
 }
 
-// ── Relay scope gate (Hitya, 2026-09-02; tightened 2026-09-11) ──────────────
+// ── Relay scope gate (the guild lead, 2026-09-02; tightened 2026-09-11) ──────────────
 // "Every so often we hear Shaman Slow when we're not around combat. These should
 // only trigger for local fights or during raids, not outside."
 //
@@ -16689,7 +16690,7 @@ async function _handleTriggerRelayPost(req, res) {
 // ⚠ OUTSIDE A RAID, UNKNOWN MEANS NOT LOCAL. The 3.1.111 gate failed open when
 // either side could not be placed, and because the ingest read a payload field
 // no agent ever sent, the sender was NEVER placed and the gate never dropped a
-// single fire. Hitya, 2026-09-11, alone in Vex Thal hearing a Ssraeshza slow:
+// single fire. The guild lead, 2026-09-11, alone in Vex Thal hearing a Ssraeshza slow:
 // "I'm not in a zone with another guild member, or in a group, or even a raid.
 // These random slips need to stop." The raid cases are the safety net for a
 // real callout: inside them nothing is consulted and everything relays.
@@ -17129,8 +17130,8 @@ async function _handleAgentTells(req, res) {
   // this upload is capturing SOMEONE ELSE'S private tells and would DM them to the
   // wrong person. Root cause (2026-07-24): the agent's NPC-hail character rename
   // fires on hail responses that bystanders also see, so a nearby raider's agent
-  // rebinds its identity to the hailer (e.g. "Hitya") and then relays that
-  // machine's tells under Hitya's opt-in — a real cross-user leak, seen live.
+  // rebinds its identity to the hailer (e.g. "Rethlan") and then relays that
+  // machine's tells under the guild lead's opt-in — a real cross-user leak, seen live.
   // The agent-side fix removes the flip at the source; THIS gate makes the leak
   // structurally impossible from the server regardless of agent version: the
   // owning discord must match the uploading discord. Shared/loaner alts are
@@ -17234,7 +17235,7 @@ async function _handleAgentTells(req, res) {
 // tell, SPEAKER → LISTENER in both directions: "**Other** → You" for
 // incoming, "You → **Other**" for outgoing. The left name is always who spoke.
 // (It used to draw incoming as "**Other** ← You", which reads as You speaking
-// — Hitya, 2026-09-14: "These are still going the wrong direction.")
+// — the guild lead, 2026-09-14: "These are still going the wrong direction.")
 // No header preamble and no per-message mute footer; the bot's name + 📬
 // glyph are the only chrome, and snooze controls live on /me/tells.
 async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
@@ -17514,7 +17515,7 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase, { track
   return { internalId: finalId, registered: true };
 }
 
-// Hitya 2026-08-19: "If they have a loot lockout we can keep them on." A mob
+// The guild lead 2026-08-19: "If they have a loot lockout we can keep them on." A mob
 // the SERVER hands out a loot lockout for is card-worthy by definition — and
 // the lockout (/sll) + bosskill relays carry exactly those names, including
 // the ones bosses.json doesn't know (instanced nameds outside the boards).
@@ -17561,7 +17562,7 @@ async function _recordKillLockouts({
 
   // Was this one of OUR kills? The encounter's raid_nights binding is the
   // direct answer when it exists. When it doesn't, the ROSTER SHARE decides —
-  // a raid night is not the only thing we run (Hitya 2026-08-22: "Friday was a
+  // a raid night is not the only thing we run (the guild lead, 2026-08-22: "Friday was a
   // guild rolling event, so internal, but still a lockout"), and only the
   // share of named players who are ours can tell an off-calendar guild event
   // from somebody else's raid. The raid-window check is the last fallback.
@@ -17786,7 +17787,7 @@ async function _handleAgentUpload(req, res) {
     if (isPet) e.pet += amount; else e.direct += amount;
   };
   // 🐾 Charmed summary for the parse card ("list the charmed mobs together",
-  // Hitya 2026-07-31): per pet NAME, the damage bucket + the claimants it
+  // The guild lead 2026-07-31): per pet NAME, the damage bucket + the claimants it
   // split across, from THIS upload's fold (latest perspective, like the
   // events count in the card footer).
   const _charmedPets = new Map();   // display name → { damage, claimants:Set }
@@ -17819,7 +17820,7 @@ async function _handleAgentUpload(req, res) {
       // least of all the charmer's own — sees the whole picture. When several
       // raiders legitimately run same-named charms in one fight (three
       // Revenants, 2026-07-30), an equal split across the CURRENT claimants
-      // is the honest non-unique attribution (Hitya 2026-07-31). What we
+      // is the honest non-unique attribution (the guild lead, 2026-07-31). What we
       // never do again is split across everyone who charmed that name all
       // night — that's the Blood of Sraeshza corruption (damage credited to
       // raiders who were mezzing, dead, or in another zone).
@@ -17841,7 +17842,7 @@ async function _handleAgentUpload(req, res) {
         // raider's will, where attribution is the interesting part. Regular
         // summons ride the same pet_leaders path but are NOT charmed:
         //   • possessive names ("Purrina`s warder") — warders/summons named
-        //     after their master (Hitya 2026-07-31: "regular pets just named
+        //     after their master (the guild lead, 2026-07-31: "regular pets just named
         //     after their Master");
         //   • single-word names ("Gobn") — mage/necro summons.
         // Their damage still folds into the owner exactly as before; they
@@ -17904,7 +17905,7 @@ async function _handleAgentUpload(req, res) {
   // time here — before dedup, before _noteRaiderDeaths, and before they are
   // persisted on the contribution (utils/clockOffset.js). A skewed observer's
   // copy of a shared death used to escape the 30s dedup window and render as a
-  // second death (Fargan's 63s-slow install, Hitya 2026-08-06).
+  // second death (a member's 63s-slow install, the guild lead 2026-08-06).
   //
   // Gated on there being deaths at all: most uploads have none, and the lookup
   // is a Supabase read. No deaths, nothing to correct, no reason to ask.
@@ -17959,7 +17960,7 @@ async function _handleAgentUpload(req, res) {
   // Shows every encounter as it arrives — boss and trash — so officers can verify
   // data quality in real-time without touching the live raid boards.
   //
-  // ROUTING (Hitya 2026-07-31): the card goes to the per-night thread
+  // ROUTING (the guild lead, 2026-07-31): the card goes to the per-night thread
   // (utils/raidNight.js, created lazily on the night's first card) and falls
   // back to AUTOPARSE_TEST_THREAD_ID when night threads are off/unresolvable.
   // The CANONICAL parse record does NOT move: logParseToDiscord still writes
@@ -17992,12 +17993,12 @@ async function _handleAgentUpload(req, res) {
       // original QA thread. Resolution is cached per night — not per card.
       const _rn = require('./utils/raidNight');
       // Which zone the kill was in, so two events running at once each get
-      // their own kills rather than whichever start time is nearer (Hitya
+      // their own kills rather than whichever start time is nearer (the guild lead
       // 2026-09-07). Null when unknown → the clock decides, as before.
       const _zoneId = await _killZoneId(encounter.boss_name, character).catch(() => null);
       const _target = await _rn.getRaidNightTarget(client, startedMs, _zoneId)
         .catch(() => ({ thread: null, kind: null, event: null }));
-      // Volume knob (Hitya 2026-07-31) — 1-player/1-second trash cards flooded
+      // Volume knob (the guild lead, 2026-07-31) — 1-player/1-second trash cards flooded
       // night one's thread. Known bosses always pass; everything else has to
       // clear the floors. The canonical '📊 Parse Log' record below is NOT
       // filtered, and neither is Supabase — this only gates what raiders read.
@@ -18011,7 +18012,7 @@ async function _handleAgentUpload(req, res) {
         durationSec: duration, playerCount: players.length, isBoss: _isBossCard,
       });
       const nightThread = (_target.thread && _passesVolume) ? _target.thread : null;
-      // QA copy (Hitya: "can still get a copy if need be") —
+      // QA copy (The guild lead: "can still get a copy if need be") —
       //   AUTOPARSE_QA_COPY=off       never post to the QA thread
       //   AUTOPARSE_QA_COPY=fallback  (default) only when the night thread
       //                               didn't take the card — the safety net
@@ -18050,8 +18051,8 @@ async function _handleAgentUpload(req, res) {
         // at the exact same timestamp are treated as separate kills.
         //
         // Earlier attempt that only compared ended_at proximity broke for
-        // the out-of-range case — Utoh's encounter ended via idle flush
-        // ~minutes before Syrl's in-range parser saw the death event, so
+        // the out-of-range case — a member's encounter ended via idle flush
+        // ~minutes before a member's in-range parser saw the death event, so
         // their ended_at gap exceeded any reasonable tolerance window.
         // Cache-first lookup: _liveCards is updated immediately (before the async
         // Discord send resolves), so concurrent uploads for the same boss find
@@ -18178,7 +18179,7 @@ async function _handleAgentUpload(req, res) {
 
           // ── Merge deaths (#134) ───────────────────────────────────────────
           // The old code SUMMED each parser's sighting of the same death — three
-          // parsers each seeing "Melting" die once rendered "Melting ×3". The
+          // parsers each seeing "Ambriel" die once rendered "Ambriel ×3". The
           // website already does this right: dedup across uploaders on name+ts
           // (~30s window) and suppress any name a SINGLE uploader reported dying
           // 2+ times (an NPC namesake). Accumulate each parser's RAW sightings
@@ -18437,7 +18438,7 @@ async function _handleAgentUpload(req, res) {
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
         // 🐾 Charmed — the charm pets listed together with who their damage
-        // split across ("A Shissar Revenant — 12,480 (Jankzer / Rorschach)").
+        // split across ("A Shissar Revenant — 12,480 (Tilbrook / Gwenna)").
         // Latest-perspective like the footer's event count; same-named pets
         // stay one line because the log can't tell them apart (no spawn id).
         if (_charmedPets.size > 0) {
@@ -18538,7 +18539,7 @@ async function _handleAgentUpload(req, res) {
         }
 
         // #83b — point the web parse page's "View in Discord" at THIS
-        // human-readable card, not the Parse Log JSON embed (Hitya
+        // human-readable card, not the Parse Log JSON embed (the guild lead
         // 2026-07-31: the button landed on the machine-format thread).
         // Unconditional write so the card wins over the JSON-embed stitch
         // (applyEncounterParseLink), whose is.null guard keeps it as the
@@ -18614,7 +18615,7 @@ async function _handleAgentUpload(req, res) {
         if (session?.threadId) {
           sessionTargetChannel = await client.channels.fetch(session.threadId).catch(() => null);
         }
-        // The night/event thread IS the landing spot (Hitya 2026-07-31). On a
+        // The night/event thread IS the landing spot (the guild lead, 2026-07-31). On a
         // normal raid night the /raidnight session thread above already IS it;
         // this covers the nights nobody ran /raidnight — without it the card
         // fell through to the officers' QA thread, because RAID_CHAT_CHANNEL_ID
@@ -18870,7 +18871,7 @@ async function _handleAgentUpload(req, res) {
         // stops showing as ENGAGED as soon as one of the raid's agents saw it
         // die. Set-once (ended_at=is.null filter): the first confirmed death
         // time wins; later unconfirmed idle-flush uploads can't clear it.
-        // (Hitya 2026-06-29 — "anyone saw the mob die … register the parse".)
+        // (the guild lead, 2026-06-29 — "anyone saw the mob die … register the parse".)
         if (recParseResult?.encounterId && encounter.confirmed_kill === true) {
           const endedIso = encounter.ended_at
             ? new Date(encounter.ended_at).toISOString()
@@ -18882,8 +18883,8 @@ async function _handleAgentUpload(req, res) {
         }
 
         // A confirmed kill of a lockout-bearing raid boss IS a lockout
-        // observation for everyone who was there — Hitya 2026-08-22, on a
-        // Ventani parse Taeya had uploaded from a non-guild raid: "taeya
+        // observation for everyone who was there — the guild lead 2026-08-22, on a
+        // Ventani parse a member had uploaded from a non-guild raid: "taeya
         // reported this Ventani kill so they should have a lockout." The
         // /sll relay this table was built on needs a human to type /sll in
         // game, so it had produced zero rows while the encounter pipe had
@@ -18978,7 +18979,7 @@ async function _handleAgentUpload(req, res) {
   // [#80-live] Live Raid Night Review — post-ack, synchronous, fully swallowed.
   // Two jobs, neither of which may ever reach this handler's control flow:
   //   • tally the kill when it was NOT a tracked boss (`encounters` is
-  //     boss-only, so the trash totals Hitya asked for have no other source);
+  //     boss-only, so the trash totals the guild lead asked for have no other source);
   //   • mark the night dirty so the live card refreshes on its own debounce.
   // It is handed a SIGNAL, never combat data — every number on the card still
   // comes from Supabase, so the live card can't disagree with the parse card.
@@ -19105,7 +19106,7 @@ const httpServer = http.createServer(async (req, res) => {
   // it without redirecting the officer to Discord. Auth via the agent
   // bearer (same shared secret); the web action validates officer status
   // server-side before calling, and the bot logs the recorded_by id for
-  // audit. Hitya 2026-06-21.
+  // audit. The guild lead 2026-06-21.
   if (req.method === 'POST' && req.url === '/api/admin/opendkp-register') {
     const identity = await mimicLink.requireAgentAuth(req, res);
     if (!identity) return;
@@ -19127,9 +19128,9 @@ const httpServer = http.createServer(async (req, res) => {
       const recordedBy = String(body?.recorded_by_discord_id || '').trim();
       // OpenDKP CharacterId of the family root this new character should be
       // parented under. The web /admin/links page computes this from the
-      // uploader's existing characters cluster — e.g. Hitya's Mimic uploads
-      // a new alt, OpenDKP already lists her family rooted at Canopy, so
-      // the new character lands as one of Canopy's alts instead of becoming
+      // uploader's existing characters cluster — e.g. a Mimic uploads
+      // a new alt and OpenDKP already roots that family somewhere, so
+      // the new character lands as one of that main's alts instead of becoming
       // its own un-parented root. 0 = no parent (acceptable when the web
       // genuinely couldn't resolve a family root for the uploader).
       const parentOpenDkpId = Number.isFinite(parseInt(body?.parent_opendkp_id, 10))
@@ -19538,7 +19539,7 @@ const httpServer = http.createServer(async (req, res) => {
   // missed the source line can replay it. Stored in _triggerRelay ring
   // buffer; receivers fetch via GET /api/agent/recent-fires below.
   // Feedback from inside Mimic, with an optional redacted log slice
-  // (Hitya 2026-09-02). The agent does the redaction — officer chat, tells,
+  // (the guild lead, 2026-09-02). The agent does the redaction — officer chat, tells,
   // group and /who are gone before this ever sees the bytes — so the bot's job
   // is to store it and tell the officers.
   if (req.method === 'POST' && req.url === '/api/agent/feedback') {
@@ -19670,7 +19671,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
-  // Fun-events ingestion — Peopleslayer LD counter, future CoH/DI/Aegolism/Rune.
+  // Fun-events ingestion — a member LD counter, future CoH/DI/Aegolism/Rune.
   // Each event upserts into the fun_events table; the unique constraint on
   // (guild_id, event_type, caster, event_ts) silently dedups replays.
   if (req.method === 'POST' && req.url === '/api/agent/fun_event') {
@@ -19683,7 +19684,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
-  // Trigger timing feedback — votes from Mimic's trigger overlay (Hitya
+  // Trigger timing feedback — votes from Mimic's trigger overlay (the guild lead
   // 2026-06-26 — v1.1.2). Each vote inserts a trigger_timing_feedback row;
   // officer /admin/triggers will surface aggregates in a follow-up so the
   // guild's triggers can be tuned from evidence instead of guesswork.

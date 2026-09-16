@@ -1,6 +1,6 @@
 // test/scrap-leaderboard-raid-fights.test.js — the Scrap counts raid fights only.
 //
-// Hitya, 2026-09-13: "Chadivarius's 26.8M damage on a non-raid swarm shouldn't
+// The guild lead, 2026-09-13: "a member's 26.8M damage on a non-raid swarm shouldn't
 // be in here for the leaderboards." 25.96M of it was one-to-two-player
 // Shik`nar farming. The RPC behind /me's Top Dog card now admits a fight only
 // when at least seven damage-dealers were credited on it, and drops

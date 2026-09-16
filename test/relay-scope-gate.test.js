@@ -1,11 +1,11 @@
 // test/relay-scope-gate.test.js — a guild trigger that fires on someone else's
 // machine should not speak on yours unless it is relevant to you.
 //
-// Hitya, 2026-09-02: "Every so often we hear 'Shaman Slow' when we're not around
+// The guild lead, 2026-09-02: "Every so often we hear 'Shaman Slow' when we're not around
 // combat. It's a guildwide scope. These should only trigger for local fights or
 // during raids, not outside."
 //
-// Hitya, 2026-09-11, alone in Vex Thal while Lucker slowed trash in Ssraeshza:
+// The guild lead, 2026-09-11, alone in Vex Thal while a member slowed trash in Ssraeshza:
 // "I'm not in a zone with another guild member, or in a group, or even a raid.
 // These random slips need to stop."
 //

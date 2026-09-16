@@ -1,6 +1,6 @@
 // /raidhistory — every raid night, coloured by how full the raid was.
 //
-// Hitya, 2026-09-03: "give us a /raidhistory page as well that contains each
+// The guild lead, 2026-09-03: "give us a /raidhistory page as well that contains each
 // night and this view with a scale from red at half raiders to green full
 // raiders, orange middle of the way."
 //
@@ -14,7 +14,7 @@
 // empty the page falls back to 60 rather than to nothing. `?full=` overrides
 // it for a what-if read, `?weeks=` widens the window. Neither writes anything.
 //
-// Only OFFICIAL raid nights (Hitya, 2026-09-04: "it should just be our raid
+// Only OFFICIAL raid nights (the guild lead, 2026-09-04: "it should just be our raid
 // days"): bonus rows are dropped and a raid's night is the date in its name
 // (lib/raidHeatmap: isOfficialRaid, raidNightKey). Nights are drawn as month
 // blocks of day chips, each chip carrying the raider count.
@@ -43,7 +43,7 @@ import RaidLayoutPicker from '@/components/RaidLayoutPicker';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 
-// Two layouts, member's choice (Hitya, 2026-09-04, after the beta side-by-side:
+// Two layouts, member's choice (the guild lead, 2026-09-04, after the beta side-by-side:
 // "I like blocks and strips, let's keep both as options, default to strips").
 // The choice lives in the wp_raid_layout cookie; ?layout= overrides it for a
 // shared link. lib/raidLayout.ts decides; RaidLayoutPicker writes the cookie.

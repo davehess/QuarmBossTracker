@@ -1,16 +1,16 @@
 // test/ch-unnumbered-spot-heal.test.js — no number, no chain slot.
 //
-// Pyxil (druid) was spot-healing the RAMPAGE target and shouting her heals
+// A member (druid) was spot-healing the RAMPAGE target and shouting her heals
 // without a slot number:
 //
 //   [R] [Pyxil]: TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left
 //
 // Tunare's Renewal is a CH-equivalent, so the agent auto-assigned her a chain
-// slot the first time it saw one. She landed on 006 — where Mcdorf actually
+// slot the first time it saw one. She landed on 006 — where a member actually
 // was — which lit the ORDER CONFLICT banner and put a druid who was nowhere
 // near the rotation into the middle of it.
 //
-// Hitya's rule: "she shouldn't be placed back onto the CH chain even though
+// The guild lead's rule: "she shouldn't be placed back onto the CH chain even though
 // she's posting CHs." The number is what makes it a chain.
 //
 // The trap this guards against is the reasoning that USED to be in the code:
@@ -59,7 +59,7 @@ describe('an un-numbered CH-equivalent shout', () => {
     const owner6 = (before.slots['6'] || before.slots[6]).name;
     expect(owner6).toBe('Mcdorf');
 
-    // Pyxil's three real shouts from the raid.
+    // A member's three real shouts from the raid.
     for (const t of [3, 2, 1]) {
       trackChChainLine(line(t, "Pyxil tells the raid,  'TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left'"));
     }

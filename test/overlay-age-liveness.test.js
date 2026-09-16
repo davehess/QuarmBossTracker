@@ -1,7 +1,7 @@
 // test/overlay-age-liveness.test.js — overlays must not render a value they
 // cannot date, or one whose subject is dead.
 //
-// The class of bug (Hitya, 2026-08-09 Emperor Ssraeshza):
+// The class of bug (the guild lead, 2026-08-09 Emperor Ssraeshza):
 //   • Target Info showed the main tank at "7k / 7k · 100%" while he was at
 //     roughly half health. The percentage came from the live Zeal gauge; the
 //     exact pair came from a cross-client snapshot the bot will serve up to 90s
@@ -83,7 +83,7 @@ describe('the death registry', () => {
 
   it('snapshots the currently dead with how long ago, name AS WRITTEN', () => {
     // ⚠ This used to look up 'currygoat' — it was asserting the bug that put
-    // lowercase names on the Command Center's needs-rez board (Hitya,
+    // lowercase names on the Command Center's needs-rez board (the guild lead,
     // 2026-08-30). The key stays lowercase for matching; `name` is the
     // spelling a healer reads.
     _noteDeath('Currygoat', Date.now() - 5000);

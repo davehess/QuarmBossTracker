@@ -1,7 +1,7 @@
 // test/pacify-tracking.test.js — the pull-safety family, and the two ways it
 // can lie to you.
 //
-// Hitya, 2026-09-02: "things like pacifying where we lower aggro radius for a
+// The guild lead, 2026-09-02: "things like pacifying where we lower aggro radius for a
 // mob and don't engage. but keep the timer is vital for certain operations."
 //
 // ⚠ THE COUNTDOWN IS THE ONLY SIGNAL THAT WILL EVER EXIST. `spell_fades` is
@@ -147,7 +147,7 @@ describe('the flag the overlay actually branches on', () => {
     expect(row.owner).toBe('Canopy');
   });
 
-  // ⚠ Hitya, 2026-09-02: "harmony is not the same as pacify... it's AOE so
+  // ⚠ the guild lead, 2026-09-02: "harmony is not the same as pacify... it's AOE so
   // nearby mobs will get harmony as well. harmony will still aggro mobs if you
   // stand very close, vs pacify that will not attack even if you're colliding
   // with them." targettype confirms it: Harmony and Wake of Tranquility are 8
@@ -322,7 +322,7 @@ describe('synthesizing the silent pacifies', () => {
     expect(h2.buffCastBuffer.length).toBe(0);
   });
 
-  // ⚠ Hitya, 2026-09-02: "harmony is unresistable, but it will not work on
+  // ⚠ the guild lead, 2026-09-02: "harmony is unresistable, but it will not work on
   // certain mobs. plane of sky is a place where it does not work, despite being
   // outdoors." The zone flag genuinely does not explain it — Plane of Sky is
   // cast_outdoor=1 in eqemu_zone. What explains it is EQEmu NPC special ability

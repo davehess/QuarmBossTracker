@@ -10,7 +10,7 @@
 // Suggestions for the picker come from two sources:
 //   1) Name-token match against character names in the member's Discord
 //      nickname / global_name (the /admin/links heuristic). Many members
-//      list "Hitya / Pyxil / Jankzer" style rosters in their nickname.
+//      list a "Main / Alt / Alt" style roster in their nickname.
 //   2) /who observations — characters who have been observed by an
 //      uploader whose own character matches a token from this member's
 //      nickname. Catches "Bob runs the agent and has been seen logged
@@ -78,7 +78,7 @@ function fmtJoined(iso: string | null): string {
 }
 
 // Tokenize a Discord display name. Matches the /admin/links logic so
-// "Abrahms/Canniball/Fischer" → ["abrahms","canniball","fischer"].
+// "Main/Alt/Alt" → ["main","alt","alt"].
 function tokenize(raw: string | null | undefined): string[] {
   if (!raw) return [];
   const cleaned = raw

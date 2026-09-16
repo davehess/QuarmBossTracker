@@ -15,7 +15,7 @@
 // date. Scrubbing back does not filter a list, it un-adopts rules.
 //
 // Motion: the platform's overlays treat animation as a cost because they are
-// read mid-fight. This is a page read deliberately, and Hitya asked for smooth
+// read mid-fight. This is a page read deliberately, and the guild lead asked for smooth
 // transitions, so they earn their place here — but every principle card stays
 // MOUNTED and toggles a class instead of unmounting, because that is what
 // makes the transition continuous rather than a flash of re-layout. All of it

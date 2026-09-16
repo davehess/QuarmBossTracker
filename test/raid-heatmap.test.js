@@ -1,12 +1,12 @@
 // test/raid-heatmap.test.js — the pure helpers behind the raid-attendance
-// heatmaps on /me and /raidhistory (Hitya, 2026-09-03).
+// heatmaps on /me and /raidhistory (the guild lead, 2026-09-03).
 //
 // Real imports, real calls: a comment cannot satisfy a function. The traps
 // each block pins were found against live rows the same day:
 //   · a night is an EASTERN day, and two raids can share one (25 of 389 do);
 //   · a raider on two characters is one raider, and "Hitya" and "hitya" are
 //     the same tick attendee;
-//   · the colour scale is Hitya's, not a gradient from zero: red UNTIL half,
+//   · the colour scale is the guild lead's, not a gradient from zero: red UNTIL half,
 //     orange AT three-quarters, green FROM full;
 //   · nights are shown as month blocks, newest month first, nights in date
 //     order inside a month — the shape that reads on a phone and a desktop.

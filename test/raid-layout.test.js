@@ -1,5 +1,5 @@
 // test/raid-layout.test.js — the member's choice between the two attendance
-// layouts (Hitya, 2026-09-04: "I like blocks and strips, let's keep both as
+// layouts (the guild lead, 2026-09-04: "I like blocks and strips, let's keep both as
 // options, default to strips").
 //
 // The pure picker is real-imported; the wiring is stripped-source: both pages
@@ -51,7 +51,7 @@ describe('the pages honour the choice', () => {
     expect(history).toMatch(/layout === 'strips' \? \(\s*<RaidNightsStrips/);
     expect(meAtt).toMatch(/layout === 'strips' \? \(\s*<RaidNightsStrips/);
     expect(history).toMatch(/<RaidLayoutPicker current=\{layout\} \/>/);
-    // /me flips locally (Hitya, 2026-09-13: the server round trip re-rendered
+    // /me flips locally (the guild lead, 2026-09-13: the server round trip re-rendered
     // the whole account twice per click); the cookie the page reads on the
     // next fresh load is still written by the picker.
     expect(meAtt).toMatch(/<RaidLayoutPicker current=\{layout\} onChange=\{setLayout\} \/>/);

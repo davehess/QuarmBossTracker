@@ -1,6 +1,6 @@
 // test/spell-effect-decode.test.js — what a buff actually gives you.
 //
-// Hitya, 2026-09-02, with two in-game spell descriptions: "The buffs on the
+// The guild lead, 2026-09-02, with two in-game spell descriptions: "The buffs on the
 // buffs page should give the affects that they're providing each, and then a
 // summary below of all of the things that are provided."
 //

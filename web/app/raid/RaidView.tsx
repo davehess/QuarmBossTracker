@@ -120,7 +120,7 @@ const CLASS_PROVIDES: Record<string, BuffCategory[]> = {
 };
 
 // Which resist SCHOOLS each class can cover — drives per-school gaps in the
-// buffer queue ("Resist Magic missing on Dafeet") instead of the generic
+// buffer queue ("Resist Magic missing on Kelbrin") instead of the generic
 // resists bucket, which any one resist buff satisfied.
 const CLASS_PROVIDES_RESISTS: Record<string, ResistType[]> = {
   enchanter: ['MR'],
@@ -164,7 +164,7 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
   return '';
 }
 
-// Twitch Queue sort key — LOWEST MANA FIRST is the spine (Hitya 2026-07-19:
+// Twitch Queue sort key — LOWEST MANA FIRST is the spine (the guild lead, 2026-07-19:
 // "it really should be lowest first"), with a class boost that floats the most
 // mana-critical raiders up at a given fill: clerics hardest (a dry cleric = a
 // wipe), then wizards/enchanters (pure-mana nukers/CC). Lower key = higher in
@@ -176,7 +176,7 @@ function twitchSortKey(r: { className: string | null; manaPct: number }): number
 }
 // Bards can't be mana-fed by any external source (only meditate + Flowing
 // Thought), so twitching them is wasted — they never belong on the board
-// (Hitya 2026-07-19).
+// (the guild lead, 2026-07-19).
 function twitchEligible(className: string | null): boolean {
   return (className || '').trim().toLowerCase() !== 'bard';
 }
@@ -200,8 +200,8 @@ export default function RaidView({
   ari: { character: string; setByName: string | null; setAt: string | null } | null;
   // No Zeal type-5 raid snapshot from ANY uploader, yet we do have live-state
   // characters — the roster grid can't group anyone, so surface WHY instead of
-  // a bare "No roster yet" (Hitya 2026-07-05: "lost Peopleslayer off the
-  // raids tab and Bstie isn't here").
+  // a bare "No roster yet" (the guild lead, 2026-07-05: "lost someone off the
+  // raids tab and they aren't here").
   rosterMissing?: boolean;
 }) {
   // Default Buffer-mode class = the signed-in user's own class as detected in
@@ -240,7 +240,7 @@ export default function RaidView({
     return m;
   }, [inRaidRows]);
   // Parking-lot threshold: characters unseen for >5 min get moved to the
-  // "Not seen / offline" group (Hitya 2026-06-22 — "Not in raid implies
+  // "Not seen / offline" group (Rethlan 2026-06-22 — "Not in raid implies
   // they're still online"). 5 min lines up with Mimic's live-state heartbeat
   // cadence; anything older than that is almost always logged out, not
   // just sitting in the parking lot. Default still hides stale rows from
@@ -382,7 +382,7 @@ export default function RaidView({
            .sort((a, b) => (b.manaPct! - a.manaPct!) || a.name.localeCompare(b.name)),
     [tabRows]);
   // Twitch Queue — who to feed mana next: LOWEST mana up top, clerics floated
-  // hardest, then wizards/enchanters (Hitya 2026-07-19). Bards excluded — they
+  // hardest, then wizards/enchanters (the guild lead, 2026-07-19). Bards excluded — they
   // can't be twitched. Same source list, re-filtered + re-sorted.
   const twitchQueue = useMemo(() =>
     manaList.filter(r => twitchEligible(r.className))
@@ -535,7 +535,7 @@ export default function RaidView({
             // (someone else's Mimic saw the cast) but produces no HP signal of
             // their own, so !noAgent marked whole groups as covered when nobody
             // in them ran anything. Group 6 showed the MIMIC chip on five
-            // inferred rows (Hitya 2026-08-06).
+            // inferred rows (the guild lead, 2026-08-06).
             const mimicInGroup = grpRows.some(r => r.hasAgent);
             return (
               <section key={label} className="bg-panel border border-border rounded-lg overflow-hidden">

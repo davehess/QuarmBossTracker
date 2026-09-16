@@ -47,9 +47,8 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
   // ROSTER SOURCE: we used to read from opendkp_character_id_to_name —
   // which is EMPTY on the live database (the OpenDKP sync never populated
   // it), so the diff treated every chatter as missing and the queue
-  // showed every active Wolf Pack member. Hitya 2026-06-21 ("I know
-  // for a fact this is not true — Kazmodon/Statlander/Pyxil et al ARE
-  // in OpenDKP"). The real "is this character in OpenDKP" signal lives
+  // showed every active Wolf Pack member. The guild lead, 2026-06-21 ("I know
+  // for a fact this is not true — these people ARE in OpenDKP"). The real "is this character in OpenDKP" signal lives
   // in opendkp_attendance_recent — every character who's been ticked
   // shows up there — backstopped by characters.opendkp_id (set by the
   // OpenDKP sync when a character gets parented in the roster).
@@ -375,7 +374,7 @@ function parseTickTime(raidTs: string, description: string | null): string | nul
 // (5) Potentially-missing raid ticks — family-aware, evidence-backed.
 //
 // A "missed tick" only counts when the person was demonstrably PRESENT but not
-// in the snapshot. Three cases (Hitya 2026-06-23):
+// in the snapshot. Three cases (the guild lead, 2026-06-23):
 //   • INTERIOR gap — ticked (on any of their characters) BEFORE and AFTER the
 //     missed tick. Self-evident: a swap / LD / zone cost them a tick.
 //   • END-OF-RAID (trailing) — missed the last tick(s) but combat or chat
@@ -578,8 +577,8 @@ async function loadPotentialMissingTicks(): Promise<QueueCategory> {
 // (6) Chat speaker misattribution. A misconfigured agent tails a stray
 // eqlog_<Name> log (an old or foreign character still in the watched folder),
 // so guild/raid chat the player typed on their REAL character is stamped with
-// that stray name (Wabumkin's machine emitting "Dopefiend"/"Facehack";
-// Chadivarius's emitting "Ashaiya"). The chat_attribution_conflicts RPC finds
+// that stray name (a member's machine emitting "Dopefiend"/"Facehack";
+// A member's emitting "Ashaiya"). The chat_attribution_conflicts RPC finds
 // lines where the same in-game broadcast was stored under both a ghost name
 // (non-roster, one uploader) and a real roster name (seen by bystanders). The
 // fix is on the member's machine: remove the stray log from Mimic's watch dir.

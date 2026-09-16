@@ -1,6 +1,6 @@
 // test/buff-durations.test.js — measuring how long a buff actually lasted.
 //
-// Hitya, 2026-09-02: "Move buffs to the buffs tab and give it a more robust view
+// The guild lead, 2026-09-02: "Move buffs to the buffs tab and give it a more robust view
 // of effects and timeframes ... also provide an estimate of how long cast buffs
 // will last by character based on AA/Focus effects."
 //

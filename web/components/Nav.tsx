@@ -3,13 +3,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 
-// Four top-level categories (Hitya, 2026-08-28). Sixteen chips wrapped to three
+// Four top-level categories (the guild lead, 2026-08-28). Sixteen chips wrapped to three
 // rows on desktop and six on a phone, which pushed the page's whole first
 // viewport below the fold. Everything is still one click away — the difference
 // is that you now choose a category first.
 //
 // Grouping is a judgment call: Raid is what you touch DURING one, Stats is what
-// happened, Prep is what you do beforehand. Hitya has ruled on three so far —
+// happened, Prep is what you do beforehand. The guild lead has ruled on three so far —
 // Buffs is Raid; Quartermaster and /who are Prep (2026-08-28). Say so if a
 // destination is filed wrong; nothing here is load-bearing beyond the label.
 export type Item = { href: string; label: string };
@@ -109,7 +109,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
 
   return (
     <div ref={wrap} className="relative" onMouseLeave={() => { if (canHover) setOpen(null); }}>
-      {/* ⚠ NOWRAP, deliberately (Hitya, 2026-08-30: "Top nav is broken when you
+      {/* ⚠ NOWRAP, deliberately (the guild lead, 2026-08-30: "Top nav is broken when you
           log in on desktop in chrome"). This row is only ever the header's
           middle group, and its container can be squeezed thin by a wide
           right-hand block — signed in that block gains the search box, Tour,
@@ -145,7 +145,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
         })}
 
         {/* ⚠ Always rendered. The brief is four top-level doors — Raid, Stats,
-            Prep and /me (Hitya) — and gating this one on `showMe` quietly made
+            Prep and /me (the guild lead) — and gating this one on `showMe` quietly made
             it three for every signed-out visitor, which is how it went missing.
             /me redirects to `/auth/signin?next=/me` on its own, so a signed-out
             click lands on sign-in and comes back here rather than dead-ending;
@@ -158,7 +158,7 @@ export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?:
             brief and exactly the 95px that stopped the signed-in bar fitting. */}
       </nav>
 
-      {/* The revealed row. On hover devices it FLOATS under the chips (Hitya,
+      {/* The revealed row. On hover devices it FLOATS under the chips (the guild lead,
           2026-09-13: "the top design jumps around when hovering, it needs to
           stay in place") — in flow it grew the header by a row on every
           mouseover and pushed the whole page down and back. On touch there is

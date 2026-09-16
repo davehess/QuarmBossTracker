@@ -1,5 +1,5 @@
 // /raid/plan — Fight Cards, the pre-raid readiness page (task #43,
-// docs/DESIGN-fight-cards.md; Hitya: "conceptually it was a checklist for each
+// docs/DESIGN-fight-cards.md; The guild lead: "conceptually it was a checklist for each
 // of the fights to make sure that we had the player composition that we
 // needed, and a review of the tactics that keep us from wasting time and
 // wiping").

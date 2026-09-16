@@ -1,6 +1,6 @@
 // /fun — guild-flavor counters that don't matter for raid optimization but
-// are fun to track. First tenants: Peopleslayer LD counter (from the agent's
-// fun_events stream) and Tunare mentions from Naggato's family (from the
+// are fun to track. First tenants: a member LD counter (from the agent's
+// fun_events stream) and Tunare mentions from a member's family (from the
 // chat_messages table). Future tenants will join as the agent ships their
 // detectors: CotH Pearl (Magician), DI Emerald, Aegolism/Rune Peridot, etc.
 
@@ -77,7 +77,7 @@ async function loadKyinen(sb: Sb) {
 }
 
 SECTIONS.push(async (sb, counters) => {
-  // Peopleslayer LD card — count + damage he logged in fights he was ACTUALLY
+  // A member LD card — count + damage he logged in fights he was ACTUALLY
   // disconnected during. The joke: he goes linkdead mid-fight and his character
   // keeps swinging. The earlier version summed his total_damage across EVERY
   // encounter that started after his first-ever LD — i.e. essentially his whole
@@ -85,13 +85,13 @@ SECTIONS.push(async (sb, counters) => {
   // we only count an encounter if one of his LD timestamps falls inside that
   // encounter's window [started_at, started_at + duration_sec] — "damage dealt
   // while he was disconnected." Still only his own encounter_players rows.
-  // ── 🔌 Raids since Peopleslayer crashed ──────────────────────────────────
-  // Peopleslayer got a new machine; we flipped the card from "lifetime LD
+  // ── 🔌 Raids since a member crashed ──────────────────────────────────
+  // A member got a new machine; we flipped the card from "lifetime LD
   // count" (the old one — strikethrough'd in the subtitle as a callback) to
   // "raids since the most recent LD", per his own suggestion. Shows the date
   // of the last LD in bold + the zone it happened in (agent v3.1.72+ enriches
   // the event with the zone from Zeal state). Previous-best streak strikes
-  // through when broken — same pattern as the Moash card. (Hitya 2026-06-26.)
+  // through when broken — same pattern as the enrage-death card. (the guild lead, 2026-06-26.)
   try {
     const { data: ldRows, count: ldTotal } = await sb
       .from('fun_events')
@@ -102,7 +102,7 @@ SECTIONS.push(async (sb, counters) => {
       .map(r => ({ ts: new Date(r.event_ts).getTime(), zone: r.target }))
       .filter(r => Number.isFinite(r.ts));
 
-    // "Raids since" = distinct UTC dates where Peopleslayer parsed an
+    // "Raids since" = distinct UTC dates where Emberly parsed an
     // encounter, from after his most recent LD until today. Each distinct
     // calendar date counts as one raid he survived without going LD.
     const fmtDay = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -126,7 +126,7 @@ SECTIONS.push(async (sb, counters) => {
       raidsSince = sinceDays.size;
 
       // Previous-best streak — for each consecutive pair of LDs, count distinct
-      // raid dates Peopleslayer parsed between them. The biggest one is the
+      // raid dates a member parsed between them. The biggest one is the
       // record to beat. Cheap-and-correct: one extra query covering all gaps.
       if (lds.length >= 2) {
         const firstMs = lds[0].ts;
@@ -200,9 +200,9 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // Tunare mentions from Naggato + alts.
+  // Tunare mentions from a member + alts.
   //
-  // THE BUG (Hitya 2026-08-04, "what happened to our Tunare invocations?"):
+  // THE BUG (the guild lead, 2026-08-04, "what happened to our Tunare invocations?"):
   // this card read 0 while the data was right there — 83 rows, latest
   // 2026-07-31. The reason it read 0 rather than SAYING anything is the shape
   // below: supabase-js does not throw on a failed call, it returns
@@ -278,9 +278,9 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
+  // ── A member's Bounty — stacks of food + water distributed. Recipient-side
   // detector means each member's agent reports what THEY received; summing
-  // approximates total stacks Malthur put out. Plain captured count (the
+  // approximates total stacks a member put out. Plain captured count (the
   // 420 founders' baseline was removed per owner request).
   const MALTHUR_BASELINE = 0;
   try {
@@ -355,8 +355,8 @@ SECTIONS.push(async (sb, counters) => {
   // ── Lord of Ire vanquished — counts every Plane of Hate instance boss kill
   // 🐉 Dragon Punch — monk "Stunning Kick / Force of Disruption" proc card.
   // The proc line "<target> is stricken by the force of a dragon." names only
-  // the TARGET, never the kicker, and is BYSTANDER-VISIBLE — every boxed /
-  // grouped agent sees the same punch and the agent credited its own log owner,
+  // the TARGET, never the kicker, and is BYSTANDER-VISIBLE — every agent in
+  // the group sees the same punch and credited its own log owner,
   // so per-player attribution was both wrong AND over-counted (the same physical
   // punch counted once per watching character). So we anonymize it: count
   // DISTINCT (target, event_ts) — one physical reposition regardless of how many
@@ -407,8 +407,8 @@ SECTIONS.push(async (sb, counters) => {
     const byBard = new Map<string, number>();
     for (const r of totals) {
       // Drop stray-log ghosts (an old/foreign eqlog_<Name> a member's agent
-      // tailed — e.g. "Ashaiya" — which isn't a roster character), then fold
-      // real alts into their main (Chadivarius → Moash) so the card names and
+      // tailed, which isn't a roster character), then fold
+      // real alts into their main so the card names and
       // total only ever reflect actual Wolf Pack bards. Ghost damage is
       // dropped from the TOTAL too — we don't credit mystery names.
       if (!names.isKnown(r.character_name)) continue;
@@ -459,8 +459,8 @@ SECTIONS.push(async (sb, counters) => {
         .eq('event_type', 'lord_of_ire_killed'),
       loadNameMap(sb),
     ]);
-    // Fold alts into their main (Adiwen → Wabumkin, Timberr → Timberowl) so the
-    // card's top-3 matches /fun/lord-of-ire's "By main" list — the outside was
+    // Fold alts into their main so the card's top-3 matches
+    // /fun/lord-of-ire's "By main" list — the outside was
     // showing raw per-character names while the page folded to mains.
     const tally = new Map<string, number>();
     for (const r of (loiRows ?? []) as { caster: string | null }[]) {
@@ -494,7 +494,7 @@ SECTIONS.push(async (sb, counters) => {
 SECTIONS.push(async (sb, counters) => {
   // ── 🤬 Pottymouth award — chat-filter asterisk redactions ────────────────
   // Fires when the bot sees a chat line where EQ's filter scrubbed a word with
-  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Hitya 2026-06-26.)
+  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (the guild lead, 2026-06-26.)
   try {
     const { data: pmRows, count: pmTotal } = await sb
       .from('fun_events')
@@ -524,7 +524,7 @@ SECTIONS.push(async (sb, counters) => {
   // sees a different version per agent. The bot's fuzzy chat dedup catches
   // these and emits a drunkard fun_event on the SECOND distinct variant of
   // one underlying line — meaning at least two agents saw differently-slurred
-  // copies, the signal Uilnayar called out ("really observed when seen by
+  // copies, the signal a member called out ("really observed when seen by
   // multiple people and when a player is the one that says the word").
   try {
     // The exact count was already right; the per-person tally below was not —
@@ -559,11 +559,11 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // ── 💀 Days since Moash died to enrage ───────────────────────────────────
+  // ── 💀 Days since a member died to enrage ───────────────────────────────────
   // Loud-and-tall card with the date bolded + the previous-best streak
   // strikethrough'd when broken. Source: fun_events emitted by the
-  // /enragedeath officer command (Hitya 2026-06-26 — Shavimo's manual
-  // "It has been ~~167~~ 0 days since Moash died to enrage" gag goes live).
+  // /enragedeath officer command (the guild lead, 2026-06-26 — a member's manual
+  // "It has been ~~167~~ 0 days since Cindral died to enrage" gag goes live).
   try {
     const { data: enrageRows } = await sb
       .from('fun_events')
@@ -764,7 +764,7 @@ export default async function FunPage() {
   // Bucket cards: "live" ones carry real data; "dormant" ones are still at
   // zero / "—" (detector hasn't fired or nobody's triggered them yet) and
   // get demoted to a dimmer section at the bottom so the live stats lead.
-  // Hitya 2026-06-22 ("any empty fun ones should be moved to the bottom
+  // The guild lead 2026-06-22 ("any empty fun ones should be moved to the bottom
   // section").
   const isLive = (c: { value: number | string }) =>
     !(c.value === 0 || c.value === '—');
@@ -788,7 +788,7 @@ export default async function FunPage() {
       {/* What's new tonight — small callout marking the fresh fun cards so
           guildies can laugh at them (and at each other). Hard-coded ledger
           rather than a feed; intentionally short. Update this list as new
-          fun stuff lands and rotate older items out. (Hitya 2026-06-26.) */}
+          fun stuff lands and rotate older items out. (the guild lead, 2026-06-26.) */}
       <details className="bg-panel border border-purple/50 rounded-lg p-4 group">
         <summary className="flex items-center gap-2 cursor-pointer list-none select-none">
           <span aria-hidden className="text-base">🆕</span>
@@ -814,7 +814,7 @@ export default async function FunPage() {
         {liveCounters.map(c => <FunCard key={c.label} c={c} />)}
       </section>
 
-      {/* The Kyinen decree — moved below the live counters (Hitya
+      {/* The Kyinen decree — moved below the live counters (the guild lead
           2026-06-22 "move the decree to the bottom"). Still its own gold
           frame, just no longer hogging the top of the page. */}
       <KyinenExecutionCard
@@ -853,7 +853,7 @@ export default async function FunPage() {
 // One fun counter card. Emoji is absolutely positioned in the top-right so a
 // tall SVG emoji (the Tunare kiss scene) can't push the number down and break
 // vertical alignment with sibling cards in the same grid row — that was the
-// "Tunare Invocations is off" misalignment (Hitya 2026-06-22). Label +
+// "Tunare Invocations is off" misalignment (Rethlan 2026-06-22). Label +
 // number reserve right padding so they never run under the emoji.
 function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string } }) {
   return (
@@ -875,7 +875,7 @@ function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: num
 // ── The Kyinen Execution Card ────────────────────────────────────────────────
 // A reserved, rich-person's-picture-frame card commemorating each time the
 // Quarm lead CSR has executed Wolf Pack's longest-tenured player. Detected
-// from pvp_kills (killer=Kyinen, victim=Malthur) — no new agent detector
+// from pvp_kills (killer=Kyinen, victim=a member) — no new agent detector
 // needed; the kill broadcast lands via the standard PvP-channel relay.
 //
 // Visual: double gold frame with inset glow + inline SVG of an actual

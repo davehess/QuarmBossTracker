@@ -1,5 +1,5 @@
 -- pop_spell_needs v4 — stop hiding alts. PoP flagging isn't a mains-only
--- activity (Hitya, 2026-08-26: "due to the nature of pop flagging they may do
+-- activity (the guild lead, 2026-08-26: "due to the nature of pop flagging they may do
 -- it for many of their toons and we shouldn't only track mains"), but the
 -- function's `mains` CTE hard-filtered to
 -- `c.main_name IS NULL OR c.main_name = c.name` — an alt with a submitted
@@ -8,7 +8,7 @@
 -- Widen the CTE to every non-deleted, non-excluded character with a submitted
 -- spellbook (main or alt) and surface `is_main` on each row so callers choose
 -- their own default. /pop's guild-wide table keeps defaulting to mains
--- (Hitya: "we should default our views to mains") by filtering is_main=true
+-- (The guild lead: "we should default our views to mains") by filtering is_main=true
 -- client-side; a new "My Characters" view ignores it entirely, same as the
 -- flags-based chart/matrix already do per this session's other change.
 --

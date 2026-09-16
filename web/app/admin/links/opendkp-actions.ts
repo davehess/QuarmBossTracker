@@ -29,7 +29,7 @@ type RegisterArgs = {
   // OpenDKP CharacterId of the family root this character should be parented
   // under (the bot passes it as ParentId). null → ParentId 0 (self-rooted).
   parentOpenDkpId?: number | null;
-  parentName?:      string | null;   // display only ("alt of Canopy")
+  parentName?:      string | null;   // display only ("alt of Hessmoor")
   // Discord ID of the character's owner (the Mimic uploader). Target for the
   // claim DM. null → no DM target.
   uploaderDiscordId?: string | null;
@@ -50,7 +50,7 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
   // Traders never reach OpenDKP (the bot's SKIP_OPENDKP_RANKS drops them), so
   // the class/race/level gate that exists FOR OpenDKP must not apply to them.
   // Demanding a class for a bank mule /who never saw is what left ~110
-  // uploading characters unlinked (Hitya 2026-08-20: "I can't easily make them
+  // uploading characters unlinked (the guild lead, 2026-08-20: "I can't easily make them
   // traders because of the class requirement"). Traders get fixed honest
   // placeholders instead — level 1 Human, class Unknown.
   const localOnly = isLocalOnlyRank(args.rank);
@@ -118,7 +118,7 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
 // member's box happened to tail, an operator/junk name). These have NO row in
 // our characters mirror yet, so we upsert a stub with link_ignored=true: it
 // drops off the "Not in OpenDKP" list and lands in the Dismissed view, where
-// an officer can restore it. (Hitya 2026-07-05: "Dopefiend was some other
+// an officer can restore it. (the guild lead, 2026-07-05: "Dopefiend was some other
 // guild's player — we should have an ignore button.")
 export async function ignoreUnregistered(name: string): Promise<{ ok: boolean; error?: string }> {
   const { data: { user } } = await supabaseServer().auth.getUser();

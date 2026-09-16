@@ -1,7 +1,7 @@
 // test/relay-clock-skew.test.js — a relayed trigger fire must be translated
 // from the ORIGINATOR's clock onto ours before anything times off it.
 //
-// The bug (Hitya, 2026-08-10 Ssra: "the clock skew was VERY apparent for the TTS
+// The bug (the guild lead, 2026-08-10 Ssra: "the clock skew was VERY apparent for the TTS
 // timers"): _relayLocalFire stamps fired_at_ms from the originating machine's
 // clock — it is the EQ log-line time on THEIR box — and three installs have been
 // measured 14s, 42s and 56s off, drifting ~1.5-3 s/day. Every consumer then

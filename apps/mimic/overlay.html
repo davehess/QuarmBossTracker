@@ -16,7 +16,7 @@
      same across overlays. Same margin-right:28px clears the ✕ hide
      button at the top-right. */
   .tabs{display:flex;gap:2px;margin-left:6px;margin-right:28px;align-items:center}
-  /* Compact on purpose (Hitya 2026-08-16, from a live History screenshot:
+  /* Compact on purpose (the guild lead, 2026-08-16, from a live History screenshot:
      "These buttons are too large") — the strip competes with parse rows for
      a narrow overlay's space, so it stays a size DOWN from the row text. */
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
@@ -34,7 +34,7 @@
   /* Observed ("what THIS machine saw") is its own column, not a parenthetical
      tucked under the guild number. Inline it wrapped onto a second line and
      doubled the height of every row for a value most people ignore — a lot of
-     dead space on a window that is usually wide (Hitya 2026-08-13).
+     dead space on a window that is usually wide (the guild lead, 2026-08-13).
      Hidden below 400px so a narrow HUD keeps the compact 6-column layout; the
      value is not lost there, the inline fallback still renders. */
   li .obs, .colhdr .obs{display:none}
@@ -68,7 +68,7 @@
      wins. It originally sat ABOVE .colhdr and the 6-column base silently
      overrode the 7-column one: the rows widened, the header did not, SEC wrapped
      to a second line and every header label sat one column right of its data
-     (Hitya, live 2026-08-13). */
+     (the guild lead, live 2026-08-13). */
   @media (min-width: 400px){
     li{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
     .colhdr{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
@@ -439,9 +439,9 @@
   }
 
   function _foldPetsIntoOwners(allRows){
-      // Fold an owned pet INTO its owner. "Shavimo`s warder should be added
-      // to Shavimo's damage and have a little (+pet) next to their name"
-      // (Hitya, live 2026-08-13) — a pet is not a raider, it is part of what
+      // Fold an owned pet INTO its owner. "a member`s warder should be added
+      // to a member's damage and have a little (+pet) next to their name"
+      // (the guild lead, live 2026-08-13) — a pet is not a raider, it is part of what
       // its owner brought.
       //
       // This also has to happen BEFORE the guild merge below, and that is the
@@ -457,14 +457,14 @@
       // their own "(charmed)" row exactly as before.
       //
       // ⚠ THE OWNER MAY HAVE NO ROW OF THEIR OWN, AND THAT IS THE NORMAL CASE
-      // FOR A CHARMER (Hitya, live 2026-09-02: "it looks like when Chad
+      // FOR A CHARMER (the guild lead, live 2026-09-02: "it looks like when Chad
       // charmed him it attributed to him, but it should be the other way
       // around as Chad +pet"). An enchanter running a charm pet often does
       // little or no direct damage, so they never appear in perPlayer at all
       // — and the fold below used to require an existing owner row, so the
-      // pet kept its own "Vkjor (Chadivarius)" line instead. That reads as if
+      // pet kept its own "Vkjor (Ithren)" line instead. That reads as if
       // the PET were the raider, which is backwards: the damage is what
-      // Chadivarius brought. So we CREATE the owner's row when it is missing
+      // A member brought. So we CREATE the owner's row when it is missing
       // and fold into that.
       var _byName = new Map();
       allRows.forEach(function(r){ _byName.set(String(r[0]).toLowerCase(), r); });
@@ -518,7 +518,7 @@
       // defender — so trash pulls still name what's being fought.
       var boss = (et && (et.bossName || et.targetName)) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       // ── History mode ───────────────────────────────────────────────────────
-      // The guild-combined number moved here (Hitya 2026-08-14): mid-fight it
+      // The guild-combined number moved here (the guild lead, 2026-08-14): mid-fight it
       // has fewer than three independent readings, so the bot's corroboration
       // estimator falls back to max and a client with a skewed clock or a
       // double-counted hit sets the number for everybody. Post-fight, once the
@@ -540,8 +540,8 @@
       // empty meter isn't mysterious. Updates the empty-state in-place.
       // Empty-state copy. When the agent picked another character's encounter
       // (another watched character's log has a more-recent update), name
-      // the FOCUSED character so the user sees "waiting on Melting's combat"
-      // instead of the unhelpful "fight in progress on Timberowl". Once the
+      // the FOCUSED character so the user sees "waiting on Ambriel's combat"
+      // instead of the unhelpful "fight in progress on Zarrin". Once the
       // agent ships per-character encounter tracking (agent 3.0.71+), this
       // branch should rarely fire — the overlay prefers the focused
       // character's encounter directly.
@@ -588,7 +588,7 @@
       // The guild number is the HEADLINE and this machine's own figure moves
       // into parentheses, because the measurement that motivated this was that
       // the worst local view saw 0.1-8.3% of a fight. A row reading
-      // "Wabumkin 164k (0)" is the whole point: he did that damage and this
+      // "Dunstan 164k (0)" is the whole point: he did that damage and this
       // client saw none of it, which a local-only meter can never tell you.
       //
       // ⚠ HISTORY TAB ONLY as of 2026-08-14 — deliberately NOT live.
@@ -596,7 +596,7 @@
       // here. Mid-fight the bot has fewer than three independent readings of
       // most players, so `_corroboratedDamage` falls back to max and one client
       // with a skewed clock or a doubled hit sets the number for the whole
-      // raid. Hitya, watching it happen: "the overcount from time skew and
+      // raid. The guild lead, watching it happen: "the overcount from time skew and
       // whatnot is too much to account for in a live stat review and it is
       // legitimately doubling damage." Do not re-point this at s.guildDamage
       // without solving the settling problem first.
@@ -664,7 +664,7 @@
       // after the mob dies. Format the bot expects:
       //   <Boss> in <s>s, <total>K Damage @<dps>, 1. <Name> = <d>@<dps> in <s>s | 2. …
       try {
-        // History copy (Hitya 2026-08-16: "in history there's no copy
+        // History copy (the guild lead, 2026-08-16: "in history there's no copy
         // button"): build the line from the rows being BROWSED — allRows is
         // already the guild-merged view of THAT fight and secs is ITS
         // duration, so header and rows can never splice two fights. Rebuilt
@@ -719,7 +719,7 @@
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
-        // Mob Info "Allure (Hopeya)" charm label. Charm mobs with no live
+        // Mob Info "Allure (Sorvane)" charm label. Charm mobs with no live
         // owner proof say "(charmed)" — same-name charm pets can't be told
         // apart (no spawn id), so the meter never guesses a specific raider.
         // Owner absorbed a pet's damage — mark it so the number is explainable.
@@ -784,7 +784,7 @@
       // #159: request the fit EVERY tick, not only when the scoreboard HTML
       // changed — a chrome-menu-grown window (ensure-min-height 420) or a stuck
       // menu-suppression flag otherwise parks the backdrop tall forever with no
-      // recovery path on quiet ticks (Hitya field report, full-height backdrop
+      // recovery path on quiet ticks (the guild lead field report, full-height backdrop
       // under a 2-row meter). main.js's 4px/12px hysteresis absorbs the no-ops,
       // so the extra localhost IPC is one small int per poll.
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.querySelector('.hud')); } catch (e) {}

@@ -5,7 +5,7 @@
 //     Read from character_gear × eqemu_items, extending the raidKit idiom.
 //     VISIBLE ownership only — the bank is stripped before upload — so a blank
 //     means "not seen", not "doesn't exist".
-//     ⚠ OWNER NAMES ARE OFFICER-ONLY (Hitya, 2026-08-14: "quartermaster should
+//     ⚠ OWNER NAMES ARE OFFICER-ONLY (the guild lead, 2026-08-14: "quartermaster should
 //     display raider information for that user not for everyone. it can display
 //     for everyone for admins"). A member sees their OWN characters named and a
 //     nameless guild-wide count; scoping lives in scopeKitCoverage so the rule

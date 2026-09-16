@@ -1,4 +1,4 @@
--- Officer-assisted Mimic linking (Hitya 2026-08-24, from Gonner's report):
+-- Officer-assisted Mimic linking (the guild lead, 2026-08-24, from a member's report):
 -- "gonner wants to install but doesn't have discord auth working."
 --
 -- Discord refuses OAuth consent for unverified accounts, and the ONLY stamper

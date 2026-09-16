@@ -14,7 +14,7 @@ import { TZ_CHOICES, TZ_COOKIE } from '@/lib/timezone-shared';
 import { ClockFace } from './HeaderIcons';
 
 // "make the time a clock and the 3 character abbreviation for the time zone"
-// (Hitya, 2026-08-28). A <select> can only display its own option text, so the
+// (the guild lead, 2026-08-28). A <select> can only display its own option text, so the
 // native control stays — it is still the focusable, labelled, OS-rendered
 // picker — and is laid transparent over the clock+abbreviation that replaces
 // its face. Nothing about choosing a zone changes; only what it reads as.

@@ -1,7 +1,7 @@
 // test/trigger-timer-identity.test.js — a timer's identity and label must come
 // from SEMANTIC captures only.
 //
-// The bug (Hitya, live, 2026-08-10 Ssra — docs/FINDINGS-2026-08-10-trigger-overlay.md
+// The bug (the guild lead, live, 2026-08-10 Ssra — docs/FINDINGS-2026-08-10-trigger-overlay.md
 // P1): _buildCaptureBag puts numeric keys ('0' = the whole match), L/l (the raw
 // log line, EQ timestamp included) and c/char/self into the capture bag so that
 // action text can interpolate {L}/{c}. _startTimer then folded the WHOLE bag into

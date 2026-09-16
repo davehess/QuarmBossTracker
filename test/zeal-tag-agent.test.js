@@ -1,7 +1,7 @@
 // test/zeal-tag-agent.test.js — agent-side /tag handling: upload cap, zone
 // clear, and rate-limit detection.
 //
-// All three come from live testing on 2026-08-07 (Canopy + Adiwen + Rockin):
+// All three come from live testing on 2026-08-07 (three members):
 //   · CAP — tagging through The Deep produced ~50 tags and the payload capped
 //     at exactly 24, keeping the OLDEST (Map insertion order) and dropping the
 //     boss, which had been tagged last.

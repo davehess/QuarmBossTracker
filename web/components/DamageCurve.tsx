@@ -1,13 +1,13 @@
 'use client';
 
-// DamageCurve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md), built,
+// DamageCurve — the guild lead's napkin sketch (docs/DESIGN-fight-timeline.md), built,
 // then reshaped by his 2026-08-16 parse review:
 //
 //   100 ┤╲                    Y = boss HP %
 //    75 ┤ ╲░░░░░░░░           shaded = damage contribution   Wizard 23.4%
 //     0 ┤            ╲___     (stacked BY CLASS, drillable)  Warrior 12.6%
 //       └──────────────────   X = fight time                 ← right-edge labels
-//   MT  ├──── Abrahms ────┤   swimlane: who was taking hits, when
+//   MT  ├──── a member ────┤   swimlane: who was taking hits, when
 //
 // The stack groups BY CLASS at the top level with name+% labels on the right
 // edge; clicking a class (band, chip, or legend row) drills into that class's
@@ -28,7 +28,7 @@
 //
 // Geometry note: this used to mirror FightTimeline.tsx exactly (W=1000,
 // PADL/PADR=8) because both drew fight-time axes on /parses/[id]. That page now
-// renders its events as a LIST (FightEventLog — Hitya: the marker view was
+// renders its events as a LIST (FightEventLog — The guild lead: the marker view was
 // "useless in this format"), so this chart is the only time axis there and the
 // right pad is free to hold the label gutter. /raid/review still uses
 // FightTimeline standalone — no cross-chart alignment to preserve.
@@ -425,7 +425,7 @@ export function DamageCurve({
 
         {/* Taking-hits swimlane. Gaps ≥10s are real: nobody was taking hits —
             the mob was moving, kited, feared, or off the raid (ask #2: the
-            Moash "it ran" read was correct — hover a gap for its window). */}
+            a member "it ran" read was correct — hover a gap for its window). */}
         <text x={PADL} y={MT_Y - 3} fill={C.dim} fontSize={10}>
           MT
           <title>Who was taking hits, when. A gap means NOBODY was taking hits — the mob was moving, kited, or off the raid — not that the tank changed.</title>

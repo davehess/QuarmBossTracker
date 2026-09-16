@@ -1,7 +1,7 @@
 // test/ch-slot-conflict.test.js — two callers on one CH slot number must show
 // BOTH names, in first-claimed order, never a silent overwrite.
 //
-// The incident (Hitya, 2026-08-10 Ssra; DESIGN-extended-target-v2.md §5):
+// The incident (the guild lead, 2026-08-10 Ssra; DESIGN-extended-target-v2.md §5):
 // Mcdorf held slot 001; Pyxil called a CH as 001 and REPLACED Mcdorf on the
 // overlay. The call (Hitya, 2026-08-11): "Mcdorf and Pyxil both having 001 in
 // their numbering shouldn't overwrite the spot, it should show both of them in
@@ -57,8 +57,8 @@ describe('_chMergeClaimants', () => {
   });
 
   it('roster-resolved name and a DIFFERENT speaker both claim', () => {
-    // The inverse direction of the bug: roster says the slot is Mcdorf's, so a
-    // mis-calling Pyxil used to be invisible. Both must surface.
+    // The inverse direction of the bug: roster says the slot is a member's, so a
+    // mis-calling a member used to be invisible. Both must surface.
     const out = _chMergeClaimants({}, 'Mcdorf', 'Pyxil', T);
     expect(out.map(c => c.name).sort()).toEqual(['Mcdorf', 'Pyxil']);
   });
@@ -69,7 +69,7 @@ describe('_chMergeClaimants', () => {
     expect(out.map(c => c.name)).toEqual(['Mcdorf']);
   });
 
-  // Per-claimant mana (Hitya, live test 2026-08-12): the overlay now renders one
+  // Per-claimant mana (the guild lead, live test 2026-08-12): the overlay now renders one
   // ROW per claimant so each cleric's own cast bar is visible, which means each
   // claimant has to carry its own mana — a single shared number would print the
   // caller's mana against the other cleric's name.
@@ -80,7 +80,7 @@ describe('_chMergeClaimants', () => {
     const both = _chMergeClaimants({ name: 'Mcdorf', lastAtMs: T, claimants: first },
                                    'Stupidrichard', 'Stupidrichard', T + 5000, 95);
     expect(both.map(c => c.name)).toEqual(['Mcdorf', 'Stupidrichard']);
-    expect(both.map(c => c.mana)).toEqual([54, 95]);   // Mcdorf's 54 survives
+    expect(both.map(c => c.mana)).toEqual([54, 95]);   // A member's 54 survives
   });
 
   it('a repeat call updates that claimant\'s mana only', () => {
@@ -103,7 +103,7 @@ describe('_chMergeClaimants', () => {
 });
 
 // The live sequence Hitya reported (2026-08-12): Mcdorf and Stupidrichard both
-// call 002 (conflict, correctly), then Stupidrichard moves to 003 — at which
+// call 002 (conflict, correctly), then a member moves to 003 — at which
 // point 002 is uncontested and the banner must clear IMMEDIATELY, not after the
 // 120s claim window, and not only if someone happens to call 002 again.
 describe('_chReleaseClaimantsElsewhere', () => {
@@ -115,7 +115,7 @@ describe('_chReleaseClaimantsElsewhere', () => {
 
   it('switching to a new number clears the old slot the moment it happens', () => {
     const c = { slots: conflicted() };
-    // Stupidrichard now calls 003.
+    // A member now calls 003.
     c.slots[3] = { name: 'Stupidrichard', lastAtMs: T + 5000,
                    claimants: _chMergeClaimants(null, 'Stupidrichard', 'Stupidrichard', T + 5000, 93) };
     _chReleaseClaimantsElsewhere(c, ['Stupidrichard', 'Stupidrichard'], 3);

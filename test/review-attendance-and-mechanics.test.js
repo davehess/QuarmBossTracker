@@ -1,6 +1,6 @@
 // test/review-attendance-and-mechanics.test.js — the raid review for nights
 // before the agent existed, and mechanics grouped by the fight they hit
-// (Hitya, 2026-09-04: "the early raids have very limited data … at least have
+// (the guild lead, 2026-09-04: "the early raids have very limited data … at least have
 // the bosses killed" · "its just a line of asphyxiate and not who it landed
 // on. We should group these by boss").
 //

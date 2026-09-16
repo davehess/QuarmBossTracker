@@ -1,5 +1,5 @@
 // test/song-aoe-pulse.test.js — the melody AE badge counts ONE pulse, not the
-// whole kite. Fittir's ⚔123/12 (2026-08-19): the EQ client flushes the log in
+// whole kite. A member's ⚔123/12 (2026-08-19): the EQ client flushes the log in
 // multi-second batches under swarm load, so wall-clock burst detection merged
 // every pulse of a kite into one count. Pulse boundaries now come from the
 // LINE's own timestamp. Also covers the per-song kite damage totals added in

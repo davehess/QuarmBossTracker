@@ -1,7 +1,7 @@
 // test/zeal-version-capability.test.js — the BOT + BOARD half of "whose client
 // can actually hand us a spawn id".
 //
-// Hitya, 2026-09-01: "let me start tracking zeal versions so we can work
+// The guild lead, 2026-09-01: "let me start tracking zeal versions so we can work
 // towards knowing when someone has that Target and spawn ID. fall back is if
 // they tag."
 //
@@ -79,7 +79,7 @@ describe('/admin/agents shows it honestly', () => {
     expect(sel).toContain('spawn_id_seen_at');
   });
 
-  // ⚠ Hitya, 2026-08-16: "character counts mean almost nothing." One person
+  // ⚠ the guild lead, 2026-08-16: "character counts mean almost nothing." One person
   // runs several characters off ONE Zeal install, so a character count overstates
   // adoption ~10x — the exact mistake that made "178 characters on 3.5.80"
   // read as fleet-wide when it was 16 people. A family here IS a player.

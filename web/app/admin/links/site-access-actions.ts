@@ -1,5 +1,5 @@
 'use server';
-// Officer-issued site-access invites (Hitya 2026-08-24, from Lacunanight —
+// Officer-issued site-access invites (the guild lead, 2026-08-24, from Lacunanight —
 // Discord's phone-verification wall blocks OAuth consent, and he wants SITE
 // access, not Mimic).
 //

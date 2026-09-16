@@ -1,7 +1,7 @@
 // test/raid-end-button.test.js — "End raid" on the raid-night thread.
 //
 // "We need a button on the raid night thread for officers and leaders to be
-// able to click to end the raid." (Hitya, 2026-08-30)
+// able to click to end the raid." (the guild lead, 2026-08-30)
 //
 // What it does is stop the automatic attendance ticks for the rest of the
 // night. The four slots fire on the clock (20:30 / 21:30 / 22:30 / 23:30 ET),

@@ -1,6 +1,6 @@
 // /raids?count=N — a documented parameter we were not using.
 //
-// Hitya, 2026-08-26: "is there an alternative in the APIs to what we're doing
+// The guild lead, 2026-08-26: "is there an alternative in the APIs to what we're doing
 // with that call?" For audits: no — the only documented parameter is `page`,
 // so the last-page approach stands. For RAIDS: yes. OpenDKP's own Postman
 // collection documents `/clients/{client}/raids?count=10`, and we were pulling

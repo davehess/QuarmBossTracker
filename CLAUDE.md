@@ -88,6 +88,29 @@ fixture's name is load-bearing (the `{s}`-capture rule below turns on capturing
 a name with a leading space), and renaming one silently breaks the test it
 anchors. The rule above governs prose: comments, docs, commit messages.
 
+**Source comments were swept on 2026-09-16 and the invented names are a
+convention, not people.** Docs went first (2026-09-16, three passes); the source
+followed the same day — `index.js`, `utils/`, `commands/`, the agent, Mimic,
+`web/`, the migrations and `test/`'s own comments. Three rules came out of it,
+and the next person writing a comment should follow them:
+- **Prose gets a role.** `(Hitya 2026-08-11)` → `(the guild lead, 2026-08-11)`;
+  anyone else → `a member`. Keep the date and the quote.
+- **A worked EXAMPLE still needs a name-shaped token**, so it gets an invented
+  one — `Aldenmar`, `Brackwyn`, `Corvale`, `Rethlan`, `Nyssara`, `Zarrin` and
+  friends. **None of them is anybody**; they were checked against `characters`
+  and `eqemu_npc_types` before use. A stable map was used so a two-name example
+  stays two different people. Prefer `<name>` where the example does not need a
+  token at all.
+- **Fixtures were NOT touched**, per the rule above — which means a test file's
+  comments now read in roles while its fixtures still carry real names. That is
+  deliberate and it is the remaining surface: ~1,700 name mentions in `test/`
+  and `data/` fixtures + golden logs, whose rename would have to regenerate the
+  golden expectations in the same change. Logged in `docs/STATUS.md`.
+⚠ The sweep only rewrote COMMENT spans. `web/components/about/OverlayDemo.tsx`,
+`web/app/mimic/mini/mocks.tsx` and `web/lib/miniReview.ts` were skipped whole —
+their mock DATA names the real raid on public pages, and that is the guild
+lead's call, not a sweep's.
+
 ⚠ **The `feedback` table on wolfpack.quest is member-submitted and lives in the
 database, not the repo.** Summarise what a submission asked for; do not copy the
 submitter's name into a doc or a comment.

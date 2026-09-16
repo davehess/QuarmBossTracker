@@ -3,7 +3,7 @@
 #
 # This script restores with --clean, which drops and reloads `public`, so the
 # local copy faithfully mirrored production INCLUDING its retention deletes and
-# was therefore no more of an archive than production is. Hitya's call: "local
+# was therefore no more of an archive than production is. The guild lead's call: "local
 # should not lose any history." Kept only for the case where you deliberately
 # want an exact mirror of production rather than an accumulating archive.
 #

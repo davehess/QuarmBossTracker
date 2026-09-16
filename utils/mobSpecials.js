@@ -16,7 +16,7 @@
 // `limit=1` served the L1 placeholder: wrong level, wrong HP, and — worse —
 // "Immune Melee / Immune Magic" chips on a mob you are actively meleeing.
 //
-// THE RULE (Hitya, 2026-07-25 — docs/audit-mob-specials.md §"The fix"):
+// THE RULE (the guild lead, 2026-07-25 — docs/audit-mob-specials.md §"The fix"):
 //   1. fetch ALL rows matching the normalized name (never limit=1);
 //   2. split REAL rows from PLACEHOLDER rows (placeholder = immune to BOTH 19
 //      and 20 — it can never be the mob you're fighting);

@@ -1,7 +1,7 @@
 // test/ds-attribution.test.js — an anonymous "<mob> was hit by non-melee for N"
 // is NOT a damage shield just because the mob swung at someone a second ago.
 //
-// Hitya, 2026-09-13, reading the Tank overlay on Kaas Thox Xi Ans Dyek: "This
+// The guild lead, 2026-09-13, reading the Tank overlay on Kaas Thox Xi Ans Dyek: "This
 // is misleading, i don't think he's getting thorns damage returned … These
 // look like 150 dd procs." The rollup agreed: sixteen hits of exactly 150,
 // spread over five raiders as `ds:non-melee` — one flavor line in the whole

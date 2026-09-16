@@ -1,6 +1,6 @@
 // test/log-rotate.test.js — the log-rotation decision + archive naming.
 //
-// Feedback (Ashieron, 2026-08-07, wolfpack.quest): "Keep track of logfile size
+// Feedback (a member, 2026-08-07, wolfpack.quest): "Keep track of logfile size
 // and cull the file when it gets too big, or keep it at a maximum size and
 // file old logs to another location." We archive, never cull — old logs feed
 // --since backfill and historical chat. These tests pin the decision gates:

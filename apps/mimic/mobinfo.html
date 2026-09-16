@@ -265,7 +265,7 @@
     // and ~ (synthesized from our own cast — no landing line exists to confirm).
     if (isPacify && b.pacify_ae)   ownerStr = ' <span style="color:#79c0ff;font-size:9px">AE</span>' + ownerStr;
     if (isPacify && b.unconfirmed) ownerStr = ' <span style="color:#8b949e" title="from your cast — unconfirmed">~</span>' + ownerStr;
-    // ⚠ NEVER a blanket "safe to pull past" (Hitya 2026-09-02). Pacify means the
+    // ⚠ NEVER a blanket "safe to pull past" (the guild lead, 2026-09-02). Pacify means the
     // mob will not attack even at contact; Harmony only shrinks the aggro
     // radius and STILL aggros up close, and being AE it is on nearby mobs we
     // are not showing. The row states the effect and the clock; the pull is the
@@ -305,7 +305,7 @@
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
     // Pacify FIRST, on its own line, then Debuffs (good===0), then Buffs
-    // (Hitya 2026-09-02). It is pulled out before the good/bad split because it
+    // (the guild lead, 2026-09-02). It is pulled out before the good/bad split because it
     // is neither — the catalog calls it beneficial (it is, to the mob) but what
     // the raid needs from it is "is this mob still safe to walk past", which is
     // the first thing you check and the last thing that should be buried in a
@@ -354,7 +354,7 @@
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
 
-  // Sight chips — "will invis hide me from this?" (Hitya 2026-09-02).
+  // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
   //
   // ⚠ THE RAW FLAGS ARE NOT THE ANSWER. Measured over the 18,033-row catalog:
   //     non-undead           see_invis 11%   see_invis_undead 96%

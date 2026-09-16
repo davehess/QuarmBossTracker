@@ -1,6 +1,6 @@
 'use client';
 // RaidHeatmap — raid nights as month blocks of day chips, shared by /me and
-// /raidhistory (Hitya, 2026-09-03; reshaped 2026-09-04: the week×weekday grid
+// /raidhistory (the guild lead, 2026-09-03; reshaped 2026-09-04: the week×weekday grid
 // "looks odd … come up with a better format that is both mobile and desktop
 // friendly"). The pages decide what a chip MEANS (gold for "I was there" on
 // /me; red→orange→green fill on /raidhistory) and hand the colours in; this

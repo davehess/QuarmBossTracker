@@ -86,8 +86,8 @@ describe('_ilikeAnyClause — case-insensitive multi-name PostgREST filter', () 
 // ── #121 loot bidding v2 (real index.js) ────────────────────────────────────
 describe('_resolveCharIdNames — char_id → real name via MODE over loot join', () => {
   it('takes the most-frequent loot name per char_id (2x-drop noise dropped)', () => {
-    // char 108064 won item 1 in raid 100 (loot → Hitya) and item 2 in raid 101
-    // (Hitya again); a 2x-drop in raid 100 also awarded item 1 to Bippo → noise.
+    // char 108064 won item 1 in raid 100 (loot → the guild lead) and item 2 in raid 101
+    // (the guild lead again); a 2x-drop in raid 100 also awarded item 1 to Bippo → noise.
     const wonAuctions = [
       { winner_character_id: 108064, raid_id: 100, item_id: 1 },
       { winner_character_id: 108064, raid_id: 101, item_id: 2 },
@@ -164,9 +164,9 @@ describe('_buildMisses — bid-and-lost, per (item, character)', () => {
   });
 
   it('excludes an item only for the character that has it', () => {
-    // ⚠ The regression Hitya reported (2026-08-29). Both characters bid on the
-    // same item and both lost; Melting already owns one. Under the old
-    // family-wide rule Melting's copy erased Hitya's miss too. Measured on the
+    // ⚠ The regression the guild lead reported (2026-08-29). Both characters bid on the
+    // same item and both lost; a member already owns one. Under the old
+    // family-wide rule a member's copy erased the guild lead's miss too. Measured on the
     // real account: 20 items bid on and lost, 19 hidden this way, 1 displayed.
     const bidRows = [
       { auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-02', raid_id: 1 },
@@ -205,7 +205,7 @@ describe('_buildMisses — bid-and-lost, per (item, character)', () => {
   });
 
   it('keys a DETAIL-sourced row by name when CharacterId is absent', () => {
-    // ⚠ The Utoh regression (2026-08-30). OpenDKP's per-auction bid history is
+    // ⚠ The a member regression (2026-08-30). OpenDKP's per-auction bid history is
     // Name/Rank/Value/Date — no CharacterId — and the builder used to skip
     // id-less rows entirely, silently hiding every backfilled loss: exactly
     // the data the detail backfill exists to surface.

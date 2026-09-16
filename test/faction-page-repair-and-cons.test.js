@@ -1,7 +1,7 @@
 // test/faction-page-repair-and-cons.test.js — every faction row can open into
 // what is unconfirmed, what has been conned on it, and what repairs it.
 //
-// Hitya, 2026-09-03: "add the repair table to factions, but also we can have
+// The guild lead, 2026-09-03: "add the repair table to factions, but also we can have
 // an 'unconfirmed hits' section on the table also. The Conning of npcs on
 // those factions is important."
 //

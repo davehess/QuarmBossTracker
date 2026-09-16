@@ -1,7 +1,7 @@
 // test/mobinfo-sight-flags.test.js — the mob-info row carries enough to answer
 // "will invis hide me from this?"
 //
-// Hitya, 2026-09-02: "mob info needs to also denote if a mob can see invis."
+// The guild lead, 2026-09-02: "mob info needs to also denote if a mob can see invis."
 //
 // ⚠ THE RAW FLAG IS NOT THE ANSWER, AND SHIPPING IT ALONE WOULD BE NOISE.
 // Measured over the 18,033-row catalog:

@@ -1,7 +1,7 @@
 // test/live-state-signature.test.js — what makes the agent push a live-state
 // snapshot NOW instead of waiting for the heartbeat.
 //
-// Hitya, 2026-09-01: "45 seconds is entirely too long for certain things to be
+// The guild lead, 2026-09-01: "45 seconds is entirely too long for certain things to be
 // synced. many fights only last about that long. so when we're reporting up HP
 // totals or who's tanking or if a boss is slowed even 2 seconds can feel like
 // an eternity. 2 seconds is often the delay between CH chain castings."

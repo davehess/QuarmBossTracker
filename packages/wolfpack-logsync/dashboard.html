@@ -21,14 +21,14 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
-/* Sidebar navigation (Hitya 2026-08-13: "having to scroll in our dashboard is
+/* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
    why features kept getting stacked INSIDE existing tabs instead of getting
    their own. A rail has room to grow and shows every destination at once.
    The markup is unchanged: same .nav, same data-tab buttons, so the switcher,
    the Panels popover and the tour all keep working. */
-/* The top bar stays put while the page scrolls (Hitya 2026-09-02: "lets also
+/* The top bar stays put while the page scrolls (the guild lead, 2026-09-02: "lets also
    lock the top nav as we scroll"). Everything a user reaches for repeatedly —
    the tab rail, Panels, Tour, Feedback, Reload — is now reachable without
    scrolling back up. Solid background, not translucent: content passes UNDER
@@ -46,7 +46,7 @@ tr:hover td { background:#1f242c }
 /* ⚠ The rail sticks BELOW the sticky top bar, not at a fixed 8px. When the bar
    became sticky the rail kept sticking to top:8px — i.e. underneath it — so the
    first few tabs (Dashboard, Overlays, Raid, Buffs) slid under the header and
-   vanished the moment you scrolled (Hitya 2026-09-02).
+   vanished the moment you scrolled (the guild lead, 2026-09-02).
    --wp-topbar-h is MEASURED and republished by _wpSyncTopBarHeight(); the
    fallback only covers the first paint. A hardcoded offset would be wrong the
    moment the bar wraps or the short-window breakpoint fires. */
@@ -234,7 +234,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="raid">⚔ Raid</button>
   <button data-tab="buffs">✨ Buffs</button>
   <button data-tab="fights">⚔️ Fights</button>
-  <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (Hitya
+  <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
        navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
        unrelated jobs: what your log SAW (session stats), whether the machinery
@@ -251,7 +251,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
-  <!-- ✨ Tour and ⚙ Panels moved to the sticky top bar (Hitya 2026-09-02) so
+  <!-- ✨ Tour and ⚙ Panels moved to the sticky top bar (the guild lead, 2026-09-02) so
        they are reachable from anywhere on a long page, alongside Feedback. The
        ids are unchanged, so every handler that binds to them still binds. -->
 </div>
@@ -583,7 +583,7 @@ async function _wpFbSend() {
   if (btn) btn.disabled = false;
 }
 
-// ✨ Buffs tab (Hitya 2026-09-02: "Move buffs to the buffs tab and give it a
+// ✨ Buffs tab (the guild lead, 2026-09-02: "Move buffs to the buffs tab and give it a
 // more robust view of effects and timeframes").
 //
 // ⚠ THREE NUMBERS, AND THE TAB MUST NEVER BLEND THEM. Blending is how a screen
@@ -610,7 +610,7 @@ function _wpBuffProv(kind) {
 // with one name silently resolve to the LAST one, so this used to hand seconds
 // to the ms formatter and every buff on the Buffs tab read 1/1000 of its real
 // time: Girdle of Karana's 56m showed as "3s", its 4320s catalog as "~4s"
-// (Hitya 2026-09-02, with the in-game buff window beside it). check-agent-
+// (the guild lead, 2026-09-02, with the in-game buff window beside it). check-agent-
 // dashboard.js now fails the build on any duplicate declaration.
 function _wpSecs(secs) {
   if (secs == null) return '—';
@@ -633,9 +633,9 @@ function _wpBuffFx(fx) {
   return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06)">' + out + '</div>';
 }
 // ── "What all of this is actually giving you" ────────────────────────────────
-// Hitya 2026-09-02: "a summary below of all of the things that are provided."
+// The guild lead 2026-09-02: "a summary below of all of the things that are provided."
 // Aggregated per character, because buffs are per character — one merged column
-// across five boxes would read as one character with five sets of stats.
+// across five machines would read as one character with five sets of stats.
 //
 // ⚠ SAME-STAT ENTRIES ARE LISTED, NEVER ADDED. EQ does not stack two buffs of
 // the same kind; the stronger one applies and the other is doing nothing. So
@@ -1057,7 +1057,7 @@ function renderHeader(s) {
     // Click-to-force-drain link — POSTs /api/drain which resets next_try_at
     // on every entry to now(), un-parks poison entries, and kicks an immediate
     // pass. Helpful when the queue gets stuck in a long exponential backoff
-    // after a transient server hiccup (added 2026-06-21 from Hitya's
+    // after a transient server hiccup (added 2026-06-21 from the guild lead's
     // stalled-queue report).
     const parkedTag = q.parked > 0 ? ' <span style="color:#d18a2d" title="Entries the bot keeps rejecting — parked to a slow retry lane so they don&rsquo;t block live uploads. Drain now to retry them at full speed.">(' + q.parked + ' parked)</span>' : '';
     queueChip = ' · <span style="background:#3b2a06;color:#ffd07a;border:1px solid #d18a2d;border-radius:3px;font-size:11px;padding:2px 6px;margin-left:4px" title="' + esc(tip) + '">⏳ ' + q.pending + ' queued' + parkedTag + ' · <a href="#" id="wpDrainNow" style="color:#ffd07a;text-decoration:underline;cursor:pointer" title="Reset all backoff timers and force an immediate drain pass">drain now</a></span>';
@@ -1149,7 +1149,7 @@ function renderHeader(s) {
     // checkAgentUpdate (silent in-place agent hot-swap). The user gets
     // one unified result driven by Mimic's dialogs; no need for our
     // dashboard-side restart confirm to add a second prompt.
-    // (Hitya 2026-06-21 — the dashboard button used to be agent-only,
+    // (the guild lead, 2026-06-21 — the dashboard button used to be agent-only,
     // missing every Mimic-only update that landed in between.)
     const inMimic = !!(window.mimic && typeof window.mimic.checkForUpdates === 'function');
     if (inMimic) {
@@ -1449,7 +1449,7 @@ function renderMeCard(s) {
 function renderEngine(s) {
   const el = document.getElementById('wpEngine');
   if (!el) return;
-  // ⚙ SETUP, not "Engine" (Hitya 2026-09-02: "The main dashboard says Engine and
+  // ⚙ SETUP, not "Engine" (the guild lead, 2026-09-02: "The main dashboard says Engine and
   // is by default minimized where the setup is. We should callout that it's the
   // setup for first time users."). The first-run checklist lived behind a
   // collapsed panel named after our internals, so the one person who most needed
@@ -1546,7 +1546,7 @@ function _isPanelHidden(el) {
 // the value changes about once a year, so the byte-stability morphInto needs is
 // free (see the render-rules note in CLAUDE.md).
 //
-// WHY THIS ROW EXISTS (Abrahms, 2026-09-10): every overlay resolves as
+// WHY THIS ROW EXISTS (a member, 2026-09-10): every overlay resolves as
 //   shouldShow = unlocked || (cfg.showX && !cfg.hideOverlays && _eqGateOk(cfg))
 // and `unlocked` — placement mode — bypasses the rest. So with "Don't show any
 // overlays" on (before 2026-09-11 that was quiet mode; quiet mode now only mutes), an
@@ -1574,15 +1574,15 @@ function _setupCheckRows(s) {
   const eqf = (s && s.eqFolder) || {};
   const zealSeenNotLive = zeal.length > 0 && !zealLive;
   // ⚠ "install/enable Zeal" is the right answer ONLY when Zeal is genuinely
-  // absent, and until 2026-09-10 this row said it unconditionally. Abrahms had
+  // absent, and until 2026-09-10 this row said it unconditionally. A member had
   // Zeal installed and a dead feed (EQ elevated, Mimic not); the row sent him
   // to Check / install Zeal, which then failed on its own unrelated error. A
   // row that names the wrong problem walks people into a second one — so the
   // wording branches on what is actually on disk (s.eqFolder.zealInstalled).
   // The two live causes of "installed but silent" are both on the same
   // Compatibility tab, and both are confirmed field cases: XP compatibility
-  // mode (Chadivarius, 2026-08-13) and an elevation mismatch (Jankzer
-  // 2026-07-05, Abrahms 2026-09-10). We ask rather than detect — reading the
+  // mode (a member, 2026-08-13) and an elevation mismatch (two members,
+  // 2026-07-05 and 2026-09-10). We ask rather than detect — reading the
   // AppCompatFlags registry needs a spawn on a poll path.
   const zealBad = eqf.zealInstalled === true
     ? 'Zeal IS installed in your EQ folder, so this is not an install problem. Are you running EQ in compatibility mode, or as administrator? Right-click eqgame.exe → Properties → Compatibility: untick compatibility mode, and if "Run as administrator" is ticked, either untick it or run Mimic as admin to match. Restart EQ after changing either.'
@@ -1618,7 +1618,7 @@ function renderSetupChecks(s) {
   // MID-RENDER — after the first rows are appended and before the buttons are,
   // so the Setup card silently loses "Set up for me", the Defender, Zeal and
   // clock fixers, and every row below Zeal. Shipped in agent 3.6.35 and rode a
-  // stable graduation to the whole fleet (Hitya: "setup lost the buttons on the
+  // stable graduation to the whole fleet (The guild lead: "setup lost the buttons on the
   // mimic dashboard"). It got through because the tests asserted on SOURCE TEXT
   // and never ran the function — the exact trap CLAUDE.md names — and
   // check:dashboard only proves the script PARSES, which a ReferenceError does.
@@ -1671,7 +1671,7 @@ function renderSetupChecks(s) {
   // EQ folder writable — the silent precondition for three buttons on this very
   // card (Set up for me, Check / install Zeal) plus UI Studio backups. A folder
   // Mimic cannot write is why they fail, and they used to fail with a raw
-  // EPERM string no member could act on (Abrahms, EQ in Program Files,
+  // EPERM string no member could act on (a member, EQ in Program Files,
   // 2026-09-10). Tri-state and always shown, like Export on /camp above.
   if (eqf.writable === true) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--green)">✓</span></td>'
@@ -1701,7 +1701,7 @@ function renderSetupChecks(s) {
   // One-click writer for the EQ logging + Zeal export/pipe settings. The note
   // is deliberate: EQ rewrites eqclient.ini on exit so it must be CLOSED, and
   // the in-game equivalents are spelled out so a user can act live too.
-  // The action row sits ABOVE the checklist (Hitya 2026-09-13: "The other
+  // The action row sits ABOVE the checklist (the guild lead, 2026-09-13: "The other
   // setup items for Quarm should also be at the top there with that main
   // button") — Set up for me, the Mimic-only fixers and the old-log importer
   // together, first thing a first-run user sees when the panel opens.
@@ -1749,7 +1749,7 @@ function renderSetupChecks(s) {
   wpWireFixerButtons(s);
 }
 // Windows Defender exclusions + Zeal install, on the dashboard next to
-// "Set up for me" (Hitya 2026-08-04). Both already existed as Settings
+// "Set up for me" (Rethlan 2026-08-04). Both already existed as Settings
 // actions; this puts them where a user is actually standing when they discover
 // something is wrong, rather than three clicks away in a form.
 //
@@ -2382,8 +2382,8 @@ function _fmtBuffTicks(t) {
 // Authoritative Zeal pipe field names — from CoastalRedwood/Zeal
 // named_pipe.cpp (LabelNames + GaugeNames maps; the ids are the classic EQ
 // client UI EQType label ids, which is why they are not documented in Zeal
-// itself). Confirmed against live side-by-sides (Canopy + Manamana,
-// 2026-07-07/08). Shared by the Buffs &amp; Zone char-info table and the
+// itself). Confirmed against two live side-by-sides, 2026-07-07/08.
+// Shared by the Buffs &amp; Zone char-info table and the
 // Info tab Zeal Pipe explorer.
 var WP_ZLABELS = { 1: 'Name', 2: 'Level', 3: 'Class', 4: 'Deity', 5: 'STR', 6: 'STA', 7: 'DEX', 8: 'AGI',
   9: 'WIS', 10: 'INT', 11: 'CHA', 12: 'Poison resist', 13: 'Disease resist', 14: 'Fire resist',
@@ -2410,7 +2410,7 @@ function renderZealClients(s) {
   if (!el) return;   // Dashboard section not painted yet
   // <details> open state persists via the wpKeep store (see morphInto header)
   // — DOM snapshots died the moment a PARENT section repainted first.
-  // Per-machine "don't care" filter — hide boxes/alts you aren't tracking.
+  // Per-machine "don't care" filter — hide characters you aren't tracking.
   // Persisted in localStorage (same idea as the panel ✕). The ✕ on each row
   // adds the name; "show all" clears the set.
   var _zHidden = {};
@@ -2488,7 +2488,7 @@ function renderZealClients(s) {
     }
     // Char-info diagnostic — Zeal's type-1 fields (ids 1-13). This is where
     // raw HP cur/max would live if Zeal exposes it; surfaced so we can
-    // confirm what's actually sent (Hitya 2026-07-05 self-HP-numbers ask).
+    // confirm what's actually sent (the guild lead, 2026-07-05 self-HP-numbers ask).
     if (c.live && Array.isArray(c.char_info) && c.char_info.length) {
       // Field names come from the shared WP_ZLABELS map (Zeal named_pipe.cpp
       // LabelNames — see the definition above renderZealClients).
@@ -3314,7 +3314,7 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
-  // 🎨 Theme picker (Hitya 2026-07-12) — direct pick instead of cycling
+  // 🎨 Theme picker (the guild lead, 2026-07-12) — direct pick instead of cycling
   // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
   // active one highlights from status.overlayTheme.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
@@ -3332,7 +3332,7 @@ function renderOverlays(s) {
     + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
     + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
     + '</div>';
-  // 🔍 Overlay scale (Fittir's 5K monitor). Global slider here; each overlay
+  // 🔍 Overlay scale (a member's 5K monitor). Global slider here; each overlay
   // also carries its own "size" slider in its setup bar that overrides this.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     + '<b>🔍 Size — all overlays</b>'
@@ -3369,7 +3369,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
     + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
     + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
-    // Tray parity (Hitya 2026-08-19): lock/unlock, setup mode, and hide-all
+    // Tray parity (the guild lead, 2026-08-19): lock/unlock, setup mode, and hide-all
     // live here too, not just in the tray. Stateful labels start as … and are
     // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
     + '<span style="flex-basis:100%"></span>'
@@ -3377,7 +3377,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
     + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '</div>';
-  // 💥 Damage-taken audio alert (Hitya 2026-07-31). Not an overlay — an opt-in
+  // 💥 Damage-taken audio alert (the guild lead, 2026-07-31). Not an overlay — an opt-in
   // spoken cue — but its hotkey belongs with the other global hotkeys, so it
   // shares this block. Default OFF; the ON/OFF button and the rebind row both
   // write Mimic config, and main.js pushes the flag to the agent on save.
@@ -3392,7 +3392,7 @@ function renderOverlays(s) {
     + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
     + '</div>';
-  // 💾 Per-character overlay layouts — tray parity (Hitya 2026-08-19:
+  // 💾 Per-character overlay layouts — tray parity (the guild lead, 2026-08-19:
   // "Overlay layouts should be saves and in the overlay tab"). Baked from
   // the Mimic status object, so the card re-renders when a save/forget or
   // character switch pushes fresh status — same pattern as the theme picker.
@@ -3434,7 +3434,7 @@ function renderOverlays(s) {
   h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
-    // Dock button beside the on/off toggle (Hitya 2026-08-14). Trigger alerts
+    // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
     // would tie the callouts to being on screen. The dock can't dock itself.
     var dockCell = (key === 'trigger' || key === 'dock')
@@ -3461,7 +3461,7 @@ function renderOverlays(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:6px">When on, the Extended Target list hides targets reported by Mimics in a different zone, so a splinter group elsewhere does not clutter your list. Turn off to include every online raider regardless of zone.</div>';
   h += '</div>';
 
-  // Buff-queue section filters (Hitya 2026-08-19: "add some options on the
+  // Buff-queue section filters (the guild lead, 2026-08-19: "add some options on the
   // dashboard for debuff / feral only"). Agent-side pref like Extended
   // Target's — checkboxes here, POST /api/bq-pref, and the overlay obeys on
   // its next poll. HTML byte-stable; checked state applied by wpWireBqPref.
@@ -3747,7 +3747,7 @@ function wpRefreshOverlayToggles() {
       var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
-      // are indistinguishable here (Hitya 2026-08-04).
+      // are indistinguishable here (the guild lead, 2026-08-04).
       var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
@@ -3833,7 +3833,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       if (a === 'arrange' && window.mimic.autoArrangeNow) window.mimic.autoArrangeNow();
       if (a === 'rescue' && window.mimic.rescueOverlays) window.mimic.rescueOverlays();
       if (a === 'backdrops' && window.mimic.toggleBackdrops) window.mimic.toggleBackdrops();
-      // Tray parity (Hitya 2026-08-19) — same IPCs the tray items drive.
+      // Tray parity (the guild lead, 2026-08-19) — same IPCs the tray items drive.
       if (a === 'lock' && window.mimic.setOverlaysLocked && window.mimic.getStatus) {
         window.mimic.getStatus().then(function(st){
           var locked = !(st && st.overlaysLocked === false);
@@ -3866,7 +3866,7 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
 // Local trigger-library scan — v1.1.1 foundation. Hits /api/triggers/local-scan
 // once per dashboard render and paints the result into #wpTriggerScanCard.
 // Discovery only — never uploads anything; the result is visible in this
-// browser only. (Hitya 2026-06-26.)
+// browser only. (the guild lead, 2026-06-26.)
 var _wpTriggerScanCacheMs = 0;
 function wpScanLocalTriggers(){
   // Throttle to once per 60s so a re-render burst doesn't hammer the local
@@ -4129,7 +4129,7 @@ function renderZealExplorer(s) {
 // Stable clock time ("5:24 PM") for capture cards. Relative "X ago" strings
 // change every poll, which defeats the byte-stable innerHTML compare and makes
 // the card repaint (scroll jump / flicker) — an absolute time is stable across
-// polls, so the card only repaints when the DATA changes. (Hitya 2026-07-16.)
+// polls, so the card only repaints when the DATA changes. (the guild lead, 2026-07-16.)
 function _clockOf(ms) {
   var n = Number(ms);
   if (!isFinite(n) || n <= 0) return '?';
@@ -4174,7 +4174,7 @@ function renderBackupsCard(s) {
 }
 
 // 🎫 Officer DKP tick card. Two attendance sources, difference highlighted
-// (Hitya 2026-07-16): the LIVE raid roster (who Zeal sees right now) and any
+// (the guild lead, 2026-07-16): the LIVE raid roster (who Zeal sees right now) and any
 // exported RaidTick*.txt. Slot buttons run a dry-run PREVIEW first; a pending
 // confirm freezes the card (window._dkpTickPending) so the 2s poll can't wipe
 // the confirm UI.
@@ -4449,8 +4449,8 @@ function renderReporters(s) {
     var r = reps[ri];
     var freshDot = r.fresh ? '<span style="color:var(--green)">●</span>' : '<span style="color:var(--red)">○</span>';
     var camp = r.camping ? ' <span class="dim" title="camping">⛺</span>' : '';
-    // #119: show the LIVE character with the primary/main in parens ("Canopy
-    // (Hitya)") when the bot resolves one, else the primary alone. The label is
+    // #119: show the LIVE character with the primary/main in parens ("a member
+    // (the guild lead)") when the bot resolves one, else the primary alone. The label is
     // computed bot-side (character_label) so the hide_main_names rule stays
     // server-side; class="name" click-delegation slices to the first word, which
     // is the live character — the right /character page to open. Older bots that
@@ -4709,13 +4709,13 @@ document.addEventListener('click', function (ev) {
 // resists, rolls, inbound spell damage, loadouts and pets. All of it used to
 // sit on Info, which had become three tabs wearing one coat: session
 // observations, machine diagnostics, and parser facts. This is the
-// observations half (Hitya 2026-08-13 — the dashboard-navigation pass).
+// observations half (the guild lead, 2026-08-13 — the dashboard-navigation pass).
 //
 // Every card here is byte-stable between polls by construction: absolute
 // timestamps only, no fmtAgo, no live gauges. That is why this section needs
 // no wp* placeholders at all — a poll that changes nothing rewrites nothing,
 // so open <details> rows survive (and each one carries wpKeep besides).
-// ── 💰 Loot tab (Hitya, 2026-08-27) ────────────────────────────────────────
+// ── 💰 Loot tab (the guild lead, 2026-08-27) ────────────────────────────────────────
 // "move the opendkp bits to their own loot tab with rolls and make sure it
 // only checks for loot during raids."
 //
@@ -4913,7 +4913,7 @@ function renderStats(s) {
     h += '</div>';
   }
 
-  // 🎲 Rolls moved to the Loot tab (Hitya, 2026-08-27: "move the opendkp bits
+  // 🎲 Rolls moved to the Loot tab (the guild lead, 2026-08-27: "move the opendkp bits
   // to their own loot tab with rolls"). Rolls and bids are two ways of handing
   // out the same drop, so they belong on one screen — see renderLootTab().
 
@@ -4961,7 +4961,7 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Crash review (moved here from Triggers, Hitya 2026-08-13 — a crash is a
+  // Crash review (moved here from Triggers, the guild lead 2026-08-13 — a crash is a
   // machine/diagnostic concern, not a callout one). Reading dumps costs real
   // work, so the list fills on demand via renderCrashReview()'s one-shot.
   // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
@@ -4987,7 +4987,7 @@ function renderInfo(s) {
   // placeholder location moved — so they are NOT re-declared here.
   // (The Zeal Pipe explorer + Raw Zeal Capture moved to the 🩺 Diagnostics tab
   // — see renderDiag. Crash review and Client versions deliberately STAYED
-  // here: Hitya put the crash card on Info on purpose, and "what build is my
+  // here: the guild lead put the crash card on Info on purpose, and "what build is my
   // client running" is a fact about the install, not a health check.)
   // 🛟 Settings backups — filled by renderBackupsCard (own placeholder so the
   // restore controls survive #info repaints).
@@ -5033,12 +5033,12 @@ function renderInfo(s) {
   // (an acceptable repaint — the Info tab is not a form surface mid-raid).
   const _ztc = s.zealTagConfig || [];
   // 🗂 Log archiving banner — the user-facing notice + kill switch for the
-  // auto-archive feature (Ashieron feedback). Plain language: nothing is
+  // auto-archive feature (a member feedback). Plain language: nothing is
   // deleted, and the impacted files are named with sizes.
   const _lr = s.logRotate;
   if (_lr) {
     h += '<div class="card"><h2>🗂 Log archiving</h2>';
-    // One-time NEW-FEATURE announcement (Hitya: a Mimic banner, not a Discord
+    // One-time NEW-FEATURE announcement (The guild lead: a Mimic banner, not a Discord
     // post). Dismissed state persists in prefs so it appears once per install.
     if (!_lr.noticeSeen) {
       h += '<div style="border-left:3px solid var(--green);background:rgba(63,185,80,.08);padding:6px 8px;margin-bottom:8px;font-size:12px">'
@@ -5093,7 +5093,7 @@ function renderInfo(s) {
         h += '<div style="margin:0 0 4px 18px;color:#f2b632;font-size:11px">' + esc(w) + '</div>';
       }
     }
-    // Setup for tagging (Hitya 2026-09-03). "Set up EQ for me" writes the
+    // Setup for tagging (the guild lead, 2026-09-03). "Set up EQ for me" writes the
     // zeal.ini keys; the channel JOIN is a per-character thing the raider still
     // types once. The password comes from bot tuning at render time — it is
     // never in this file's source. Officer line only for officers.
@@ -5119,7 +5119,7 @@ function renderInfo(s) {
   h += '</div>';
   h += '</div>';
   // GINA/EQLP scan placeholder card — populated by wpScanLocalTriggers() on
-  // dashboard load via /api/triggers/local-scan. (Hitya 2026-06-26 — v1.1.1
+  // dashboard load via /api/triggers/local-scan. (the guild lead, 2026-06-26 — v1.1.1
   // foundation; parse + import land in 1.1.2+.) Empty placeholder so the
   // section's HTML stays byte-stable for morphInto until the scan resolves.
   h += '<div class="card wide" id="wpTriggerScanCard">'
@@ -5194,7 +5194,7 @@ var _raidSelName = null;   // click-to-expand raider in the Raid card
 // DAMAGE SHIELDS (+N per slot, total), SONGS (n/6), OTHER, DI/CHA warning.
 var _RD_RES_ORDER  = ['MR','FR','CR','PR','DR'];
 var _RD_RES_LABELS = { MR:'Magic', FR:'Fire', CR:'Cold', PR:'Poison', DR:'Disease' };
-// 2026-06-22 (Hitya): dropped 'mana' from the displayed order — the raw
+// 2026-06-22 (the guild lead): dropped 'mana' from the displayed order — the raw
 // max-mana category was always blank for the practical caster case (Mask of
 // the Stalker / Protection of the Cabbage carry +mana regen, not +max mana),
 // so the row just read "— missing" forever. Added 'seeInvis' + 'invis' so
@@ -5261,7 +5261,7 @@ function _raidDetailHtml(sel, det) {
     // Dedup primaries by buff name — Circle of Seasons covers Fire AND Cold,
     // and the catalog can return two SPA entries for one school (or a stale +
     // fresh cast lingers), which rendered "Circle of Seasons +1 more" with
-    // nothing behind the +1 (Hitya 2026-06-22). "+N more" now only fires
+    // nothing behind the +1 (the guild lead, 2026-06-22). "+N more" now only fires
     // when the extra entry is a genuinely different spell.
     var seenPrim = {};
     for (var i5 = 0; i5 < entries.length; i5++) {
@@ -5573,7 +5573,7 @@ async function refreshRaidTab() {
 // timeout, a non-JSON body, or a poll that legitimately came back empty for a
 // moment while the reporter election moved roster duty to another agent. The
 // panel then refilled on the next poll, so a raid of 45 flickered in and out
-// (Hitya 2026-08-06). Same stale-while-error rule the mob-info cache needed.
+// (the guild lead, 2026-08-06). Same stale-while-error rule the mob-info cache needed.
 // Bounded at 2 minutes so genuinely LEAVING a raid still clears the board
 // rather than pinning a roster that no longer exists.
 var _raidTabLast = null, _raidTabLastAt = 0;
@@ -5633,7 +5633,7 @@ function renderOptin(o) {
     h += '</div>';
   }
 
-  // Imported log backups (Hitya 2026-09-13). Inside Mimic: native pickers plus
+  // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
   // a drop zone that reads real paths through the bridge. A browser tab has
   // neither, so it only lists what is already imported.
   const imp = o.importedPaths || [];
@@ -5692,8 +5692,8 @@ function renderOptin(o) {
          '<button data-act="stop-all" style="background:#a40e26;border-color:#a40e26;color:#fff;margin-left:auto">⏸ Pause all</button>' +
          '</div>';
   }
-  // Group files by character so 'Hitya' with eqlog_Hitya_pq.proj.txt and
-  // eqlog_Hitya_pq.proj.txt2 (the rolled-over backup) show under one header.
+  // Group files by character so one character with eqlog_<Name>_pq.proj.txt and
+  // eqlog_<Name>_pq.proj.txt2 (the rolled-over backup) show under one header.
   const byChar = {};
   for (const f of list) {
     (byChar[f.character] = byChar[f.character] || []).push(f);
@@ -5911,7 +5911,7 @@ function renderOptin(o) {
         const char = b.dataset.bfChar || 'this character';
         // window.prompt() is UNSUPPORTED in Electron renderers — it throws,
         // which made this button a silent no-op inside Mimic (the async
-        // handler died before the POST; Hitya 2026-08-20, two June requests
+        // handler died before the POST; the guild lead 2026-08-20, two June requests
         // undismissable). confirm() IS supported, so the dismiss ships
         // without the optional officer-facing reason rather than blocking
         // on an input dialog Electron cannot show.
@@ -6055,7 +6055,7 @@ async function refresh() {
     // Make it VISIBLE instead of a silent blank, with the exact origin so the
     // problem is obvious, plus a one-click reload to the live engine.
     _refreshFailures++;
-    // SELF-HEAL (Hitya 2026-07-15: banner sat for minutes — "ITS A PROBLEM
+    // SELF-HEAL (the guild lead, 2026-07-15: banner sat for minutes — "ITS A PROBLEM
     // FOR ME"), refined the same night: reload ONLY when the shell says the
     // engine actually moved ports — that is the one failure a reload fixes.
     // A same-port engine that is busy or rebooting recovers on its own once
@@ -6534,7 +6534,7 @@ if (_uiStudioBtn) {
   }
 }
 
-// 📊 Resources — opens Mimic's Resource use window (Hitya 2026-08-04, "its
+// 📊 Resources — opens Mimic's Resource use window (the guild lead, 2026-08-04, "its
 // own window accessible from the tray and the dashboard"). Unlike UI Studio,
 // which dims when unavailable, this one stays HIDDEN outside Mimic: the answer
 // it gives is specifically "what do MIMIC's processes cost", which is not a
@@ -6868,7 +6868,7 @@ async function dismissTopDamage(key) {
     // every section repaint, and a renderer that rebuilds its innerHTML (e.g.
     // renderOptin) resurrects hidden cards without the wp-hidden class — the
     // same bounce-back the Watched Logs card had, except most renderers never
-    // learned to consult the set. Healing it here covers all of them (Hitya
+    // learned to consult the set. Healing it here covers all of them (the guild lead
     // 2026-08-20: closing the backfill panel "just refreshes and brings it
     // back").
     var hiddenSet = _loadHiddenSet();
@@ -7854,7 +7854,7 @@ async function dismissTopDamage(key) {
         var hist = row.item_id!=null ? itemHist[row.item_id] : null;
         var star = row.wishlisted ? " <span title='on your wishlist' style='color:var(--gold,#d4af37)'>★</span>" : "";
         var lastWin = (hist && hist.winning_bid!=null) ? (fmt(hist.winning_bid)+(hist.winner?(" · "+esc(hist.winner)):"")) : "—";
-        // #5 (Hitya, 2026-08-30: "Second place should show up as well in the
+        // #5 (the guild lead, 2026-08-30: "Second place should show up as well in the
         // bidding area") — second place used to be a dim sub-line tucked under
         // "Last win"; the misses table gave it a real column and the bidding
         // area did not. Same column, same header, so the two tables read alike.
@@ -7930,7 +7930,7 @@ async function dismissTopDamage(key) {
       h += "<div style='display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 4px;font-size:11px'>";
       if (acctDkp && acctDkp.account_dkp!=null){
         var whoTxt = acctDkp.character ? (" · "+esc(acctDkp.character)) : "";
-        // ⚠ SAY WHICH NUMBER THIS IS (Hitya, 2026-08-31: "i'm noticing that the
+        // ⚠ SAY WHICH NUMBER THIS IS (the guild lead, 2026-08-31: "i'm noticing that the
         // 192 dkp is wrong. i'm actually at 143 total"). This pill used to
         // hardcode "account (OpenDKP)" and show no age, so all three cases —
         // live standings, standings CACHED FROM AN EARLIER RAID, and the
@@ -7987,7 +7987,7 @@ async function dismissTopDamage(key) {
       // The account DKP cell, shared by both tables below.
       var dkpCellShared = (acctDkp&&acctDkp.account_dkp!=null) ? fmt(acctDkp.account_dkp) : (dkp?("~"+fmt(dkp.family_total)):"—");
       // Bid figures live on the MISSES rows, so the wishlist borrows them by
-      // item (Hitya, 2026-08-31: "the wishlist ... just needs to show the
+      // item (the guild lead, 2026-08-31: "the wishlist ... just needs to show the
       // fields from the Recent misses"). The two lists overlap almost entirely
       // — everything inferred "from bid history" is by definition something you
       // bid on and lost — so this is a join, not a second fetch.
@@ -8054,7 +8054,7 @@ async function dismissTopDamage(key) {
 
   // ── LOOT WON ───────────────────────────────────────────────────────────────
   // "Move Past Items to a different 'loot won' area on the loot page of mimic"
-  // (Hitya, 2026-08-30). It used to be the last section of the bidding card,
+  // (the guild lead, 2026-08-30). It used to be the last section of the bidding card,
   // which mixed two different questions: the bidding card is your LIVE HAND
   // (what is up, what you lost, what you plan to spend) and this is your
   // ARCHIVE. Splitting them splits the privacy gate too — you can browse what
@@ -8349,7 +8349,7 @@ async function dismissTopDamage(key) {
       acctDkp=(j&&j.ok)?j:null; lastAcctKey=key; lastAcctAt=Date.now();
     }).catch(function(){ acctDkp=null; lastAcctKey=key; lastAcctAt=Date.now(); });
   }
-  // ── Raid gate (Hitya, 2026-08-27: "make sure it only checks for loot during
+  // ── Raid gate (the guild lead, 2026-08-27: "make sure it only checks for loot during
   // raids") ────────────────────────────────────────────────────────────────
   // Sun/Wed/Thu 8pm-midnight ET, an hour either side, matching the bot.
   // Computed from the browser clock in ET so it is right regardless of where
@@ -8520,7 +8520,7 @@ async function dismissTopDamage(key) {
       html += '</div>';
     }
 
-    // Bulk bar. Uilnayar imported a large pack and had no way out of it except
+    // Bulk bar. A member imported a large pack and had no way out of it except
     // one ✕ at a time (Discord, 2026-08-29) — an import can add hundreds in a
     // click, so the undo has to be the same size as the do.
     html += '<div id="trigBulk" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:2px 0 8px">'

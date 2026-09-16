@@ -1,4 +1,4 @@
-// test/raid-night-events.test.js — raid-night thread v2 (Hitya 2026-07-31).
+// test/raid-night-events.test.js — raid-night thread v2 (the guild lead, 2026-07-31).
 //
 // Covers the three things that changed after night one:
 //   1. the posting WINDOW comes from a scheduled event (start −30m … end +15m),
@@ -18,7 +18,7 @@ const TZ = 'America/New_York';
 const MIN = 60_000;
 const et = (s) => Date.parse(s);
 
-// Thursday 2026-07-30, 20:00 → 00:00 ET — the shape Hitya's calendar produces.
+// Thursday 2026-07-30, 20:00 → 00:00 ET — the shape the guild lead's calendar produces.
 const RAID = { id: 'discord:1', title: 'Vex Thal', startMs: et('2026-07-30T20:00:00-04:00'), endMs: et('2026-07-31T00:00:00-04:00') };
 // Friday 2026-07-31, 21:00 → 23:00 ET — an off-night guild event.
 const SOCIAL = { id: 'discord:2', title: 'Bingo Night', startMs: et('2026-07-31T21:00:00-04:00'), endMs: et('2026-07-31T23:00:00-04:00') };

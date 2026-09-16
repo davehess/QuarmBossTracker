@@ -1,6 +1,6 @@
 // /ai — how this platform is built and maintained by AI sessions.
 //
-// Hitya 2026-08-23: "publish all of this detail to wolfpack.quest/ai … human
+// The guild lead 2026-08-23: "publish all of this detail to wolfpack.quest/ai … human
 // and agent readable … any agentic workflow could review that page and
 // understand our methodology … without GitHub access, but if the agent has
 // GitHub access it could see the full picture and set up its own workflow to

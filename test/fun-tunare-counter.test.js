@@ -1,8 +1,8 @@
 // A failed query must never render as a zero.
 //
-// THE BUG (Hitya 2026-08-04, "what happened to our Tunare invocations?"):
+// THE BUG (the guild lead, 2026-08-04, "what happened to our Tunare invocations?"):
 // the /fun card read 0 while the data sat right there — 83 rows across
-// Naggato's family, latest 2026-07-31, and `fun_tunare_stats` returns exactly
+// A member's family, latest 2026-07-31, and `fun_tunare_stats` returns exactly
 // that when called as service_role.
 //
 // The reason it read 0 rather than saying anything is a one-line habit:

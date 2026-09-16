@@ -1,6 +1,6 @@
 // test/tell-relay-direction.test.js — the DM relay's arrow points from the speaker.
 //
-// Hitya, 2026-09-14, with the #pvp-style DM thread open: "These are still
+// The guild lead, 2026-09-14, with the #pvp-style DM thread open: "These are still
 // going the wrong direction." A tell Fandango sent was drawn as
 // "**Fandango** ← Hitya", which reads as Hitya speaking. The stored rows were
 // checked against the raw log lines and every direction was right — only the

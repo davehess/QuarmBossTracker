@@ -1,5 +1,5 @@
 // test/vision-eye-target.test.js — an Eye of Zomm as the TARGET must never
-// become a fight (Hitya, live 2026-08-16: "Eye of PLAYER showing up in DPS
+// become a fight (the guild lead, live 2026-08-16: "Eye of PLAYER showing up in DPS
 // meter and history").
 //
 // The _isVisionEyePet choke points already keep eyes off the PET/attacker

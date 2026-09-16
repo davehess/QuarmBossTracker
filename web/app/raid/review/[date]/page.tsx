@@ -16,7 +16,7 @@
 //      re-implemented: deaths + raid events + callout fires on one axis. The
 //      Discord review carries a 12-cell sparkline of the same deaths and links
 //      here; this is where the full picture lives.
-//   7. Trash cleared   — Hitya 2026-08-02. `encounters` is boss-only by
+//   7. Trash cleared   — the guild lead 2026-08-02. `encounters` is boss-only by
 //      construction (supabase.recordParse no-ops without a bosses_local row),
 //      so the trash tally is what the BOT observed on the upload stream,
 //      published to bot_kv by utils/raidReview.js. Absent → section drops out.
@@ -66,7 +66,7 @@ type FireRow = { at: string; subtype: string | null; actor: string | null; label
 // timelines get raid events (slow/mob-heal/disc) as well as fires.
 type EncEventRow = { encounter_id: string; at: string; kind: string; subtype: string | null; actor: string | null; label: string | null };
 // Who came, from OpenDKP ticks — the one record that exists for every night
-// since 2024, long before anyone uploaded a parse (Hitya, 2026-09-04: "the
+// since 2024, long before anyone uploaded a parse (the guild lead, 2026-09-04: "the
 // early raids have very limited data … at least have the bosses killed"). The
 // raid NAME is the officer's own record of what was on the menu.
 type Attendance = { raids: string[]; raiders: string[]; ticks: number; zone: string | null };
@@ -82,7 +82,7 @@ async function load(date: string) {
     // Curated bosses only, filtered IN THE QUERY like /parses. Since bot 3.1.52
     // every exactly-matched mob persists an encounter (first kills are sacred),
     // so a night's rows are mostly farm trash — a Saturday Ssra farm showed as
-    // "470 kills" here (Hitya, 2026-09-04: "we're still displaying all of these
+    // "470 kills" here (Rethlan, 2026-09-04: "we're still displaying all of these
     // non-raid mobs"). Trash keeps its own line: the bot's tally in bot_kv.
     const curated = await curatedNpcIds(sb);
 
@@ -397,7 +397,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
   }
 
   // Grouped by the FIGHT each fire landed in, folded by label, with the deaths
-  // that followed within a few seconds named beside it (Hitya, 2026-09-04:
+  // that followed within a few seconds named beside it (the guild lead, 2026-09-04:
   // "its just a line of asphyxiate and not who it landed on. We should group
   // these by boss"). The event row carries no target — the agent relays the
   // trigger name, not the line — so the victim is inferred from the same
@@ -580,7 +580,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
             </section>
           )}
 
-          {/* 1b. Trash cleared (Hitya 2026-08-02). `encounters` only ever holds
+          {/* 1b. Trash cleared (the guild lead, 2026-08-02). `encounters` only ever holds
                   tracked bosses, so this is the bot's observed tally of
                   everything ELSE the raid killed, published to bot_kv. */}
           {trash && (

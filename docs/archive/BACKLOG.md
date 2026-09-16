@@ -124,7 +124,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   exact channel token, including whether the ZT display prefix is part of it. Open product Q: mirror to web as a searchable tag timeline (like the
   chat log) or stay purely live-overlay + ephemeral?
 - **Stale-log-filename attribution — extend beyond chat.** Root cause found
-  2026-07-07 (the a member/a member/a member chat renames): after a character
+  2026-07-07 (the three-way chat renames): after a character
   swap the EQ client keeps appending to the PREVIOUS character's log, so
   everything keyed on the log FILENAME misattributes for the rest of that
   session. Chat is fixed end-to-end (agent 3.2.2 `speaker_source` + Zeal

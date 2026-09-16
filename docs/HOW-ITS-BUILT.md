@@ -2945,7 +2945,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `/parses/[id]`: stacked BY CLASS with right-edge `class + %` labels, click a
   class to drill into its characters (one-axis premise holds in both views),
   hover highlights, MT strip with honest "nobody taking hits" gap tooltips
-  (1-bucket sampling holes bridged; real gaps kept — the a member "it ran" case).
+  (1-bucket sampling holes bridged; real gaps kept — the "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
 - **Missing-spells "where from" + shopping list** (web 1.1.67):

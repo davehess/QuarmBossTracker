@@ -3,7 +3,7 @@
 // The endpoint (`GET /api/agent/mob-info`, index.js) used to fetch ONE
 // eqemu_npc_types row with `&limit=1` and no ORDER BY, so PostgREST's arbitrary
 // row order decided which of a name's many bodies a raider saw. utils/mobSpecials
-// now owns the rule from docs/audit-mob-specials.md §"The fix" (Hitya, 2026-07-25):
+// now owns the rule from docs/audit-mob-specials.md §"The fix" (the guild lead, 2026-07-25):
 // all rows → split real vs placeholder → prefer the requester's zone → primary is
 // the highest-level REAL row → flags are the UNION across real rows only.
 //

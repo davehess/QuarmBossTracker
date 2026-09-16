@@ -1,6 +1,6 @@
 // Hide-all must stay distinguishable from "I turned this off".
 //
-// Uilnayar, 2026-08-04: "we should be able to see in the overlays section which
+// A member, 2026-08-04: "we should be able to see in the overlays section which
 // ones were previously off but are hidden. Currently, when we hide the windows,
 // it just sets everything to off."
 //

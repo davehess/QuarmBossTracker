@@ -159,7 +159,7 @@ async function findLatestDump() {
 // recipes, doors, merchant lists, etc. are CLASSIC-static and live in the
 // TAKP/Al'Kabor parent dump). For any whitelisted table we don't see in the
 // Quarm dump we fall back to scanning the latest Al'Kabor tarball — same
-// CREATE TABLE + INSERT mysqldump format, just a different file. Uilnayar
+// CREATE TABLE + INSERT mysqldump format, just a different file. A member
 // 2026-06-23 — "we need our own version of the DB for a complete picture."
 async function findAlkaborDump() {
   console.log('Querying GitHub for latest Al\'Kabor DB tarball (fallback source)…');
@@ -875,7 +875,7 @@ if (require.main !== module) return;
   // Have we already synced this exact dump? Skip if yes (idempotent) — UNLESS
   // FORCE_RESYNC is set. Force is needed when the dump is unchanged but the
   // WHITELIST grew (new mirror tables added in code), so a re-import of the
-  // same dump is required to populate them (Hitya 2026-06-23 — faction
+  // same dump is required to populate them (the guild lead, 2026-06-23 — faction
   // tables added; the unchanged-dump short-circuit was skipping them).
   let prevState = {};
   try { prevState = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch {}

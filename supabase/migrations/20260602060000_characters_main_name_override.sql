@@ -2,9 +2,9 @@
 --
 -- syncCharacters() upserts characters.main_name from OpenDKP's ParentId
 -- on every interval (≤30 min). Manually rewriting main_name to a value
--- OpenDKP doesn't agree with (e.g. re-parenting Lith / Dantare under
--- Dant when OpenDKP still says Lith is the root) would get reverted on
--- the next sync.
+-- OpenDKP doesn't agree with (re-parenting two alts under the main an
+-- officer says they belong to, when OpenDKP still roots them elsewhere)
+-- would get reverted on the next sync.
 --
 -- Instead: store the intended truth in main_name_override. A BEFORE
 -- INSERT / UPDATE trigger replaces NEW.main_name with the override if

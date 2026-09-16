@@ -7,7 +7,7 @@
 //
 // #65 broke the proxy: real overlays are now served BY the agent at
 // /overlay/<name> so they ride agent hot-swaps. The Command Center inherited a
-// gear that opened Mimic Settings from inside a raid overlay (Hitya,
+// gear that opened Mimic Settings from inside a raid overlay (the guild lead,
 // 2026-08-13) — and because /overlay/command carries no `?overlay=` query, it
 // was even misdetected as the main window rather than as an overlay.
 //

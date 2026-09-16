@@ -3,7 +3,7 @@
 // 1. The glow was a blob positioned BEHIND the plate, on the belief that the
 //    keyed art leaves the eye slits transparent. It does not — keying cut the
 //    dark LINEWORK and left the eye interior opaque bone, so the light read
-//    through the brow strokes instead of the eye (Hitya, 2026-08-28: "this is
+//    through the brow strokes instead of the eye (the guild lead, 2026-08-28: "this is
 //    the area that should glow"). The fix makes the glow its own plate, painted
 //    on top, cut to the eye interior measured off the shipped asset.
 // 2. The reveal filter was written as `.wolf-alpha img`, which also matched the
@@ -48,7 +48,7 @@ describe('wolf hero eye glow', () => {
   it('gives every wolf an opaque silhouette, under its own plate', () => {
     // Only the BONE is opaque in the keyed art; every dark line is a hole, so
     // without a filled silhouette beneath it a wolf in front shows the wolf
-    // behind through its own linework (Hitya: "the transparency overlap looks
+    // behind through its own linework (The guild lead: "the transparency overlap looks
     // bad"). Brightness-not-opacity is necessary but was not sufficient.
     // The rule that actually positions it. `.wolf-packmember .wolf-solid` also
     // mentions the class, and satisfied a laxer version of this assertion while
@@ -90,7 +90,7 @@ describe('wolf hero eye glow', () => {
   });
 
   it('finishes the alpha before a single pack eye opens', () => {
-    // The order Hitya asked for (2026-08-29): her eyes, then HER, then their
+    // The order the guild lead asked for (2026-08-29): her eyes, then HER, then their
     // eyes, then them. The first cut interleaved the two halves, so she landed
     // at the same moment as a wall of pack. Four numbers spread across a CSS
     // rule and a TSX array decide this, and none of them says so on its own.
@@ -175,7 +175,7 @@ describe('landing page fit and pacing', () => {
     void delay;
   });
 
-  // Every ruling Hitya has made on where a destination belongs. Each one is a
+  // Every ruling the guild lead has made on where a destination belongs. Each one is a
   // pair — in the right group AND out of the wrong one — because moving an item
   // by copying it leaves a duplicate that looks fine in the menu.
   const RULINGS = [
@@ -198,7 +198,7 @@ describe('landing page fit and pacing', () => {
 
   it('always offers /me — it is a top-level door, not a signed-in extra', () => {
     // Gating it on `showMe` made the four doors three for every signed-out
-    // visitor, which is exactly how it went missing (Hitya, 2026-08-28).
+    // visitor, which is exactly how it went missing (the guild lead, 2026-08-28).
     // /me redirects to sign-in itself, so the link never dead-ends.
     const me = nav.match(/^\s*(?:\{showMe[^\n]*)?<Link href="\/me"/m);
     expect(nav).toMatch(/<Link href="\/me"/);

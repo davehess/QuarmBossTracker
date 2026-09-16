@@ -22,7 +22,7 @@
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
 
-  /* ⚠ The plate is OPT-IN, driven by the backdrop toggle (Hitya 2026-08-14:
+  /* ⚠ The plate is OPT-IN, driven by the backdrop toggle (the guild lead, 2026-08-14:
      "Background on/off doesn't do much for the dock. It should fully remove the
      background from the inside of the box when off"). Default = no plate at
      all, so the panes float over EQ exactly as loose overlays did. */
@@ -32,7 +32,7 @@
   /* Auto-fit measures shell.scrollHeight — with height:100% that is AT LEAST
      the viewport, so `want = scrollHeight + 10` sat a rounding coin-flip past
      the 8px hysteresis and the window crept +10px every 1s fit tick to the
-     1600 cap (Hitya 2026-08-19: "keeps resizing to the entire height of the
+     1600 cap (the guild lead, 2026-08-19: "keeps resizing to the entire height of the
      screen … grows each tick. It should only grow to support the size of its
      contents"). While auto-fit is ON the shell is intrinsic-height, so the
      measure is the CONTENT and the loop has a fixed point. Auto-fit OFF keeps
@@ -88,14 +88,14 @@
   /* ── Setup mode ──────────────────────────────────────────────────────────
      Panes become draggable cards. The iframes go pointer-events:none so the
      drag lands on the PANE — without that, a mousedown inside a pane hits the
-     overlay's own drag handle and moves the whole window (Hitya 2026-08-14:
+     overlay's own drag handle and moves the whole window (the guild lead, 2026-08-14:
      "dragging the inner dock items … moves the entire window"). */
   body.setup .pane{cursor:grab;border-color:rgba(246,195,101,0.6)}
   body.setup .pane > iframe{pointer-events:none}
   body.setup .pane.drag{opacity:0.45;cursor:grabbing}
   body.setup .pane.over{outline:2px dashed #f0b429;outline-offset:-2px}
   /* Corner grip — drag to stretch a pane across columns/rows in setup
-     (Hitya 2026-08-19). Snaps to whole grid cells; the ≡ menu presets
+     (the guild lead, 2026-08-19). Snaps to whole grid cells; the ≡ menu presets
      keep working. */
   .pane{position:relative}
   .pane .grip{display:none;position:absolute;right:0;bottom:0;width:16px;height:16px;
@@ -114,7 +114,7 @@
   #setupbar .sb:hover{background:rgba(0,0,0,0.45)}
 
   /* Pane picker — which overlays live in the dock. #layouts (named dock
-     layouts + rename, Hitya 2026-08-19) shares the same panel chrome. */
+     layouts + rename, the guild lead 2026-08-19) shares the same panel chrome. */
   #picker,#layouts{display:none;position:absolute;top:26px;left:6px;right:6px;z-index:80;
     background:rgba(13,17,23,0.98);border:1px solid rgba(163,113,247,0.5);
     border-radius:6px;padding:6px;max-height:70%;overflow:auto;
@@ -237,7 +237,7 @@
     // names no sender ever used — so the dock NEVER entered setup state:
     // "Setup THIS Overlay" looked dead and panes could never be dragged
     // (pane drag is body.setup-gated). What read as "editable during Setup
-    // ALL" was only the unlocked chrome (Hitya 2026-08-19).
+    // ALL" was only the unlocked chrome (the guild lead, 2026-08-19).
     SETUP = !!(p && (p === true || p.active || p.on || p.setup));
     if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all';
     document.body.classList.toggle('setup', SETUP);
@@ -337,7 +337,7 @@
     colBtn.textContent = '▥ ' + cols;
     if (growBtn) growBtn.classList.toggle('on', state.growUp !== false);
     countEl.textContent = keys.length ? '(' + keys.length + ')' : '';
-    // User-named dock (Hitya 2026-08-19: "change the dock configuration name
+    // User-named dock (the guild lead, 2026-08-19: "change the dock configuration name
     // to reflect what the user wants").
     var titleEl = document.getElementById('dockTitle');
     if (titleEl) titleEl.textContent = '◫ ' + (state.dockName || 'Dock');
@@ -430,7 +430,7 @@
   }
 
   // ── Auto height ───────────────────────────────────────────────────────────
-  // Hitya: "Automatic height adjustment needs to be turned on." Each pane is
+  // The guild lead: "Automatic height adjustment needs to be turned on." Each pane is
   // sized from its OWN content (same-origin, so we can measure it), then the
   // dock asks main to size the window to the total. main keeps the BOTTOM edge
   // fixed when grow-upward is on, so it grows away from the middle of the
@@ -593,7 +593,7 @@
     } catch (e) {}
   }
 
-  // ── Corner-resize a pane across grid cells (Hitya 2026-08-19: "In setup
+  // ── Corner-resize a pane across grid cells (the guild lead, 2026-08-19: "In setup
   // mode i should be able to resize via the corners or sides of the docked
   // overlays to stretch to consume additional rows or columns") ─────────────
   // Live-preview while dragging; the real dock-span write happens on release
@@ -646,7 +646,7 @@
     try { M.dockCols().then(function (st) { if (st) render(st, true); }); } catch (e) {}
   });
 
-  // ── Named dock layouts + rename (Hitya 2026-08-19: "Dock needs the ability
+  // ── Named dock layouts + rename (the guild lead, 2026-08-19: "Dock needs the ability
   // to save configurations … A 'Save layout' button or 'Load Layout' with
   // each of their layouts") ─────────────────────────────────────────────────
   var layEl   = document.getElementById('layouts');

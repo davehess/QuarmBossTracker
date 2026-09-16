@@ -1,6 +1,6 @@
 // test/tag-autojoin-file-write.test.js — the autojoin file-write, unblocked.
 //
-// Hitya, 2026-09-03, with a real eqclient.ini: "Autojoin is part of the
+// The guild lead, 2026-09-03, with a real eqclient.ini: "Autojoin is part of the
 // eqclient.ini. We can save the channel:pass as an environmental variable for
 // officer chat and for tagging. The tagging piece is critical."
 //

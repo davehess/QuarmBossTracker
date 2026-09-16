@@ -1,7 +1,7 @@
 // test/opendkp-offraid-sync-cadence.test.js — the mirror sync backs off between
 // raids.
 //
-// Hitya, 2026-08-27: "cut down the number of calls as much as possible outside
+// The guild lead, 2026-08-27: "cut down the number of calls as much as possible outside
 // of raid times". Measured over a 12h window before this landed, the 30-minute
 // mirror sync was most of what OpenDKP saw from us — /auctions 26 calls /
 // 11.9 MB, /characters 65 / 8.9 MB, /raids/{id} 245 / 1.5 MB — all maintenance,
@@ -98,7 +98,7 @@ describe('off-raid sync cadence', () => {
   });
 
   it('does NOT pull OpenDKP on boot at all', () => {
-    // Hitya: "can we take the opendkp pull out of main redeploy? we have the
+    // The guild lead: "can we take the opendkp pull out of main redeploy? we have the
     // data that isn't stale prior to the raid". main redeploys 12-42 times a
     // day, and a boot pull is a per-deploy fetch of data the process we just
     // replaced had mirrored minutes earlier — the same shape that dominated

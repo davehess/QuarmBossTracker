@@ -1,7 +1,7 @@
 // test/pre-raid-checklist.test.js — the officer-chat pre-raid checklist.
 // Real-imports the pure builder (utils/preRaidChecklist.js).
 //
-// Hitya 2026-08-21: "let's build an admin-facing officer-chat pre-raid
+// The guild lead 2026-08-21: "let's build an admin-facing officer-chat pre-raid
 // checklist, active mimics, class shortages below our average, lockouts,
 // other pertinent details."
 

@@ -1,10 +1,10 @@
 // test/setup-checklist-eq-folder.test.js — the Setup checklist has to name the
-// RIGHT problem (Hitya, 2026-09-10: "we should be able to denote both
+// RIGHT problem (the guild lead, 2026-09-10: "we should be able to denote both
 // situations. ask the user if they're running in compatibility mode if Zeal
 // says it's not connected, yet zeal files are in the folder. do a write check
 // to see if permissions are there").
 //
-// THE FIELD CASE. Abrahms/AirborneSapper had Zeal installed and working files
+// THE FIELD CASE. A member/AirborneSapper had Zeal installed and working files
 // on disk, and a dead feed — EQ was running elevated while Mimic was not. The
 // "Zeal connected" row said "install/enable Zeal" regardless of what was on
 // disk, so he clicked Check / install Zeal, and THAT failed with a raw
@@ -248,7 +248,7 @@ describe('the raw EPERM never reaches a member again', () => {
 });
 
 describe('the overlays-off row — the third thing the app knew and never said', () => {
-  // Abrahms, 2026-09-10, after Program Files and elevation were both ruled out:
+  // A member, 2026-09-10, after Program Files and elevation were both ruled out:
   // "I can get em all up when doing the placement mode. and moving/resizing.
   // even the hotkey flip them from on to hidden. but nothing ever makes it to my
   // screen." Every overlay is `unlocked || (showX && !hideOverlays && eqGate)`, and
@@ -295,7 +295,7 @@ describe('the overlays-off row — the third thing the app knew and never said',
 // renderSetupChecks, a ReferenceError that fires MID-RENDER — after the first
 // rows are appended, before the buttons are. The Setup card silently lost "Set
 // up for me", the Defender / Zeal / clock fixers and every row below Zeal, and
-// it rode a stable graduation to the whole fleet before Hitya said "setup lost
+// it rode a stable graduation to the whole fleet before the guild lead said "setup lost
 // the buttons on the mimic dashboard".
 //
 // check:dashboard did not catch it either — it proves the script PARSES, and a

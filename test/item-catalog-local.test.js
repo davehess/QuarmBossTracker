@@ -3,7 +3,7 @@
 //
 // The whole reason this exists is that choosing a wishlist item should cost
 // nothing at the moment you choose it — no bot round-trip, no database, works
-// with the network down (Hitya, 2026-08-30). So the properties worth pinning
+// with the network down (the guild lead, 2026-08-30). So the properties worth pinning
 // are the ETag (an unchanged week must cost ~200 bytes, not 130 kB), the
 // minimum query length (a keystroke must not full-scan 11k rows), and the
 // ranking (typing "cloak" should not bury "Cloak of Flames" under

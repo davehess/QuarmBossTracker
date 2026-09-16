@@ -1,4 +1,4 @@
-// /admin/adoption — the product-health page (Hitya 2026-08-18: "if you were a
+// /admin/adoption — the product-health page (the guild lead, 2026-08-18: "if you were a
 // product manager justifying our product and showing new user acquisition or
 // new raider adoption (those are varied) and what other stats would you
 // present to your execs?").

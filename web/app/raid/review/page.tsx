@@ -131,7 +131,7 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
     }
 
     // OpenDKP nights — the guild raided for a year and a half before anyone
-    // uploaded a parse (Hitya, 2026-09-04: "the early raids have very limited
+    // uploaded a parse (the guild lead, 2026-09-04: "the early raids have very limited
     // data … at least have the bosses killed"). Every night OpenDKP ticked
     // gets a card, its raid name standing in for the kills; bonus rows are
     // not nights, and the night is the date in the raid's name.

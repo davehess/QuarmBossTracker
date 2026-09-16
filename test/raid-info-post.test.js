@@ -1,7 +1,7 @@
 // test/raid-info-post.test.js — the midday raid-info post.
 // Real-imports the pure helpers (utils/raidInfoPost.js).
 //
-// The fixture is the ACTUAL signup embed Hitya sent (Vex Thal, Aug 23 2026):
+// The fixture is the ACTUAL signup embed the guild lead sent (Vex Thal, Aug 23 2026):
 // "this is the information that we go off of from signups."
 
 import { describe, it, expect } from 'vitest';

@@ -1,6 +1,6 @@
 // test/db-read-discipline.test.js — the database read layer stays ONE layer.
 //
-// Hitya, 2026-08-16: "do U1 … let's start looking at the database read/write
+// The guild lead, 2026-08-16: "do U1 … let's start looking at the database read/write
 // layers as that is complexity I have not designed in."
 //
 // The complexity nobody designed in: PostgREST silently caps EVERY response at

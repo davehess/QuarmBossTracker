@@ -1,6 +1,6 @@
 // commands/lockoutcheck.js — pre-raid lockout briefing to officer chat.
 //
-// Hitya 2026-08-21: "put it into a post in officer chat about characters
+// The guild lead 2026-08-21: "put it into a post in officer chat about characters
 // currently locked out for the upcoming night's raid by zone from the raid
 // planner's event."
 //
@@ -68,7 +68,7 @@ async function buildBriefingEmbed(client) {
   const header = [
     planned.eventTitle ? `**${planned.eventTitle}**` : null,
     // Mains are the verdict — a blocked alt is a swap, a blocked main is a hole
-    // in the raid (Hitya 2026-08-22: "as long as mains are good to go").
+    // in the raid (the guild lead, 2026-08-22: "as long as mains are good to go").
     b.mainsBlocked === 0
       ? (b.altsBlocked
           ? `✅ **All mains clear.** ${b.altsBlocked} alt${b.altsBlocked === 1 ? '' : 's'} blocked — swap and carry on.`

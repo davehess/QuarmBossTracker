@@ -1,7 +1,7 @@
 // test/pacify-overlay.test.js — a pacify gets its own line, above the mob's
 // buffs and above our debuffs.
 //
-// Hitya, 2026-09-02, choosing this over folding it into either section: it is
+// The guild lead, 2026-09-02, choosing this over folding it into either section: it is
 // neither. The catalog calls the whole SPA-30 line beneficial (good_effect=1 —
 // and it IS good, for the mob), so left alone it renders green among the mob's
 // own buffs. But what the raid wants from it is "is this thing still safe to
@@ -80,7 +80,7 @@ describe('where a pacify lands on the overlay', () => {
     expect(html).not.toContain('fell off');
   });
 
-  // ⚠ Hitya, 2026-09-02: Pacify means the mob will not attack even at contact;
+  // ⚠ the guild lead, 2026-09-02: Pacify means the mob will not attack even at contact;
   // Harmony only SHRINKS the aggro radius and still aggros up close, and being
   // AE it is also on nearby mobs this row says nothing about. An earlier cut of
   // this overlay told the reader a Harmony'd mob was "safe to pull past", which

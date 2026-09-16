@@ -4,9 +4,9 @@
 -- 50-minute–to–2-hour duration with every player who did any damage in the
 -- zone). When that blob merges into a real ~3-minute boss kill (same npc, ±30m
 -- window), max-damage-per-player drags in parked alts and passers-by who were
--- never in the fight. (Hitya 2026-06-23: Hitya showed 2.3k on a Cazic Thule
--- kill she wasn't at; both of Borowhay's boxes appeared at once — all sourced
--- only from one 3024s blob upload.)
+-- never in the fight. (the guild lead, 2026-06-23: a character showed 2.3k on a
+-- Cazic Thule kill they were never at, alongside other characters who were not
+-- in the fight either — all sourced only from one 3024s blob upload.)
 --
 -- The prior statistical duration guard here failed because the blob had BOTH
 -- the most players and the most damage, so it dominated the percentile math.

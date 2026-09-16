@@ -132,7 +132,7 @@ export function computeKitCoverage(catalog: KitEntry[], rows: KitOwnerRow[]): Ki
 /**
  * Narrow a coverage board to what a given viewer may see BY NAME.
  *
- * Hitya, 2026-08-14: *"quartermaster should display raider information for that
+ * The guild lead, 2026-08-14: *"quartermaster should display raider information for that
  * user not for everyone. it can display for everyone for admins."*
  *
  * Board 1 shipped naming every owner of every utility item to every signed-in

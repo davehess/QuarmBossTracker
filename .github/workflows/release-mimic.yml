@@ -173,7 +173,7 @@ jobs:
       # git trailers, and demote the install/SmartScreen note below a rule. This
       # is what the #mimic-releases announcer surfaces (it shows the part above
       # the ---), so a raider sees "finishing-blow fix, Set up for me, …" instead
-      # of "Electron desktop client, bundles Node runtime" (Uilnayar 2026-07-14).
+      # of "Electron desktop client, bundles Node runtime" (a member, 2026-07-14).
       - name: Build release notes
         id: notes
         if: steps.tag.outputs.build == 'true'

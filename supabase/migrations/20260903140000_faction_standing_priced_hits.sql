@@ -1,6 +1,6 @@
 -- faction_standing: count the hits whose point value we actually resolved.
 --
--- Hitya, 2026-09-03: "this is still inaccurate. We should have how many
+-- The guild lead, 2026-09-03: "this is still inaccurate. We should have how many
 -- positive and negative hits total in parentheses for raised and lowered, and
 -- the raised/lowered should specifically call out how much the faction has been
 -- raised or lowered."

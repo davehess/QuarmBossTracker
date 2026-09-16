@@ -1,7 +1,7 @@
 // test/buffs-tab-effects.test.js — the Buffs tab says what each buff gives you,
 // and sums up what you are carrying.
 //
-// Hitya, 2026-09-02: "The buffs on the buffs page should give the affects that
+// The guild lead, 2026-09-02: "The buffs on the buffs page should give the affects that
 // they're providing each, and then a summary below of all of the things that
 // are provided."
 //
@@ -141,7 +141,7 @@ describe('wiring', () => {
 // formatter declared as _wpDur — a name already taken further down the same
 // single-scope file by a MILLISECONDS formatter. Two top-level `function`
 // declarations with one name silently resolve to the LAST, so every buff
-// rendered at 1/1000 of its real time and nothing threw. Hitya caught it against
+// rendered at 1/1000 of its real time and nothing threw. The guild lead caught it against
 // the in-game buff window: Girdle of Karana's 56 minutes read "3s", and its
 // 4320-second catalog duration read "~4s".
 //

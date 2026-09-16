@@ -1,6 +1,6 @@
 // test/roll-breakdown.test.js — "who else rolled".
 //
-// Hitya, 2026-08-14: "can we start having a drop-down to open up lower rolls on
+// The guild lead, 2026-08-14: "can we start having a drop-down to open up lower rolls on
 // the page and see who else rolled?"
 //
 // The /rolls page and the Command Center both show winners only; the losing
@@ -49,7 +49,7 @@ describe('rollBreakdown', () => {
   });
 
   it('keeps a re-roll, flags it, and never calls it a winner', () => {
-    // Ashieron rolled 220 and won, then re-rolled 5. The re-roll must show (or
+    // A member rolled 220 and won, then re-rolled 5. The re-roll must show (or
     // the count lies) and must not be styled as a win.
     const lines = rollBreakdown(session({
       winners: [{ name: 'Ashieron', value: 220 }],

@@ -2,12 +2,12 @@
 
 // "Characters we think are yours" — the MEMBER side of character linking.
 //
-// Hitya 2026-08-20: "I need a way for the end user that we suspect these are a
+// The guild lead 2026-08-20: "I need a way for the end user that we suspect these are a
 // part of to tell us about these users." Until now the only way an uploading-
 // but-unlinked character got filed was an officer working /admin/links, and
 // ~110 characters were sitting there unclaimed — mostly traders and bank
 // mules, which an officer cannot classify anyway (they don't know whose
-// Beltbroker is whose).
+// A member is whose).
 //
 // The person whose Mimic uploaded the file DOES know. The agent authenticates
 // as them, so `agent_upload_stats.uploaded_by_discord_id` is a first-party

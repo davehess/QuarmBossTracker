@@ -1,6 +1,6 @@
 // `/zeal version` → what the client actually has LOADED.
 //
-// Fixture lines are the REAL output Uilnayar pasted on 2026-08-04, not invented:
+// Fixture lines are the REAL output a member pasted on 2026-08-04, not invented:
 //
 //   [09:34:08] Zeal version: 1.4.3 (23c766f)
 //   [09:34:08] eqw.dll version: 1.0.1 (Jan 20 2026 22:09:32)

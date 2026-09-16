@@ -247,13 +247,13 @@ async function loadFloorAndCoverage(): Promise<{
 }
 
 // Everything /me needs per character that can be asked for ONCE per account.
-// Hitya, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
+// The guild lead, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
 // page ran a dozen queries per character, and an account can hold 46 of them
 // (mains, alts, mules) — ~550 PostgREST round trips a load, two of them a
 // 385 ms chat count each. Now: chat counts, best-known levels, loot, wishlist
 // and PvP tallies come back for the whole family in one query apiece, and the
 // per-character fan-out below runs only for names that have any parse,
-// upload or rollup row at all (37 of Hitya's 46 have none).
+// upload or rollup row at all (37 of the guild lead's 46 have none).
 type LootRow = { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null };
 type FamilyPrefetch = {
   active:   Set<string>;                                              // lower-cased names with something to fetch
@@ -290,7 +290,7 @@ async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
     admin.from('wishlists').select('character_name').in('character_name', names).limit(1000),
     // PvP tallies — case-insensitive on purpose (the broadcast names are not
     // canonicalised). Assists are credited to the assister on someone else's
-    // kill (Hitya 2026-06-24: "the /me page should also list assists").
+    // kill (the guild lead, 2026-06-24: "the /me page should also list assists").
     admin.from('pvp_kills').select('killer').ilikeAnyOf('killer', names).limit(1000),
     admin.from('pvp_kills').select('victim').ilikeAnyOf('victim', names).limit(1000),
     admin.from('pvp_assists').select('assister').ilikeAnyOf('assister', names).limit(1000),
@@ -496,7 +496,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
 // Best-known level per character. Two signals:
 //   (a) who_observations.level — /who history (highest level we've ever seen).
 //   (b) character_spellbook.spell_level — a scribed L60 spell IS proof of L60,
-//       independent of /who staleness (Hitya 2026-06-23: Canopy's /who
+//       independent of /who staleness (the guild lead, 2026-06-23: a member's /who
 //       cache held an L57 row but her spellbook proves L60).
 // Compute the max client-side. who_observations has tons of NULL-level rows
 // (anonymous /who hides level) and a chained PostgREST .not('level','is',null)
@@ -522,7 +522,7 @@ async function loadCharLevels(charNames: string[]): Promise<Map<string, number>>
 // "Last seen" is the freshest upload on ANY stream — Mimic streams faction,
 // inventory, chat, live state and more while the last fight is a memory, so
 // keying the banner on the encounter endpoint alone read "isn't syncing" with
-// Mimic running (Hitya, 2026-09-04: "the parser was syncing message is wrong,
+// Mimic running (the guild lead, 2026-09-04: "the parser was syncing message is wrong,
 // mimic is on"). The last fight upload is kept separately for the sub-line.
 type Heartbeat = { lastSeen: string; lastFight: string | null; agentVersion: string | null };
 async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, Heartbeat>> {
@@ -562,7 +562,7 @@ type ScrapView = {
   me:    (ScrapRow & { rank: number }) | null;
   rival: (ScrapRow & { rank: number }) | null;
 };
-// ── Raid attendance heatmap (Hitya, 2026-09-03) ──────────────────────────────
+// ── Raid attendance heatmap (the guild lead, 2026-09-03) ──────────────────────────────
 // "add in raid attendance on a person's /me … with mouse over on dates and
 // raid names and links to the raids". One cell per OFFICIAL raid night (bonus
 // rows dropped, the night taken from the raid's name — lib/raidHeatmap) over
@@ -571,7 +571,7 @@ type ScrapView = {
 // raid was held without them. The family union matters — a person is one
 // person, and their alt-night attendance counts exactly like their main's.
 //
-// 60 days, not a year (Hitya, 2026-09-04: "/me is slow to load now … load the
+// 60 days, not a year (the guild lead, 2026-09-04: "/me is slow to load now … load the
 // last 60 days by default") — the year is on /raidhistory for anyone who wants
 // it. Two narrow tick reads — ids only, no attendee arrays — because this page
 // is per-member and the arrays are the wide part. The overlap filter does the
@@ -695,7 +695,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
 
   // Paginated — a .limit() above 1000 does NOT lift PostgREST's silent cap
   // (test/db-read-discipline.test.js ratchets on this), and a member with many
-  // a member's several characters can exceed it across endpoints.
+  // A member's several characters can exceed it across endpoints.
   const ups = await selectAll<{ character: string; last_uploaded_at: string | null }>(
     (from, to) => admin
       .from('agent_upload_stats')
@@ -831,7 +831,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   const recentCount = syncRows.filter(r => r.status === 'recent').length;
   const everSynced  = syncRows.filter(r => r.lastSeen).length;
   // Most recently seen first; the never-uploaded go behind a disclosure
-  // (Hitya, 2026-09-04: "anyone that has no uploads should be grouped into a
+  // (the guild lead, 2026-09-04: "anyone that has no uploads should be grouped into a
   // collapsed section … sort by how recently it was seen").
   const seenRows  = syncRows.filter(r => r.lastSeen).sort((a, b) => b.lastSeen!.localeCompare(a.lastSeen!) || a.name.localeCompare(b.name));
   const neverRows = syncRows.filter(r => !r.lastSeen).sort((a, b) => a.name.localeCompare(b.name));
@@ -981,7 +981,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               <a href={`https://wolfpack.opendkp.com/#/characters/${c.opendkp_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">opendkp →</a>
             )}
           </div>
-          {/* Uploads on their own line (Hitya 2026-06-24: "lets put the
+          {/* Uploads on their own line (the guild lead, 2026-06-24: "lets put the
               uploads on a new line"). */}
           <div className="flex items-center gap-2 flex-wrap sm:justify-end">
             <InventoryUpload character={c.name} />

@@ -1,5 +1,5 @@
 // test/loot-second-place-column.test.js — "Second place should show up as well
-// in the bidding area." (Hitya, 2026-08-30)
+// in the bidding area." (the guild lead, 2026-08-30)
 //
 // Second place was already derived server-side (_lootItemSummary → runner_up)
 // and already had a real column in RECENT MISSES — but in the bidding area it

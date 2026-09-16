@@ -1,12 +1,12 @@
 // The three download channels, as a symbol plus an optional label.
 //
-// Hitya, 2026-08-28: "a download symbol next to miMIC, beta, and a Linux
+// The guild lead, 2026-08-28: "a download symbol next to miMIC, beta, and a Linux
 // penguin logo 🐧", and when space is short show only those symbols. So each
 // channel owns ONE glyph, the label is what drops, and the accessible name is
 // pinned with aria-label so nothing is lost when the words go.
 //
 // ⚠ The stable channel's glyph is the download arrow, NOT the mimic logo
-// (Hitya): the logo is the brand mark in the same bar, so the folded bar was
+// (the guild lead): the logo is the brand mark in the same bar, so the folded bar was
 // showing the same picture twice — once as "home", once as "download" — with
 // only a blue box telling them apart.
 import type { ReactNode } from 'react';

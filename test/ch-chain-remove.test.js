@@ -1,7 +1,7 @@
 // test/ch-chain-remove.test.js — the ✕ that takes a healer off the chain.
 //
-// Hitya, 2026-08-14: "For the Pyxil scenario we should be able to remove from
-// the chain via a [x]Remove button."
+// The guild lead, 2026-08-14: "we should be able to remove from the chain via a
+// [x]Remove button."
 //
 // The half that is easy to get wrong is what happens NEXT: whoever put them on
 // the chain is still shouting their number, so a removal that only deletes the
@@ -49,7 +49,7 @@ describe('removing a healer from the chain', () => {
   });
 
   it('KEEPS them off when they shout the number again', () => {
-    // The whole point. Without the block this is where Pyxil comes straight
+    // The whole point. Without the block this is where a member comes straight
     // back and the button looks like it did nothing.
     call(8, 'Fargan', 1); call(6, 'Pyxil', 6);
     removeChChainSlot(6);
@@ -101,7 +101,7 @@ describe('a contested slot removes the right person', () => {
   beforeEach(() => _resetChChainForTest());
 
   // NOTE the ownership rule this rests on: the LAST caller owns the row, and
-  // the earlier caller lives on in `claimants`. So in Hitya's actual scenario —
+  // the earlier caller lives on in `claimants`. So in the guild lead's actual scenario —
   // Mcdorf is 006, Pyxil mis-calls it — Pyxil is the row's *owner* by the time
   // anyone reaches for the ✕. That is exactly the case where deleting the slot
   // outright would take the real cleric off the rotation, which is the

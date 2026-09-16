@@ -1,7 +1,7 @@
 // test/target-info-zone-scope.test.js — Target Info stops hiding a third of the
 // raid's debuffs.
 //
-// Hitya, live 2026-09-02, with a screenshot: "Debuffs don't show on Target Info
+// The guild lead, live 2026-09-02, with a screenshot: "Debuffs don't show on Target Info
 // but show on Extended Target." The Extended Target row carried Asphyxiate,
 // Weakness and Tashanian on The Avatar of War; the Target Info panel for the
 // same mob showed none of them.

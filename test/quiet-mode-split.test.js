@@ -1,4 +1,4 @@
-// Quiet mode split (Hitya 2026-09-11): "quiet mode should separate between
+// Quiet mode split (the guild lead, 2026-09-11): "quiet mode should separate between
 // muted and not seeing overlays at all. two options and the current mode
 // should just mute."
 //

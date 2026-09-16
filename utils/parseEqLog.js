@@ -1,7 +1,7 @@
 // utils/parseEqLog.js — EQLogParser "Send to EQ" paste parser.
 //
 // Format reference (single-mob and combined-multi-mob):
-//   "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Statlander +Pets = 4.59K@148 in 31s | ..."
+//   "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Kaldrim +Pets = 4.59K@148 in 31s | ..."
 //   "Combined (3): Lord Nagafen in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ..."
 //
 // Returned shape (matches what utils/supabase.recordParse expects as `parsed`):

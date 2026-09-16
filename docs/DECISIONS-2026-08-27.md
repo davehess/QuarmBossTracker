@@ -155,7 +155,7 @@ paths give `[0]`. Empty segments are now dropped before `Number()`, and the test
 asserts the fallback by **identity** (`toBe(_SWEEP_ANCHOR_DAYS_DEFAULT)`), which
 distinguishes the two paths.
 
-## ⚠ a member is NOT the guild lead — the attribution rule was wrong for three weeks
+## ⚠ Two different people — the attribution rule was wrong for three weeks
 
 The guild lead, seeing the rule quoted back in `GEMINI-SPARK-HELPER.md`:
 

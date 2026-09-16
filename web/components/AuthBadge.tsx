@@ -24,9 +24,9 @@ export default async function AuthBadge() {
   // joins because user_id ISN'T reliably populated on the bot's member-
   // sync output — about 94% of rows have user_id NULL (the 6h member
   // sync upserts by discord_id, not by Supabase Auth user_id, so unless
-  // a member has actively signed in to wolfpack.quest AND a separate
+  // A member has actively signed in to wolfpack.quest AND a separate
   // sync pass has stamped their auth user_id, the column is blank).
-  // Hitya 2026-06-21 ("back to seeing my Discord profile in the top
+  // The guild lead 2026-06-21 ("back to seeing my Discord profile in the top
   // corner instead of my Wolf Pack server profile") — every member
   // whose user_id link hadn't been written was falling through to the
   // Discord global name. Look up by Discord ID from the OAuth identity
@@ -36,7 +36,7 @@ export default async function AuthBadge() {
   // wolfpack_members RLS is a single self-read policy (auth.uid() = user_id),
   // so under the user's JWT a row whose user_id is NULL (or not yet stamped)
   // is INVISIBLE — which silently killed the discord_id fallback for the 94%
-  // of un-stamped rows and re-broke the "vaporjesus instead of Hitya" case
+  // of un-stamped rows and re-broke the "vaporjesus instead of Rethlan" case
   // (2026-07-14). We only ever query the logged-in user's OWN row (by their
   // user.id / their own OAuth discord_id), so service-role is safe here.
   const admin = supabaseAdmin();

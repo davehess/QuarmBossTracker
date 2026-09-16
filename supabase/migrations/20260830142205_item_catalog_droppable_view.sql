@@ -5,7 +5,7 @@
 -- ETag'd catalog they cache on disk (same shape as spell-catalog).
 --
 -- ⚠ Deliberately "everything droppable", NOT "everything our tracked bosses
--- drop". Hitya, 2026-08-30: include the Planes of Power items so people can
+-- drop". The guild lead, 2026-08-30: include the Planes of Power items so people can
 -- build a wishlist before the 2026-10-01 unlock. Only 12 PoP bosses are
 -- registered in bosses_local today (against 407 Luclin) because the PoP board
 -- gets built out AFTER unlock — so a boss-driven universe reached just 113 PoP

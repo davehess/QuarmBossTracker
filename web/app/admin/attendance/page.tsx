@@ -67,8 +67,8 @@ type CharRow = {
 };
 
 // Ranks that count as "on the raid roster" — what the class summary should
-// count. Excludes Raid Alt (placeholder DKP-tracker characters like
-// Ferdinand / Canopy / Bardtholemu that aren't real people in the slot).
+// count. Excludes Raid Alt — placeholder DKP-tracker characters that aren't
+// real people in the slot.
 const ROSTER_RANKS = new Set(['Raid Pack', 'Officer', 'Pack Leader', 'Recruit']);
 
 type Raid = { raid_id: number; ts: string };
@@ -251,7 +251,7 @@ function computeAttendance(args: {
   // window. CRITICAL: only count ticks that actually have attendees — empty-
   // attendee ticks are sync gaps (detail fetched mid-raid before attendance
   // was finalized) and counting them in the denominator credits nobody,
-  // which is what tanked everyone's RA below OpenDKP's numbers (Rorschach
+  // which is what tanked everyone's RA below OpenDKP's numbers (a member
   // read 64% vs OpenDKP's 100%). The bot's _raidNeedsDetail re-fetch backfills
   // those empties over the next sync cycles; until then we simply don't
   // penalize anyone for ticks we failed to capture.
@@ -383,12 +383,12 @@ export default async function AdminAttendancePage({
   const targets = p.targets ? parseTargets(p.targets) : dbTargets;
   const isOverriding = !!p.targets;
   const threshold = p.threshold ? Math.max(0, Math.min(1, parseFloat(p.threshold))) : DEFAULT_THRESHOLD;
-  // ── Active-only by default (Hitya, 2026-08-28) ──────────────────────────
+  // ── Active-only by default (the guild lead, 2026-08-28) ──────────────────────────
   // "if someone falls off of the 30 day list (no ticks in 30 days) they become
   // inactive. we should filter by default on that page by that stat."
   // Measured when this shipped: 290 rows, 218 of them with zero ticks in 30
   // days. The page was 75% people who are not raiding, which is what made a
-  // real signal — Topflight going inactive after his last tick on 2026-07-22 —
+  // real signal — a member going inactive after their last tick on 2026-07-22 —
   // something you had to go looking for rather than something the page told you.
   const showAll = p.show === 'all';
   const demoMode = getDemoMode();
@@ -435,7 +435,7 @@ export default async function AdminAttendancePage({
   const familyMetrics = await loadFamilyMetrics();
   // ⚠ "Inactive" is defined on TICKS, not on RA%. A returning member can sit at
   // 0% for a window and still have raided this week; someone at 40% 90d RA can
-  // have stopped a month ago. Topflight is the case that prompted this — 30%
+  // have stopped a month ago. A member is the case that prompted this — 30%
   // over 90 days, and not a single tick since 2026-07-22.
   const activeMetrics   = familyMetrics.filter(m => Number(m.att_ticks_30d) > 0);
   const inactiveMetrics = familyMetrics.filter(m => Number(m.att_ticks_30d) === 0);

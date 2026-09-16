@@ -1,13 +1,13 @@
 // test/attendance-active-filter.test.js — /admin/attendance hides inactive
 // members by default.
 //
-// Hitya, 2026-08-28: "if someone falls off of the 30 day list (no ticks in 30
+// The guild lead, 2026-08-28: "if someone falls off of the 30 day list (no ticks in 30
 // days) they become inactive. we should filter by default on that page by that
-// stat. Topflight is an example of that where he just went inactive."
+// stat. A member is an example of that where he just went inactive."
 //
 // Measured when this shipped: 290 rows, 218 with zero ticks in 30 days. Three
 // quarters of the page was people who are not raiding, which is what made a
-// real signal — Topflight, 30% over 90 days and not one tick since 2026-07-22 —
+// real signal — a member, 30% over 90 days and not one tick since 2026-07-22 —
 // something you had to hunt for rather than something the page told you.
 //
 // Run: npx vitest run test/attendance-active-filter.test.js
@@ -28,7 +28,7 @@ describe('attendance page — active by default', () => {
   it('defines inactive on TICKS, not on RA%', () => {
     // ⚠ The distinction matters. A returning member can sit at 0% RA for a
     // window and still have raided this week; someone at 40% 90d RA can have
-    // stopped a month ago — Topflight was exactly that. Filtering on the
+    // stopped a month ago — a member was exactly that. Filtering on the
     // percentage would hide the wrong people.
     expect(src).toContain('Number(m.att_ticks_30d) > 0');
     expect(src).toContain('Number(m.att_ticks_30d) === 0');

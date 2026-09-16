@@ -5,8 +5,8 @@
 -- view in ~9 SEQUENTIAL .range() pages — ~9 round trips of latency per load
 -- (efficiency review 2026-07-07, MEDIUM). A jsonb_agg returns a single value,
 -- which the row cap doesn't apply to. Ordered by the view's unique
--- character_key (same ordering the pagination used — see the Nosfearatu
--- duplicate-row bug, 2026-06-22).
+-- character_key (same ordering the pagination used — see the duplicate-row
+-- pagination bug, 2026-06-22).
 create or replace function public.who_directory_json()
 returns jsonb
 language sql

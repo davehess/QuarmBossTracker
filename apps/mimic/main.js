@@ -93,7 +93,7 @@ const WOLFPACK_URL    = 'https://wolfpack.quest';
 // Standard webPreferences for every window we open, PLUS a name stamped onto
 // that renderer's own command line.
 //
-// "Can these expose their names in Task manager as well?" (Uilnayar 2026-08-04)
+// "Can these expose their names in Task manager as well?" (Bellwick 2026-08-04)
 // — partly. The Name column cannot change: every renderer is the same
 // Wolf Pack Mimic.exe and Task Manager reads that column from the exe's version
 // resource. (The Dashboard row is named only because it owns a visible taskbar
@@ -180,7 +180,7 @@ function defaultConfig() {
     eqPath: null,            // legacy single-folder (kept for back-compat read)
     eqPaths: [],             // multi-folder picker — every EQ install to tail
     eqPathsExcluded: [],     // auto-detected paths the user explicitly unchecked
-    // Onboarding "old log backups anywhere else?" picks (Hitya 2026-09-13).
+    // Onboarding "old log backups anywhere else?" picks (the guild lead, 2026-09-13).
     // Handed to the agent ONCE at spawn (WOLFPACK_IMPORTED_LOGS); the agent's
     // own persisted imported-logs list is the source of truth after that, and
     // the Logsync tab edits that list directly.
@@ -202,7 +202,7 @@ function defaultConfig() {
                              // sets this false (hides the visual) but TTS keeps
                              // firing from the hidden window. Re-shown when the
                              // user turns triggers on via tray/dashboard.
-    // 💥 Damage-taken audio alert (Hitya 2026-07-31) — speaks "taking damage"
+    // 💥 Damage-taken audio alert (the guild lead, 2026-07-31) — speaks "taking damage"
     // the first time something lands on you after a quiet period, then holds a
     // ~5s cooldown so a tank eating a swing a second isn't narrated to death.
     // DEFAULT OFF, deliberately: it's an opt-in cue, and a fresh install (or a
@@ -210,7 +210,7 @@ function defaultConfig() {
     // the global hotkey (damageAlertHotkey, Ctrl+Shift+D by default), or the
     // dashboard Overlays tab; pushed to the agent on every change + relaunch.
     damageAlert: false,
-    // Split 2026-09-11 (Hitya: "quiet mode should separate between muted and
+    // Split 2026-09-11 (The guild lead: "quiet mode should separate between muted and
     // not seeing overlays at all ... the current mode should just mute").
     // Until then quietMode hid every overlay and silenced NOTHING — callouts
     // speak from the hidden trigger window — so the label lied both ways.
@@ -544,7 +544,7 @@ function _writeZealRaw(obj) {
 // character=null and show up as "(unknown)" in the admin agent fleet view.
 // Detecting on the Mimic side and passing --character closes that gap.
 // ⚠ TAKP installs are named for the project + its version — C:\TAKPv22 is what
-// Pyxil had (2026-08-14), and the version moves. A fixed string would go stale
+// A member had (2026-08-14), and the version moves. A fixed string would go stale
 // with the next release, so the scan ALSO walks each drive root for any folder
 // starting "takp" (see _takpRoots below). The named entries here stay as the
 // cheap path that avoids a readdir when the layout is the common one.
@@ -557,7 +557,7 @@ const EQ_DEFAULT_DIRS = [
   // D: drive — second most common
   'D:\\Quarm', 'D:\\Project Quarm', 'D:\\Project1999', 'D:\\EQ',
   'D:\\TAKP', 'D:\\TAKPv22',
-  // A: / B: / E: / F: — power-user partitions (Hitya runs A:)
+  // A: / B: / E: / F: — power-user partitions (the guild lead runs A:)
   'A:\\Quarm', 'A:\\Project Quarm', 'A:\\EQ',
   'B:\\Quarm', 'B:\\EQ',
   'E:\\Quarm', 'E:\\Project Quarm', 'E:\\EQ',
@@ -603,7 +603,7 @@ function _firstLineIsEqWelcome(filePath) {
 // eqlog_*_pq.proj stem (rotation / backup) pass only when line 1 is the EQ
 // welcome signature — so renamed logs are caught without tailing arbitrary
 // eqlog_-prefixed junk.
-// ── Persistent verdict cache (Uilnayar 2026-08-04) ──────────────────────────
+// ── Persistent verdict cache (a member, 2026-08-04) ──────────────────────────
 // "we should be able to track the previous last updated dates on those files
 // and file size to not interpret them again."
 //
@@ -689,7 +689,7 @@ const _EQ_SCAN_TTL_MS = 30_000;
 // ── Learned dead ends ───────────────────────────────────────────────────────
 //
 // "it didn't show up on my list of installs but it showed up in the logs. We
-// should be able to ignore it" (Uilnayar 2026-08-04, on B:\Quarm costing 21s).
+// should be able to ignore it" (a member, 2026-08-04, on B:\Quarm costing 21s).
 //
 // The DriveType filter catches the network-drive case, but it only knows about
 // drive TYPES. A slow dead end on a local fixed drive — a failing disk, a
@@ -799,7 +799,7 @@ function detectEqDir(hint) {
   if (hint && _dirHasEqLogs(hint)) return hint;
 
   // 2. Walk UP from the Mimic .exe's install dir — if a user installs
-  //    Mimic inside their EQ folder (Hitya did: A:\EQ\Mimic\...), the EQ
+  //    Mimic inside their EQ folder (the guild lead did: A:\EQ\Mimic\...), the EQ
   //    dir is one or two levels up. Stops at the drive root.
   try {
     const exePath = app.getPath('exe');
@@ -922,7 +922,7 @@ async function resolveEqDirsWithLogs() {
   // what to TAIL and wrong for deciding what we KNOW. Those were the same list
   // until 2026-08-14, and the result was a deadlock for every brand-new user:
   //
-  //   Pyxil pointed Mimic at C:\TAKPv22, Settings showed it ticked
+  //   A member pointed Mimic at C:\TAKPv22, Settings showed it ticked
   //   ("eqclient.exe · no logs yet"), and the dashboard still said "No EQ
   //   folder selected" while "Set up EQ for me" answered "No EQ folder known
   //   yet — point Mimic at your EverQuest folder in Settings first."
@@ -960,7 +960,7 @@ async function resolveEqDirsWithLogs() {
 // bodies — so it runs on the MAIN process event loop, and while it runs every
 // Mimic window stops pumping messages. That is why a slow scan shows up as the
 // dashboard AND Settings both freezing, with Windows painting "(Not
-// Responding)" on the title bar (Uilnayar, 2026-08-04: "Something on the initial
+// Responding)" on the title bar (Bellwick, 2026-08-04: "Something on the initial
 // loading page is taking a long time to load. same with the settings page. It
 // has gotten worse lately.").
 //
@@ -1119,7 +1119,7 @@ function _findEqInstallsUncached(hint) {
     }
     probe(dir, 'common');
   }
-  // TAKP installs carry their version in the folder name — Pyxil's was
+  // TAKP installs carry their version in the folder name — a member's was
   // C:\TAKPv22 (2026-08-14), and that number moves every release, so a fixed
   // string goes stale. One readdir per LOCAL drive root finds any of them.
   // Cheap: drive roots hold a handful of entries, and this whole scan is
@@ -1178,7 +1178,7 @@ function _startWindowDrag(win, persistKey) {
     // that ends a drag — the window gets WS_EX_NOACTIVATE, the cursor slides
     // off the moving window, and mouseup lands on EQ instead. Result: the
     // 60fps setBounds stays glued to the cursor = "the overlay is stuck to my
-    // mouse" (Uilnayar 2026-06-22, CH chain + threat). Make the window
+    // mouse" (a member, 2026-06-22, CH chain + threat). Make the window
     // focusable for the duration of the drag so mouseup is delivered, then
     // restore its resting focusability on drag end. isFocusable() captures the
     // resting state so we only re-disable windows that were non-focusable.
@@ -1517,7 +1517,7 @@ function _zealParseData(obj) {
 // Character logged off (camped, client closed, or someone else logged in on
 // the same client). Drop the local live state AND tell the agent to forget
 // its _zealState entry — otherwise Mob Info keeps showing the camped
-// character's last target forever (the "stale Dafeet" bug: switch characters
+// character's last target forever (the "stale Kelbrin" bug: switch characters
 // with no target on the new one → the old entry stays the freshest WITH a
 // target and wins _currentTargetState()).
 function _retireZealChar(character, why, swappedTo) {
@@ -1690,8 +1690,7 @@ function _zealAbsorb(obj, pid) {
         // Char-info label ids — the classic EQ client UI "EQType" label ids.
         // Zeal queries a fixed LabelNames map and forwards whatever the client
         // populates (CoastalRedwood/Zeal named_pipe.cpp — the authoritative
-        // list, confirmed against two live side-by-sides, Canopy + Manamana
-        // 2026-07-07/08):
+        // list, confirmed against two live side-by-sides, 2026-07-07/08):
         //   1 Name · 2 Level · 3 Class · 4 Deity · 5-11 STR/STA/DEX/AGI/WIS/
         //   INT/CHA · 12 poison / 13 disease / 14 fire / 15 cold / 16 magic
         //   resists · 17 HP cur · 18 HP max · 19 HP % · 20 mana % ·
@@ -1807,7 +1806,7 @@ function _zealAbsorb(obj, pid) {
 
 // Discover the player's OWN current/max HP from Zeal's char-info fields.
 // Ids 1-13 are a CONFIRMED non-HP block (name/level/class/deity/stats/
-// resists — Canopy side-by-side, 2026-07-07), so only the 14-44 band is
+// resists — a member side-by-side, 2026-07-07), so only the 14-44 band is
 // scanned. Candidates are validated against the gauge's already-trusted HP%:
 //   • The classic UI EQTypes put current HP at label 17 and max HP at 18 —
 //     if that exact pair is present and its ratio matches the gauge, pin it
@@ -1838,7 +1837,7 @@ function _detectSelfHp(cur, s, charInfo) {
     }
     cur.hpIds = null;   // stopped tracking — was a coincidence, relearn
   }
-  // Known-prior fast path: EQType 17/18 — CONFIRMED cur/max HP (Canopy
+  // Known-prior fast path: EQType 17/18 — CONFIRMED cur/max HP (a member
   // side-by-side 2026-07-08: 17=1422, 18=1662 vs in-game 1425/1662). Since
   // the ids are field-verified, pin at ANY HP level when the ratio agrees —
   // including full HP, where the generic learner can't (cur == max matches
@@ -2027,7 +2026,7 @@ async function startMimicLink() {
   // shell.openExternal returns a PROMISE. The old `try { shell.openExternal(x) }
   // catch {}` could never catch a launch failure — the rejection escaped the
   // synchronous catch entirely, so a browser that refused to open produced an
-  // unhandled rejection and, on screen, absolute silence. Emma/Camping hit this
+  // unhandled rejection and, on screen, absolute silence. Two members hit this
   // on Firefox 2026-08-06: clicked Sign in, nothing happened, no error.
   // Await it, and record the failure so Settings can tell the user to open the
   // page themselves instead of leaving them staring at a dead button.
@@ -2222,7 +2221,7 @@ function startZealCapture() {
             // Lead with the admin-mismatch fix: EQ-running-but-no-Zeal-data is
             // the classic signature of it. If EQ runs elevated and Mimic
             // doesn't, Windows' pipe ACL blocks the connection (it connects
-            // then instantly drops), so no data ever arrives — cost Jankzer a
+            // then instantly drops), so no data ever arrives — cost a member a
             // couple hours before "run Mimic as admin" fixed it (2026-07-05).
             body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Zeal health.',
           });
@@ -2537,7 +2536,7 @@ async function launchAgent() {
   //
   // IMPORTANT: do NOT pass a global --character. With multiple --log files
   // the agent applies one --character to EVERY log, which mis-attributes
-  // an alt's combat + chat to the main (the "Wabumkin/Adiwen" bug). Each
+  // an alt's combat + chat to the main (the "Dunstan/Brackwyn" bug). Each
   // log self-identifies from its filename (characterFromFilename) when no
   // --character is given, which is exactly what we want for a multi-char
   // install. Single-character installs still resolve correctly from the
@@ -2799,7 +2798,7 @@ function _curWindowUrl() {
   try { return (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.getURL()) || '(none)'; }
   catch { return '(err)'; }
 }
-// Self-healing port watcher (Uilnayar 2026-07-15: "Can't reach the parser
+// Self-healing port watcher (a member, 2026-07-15: "Can't reach the parser
 // engine at :7779" appearing constantly). The one-shot reload after
 // launchAgent() only fires when waitForAgent succeeds INSIDE its window — a
 // slow agent boot (23 logs to open), a crash-restart with backoff, or a
@@ -2855,7 +2854,7 @@ function createMainWindow() {
   // doesn't ambush the user mid-login. The user can pop it open from the tray.
   // Detected via the --autostart arg (set in applyAutoStart) OR Electron's
   // openAsHidden flag (which Windows passes when "Start hidden" was checked).
-  // An UNATTENDED auto-install counts as an auto-start too (Uilnayar,
+  // An UNATTENDED auto-install counts as an auto-start too (a member,
   // 2026-08-04: "The settings/dashboard did pop up to the foreground").
   //
   // The whole promise of install-on-EQ-close is that it happens without
@@ -2992,7 +2991,7 @@ function _boundsOnScreen(b) {
   } catch { return false; }
 }
 
-// ── Overlay home display (multi-monitor, Uilnayar 2026-07-15) ────────────────
+// ── Overlay home display (multi-monitor, a member 2026-07-15) ────────────────
 // "I've lost several overlays off my window and cannot find them." Overlays
 // can legitimately sit on ANY connected display (so _boundsOnScreen passes)
 // while the user plays EQ on another. The HOME display is where overlays
@@ -3028,7 +3027,7 @@ function _rescueOverlays() {
       const b = win.getBounds();
       // "Already home" = the window's CENTER sits on the home display. The
       // first cut tested for a mere sliver of overlap, so a window straddling
-      // the monitor boundary (Uilnayar 2026-07-15: CH chain never came back)
+      // the monitor boundary (a member, 2026-07-15: CH chain never came back)
       // was counted as home and skipped — still mostly lost off-screen.
       const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
       const onHome = cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height;
@@ -3148,10 +3147,10 @@ function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
 
-// ── Overlay scale (Fittir's 5K monitor — Hitya 2026-08-18) ───────────────────
+// ── Overlay scale (a member's 5K monitor — the guild lead 2026-08-18) ───────────────────
 // zoomFactor scales all CSS px content, so no per-overlay HTML changes; window
 // BOUNDS stay the user's own (scale up, then drag the corner or use the
-// right-click resize presets — both keep working). Two layers (Hitya
+// right-click resize presets — both keep working). Two layers (the guild lead
 // 2026-08-19: "a slider on the overlays page and one on each individual one"):
 //   cfg.overlayScale         — global default, 0.5–2.0 (dashboard Overlays
 //                              tab + Settings window);
@@ -3168,7 +3167,7 @@ function overlayScaleFor(key) {
   const cfg = loadConfig();
   const own = _validScale((cfg.overlayScaleByKey || {})[key]);
   if (own != null) return own;
-  // The dock sits out of the global scale unless opted in (Hitya
+  // The dock sits out of the global scale unless opted in (the guild lead
   // 2026-08-19: "don't change the [dock] with the scale by default") — it's
   // a large, hand-sized window; the "Scale the dock too" checkbox on the
   // dashboard Overlays tab sets cfg.overlayScaleDock.
@@ -3191,7 +3190,7 @@ function applyOverlayScale(win, key) {
   // Live scale change: the window BOUNDS scale with the zoom, anchored on the
   // window's center and clamped to its display's work area — so the card's
   // rounded edges and centering land exactly where a hand-resized window
-  // would put them (Hitya 2026-08-19: zoom inside fixed bounds left the card
+  // would put them (the guild lead, 2026-08-19: zoom inside fixed bounds left the card
   // reflowing in a wrong-sized box). Base the math on the DESTINATION of any
   // glide still in flight (st.bounds), else live bounds, so retargeting
   // mid-glide stays exact; settle() clears st.bounds so a user's manual
@@ -3222,12 +3221,12 @@ function applyOverlayScale(win, key) {
 }
 // Mirror the live zoom into the renderer ('wp-zoom' → --wp-zoom CSS var) so
 // the preload's counter-zoom rules can keep the setup bar at ONE painted
-// size spanning the window width at every overlay scale (Hitya 2026-08-19).
+// size spanning the window width at every overlay scale (the guild lead, 2026-08-19).
 function _pushZoomVar(win, z) {
   try { win.webContents.send('wp-zoom', z); } catch {}
 }
 // Glide zoom + bounds together (ease-out cubic) so a scale change grows the
-// overlay smoothly instead of snapping (Hitya 2026-08-19: "smoothly glide
+// overlay smoothly instead of snapping (the guild lead, 2026-08-19: "smoothly glide
 // instead of jumping"). Retargetable — a newer call clears the timer in
 // flight and the stale settle() never runs.
 const SCALE_TWEEN_MS = 180, SCALE_TWEEN_STEPS = 9;
@@ -3271,7 +3270,7 @@ function applyAllOverlayScales() {
   for (const [key, win] of _overlayEntries()) applyOverlayScale(win, key);
 }
 
-// ── Per-overlay solid backdrop (Uilnayar 2026-07-10) ─────────────────────────
+// ── Per-overlay solid backdrop (a member, 2026-07-10) ─────────────────────────
 // A dark opaque plate behind the WHOLE overlay window (not just the cards) so
 // overlays stay readable over bright scenes. Per-overlay in the right-click
 // chrome menu; all-at-once via the backdrop hotkey (default Ctrl+Shift+B,
@@ -3301,7 +3300,7 @@ function toggleAllBackdrops() {
   applyAllOverlayBackdrops();
 }
 
-// ── Auto-arrange overlays around the in-game UI (Uilnayar 2026-07-10) ────────
+// ── Auto-arrange overlays around the in-game UI (a member, 2026-07-10) ────────
 // Reads the freshest UI_<Char>_*.ini (position data EQ itself writes; we NEVER
 // write these — EQ overwrites them on camp/zone/quit), projects the player's
 // window rects onto the primary display, and packs the VISIBLE overlay windows
@@ -3411,7 +3410,7 @@ function _autoArrangeOverlays(pinnedKey) {
       }
     }
   }
-  // Perimeter rule (Uilnayar 2026-07-11 — "they should stay out of the center
+  // Perimeter rule (a member, 2026-07-11 — "they should stay out of the center
   // of the screen for the most part, lining the outside"): the middle ~52% of
   // the display is the play view and is a soft no-go zone. Pass 1 blocks it,
   // which fills the right column → top/bottom bands → left column; pass 2
@@ -3434,7 +3433,7 @@ function _autoArrangeOverlays(pinnedKey) {
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   for (const o of wins) pendingCur.set(o.key, pad(o.b));
-  // Pinned overlay (arrange-on-show passes the just-opened one, Uilnayar
+  // Pinned overlay (arrange-on-show passes the just-opened one, a member
   // 2026-07-12: "the overlay must not jump when opening"): it stays exactly
   // at its saved bounds — its rect blocks placement and it is never moved.
   // Manual auto-arrange passes nothing and repacks everything as before.
@@ -3443,7 +3442,7 @@ function _autoArrangeOverlays(pinnedKey) {
   for (const o of moveList) {
     // Shrink-only preset ladder: try the current width, then narrower presets
     // ("auto-resize" — a too-wide overlay steps down until it fits somewhere).
-    // No resizing during arrange (Uilnayar 2026-07-12): windows keep their
+    // No resizing during arrange (a member, 2026-07-12): windows keep their
     // exact size — an overlay that fits nowhere at its current size is
     // simply left where it was.
     const ladder = [o.b.width];
@@ -3455,7 +3454,7 @@ function _autoArrangeOverlays(pinnedKey) {
         // Right edge first, then sweep left — keeps the EQ center clear and
         // matches how raiders park overlays today.
         //
-        // Skip-ahead sweep (Uilnayar 2026-07-13: "hitting autoarrange lags
+        // Skip-ahead sweep (a member, 2026-07-13: "hitting autoarrange lags
         // out the system"): the old inner loop stepped y 16px at a time
         // through BLOCKED space — up to ~12k candidate rects per overlay,
         // each overlap-checked against every obstacle, all synchronous on
@@ -3689,7 +3688,7 @@ function openSettings() {
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
-// Resource use — its own window as of 2026-08-04 (Uilnayar), reachable
+// Resource use — its own window as of 2026-08-04 (a member), reachable
 // from the tray and the dashboard rather than only from inside Settings.
 // "Is Mimic costing me anything?" gets asked while the game is running, so the
 // answer has to be openable next to EQ and leavable open; buried in Settings it
@@ -3786,7 +3785,7 @@ ipcMain.handle('open-ui-studio', () => { openUiStudio(); return true; });
 // ── PvP Sets (bundled in apps/mimic/pvp-sets/) ─────────────────────────────
 // Shared rotations contributed by guildies — pre-built hotkey pages,
 // spell-set notes, clicky lineups, potion picks. First template: the
-// bard "Dirge Team 6™" PvP rotation (credit: Vann | Barb). UI Studio
+// bard "Dirge Team 6™" PvP rotation (credit: a member | Barb). UI Studio
 // shows a class-matched picker; the agent never writes back to the EQ
 // socials INI yet — we drop a plain-markdown summary alongside the user's
 // UI files so they can configure in-game without risk to existing data.
@@ -4517,7 +4516,7 @@ function _ourEqDirs() {
 //
 // eqgame.exe is the binary name for EVERY EverQuest client, so the process name
 // alone cannot tell Project Quarm from another install on the same machine.
-// Uilnayar 2026-08-04: EQLegends was the running client and Mimic reported
+// A member 2026-08-04: EQLegends was the running client and Mimic reported
 // "EverQuest running" — overlays up over the wrong game, the Zeal-missing nag
 // primed, and the EQ-close auto-install armed against a process we don't care
 // about. Only the full ExecutablePath distinguishes them.
@@ -4603,7 +4602,7 @@ function _checkEqRunning() {
 }
 // ── Pending-update install + nag ─────────────────────────────────────────────
 // Raiders kept arriving on old builds without realising it and quietly missing
-// features (Uilnayar 2026-08-03). autoInstallOnAppQuit already applies an update
+// features (a member, 2026-08-03). autoInstallOnAppQuit already applies an update
 // at the next normal Mimic quit — but people leave Mimic running for days, so
 // that almost never fires.
 //
@@ -4679,7 +4678,7 @@ async function _pollEqPresence() {
   // EQ is closed and an update is waiting — install it, EVEN THOUGH no
   // close-transition happened on our watch.
   //
-  // THE BUG (Uilnayar, 2026-08-04: "beta 9 did not update after eq closed"):
+  // THE BUG (a member, 2026-08-04: "beta 9 did not update after eq closed"):
   // the call above only fires on the FALLING EDGE, so it required us to observe
   // running → closed. It misses the common orderings entirely:
   //   • the download finishes while EQ is already shut (the overnight case —
@@ -4701,7 +4700,7 @@ async function _pollEqPresence() {
 }
 // Presence polling backs OFF while EQ is absent.
 //
-// Some raiders quit Mimic between sessions "to save on processing" (Uilnayar
+// Some raiders quit Mimic between sessions "to save on processing" (a member
 // 2026-08-03), and they had a point about this one: everything else already
 // idles hard — the 1Hz blind poll early-returns on !_eqRunning, the 300ms Zeal
 // flush no-ops when no snapshot is dirty — but _checkEqRunning() SPAWNS
@@ -5042,7 +5041,7 @@ function applyZealVisibility() {
 // HP, boss enrage warning, current rampage target. Reads /api/tank-state which
 // aggregates everything from the locally-watched Zeal state. Cross-raid HP sync
 // is Tier 4 (deferred); the overlay shows the active local character only.
-// (Uilnayar 2026-06-25.)
+// (a member, 2026-06-25.)
 function createTankOverlay() {
   const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
   tankWindow = new BrowserWindow({
@@ -5112,7 +5111,7 @@ function applyThreatVisibility() {
 
 // Extended Target overlay — raid-wide "who's targeting what", sorted by raider
 // count, with HP + debuffs per target. Polls /api/extended-target (agent proxy
-// of the bot aggregation). Opt-in (default off); EQ-gated. (Uilnayar 2026-06-29.)
+// of the bot aggregation). Opt-in (default off); EQ-gated. (a member, 2026-06-29.)
 function createExtTargetOverlay() {
   const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
   extTargetWindow = new BrowserWindow({
@@ -5188,7 +5187,7 @@ async function _loadOverlayPreferAgent(win, overlayPath, fallbackFile) {
   try { await win.loadFile(fallbackFile); } catch (e) { void e; /* last resort — nothing more to try */ }
 }
 
-// Command Center overlay — the "one window" raid board (Uilnayar 2026-07-03):
+// Command Center overlay — the "one window" raid board (a member, 2026-07-03):
 // boss/MT/rampage/enrage/Death Touch (same data as the Tank overlay) plus
 // raid-wide DA/invuln status and healer mana parsed from raid-chat macros,
 // plus Curse/Cure alerts from the buff queue. Reads /api/command-center.
@@ -5229,7 +5228,7 @@ function applyCommandVisibility() {
 }
 
 // CH chain overlay — cleric Complete Heal rotation read from the zone-visible
-// shout/raid callouts ("004 - CH - Naggato - Mana: 52%" / "005 GO GO GO").
+// shout/raid callouts ("004 - CH - Drayvon - Mana: 52%" / "005 GO GO GO").
 // Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
 // Reads stats.chChain via /api/state — fully local, no relay. Opt-in.
 function createChChainOverlay() {
@@ -5242,7 +5241,7 @@ function createChChainOverlay() {
     alwaysOnTop: true, skipTaskbar: true,
     // focusable: false → on Windows this sets WS_EX_NOACTIVATE on the
     // overlay's native HWND, so clicks fire DOM events without bringing
-    // the window to the foreground. Reported by Uilnayar (2026-06-19) —
+    // the window to the foreground. Reported by a member (2026-06-19) —
     // clicking ⚙ / lock / move on the CH chain overlay pulled focus from
     // EQ, and missing-the-refocus-on-the-way-back cost real CH heals. We
     // don't take keyboard input on this overlay and drag is custom IPC
@@ -5309,10 +5308,10 @@ function applyDockVisibility() {
   // force-shows every overlay ONCE in applySetupMode, but any later
   // visibility pass (dock-set, toggle-overlay, config save) re-ran these
   // predicates WITHOUT a setup term and hid everything whose flag is off —
-  // Hitya 2026-08-19: "adding Mob Info into the dock hid almost every other
+  // The guild lead 2026-08-19: "adding Mob Info into the dock hid almost every other
   // overlay, minus TTS."
   const unlocked = setupMode || cfg.overlaysLocked === false;
-  // Holding panes IMPLIES being on screen. Hitya, 2026-08-14: "the dock is only
+  // Holding panes IMPLIES being on screen. The guild lead, 2026-08-14: "the dock is only
   // accessible from doing the 'Setup ALL Overlays' option" — because the only
   // ways to set showDock were the tray entry and docking something from inside
   // the dock, which you cannot reach while the dock is hidden. Setup mode
@@ -5336,7 +5335,7 @@ function applyChChainVisibility() {
 // Every Electron BrowserWindow is its OWN Chromium renderer process — ~80 MB
 // resident before it paints a single pixel. Boot used to create ten of them
 // unconditionally, so a user running two overlays still paid for ten — around
-// 800 MB of renderers for overlays that were switched OFF (Uilnayar measured
+// 800 MB of renderers for overlays that were switched OFF (a member measured
 // the per-overlay floor at 80 MB, 2026-08-04). Windows now exist only while
 // their pref says they should.
 //
@@ -5464,9 +5463,9 @@ function _dockStatePayload() {
     spans:  Object.fromEntries(keys.map(k => [k, _dockSpan(cfg, k, cols)])),
     paneBg: Object.fromEntries(keys.map(k => [k, _dockPaneBg(cfg, k)])),
     growUp: cfg.dockGrowUp !== false,          // default ON — see dock-grow
-    autoFit: cfg.dockAutoFit !== false,        // default ON (Hitya 2026-08-14)
+    autoFit: cfg.dockAutoFit !== false,        // default ON (the guild lead, 2026-08-14)
     catalog: _DOCK_CATALOG.map(c => ({ key: c.key, label: c.label, file: c.file, src: srcFor(c) })),
-    // Named layouts + user-chosen dock name (Hitya 2026-08-19).
+    // Named layouts + user-chosen dock name (the guild lead, 2026-08-19).
     dockName: (typeof cfg.dockName === 'string' && cfg.dockName.trim()) ? cfg.dockName.trim().slice(0, 24) : null,
     layouts: Object.values(cfg.dockLayouts || {})
       .filter(l => l && typeof l.name === 'string')
@@ -5503,7 +5502,7 @@ function _overlayForcedOn(cfg, e) {
 // Does this overlay need a window right now?
 //
 // "we have a toggle in taskbar for 'Hide Overlays when Everquest is not
-// running', and we should adhere to that" (Uilnayar 2026-08-04). Right: an
+// running', and we should adhere to that" (a member, 2026-08-04). Right: an
 // overlay the EQ gate is hiding has no reason to hold an ~35 MB renderer, and
 // the same argument covers hideOverlays. So existence tracks VISIBILITY, not just
 // the pref — which is the bulk of the saving, since EQ is closed most of the
@@ -5598,7 +5597,7 @@ function _hideAllHotkeyLabelNow() { const a = _hideAllAccelerator(); return a ? 
 // True only when the OS actually gave us the accelerator. Windows hands a
 // global shortcut to whoever asks FIRST, so Edge (Ctrl+Shift+H is one of its
 // defaults) or any other app can own it and our register() silently returns
-// false — the user then presses a dead key forever. Field report: Naggato
+// false — the user then presses a dead key forever. Field report: a member
 // 2026-08-07, overlays hidden, hotkey doing nothing, about to reinstall.
 function _hideAllHotkeyBound() { return !!_registeredHideAccel; }
 // What the tray/menu should SAY about the hotkey: the key when it works, an
@@ -5611,7 +5610,7 @@ function _hideAllHotkeyMenuLabel() {
 }
 // EVERY overlay's show flag, in one list — the old hand-written snapshot/flip
 // blocks silently missed showCommand (the Command Center kept showing through
-// hide-all, Uilnayar 2026-07-10). New overlays: add the flag HERE and it's
+// hide-all, a member 2026-07-10). New overlays: add the flag HERE and it's
 // covered automatically.
 // (!) 'showTriggerOverlay', NOT 'enableTriggerTts'. Hide-all must silence the
 // SCREEN, never the voice. enableTriggerTts is the flag _OVERLAY_WINDOWS gates
@@ -5619,7 +5618,7 @@ function _hideAllHotkeyMenuLabel() {
 //   flag=false -> _overlayWanted() false -> _reapDisabledOverlays() DESTROYS
 //   the window -> the renderer that owns speechSynthesis is gone -> every
 //   callout, and Rehearse, goes silent with no error anywhere.
-// Hitya, 2026-08-13: "clicking on rehearse doesn't speak out the TTS if the TTS
+// The guild lead, 2026-08-13: "clicking on rehearse doesn't speak out the TTS if the TTS
 // overlays are hidden. I thought we safeguarded from that." We had - _overlayWanted
 // exempts 'trigger' from hideOverlays and the EQ-running gate, and the window
 // carries backgroundThrottling:false precisely so a HIDDEN one keeps speaking.
@@ -5672,7 +5671,7 @@ function toggleHideAllOverlays() {
   applyAllVisibility();
   pushStatus();
 }
-// Self-heal a MOOT hide-all (Hitya 2026-08-19: "it says hideall is on but
+// Self-heal a MOOT hide-all (the guild lead, 2026-08-19: "it says hideall is on but
 // its not"). Flags get toggled back on one-by-one through the tray/dashboard
 // without going through toggleHideAllOverlays, so the persisted
 // hideAllActive + snapshot outlive the hidden state — the tray then says
@@ -5911,7 +5910,7 @@ function currentStatus() {
     overlaysLocked: cfg.overlaysLocked !== false,
     // Hide-all flips every show* flag to false, which makes "I turned this off"
     // and "the hotkey hid this" look identical everywhere — the dashboard, the
-    // tray, this payload (Uilnayar 2026-08-04: "we should be able to see in the
+    // tray, this payload (a member, 2026-08-04: "we should be able to see in the
     // overlays section which ones were previously off but are hidden").
     // Shipping the snapshot alongside the flags lets a UI tell them apart:
     // flag false + hideAllPrev[flag] true means HIDDEN, and it is coming back.
@@ -5923,7 +5922,7 @@ function currentStatus() {
     showDock: !!cfg.showDock,
     dockedOverlays: _dockedKeys(cfg),
     // Per-character overlay layouts — drives the dashboard card (tray parity,
-    // Hitya 2026-08-19: "anything that's available from the taskbar should be
+    // The guild lead 2026-08-19: "anything that's available from the taskbar should be
     // available from the dashboard as well").
     charProfilesEnabled: !!cfg.charProfilesEnabled,
     charProfiles: Object.entries(cfg.charProfiles || {}).map(([name, p]) => ({
@@ -6246,7 +6245,7 @@ function buildTrayMenu() {
     ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
     : { label: 'Check for updates…',
         // Manual check covers BOTH update channels — the Electron shell AND
-        // the agent hot-swap (Hitya 2026-07-16: "check for updates also
+        // the agent hot-swap (the guild lead, 2026-07-16: "check for updates also
         // check for newer agents rather than waiting for 30 minutes"). The
         // dashboard header's update button already did both via the
         // check-for-updates IPC; the tray item was shell-only.
@@ -6326,7 +6325,7 @@ function buildTrayMenu() {
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
     // Multi-monitor rescue — run from the tray on the monitor you play on;
-    // every overlay gathers there and auto-arranges (Uilnayar 2026-07-15:
+    // every overlay gathers there and auto-arranges (a member, 2026-07-15:
     // "lost several overlays off my window and cannot find them").
     { label: '🧲 Rescue overlays to this screen', click: () => {
         try { _rescueOverlays(); } catch (e) { appendAgentLog('[rescue] failed: ' + e.message + '\n'); }
@@ -6337,7 +6336,7 @@ function buildTrayMenu() {
         pushStatus();
       } },
     // 💥 Damage-taken audio alert — top level (not the Overlays submenu): it's
-    // an audio cue, not an overlay, and "toggleable from the taskbar" (Hitya)
+    // an audio cue, not an overlay, and "toggleable from the taskbar" (the guild lead)
     // means one click from the tray. Label carries the live hotkey so the
     // binding is discoverable without opening the dashboard. Disabled under
     // Quiet mode because the trigger overlay stays silent there anyway.
@@ -6402,7 +6401,7 @@ function buildTrayMenu() {
 // (found / not found / downloaded) came back through electron-updater's
 // events, which fire identically whether the check was manual or the silent
 // hourly poll, so a manual click when already current gave literally zero
-// feedback (Uilnayar 2026-07-03: "the check for update doesn't look like
+// feedback (a member, 2026-07-03: "the check for update doesn't look like
 // it's working - no popup"). _manualCheckPending bridges that: set here,
 // consumed + cleared by whichever updater event fires next in wireAutoUpdater.
 let _manualCheckPending = false;
@@ -6647,7 +6646,7 @@ function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
   const cfg = loadConfig();
   const _buildIsBeta = /-/.test(String(app.getVersion() || ''));
-  // forceStable (Hitya 2026-07-16: raid-night testers stuck on beta could
+  // forceStable (the guild lead, 2026-07-16: raid-night testers stuck on beta could
   // not get back to the stable release everyone else was fixed by): an
   // explicit "revert to stable" overrides even the installed-a-beta-build
   // input, and allowDowngrade lets electron-updater install a stable whose
@@ -6713,7 +6712,7 @@ function wireAutoUpdater() {
     if (_manualCheckPending) {
       _manualCheckPending = false;
       // On the beta track, "up to date" is exactly where a tester lands when
-      // they actually want the STABLE build (Hitya 2026-07-16: beta users
+      // they actually want the STABLE build (the guild lead, 2026-07-16: beta users
       // needed last night's stable release and had no way back) — offer the
       // way back right here.
       const _onBetaTrack = /-/.test(String(app.getVersion() || '')) || loadConfig().betaChannel === true;
@@ -6814,7 +6813,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // never included the setup bar — and now that the bar is position:fixed
     // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
     // setup-mode window sized to content alone clips the card by that much
-    // (Hitya 2026-08-19: CH chain "won't reveal anything", Zeal health
+    // (the guild lead, 2026-08-19: CH chain "won't reveal anything", Zeal health
     // shrinking to type 3). Added BEFORE the zoom multiply? No — the chrome
     // counter-zooms to a constant painted size, so it is added after, in
     // painted px (see below).
@@ -6841,7 +6840,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     const delta = target - bounds.height;
     if (Math.abs(delta) < 4) return true;
     if (delta < 0 && delta > -12) return true;
-    // Grow-upward mode (Uilnayar 2026-07-11, asked for Extended Target): the
+    // Grow-upward mode (a member, 2026-07-11, asked for Extended Target): the
     // BOTTOM edge stays anchored and the top moves — for overlays parked
     // near the bottom of the screen, where growing downward runs off-screen.
     // Per-overlay opt-in via the right-click chrome menu (cfg.overlayGrowUp).
@@ -6863,7 +6862,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     } else if (stashFresh) {
       y = stash.y;
     }
-    // Temporary grow-up diagnostic (Uilnayar 2026-07-13 "grows downward"): one
+    // Temporary grow-up diagnostic (a member, 2026-07-13 "grows downward"): one
     // line per resize while grow-up is enabled, so a live repro shows whether
     // the branch fired and whether it clamped at the screen top (= overlay is
     // parked too high to grow up). Remove once confirmed.
@@ -6887,7 +6886,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
 // The trigger overlay is, because its countdown stack must grow UPWARD, away
 // from the centre of the screen: "the middle of the screen is crucial area for
 // positioning, but that whole line of timers was awful to compete with"
-// (Hitya 2026-08-10 — docs/DESIGN-trigger-overlay-v2.md §3/§3b). Growing down
+// (the guild lead, 2026-08-10 — docs/DESIGN-trigger-overlay-v2.md §3/§3b). Growing down
 // from a top anchor walks the stack straight through the play area.
 // An explicit choice — the chrome menu's ⬆ Grow upward — always wins, in BOTH
 // directions, which is why every reader goes through this one helper.
@@ -6935,7 +6934,7 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     // against them, not the temporarily grown edges. Without this, toggling
     // ⬆ Grow upward from the menu bottom-anchored the re-fit to the grown
     // window's extended bottom and teleported the overlay far south
-    // (Uilnayar 2026-07-11). Consumed by the next overlay-auto-height.
+    // (a member, 2026-07-11). Consumed by the next overlay-auto-height.
     if (!win.__wpPreMenuBounds) {
       win.__wpPreMenuBounds = { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
     }
@@ -7026,7 +7025,7 @@ function setCrashReports(on) {
 ipcMain.handle('toggle-crash-reports', (_e, on) => setCrashReports(!!on));
 
 // The agent dashboard's Overlays page has a Dock button beside each on/off
-// toggle (Hitya 2026-08-14). Same handler shape as toggle-overlay so the
+// toggle (the guild lead, 2026-08-14). Same handler shape as toggle-overlay so the
 // dashboard can treat them as a pair.
 ipcMain.handle('dock-overlay', (_e, name) => {
   const spec = _dockSpec(name);
@@ -7121,7 +7120,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       if (cfg.showPopRaid && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
       break;
     case 'dock':
-      // The Dock itself (Hitya 2026-08-19: "Dock isn't available from the
+      // The Dock itself (the guild lead, 2026-08-19: "Dock isn't available from the
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
       cfg.showDock = !cfg.showDock; saveConfig(cfg);
       if (cfg.showDock && !dockWindow) createDockWindow(); else applyDockVisibility();
@@ -7129,7 +7128,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
     default:
       return null;
   }
-  // Auto-arrange on toggle REMOVED (Uilnayar 2026-07-12, 1.7.4-beta.2 test:
+  // Auto-arrange on toggle REMOVED (a member, 2026-07-12, 1.7.4-beta.2 test:
   // "take out that automatic movement — it's very disruptive"). Turning an
   // overlay on/off never moves anything; arranging is manual-only via the
   // right-click ✨ Auto-arrange item.
@@ -7148,7 +7147,7 @@ ipcMain.handle('auto-arrange-overlays', () => {
 // 🧲 Rescue — gather every overlay onto the display under the cursor (the
 // monitor the user is looking at when they click the button), stamp it as
 // the overlay HOME display, and auto-arrange there. The fix for "I've lost
-// overlays somewhere on my other monitors" (Uilnayar 2026-07-15).
+// overlays somewhere on my other monitors" (a member, 2026-07-15).
 ipcMain.handle('rescue-overlays', () => {
   try { return _rescueOverlays(); } catch (e) { return { error: e.message }; }
 });
@@ -7289,7 +7288,7 @@ ipcMain.handle('dock-set', (_e, keyOrFile, want) => {
   return _dockStatePayload();
 });
 
-// Resize a pane by grid cells. Hitya: "certain items should be able to take up
+// Resize a pane by grid cells. The guild lead: "certain items should be able to take up
 // multiple columns … I want Target Info to be 2 columns wide, 2 long."
 ipcMain.handle('dock-span', (_e, keyOrFile, c, r) => {
   const spec = _dockSpec(keyOrFile);
@@ -7316,7 +7315,7 @@ ipcMain.handle('dock-pane-bg', (_e, keyOrFile, want) => {
   return _dockStatePayload();
 });
 
-// ── Named dock layouts + rename (Hitya 2026-08-19: "Dock needs the ability
+// ── Named dock layouts + rename (the guild lead, 2026-08-19: "Dock needs the ability
 // to save configurations, and change the dock configuration name to reflect
 // what the user wants. A 'Save layout' button or 'Load Layout' with each of
 // their layouts.") ───────────────────────────────────────────────────────────
@@ -7439,7 +7438,7 @@ ipcMain.handle('dock-auto-height', (_e, h) => {
   // measures #shell in CSS px, and with an overlay scale the painted height is
   // that × zoom. Sizing the window in the unconverted unit made the dock's
   // 1s fit loop disagree with the painted size at every pass — the rapid
-  // grow/shrink churn Hitya saw at 130% (2026-08-19). ×1 at 100%, so the
+  // grow/shrink churn the guild lead saw at 130% (2026-08-19). ×1 at 100%, so the
   // dock's long-stable unscaled equilibrium is untouched.
   let hh = Math.round(Number(h) || 0);
   try {
@@ -7549,7 +7548,7 @@ ipcMain.handle('find-eq-installs', () => {
   // picker UI uses `scanned` to show "we looked in these paths".
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
   // SKIP the speculative pass when a configured folder already answers the
-  // question (Uilnayar 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
+  // question (a member, 2026-08-04: 20383ms, then 21027ms, hint A:\EQ).
   //
   // The `null` hint is the DISCOVERY pass — 20 hard-coded default paths across
   // drives A: through F:. Probing a drive letter that is not present, or is
@@ -7766,7 +7765,7 @@ ipcMain.handle('ui-studio-capture', async (_e, params) => {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_uiToken}` },
       // machine_name: which computer this backup came from. With two machines
       // backing up the same character, a timestamp alone can't tell you whose
-      // snapshot you are about to restore (Hitya 2026-08-09).
+      // snapshot you are about to restore (the guild lead, 2026-08-09).
       body: {
         character, label, server_short: 'pq.proj',
         source_width: srcW, source_height: srcH, files,
@@ -7896,7 +7895,7 @@ ipcMain.handle('pick-eq-dir', async (e) => {
   }
 });
 
-// Old-log importer pickers (Hitya 2026-09-13: "import more logs … add that
+// Old-log importer pickers (the guild lead, 2026-09-13: "import more logs … add that
 // directory or file"). Windows cannot offer files AND folders in one dialog,
 // so the caller says which. Files are pre-filtered to EQ log names; the agent
 // validates every path again when it imports.
@@ -8236,7 +8235,7 @@ ipcMain.handle('get-overlay-scale-this', (e) => {
     };
   } catch { return null; }
 });
-// ── Tray-parity IPC (Hitya 2026-08-19: "anything that's available from the
+// ── Tray-parity IPC (the guild lead, 2026-08-19: "anything that's available from the
 // taskbar should be available from the dashboard as well") ──────────────────
 // Same internals as the corresponding tray items — never a parallel path.
 ipcMain.handle('hide-all-toggle', () => {
@@ -8314,7 +8313,7 @@ function _zealEqDir() {
 // are I/O-shaped: the agent re-reads its spell/clicky catalogs and queue from
 // userData on each start, and the EQ folder holds multi-GB append-only logs we
 // tail continuously. Excluding those folders is the single biggest win
-// available on a Windows box (Uilnayar 2026-08-04, whose EQ folder was already
+// available on a Windows box (a member, 2026-08-04, whose EQ folder was already
 // excluded but Mimic's was not).
 //
 // DELIBERATELY NOT IN THE INSTALLER. An unsigned installer that silently
@@ -8606,7 +8605,7 @@ async function _runElevatedPs(tag, buildScript) {
           err: [String(stderr || '').trim(), (err && err.message) || ''].filter(Boolean).join(' | '),
         }));
     });
-    // THE BUG (Uilnayar 2026-08-04: "I approved the UAC prompts", and still got
+    // THE BUG (a member, 2026-08-04: "I approved the UAC prompts", and still got
     // told it was cancelled). Windows PowerShell 5.1 — which is what
     // powershell.exe is — ALWAYS writes a UTF-8 BOM with `-Encoding UTF8`, and
     // there is no utf8NoBOM in 5.1. JSON.parse throws on a leading U+FEFF, so a
@@ -8630,7 +8629,7 @@ async function _runElevatedPs(tag, buildScript) {
       // Do NOT blanket-call this "cancelled". Declining UAC and the elevated
       // script failing outright produced the SAME message before, so a real
       // failure looked like a user decision and nobody investigated it
-      // (Uilnayar 2026-08-04: "i also did not see a note in there about the
+      // (a member, 2026-08-04: "i also did not see a note in there about the
       // clock sync working or the windows defender exception being created").
       //
       // Windows reports a declined UAC prompt as Win32 error 1223, surfaced by
@@ -8683,7 +8682,7 @@ ipcMain.handle('defender-add-exclusions', async () => {
 // for the whole raid, not just its owner.
 //
 // A one-time "set the clock" does NOT hold — we watched exactly that fail:
-// Bardtholemu's machine was synced to ~0 on Jul 26-27 and was 11s off again by
+// A member's machine was synced to ~0 on Jul 26-27 and was 11s off again by
 // Jul 29. So this deliberately fixes the CAUSE, in order:
 //   1. w32time set to Automatic and started (the usual reason drift returns is
 //      the service being Disabled or Manual and never running);
@@ -8786,7 +8785,7 @@ ipcMain.handle('zeal-check-update', async () => {
 // running (the game holds Zeal.asi; on Windows the write would fail outright).
 // Windows reports an ACL denial as EPERM, and Node hands it straight through as
 // "EPERM: operation not permitted, copyfile '<long path>' -> '<longer path>'".
-// That is what a member sees on the Setup card, and it is unreadable — Abrahms
+// That is what a member sees on the Setup card, and it is unreadable — a member
 // pasted it into Discord asking what the red gobbledygook was (2026-09-10). An
 // unwritable EQ folder is the only realistic cause of a denial here, and it has
 // three real fixes, so lead with those and keep the errno for support.
@@ -8972,7 +8971,7 @@ ipcMain.handle('restart-to-update', () => {
 });
 // Real resource numbers, not a promise.
 //
-// Raiders quit Mimic between sessions to save processing (Uilnayar 2026-08-03),
+// Raiders quit Mimic between sessions to save processing (a member, 2026-08-03),
 // and the honest answer to "does it cost anything?" is a measurement they can
 // take on their OWN machine with their OWN overlay set — not a reassurance from
 // us. Electron's app.getAppMetrics() reports per-process CPU and working set for
@@ -8983,13 +8982,13 @@ ipcMain.handle('restart-to-update', () => {
 // first reading after a cold start reads high — the renderer discards sample #1.
 // OS pid → what that renderer actually IS. getAppMetrics() has no idea what a
 // process is FOR, so ten identical "overlay / window" rows told the user
-// nothing about WHICH overlays were alive (Uilnayar 2026-08-04). Only we can
+// nothing about WHICH overlays were alive (a member, 2026-08-04). Only we can
 // name them. Several windows can legitimately share one renderer process, so
 // labels accumulate rather than overwrite.
 // ── Private working set, straight from Windows ─────────────────────────────
 //
 // "This says 274MB but task manager calls out 161MB. Why is there such a gap?"
-// (Uilnayar 2026-08-04.) Because they are two different measurements, and both
+// (a member, 2026-08-04.) Because they are two different measurements, and both
 // are correct:
 //
 //   • Electron's privateBytes is PRIVATE COMMIT — every private page the
@@ -9014,7 +9013,7 @@ ipcMain.handle('restart-to-update', () => {
 // window is open. Everything falls back to the committed figure.
 // OFF BY DEFAULT. "I'd rather not take up extra cycles all the time just to be
 // right and match Task Manager, but we should explain that we are provisioned
-// for more committed RAM and that's why it wouldn't match" (Uilnayar
+// for more committed RAM and that's why it wouldn't match" (a member
 // 2026-08-04) — so the default is the free number plus the explanation, and
 // this is a checkbox in the Resource use window for when an exact comparison is
 // actually wanted. Each run times itself and reports the cost next to the
@@ -9023,7 +9022,7 @@ const _WS_TTL_MS = 12_000;
 let _wsPrivate = { at: 0, byPid: new Map(), inFlight: false, lastMs: 0 };
 // True only while the window that consumes these numbers is actually open.
 // "when we close that resource use window make sure we're not matching task
-// manager still and querying for the exact in the background" (Uilnayar
+// manager still and querying for the exact in the background" (a member
 // 2026-08-04). Today the only caller is resources.html's 2s poll, so closing
 // the window already stops it — but that is a property of the renderer, and a
 // background PowerShell loop is not something to leave resting on one. This
@@ -9124,7 +9123,7 @@ ipcMain.handle('app-metrics', () => {
       // workingSetSize counts SHARED pages in EVERY process that maps them, and
       // every Chromium renderer maps the same tens of MB of Electron framework.
       // Summing it across 13 processes counted that framework 13 times: Mimic
-      // reported 1267 MB where Task Manager showed 460 (Uilnayar 2026-08-04).
+      // reported 1267 MB where Task Manager showed 460 (a member, 2026-08-04).
       // privateBytes is memory not shared with any other process — what Task
       // Manager's Memory column shows, and the only basis where the per-process
       // rows legitimately add up to a total.

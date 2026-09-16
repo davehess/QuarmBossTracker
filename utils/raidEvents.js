@@ -1,7 +1,7 @@
 // utils/raidEvents.js — "is there a scheduled event running right now, and is
 // it a raid or a social/off-night event?"
 //
-// WHY (Hitya 2026-07-31): v1 of the raid-night thread keyed everything off the
+// WHY (the guild lead, 2026-07-31): v1 of the raid-night thread keyed everything off the
 // hardcoded Sun/Wed/Thu 20:30 window, so a Friday-morning backfill minted a
 // public "Kill Log — Friday" thread and an off-schedule raid got nothing. The
 // guild already publishes its schedule twice — as Discord **scheduled events**
@@ -10,13 +10,13 @@
 //
 // POSTING WINDOW: [start − RAID_EVENT_PRE_MIN, end + RAID_EVENT_POST_MIN],
 // default 30 min before the planned start and 15 min after the scheduled end
-// (Hitya's numbers). Everything the bot posts for a timestamp inside that
+// (the guild lead's numbers). Everything the bot posts for a timestamp inside that
 // window lands in that event's thread.
 //
 // SOURCES, in priority order:
 //   1. **Discord scheduled events** (primary). `guild.scheduledEvents.fetch()`
 //      is a REST call, so it needs NO new gateway intent and no new credential
-//      — the bot already has the perms Hitya has. Cached (default 5 min) and
+//      — the bot already has the perms the guild lead has. Cached (default 5 min) and
 //      single-flight so a busy raid can't turn one card per pull into one API
 //      call per pull.
 //   2. **Raid-Helper** (enrichment). We do NOT build a second client: the repo
@@ -56,7 +56,7 @@ const { getDefaultTz, partsInTzAt } = require('./timezone');
 const MIN = 60 * 1000;
 
 // Same three days as commands/raidnight.js / utils/timezone.js — but here they
-// are the PRIMARY classifier, not a fallback (Hitya 2026-07-31: the raids
+// are the PRIMARY classifier, not a fallback (the guild lead, 2026-07-31: the raids
 // themselves are Discord events — "Seru / Misc" on a Sunday, "Vex Thal" on a
 // Wednesday — so "has a Discord event" says nothing about which flow it wants;
 // the NIGHT does).
@@ -116,7 +116,7 @@ function normalizeEvent(raw) {
     startMs,
     endMs,
     assumedEnd: !Number.isFinite(Number(raw.endMs)) || Number(raw.endMs) <= startMs,
-    // Zone routing (Hitya 2026-09-07). The calendar entry's free text, and the
+    // Zone routing (the guild lead, 2026-09-07). The calendar entry's free text, and the
     // zone ids annotateZones() derives from it — carried on the event so the
     // sticky map, the plan's `why` and the tests all see the same answer.
     description: raw.description == null ? '' : String(raw.description).slice(0, 1000),
@@ -140,11 +140,11 @@ function windowContains(ev, ts) {
 
 /**
  * Of the events whose window contains `ts`, the one whose *scheduled start* is
- * nearest `ts` (Hitya: overlapping events → nearest). Ties break on the shorter
+ * nearest `ts` (The guild lead: overlapping events → nearest). Ties break on the shorter
  * event, then on id, so the choice is deterministic across bot restarts —
  * otherwise two uploads seconds apart could pick different threads.
  *
- * ⚠ THE ZONE COMES FIRST when the caller knows it (Hitya 2026-09-07: "there
+ * ⚠ THE ZONE COMES FIRST when the caller knows it (the guild lead, 2026-09-07: "there
  * are two events going on tonight and mobs are being posted to each one,
  * instead of specific ones posted per zone"). Nearest-start is the right rule
  * for one event at a time and exactly the wrong one for two at once: a Seru

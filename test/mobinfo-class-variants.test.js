@@ -1,6 +1,6 @@
 // test/mobinfo-class-variants.test.js — one name, two bodies, two classes.
 //
-// Hitya, 2026-09-15, Plane of Hate: "Female forsaken revenant are enchanters,
+// The guild lead, 2026-09-15, Plane of Hate: "Female forsaken revenant are enchanters,
 // but show up as magicians in plane of hate. we have the model ID and sex, we
 // should be able to differentiate." The catalog has a_forsaken_revenant twice
 // — 76004 male Magician, 76005 female Enchanter — identical in level, HP,

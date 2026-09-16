@@ -67,7 +67,7 @@ const YOU_NONMELEE_RX = /^\[(.+?)\]\s+Your .*? (\w[\w'`]*) for (\d+) points? of 
 
 // ── Generic death lines (covers non-broadcast deaths so assists can resolve a
 // victim's death even when there is no Druzzil broadcast at all).
-//   "Bob has been slain by Hitya!"
+//   "Bob has been slain by Rethlan!"
 //   "Bob died."
 const SLAIN_RX = /^\[(.+?)\]\s+(\w[\w'`]*) has been slain by (\w[\w'`]*)!/;
 const DIED_RX  = /^\[(.+?)\]\s+(\w[\w'`]*) (?:has been killed in combat|died)\b/;
