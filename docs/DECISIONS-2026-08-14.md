@@ -141,8 +141,8 @@ command needs a staleness alarm or an automatic feeder.**
 **The report (Hitya, live).** */raid* showed **Bwavair** under "Not seen /
 offline — *(swapped to Bardtholemu)*", 2h ago, and Group 2 rendered "5 chars"
 without her. In game she was right there in Group 2 with a full health bar.
-*"Bwavair is Bardtholemu's wife, he will play her cleric if we are short on
-some, she is online currently."*
+The roster entry and the game disagreed because a second raider was playing
+that cleric at the time — a routine hand-off the roster had no way to see.
 
 **Everything upstream was correct.** Earlier in the night Bardtholemu really did
 play her toon on his client, and the same-pid detector in `apps/mimic/main.js`

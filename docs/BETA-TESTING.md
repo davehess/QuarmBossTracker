@@ -645,7 +645,7 @@ visible wishlist is a bidding tell), per-row ✕ dismissals that are **local-onl
 expansion filter that opens on the current expansion derived from the newest
 award.
 
-**What changed (guild-lead field feedback — OpenDKP `vaporjesus`, main `Hitya`):**
+**What changed (guild-lead field feedback):**
 1. Item names no longer 404 — they link to the OpenDKP raid page (or aren't
    links). 2. Wishlist hides anything the family already won (preregs keep ★).
    3–4. New full-width **Recent misses** table (bid & lost) with *character ·

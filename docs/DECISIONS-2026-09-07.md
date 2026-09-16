@@ -62,7 +62,7 @@ Only way to fix is to restart. When I stop running mimic, it does not happen
 again."* Twice ME→DSP, once Seru→DSP. Hitya: *"serious implications here."*
 
 **Tonight's instance, reconstructed from the bot's HTTP log and Supabase.**
-His household's address was identified by pairing his 436-event upload with
+The originating connection was identified by pairing the 436-event upload with
 the request that carried it (⚠ the deploy log's timestamps are batched
 flushes, not event times — two uploads from different people share the same
 microsecond — so pair on the HTTP stream, never on `[agent] upload from`).

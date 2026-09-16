@@ -78,7 +78,7 @@ are ours and which are theirs:
 
 | Layer | What we run | Measured usage |
 |---|---|---|
-| Supabase | **Pro** (org `hesstastic`, $25/mo) | DB **1.72 GB of 8 GB** (21%) |
+| Supabase | **Pro** ($25/mo) | DB **1.72 GB of 8 GB** (21%) |
 | Railway | **Paid** — Hobby or Pro | avg **0.128 GB RAM · 0.032 vCPU**, peak 0.70 GB / 0.69 vCPU |
 | Vercel | Hobby | — |
 
@@ -361,7 +361,7 @@ and the same never-refetch guarantee.
   round-trip an actual sign-in, not just write the config.
 
 - **A no-Discord door exists and carries deployment-shaped choices
-  (2026-08-24, Gonner/Lacunanight — Discord's phone-verification wall).**
+  (2026-08-24 — Discord's phone-verification wall).**
   Officer-issued invites (`site_access_invites`, service-role only) let a
   member set username+password on `/auth/claim`; the account is created
   pre-confirmed as `<username>@<login domain>` and stamped onto

@@ -40,7 +40,7 @@ care about:
 
 ```json
 {"AuditId": 4635440, "ClientId": "8fa8662b40c12",
- "Timestamp": "2026-08-27T02:09:55Z", "CognitoUser": "Talames159",
+ "Timestamp": "2026-08-27T02:09:55Z", "CognitoUser": "<officer-login>",
  "Action": "Auction Closed"}
 ```
 

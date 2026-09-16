@@ -265,9 +265,9 @@ and `RPC_X_SS_IN_NULL_CONTEXT` is what the next `waveOut` call gets afterwards.
 in memory:
 
 ```
-RENDER (playback)  {9f0d0636-5fdf-4de9-b052-834835a41ca2}  via wodMessage
-CAPTURE (mic)      {8220f162-a788-4e8c-95ab-c47c9acaaa66}  via widMessage
-CAPTURE (mic)      {da8cd4f0-2b54-47b6-9873-d469d6265314}  via widMessage
+RENDER (playback)  {<device-guid>}  via wodMessage
+CAPTURE (mic)      {<device-guid>}  via widMessage
+CAPTURE (mic)      {<device-guid>}  via widMessage
 ```
 
 `wodMessage` is the waveOut path — the one that faulted — on render endpoint

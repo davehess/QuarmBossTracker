@@ -85,10 +85,10 @@ conversation rather than a query. That was wrong — the data exists, in
 `rh_signups`, with `absence` / `tentative` / `late` / `bench` statuses, and it
 settles both questions:
 
-- **Peopleslayer marked 19 of 19 Wednesdays `tentative`**, while signing in on
+- **One raider marked 19 of 19 Wednesdays `tentative`**, while signing in on
   18/19 Sundays and 19/19 Thursdays. Zero accepts, zero absences on that night.
-  The inferred "blocked Wednesday" (p<0.0001 off the ticks) is his own declared,
-  unbroken, four-month-long standing conditional. Nobody had aggregated it.
+  The inferred "blocked Wednesday" (p<0.0001 off the ticks) was their own
+  declared, unbroken, four-month standing conditional. Nobody had aggregated it.
 - **The late question improves into "who warns you".** Azara declares `late` 18
   times against 14 actual late arrivals — the most-late raider is also the most
   reliable signaller. Malthur declares 0 across 55 firm sign-ins and is late 47%
