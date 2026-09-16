@@ -195,10 +195,10 @@ next touch one rather than assuming a missing row means a missing doc.
     character**, so the 50 ticks with two family members present are counted
     twice (6167 vs 5907 once-per-tick). Real, but it only explains 260 of the
     gap — once-per-tick still gives 557 against a stated 143.
-  - ⚠ Two wrong inferences were made and retracted along the way: that Hitya
-    boxes (they do not — his wife played Canopy as a zone anchor), and that
-    decay was unmodelled (it rides `opendkp_adjustments`, only −15 for this
-    family). Do not rebuild either theory without new evidence.
+  - ⚠ Two wrong inferences were made and retracted along the way: one about
+    how a second character came to be online, and one that decay was
+    unmodelled (it rides `opendkp_adjustments`, only −15 for this account).
+    Do not rebuild either theory without new evidence.
   **What is NOT known:** what OpenDKP's standings actually return for the
   account, and therefore whether 192 is a stale figure, the wrong field, or a
   correct reading of something that is not the balance. **Needs:** the number
@@ -1118,7 +1118,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **The agent no longer talks to OpenDKP at all — and the blindspot that hid it
   (agent 3.6.2 · bot 3.1.87 · Mimic 2.6.2 · 2026-08-27).** Moncs: *"Do you
   purposefully call /dkp once a minute? Looking back over the past 60 minutes,
-  it looks like theres about 54 calls from 184.144.103.149 calling it"* — a
+  it looks like theres about 54 calls from <residential-ip> calling it"* — a
   RESIDENTIAL ip: one member's PC. Every open Mimic pulled the full
   472-character standings array once a minute to render one number.
   ⚠ **The blindspot, written up in `DESIGN-agent-third-party-calls.md` §1: a
@@ -1257,7 +1257,7 @@ next touch one rather than assuming a missing row means a missing doc.
     also queued: character_missing_spells has the same 'Spell: %'-only
     filter — bards under-served on the non-PoP path too.
   - **Officer-assisted Mimic linking (bot 3.1.70 + web 1.1.93, Hitya via
-    Gonner: "doesn't have discord auth working").** The device-code flow's
+    a member without working Discord auth).** The device-code flow's
     missing half: the poll handler accepted discord-only authorizations since
     2026-07-31 but nothing could write them. Officers now stamp a member's
     code on /admin/links (attestation trust model, audited onto
@@ -1266,7 +1266,7 @@ next touch one rather than assuming a missing row means a missing doc.
     follow-up shipped same-day (web 1.1.94, error-surfacing fix 1.1.95):
     officer-issued site-access invites → /auth/claim username+password bound
     to wolfpack_members.user_id, reset via re-invite, no SMTP. FIRST LIVE USE
-    SUCCEEDED (Gonner/Lacunanight, 2026-08-25 02:47 UTC). Officer procedure:
+    SUCCEEDED 2026-08-25. Officer procedure:
     RUNBOOK-site-access.md; design + merge story: DECISIONS-2026-08-24;
     self-host choices: DESIGN-selfhost-wizard.md §3.
   - **Lockouts derived from kill parses (bot 3.1.68 + web 1.1.90, Hitya:
@@ -1984,7 +1984,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **#121 Loot Bidding v2 + buff-queue class-picker defaults — DONE (2026-07-19,
   agent 3.3.100 beta + bot 3.0.221 on main + web 1.0.252 roadmap/docs; Mimic
   parked 1.9.6). No DB change (mirror reads only).** Field feedback from the
-  guild lead (OpenDKP user `vaporjesus`, family main `Hitya`).
+  guild lead.
   1. **404 bug fixed:** wishlist/win item names carried `class=name`, so the
      dashboard's /character click-delegation opened `/character/<first-word>`
      ("Timestone Adorned Ring" → `/character/Timestone` → 404). Item names now
@@ -2013,10 +2013,10 @@ next touch one rather than assuming a missing row means a missing doc.
      officers verify vs the OpenDKP UI in BETA.
   7. **Family auto-prefill after login:** `suggested_family` (main = most auction
      wins) prefills main + raid alts ONLY when the local family is empty; the
-     manual editor stays. **Grounding:** the mirror stores the account login
-     (`vaporjesus`) as `winner`/`character_name` and `character_id_to_name` is
-     EMPTY, so names resolve by MODE over the won-auction↔loot join
-     (`108064→Hitya`, `100899→Melting`, `94318→Canopy`, …).
+     manual editor stays. **Grounding:** the mirror stores the upstream ACCOUNT
+     LOGIN as `winner`/`character_name` and `character_id_to_name` is EMPTY, so
+     names resolve by MODE over the won-auction↔loot join (character id →
+     character name, one entry per character on the account).
   8. **Expansion filter + full-width panel:** item→zone is too weak
      (`eqemu_npc_types.zone_short` is NULL), so era comes from the OpenDKP DKP
      **pool** (`opendkp_raids.pool_name` → Classic/Kunark/Velious(SoV)/Luclin(SoL)),
@@ -3688,8 +3688,8 @@ Sun/Wed/Thu window before touching the code.
    count classified encounters; parse-thread mirror keeps the FIRST payload
    state forever (here that accident preserved the good data).
    **Evidence added 2026-08-09 (second pass):**
-   - **The uploader is `Hawkner` (discord `189927438958985218`), whose linked
-     characters include `Smokestomp` AND `Ikibob`** — i.e. the same person
+   - **The upload came from an account whose linked characters include both
+     names seen on the two payloads** — i.e. the same uploader
      whose morning pug created the original foreign-raid problem
      (`web/lib/anomalies.ts` header, Hitya 2026-06-29). Same account, same
      behaviour, second incident. Any future foreign-raid tuning should assume
@@ -4024,9 +4024,8 @@ before anyone touches them.** All four exist because of the two bugs found
   needs setting to Automatic. Draft wording in `DESIGN-clock-correction.md` §3.
   The agent warns its own user once at >5s absolute — a **rate** alert would
   have caught all three far earlier, which is an open question in that doc.
-  *Loose end: the drifting discord_id `272226525426876416` has no `characters`
-  row, so it renders as a bare id — linking it would let the report name a
-  person.*
+  *Loose end: the drifting install has no `characters` row, so it renders as a
+  bare id — linking it would let the report name a person.*
 
 **Callout + overlay work designed 2026-08-04 — ALL FOUR BUILT 2026-08-11 and
 ON BETA as of agent 3.5.59 (bot halves + migration in bot 3.1.38 on `main`).

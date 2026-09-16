@@ -229,9 +229,8 @@ order by n desc limit 20;
 
 ## 4. Loose end worth one minute
 
-`agent_clock_offsets.discord_id = 272226525426876416` — the +42.3s install, the
-one that caused the Uilnayar double-death — has **no matching `characters` row**,
-so it renders as an anonymous id everywhere. The contributor character on those
-uploads is **Fargan**. Linking that account would make the skew report name a
+One `agent_clock_offsets` row — the +42.3s install, the one behind the
+double-counted death — has **no matching `characters` row**, so it renders as
+an anonymous id everywhere. Linking that account would make the skew report name a
 person instead of a number, which matters for #203 ("tell the two skewed
 installs").

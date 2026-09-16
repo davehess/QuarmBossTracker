@@ -950,7 +950,7 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 
 ## Supabase
 
-**Plan: Pro, org `hesstastic` (verified 2026-09-01 via the Management API).** Not
+**Plan: Pro (verified 2026-09-01 via the Management API).** Not
 the free tier — several code comments and archived docs still say "free tier" and
 are stale; correct them when you touch them rather than propagating the claim.
 

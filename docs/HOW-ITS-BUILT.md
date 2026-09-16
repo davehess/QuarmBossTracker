@@ -55,7 +55,7 @@ writes.
   `/auth/mimic-link` (Discord OAuth) → Mimic's 2s poll exchanges for a
   `mimic_sessions` token. **Officer-assisted path (bot 3.1.70 + web 1.1.93,
   2026-08-24)**: for members Discord blocks from OAuth (the unverified-account
-  wall — Gonner), an officer enters the code on `/admin/links` and picks the
+  wall), an officer enters the code on `/admin/links` and picks the
   member; the code is stamped discord-only (`authorized_user_id` NULL — the
   shape the poll has accepted since 2026-07-31 but nothing could write) with
   `authorized_via='officer'` + the attesting officer's id, copied to
@@ -66,7 +66,7 @@ writes.
 - **Web sign-in**: Supabase Auth Discord OAuth; callback checks guild
   membership + role names (`ALLOWED_ROLE_NAMES` via `wolfpack_roles`).
   Officer gating = `isOfficer()` per request server-side.
-  **No-Discord path (web 1.1.94, 2026-08-24, Lacunanight's phone-verification
+  **No-Discord path (web 1.1.94, 2026-08-24, Discord's phone-verification
   wall):** officer generates a single-use 7-day invite on `/admin/links`
   (`site_access_invites`, service-role only) → member sets username+password
   on `/auth/claim` → account created pre-confirmed as
@@ -1590,7 +1590,7 @@ scoped and shadowing one is normal.
 ### /tag setup via "Set up EQ for me" (agent 3.6.33)
 `_EQ_SETUP_KEYS` carries eight `NameplateTag*` keys (Enable, ToolTip,
 ToolTipAlign, Filter, RaidHealthBars TRUE · PrettyPrint, Suppress FALSE ·
-Channel `Ztwolfpacktag`), written by `_iniSetKey` per EQ folder like the
+Channel `<tag-channel>`), written by `_iniSetKey` per EQ folder like the
 original four. `_tagChannelSpecs()` composes the raid join
 (`TAG_CHANNEL_NAME + ':' + tuning.tag_channel_password`) and, for officers
 only, `tuning.tag_officer_channel`; `/api/state` ships them as `zealTagJoin`
@@ -1857,7 +1857,7 @@ header `ZT`, delimiter exactly `" | "`, `clear` = clear-all,
 `ChatChannel: <name>` = autojoin plumbing, `^?^` prefixes set shapes
 (R/O/Y/G/B/W arrows, P paw, S stop sign). **The broadcast carries the mob's
 TRUE spawn id** — the field the pipe lacks — logged by every member of the ZT*
-channel (the guild's is `ZTwolfpacktag`; Zeal requires the ZT prefix), by rsay,
+channel (Zeal requires the ZT prefix on the name), by rsay,
 and by **gsay — GROUP say, not guild** (`handle_tag_command` gates it on
 `GroupInfo->is_in_group()`). Agent: `noteTagChannelLine` on the raw tail line
 (the /zeal-version pattern); ships `zeal_tags`
@@ -2927,7 +2927,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   14,741 signups back to 2024-08-08 as of 2026-08-13, no gaps against the DKP raid
   list. Nothing monitors the sync yet; a silent failure is indistinguishable from a
   quiet signup board.
-  Worked example of what it answers that ticks cannot: Peopleslayer marked **19 of 19
+  Worked example of what it answers that ticks cannot: one raider marked **19 of 19
   Wednesdays tentative** while signing in on 18/19 Sundays and 19/19 Thursdays — a
   standing weekly constraint that attendance counts alone can only infer.
 - **Per-fight timeline (#98)** — `encounter_events` → **`FightEventLog.tsx`** on

@@ -2,7 +2,7 @@
 
 Officer-facing. The complete procedure for both access paths that do not
 require the member to complete Discord OAuth, plus reset and troubleshooting.
-Built 2026-08-24 for Gonner/Lacunanight (Discord's "verify your account" /
+Built 2026-08-24 for members hitting Discord's "verify your account" /
 phone-verification wall blocks OAuth **consent** — the member can chat in the
 guild fine; only the authorize screen is blocked). First live use succeeded
 same night.

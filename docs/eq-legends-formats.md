@@ -1,7 +1,7 @@
 # EQ Legends — client config file formats (reference)
 
-Captured 2026-07-06 from real files Uilnayar provided (account `aiasknight`,
-character **Melting** on server **neriak**). No Legends support is built yet —
+Captured 2026-07-06 from real client files a member provided. No Legends
+support is built yet —
 this doc is the spec to build from when/if we do. Candidate work items at the
 bottom; none committed.
 

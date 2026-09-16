@@ -60,7 +60,7 @@ the ids REPLACE HP clustering for that name. Below that, nothing changes.
 ## We are on Supabase Pro, and there is no call budget to blow
 
 **Corrected 2026-09-01.** Code comments and archived docs across the repo say the
-project is on the Supabase **free tier**. It is on **Pro** (org `hesstastic`,
+project is on the Supabase **free tier**. It is on **Pro** (
 verified through the Management API), and has been since before several of those
 comments were written. Three live files carried the stale claim, one of them in
 copy displayed to officers on `/admin/agents`; all three fixed.

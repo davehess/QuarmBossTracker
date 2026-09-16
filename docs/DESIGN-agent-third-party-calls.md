@@ -19,7 +19,7 @@ an outbound governor, a kill switch.
 The next morning Moncs asked:
 
 > "Do you purposefully call /dkp once a minute? Looking back over the past 60
-> minutes, it looks like theres about 54 calls from 184.144.103.149 calling it"
+> minutes, it looks like theres about 54 calls from <residential-ip> calling it"
 
 **That ip was a member's home PC.** `opendkp_call_stats` is populated by
 `utils/opendkp.js`, which is bot code. The agent called `api.opendkp.com`

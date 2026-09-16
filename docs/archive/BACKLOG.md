@@ -93,8 +93,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   apps/mimic/main.js (`_autoArrangeOverlays` / `_parseUiWindowRects`).
 - **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
   (Hitya 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
-  yet.) The guild already runs an in-game custom chat channel (`ztwolfpacktag`
-  / `wolfpacktag`) to tag mobs: pull, tank picked up an add, which to assist,
+  yet.) The guild already runs a private in-game custom chat channel to tag mobs: pull, tank picked up an add, which to assist,
   "this charmed mob is a pet", etc. This IS the raid-intent stream we were
   otherwise going to synthesize from `/pipe ASSIST %t` macros (see the Zeal
   pipe protocol discussion) — consuming the existing channel beats inventing a
@@ -118,12 +117,11 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
      widening of "we never upload private channels". Draft wording already
      written in the 2026-07-08 session.
   **NEEDED before writing the regex (load-bearing — guessing ships a broken
-  parser or captures the WRONG channel):** (a) 3-5 raw `ztwolfpacktag` lines
+  parser or captures the WRONG channel):** (a) 3-5 raw tag-channel lines
   straight from the EQ log file — exact on-disk format, or confirmation it only
   comes via the Zeal pipe (type 0 log stream) and not the log file at all;
   (b) is it players typing vs Zeal auto-broadcasting on a target tag; (c) the
-  exact channel token (`ztwolfpacktag` vs `wolfpacktag` + a `zt` display
-  prefix). Open product Q: mirror to web as a searchable tag timeline (like the
+  exact channel token, including whether the ZT display prefix is part of it. Open product Q: mirror to web as a searchable tag timeline (like the
   chat log) or stay purely live-overlay + ephemeral?
 - **Stale-log-filename attribution — extend beyond chat.** Root cause found
   2026-07-07 (the Starrburst/Dant/Bardtholemu chat renames): after a character
