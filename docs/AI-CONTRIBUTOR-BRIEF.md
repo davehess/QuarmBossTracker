@@ -118,7 +118,7 @@ These are self-contained and reviewable without officer-only data. (Numbers are
 the project's queue ids.)
 
 - **#134 — Discord death post over-counts.** The website shows correct deaths
-  (each raider once), but the Discord auto-parse card multi-counts (e.g. "Melting
+  (each raider once), but the Discord auto-parse card multi-counts (e.g. "a member
   ×3"). The website already does correct cross-uploader death dedup (name+ts, ~3s
   window, + suppress names any single uploader reported dying 2+ times). Draft:
   port that dedup logic to the bot's Discord death-block rendering so the two

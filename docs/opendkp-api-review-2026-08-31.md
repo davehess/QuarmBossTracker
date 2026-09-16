@@ -1,6 +1,6 @@
 # OpenDKP API review — are we targeting them well?
 
-Hitya supplied OpenDKP's full API reference (2026-08-31) and asked for a review
+The guild lead supplied OpenDKP's full API reference (2026-08-31) and asked for a review
 of every interaction. This is that review, ranked by **measured** cost rather
 than by guesswork: the table below is our real 7-day spend from
 `opendkp_call_stats`, not an estimate.

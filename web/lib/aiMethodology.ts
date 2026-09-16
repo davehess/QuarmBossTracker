@@ -93,13 +93,13 @@ export const PRINCIPLES: Principle[] = [
   {
     id: 'attribution',
     title: 'Attribution is explicit',
-    rule: 'Most requests here come from one person under several character names, and are credited to them — but the list of those names is checked with them rather than inferred, and anyone not on it keeps their own name.',
+    rule: 'Documentation and code comments credit people by ROLE, never by character name. The repository is public, so it records what was decided and why, not who plays what.',
     because:
-      'The list was wrong for three weeks: it carried a name belonging to a different member, and was missing one that did belong. A rule that folds many names into one person fails by erasing other people\'s contributions, and it fails silently — a wrong credit reads exactly like a right one, and only the person themselves ever notices. So an unrecognised name now keeps its own credit by default.',
-    adopted: '2026-08-09',
+      'An earlier rule kept a list mapping characters to people so that credit landed correctly. It was wrong for three weeks in both directions, and it was the wrong shape anyway: a public repository has no reason to publish who is who. Naming nobody cannot misattribute anybody.',
+    adopted: '2026-09-16',
     milestone: 'm-attribution',
     sourceDoc: 'CLAUDE.md',
-    quote: 'mostly Hitya, with named exceptions',
+    quote: 'attribution: by ROLE, never by character name',
   },
   {
     id: 'raid-freeze',

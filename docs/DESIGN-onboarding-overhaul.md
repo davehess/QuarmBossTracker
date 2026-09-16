@@ -1,7 +1,7 @@
 # Design — Onboarding overhaul: a "New Here?" walkthrough on web + Discord
 
-Status: **proposal, awaiting Hitya sign-off.** Design only — no feature code has
-been written. Trigger: Hitya, 2026-07-31 09:38 — *"our /onboarding really needs
+Status: **proposal, awaiting the guild lead sign-off.** Design only — no feature code has
+been written. Trigger: the guild lead, 2026-07-31 09:38 — *"our /onboarding really needs
 an overhaul. We're likely going to want some screenshots in there, or a 'New
 Here?' guided walkthrough on the website and the discord."*
 
@@ -184,7 +184,7 @@ we're in here.
 
 | Surface | File | State |
 |---|---|---|
-| Landing `/` | `web/app/page.tsx` | Already carries **"🗺 New here? See the whole platform on one page →"** (`:57`) — the exact phrase Hitya used. It points at `/platform`. |
+| Landing `/` | `web/app/page.tsx` | Already carries **"🗺 New here? See the whole platform on one page →"** (`:57`) — the exact phrase the guild lead used. It points at `/platform`. |
 | `/platform` | `web/app/platform/page.tsx` | A **showcase**, not a walkthrough: hero, stat strip, architecture mindmap, drill-down branch cards, evolution timeline, privacy section (`:100-110`). Public, no auth. Answers *"what is all of this?"* — never *"what do I do first?"*. |
 | Nav | `web/components/Nav.tsx:7-22` | 15 links + Me/Admin. **No Start / Getting-started entry.** |
 | Header | `web/app/layout.tsx:62-98` | Three download CTAs (Mimic stable / Beta / Linux) sit under the wordmark on every page — good; a first-timer can't miss the installer. |
@@ -273,7 +273,7 @@ web/lib/onboardingSteps.ts       ← the ONLY place step copy lives
   coupling, and the bot degrades to "here's the link" rather than breaking.
   *(Alternative if we'd rather not add a cross-service dependency: keep the
   Discord copy deliberately tiny — hook + link + buttons only, as v1 proposes —
-  so there is almost nothing to drift. Hitya's call; the v1 slim card makes the
+  so there is almost nothing to drift. The guild lead's call; the v1 slim card makes the
   fetch optional.)*
 
 ### Surface 1 — Discord: the card slims down
@@ -403,7 +403,7 @@ that only exists in web markup would silently vanish in Discord.
 
 #### Shot list
 
-**Needs Hitya or a local Windows session** (live EQ + Mimic + Discord required;
+**Needs the guild lead or a local Windows session** (live EQ + Mimic + Discord required;
 a cloud session cannot produce these):
 
 | # | File | Shot | Annotate |
@@ -416,11 +416,11 @@ a cloud session cannot produce these):
 | 6 | `06-discord-board.png` | `#raid-mobs` `/board` — cooldown card + Spawning in 24h | arrow at a kill button |
 | 7 | `07-discord-parsecard.png` | An auto-parse card in the Parses Log thread | arrow at the 🔗 wolfpack.quest link |
 
-⚠ Shots 4 and 7 contain **real character names**. Decide with Hitya whether to
+⚠ Shots 4 and 7 contain **real character names**. Decide with the guild lead whether to
 use the existing obfuscation helper (`web/lib/obfuscate.ts`) or to ship them as-is
 with named raiders' okay — `docs/PRIVACY.md` is the standard we hold others to.
 
-**Capturable without Hitya** — these are public, unauthenticated wolfpack.quest
+**Capturable without the guild lead** — these are public, unauthenticated wolfpack.quest
 pages, so a cloud session with the Playwright MCP can screenshot them headlessly:
 
 | # | File | Shot |
@@ -428,7 +428,7 @@ pages, so a cloud session with the Playwright MCP can screenshot them headlessly
 | 8 | `08-web-platform.png` | `/platform` mindmap |
 | 9 | `09-web-privacy.png` | `/privacy`, framed on the "Is it a keylogger?" section |
 
-**Needs a signed-in session** (Discord OAuth gate — Hitya, or any member with a
+**Needs a signed-in session** (Discord OAuth gate — the guild lead, or any member with a
 browser; not a cloud session):
 
 | # | File | Shot | Annotate |
@@ -511,7 +511,7 @@ can switch paths at any time — the filter is a URL param, not a commitment.
   path-specific steps and the persona-targeted screenshots.
 - **Guided Discord sequence**: on persona pick, the bot opens a private thread
   (or DM chain) that walks the steps one message at a time and **advances when
-  the signal flips** — "✅ Saw your first upload from Hitya. Next: …", driven by
+  the signal flips** — "✅ Saw your first upload from the guild lead. Next: …", driven by
   the same check functions. This is the piece that makes Discord feel guided
   rather than linked-away-from, and it's only worth building once the signals
   are proven correct on the web page.
@@ -537,7 +537,7 @@ can switch paths at any time — the filter is a URL param, not a commitment.
 
 ---
 
-## Open questions for Hitya
+## Open questions for the guild lead
 
 1. **Tone.** The current card is earnest-and-explanatory; `/platform` is
    confident marketing; `/privacy` is warm and disarming (*"a rough night is

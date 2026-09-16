@@ -1,9 +1,9 @@
 # DESIGN — Bid assist: per-character bid ledger, roaming planned bids, auto-bid
 
-**Status:** specified 2026-08-26, foundation shipping. Owner: Hitya.
+**Status:** specified 2026-08-26, foundation shipping. Owner: the guild lead.
 
 > ⚠ **This document exists because the feature was described in a session and
-> never written down.** Hitya, 2026-08-26: *"the local mimic bidding piece I
+> never written down.** the guild lead, 2026-08-26: *"the local mimic bidding piece I
 > described and queued up with you disappeared."* It had — a search of
 > `STATUS.md`, `DESIGN-platform-queue.md`, every `DECISIONS-*.md` and git
 > history across all branches found nothing. This is the CLAUDE.md
@@ -98,7 +98,7 @@ this" set must be its own **uncapped** sweep, never seeded from a display array.
 
 ### 3. Auto-bid — the safety-critical part
 
-Hitya's own constraint is the governing rule:
+The guild lead's own constraint is the governing rule:
 
 > "we don't ever want to default these on in case they won other items for the
 > same slots."
@@ -122,11 +122,11 @@ Therefore:
 
 ### ANSWERED — "you have to be in the raid for it to fire"
 
-Hitya, 2026-08-26. Away-from-keyboard is fine; **not being in the raid is not.**
+The guild lead, 2026-08-26. Away-from-keyboard is fine; **not being in the raid is not.**
 That is a better gate than any time window: away-but-raiding is exactly when you
 want autobid, and not-in-the-raid is exactly when you do not.
 
-**Corrected same day, by Hitya, after I built it too narrowly:**
+**Corrected same day, by the guild lead, after I built it too narrowly:**
 
 > "one of your characters needs to be in the raid currently **or have been on a
 > tick so far that night**"

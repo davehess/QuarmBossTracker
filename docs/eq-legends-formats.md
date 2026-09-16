@@ -15,7 +15,7 @@ hard-anchored to Quarm's `*_pq.proj.ini` naming (`apps/mimic/main.js`
 
 | File | Quarm equivalent | Purpose |
 |---|---|---|
-| `<account>_characters.ini` | none | Account→character index: `[Characters]` / `Character0=Melting,neriak` (name,server per line). Enumerates characters WITHOUT needing a log file to exist — better detection than our log-filename inference. |
+| `<account>_characters.ini` | none | Account→character index: `[Characters]` / `Character0=Bexley,neriak` (name,server per line). Enumerates characters WITHOUT needing a log file to exist — better detection than our log-filename inference. |
 | `UI_<Char>_<server>_LO<n>.ini` | `UI_<Char>_pq.proj.ini` | Window layout. TWO new suffix parts: a real server name (`neriak`) and a **layout number** (`_LO1`) — one character can keep multiple numbered layouts. |
 | `<Char>_<server>_LO<n>.ini` | `<Char>_pq.proj.ini` | Character settings (hotbuttons, socials, spell loadouts…), same suffix scheme. |
 
@@ -54,7 +54,7 @@ an anomaly: capture ALL `_LO<n>` variants per character, not just `_LO1`.
   `.slot1..14=<spell id | -1>`, `.inuse=0|1`, 60 slots. Directly parseable into
   a web loadout library (like our bandolier loadouts, but for spell sets).
 - `[Socials]` — macro pages with real command lines
-  (`Page2Button1Line1=/assist Gump`). PRIVACY note: socials can contain
+  (`Page2Button1Line1=/assist <Name>`). PRIVACY note: socials can contain
   personal macro text — if we ever ingest these, they're owner-visible only
   (PRIVATE scope per the stat-visibility policy), never guild-wide.
 - `[ExternalTargetRoles]` — XT slot/role config, `^`-delimited blob.

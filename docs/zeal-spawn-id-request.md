@@ -1,7 +1,7 @@
 # Zeal: expose spawn ids on the named pipe — the EVIDENCE
 
 **Status: FILED as [PR #229](https://github.com/CoastalRedwood/Zeal/pull/229)
-on 2026-08-31, implementing the pipe half of upstream issue #218.** Hitya, 2026-08-31:
+on 2026-08-31, implementing the pipe half of upstream issue #218.** the guild lead, 2026-08-31:
 *"I think we should prepare the pull request for Zeal to include spawn id in
 pipes. It's not happening otherwise."* Two softer approaches (a forum post on
 2026-07-20, and this document as a would-be issue) produced no response, so the
@@ -79,9 +79,9 @@ A gauge object (decoded), abbreviated to the mob-relevant slots:
 ```json
 {
   "type": 2,
-  "character": "Hopeya",
+  "character": "Dalwin",
   "data": [
-    { "type": 1,  "text": "Hopeya",        "value": 999 },
+    { "type": 1,  "text": "Dalwin",        "value": 999 },
     { "type": 6,  "text": "an orc warrior", "value": 1000 },
     { "type": 16, "text": "an orc warrior", "value": 874 }
   ]
@@ -168,9 +168,9 @@ why this request got no traction the first time it was made.
 ```json
 {
   "type": 2,
-  "character": "Hopeya",
+  "character": "Dalwin",
   "data": [
-    { "type": 1,  "text": "Hopeya",         "value": 999 },
+    { "type": 1,  "text": "Dalwin",         "value": 999 },
     { "type": 6,  "text": "an orc warrior", "value": 1000, "spawn_id": 1482 },
     { "type": 16, "text": "an orc warrior", "value": 874,  "spawn_id": 1491 }
   ]

@@ -8,9 +8,9 @@ this matters; this is how to actually do it.*
 
 > The skewed clocks are **not set wrong once. They drift continuously at
 > ~1.5–3 s/day — and when someone manually corrects one, it drifts right
-> back.** Fargan's install has been sliding uninterrupted for **at least a
+> back.** a member's install has been sliding uninterrupted for **at least a
 > month** (7.5s on Jul 8 → 56.5s on Aug 4, never once corrected).
-> Bardtholemu's was synced to ~0 on **Jul 26–27** — we can see the reset in the
+> a member's was synced to ~0 on **Jul 26–27** — we can see the reset in the
 > data — and was 11s off again within two days. A single stored `offset_ms`
 > per install is therefore wrong within a week of being measured, and the
 > design has to account for that rather than store a scalar.
@@ -51,10 +51,10 @@ Two things fall out:
 - **Coverage.** `6333…7023` has 4,591 rows and a real (small, growing) skew, but
   **no consensus row at all** — consensus needs a death with 3+ witnesses, and
   this uploader never contributed to one. Min-lag covers every uploader that
-  writes any row. (And this one matters: **Stupidrichard is one of the four
-  clerics Uilnayar named for the DI callout roster** — that machine's callout
+  writes any row. (And this one matters: **a member is one of the four
+  clerics a member named for the DI callout roster** — that machine's callout
   and cast timestamps are ~7s off.)
-- **The estimators disagree for Bardtholemu** (10.2 vs 14.0), and min-lag ought
+- **The estimators disagree for a member** (10.2 vs 14.0), and min-lag ought
   to be ≥ the true skew. That is not a contradiction once you look at drift.
 
 ### 1a. Cross-stream verification (run 2026-08-04 morning — this is the proof)
@@ -65,13 +65,13 @@ different paths. Computing per-day min-lag independently from `buff_casts` and
 `chat_messages`:
 
 **the two streams agree within 0.1–0.4s on every single day, for all three
-installs** (e.g. Fargan Aug 4: buff 56.4 / chat 56.5; Bardtholemu Aug 3:
+installs** (e.g. a member Aug 4: buff 56.4 / chat 56.5; a member Aug 3:
 22.3 / 22.4). That agreement is the clock-vs-latency discriminator, and it
 came back unambiguous.
 
 ### The drift, 30 days (chat stream, per-day min-lag, backfill-days > 300s excluded)
 
-| | Fargan `2722…` | Bardtholemu `1706…` | Stupidrichard `6333…` |
+| | a member `2722…` | a member `1706…` | a member `6333…` |
 |---|---|---|---|
 | early Jul | 7.5 (Jul 8) | **−0.1 (Jul 6 — fine)** | 0.2–1.8 (fine) |
 | mid Jul | 15.5 → 22.9 (Jul 13–18) | 9.4 → 16.5, dips to 3.9 on Jul 13 | fine until Jul 18 |
@@ -82,18 +82,18 @@ came back unambiguous.
 
 Three different machines, one story:
 
-- **Fargan:** ≥ a month of uninterrupted drift, **never corrected once**.
+- **a member:** ≥ a month of uninterrupted drift, **never corrected once**.
   Long-run rate ~1.6 s/day, but the last day jumped **+7.7s** (confirmed on
   both streams, so it is real, not sampling) — consistent with sleep/hibernate
   drift or a failing RTC, i.e. it may be getting worse.
-- **Bardtholemu:** drifts ~3 s/day, was **manually synced to correct on
+- **a member:** drifts ~3 s/day, was **manually synced to correct on
   Jul 26–27, and was 11s off again by Jul 29**. We have now *watched* a
   one-time "fix your clock" fail on this machine. This is the direct evidence
   behind §3's advice.
-- **Stupidrichard's machine:** same cycle at ~0.8 s/day — fine until ~Jul 18,
+- **a member's machine:** same cycle at ~0.8 s/day — fine until ~Jul 18,
   drifted to ~6s, corrected ~Jul 25, drifting again, now ~7s.
 
-The reset days are also a free calibration: when Bardtholemu's clock was
+The reset days are also a free calibration: when a member's clock was
 correct, min-lag read **−0.2 to 1.0s** — so the pipeline-latency floor in this
 estimator is ≈ 0–1s, and min-lag ≈ true skew to within a second.
 
@@ -104,7 +104,7 @@ explanation the control exists to kill.
 
 ### The pulse estimator is now live and agrees
 
-First working 3.5.15 install (Hitya's) began heartbeating the morning of
+First working 3.5.15 install (the guild lead's) began heartbeating the morning of
 2026-08-04: `pulse` offset **+0.4s** (1,772 samples, spread 1.7s) vs that
 install's consensus estimate **−1.3s**. Both ≈ 0, agreeing within the spread —
 the third estimator cross-checks the other two on the first machine to run it.
@@ -131,7 +131,7 @@ three-week-old event with today's offset would be *worse* than not correcting.
 Store **per-install, per-day** samples (`method` ∈ `pulse` | `consensus` |
 `min_lag`) and resolve a correction by looking up the offset **nearest the
 event's own timestamp**, interpolating between samples — **but never across a
-step**. The 30-day history shows manual sync events (Bardtholemu Jul 26–27:
+step**. The 30-day history shows manual sync events (a member Jul 26–27:
 39s → 0 overnight); interpolating across that discontinuity would smear a
 20s error over two days of events. Treat a day-over-day change beyond ~5s as
 a step: use the nearer side, don't average. Keep the existing
@@ -189,7 +189,7 @@ switch would not be.
 ## 3. #203 — what to actually tell the three raiders
 
 The advice changes because of the drift finding. "Fix your clock" is wrong — and
-this is no longer a prediction: **Bardtholemu's machine was synced on Jul 26–27
+this is no longer a prediction: **a member's machine was synced on Jul 26–27
 and was 11 seconds off again two days later.** A one-time sync provably does not
 hold on these machines.
 
@@ -204,18 +204,18 @@ The three installs:
 
 | machine | current | history |
 |---|---|---|
-| Fargan's (`2722…6416`) | **~56s behind** | ≥ a month of drift, never corrected; last day jumped +8s |
-| Bardtholemu's (`1706…9824`) | ~22s behind | synced Jul 26–27, drifting again since |
-| **Stupidrichard's** (`6333…7023`) | ~7s behind | synced ~Jul 25, drifting again — and he is on the DI callout roster |
+| a member's (`2722…6416`) | **~56s behind** | ≥ a month of drift, never corrected; last day jumped +8s |
+| a member's (`1706…9824`) | ~22s behind | synced Jul 26–27, drifting again since |
+| **a member's** (`6333…7023`) | ~7s behind | synced ~Jul 25, drifting again — and he is on the DI callout roster |
 
-The loose end from the runbook still stands — Fargan's discord_id has no
+The loose end from the runbook still stands — a member's discord_id has no
 `characters` row, so automated reports name an id rather than a person.
 
-**By Wednesday's raid, Fargan's install will be roughly a minute off** (more if
+**By Wednesday's raid, a member's install will be roughly a minute off** (more if
 the recent +8s/day rate holds). That is enough to move a kill across a
 raid-window boundary on its own.
 
-## 4. Open questions for Hitya
+## 4. Open questions for the guild lead
 
 - **Do we correct history, or only from now on?** Min-lag makes historical
   correction *possible* (it can be backfilled per day). Whether it is *wanted* is

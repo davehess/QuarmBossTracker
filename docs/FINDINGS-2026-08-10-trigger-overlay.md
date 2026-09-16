@@ -1,6 +1,6 @@
 # Findings — trigger overlay, raid night 2026-08-10 (Ssra)
 
-Reported live, mid-raid, by Hitya. Everything here was diagnosed during the
+Reported live, mid-raid, by the guild lead. Everything here was diagnosed during the
 raid window; only the DB-only mitigations were applied. **Everything under
 "Queued" needs an agent and/or Mimic release and was deliberately NOT done
 during the freeze.**
@@ -17,7 +17,7 @@ during the freeze.**
 | §7(b) relayed fires ignore `cooldown_seconds` | **FIXED** — agent 3.5.56 + bot 3.1.37 carry it across the relay |
 | Clock skew on relayed fires (NEW — below) | **FIXED** — bot 3.1.37 (`main`) + agent 3.5.56 (`beta`) |
 | The 8 muted trash triggers | **STILL MUTED — do not restore yet.** Gate below. |
-| §7b "yawns." always reads as Turgur's, incl. item procs | **NOT FIXED — needs Hitya's call.** 940 rows affected; badge says 75% for a 35% proc |
+| §7b "yawns." always reads as Turgur's, incl. item procs | **NOT FIXED — needs the guild lead's call.** 940 rows affected; badge says 75% for a 35% proc |
 | §1 clear-all · §2 tag on the chip · §3 CH filler word · §5 Kneel Test | queued |
 | §6 "Too Far" relay spam | fixed live, DB only, no revert needed |
 
@@ -30,10 +30,10 @@ Running the restore SQL now puts the wall of rows straight back for everyone
 still on stable. Wait for a stable graduation of the 3.5.x agent, or for
 confirmation that the raid is entirely on beta.
 
-The TTS half is independent and stays a taste call — Hitya turned it off live as
+The TTS half is independent and stays a taste call — the guild lead turned it off live as
 *"VERY chatty for callouts"*, so it stays off until they ask for it back.
 
-### Clock skew on relayed fires — Hitya, post-raid: *"the clock skew was VERY apparent for the TTS timers"*
+### Clock skew on relayed fires — the guild lead, post-raid: *"the clock skew was VERY apparent for the TTS timers"*
 
 Distinct from §7, and broader. `_relayLocalFire` stamps `fired_at_ms` from the
 ORIGINATOR's clock — the EQ log-line time on *their* machine — and this platform
@@ -70,7 +70,7 @@ absurd >10min reading. Tests: `test/trigger-timer-identity.test.js` (§P1 + §7a
 
 ## P1 — every timer trigger creates a NEW row on every fire
 
-**Symptom (Hitya, live):** the trigger overlay fills with rows like
+**Symptom (the guild lead, live):** the trigger overlay fills with rows like
 
 ```
 09:11  [Sun Aug 09 19:59:29 2026] A Shissar Lich has been ensnared.  - Ensnared
@@ -206,7 +206,7 @@ is gone. Restore `timer_duration_sec` once the agent fix ships:
 Ensnared at 780s was the worst offender: thirteen minutes of accumulation
 against one row per snared mob per cast.
 
-**The `tts` action was stripped from the same eight** (Hitya, live: *"it's VERY
+**The `tts` action was stripped from the same eight** (the guild lead, live: *"it's VERY
 chatty for callouts"*). The on-screen text overlay is untouched — `SHM SLOW`,
 `ENSNARE - {s}` and friends still flash; they just no longer speak. A slow
 landing on every trash mob in a Ssra pull is not eight things worth saying out
@@ -281,7 +281,7 @@ is mostly about surfacing it.
 
 ### 2. Same-name mobs need the tag / spawn id on the row
 
-Hitya: *"if the mob has the same name we should include the tag/spawnid"*.
+Guild lead: *"if the mob has the same name we should include the tag/spawnid"*.
 
 Scope check before anyone designs this (`CLAUDE.md` → Scope boundaries): the
 **Zeal pipe carries no spawn id** — the target/pet gauges are name + HP only, so
@@ -300,7 +300,7 @@ appear as separate rows at all.
 
 ### 3. CH chain — a filler word can land in a chain slot
 
-Hitya: *"Not sure how 'Is' ended up as 006"* (slot 006 showing a caster named
+Guild lead: *"Not sure how 'Is' ended up as 006"* (slot 006 showing a caster named
 "is", 72% mana).
 
 The chain-roster parser (`packages/wolfpack-logsync/index.js:3790`) takes the
@@ -324,7 +324,7 @@ Fix options, in preference order:
 2. Stronger: require the token to resolve against `_raidRosterMembers` when a
    raid roster is present, and only fall back to the raw token when the roster
    is empty (not in a raid window yet). That preserves the abbreviation case
-   ("Mana" → "Manamana") and kills the filler-word case outright.
+   ("Mana" → "a member") and kills the filler-word case outright.
 
 Option 2 is the better rule but changes behaviour when the Zeal roster is
 missing; option 1 is safe on its own. Recommend shipping 1, then 2 behind the
@@ -335,7 +335,7 @@ The exact shout that caused it is not recoverable — chain calls go out on
 
 ### 4. Zeal tags don't disambiguate same-name mobs — two defects
 
-Hitya, live: *"we're not getting disambiguation after I tagged 3 as inc and they
+The guild lead, live: *"we're not getting disambiguation after I tagged 3 as inc and they
 were retagged with tank names"*. The Extended Target overlay showed two
 `a crypt guardian` rows, both 81%, with **eight** `SLOWED` chips sitting in the
 `tags:` pool — the "tags on this name we could not weld to a row" bucket.
@@ -351,8 +351,8 @@ spawn id, and `+`/`@` are treated as replace:
 > don't matter for a row label)"*
 
 They do matter now. In game the nameplate reads `<theirs> <mine>`, so after a
-tank tags `Fuggin-Tanking` and a slow macro appends `+SLOWED`, the raid sees
-`Fuggin-Tanking SLOWED` while we store just `SLOWED`. The tank name — the only
+tank tags `Ismene-Tanking` and a slow macro appends `+SLOWED`, the raid sees
+`Ismene-Tanking SLOWED` while we store just `SLOWED`. The tank name — the only
 part the welder can use — is thrown away. That is how three mobs tagged with
 tank names end up as an unweldable pool of `SLOWED`.
 
@@ -386,13 +386,13 @@ Both are small and neither touches the K=1 byte-identical payload guarantee
 separately.
 
 **Workaround until then (usable tonight):** put the tank's name in the tag text
-and use `!` (replace) rather than `+` (append) — `/tag chat !Fuggin-Tanking`.
+and use `!` (replace) rather than `+` (append) — `/tag chat !Ismene-Tanking`.
 A bare `inc` or `SLOWED` tag will pool, and an appended one will erase whatever
 tank name was there.
 
 ### 5. "Kneel Test" on Mob Info — the junk-text guard counts the wrong set
 
-Hitya, live: *"still seeing Kneel Test"* — Mob Info's DEBUFFS (OBSERVED) list on
+The guild lead, live: *"still seeing Kneel Test"* — Mob Info's DEBUFFS (OBSERVED) list on
 Xerkizh The Creator showing `Kneel Test  1/1 · 0:01`.
 
 The guard for this already exists and names the bug by name
@@ -467,7 +467,7 @@ those rows keep feeding `target-buffs` and the cure queue.
 
 ### 6. "Too Far" / "Can Not See" / "Can Not Hit From Here" — relay spam (FIXED live)
 
-Hitya: *"someone is spamming too far or cannot see to the whole raid, we're not
+Guild lead: *"someone is spamming too far or cannot see to the whole raid, we're not
 seeing it or hearing it, but it's filling up the log on the dashboard."*
 
 Three guild triggers on `Your target is too far`, `You cannot see your target`
@@ -495,7 +495,7 @@ feedback. Either implement the action or mark it unsupported in the editor.
 
 ### 7. "REST IN PEACE" spoken twice — relay dedup keyed on observer-specific data
 
-Hitya: *"We hear the 'REST IN PEACE' twice, not sure if it's local or hearing it
+Guild lead: *"We hear the 'REST IN PEACE' twice, not sure if it's local or hearing it
 over discord."* It is local. Two defects compound.
 
 **(a) The relay dedup key contains the raw log line.** A local fire is marked
@@ -534,7 +534,7 @@ const idCaptures = Object.fromEntries(Object.entries(captures || {})
 const fireKey = (t.name || 'trigger') + ':' + JSON.stringify(idCaptures);
 ```
 
-The deliberate behaviour the comment at line 28299 protects — *"'RIP Hitya' and
+The deliberate behaviour the comment at line 28299 protects — *"'RIP the guild lead' and
 'RIP Sweenie' within the same second both land"* — is preserved, because
 `victim` is a semantic capture and stays in the key.
 
@@ -559,7 +559,7 @@ someone's open mic on Discord.
 **Interim option A, DB-only:** set `default_scope = 'personal'`. Every client
 that can see the death line fires it once from its own log, so the double is
 impossible. The cost is real: a raider out of range of the death stops hearing it
-at all, which is the case the relay was built for. **Rejected by Hitya
+at all, which is the case the relay was built for. **Rejected by the guild lead
 2026-08-10: "No we want that broadcast. We only want to hear it once."**
 
 **Interim option B, DB-only — the one that actually matches the ask.** Move the
@@ -577,7 +577,7 @@ Why this gives broadcast reach heard exactly once:
 - `_relayLocalFire` **strips `discord` actions** (line 25232), so the spoken half
   never rides the relay — it can't double through that path by construction.
 - The `discord` action's dedup key defaults to `t.name + ':' + msg`
-  (line 28206) — the EXPANDED message, `Death touch — RIP:Rest in Peace Hitya`.
+  (line 28206) — the EXPANDED message, `Death touch — RIP:Rest in Peace <name>`.
   No `L`, no timestamp, so it is **identical across every observer**, and the
   bot's cross-agent dedup (`index.js:12781`, `guildId|mode|key`) collapses all N
   reporters into one spoken callout.
@@ -603,7 +603,7 @@ trigger first, then move RIP over.
 
 ### 7b. Every "yawns." in the database is recorded as Turgur's Insects — including item procs (NEW, 2026-08-10 post-raid)
 
-Hitya: *"Ashieron slowed this sun revenant and it showed as shaman slow… instead
+Guild lead: *"a member slowed this sun revenant and it showed as shaman slow… instead
 it shows as turgurs. It should have been the effect of Willsapper, since he
 procced while wearing it."* Mob Info showed **`SHM SLOW Turgur's 75%`** with
 `Turgur's Insects 43/60 · 4:18` in DEBUFFS (OBSERVED).
@@ -638,7 +638,7 @@ been labelled Turgur's.
 **A large share of those are procs, not shaman casts.** On this one sun revenant:
 thirteen "Turgur's" landings in 80 minutes, including pairs 23 seconds apart
 (04:44:47 → 04:45:10, 04:48:17 → 04:50:25). Nobody re-casts a 6m30s slow that
-way. And **Ashieron is a Paladin** — he cannot cast Turgur's Insects at all,
+way. And **a member is a Paladin** — he cannot cast Turgur's Insects at all,
 while `PAL` is in Willsapper's class list. For that landing the attribution is
 provably wrong.
 
@@ -648,7 +648,7 @@ feeds `target-buffs`, the cure queue and any analysis over `buff_casts`. It is
 the same shape as §5 (Kneel Test / Bolt of Karana): an ambiguous landing text
 where the resolver crowns a plausible representative and is silently wrong.
 
-**Not fixed — needs a call from Hitya**, because it reverses a deliberate design
+**Not fixed — needs a call from the guild lead**, because it reverses a deliberate design
 choice and changes raid-facing information. The options, and why this is not a
 straight bug fix:
 
@@ -686,7 +686,7 @@ window. That is likely why the badge read `4:18` remaining rather than expiring.
   than doing neither. The only softness is deliberate: the gate **falls open**
   when `_raidRosterMembers` is empty (no Zeal type-5 roster seen yet), so
   out-of-raid testing still fires. Nothing to fix here.
-- **Mute control on `/admin/triggers`** — Hitya asked for a quick edit link plus
+- **Mute control on `/admin/triggers`** — the guild lead asked for a quick edit link plus
   a mute; deferred past the freeze. Open choice: page-level TTS mute vs a
   per-row soft mute.
 - **"MELEE OUT" on the cursed mobs** — no such trigger exists yet. Blocked on

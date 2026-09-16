@@ -4,7 +4,7 @@
 `supabase/migrations/20260806200000_intentional_death_rules.sql` (applied),
 `utils/raidReview.js` `summarizeNight`, `web/app/parses/actions.ts`
 `markDeathIntentional` / `unmarkDeathIntentional`, and the per-death control +
-"on purpose" chip on `/parses/[id]`. Fawx and Dant on Kaas Thox Xi Ans Dyek
+"on purpose" chip on `/parses/[id]`. a member and a member on Kaas Thox Xi Ans Dyek
 (npc_id 158444) are seeded, so the case that prompted this is already covered.
 Tests: `test/raid-review-post.test.js` "intentional deaths" (11 cases, 6 mutants
 killed including one that REMOVES the death instead of marking it).
@@ -27,7 +27,7 @@ round `…0000` timestamps and exactly ONE such version exists in
 Supabase MCP and committed alongside. The advice to not ship dead schema still
 stands on its own merits.
 
-**Ask:** Hitya 2026-08-06 — *"Fawx and Dant both 'made corpses' on purpose
+**Ask:** the guild lead 2026-08-06 — *"a member and a member both 'made corpses' on purpose
 with Kaas Thox Xi Ans Dyek, so while they did have 2 deaths, they were
 intentional. Perhaps officers can have a way to set this, we do it every time
 for these rogues on that fight."*
@@ -94,7 +94,7 @@ alone on purpose — the sparkline is a factual record of what happened.
     -- timelines, the web Deaths list) -- a death that happened is never hidden,
     -- only excluded from the "things to fix" tally.
     --
-    -- Real case (Hitya, guild lead, 2026-08-06): Fawx and Dant both "make a
+    -- Real case (the guild lead, guild lead, 2026-08-06): a member and a member both "make a
     -- corpse on purpose" with Kaas Thox Xi Ans Dyek every single week (a known
     -- rogue-CH-battery / corpse-drag strat). Because it happens EVERY TIME for
     -- the same (character, boss) pair, a per-death toggle would make officers
@@ -103,10 +103,10 @@ alone on purpose — the sparkline is a factual record of what happened.
     -- Two layers:
     --
     --   1. intentional_death_rules -- a STANDING rule keyed on (character, boss).
-    --      Set once ("Fawx is always intentional on Kaas Thox Xi Ans Dyek"),
+    --      Set once ("a member is always intentional on Kaas Thox Xi Ans Dyek"),
     --      applies to every future death of that character on that boss without
     --      officers re-marking it week after week. THIS IS PHASE 1 -- it is what
-    --      Hitya's report actually needs, and the only layer with UI wiring
+    --      the guild lead's report actually needs, and the only layer with UI wiring
     --      in the first cut.
     --
     --   2. intentional_death_overrides -- a PER-DEATH exception for the rare

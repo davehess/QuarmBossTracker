@@ -3,7 +3,7 @@
 ⚠ **`CLAUDE.md` at the repo root remains the authority for this project.** This
 file records *product truth for design work only* (audience, mechanism, scene).
 Where the two disagree about architecture, routing, or policy, CLAUDE.md wins.
-Recorded 2026-08-28 at Hitya's direction when Impeccable was adopted.
+Recorded 2026-08-28 at the guild lead's direction when Impeccable was adopted.
 
 ## What it is
 
@@ -57,7 +57,7 @@ bosses, real timestamps, real damage numbers, from raids that happened.
 ## Brand commitments
 
 - The name **Wolf Pack**, and the wolf, are the guild's identity. (⚠ Pinned by
-  Hitya 2026-08-28 for the landing page: a huge wolf face in the background with
+  The guild lead 2026-08-28 for the landing page: a huge wolf face in the background with
   further wolves appearing behind it — the pack assembling. A pinned brief beats
   any generated direction.)
 - `wolfpack.quest` is the domain; `b.wolfpack.quest` is the beta mirror where

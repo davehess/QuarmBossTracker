@@ -1,6 +1,6 @@
 # Decisions — 2026-08-26
 
-## PoP page: My Characters tab, and default views scope to mains (Hitya)
+## PoP page: My Characters tab, and default views scope to mains (the guild lead)
 
 > "let's have a my characters mode on the pop page for individuals can track
 > all of their characters in one place. due to the nature of pop flagging
@@ -127,7 +127,7 @@ Shipped: bot 3.1.73, web 1.1.98, migration `20260826120000_opendkp_call_stats`
 ## Unblock day: what the 1,486 actually was (bot 3.1.74 / web 1.1.99)
 
 Moncs lifted the block, `OPENDKP_HALT` went to 0, and the page immediately read
-**1,486 "refused by us" against 4 real calls.** Hitya: *"stats are flowing but
+**1,486 "refused by us" against 4 real calls.** Guild lead: *"stats are flowing but
 I'm concerned by our block."* Right to be — that reads like we tried to hammer
 him 1,486 times an hour.
 
@@ -201,7 +201,7 @@ endpoint. Recorded rather than fixed blind: a one-line probe now logs page 1's
 id range against the watermark each pass, so the next session reads the ordering
 off Railway instead of inferring it from a sibling endpoint a second time.
 
-**The fix shipped now is Hitya's framing, not mine, and it is better** — it
+**The fix shipped now is the guild lead's framing, not mine, and it is better** — it
 needs no ordering assumption at all. The endpoint has no `since` filter, so
 there is no cheap way to *ask* whether anything changed. If the answer keeps
 being no, ask less often:

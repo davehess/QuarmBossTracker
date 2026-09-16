@@ -1,6 +1,6 @@
-# Raid-night timeline · Central HUD · Reuse timers — design (Hitya, 2026-09-13)
+# Raid-night timeline · Central HUD · Reuse timers — design (guild lead, 2026-09-13)
 
-**Status:** planned, nothing built. Three asks from Hitya on the Sunday raid:
+**Status:** planned, nothing built. Three asks from the guild lead on the Sunday raid:
 1. *"a visualization of the mobs and trash in the night, full timeline view"*
 2. *"a central hud that would outline your character with hits and misses,
    current target's name and health, your own health and mana totals"*
@@ -9,7 +9,7 @@
    cooldowns, discs"*.
 
 Options per piece, costed on the four numbers (build · maintenance · runtime ·
-change). Hitya picks; nothing in Mimic moves until the mini-mode picks land.
+change). The guild lead picks; nothing in Mimic moves until the mini-mode picks land.
 
 ---
 
@@ -120,7 +120,7 @@ Feature-parity checklist applies in full (✕, ✥ + right-click, hover handshak
 | AAs | Lay on Hands, Harm Touch, Hand of Piety, Divine Arbitration… | `eqemu_altadv_vars.spellid` → `eqemu_spells.recast_time` where the spell carries it; authored table where it does not | the landing line from the catalog (below) paired with the caster's own same-second line |
 | Discs | Defensive, Evasive, Furious… | already tracked (`_matchDiscLine`) | already tracked |
 
-**Read directly from the catalog (Hitya, 2026-09-13: "these could be read
+**Read directly from the catalog (guild lead, 2026-09-13: "these could be read
 directly") — nothing here is from memory:**
 
 | Spell | id | recast | lands on other | lands on you |
@@ -166,7 +166,7 @@ so.
 
 ---
 
-## 4. Order, and what needs Hitya
+## 4. Order, and what needs the guild lead
 
 1. **Timeline first** — web only, no Mimic change, and the data is there: the
    classifier + option A on `beta` as `?v=a`, B as `?v=b`, side by side on
@@ -174,9 +174,9 @@ so.
 2. **Timers, interim** — personal triggers for the members who want them now
    (the lines above are what to paste into them).
 3. **Cooldowns overlay + casts-left**, then **Central HUD** — after the
-   mini-mode picks land (Hitya, 2026-09-11: build nothing in Mimic until then).
+   mini-mode picks land (guild lead, 2026-09-11: build nothing in Mimic until then).
 
-Hitya's calls: ring vs strip for the HUD; whether the night view lives on the
+The guild lead's calls: ring vs strip for the HUD; whether the night view lives on the
 review page (recommended) or its own route; class presets for the Cooldowns
 overlay. The activation lines are settled from the catalog and the parser —
 no excerpt needed.

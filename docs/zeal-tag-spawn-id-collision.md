@@ -5,8 +5,8 @@ Not a Wolf Pack change. Distinct from `zeal-spawn-id-request.md` — that one as
 for a NEW field on the named-pipe gauges; this one reports a defect in an
 existing feature and asks Zeal to use a field it **already transmits**.
 
-Evidence gathered live on Project Quarm, 2026-08-07, by Canopy + Adiwen +
-Dafeet, captured independently by two Wolf Pack agents reading the tag channel.
+Evidence gathered live on Project Quarm, 2026-08-07, by a member + a member +
+a member, captured independently by two Wolf Pack agents reading the tag channel.
 
 ---
 
@@ -49,10 +49,10 @@ Two independent captures of spawn id **39**:
 
 | when (UTC) | mob | spawn_id | tagger | tag text |
 |---|---|---|---|---|
-| 02:28:26 | `an ancient sentry` | **39** | Jankzer | **`70% slowed`** |
-| 12:33:41 | `Merdan Fleetfoot` | **39** | Canopy | `TAGGEDWITHSLOWBEFORE` |
+| 02:28:26 | `an ancient sentry` | **39** | a member | **`70% slowed`** |
+| 12:33:41 | `Merdan Fleetfoot` | **39** | a member | `TAGGEDWITHSLOWBEFORE` |
 
-At 12:33 the reporter was standing in front of **Merdan Fleetfoot**, a Surefall Glade NPC, and the nameplate read **`70% slowed`** — Jankzer's label from *an
+At 12:33 the reporter was standing in front of **Merdan Fleetfoot**, a Surefall Glade NPC, and the nameplate read **`70% slowed`** — a member's label from *an
 ancient sentry*, a different mob in a different zone, tagged ten hours earlier.
 The second row is the reporter deliberately re-tagging it to confirm.
 
@@ -147,11 +147,11 @@ Two players in different zones tagged mobs sharing the display name `a gnoll`:
 
 | tagger | zone | mob | spawn_id |
 |---|---|---|---|
-| Adiwen | Qeynos Hills | `a gnoll` | 1578 |
-| Canopy | Blackburrow | `a gnoll` | 2911 |
+| a member | Qeynos Hills | `a gnoll` | 1578 |
+| a member | Blackburrow | `a gnoll` | 2911 |
 
 These ids happened not to collide, so nothing visibly broke. That is luck, not a
-safeguard: had Blackburrow held a spawn 1578, Adiwen's label would have painted
+safeguard: had Blackburrow held a spawn 1578, a member's label would have painted
 onto it, and because the names match, *no* name check could have caught it
 either. This is the case where clearing on zone change is the only defence.
 

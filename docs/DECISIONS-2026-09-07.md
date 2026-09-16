@@ -2,10 +2,10 @@
 
 ## Two events at once: kill cards go to the thread for the ZONE, not the clock (bot 3.1.124)
 
-Hitya, Monday night, #event-chat: *"there are two events going on tonight and
+The guild lead, Monday night, #event-chat: *"there are two events going on tonight and
 mobs are being posted to each one. instead of specific ones posted per zone."*
-Fargan had two Discord events up — **Seru mini for Dongru** and **Ring War
-Ashieron** — and the bot opened a 🎲 thread for each, as designed. Then every
+a member had two Discord events up — **Seru mini for a member** and **Ring War
+a member** — and the bot opened a 🎲 thread for each, as designed. Then every
 kill went to whichever event's *scheduled start* was nearest the kill time
 (`pickEventAt`, "overlapping events → nearest", 2026-07-31). Past the midpoint
 between the two starts, that is the Ring War thread for every Seru kill.
@@ -42,7 +42,7 @@ narrows, it never empties, so single-event nights are byte-identical to
 yesterday.
 
 **Verified on tonight's data** in `test/event-thread-zone-routing.test.js`,
-which carries both of Fargan's entries verbatim: at 21:30 (45 min from the
+which carries both of a member's entries verbatim: at 21:30 (45 min from the
 Ring War start, 90 from Seru's) a Seru kill now threads under Seru and a Great
 Divide kill under Ring War. A mutation pass caught one vacuous assertion — the
 "un-zoned event" fixture shared Seru's start time, so the id tie-break handed
@@ -53,13 +53,13 @@ per refresh, so with two events one thread carries both zones' rolls and the
 other none. Same class of bug, different path; it needs `looted_items.zone`
 (a zone-id string) to scope each card. Queued below.
 
-## Ashieron's "Mimic takes my internet down" report — what the bot saw (investigated, no fix)
+## a member's "Mimic takes my internet down" report — what the bot saw (investigated, no fix)
 
-Ashieron via Mimic 2.6.5, 21:22 ET: zoning out while strafe-running, *"the
+a member via Mimic 2.6.5, 21:22 ET: zoning out while strafe-running, *"the
 game hangs, then disconnects, and then my internet connection completely goes
 down … Discord disconnects, browser can not connect … adapter looks active.
 Only way to fix is to restart. When I stop running mimic, it does not happen
-again."* Twice ME→DSP, once Seru→DSP. Hitya: *"serious implications here."*
+again."* Twice ME→DSP, once Seru→DSP. Guild lead: *"serious implications here."*
 
 **Tonight's instance, reconstructed from the bot's HTTP log and Supabase.**
 The originating connection was identified by pairing the 436-event upload with
@@ -69,11 +69,11 @@ microsecond — so pair on the HTTP stream, never on `[agent] upload from`).
 
 | ET | What |
 |---|---|
-| 20:27–20:31 | Donaldus (his alt) at the Seru mini, Sanctus Seru; last live-state 20:31:27 |
+| 20:27–20:31 | a member (his alt) at the Seru mini, Sanctus Seru; last live-state 20:31:27 |
 | 20:31:31–20:32:47 | Agent still polling the bot at the normal 2/s, every request 200, no retries, no burst — but **no live-state posts** in those 75s: the Zeal-fed stream had gone quiet, i.e. EQ was already hung |
 | **20:32:47.666** | Last request ever from his machine. Clean cut mid-heartbeat |
 | 20:33–21:08 | Nothing from his address, in every sample |
-| 21:09:20 | Ashieron enters Dawnshroud (after his restart); 21:22 files the report |
+| 21:09:20 | a member enters Dawnshroud (after his restart); 21:22 files the report |
 
 So this was the **Seru→DSP** case, on the alt, and the hang preceded the
 network death by about 75 seconds.
@@ -132,9 +132,9 @@ so members can bisect without editing JSON.
 |---|---|---|
 | Event threads route by ZONE when two events overlap | ✅ bot 3.1.124 (2026-09-07) — `pickEventAt` zone-first; vocabulary in `data/zones.json` `aliases` | extend aliases as officers coin words; no code change needed |
 | 🎲 rolled-loot card is still ONE event per refresh | open — `_refreshEventRollCardNow` picks a single target; with two events one thread gets both zones' rolls, the other none | per-event cards filtered by `looted_items.zone` (a zone id string); `roll_sets.zone` is NULL tonight so rolls attribute via their looters |
-| Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested on 2026-09-06 data (`p_started_at > ended_at`); NOT applied, Hitya's call | also two duplicate rows (Thall Xundraux 22:05, Kaas Thox 23:14) untouched — merging is destructive |
+| Sequential-kill splitter splits one fight in two | open — one-line RPC fix diagnosed + tested on 2026-09-06 data (`p_started_at > ended_at`); NOT applied, the guild lead's call | also two duplicate rows (Thall Xundraux 22:05, Kaas Thox 23:14) untouched — merging is destructive |
 | Loot bidding: update / remove a bid | open — options A (withdraw), B (edit), C (show stack) presented; awaiting pick | first live cancel on a low-stakes bid |
 | Zeal sends target id 0 for "no target" | open — bot guards it (3.1.123); Mimic `main.js` should null a 0 at the edge and its "pipe omits the field" comment is wrong; agent `_provableTargetId` should refuse 0 | beta |
-| Ashieron: "Mimic takes my internet down" | investigated 2026-09-07 — bot-side evidence refutes socket/NAT exhaustion (total cut at 20:32:47 ET, established sockets died too, wire rate normal); root cause is on the box. **`scripts/mimic-netdiag.ps1` (+ `.bat`) collects everything from his PC in one zip; `-Watch` logs socket/handle counts every 20s so the next failure is captured live** | he runs `-Watch` while playing, then `-Live` when it breaks (before rebooting), then the plain bundle with `-Since` — and answers the other-devices question it prompts for |
+| A member: "Mimic takes my internet down" | investigated 2026-09-07 — bot-side evidence refutes socket/NAT exhaustion (total cut at 20:32:47 ET, established sockets died too, wire rate normal); root cause is on the box. **`scripts/mimic-netdiag.ps1` (+ `.bat`) collects everything from his PC in one zip; `-Watch` logs socket/handle counts every 20s so the next failure is captured live** | he runs `-Watch` while playing, then `-Live` when it breaks (before rebooting), then the plain bundle with `-Since` — and answers the other-devices question it prompts for |
 | Feedback should attach agent.log; Zeal-pipe opt-out should be a Settings toggle | open — both surfaced by the above | Mimic → beta |
-| P40 / local model | open — assessment given 2026-09-07 (stats first, no GPU; if the card goes anywhere it is Tower, first job voice transcription, gated on a consent call); design doc offered, not written | Tower has no free x16; Hitya may move a card out to make room |
+| P40 / local model | open — assessment given 2026-09-07 (stats first, no GPU; if the card goes anywhere it is Tower, first job voice transcription, gated on a consent call); design doc offered, not written | Tower has no free x16; the guild lead may move a card out to make room |

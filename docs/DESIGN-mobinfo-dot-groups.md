@@ -1,4 +1,4 @@
-# DESIGN — Target Info: DoTs grouped by class (Hitya, 2026-08-16)
+# DESIGN — Target Info: DoTs grouped by class (guild lead, 2026-08-16)
 
 **The ask:** *"can we group dots by class from now on and have them be
 minimized with a damage per tick total shown per line and totalled by class
@@ -20,7 +20,7 @@ the spell catalog today. Two paths:
 2. **Backfill spell→class into the mirror from the local `peq` DB** (the
    eqemu_items precedent — ⚠ needs a local session): enriches path 1 so even
    uncorrelated landings can class-group by the spell itself.
-3. **Same local backfill should ALSO pull `dot_stacking_exempt`** (Hitya
+3. **Same local backfill should ALSO pull `dot_stacking_exempt`** (the guild lead
    2026-08-16, from Partil's bug-reports post quoting Quarm's
    buffstacking.cpp:654): the server flag that says whether a DoT stacks with
    ITSELF across casters (0 = stacks, the Luclin change — Immolate; 1 = does
@@ -57,7 +57,7 @@ sums whatever each line is currently showing.
   localStorage-backed — NEVER DOM state (#content repaints; the wpKeep rule).
   Carets always drawn and merely dimmed (the repaint hover rule); every
   clickable carries the hover-interact handshake.
-- Line: `Envenomed Bolt · Uilnayar · 91/tick · 0:48`
+- Line: `Envenomed Bolt · Aramil · 91/tick · 0:48`
 - Collapsed: `▸ Necromancer ×3 — 273/tick` (sum of the visible per-line
   values; count keeps the header honest).
 

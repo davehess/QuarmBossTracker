@@ -1,6 +1,6 @@
 # DESIGN — Lord Mobsincamp: a local assistant as the members' search
 
-*Written 2026-09-12 from Hitya's ask: "could we hook up a local LLM agent that
+*Written 2026-09-12 from the guild lead's ask: "could we hook up a local LLM agent that
 would be exposed to our members as the search element and run off of the larger
 local database copy? if we experience issues to our supabase hosted database
 could we fail back to the copy on tower and offload? I'd like to name it Lord
@@ -29,7 +29,7 @@ What it can answer that nothing on the site can today, because the questions
 cross tables and time: *"when did we last kill Emperor Ssraeshza and who
 tanked?"*, *"who has landed the most slows on Kaas Thox this month?"*, *"which
 of my characters is missing Fungal Regrowth?"*, *"what does Turgur's Insects do
-and who can cast it?"*, *"how many raid nights did Lucker make in August?"*.
+and who can cast it?"*, *"how many raid nights did a member make in August?"*.
 
 ## 2. Shape
 
@@ -178,19 +178,19 @@ If the hosted project has issues:
 
 ## 7. Hardware reality
 
-**The P40 is not in Tower. It is in the desktop that runs Canopy** (Hitya,
+**The P40 is not in Tower. It is in the desktop that runs a member** (the guild lead,
 2026-09-12). That settles the slot question — nothing moves — and it splits the
 design across two boxes on the same LAN:
 
 | Runs on | Piece | Why |
 |---|---|---|
 | **Tower** (always on) | archive Postgres, the tool service, the broker worker | the data and the always-on bits belong on the box that never sleeps |
-| **The desktop** (on when Hitya is) | model serving on the P40, LAN-only OpenAI-compatible endpoint | that is where the card is |
+| **The desktop** (on when the guild lead is) | model serving on the P40, LAN-only OpenAI-compatible endpoint | that is where the card is |
 
 Consequences:
 - **Availability = that desktop's uptime.** When it is off, `ASSISTANT_MODEL_URL`
   does not answer. The tool service must handle that gracefully: fall back to
-  `hosted` if Hitya allows it (§8), otherwise reply *"Lord Mobsincamp is
+  `hosted` if the guild lead allows it (§8), otherwise reply *"Lord Mobsincamp is
   asleep"* and offer the plain search. A guild-facing assistant that is only up
   when one member's PC is on is fine as a Phase 1 fact, as long as the site
   says so instead of hanging.
@@ -220,7 +220,7 @@ Consequences:
 
 Phase 0 is the honest accelerator: it makes Lord Mobsincamp real for members in
 days, with every privacy rule in place, while the card is sourced and seated.
-Whether member questions may be answered by a hosted model at all is Hitya's
+Whether member questions may be answered by a hosted model at all is the guild lead's
 call (§9) — the tool layer guarantees the model only ever sees what the tools
 return, which is data the site already shows that member.
 

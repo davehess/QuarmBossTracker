@@ -1,6 +1,6 @@
 # Tower — Coolify and the Supabase backups, in one place
 
-Written 2026-09-04 at Hitya's request. **This is the overview**; the two runbooks
+Written 2026-09-04 at the guild lead's request. **This is the overview**; the two runbooks
 it sits on top of stay authoritative for the step-by-step and the traps:
 `RUNBOOK-unraid-supabase-replica.md` (the local Supabase stack + the backup) and
 `RUNBOOK-local-web-coolify.md` (the Coolify VM + the local site). Where this
@@ -8,7 +8,7 @@ file and a runbook disagree, the runbook wins and this file needs the edit.
 
 **This repo is public.** Addresses and identifiers below are placeholders —
 `<tower-ip>`, `<coolify-vm-ip>`, `<project-ref>` — and the real values live on
-the box and in the Supabase dashboard, never here (Hitya, 2026-09-04).
+the box and in the Supabase dashboard, never here (guild lead, 2026-09-04).
 
 Everything below marked **verified** was proven on the box on 2026-08-11.
 Everything marked **⚠ unverified** was committed copy-paste ready but no session
@@ -303,7 +303,7 @@ above.
    this is confirmed, the backup is the one from 2026-08-11.
 2. **The threat-snapshot sweep.** 754 MB of the 1,162 MB of table data, 65% of
    every dump's wire cost, never pruned. Needs an index and a batched delete on
-   the hosted project (destructive — Hitya's go-ahead), and a decision on
+   the hosted project (destructive — the guild lead's go-ahead), and a decision on
    whether the local archive should keep those rows forever or drop them too.
 3. **Lean nightly dumps** (`--exclude-table-data=encounter_threat_snapshots`,
    full weekly) if egress ever matters — a one-line script change, recorded

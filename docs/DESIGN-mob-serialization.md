@@ -9,9 +9,9 @@ spatially separate clusters of engaged raiders; each cluster is one instance.
 
 **Status:** phases 0-1 shipped (bot 3.1.10, 2026-08-05) + phase-2 coverage
 forwards (agent 3.5.30 beta: type-5 loc, observed_tanks). Open question 1
-answered by Hitya 2026-08-04: debuff attribution IS the want; q3: the
+answered by the guild lead 2026-08-04: debuff attribution IS the want; q3: the
 upstream ask got zero traction; q4: raid-wide position forwarding approved
-(PRIVACY.md updated). Author: cloud session 2026-07-31, from Hitya's
+(PRIVACY.md updated). Author: cloud session 2026-07-31, from the guild lead's
 2026-07-30 raid-night report and his refined framing ("we don't need the mob's
 position — we need to know which players are on which one").
 **Routing: docs → `main`, no version bump.**
@@ -24,7 +24,7 @@ separator and states what it buys.
 
 ## The problem, as reported
 
-Raid night 2026-07-30 (Hitya): four `a crypt guardian` pulled simultaneously.
+Raid night 2026-07-30 (the guild lead): four `a crypt guardian` pulled simultaneously.
 In every surface that reads mob identity by NAME, they merged:
 
 - **Extended Target** showed fewer rows than mobs, and every row carried the
@@ -111,7 +111,7 @@ are the **dashboard explorer's render** of the data, inside `WEB_HTML`
 | **"Which mob is hitting me"** | computed `:26982-26988`, sent `:27033-27034` | `incoming_mob` + `incoming_mob_since`, from `stats.recentTankHits` within 20s |
 | `recentTankHits` source | pushed at `:5644-5646` | `{ mob, mobDisplay, tank, tsMs }` — rampage hits deliberately excluded (`:5640-5643`) |
 | Per-mob damage window | `:5884-5885` | `{ mob, amount, tsMs }` — **no attacker field**; who dealt it is not retained |
-| Cumulative damage per mob NAME | `:5876` (`this.targets`) | name-keyed, the merge Hitya saw |
+| Cumulative damage per mob NAME | `:5876` (`this.targets`) | name-keyed, the merge the guild lead saw |
 | #56 serial-track engine | `:26144-26310` | separator-only tracks, K per name, death-boundary close, HP-continuity assignment (`MOBTRACK_CONT_UP = 15`, `:26180`), stale expiry 90s (`:26179`); hooked at `:18380` (ext payload) and `:29747` (death line); kill switch `WP_SERIAL_TRACKS=0`, display gated by `WP_SERIAL_TRACKS_DISPLAY` (`:26183-26184`) |
 
 ### Bot — `index.js`
@@ -232,7 +232,7 @@ and stable until the instance's track closes (mirrors the #56 ordinal rule,
 | **Debuff landing** cast by `C` onto `C`'s target `N` | the instance matching `C`'s **target's HP** at cast time, and — when `C` is melee-range — `C`'s cluster | **medium; this is the one that must not be wrong** |
 | Ranged/spell damage by a non-melee `P` | not assignable by position; falls back to name-level aggregate | low → stays aggregate |
 
-Debuff attribution is the payload feature (it's the merge Hitya actually
+Debuff attribution is the payload feature (it's the merge the guild lead actually
 noticed) *and* the one with the worst failure mode. Rule 2 of the existing
 design applies unchanged and is restated as law here: **a track never inherits
 timers from another track**, and where attribution is ambiguous the UI shows
@@ -399,7 +399,7 @@ clustering only as a fallback for pre-upgrade clients.
 
 ---
 
-## Open questions (for Hitya)
+## Open questions (for the guild lead)
 
 1. **Is the debuff split the actual want, or is it per-instance HP?** They're
    separable — per-instance HP is easier and lower-risk; per-instance debuffs is

@@ -1,6 +1,6 @@
 # Mimic 3 — voice overhaul: recorded callouts and a virtual raid leader
 
-Hitya, 2026-08-10: *"miMIC version 3 is going to have to be an overhaul on these
+The guild lead, 2026-08-10: *"miMIC version 3 is going to have to be an overhaul on these
 TTS with voices, either recordings we have specifically for these, people saying
 other peoples names would be a cool thing, virtual raid leader where we can
 record our own voices saying a bunch of things and string them together. I do a
@@ -27,7 +27,7 @@ the words are parsed.
 2. **Names spoken by other people.** Callouts that interpolate a character name
    (`RIP {victim}`, `Rampage on {target}`, CH slot calls) need a name library —
    one clip per raider name, and a clip can be recorded by *someone else*, which
-   is the part Hitya wants. Concatenate `[fixed clip] + [name clip]`.
+   is the part the guild lead wants. Concatenate `[fixed clip] + [name clip]`.
 3. **Virtual raid leader.** A recorded phrase bank strung together into full
    callouts, in the guild's own voices, including impressions people have asked
    for. This is a small sequencing engine plus a recording/management UI.

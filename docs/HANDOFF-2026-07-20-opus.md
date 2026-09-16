@@ -1,7 +1,7 @@
 # HANDOFF — resuming the platform queue (~Wed 2026-07-23, Opus session)
 
 *Written 2026-07-20 by the Fable session that ran the 07-17→07-20 sprint, at the
-usage-limit pause. Hitya (Monk officer, EST) directs; this doc is the complete
+usage-limit pause. The guild lead (Monk officer, EST) directs; this doc is the complete
 state + process transfer. Read CLAUDE.md first, then this, then `docs/STATUS.md`
 (the ledger) and `docs/BETA-TESTING.md` (what awaits field verification).*
 
@@ -39,7 +39,7 @@ v1→v2 (#108→#121), Mimic Me card + Admin tab (#109), pet-buff verdict (#117/
 - **`dedup_chat = 0`** in `overlay_tuning.tuning` — the 07-19 chat-blackout
   mitigation. Everyone uploads chat. RE-ENABLE only per the procedure in
   BETA-TESTING #112 (fleet on agent ≥3.3.91 first). Do not "clean up" this key.
-- **`hide_main_names = "Tildias,Serreth"`** (same tuning row) — Hitya's explicit
+- **`hide_main_names`** (same tuning row) — the guild lead's explicit
   privacy exception; server-side enforced in who-enrichment. Officers extend via
   the same key (a dedicated input is an open fast-follow).
 - **`roll_sets` was EMPTY until 07-19 night** — Friday's off-night rolls were
@@ -67,7 +67,7 @@ Priority order for the next raid nights:
    tracker should show buffs; if not, the 🐾 card names the failing checkpoint.
 3. **#121 bidding v2** — the family-pooled DKP figure vs the OpenDKP UI
    (officers), and the 6-column misses layout (6th col = current DKP was the
-   coordinator's INTERPRETATION — Hitya never confirmed; adjust on feedback).
+   coordinator's INTERPRETATION — the guild lead never confirmed; adjust on feedback).
 4. **#112 re-enable** — once fleet ≥3.3.91, flip `dedup_chat` back on per the
    documented procedure; watch #guild-chat for gaps.
 5. **P1b/P1c dedup flips** (`dedup_buffs`, `dedup_roster`) — built dark; flip
@@ -76,7 +76,7 @@ Priority order for the next raid nights:
    round-trips, sticky callouts, loot announce chips, CH "GO", ext-target zone
    filter, auto-grow — all have ✅/👥 cases in BETA-TESTING.
 
-## 4. Officer actions pending (Hitya, no code)
+## 4. Officer actions pending (the guild lead, no code)
 
 - `node deploy-commands.js` (registers `/ingestrules`), set
   `RULES_CHANNEL_ID`/`RAID_RULES_CHANNEL_ID`/`LOOT_RULES_CHANNEL_ID` on Railway,
@@ -141,7 +141,7 @@ Then implementation (board task numbers; every brief pattern below in §6):
    accident (a lint claim from the wrong checkout; an inflated test count from a
    stale worktree).
 3. **Repro-first for every bug**: fixture must FAIL before the fix and PASS
-   after, and the report separates OBSERVED FACTS from diagnosis. Hitya
+   after, and the report separates OBSERVED FACTS from diagnosis. The guild lead
    corrected three overconfident diagnoses in one day (clicky→charm→target-self,
    all wrong; truth = user was on a pre-fix version). Never state a hypothesis
    as a finding, in briefs OR in replies.

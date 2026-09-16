@@ -82,7 +82,7 @@ accurate sentence is "the agent makes no third-party **data** calls."
 
 ### What the trigger is, and what it is deliberately not
 
-Hitya, when this was scoped: *"if there is an auction it should be something
+The guild lead, when this was scoped: *"if there is an auction it should be something
 they receive, or it should be a poll that happens on the bot side that happens
 after a named mob is killed. maybe there's a better design than those two given
 what we know about loot being posted from trash mobs as well."*
@@ -110,7 +110,7 @@ and shared fleet-wide. So the policy in `_standingsRefreshDecision` is:
 ### ⚠ The gate is the raid window. An open auction only sets the pace inside it.
 
 Corrected 2026-08-27, same day, after the first cut let an open auction alone
-justify a live call. Hitya:
+justify a live call. Guild lead:
 
 > "the live dkp checkin should be raids-only since users are getting more dkp
 > with each tick. the rest of the time the checkin should be just to the bot and
@@ -192,7 +192,7 @@ byte level **before** parse and never leave the machine (`docs/PRIVACY.md`).
 
 ## 4. The Loot tab, and the raid gate
 
-Hitya: *"move the opendkp bits to their own loot tab with rolls and make sure it
+Guild lead: *"move the opendkp bits to their own loot tab with rolls and make sure it
 only checks for loot during raids."*
 
 Bidding lived on the Dashboard and rolls lived on Stats — two ways of handing
@@ -224,7 +224,7 @@ entire problem.
 
 ## 4a. The mirror sync also backs off between raids
 
-Hitya, 2026-08-27: *"cut down the number of calls as much as possible outside of
+The guild lead, 2026-08-27: *"cut down the number of calls as much as possible outside of
 raid times."*
 
 Once the agent stopped calling OpenDKP, the **30-minute mirror sync** became the
@@ -257,7 +257,7 @@ at all**, silently, looking exactly like it is working. Wall-clock blocks make
 both impossible: a restart re-adopts the current block, and the next block
 arrives on schedule regardless.
 
-⚠ **There is no boot pull.** Hitya, 2026-08-27: *"can we take the opendkp pull
+⚠ **There is no boot pull.** the guild lead, 2026-08-27: *"can we take the opendkp pull
 out of main redeploy? we have the data that isn't stale prior to the raid, save
 for peoples saved bids and wishlists."* A sync used to run 45s after start; on a
 platform that redeploys on every push to `main` that is a per-deploy pull of data
@@ -285,7 +285,7 @@ three hours rather than thirty minutes, the same trade already accepted for the
 audits idle backoff.
 
 ⚠ **Adjustments are the exception to "DKP only moves during raids" — but they
-are automated, and the cadence happens to catch them.** Hitya, 2026-08-27:
+are automated, and the cadence happens to catch them.** the guild lead, 2026-08-27:
 *"all of this dkp work was happening manually beforehand and the decay happens
 automatically based on settings that we've deployed in open dkp."*
 
@@ -309,7 +309,7 @@ advice was unusable. (3) "Only 2.7% of adjustments happen during raid hours" —
 true but evidentially worthless, since a job pinned to 08:00 ET can never appear
 in a raid window; it said nothing about human behaviour.
 
-The genuinely human adjustments Hitya described — *"someone rarely passing
+The genuinely human adjustments the guild lead described — *"someone rarely passing
 because they can't loot or for the next person, or missed ticks"* — are real and
 small (78 rows at ±20 or less). They are also not urgent: a pass or a missed tick
 is corrected after the fact, and the member is not bidding on it in the next

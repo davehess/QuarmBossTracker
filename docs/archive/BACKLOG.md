@@ -34,8 +34,8 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
 
 ## Quick requested features (buildable, queued)
 - **Per-class name colors on overlays — 📐 designed, ⛔ NEEDS LOCAL SESSION
-  for the data.** (Hitya 2026-07-11: use each user's own EQ raid-window
-  class colors "in some capacity for different class types; use Hitya's
+  for the data.** (guild lead 2026-07-11: use each user's own EQ raid-window
+  class colors "in some capacity for different class types; use the guild lead's
   color palette for classes as a template, with the ability to turn that
   off in options".) Design: (1) agent parses the player's raid-window class
   colors from their EQ config at startup (same newest-UI-ini discovery as
@@ -46,8 +46,8 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   Overlays-tab toggle; (4) consumers color class-known names: buff queue
   rows, Extended Target, /who overlay, CH chain healers, raid rosters.
   **Needs local session FIRST (blocker):** the exact file+section where the
-  Quarm client persists raid-window class colors, plus Hitya's actual
-  values. On the desktop: check `UI_Hitya_pq.proj.ini` (grep for sections
+  Quarm client persists raid-window class colors, plus the guild lead's actual
+  values. On the desktop: check `UI_<Name>_pq.proj.ini` (grep for sections
   with Color/RGBA keys near Raid), `eqclient.ini`, and Zeal's ini; paste
   the section verbatim + key format into this item (or mirror to a
   `class_color_template` row). UI snapshots in Supabase are AES-encrypted
@@ -92,7 +92,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   instead of/alongside admin-crafted. Packer + UI parser:
   apps/mimic/main.js (`_autoArrangeOverlays` / `_parseUiWindowRects`).
 - **Capture the `wolfpacktag` raid channel → live raid-leader overlays.**
-  (Hitya 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
+  (guild lead 2026-07-08. ⛔ BLOCKED on a raw log sample — not ready to provide
   yet.) The guild already runs a private in-game custom chat channel to tag mobs: pull, tank picked up an add, which to assist,
   "this charmed mob is a pet", etc. This IS the raid-intent stream we were
   otherwise going to synthesize from `/pipe ASSIST %t` macros (see the Zeal
@@ -124,7 +124,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   exact channel token, including whether the ZT display prefix is part of it. Open product Q: mirror to web as a searchable tag timeline (like the
   chat log) or stay purely live-overlay + ephemeral?
 - **Stale-log-filename attribution — extend beyond chat.** Root cause found
-  2026-07-07 (the Starrburst/Dant/Bardtholemu chat renames): after a character
+  2026-07-07 (the a member/a member/a member chat renames): after a character
   swap the EQ client keeps appending to the PREVIOUS character's log, so
   everything keyed on the log FILENAME misattributes for the rest of that
   session. Chat is fixed end-to-end (agent 3.2.2 `speaker_source` + Zeal
@@ -143,7 +143,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   tail-loop pre-filters + dead zeal.ini cache, Mimic melody 150ms poll +
   byte-stability, Supabase retention (chat 138MB / buff_casts 118MB /
   who_observations 102MB and growing).
-- **EQ Legends config formats — documented, nothing built.** Uilnayar provided
+- **EQ Legends config formats — documented, nothing built.** a member provided
   real Legends client files (2026-07-06); full spec + candidate work items
   (UI Studio backup support, spell-loadout ingest, feasibility map) in
   `docs/eq-legends-formats.md`. Key facts: `UI_<Char>_<server>_LO<n>.ini`
@@ -152,7 +152,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   Legends — anything Zeal-fed can't port. Need a Legends LOG sample before
   scoping log-driven features.
 - **/me named-mob kill counts.** Show per-named-mob totals of how many of each
-  the member has killed / been part of the kill on. Buildable from
+  The member has killed / been part of the kill on. Buildable from
   `encounter_players` ⋈ `encounters.npc_id` ⋈ `eqemu_npc_types.name`: count
   distinct encounters per npc where one of the member's characters appears.
   Group by npc, sort desc. A new card on `/me` (per-character or family-wide).
@@ -164,7 +164,7 @@ class filter + "only gaps" + "hide logged-off" toggles, accuracy caveat banner.
   (heartbeat log, ~60MB/177k rows) to ~30–60 days; later `who_observations`. Keeps
   us comfortably on the free tier.
 
-## Hot-servable overlays (Hitya 2026-07-16 — pre-2.0 architecture, APPROVED direction)
+## Hot-servable overlays (guild lead 2026-07-16 — pre-2.0 architecture, APPROVED direction)
 
 "Separate the working version of overlays into a separately updateable format
 so we can correct components on the fly for all users without requiring a
@@ -220,13 +220,13 @@ Raid feedback driving it (2026-07-15 night, all currently shell-build-bound):
   holds, draft the upstream report to CoastalRedwood/Zeal (pattern:
   `docs/zeal-spawn-id-request.md`).
 
-- ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (Hitya
+- ~~Verify the first-person OUTGOING heal line~~ **RESOLVED (the guild lead
   2026-07-14): it does not exist.** Heal amounts are private to the healed;
   bystanders only see the spell's `cast_on_other` landing message with the
   target's name ("X is completely healed." / "X feels much better."). The
   defensive pattern in the agent stays as a no-op.
 
-## CONTINUATION QUEUE (2026-07-14 handoff — Uilnayar-approved order)
+## CONTINUATION QUEUE (2026-07-14 handoff — a member-approved order)
 
 > Scaffolding for the next session (any model). Designs below are agreed with
 > the owner; implement top-to-bottom. Mimic/agent work lands on `beta` (the
@@ -288,7 +288,7 @@ Raid feedback driving it (2026-07-15 night, all currently shell-build-bound):
   /me named-mob kill counts, and mob-immunity observed capture (§6 Fix A)
   are the next unblocked items, in that order.
 
-### 1c. Gameplay-first + scale readiness (Hitya 2026-07-15, raid-day findings)
+### 1c. Gameplay-first + scale readiness (guild lead 2026-07-15, raid-day findings)
 Design principle (owner, verbatim intent): "we ALWAYS want to prioritize
 gameplay over background activity." Encode in every future agent change: no
 sync I/O, no unbounded CPU on the event loop; background work yields to the
@@ -390,7 +390,7 @@ overlay-serving path. The 3.3.51 async queue-flush is the reference fix.
   eqemu_npc_types — design in "Quick requested features" above) + a
   searchable section and timeframe filtering on those views.
 
-### 6. Mob immunity display on Target/Mob Info (Hitya 2026-07-15)
+### 6. Mob immunity display on Target/Mob Info (guild lead 2026-07-15)
 Report: "a sonic warwolf" showed **"Your target is immune to changes in its
 run speed"** in-game, but the Target Info / Mob Info Stats tab gave **no**
 snare/root-immune warning — "it needs to show up on the target info if people
@@ -439,7 +439,7 @@ are going to rely on it."
   so verify against in-game behavior — (A) is the trustworthy source, (B) makes
   it show up before anyone casts.
 
-### 7. Cross-client HP serialization of simultaneous same-name mobs (Hitya 2026-07-15)
+### 7. Cross-client HP serialization of simultaneous same-name mobs (guild lead 2026-07-15)
 Report: two "a grimling marauder" up at once, each with the in-game target
 ring (clearly distinct entities). The Mob Info "DEBUFFS (OBSERVED)" card
 merges BOTH mobs' debuffs onto whichever one you target — Engulfing Roots on
@@ -528,7 +528,7 @@ bot-side per-spell amount lookup (eqemu_spells) are new. Also queued: live
   tab's "Spell Casts This Session — Players / NPCs" lists everyone's casts as
   "a spell" because **EQ does not log spell names for bystanders** — only the
   uploader's own casts are named. Two asks:
-  1. Guild mates (Elyas, Atlasius, …) land in the **NPC/Unknown** bucket because
+  1. Guild mates (a member, a member, …) land in the **NPC/Unknown** bucket because
      `isConfirmedPlayer` hadn't confirmed them yet (not /who'd / no heal seen).
      Fix idea: also treat names present in the roster (`characters` table, synced
      down) or in `who_observations` as players, and/or relabel the section so
@@ -544,7 +544,7 @@ bot-side per-spell amount lookup (eqemu_spells) are new. Also queued: live
      non-guild character page (class inference). (agent)
 
 
-- **Zeal pet gauge slot = 16.** Confirmed from Hopeya's gauge dump: slot 1=self,
+- **Zeal pet gauge slot = 16.** Confirmed from a member's gauge dump: slot 1=self,
   slot 6=target, slot 16=the charm pet (a 2nd "A Netherbian Drone" at 100% vs
   the target drone in slot 6). Slot 24 ("4", ~53%) is a fixed UI gauge, not the
   pet. → wire slot 16 (HP% + text=name) into Mimic `_zealAbsorb`
@@ -656,7 +656,7 @@ the "get them hooked" set and are ready to test in order tomorrow.
   and let signed-in users set their own toon's class when known (write to
   `characters.class`, owner-gated). Data: `characters` + `who_observations`.
   (web; maybe a small write endpoint)
-- **G. Mimic overlay/setup overhaul** (real install friction — Dafeet hit it):
+- **G. Mimic overlay/setup overhaul** (real install friction — a member hit it):
   - First-run setup page (`apps/mimic/loading.html`) should include an **EQ
     folders** card as the **2nd** item (reuse `findEqInstalls`/`pickEqDir`).
   - Token card should offer **"enter token OR sign in with Discord"** in the

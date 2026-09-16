@@ -95,7 +95,7 @@ Four doors — Raid, Stats, Prep, and the member's own `/me`. Hover opens on fin
 pointers, tap opens elsewhere; the open state is guarded on
 `matchMedia('(hover: hover) and (pointer: fine)')` because a tap's compatibility
 `mouseenter` plus the click otherwise open and immediately close the panel.
-Grouping is a judgment call and Hitya reclassifies it freely — nothing is
+Grouping is a judgment call and the guild lead reclassifies it freely — nothing is
 load-bearing beyond the label.
 
 ## Surface modes

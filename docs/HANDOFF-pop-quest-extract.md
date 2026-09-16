@@ -7,7 +7,7 @@ proxy blocks pqdi.cc / eqemulator.org, so there is no second source.
 **Why it matters.** Two features are built and waiting on this data:
 
 1. **Flag coverage for non-Mimic raiders** (agent 3.6.4, already shipping to
-   beta). Agents now capture *witnessed hails* — `Fittir says, 'Hail, Seer Mal
+   beta). Agents now capture *witnessed hails* — `a member says, 'Hail, Seer Mal
    Nae'` — because the authoritative grant line is a self-message only Mimic
    users produce. The agent deliberately does **not** decide which NPCs matter;
    the bot maps NPC → flag against a catalog. **That catalog currently names

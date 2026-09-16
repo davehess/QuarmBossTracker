@@ -128,11 +128,12 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ## Bot features
 
-### Reporter fleet: one account, several machines, one slot (bot 3.1.102)
+### Reporter fleet: one account, several installs, one slot (bot 3.1.102)
 
-The fleet registry keys on discord_id, so a second machine on one account used
-to clobber the first on every heartbeat — an idle machine (320h since a log
-line) flip-flopped against a live one (4s) in the officer panel.
+The fleet registry keys on discord_id, so a second install on one account used
+to clobber the first on every heartbeat — an install with a stale log (320h
+since a line) flip-flopped against one with a fresh log (4s) in the officer
+panel.
 `_reporterClaimAllowed` now gates the ingest: **the freshest LOG holds the
 slot, not the latest heartbeat.** Ages are projected to now; a 5s slack keeps a
 lone idle machine updating its own entry (without it, an unchanged log ties
@@ -140,8 +141,12 @@ itself and the entry starves to TTL death); dead or camping incumbents are
 always claimable; agents too old to send `last_line_ms` keep last-writer
 behavior between themselves but never displace a signalled incumbent. A refused
 machine loses only the panel row — roles and elections key on the shared
-discord_id either way. Two machines BOTH actively logging still trade the slot
-within the slack; that is one account signalling from two machines, not a bug. Behaviour-tested by
+discord_id either way. Two installs whose logs are BOTH recent still trade the
+slot within the slack. ⚠ **Recent is not concurrent** — a character played
+earlier in the night still has a fresh log, and a character switched to
+mid-fight leaves the previous one's log fresh behind it. The registry compares
+log RECENCY and infers nothing about who was signed in when, so trading the
+slot is expected rather than a bug. Behaviour-tested by
 executing the helper (`test/reporter-claim.test.js`).
 
 ### Raid timers & boards
@@ -345,7 +350,7 @@ derivation: `docs/DESIGN-outcome-backfill.md`.
   window at 45 days. NOT applied — the one-off SQL is in the design doc.
 - **Officer-triggered only.** `/backfillscan [date] [apply] [expire]` previews by
   default; no timer, no midnight-chain hook, no DM (delivery stays the pull-based
-  agent-dashboard 📋 banner). Automatic filing is parked pending Hitya's sign-off.
+  agent-dashboard 📋 banner). Automatic filing is parked pending the guild lead's sign-off.
 - Validation: over the 2026-07-30 night (13 fights, 118 uploads) it flags exactly
   the three `state.petOwners` casualties and nothing else; 24 of the last 42
   nights flag nothing at all. Regression: `test/backfill-scan.test.js` (fixtures
@@ -389,7 +394,7 @@ live card rather than adding one. Load-bearing:
 
 ### Member network diagnostic (`scripts/mimic-netdiag.ps1` + `.bat`) — 2026-09-07
 A read-only PowerShell bundle a member runs on their own PC when Mimic is
-blamed for a network or hang problem (Ashieron's "internet goes down when I
+blamed for a network or hang problem (a member's "internet goes down when I
 zone"). Double-click the `.bat`; output is `Desktop\mimic-netdiag-<date>.zip`
 for the officer. Collects: last boot + relevant processes (handle counts),
 Mimic's redacted config + `agent.log`/`.1` tails and `[zeal]`/`[upload-queue]`/
@@ -431,7 +436,7 @@ so an event Discord stops listing (status → COMPLETED) still resolves through
 its own tail. **Window = start − `RAID_EVENT_PRE_MIN` (30) … end +
 `RAID_EVENT_POST_MIN` (15)**; an event with no end time is assumed
 `RAID_EVENT_DEFAULT_HOURS` (4) long. **Overlapping windows resolve by ZONE
-first** (Hitya 2026-09-07 — a Seru mini and a Ring War on one night had every
+first** (guild lead 2026-09-07 — a Seru mini and a Ring War on one night had every
 kill landing by the clock): each event's zone(s) are read from its own text,
 title first, then description, then location (`zoneIdsForEvent`), against a
 vocabulary of eqemu long/short names + `data/zones.json` names/`shortName`/
@@ -601,7 +606,7 @@ Tests: `test/buff-durations.test.js`.
 ### Dashboard: the tab rail clears the sticky bar (agent 3.6.23)
 Regression from 3.6.21: the rail was already `position:sticky; top:8px`, so once
 the header became sticky the rail pinned itself UNDER it and the first four tabs
-(Dashboard, Overlays, Raid, Buffs) vanished on any scroll (Hitya 2026-09-02).
+(Dashboard, Overlays, Raid, Buffs) vanished on any scroll (guild lead 2026-09-02).
 Now `top:calc(var(--wp-topbar-h, 118px) + 8px)`, plus `max-height` +
 `overflow-y:auto` so a rail taller than the space below the bar scrolls itself
 rather than pushing its last tabs off-screen.
@@ -667,12 +672,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 The relay had **no scope of any kind** — every guild-trigger fire from any raider
 ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness
 drop. Someone landing a slow while soloing an alt in another zone spoke on the
-whole guild's machines (Hitya, 2026-09-02: *"we hear Shaman Slow when we're not
+whole guild's machines (guild lead, 2026-09-02: *"we hear Shaman Slow when we're not
 around combat"*).
 ⚠ **3.1.111 never gated a single fire.** Its ingest resolved the sender's zone
 from `payload.character`, a field no agent has ever sent, so the origin was null
-every time and the deliberate fail-open branch passed everything (Hitya,
-2026-09-11, alone in Vex Thal hearing Lucker's Ssraeshza slows: *"these random
+every time and the deliberate fail-open branch passed everything (the guild lead,
+2026-09-11, alone in Vex Thal hearing a member's Ssraeshza slows: *"these random
 slips need to stop"*).
 **The rule (3.1.125): raid-wide while you are in a raid — the scheduled window
 (`_inRaidWindowEt`) OR your own Mimic uploaded a raid roster in the last 10
@@ -684,7 +689,7 @@ shares a zone with any live character on the LISTENING account
 inputs once per poll (window → roster → zones, each early return skipping the
 rest) and both poll paths (`/recent-fires` and the #106 multiplexed `/poll`) go
 through it. The ring stores `origin_zones` (an array) per fire.
-⚠ **Outside a raid, unknown means NOT local** — flipped from 3.1.111 on Hitya's
+⚠ **Outside a raid, unknown means NOT local** — flipped from 3.1.111 on the guild lead's
 call. The raid cases are the safety net for a real Death Touch warning: inside
 them nothing is consulted and everything relays. A listener with no live-state
 and no raid roster hears no relays off-schedule; that is the intended trade.
@@ -711,7 +716,7 @@ first draft with all fifteen produced 22 crossing errors and would have been
 unreadable even if it had passed.
 
 ### Site chrome: favicon, link previews, error + loading boundaries (web 1.7.9)
-Audit against a "20 things a real site has" checklist (Hitya, 2026-09-02). Four
+Audit against a "20 things a real site has" checklist (guild lead, 2026-09-02). Four
 real gaps out of nineteen; the rest were marketing-site advice that does not
 apply to a member-gated guild tool.
 - **The favicon was BROKEN, not missing.** `layout.tsx` declared
@@ -760,7 +765,7 @@ a beat after they switched target and stamping the new id onto the old target's
 cast is worse than sending nothing.
 
 ### Target Info stops hiding a third of the raid's debuffs (bot 3.1.116)
-Hitya, live 2026-09-02: *"Debuffs don't show on Target Info but show on Extended
+The guild lead, live 2026-09-02: *"Debuffs don't show on Target Info but show on Extended
 Target."* Both read `buff_casts`; they disagreed on one null.
 
 ⚠ **`_zoneScopeKeep` DROPS a row whose observer it cannot place — and unknown is
@@ -797,7 +802,7 @@ Tests: `test/target-info-zone-scope.test.js`.
 ### Target Info: effects scoped to the SPAWN, not just the name (bot 3.1.110)
 `buff_casts` keyed a landing by target NAME, so the cross-client Target Info
 relay merged every same-name mob in the zone into one effect list — the mob you
-are targeting showed timers belonging to its siblings (Hitya 2026-09-02).
+are targeting showed timers belonging to its siblings (guild lead 2026-09-02).
 Migration `20260902100000` adds `buff_casts.target_id`; the ingest persists it
 and `_handleAgentTargetBuffs` filters on it through `_idScopeKeep`, which sits
 beside `_zoneScopeKeep` as the same idea one level down: #141 scoped ACROSS
@@ -819,7 +824,7 @@ nothing.
 Tests: `test/target-info-spawn-id-scope.test.js`.
 
 ### Mob Info: "will invis hide me from this?" (bot 3.1.115 · agent 3.6.28 · Mimic 2.6.5)
-Hitya 2026-09-02: *"mob info needs to also denote if a mob can see invis."* The
+The guild lead 2026-09-02: *"mob info needs to also denote if a mob can see invis."* The
 four sight flags were already selected AND already returned by `mob-info` — the
 comment above them has said "drive Mob Info chips" since they were added — but
 nothing ever rendered them. This is the render, plus the one field that makes
@@ -857,7 +862,7 @@ deleting the call left all ten behaviour tests green).
 
 ### Pacify: its own line, and a timer for the silent ones (agent 3.6.25–3.6.27 · Mimic 2.6.5)
 The pull-safety family — SPA 30, aggro-radius reduction — is what lets you pull
-past a mob **without engaging it**. Hitya 2026-09-02: *"things like pacifying
+past a mob **without engaging it**. The guild lead 2026-09-02: *"things like pacifying
 where we lower aggro radius for a mob and don't engage. but keep the timer is
 vital for certain operations."*
 
@@ -888,7 +893,7 @@ through the caster's `buff_casts` upload and the (spawn-scoped) `target-buffs`
 relay.
 
 ⚠ **HARMONY IS NOT PACIFY, AND THE DIFFERENCE IS A SAFETY DIFFERENCE**
-(Hitya 2026-09-02, correcting a first cut that treated the family as
+(guild lead 2026-09-02, correcting a first cut that treated the family as
 interchangeable). `targettype` confirms it:
 | | targettype | Behaviour |
 |---|---|---|
@@ -929,7 +934,7 @@ about to add. Three-valued on purpose: `true` suppresses, `false` records,
 `null` (mob not in the catalog cache yet) records and fails open, with the row
 still marked unconfirmed.
 ⚠ **This is a MOB property, not a zone rule, and Plane of Sky is why**
-(Hitya 2026-09-02: *"plane of sky is a place where it does not work, despite
+(guild lead 2026-09-02: *"plane of sky is a place where it does not work, despite
 being outdoors"*). The zone is `cast_outdoor = 1` in `eqemu_zone` — genuinely
 flagged outdoors — so the "Harmony needs outdoors" heuristic predicts it works.
 What actually decides it: **116 of that zone's 118 NPCs carry ability 31**
@@ -960,7 +965,7 @@ was green against a `pacified: false` mutation until a test was written for it.
 `_extMobLastSeen` is a 90s grace cache that keeps a hurt mob on the overlay
 through a targeting gap. It was purely time-based, so a boss killed at 5% sat
 there as a "last seen 56s ago" corpse carrying its whole debuff list — while the
-bot had *already announced the kill* (Hitya 2026-09-01, Lord of Ire in Plane of
+bot had *already announced the kill* (guild lead 2026-09-01, Lord of Ire in Plane of
 Hate). `_extEvictDeadMob(name)` now drops it the moment a death is confirmed,
 from two signals: the `bosskill` relay (server broadcasts — instanced/lockout
 content) and any `encounter` upload with `confirmed_kill === true` (whatever a
@@ -1181,7 +1186,7 @@ once per day. Parse chain: `npm run drill` (`scripts/preraid-drill.js`) —
 READ-ONLY, safe mid-raid; golden-log parser self-test + bot `/health` +
 `latest-version` for both channels + bearer ingest-auth probe + site health.
 A write-path drill (POST a synthetic encounter end to end) is designed but NOT
-enabled — needs Hitya's sign-off, see the design doc.
+enabled — needs the guild lead's sign-off, see the design doc.
 
 ### Zeal live state
 Mimic bridges the pipe (below); the agent keys `_zealState` per character:
@@ -1239,7 +1244,7 @@ does not exist until the fight ends.
 
 ### Personal triggers — bulk management + what the loader threw away (agent 3.6.6)
 
-Uilnayar imported a large trigger pack into miMIC and asked how to undo it; the
+a member imported a large trigger pack into miMIC and asked how to undo it; the
 only answer was one `✕` at a time (Discord, 2026-08-29). The dashboard's
 personal-trigger list now has a bulk bar: **Select All / None / Disabled**,
 **⏸ Park for review** (disable, keep), **Enable**, **Delete selected**, and
@@ -1273,7 +1278,7 @@ agent, so a rename fails loudly rather than passing on a stale copy).
 ### Divine Intervention is not invulnerability (agent 3.6.10)
 
 ⚠ `DA_SPELL_RX` listed **Divine Intervention**, so the Tank/Command cards
-rendered "INV 5:36" over a rampage target (Hitya, 2026-08-30). DI is a one-shot
+rendered "INV 5:36" over a rampage target (guild lead, 2026-08-30). DI is a one-shot
 DEATH SAVE — under it the tank takes full damage and can die — so INV is the
 most dangerous claim the overlay can make. The catalog settles it: every true
 invuln (Divine Aura 207, Divine Barrier 130, Harmshield 199) is `buffduration`
@@ -1315,7 +1320,7 @@ the pet does** (agent 3.5.36). The owner key is deliberate — it's what makes
 `_captureTargetBuffsOnCharm` work at all — but it meant a dead pet's spells
 unioned onto whatever stood in the slot next: a charmed rat's Glamour of Tunare
 + Tunare's Request (1800 ticks = 3h) showed on a summoned warder that never had
-them (Hitya 2026-08-05). `_reconcilePetIdentity()` clears landings + the
+them (guild lead 2026-08-05). `_reconcilePetIdentity()` clears landings + the
 `/pet health` report on a slot-16 name → DIFFERENT name transition; slot 16
 going **empty is not an identity change** (it dips ~3s during a re-charm, and
 treating that as a new pet erases a live pet's buffs — fixture-enforced).
@@ -1330,7 +1335,7 @@ what catches it.~~
 off the pipe's player message (Zeal PR #229) and `_reconcilePetIdentity` checks
 it BEFORE the name: two `an orc warrior` are one string but two ids, so a
 same-name re-charm now drops the previous pet's buffs instead of unioning them
-onto the new one (Hitya, 2026-08-31: *"in case people switch their charmed
+onto the new one (guild lead, 2026-08-31: *"in case people switch their charmed
 pets"*). ⚠ **null is UNKNOWN, never CHANGED** — it is null on every released
 Zeal, whenever there is no pet, and during the ~3s slot-16 dip of a re-charm, so
 a change requires BOTH ids real and different; wiping on null would erase a live
@@ -1378,7 +1383,7 @@ Parses shout/raid callouts: numbered calls (`_CH_CALL_RX`), GO cues
 personal heal macros (`_CH_PERSONAL_RX` — **never take a slot**, CH-equivalent
 or not; they render as the spot-heal banner, labelled "Druid CH" etc. from
 `CH_EQUIVALENT_SPELLS`), and the **roster
-announcement** ("Fargan 001, Rapha 002…" — ≥3 contiguous-from-1 pairs) which
+announcement** ("a member 001, Rapha 002…" — ≥3 contiguous-from-1 pairs) which
 owns slot names authoritatively (short names resolve via the Zeal raid
 roster). Beat = median gap of last 10 calls → due-countdown, slip pivot
 banner. Off-heal candidates (hurt offtanks only, <90% tunable) hang off the
@@ -1580,7 +1585,7 @@ already taken further down by a **milliseconds** formatter (agent liveness
 ages), so every buff rendered at **1/1000** of its real time: Girdle of Karana's
 56 minutes read `3s`, its 4320-second catalog duration read `~4s`. The numbers
 were plausible enough to read past, and only a screenshot against the in-game
-buff window caught it (Hitya, 2026-09-02). The seconds one is now `_wpSecs`.
+buff window caught it (guild lead, 2026-09-02). The seconds one is now `_wpSecs`.
 
 **`check-agent-dashboard.js` fails the build on any duplicate top-level
 declaration** (`checkDuplicateFunctions`) — verified by reintroducing the exact
@@ -1597,7 +1602,7 @@ only, `tuning.tag_officer_channel`; `/api/state` ships them as `zealTagJoin`
 to the 🏷 card. Secrets never in source, logs, or uploads. Base nameplate keys
 untouched (unverified dependency).
 **Autojoin (agent 3.6.34):** `_iniGetKey` reads `[Defaults] ChannelAutoJoin`
-from **`eqclient.ini`** (the real location — grounded in Hitya's file
+from **`eqclient.ini`** (the real location — grounded in the guild lead's file
 2026-09-03; the ledger had said "character ini" since August), `_mergeAutojoin`
 merges on **whitespace** (commas tolerated on read only), `_iniSetKey` writes
 back only on change. Runs inside `_applyEqSetup` for the raid spec and, for
@@ -1613,7 +1618,7 @@ defers until logout (`defer-save` + background watcher).
 `_readUiBundle` enumerates the per-character inis and then catch-alls any other
 `.ini` belonging to the character (server-suffix variants, `/loadskin`
 leftovers, machine migrations). More than one can carry the same `[Section]`
-with its own geometry, and the parse loop pushes each — Hitya's layout drew
+with its own geometry, and the parse loop pushes each — the guild lead's layout drew
 **258 windows for a file holding ~129**, two of everything stacked on the
 canvas (2026-09-02, with a screenshot). `_dedupeWindows` now keeps one row per
 section, ranked `UI_<char>_pq.proj.ini` → other `UI_*` → `<char>_pq.proj.ini` →
@@ -1653,7 +1658,7 @@ by somebody else?"**: **already in your household → upload, nothing to claim**
 `characters` but unclaimed → it becomes yours**. Both the created row AND a
 claim of an existing one stamp the `registered_via_web_*` audit columns, and
 the character joins the uploader's family via `main_name`.
-⚠ That third case is a **deliberate widening** (Hitya, 2026-08-14). The first
+⚠ That third case is a **deliberate widening** (guild lead, 2026-08-14). The first
 cut refused to claim an unclaimed row carrying an `opendkp_id`, reasoning it
 meant a real member who merely had not linked Discord. Overruled: *"Being in
 the guild should not be a limiter for someone making a new character and trying
@@ -1742,7 +1747,7 @@ Zeal health, Settings, loading. Overlays poll the local agent
 (`/api/state`, `/api/tank-state`, `/api/command-center`,
 `/api/extended-target`, `/api/buff-queue`) every ~1.5–2s.
 
-**Overlay size 50%–200% (mimic + agent 3.5.88, beta — Fittir's 5K monitor).**
+**Overlay size 50%–200% (mimic + agent 3.5.88, beta — a member's 5K monitor).**
 zoomFactor per overlay window, applied in `applyOverlayOpacity`'s shared
 ready-to-show lifecycle so every overlay (and any future one) inherits it.
 Three surfaces: 🔍 "Size — all overlays" on the dashboard Overlays tab
@@ -1890,7 +1895,7 @@ does NOT need `/tag filter` for the chat-channel path.
 the server's chat rate limit.** Tags are chat messages, so a burst trips *"You
 are currently rate limited, you cannot send more messages for 32 seconds"* and
 the broadcast is simply refused — while the arrow still draws locally, so the
-tagger believes the raid can see a mark nobody received (Hitya 2026-08-07,
+tagger believes the raid can see a mark nobody received (guild lead 2026-08-07,
 tagging through The Deep). The other three are config states you fix once; this
 one recurs, dynamically, exactly when marking fastest. Measured usable rate:
 ~8/min sustained on `/tag chat` before the lockout. Agent surfaces it on the 🏷
@@ -1961,7 +1966,7 @@ deleting guild history is an officer decision. Tests:
 `test/thread-anchor.test.js`.
 
 ### Resource use: which memory number, and why they disagree — 2026-08-04
-Uilnayar checked the card against Task Manager twice and was right both times.
+a member checked the card against Task Manager twice and was right both times.
 **Round 1 (1267 vs 460):** it summed `workingSetSize`, which counts pages SHARED
 between processes once per process — every Chromium renderer maps the same
 Electron framework, so 13 processes counted it 13×. **Round 2 (274 vs 161):**
@@ -2007,7 +2012,7 @@ flag-name split (`pet` → `showPets`). Tests: `test/hide-all-state.test.js`.
 
 ### Overlay windows are lazy — 2026-08-04
 Every overlay is its own Chromium renderer (~80 MB resident before it paints;
-Uilnayar measured the floor). Boot created **ten** of them unconditionally,
+a member measured the floor). Boot created **ten** of them unconditionally,
 ignoring every `cfg.show*`. `_OVERLAY_WINDOWS` (main.js, next to
 `applyAllVisibility`) is the flag → getter → creator → dropper table;
 `_materializeEnabledOverlays()` builds what is enabled and
@@ -2023,7 +2028,7 @@ TTS fires from the hidden window (#97). Tests: `test/overlay-lifecycle.test.js`.
 
 ### Not every eqgame.exe is yours — 2026-08-04
 `_checkEqRunning` matched the process NAME, but `eqgame.exe` is the binary for
-every EverQuest client — Uilnayar had EQLegends up and Mimic reported "EverQuest
+every EverQuest client — a member had EQLegends up and Mimic reported "EverQuest
 running" (overlays over the wrong game, Zeal nag primed, EQ-close auto-install
 armed against an untracked process). Now `tasklist` yields PIDs, and
 `_resolveEqPidOwners` reads each one's `ExecutablePath` via `Get-CimInstance`
@@ -2049,13 +2054,13 @@ holds it in memory.
 
 ## Web features
 
-- **Mimic mini-mode review — the guild votes (`web/app/mimic/mini/*`, catalog in `web/lib/miniReview.ts`, web 1.7.31, 2026-09-11)** — member page; one overlay at a time, full mode left, three minis right, one vote per member per overlay (changeable), feedback thread per overlay with the author's pick beside each note. The catalog (9 overlays × 3 options, four-number costs, real cast) is pure TS so the server actions and `test/mimic-mini-review.test.js` validate through the SAME functions. Mocks (`mocks.tsx` + `mocks.module.css`) are pure functions of a 20s scenario clock and the Zeal toggle; `MiniReview.tsx` drives them at 10 fps via rAF and freezes under `prefers-reduced-motion`. Writes are service-role through `actions.ts`; tables `overlay_design_votes` (PK overlay+user) and `overlay_design_feedback`, RLS on, authenticated read. Deep links are `#tank` … `#buff`. The ballot (one row per `wolfpack_members.is_member`, merged accounts excluded; your row votes with A/B/C buttons) and the plain-text voter list under each option are the "spot for each person" (Hitya 2026-09-11). The ground-rules block (bar style, ▭ / 📌 menu rows, Ctrl+Shift+M) is the framework every pick shares; nothing in Mimic is built until the picks land.
+- **Mimic mini-mode review — the guild votes (`web/app/mimic/mini/*`, catalog in `web/lib/miniReview.ts`, web 1.7.31, 2026-09-11)** — member page; one overlay at a time, full mode left, three minis right, one vote per member per overlay (changeable), feedback thread per overlay with the author's pick beside each note. The catalog (9 overlays × 3 options, four-number costs, real cast) is pure TS so the server actions and `test/mimic-mini-review.test.js` validate through the SAME functions. Mocks (`mocks.tsx` + `mocks.module.css`) are pure functions of a 20s scenario clock and the Zeal toggle; `MiniReview.tsx` drives them at 10 fps via rAF and freezes under `prefers-reduced-motion`. Writes are service-role through `actions.ts`; tables `overlay_design_votes` (PK overlay+user) and `overlay_design_feedback`, RLS on, authenticated read. Deep links are `#tank` … `#buff`. The ballot (one row per `wolfpack_members.is_member`, merged accounts excluded; your row votes with A/B/C buttons) and the plain-text voter list under each option are the "spot for each person" (guild lead 2026-09-11). The ground-rules block (bar style, ▭ / 📌 menu rows, Ctrl+Shift+M) is the framework every pick shares; nothing in Mimic is built until the picks land.
 - **Item catalog for the wishlist picker (`/api/agent/item-catalog` +
   `item_catalog_droppable` view, bot 3.1.98)** — every item any catalogued NPC
   can drop, with its expansion, served ETag'd so agents cache it on disk and
   search locally. 11,099 rows · ~380 kB JSON · ~130 kB gzipped.
   ⚠ **The universe is "everything droppable", NOT "everything our tracked
-  bosses drop"** (Hitya, 2026-08-30 — include PoP so people can build a wishlist
+  bosses drop"** (guild lead, 2026-08-30 — include PoP so people can build a wishlist
   before the 2026-10-01 unlock). Only 12 PoP bosses are registered in
   `bosses_local` against 407 Luclin, because that board is built out AFTER
   unlock, so a boss-driven universe reached 113 of 1,212 PoP items. The drop
@@ -2072,7 +2077,7 @@ holds it in memory.
   gated 🏁 button on every attendance tick card in the raid-night thread;
   `handleRaidEndButton` writes `raid_ended_<nightKey>` to **bot_kv** (never
   state.json — it is keyed per night) and `_captureRaidTickIfDue` returns early
-  on it, BEFORE the roster paging. Hitya, 2026-08-30. The four tick slots fire
+  on it, BEFORE the roster paging. The guild lead, 2026-08-30. The four tick slots fire
   on the clock (20:30/21:30/22:30/23:30 ET) and since 2026-08-16 alt and
   Seru/misc nights run three ticks over two hours, so slot 4 was recording
   attendance an hour after those raids ended; the `MIN_NAMES` floor is a guess
@@ -2095,13 +2100,13 @@ holds it in memory.
   the winning VALUE from the bid list and taking the next highest, which is
   wrong whenever several people bid the same number: Thorny Chain Sleeves
   reported 10 (really 5) and Bone Chill Shield 20 (really 7), both because a
-  losing bid tied the winner's value and got read as the runner-up (Hitya,
+  losing bid tied the winner's value and got read as the runner-up (the guild lead,
   2026-08-30). The value rule survives only as the fallback for rows the
   detail backfill has not reached, which carry no `position`.
 - **Panel auction cache: the idle TTL is raid-aware (`_panelAuctions`, bot
   3.1.103)** — "nothing is up for bid" used to be cached for 120s, exactly the
   length of a bidding window, so a raider's Loot tab could hold an empty list
-  for the whole auction (Hitya, 2026-08-30: *"The loot is not posted quickly on
+  for the whole auction (guild lead, 2026-08-30: *"The loot is not posted quickly on
   the channel"*). Now: `_invalidatePanelAuctions()` fires from
   `_handleAgentLootPost` the moment an officer opens bidding — exact, and free,
   since it only moves a call forward — and inside a raid window the idle TTL is
@@ -2110,7 +2115,7 @@ holds it in memory.
   stays 120s and the 15s ACTIVE TTL is untouched. Tests:
   `test/server-panel-auction-cache.test.js`.
 - **Loot bidding: RECENT MISSES is PER CHARACTER (`_buildMisses`, bot 3.1.97)** —
-  Hitya, 2026-08-29: *"removed for that character after that character wins that
+  The guild lead, 2026-08-29: *"removed for that character after that character wins that
   item"*, and *"I know for a fact that there are items that I've bid on in the
   past and not won."* They were right, and the shortfall was large.
   ⚠ **The 2026-08-09 fix (drop items the family already owns) was right about
@@ -2139,7 +2144,7 @@ holds it in memory.
   immutable). First error aborts the pass. Char naming: `characters.opendkp_id`
   is now authoritative for char_id→name with the MODE-over-loot heuristic as
   fallback only — the heuristic failing silently is what blanked CHAR and made
-  Rockin's multi-winner Thorny Chain Helm WIN render as a family miss.
+  a member's multi-winner Thorny Chain Helm WIN render as a family miss.
   ⚠ **(bot 3.1.100) Detail-sourced bid rows have NO CharacterId** — OpenDKP's
   per-auction history is Name/Rank/Value/Date — and `_buildMisses` used to skip
   id-less rows, silently hiding every backfilled loss (the exact data the
@@ -2151,7 +2156,7 @@ holds it in memory.
   currently PER-MACHINE (`logsync.lootdismiss.json`); the bot's roaming
   `character_bid_prefs.dismissed` field exists but no client calls it — queued.
 - **Platform map (`components/PlatformMap.tsx` + `platformData.ts`, web 1.7.0)** —
-  top-down, not radial (Hitya): `wolfpack.quest` is the ROOT and the other five
+  top-down, not radial (the guild lead): `wolfpack.quest` is the ROOT and the other five
   branches stand under it in pipeline order, joined by a CSS rail. Hovering a
   column lists that branch's `details` names via a `0fr → 1fr` grid-row
   transition, with `items-start` on the grid so only the hovered column grows.
@@ -2197,7 +2202,7 @@ holds it in memory.
   to sit under a banner whose height changes when folded. ⚠ Compact channels are
   the symbol ALONE, which is also what keeps the bar inside a 360px viewport —
   the labels are 45px across the three chips. ⚠ **The stable channel's symbol is
-  the download arrow, not the mimic logo** (Hitya, 2026-08-28): the logo is the
+  the download arrow, not the mimic logo** (guild lead, 2026-08-28): the logo is the
   brand mark in the same bar, so the folded bar was showing one picture twice —
   as "home" and as "download" — with only a blue box telling them apart. One
   download mark per chip; there is no trailing arrow. `TimezonePicker` now reads as a
@@ -2269,7 +2274,7 @@ holds it in memory.
   ⚠ **`/me` renders unconditionally**; gating it on `showMe` made the four doors
   three for every signed-out visitor and it went missing. `/me` redirects to
   `/auth/signin?next=/me` itself, so the link never dead-ends. Placement rulings
-  (Hitya, 2026-08-28): Buffs is Raid; Quartermaster and `/who` are Prep — Raid is
+  (guild lead, 2026-08-28): Buffs is Raid; Quartermaster and `/who` are Prep — Raid is
   what you touch DURING one, Prep is what you do beforehand. Each ruling is
   asserted as a pair (in the right group, out of the wrong one) so a move done
   by copying leaves a failing test rather than a duplicate.
@@ -2304,13 +2309,13 @@ holds it in memory.
   npc_id = zone_id*1000+n). Promotion is automatic: a name arriving on the
   /sll lockout or bosskill relay flips its row to curated
   (`_promoteLockoutBoss`, bot `index.js`) — "if they have a loot lockout we
-  can keep them on" (Hitya 2026-08-19).
+  can keep them on" (guild lead 2026-08-19).
 - **Member-side character filing (web 1.1.82 + bot 3.1.63, 2026-08-20)** —
   `/me` → "Characters we think are yours": characters whose uploads carry the
   member's own `agent_upload_stats.uploaded_by_discord_id` but have no
   `characters.discord_id`. Actions in `web/app/me/claim-actions.ts` (Trader =
   one-click local link; Raid alt = the same `opendkp_register_requests` queue
-  the officer surface uses; Not mine = `link_ignored`), all gated on
+  The officer surface uses; Not mine = `link_ignored`), all gated on
   "your agent uploaded it AND nobody else owns it". The level ladder + trader
   placeholders are `web/lib/characterRoles.ts` (pure, tested) and are shared
   with `/admin/links` — Trader there no longer demands a class.
@@ -2349,7 +2354,7 @@ holds it in memory.
   `utils/killLockouts.js` + `_recordKillLockouts` (bot `index.js`) write rows
   straight off the encounter pipe. Participants come from FOUR places —
   uploader, `players`, `healers`, `defenders` — because a damage list alone
-  misses a cleric (the case that prompted it: Taeya uploaded a Ventani kill and
+  misses a cleric (the case that prompted it: a member uploaded a Ventani kill and
   had no `encounter_players` row on it). Expiry = kill + boss timer, so a live
   `/sll` row always wins (`dropRowsShadowedBySll`); `source` on the row says
   which. PK is (guild, character, boss) — see `docs/DECISIONS-2026-08-21.md`
@@ -2362,7 +2367,7 @@ holds it in memory.
   RaidHelper event) × active `character_lockouts`, grouped by zone, mains
   first, plus the targets that are clear. Pre-pull by design — see the engage-
   lock note below.
-  ⚠ **The verdict is `mainsBlocked`, not a headcount** (Hitya 2026-08-22: "as
+  ⚠ **The verdict is `mainsBlocked`, not a headcount** (guild lead 2026-08-22: "as
   long as mains are good to go"). Three filters, all needed, all learned the
   hard way — they take 753 rows down to the six an officer acts on:
   (1) only UP targets count, because a lockout runs as long as the boss's
@@ -2391,7 +2396,7 @@ holds it in memory.
   from.
   ⚠ **A raid night is not the only thing we run.** `ours` also comes out true
   when the majority of named players are on the roster — that is what tells an
-  off-calendar GUILD event from somebody else's raid (Hitya 2026-08-22:
+  off-calendar GUILD event from somebody else's raid (guild lead 2026-08-22:
   "Friday was a guild rolling event, so internal, but still a lockout").
   Measured: our raids 0.75–0.89 roster share, pug raids 0.14–0.22. The 0.5 line
   is `GUILD_EVENT_MIN_MEMBER_FRAC`, kept identical to
@@ -2430,7 +2435,7 @@ holds it in memory.
   the level gets first dibs), restricted to characters who submitted a
   spellbook. /pop also takes spellbook submissions, reusing the /me uploader +
   action.
-  **v4 (web 1.1.97, bot-adjacent migration 20260826010000, Hitya: "we
+  **v4 (web 1.1.97, bot-adjacent migration 20260826010000, Guild lead: "we
   shouldn't only track mains")** — dropped the mains-only filter (`main_name
   IS NULL OR main_name = name`); the function now covers every eligible
   character (main + alt) and returns `is_main` per row so callers pick their
@@ -2681,7 +2686,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   render an empty list.
 - **Loot won card (agent 3.6.11)** — the archive split out of the bidding card
   into its own `wpLootWonCard` in the Loot section (`renderWon()` in
-  `dashboard.html`; Hitya 2026-08-30: *"Move Past Items to a different 'loot
+  `dashboard.html`; the guild lead 2026-08-30: *"Move Past Items to a different 'loot
   won' area"*). The bidding card is the LIVE HAND — what is up, what you lost,
   what you plan to spend; this is the ARCHIVE. The split also splits the
   privacy gate: `showWon` is independent of `showLoot`, so you can browse what
@@ -2692,7 +2697,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `data-extra=1` until a query. Tests: `test/loot-won-card.test.js`.
 - **2nd place in the bidding area (agent 3.6.11)** — the auctions table gained
   a `2nd place` column between `Last win` and `Bid`, matching RECENT MISSES
-  (Hitya 2026-08-30). `runner_up` was already served by `_lootItemSummary` and
+  (guild lead 2026-08-30). `runner_up` was already served by `_lootItemSummary` and
   already rendered — as a 10px dim sub-line INSIDE the `Last win` cell, which
   is why it read as missing. Empty renders an em-dash so the column never
   collapses. Tests: `test/loot-second-place-column.test.js`.
@@ -2701,7 +2706,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   a new discipline in 10 minutes 34 seconds."), the only place EQ states the
   shared melee-discipline reuse exactly. Keyed per watched character;
   `_disciplineTimerSnapshot(activeChar)` rides the Command Center payload as
-  `discipline` and renders as a one-row card (Hitya, 2026-08-30: *"discipline
+  `discipline` and renders as a one-row card (guild lead, 2026-08-30: *"discipline
   cooldowns should be tracked on the command center for the user only"*).
   Deliberately NOT on the raid-wide defensives board — no equivalent line
   exists for other people, and deriving one from their activation emote means
@@ -2711,7 +2716,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Eaten-backslash detector (`scripts/check-agent-dashboard.js`, 2026-08-30)** —
   the hand-escaped `WEB_HTML` era ate backslashes, and five survivors were still
   shipping: `/^file:(d+)$/` ×2 (a picked RaidTick file resolved to zero
-  attendees — "No attendees in that source", reported by Hitya after a raid),
+  attendees — "No attendees in that source", reported by the guild lead after a raid),
   `.split(/s+/)` ×2 (silently defeated the wp-* class preservation its own
   comment describes, so hidden panels reappeared every 2s poll), and `/^✥s*/`.
   A lost backslash is valid regex that matches the wrong thing, so it never
@@ -2756,7 +2761,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   lines. Pulse bursts are bounded by the LINE's log timestamp
   (`SONG_AOE_PULSE_GAP_MS`), never wall-clock arrival — the EQ client
   flushes the log in multi-second batches under swarm load, which merged
-  pulses into ⚔123/12 badges (Fittir, 2026-08-19; `test/song-aoe-pulse.test.js`).
+  pulses into ⚔123/12 badges (a member, 2026-08-19; `test/song-aoe-pulse.test.js`).
   Surfaced per order row as `aoe_hits`/`aoe_dmg`/`aoe_kite` (running
   damage total for the current kite, reset after 30s quiet); `melody.html`
   renders an ⚔ hits/12 chip beside the song name (12 = Quarm AE cap,
@@ -2859,7 +2864,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   server component and the expansion works with JS off.
 - **Quartermaster (#82)** — `/quartermaster` (`web/lib/quartermaster.ts`):
   utility-kit coverage + quest checklist (reuses the `quest_catalog` store).
-  ⚠ **Owner NAMES are officer-only** (Hitya, 2026-08-14: *"quartermaster should
+  ⚠ **Owner NAMES are officer-only** (guild lead, 2026-08-14: *"quartermaster should
   display raider information for that user not for everyone. it can display for
   everyone for admins"*). Board 1 originally named every owner of every kit item
   to every signed-in member. Coverage is still computed guild-wide, then
@@ -2884,7 +2889,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   and a figure read inline; server component, no JS) and
   **`RaidHeatmap.tsx`** (month blocks of 44px day chips with one fixed
   tooltip; client) — chosen by `RaidLayoutPicker` → `wp_raid_layout` cookie,
-  `?layout=` override, `lib/raidLayout.ts` decides (Hitya's pick, 2026-09-04;
+  `?layout=` override, `lib/raidLayout.ts` decides (the guild lead's pick, 2026-09-04;
   a mini-calendar variant was built and dropped). Two surfaces: the **/me** 📅 section
   (last 60 days, family union via `.overlaps('attendees')`, ids-only tick reads,
   rate-first stats) and **`/raidhistory`** (member page: month blocks with the
@@ -2922,7 +2927,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   turned up, `rh_signups` says what they said they would do. Statuses are the class
   name (accepted), plus `absence`, `tentative`, `late` and `bench`.
   ⚠ **Raid-Helper's own board only retains its contents until the day of the raid**
-  (Hitya, 2026-08-13) — so the mirror is not a convenience copy, it is the archive.
+  (guild lead, 2026-08-13) — so the mirror is not a convenience copy, it is the archive.
   Anything a sync outage misses is gone permanently rather than late. 292 events /
   14,741 signups back to 2024-08-08 as of 2026-08-13, no gaps against the DKP raid
   list. Nothing monitors the sync yet; a silent failure is indistinguishable from a
@@ -2932,7 +2937,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   standing weekly constraint that attendance counts alone can only infer.
 - **Per-fight timeline (#98)** — `encounter_events` → **`FightEventLog.tsx`** on
   `/parses/[id]` since web 1.1.60 (collapsible LIST of deaths, slows, mob heals,
-  discs, fires — names + times, repeats folded ×N; Hitya 2026-08-16: the marker
+  discs, fires — names + times, repeats folded ×N; the guild lead 2026-08-16: the marker
   view was "useless in this format"). The marker chart `FightTimeline.tsx`
   survives on `/raid/review` where wipe-spotting is the job. Replay-this-fight
   link unchanged.
@@ -2940,7 +2945,7 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `/parses/[id]`: stacked BY CLASS with right-edge `class + %` labels, click a
   class to drill into its characters (one-axis premise holds in both views),
   hover highlights, MT strip with honest "nobody taking hits" gap tooltips
-  (1-bucket sampling holes bridged; real gaps kept — the Moash "it ran" case).
+  (1-bucket sampling holes bridged; real gaps kept — the a member "it ran" case).
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
 - **Missing-spells "where from" + shopping list** (web 1.1.67):

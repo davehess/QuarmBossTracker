@@ -62,7 +62,7 @@ Two smaller notes from reading their build config:
 ## If we pursue it — the shape
 
 1. An Azure subscription + an Artifact Signing account and certificate profile.
-2. Identity validation as an individual (US/Canada) — Hitya's call, and it
+2. Identity validation as an individual (US/Canada) — the guild lead's call, and it
    requires real personal identity documents, which is a decision not a task.
 3. CI signs with a service principal; there is **no hardware token to ship or
    plug in**. That is the practical reason this beats Certum Open Source
@@ -73,7 +73,7 @@ Two smaller notes from reading their build config:
    proceeds unsigned, CI stays green
    (`docs/pq-companion/06-data-provenance-and-gaps.md` §5).
 
-**Still Hitya's decision, not a task to pick up.** It costs money and requires
+**Still the guild lead's decision, not a task to pick up.** It costs money and requires
 personal identity verification. What has changed is that it is now *possible*;
 this file previously implied it was not.
 

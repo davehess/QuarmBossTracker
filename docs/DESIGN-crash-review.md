@@ -1,6 +1,6 @@
 # DESIGN — consent-driven crash review
 
-**Hitya, 2026-08-12**, after Razek reported crashing twice while zoning with
+**The guild lead, 2026-08-12**, after a member reported crashing twice while zoning with
 Mimic running:
 
 > *"ideally we would be able to review any of the crash reports that are on the
@@ -165,7 +165,7 @@ grab-bag: the client tears the world down, something still reaches for the
 player, and it dies on the way out. It shows up in every Zeal version in the
 corpus over 19 months, so it is not a regression in any particular build.
 
-**Razek's crashes are in the data, and they are their own signature.** All 29 of
+**a member's crashes are in the data, and they are their own signature.** All 29 of
 his reports (2026-07-31 → 2026-08-12, including the pair he reported) carry one
 fingerprint: `0x6ef` in `kernelbase.dll` at `+9f54`, Zeal 1.4.2 — and the four
 that kept their context all read `Game state: ff`, `Zone ID: ffffffff`,
@@ -189,13 +189,13 @@ not build correlations across the archive on those fields.
 
 ⚠ **`Multiple Crashes` is the handler re-entering and it destroys the evidence.**
 0 of 64 such rows carry a zone, skin, character or game state — Zeal cannot
-safely re-read game state on the second pass. It is 25 of Razek's 29. That is a
+safely re-read game state on the second pass. It is 25 of a member's 29. That is a
 concrete, cheap upstream ask independent of the crash itself: *carry the context
 captured on the first pass into the re-entrant report.*
 
 ## 8. SOLVED — the `0x6ef` crash is the Windows audio stack, not Zeal (2026-08-12)
 
-Hitya sent the actual crash zip for the 16:13 ET report. Its `crash_reason.txt`
+The guild lead sent the actual crash zip for the 16:13 ET report. Its `crash_reason.txt`
 is a context-free `Multiple Crashes`, exactly as §7 predicted — but the zip also
 carries `minidump.dmp`, which we had never looked at. `scripts/read-minidump.py`
 answers it outright:
@@ -358,9 +358,8 @@ run, never the answer.
 
 ## 9. Field note — a UI-ini rebuild that stopped one raider's crashes (2026-09-06)
 
-Chadivarius was crashing constantly, rebuilt his UI files, and has not crashed
-since. Hitya sent both generations of `UI_Chadivarius_pq.proj.ini` and
-`Chadivarius_pq.proj.ini` for a diff. Recorded here because it is the first
+a member was crashing constantly, rebuilt his UI files, and has not crashed
+since. The guild lead sent both generations of the affected ini files for a diff. Recorded here because it is the first
 UI-file case with before/after evidence, and because it shows exactly where the
 corpus goes blind: **he has never uploaded a crash report (0 rows), so there is
 no signature to test any of this against.** The upload toggle is off by default.

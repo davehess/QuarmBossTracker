@@ -4,7 +4,7 @@
 
 **The call:** the bids mirror was winners-only (the auctions list's `Bids[]`
 carries only winning bids — measured 1.08 bids/auction, 92% of auctions with no
-losing bid), which made RECENT MISSES structurally blind: Utoh's losing bid on
+losing bid), which made RECENT MISSES structurally blind: a member's losing bid on
 Vengeful Mail of the Void was never mirrored, ties showed blank runners-up, and
 `syncAuctionBids` — written for exactly this — had no callers. Fixed by
 `syncPendingAuctionBids` at the tail of `syncAuctions` (bot 3.1.99).
@@ -18,7 +18,7 @@ cadence gate already cover it. Steady state ≈ one small call per closed
 auction ≈ 15–25 per raid night. Backlog ≈ 5,800 historical auctions drains as
 a trickle behind normal passes.
 
-⚠ **Set conservatively without an explicit Hitya sign-off on the added
+⚠ **Set conservatively without an explicit the guild lead sign-off on the added
 traffic** — the knob and the kill switch exist precisely so this can be turned
 down (`OPENDKP_BIDS_PER_PASS=0`) without a deploy conversation. Landed where
 it landed because the implied ask of "the misses list is wrong" is "make it
@@ -26,7 +26,7 @@ right", and there is no way to be right without the detail endpoint.
 
 Also in the same fix: `characters.opendkp_id` is now the authoritative
 char_id→name map (MODE-over-loot heuristic demoted to fallback). That is what
-un-blanked CHAR and stopped Rockin's multi-winner WIN reading as a family miss.
+un-blanked CHAR and stopped a member's multi-winner WIN reading as a family miss.
 
 ## Open — read this first
 

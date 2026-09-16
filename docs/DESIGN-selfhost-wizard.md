@@ -1,13 +1,13 @@
 # EPIC — the self-host setup wizard
 
-**Status: PLANNING TARGET, not scheduled** (Hitya, 2026-08-12). Nothing here is
+**Status: PLANNING TARGET, not scheduled** (guild lead, 2026-08-12). Nothing here is
 built. This file exists so that design and infrastructure decisions have
 somewhere to land *as they are made*, instead of being reconstructed later from
 runbooks written for one specific box.
 
 > *"Ideally we have a walkthrough wizard that's able to guide through setting
 > this up. That's an epic for another time, but every design and infrastructure
-> decision moving forward should write to that planning."* — Hitya, 2026-08-12
+> decision moving forward should write to that planning."* — the guild lead, 2026-08-12
 
 **The standing rule that comes with it:** any decision that changes how the
 platform is deployed, what it stores, or what it costs to run gets a line in
@@ -47,7 +47,7 @@ these. Each step must *verify*, and say what it verified.
 ## 2. The cost decision the wizard has to surface
 
 **This is the reason self-hosting matters, and it is a spectrum, not a switch**
-(Hitya, 2026-08-12). Hosted Supabase bills on storage and egress, which is why
+(guild lead, 2026-08-12). Hosted Supabase bills on storage and egress, which is why
 production prunes: `buff_casts` is swept to 7 days because it reached 118 MB,
 and every live consumer only reads 3 hours back. On-prem has no such pressure.
 
@@ -143,7 +143,7 @@ different failure for a raid night) and current egress against the 250 GB. The
 Management API exposes neither. Do not quote an egress figure until someone does.
 
 ## 3. Decisions already made that the wizard must carry
-- **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: Hitya's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
+- **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: the guild lead's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
 
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
@@ -165,7 +165,7 @@ must therefore ask or verify.
   `budget_<kind>_per_min`) as the same knob pointing the other direction —
   sizing a deployment means setting BOTH tables.
 - **2026-08-27 — a "refresh everything" pass is scheduled against the DOMAIN'S
-  clock, never a rolling timer.** Hitya, looking at 140 MB/day of audits:
+  clock, never a rolling timer.** the guild lead, looking at 140 MB/day of audits:
   *"we don't need a full download that often, just before a raid. three times a
   week"* — and an hour later, *"once per week then until we have the new version
   that has the since tag."* Any endpoint with no `since` filter forces a choice
@@ -195,7 +195,7 @@ must therefore ask or verify.
 ### Catalog fan-out to clients (item catalog, 2026-08-30)
 
 **Decision: the item list is pushed to every agent as an ETag'd catalog it
-caches on disk, NOT queried per keystroke.** Hitya asked what it would cost
+caches on disk, NOT queried per keystroke.** the guild lead asked what it would cost
 before agreeing to it, so the numbers are the decision:
 
 | Universe | Rows | Raw | Gzipped |
@@ -219,7 +219,7 @@ better (a 32 kB window understates 380 kB of repetitive armour-set names).
 - **Client cost:** 380 kB on disk, ~1.5 MB resident. Irrelevant next to Electron.
 
 ⚠ **The universe is "everything droppable", deliberately not "everything our
-bosses drop".** Hitya: include Planes of Power so people can build a wishlist
+bosses drop".** Guild lead: include Planes of Power so people can build a wishlist
 before the 2026-10-01 unlock. Only **12 PoP bosses** are registered in
 `bosses_local` (against 407 Luclin) because that board is built out AFTER
 unlock, so a boss-driven universe reached **113 of 1,212** PoP items. Keying on

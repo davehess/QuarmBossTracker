@@ -7,7 +7,7 @@ X mid-raid' knowledge, written down and wired to buttons — one officer surface
 instead of knowledge living in three heads."*
 
 **Status:** design + phase-1 implementation (`/admin/console`, additive, web-only).
-Bot-side items in §7.2 are **proposed, not built** — they need Hitya's call and,
+Bot-side items in §7.2 are **proposed, not built** — they need the guild lead's call and,
 in one case, a lever that can silence the fleet.
 
 ---
@@ -169,11 +169,11 @@ not in how bad it sounds.
 | **RB-01** | **A callout didn't fire** | **Very high** — every raid week | High (a tank dies) | ★★★★★ | Callout trifecta (2026-07-17: triggers ran *after* the privacy filter, 9/17 shipped templates could never fire; ✕ silently persisted `enableTriggerTts=false`; relay `nextId` reset made the fleet relay-deaf for hours). `{s}` excluded backticks → Luclin names unmatched. **29/101 enabled triggers `^`-dead, live right now.** Emperor tank-buster pattern matched **0 of 7** real lines. DT pet-victim capture. Cleric-hammer-pet DT false positive. TTS silent on machines where Windows muted a never-clicked overlay window. |
 | **RB-02** | **Parses are missing or wrong** | High | **Very high** (guild memory + DKP) | ★★★★★ | Auth-blip 401 → agent queue drops 4xx as *permanent* → silent fleet-wide loss (P0, 2026-07-17). 409 storm 2026-07-13 (86.8% of bot log lines in the peak 5 min). Charm-pet attribution corruption 2026-07-30 (3.05M phantom damage; totals past boss HP; one corrupted uploader per fight). Death over-count (#134). Lord of Ire split-vs-knit (2026-07-13). `insertIgnoreDuplicates` batch-409 destroying passengers. |
 | **RB-03** | **The bot is down / everything froze mid-raid** | Medium | **Maximal** | ★★★★★ | 2026-07-13: GoTrue 504s wedged the site while Postgres was fine; **web pushes were restarting the bot** (fixed via `railway.toml` watchPatterns); mid-raid restarts amplified the queue backup and the announcer spam. Single replica is load-bearing (a second replica double-posts every Discord message). Readiness gate + graceful drain shipped as #58. |
-| **RB-04** | **One agent is misbehaving** | Medium-high | High | ★★★★☆ | 2026-07-30 charm corruption was **per-uploader** (Hawkner on Blood, Bardtholemu 3.05M, Uilnayar at 01:05). 2026-07-19 chat blackout was **one** elected reporter heartbeating with its character logged out. Version spread today: 9 agent versions in 7 days, oldest still-active 3.4.22. |
+| **RB-04** | **One agent is misbehaving** | Medium-high | High | ★★★★☆ | 2026-07-30 charm corruption was **per-uploader** (a member on Blood, a member 3.05M, a member at 01:05). 2026-07-19 chat blackout was **one** elected reporter heartbeating with its character logged out. Version spread today: 9 agent versions in 7 days, oldest still-active 3.4.22. |
 | **RB-05** | **Guild chat stopped reaching Discord** | Low (mitigated) but **unresolved** | High | ★★★★☆ | The 2026-07-19 blackout, 6:43am–3:16pm. Fixed in #112 by liveness + zone-spread — but the mitigation `dedup_chat=0` **is still on 14 days later**, so the fix has never actually been exercised in prod. |
 | **RB-06** | **Mimic won't update / a bad build is out** | Medium | Medium-high | ★★★☆☆ | 2026-07-30 atom-feed starvation: 14 Deck builds in 2 days pushed every `beta` tag out of GitHub's 10-entry `releases.atom` window → *the entire Windows beta channel* failed with "No published versions on GitHub". 2026-07-09: parking beta at/below stable stops the updater offering betas. `forceStable` nag loop. LKG crash-loop rollback + blacklist. |
 | **RB-07** | **A raider can't get Mimic/Zeal working** | **Highest volume** | Low each | ★★★☆☆ | In-EQ-folder install breaks Zeal DX-hook detection (n=1, 2026-06-12) *and* `detectEqDir()` actively steers people into that layout. Elevation mismatch = silent connect-then-close. `/log on` not set. Token lockout (`/token for:@member` exists precisely for this). Release-announce DMs failed for 15 of 26. |
-| **RB-08** | **Something must ship during the raid window** | Medium | High if fumbled | ★★★☆☆ | The freeze rule itself (Hitya 2026-07-13) and its `[hotfix]` escape hatch; `raid-freeze.yml` is advisory only — Railway/Vercel deploy regardless. |
+| **RB-08** | **Something must ship during the raid window** | Medium | High if fumbled | ★★★☆☆ | The freeze rule itself (guild lead 2026-07-13) and its `[hotfix]` escape hatch; `raid-freeze.yml` is advisory only — Railway/Vercel deploy regardless. |
 | RB-09 | Night thread in the wrong channel / missing | Medium | Low-medium | ★★☆☆☆ | 2026-07-31: v1's parent chain stopped at `RAID_CHAT_CHANNEL_ID`, unset on Railway → night one's threads all landed in #raid-mobs. |
 | RB-10 | Loot / DKP didn't propagate | Medium | High (disputes) | ★★★☆☆ | #138 OpenDKP upsert PG 21000 — whole batches silently never mirrored. #110 "Backpack" incident: 3 deleted awards still live on the site. |
 | RB-11 | A trigger is spamming the raid | Low-medium | Medium-high | ★★☆☆☆ | Ghost callouts (relays riding the durable FIFO, served for 60s from `posted_at`); the DT false positive; the `voice` action retry loop. |
@@ -286,8 +286,8 @@ is absurd, a name is on it who wasn't there, or the total exceeds the boss's HP.
 distinguish "query failed" from "token not found", so during a Supabase 5xx
 window valid agents got 401 — **and the agent's durable queue drops 4xx as
 permanent.** A blip became permanent fleet-wide data loss. The 2026-07-13 409
-storm. The 2026-07-30 charm-pet corruption (Jankzer top DPS while mezzing;
-Bardtholemu 3.05M; encounter total 70k past the boss's HP pool). The `#134`
+storm. The 2026-07-30 charm-pet corruption (a member top DPS while mezzing;
+a member 3.05M; encounter total 70k past the boss's HP pool). The `#134`
 death over-count. Lord of Ire's split-vs-knit dedup.
 
 **Branch first: MISSING or WRONG?** They have completely different causes.
@@ -421,8 +421,8 @@ reporter has silently stopped covering its stream, or someone is on an agent
 version old enough to be missing a correctness fix.
 
 **Grounded in.** 2026-07-30: exactly **one corrupted uploader per fight**
-(whoever's stale `petOwners` residue matched that fight's mob names) — Hawkner on
-Blood, Bardtholemu 3.05M, Uilnayar at 01:05. 2026-07-19: **one** elected chat
+(whoever's stale `petOwners` residue matched that fight's mob names) — a member on
+Blood, a member 3.05M, a member at 01:05. 2026-07-19: **one** elected chat
 reporter heartbeating while its character was logged out darkened guild chat for
 8.5 hours. Today: 9 agent versions across the fleet in 7 days, oldest
 still-active **3.4.22**.
@@ -538,7 +538,7 @@ diagnostic card — they walk the checkpoints for you.
 ### RB-08 — "It's raid night and this has to ship" *(outline)*
 
 **Symptom.** Something is broken *now* and the fix is a code change.
-**Grounded in.** Hitya 2026-07-13. Any `main` push restarts production
+**Grounded in.** the guild lead 2026-07-13. Any `main` push restarts production
 surfaces the raid depends on.
 **Decide first: does it *have* to ship?** A tuning flag, a guild-trigger row, a
 Mimic Mail notice, and a reporter pin all take effect in 60s–10min **with no
@@ -731,7 +731,7 @@ the link; the action happens somewhere with more friction.
 - **Mimic Mail composition** stays on `/admin/notices` — the console links to it
   pre-filled. Broadcasting to every Mimic deserves the page that's designed for it.
 
-**Class D — needs Hitya's sign-off before it exists at all.** See §7.2.
+**Class D — needs the guild lead's sign-off before it exists at all.** See §7.2.
 
 ### 5.6 Where the console does *not* go
 
@@ -770,8 +770,8 @@ for anything it doesn't own. Three surfaces, one source of truth.
 | # | Proposal | Why | Size | Needs |
 |---|---|---|---|---|
 | **N1** | **Bot heartbeat row.** Bot upserts `bot_kv['health_snapshot']` every ~60s with `{ready, uptime_s, version, discord_ping_ms, supabase_breaker, budgets, deployed_at}` | Today the console cannot distinguish "bot down" from "quiet night" without a cross-service HTTP call — and `BOT_BASE_URL` on Vercel is a **documented repeat foot-gun** (`opendkp-actions.ts` migrated *away* from it for exactly this reason). `bot_kv` needs no env var and staleness of the row *is* the down signal. | ~25 lines, `index.js` | Bot change — **not taken in this pass** (charter: #171 owns `index.js`) |
-| **N2** | **Flag expiry.** `flag_expires_<key>` (ISO string) in the same tuning jsonb; `_overlayTuningMap()` drops a flag past its expiry | The direct fix for `dedup_chat` sitting at 0 for 14 days. Mitigations should default to temporary. String tuning keys are precedent (`hide_main_names`, `reporter_pin_*`, `agent_release_ref_beta`). | ~15 lines bot + UI | Bot change + Hitya (does an auto-revert mid-raid scare anyone?) |
-| **N3** | **Per-uploader encounter quarantine.** `uploader_quarantine` (comma discord-ids); the encounter handler still **stores** the contribution but stamps `contributions.quarantined=true` so `merge_encounter_players` skips it | 2026-07-30's failure was per-uploader, and there is **no lever for it**. Budgets are per-kind; token revoke is nuclear. Quarantine is reversible (clear the flag, re-run the merge) and **lossless** — which is why it must be *quarantine*, not drop. | ~40 lines bot + RPC arg | **Hitya's call.** This is the one proposal that touches the durable parse path. |
+| **N2** | **Flag expiry.** `flag_expires_<key>` (ISO string) in the same tuning jsonb; `_overlayTuningMap()` drops a flag past its expiry | The direct fix for `dedup_chat` sitting at 0 for 14 days. Mitigations should default to temporary. String tuning keys are precedent (`hide_main_names`, `reporter_pin_*`, `agent_release_ref_beta`). | ~15 lines bot + UI | Bot change + the guild lead (does an auto-revert mid-raid scare anyone?) |
+| **N3** | **Per-uploader encounter quarantine.** `uploader_quarantine` (comma discord-ids); the encounter handler still **stores** the contribution but stamps `contributions.quarantined=true` so `merge_encounter_players` skips it | 2026-07-30's failure was per-uploader, and there is **no lever for it**. Budgets are per-kind; token revoke is nuclear. Quarantine is reversible (clear the flag, re-run the merge) and **lossless** — which is why it must be *quarantine*, not drop. | ~40 lines bot + RPC arg | **the guild lead's call.** This is the one proposal that touches the durable parse path. |
 | **N4** | **Budget UI.** Surface `budget_<kind>_per_min` / `budget_enforce_<kind>` / `flag_disable_budgets` on the console (Class B) | They're in `_FLAG_OVERRIDE_KEYS` (Mimic can write them) but have **no web UI** — SQL-only. That's an inconsistency, not a design. | small, web-only | — |
 | **N5** | **`flag_raid_hold` on the web.** It's in `_FLAG_OVERRIDE_KEYS` and on Mimic's card, but missing from `/admin/overlays` | Same inconsistency. | tiny, web-only | — |
 | **N6** | **Console link on the pre-raid Discord line** | The 19:30 post is the one time an officer reliably looks. Append `wolfpack.quest/admin/console`. | 1 line, `index.js` | Bot change |
@@ -810,7 +810,7 @@ a health snapshot.
 **If N3 (quarantine) is taken**, it needs one column and the merge RPC updated:
 
 ```sql
--- ONLY IF Hitya approves N3.
+-- ONLY IF the guild lead approves N3.
 alter table public.contributions
   add column if not exists quarantined boolean not null default false;
 create index if not exists contributions_quarantined_idx
@@ -889,7 +889,7 @@ N2 flag expiry, N3 quarantine, N6 pre-raid Discord link.
 
 ---
 
-## 10. For Hitya
+## 10. For the guild lead
 
 1. **`dedup_chat` has been 0 for 14 days.** #112 shipped the liveness +
    zone-spread fix specifically so it could go back on, and the fleet passed

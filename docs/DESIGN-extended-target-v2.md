@@ -1,6 +1,6 @@
 # Extended Target — keep our tags, show engage time, and expose the hate seats
 
-From Hitya, 2026-08-10 (Emperor Ssraeshza, an ~866s fight):
+From the guild lead, 2026-08-10 (Emperor Ssraeshza, an ~866s fight):
 
 > *"We lost our tags naturally from the game memory but the mobs still had their
 > tags, in game. We can keep ours on the extended targets as well. This is a long
@@ -57,7 +57,7 @@ is the rampage target, then the **whole seating order** is worth showing, becaus
 it says who inherits rampage when the current victim dies, feigns or is healed
 off.
 
-**Joining the list is not just damage.** The four routes Hitya listed, all of
+**Joining the list is not just damage.** The four routes the guild lead listed, all of
 which are observable:
 
 | Route | Signal we already parse |
@@ -94,9 +94,9 @@ reducers land.
 
 ## 4. Mez ownership (2026-08-10, the Zlakas sequence)
 
-Hitya: *"The Tag on that should be JANKZER MEZ not just MEZ in the extended
-target."* Then the failure that proves it: Jankzer died, **his mez state dropped
-off the row immediately**, and Zlakas showed as un-mezzed and went for Fargan —
+Guild lead: *"The Tag on that should be JANKZER MEZ not just MEZ in the extended
+target."* Then the failure that proves it: a member died, **his mez state dropped
+off the row immediately**, and Zlakas showed as un-mezzed and went for a member —
 a cleric 5.8s into a Complete Heal.
 
 Two defects:
@@ -120,20 +120,20 @@ silently goes quiet instead.
 
 From the same sequence, where three consecutive CH landings decided the fight:
 
-- **Put the MT's health on the CH chain overlay.** Hitya: *"i know we have this
+- **Put the MT's health on the CH chain overlay.** Guild lead: *"i know we have this
   in multiple places but its for a reason."* The chain is where the clerics look;
   the number that decides whether the chain is keeping up is on a different
   window. Duplication is correct here.
-- **Interrupts are invisible on the chain.** Fargan's CH was interrupted halfway
+- **Interrupts are invisible on the chain.** a member's CH was interrupted halfway
   when an un-mezzed add hit him. The chain kept his slot as if the cast were
   coming. An interrupted CH should mark the slot immediately — the next heal was
   6.2s out, with 7.2s behind it, against a tank at 45%.
-- **Slot ownership gets overwritten by whoever calls the number.** Mcdorf held
-  001; Pyxil called a CH as 001 and **replaced Mcdorf in the overlay**.
+- **Slot ownership gets overwritten by whoever calls the number.** a member held
+  001; a member called a CH as 001 and **replaced a member in the overlay**.
   *SHIPPED agent 3.5.61, refined 3.5.62.* Both claimants are kept in
   first-claimed order under an ORDER CONFLICT banner — and after a live test
-  (Hitya, 2026-08-12) they render as **one row each** rather than a merged
-  `Mcdorf / Stupidric…`, because the joined row truncated the names AND
+  (guild lead, 2026-08-12) they render as **one row each** rather than a merged
+  `Norwood / Stupidric…`, because the joined row truncated the names AND
   collapsed two different casts into one bar: you could see the slot was
   contested but not what either cleric was doing. Each row now runs its own cast
   timer and carries its own mana. Still display-only; the officer-pushed
@@ -141,13 +141,13 @@ From the same sequence, where three consecutive CH landings decided the fight:
   as §3 of `FINDINGS-2026-08-10-trigger-overlay.md` (the roster parser trusting
   the shout over the roster) — a call should update the SLOT's timing, not
   reassign who owns it, unless the roster says so.
-  **Display half SHIPPED (agent 3.5.61, 2026-08-11, Hitya's call):** both
-  claimants render on the row in first-claimed order ("Mcdorf / Pyxil") and the
+  **Display half SHIPPED (agent 3.5.61, 2026-08-11, the guild lead's call):** both
+  claimants render on the row in first-claimed order ("a member / a member") and the
   overlay banners **ORDER CONFLICT** (yellow letters, red outline). Claimants
   self-evict after 120s of silence so a corrected mis-call heals on its own.
   Tests: `test/ch-slot-conflict.test.js`. The structural half — the
   officer-pushed authoritative rotation — is still the open question above.
-- **A countdown froze**: Lenolshot's Weapon Shield sat at `2s` for longer than
+- **A countdown froze**: a member's Weapon Shield sat at `2s` for longer than
   two seconds. Same family as the stale cross-client HP — a timer whose source
   stopped updating keeps rendering its last value instead of expiring.
 
@@ -164,7 +164,7 @@ overlay that goes quiet and one that lies.
 
 ## 6. CH overlap detection must be measured LOCALLY, then merged on true time
 
-Hitya, 2026-08-10: *"We need an alert when two people have casts that appear to
+The guild lead, 2026-08-10: *"We need an alert when two people have casts that appear to
 be going at the same time or nearby on CHs, and we have it built in but everyone
 mutes it because the gap is small, and physics won't allow us to hit those
 timings on a round trip. this comparison needs to be local."* And: *"that local
@@ -183,7 +183,7 @@ every machine in the raid.
 
 **Local is the accurate source.** EQ writes `<Name> begins to cast a spell.` into
 *every nearby client's* log — visible in the raid captures as consecutive lines
-for Jankzer, Ghalix, Mcdorf and others. So one observer sees several clerics'
+for a member, a member, a member and others. So one observer sees several clerics'
 cast STARTS, all stamped by **one clock**, with the agent's own sub-second
 arrival time. Comparing two of those is exact: no skew, no round trip. That is
 where overlap detection belongs.
@@ -212,9 +212,9 @@ sighting drive a real-time callout that a local one could.
 
 ### The related ask: name who should DI
 
-From the same sequence — DI fired on Currygoat and Emma's CH landed just after,
-which is what saved the tank. Hitya: *"That would have been the perfect callout
-for Emma OR Aimey to DI because Fargan was being hit, Uilnayar was landing his
+From the same sequence — DI fired on a member and a member's CH landed just after,
+which is what saved the tank. Guild lead: *"That would have been the perfect callout
+for a member OR a member to DI because a member was being hit, a member was landing his
 heal already, bwavair was 3.4 seconds in, mcdorf and stupidrichard 6.4 seconds
 into cast each."*
 

@@ -1,6 +1,6 @@
 # Outcome-driven backfill requests
 
-**Ask (Hitya, 2026-08-02, verbatim):** *"backfill requests based on outcomes
+**Ask (guild lead, 2026-08-02, verbatim):** *"backfill requests based on outcomes
 where we have bad data would be great. if one player reported 200% of a mobs HP
 was taken while others had less, we should look for the bystanders that were
 there from the tick that we saw doing melee damage, ideally tanks or those that
@@ -44,7 +44,7 @@ So this work has two halves and the second one is the one that makes it useful:
 
 ### 1.1 The HP pool is a real physical ceiling — and it has to be the RIGHT pool
 
-Hitya's stated signal is damage vs the mob's health. We have that:
+The guild lead's stated signal is damage vs the mob's health. We have that:
 `eqemu_npc_types.hp`. First, is it any good?
 
 Across **224 confirmed kills with ≥4 uploads**, the *consensus* (median upload)
@@ -84,7 +84,7 @@ Where the ladder is ambiguous (four `#Innoruuk` bodies in zone 76) the ladder's
 highest-level pick is also the **largest** pool, which is the conservative
 direction: a bigger pool means fewer flags.
 
-### 1.2 Signal 1 — INFLATED (the case Hitya described)
+### 1.2 Signal 1 — INFLATED (the case the guild lead described)
 
 > One upload claims more damage than the mob has health **and** more than
 > everyone standing next to it saw.
@@ -101,7 +101,7 @@ legitimately. It is not a round number picked for feel — it is "outside the
 observed physical range, with margin".
 
 **Why 1.50 on the sibling median.** Distance culling means every parser sees a
-*subset*, so the LOW side is normal and uninformative (Jabouti routinely uploads
+*subset*, so the LOW side is normal and uninformative (a member routinely uploads
 6k on a 200k fight — one stray hit before he zoned). The HIGH side is the
 interesting one, because a parser cannot see damage that did not happen. 1.50
 sits above the widest honest spread we see (a parser whose window covers a phase
@@ -122,7 +122,7 @@ because in that case *every* upload overshoots together and nobody disagrees.
 The conjunction is what carries the signal, and the test suite pins both
 directions.
 
-The nearest miss in the whole corpus is Trakanon, 2026-07-30 01:03: Bardtholemu
+The nearest miss in the whole corpus is Trakanon, 2026-07-30 01:03: a member
 at **2.04× the sibling median but only 1.28× the pool**. Held back by the anchor
 — and correctly so: a 31-second trash kill where three of six uploads clear the
 median gate is a spread, not corruption.
@@ -154,7 +154,7 @@ for this one") — now it can do something about it.
   preview — "35 players named vs 21 consensus" is the line that makes the
   diagnosis obvious to a human.
 - **"Names nobody else saw" (ghost players).** Looked promising and isn't. On
-  Hawkner's Blood upload 13 of 35 names appear in no other contribution — but
+  a member's Blood upload 13 of 35 names appear in no other contribution — but
   that's just what a *wider view* looks like, and a wider view is a virtue. Not a
   gate; worth surfacing as a detail if the officer preview ever grows.
 - **Duration outlier.** Real (the over-long session blobs: 1,739s next to a 634s
@@ -169,7 +169,7 @@ for this one") — now it can do something about it.
 
 ## 2. Targeting — who do we ask?
 
-Hitya's three criteria, ordered by how hard they are to fake, plus two gates
+The guild lead's three criteria, ordered by how hard they are to fake, plus two gates
 that have nothing to do with the fight.
 
 ### Hard gates (fail any → not a candidate, no score)
@@ -195,34 +195,34 @@ that have nothing to do with the fight.
 |---|---|---|
 | +40 | ≥20 melee swings on the target | in melee range, sustained |
 | +25 | observed for ≥60% of the fight | a log that starts halfway can't adjudicate the first half |
-| +20 | Warrior / Paladin / Shadow Knight | Hitya's "ideally tanks" — they stand in the middle of everything |
+| +20 | Warrior / Paladin / Shadow Knight | the guild lead's "ideally tanks" — they stand in the middle of everything |
 | +15 | took ≥2,000 damage from the mob (`raw_parse.defenders`) | actually tanked it, not just near it |
-| +10 / −25 | never died / died | Hitya's "those that did not die" — a corpse stops seeing the fight |
+| +10 / −25 | never died / died | the guild lead's "those that did not die" — a corpse stops seeing the fight |
 
 Ties break on melee hits, then damage taken, then name — so two runs of the same
 scan ask the same people. Deaths come from `dedupParseDeaths()`
 (`utils/parseDeaths.js`, the #134 phantom-namesake rule) — reused, not
-re-derived, so an NPC called "Syphon" can't disqualify the raider called Syphon.
+re-derived, so an NPC called "a member" can't disqualify the raider called a member.
 
 ### What it picks on the real incident
 
-Blood of Ssraeshza, 2026-07-30, suspect Hawkner:
+Blood of Ssraeshza, 2026-07-30, suspect A member:
 
 | rank | who | class | melee hits | def hits | took | died | runs agent |
 |---|---|---|---|---|---|---|---|
-| 1 | **Ashieron** | Paladin | 82 | 140 | 20,231 | no | yes |
-| 2 | **Peopleslayer** | Warrior | 76 | 30 | 15,325 | no | yes |
-| 3 | **Abrahms** | Paladin | 53 | 80 | 12,997 | no | yes |
-| — | ~~Currygoat~~ | Warrior | 358 | 153 | 40,244 | no | **no** |
+| 1 | **a member** | Paladin | 82 | 140 | 20,231 | no | yes |
+| 2 | **a member** | Warrior | 76 | 30 | 15,325 | no | yes |
+| 3 | **a member** | Paladin | 53 | 80 | 12,997 | no | yes |
+| — | ~~a member~~ | Warrior | 358 | 153 | 40,244 | no | **no** |
 
-Currygoat was the **main tank** and by every combat measure the best possible
+a member was the **main tank** and by every combat measure the best possible
 witness — and he is correctly dropped, because he has never uploaded a
 contribution. Asking him would have produced pending row #93. (The test asserts
 both halves: that he's excluded, and that he'd rank first if he ran the agent.)
 
-Emperor, suspect Bardtholemu → Peopleslayer (1,589 melee swings, 1,492 defender
-hits, 735k damage taken — he tanked the whole 18 minutes), Naggato, Ashieron.
-Rhag`Mozdezh, suspect Uilnayar → Kurp, Jankzer, Fittir.
+Emperor, suspect a member → a member (1,589 melee swings, 1,492 defender
+hits, 735k damage taken — he tanked the whole 18 minutes), a member, a member.
+Rhag`Mozdezh, suspect a member → a member, a member, a member.
 
 ### Volume caps
 
@@ -321,12 +321,12 @@ upload history. That's what stops backlog #2.
 ## 5. Why officer-triggered, and not automatic
 
 **Chosen: `/backfillscan`, preview by default, no timer, no midnight-chain hook,
-no DM.** Automatic filing is deliberately left unwired pending Hitya's sign-off.
+no DM.** Automatic filing is deliberately left unwired pending the guild lead's sign-off.
 
 Reasoning:
 
 - The task brief is explicit that an automatic system that reaches raiders needs
-  Hitya's sign-off before it fires. Officer-triggered is the version that can
+  The guild lead's sign-off before it fires. Officer-triggered is the version that can
   ship today and be reviewed by watching it, not by arguing about it.
 - Nothing here DMs anyone even when applied — delivery stays pull-based into the
   target's own agent dashboard, exactly as officer-filed requests have always
@@ -366,13 +366,13 @@ found and who it *would* ask, with a "Preview only" footer.
 | 00:45 | Vyzh\`dra the Exiled | 16 | 0.96 | 1.00 | |
 | 00:48 | Vyzh\`dra the Cursed | 16 | 0.97 | 1.05 | |
 | 00:58 | Rhag\`Zhezum | 13 | 0.98 | 1.26 | |
-| **01:05** | **Rhag\`Mozdezh** | 14 | **1.69** | **1.74** | **Uilnayar** |
+| **01:05** | **Rhag\`Mozdezh** | 14 | **1.69** | **1.74** | **a member** |
 | 01:25 | Arch Lich Rhag\`Zadune | 13 | 1.08 | 1.09 | |
 | 01:40 | Xerkizh The Creator | 19 | 0.98 | 1.01 | |
 | 01:53 | Terror | 12 | 0.29 | 1.15 | *(thin)* |
 | 01:59 | High Priest of Ssraeshza | 1 | 0.99 | — | |
-| **02:35** | **Blood of Ssraeshza** | 7 | **1.90** | **2.38** | **Hawkner** |
-| **02:42** | **Emperor Ssraeshza** | 13 | **2.44** | **2.61** | **Bardtholemu** |
+| **02:35** | **Blood of Ssraeshza** | 7 | **1.90** | **2.38** | **a member** |
+| **02:42** | **Emperor Ssraeshza** | 13 | **2.44** | **2.61** | **a member** |
 | 03:26 | Ashenbone Broodmaster | 1 | 0.00 | — | *(thin)* |
 | 03:35 | Lord of Ire | 2 | 0.77 | 1.73 | |
 
@@ -405,7 +405,7 @@ median 0, mean 0.8, max 4. A detector that fired on every fight would be
 useless; this one is quiet on more than half of all raid nights.
 
 The 35 historical flags are not noise either — the pre-July cluster
-(`Moash` 9.7×, `Chadivarius`/`Ashaiya` 63× on one King Tormax, `Squeekie` 7.7×)
+(9.7×, 63× on one King Tormax, 7.7×)
 is the finishing-blow / session-blob over-count class that
 `merge_encounter_players`'s median rewrite (2026-07-14) and agent 3.3.32 were
 written to survive. The detector finds that class too, without being told about

@@ -4,7 +4,7 @@ Captured 2026-06-05. This is the design research + future-state for bringing a
 DnDOverlay-class trigger/event system into our stack, plus the related overlay
 work (charm tracker, buff timers, mob-info). Read this before resuming.
 
-Source studied: **DnDOverlay** by Luter (`gitlab.com/zeraxx1/DnDOverlay`) — an
+Source studied: **DnDOverlay** by a member (`gitlab.com/zeraxx1/DnDOverlay`) — an
 Electron EQ overlay with a powerful event-driven trigger engine. We have his
 full config export (7 `.dno` files) + key source files mapped.
 
@@ -12,7 +12,7 @@ full config export (7 `.dno` files) + key source files mapped.
 
 ## The core architectural decision (READ FIRST)
 
-**Luter's model is fully LOCAL** — every player runs the whole engine, parses
+**a member's model is fully LOCAL** — every player runs the whole engine, parses
 their own log, fires their own overlays + local TTS. Synchronized + low-latency
 because it's one process. Cost: every player sets up overlays/triggers/TTS.
 
@@ -81,7 +81,7 @@ local — those are about you, not the raid.
 
 ## Parsing — the de-risked landmine
 
-Luter's `{{mob}}`/`{{player}}`/`{{ally}}` macros are load-bearing (every regex
+a member's `{{mob}}`/`{{player}}`/`{{ally}}` macros are load-bearing (every regex
 uses them). The trap is **silent failures** on EQ name quirks. His solution
 (confirmed): **canonicalize on ingest** —
 1. NBSP → space, collapse whitespace, trim trailing spaces (his
@@ -134,15 +134,15 @@ expose the pet's buff window, so we **infer**:
     link Quarmy per char). Format: `AAIndex / Rank` header, then `<aaId> <rank>`
     rows until `Checksum`. The id is the Mac ability id (matches
     `altadv_vars.eqmacid`, TBD-verify).
-  - **IMPORTANT correction:** AA `211` is **NOT** SCR — Hopeya (enc), Melting
-    (bard), AND Hitya (monk) all have `211→3`; a monk wouldn't buy SCR, so 211
+  - **IMPORTANT correction:** AA `211` is **NOT** SCR — a member (enc), a member
+    (bard), AND the guild lead (monk) all have `211→3`; a monk wouldn't buy SCR, so 211
     is a universal AA. **Do not assume IDs — resolve from `eqemu_altadv_vars`.**
     Our three test characters have **0 SCR**, so their pet buffs correctly show
     **minimum (base) duration, +0%**.
   - **Extended Enhancement** is a *gear* focus (not in AAIndex) — resolve from
     Quarmy worn items → `eqemu_items` focus. Follow-up after the AA path.
 - Quarmy AA parser is **not built yet** (`parseQuarmyWishlist` is still a
-  placeholder). Three Quarmy files (Hopeya/Melting/Hitya) are saved as test
+  placeholder). Three Quarmy files (a member/a member/the guild lead) are saved as test
   fixtures.
 
 **First steps tomorrow:** verify the AA sync populated → query

@@ -25,7 +25,7 @@ migration `20260809030000`). Chart not built yet. Data audit 2026-08-06, re-audi
 > normalisation at INGEST** so `encounter_id` is populated going forward. Until
 > then the read-side window join cannot separate repeat pulls of one boss.
 
-**Ask:** Hitya 2026-08-06 (napkin sketch) — "retool the timeline … capture the
+**Ask:** the guild lead 2026-08-06 (napkin sketch) — "retool the timeline … capture the
 parse's damage timeline and who is main tank or rampage throughout the fight,
 then allow us to highlight sections of the damage meter by class(es), toggleable
 via some classes on the side, or have a search list with all of the damage
@@ -40,8 +40,8 @@ dealers from the raid to see where they were in that."
  25 ┤     ╲░░░░░░░░░░░░░░╱╲
   0 ┤                      ╲___
     └────────────────────────────  X = fight time
-MT   ├──────── Abrahms MT ────────┤       swimlane: who held MT, when
-RAMP ├─ Syko ─┼─── Hitya ───┼ Syko ┤      swimlane: who was rampage target
+MT   ├──────── Fenwick MT ────────┤       swimlane: who held MT, when
+RAMP ├─ tank A ┼── tank B ──┼ tank A ┤   swimlane: who was rampage target
 ```
 
 ## What we ALREADY have (measured, not assumed)
@@ -51,7 +51,7 @@ back to 2026-07-02.** One row per uploader per tick, `per_player` jsonb keyed by
 character:
 
 ```json
-{"Abrahms": {"dmg":333,"swing":333,"spell":0,"proc":0,"heal":0,"healRaw":0,
+{"Fenwick": {"dmg":333,"swing":333,"spell":0,"proc":0,"heal":0,"healRaw":0,
              "took":3611,"tookMax":1200,"pet_owner":null,"procDetail":{}}}
 ```
 
@@ -172,13 +172,13 @@ Diabo Xi Xin Thall 189.6% — and all three share one property: the boss was
 pulled several times inside the window. Step 2 is the fix. Until it lands, do
 not present the chart as authoritative for repeat-pull fights.
 
-## Open decision for Hitya
+## Open decision for the guild lead
 
 The sketch says class toggles *or* a searchable damage-dealer list. These are
 different interactions and both are cheap once the tidy series exists:
 
 - **Class toggles** answer "where did the rogues do their damage?"
-- **Player search** answers "where was *Wabumkin* in this fight?"
+- **Player search** answers "where was *a member* in this fight?"
 
 Recommend shipping BOTH against one selection model — a set of highlighted
 characters, with class buttons as bulk selectors over that set. One highlight
@@ -186,7 +186,7 @@ mechanism, two ways to fill it, no second code path.
 
 ## Long-term storage — the two-tier model (measured 2026-08-06)
 
-Hitya: "can we come up with a longterm storage model that would shrink this
+Guild lead: "can we come up with a longterm storage model that would shrink this
 but still maintain that sort of timeline view?" Yes, and the numbers are lopsided
 enough that the answer is easy.
 
@@ -226,7 +226,7 @@ is an argument for sparsity, not against it.)
 **HOT — `encounter_threat_snapshots`, unchanged.** It feeds the live overlays and
 must stay exactly as it is. Add **retention only**.
 
-> **DECIDED 2026-08-06 (Hitya): Model B, with a 2-MONTH hot window**, not the
+> **DECIDED 2026-08-06 (the guild lead): Model B, with a 2-MONTH hot window**, not the
 > 14 days originally proposed — *"I'd like to keep 2 months full before tuning
 > down."* Costed at the measured 12.2 MB/day:
 >
@@ -373,9 +373,9 @@ The chart labels them rather than pretending.
 
 ---
 
-## 2026-08-16 — Hitya's first-format review (shipped web 1.1.60)
+## 2026-08-16 — the guild lead's first-format review (shipped web 1.1.60)
 
-Hitya reviewed `/parses/4d0d6dd2-…` (the restless burrower) and asked for five
+The guild lead reviewed `/parses/4d0d6dd2-…` (the restless burrower) and asked for five
 changes. All shipped in one pass; every claim below was verified against that
 fight's real rows (456 timeline rows, 224 events) in a Playwright harness
 before landing.
@@ -397,10 +397,10 @@ before landing.
    capture vs 5s buckets) — `mainTankLane` now bridges a SINGLE empty bucket
    when the same tank holds both sides. The 385s→end gap was REAL: the mob
    dealt zero damage for the last ~3.5 minutes while the raid kept hitting it
-   (Hitya's "it ran, i bet" — correct). Real gaps (≥10s) render as faint
+   (the guild lead's "it ran, i bet" — correct). Real gaps (≥10s) render as faint
    dashed rects with a hover tooltip ("nobody taking hits mm:ss–mm:ss") plus a
    legend line. A gap across a tank CHANGE is never bridged.
-4. **The FightTimeline marker chart is gone from `/parses/[id]`** (Hitya:
+4. **The FightTimeline marker chart is gone from `/parses/[id]`** (Guild lead:
    "useless in this format") — replaced by `FightEventLog.tsx`: a collapsible
    `<details>` LIST of deaths + raid events + callouts in order, with names,
    per-type dots in the same #105 hues, and consecutive repeats folded into
@@ -412,7 +412,7 @@ before landing.
    time-axis chart on `/parses/[id]` anymore, which freed the right pad
    (PADR 148) for the label gutter.
 
-**Denoted for the future (Hitya, same review):** per-type / per-callout
+**Denoted for the future (the guild lead, same review):** per-type / per-callout
 toggles on the event list — "many of these are probably personal to one
 character." Needs client state and probably a per-user preference; when it
 lands, `FightEventLog` goes `'use client'` and the grouped rows become the
@@ -420,7 +420,7 @@ toggle rows.
 
 ### Second round, same night (web 1.1.62 — staged during the raid freeze)
 
-Hitya reviewed the list live on `/parses/d951b081` (the ST trash-merge card)
+The guild lead reviewed the list live on `/parses/d951b081` (the ST trash-merge card)
 from a phone mid-raid-prep. Three measured problems, all pinned in
 `test/fight-events.test.js` over the new pure module `web/lib/fightEvents.ts`:
 
@@ -435,15 +435,15 @@ from a phone mid-raid-prep. Three measured problems, all pinned in
    Hit From Here / Out of Range / Range family (the standing "noisy
    eqlogparser triggers" set) fires on YOUR positioning, not the raid's
    fight — filtered from the list entirely, with an honest "N range-check
-   callouts hidden" note in the summary line. Hitya: *"the too far/can't see
+   callouts hidden" note in the summary line. Guild lead: *"the too far/can't see
    callouts shouldn't be shown."*
 3. **Folding that survives alternation, and no doubled names.** "(copy)"
    trigger clones normalize into their base label; folding is now WINDOWED
    per (kind, label, actor) — 45s — so alternating rampage targets
-   (→ Moash / → Timberowl / → Moash…) collapse per-target instead of
+   (→ a member / → a member / → a member…) collapse per-target instead of
    defeating consecutive-run folding; and the actor suffix is suppressed
    when the label already opens with it. Row layout tightened for phones
    (the KIND text column dropped — the colored dot carries it via tooltip).
 
-Hitya's verdict on round one: *"the timeline view was fine to have it just
+The guild lead's verdict on round one: *"the timeline view was fine to have it just
 needed a better look"* — the list stays, this is the look.

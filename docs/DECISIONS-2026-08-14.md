@@ -11,18 +11,18 @@ first and reach back for the older detail.
 
 | Item | State |
 |---|---|
-| **P1 RESOLVED — bot 3.1.52 self-healing encounter persistence (task #47 SHIPPED 2026-08-17)** | Hitya's morning backfill exposed the SECOND half of the P1: backfill uploads skip the bosses.json match by design (so replays can't re-arm timers), so they slug the display name — `nanzata_the_warder` ≠ curated `nanzata_warder`, `the_progenitor` ≠ `progenitor` — meaning even patched bosses could not be backfilled, and his replay's Progenitor + **Master of the Guard** (a 6th ST named, 128120, now in the table) were refused too. Fix in `_resolveBossForPersist` (bot 3.1.52, 10 source-slice tests): curated id → slug → article-stripped slug → EXACT eqemu name match reusing a curated row by npc_id → **self-registration for first-time content**. Refusal now only for names with no exact/unambiguous eqemu match (the junk filter that keeps a mis-parsed 'Labanab' out). **Remaining recovery:** Hitya to re-run his backfill (heals Progenitor + Master of the Guard + old trash); the 4 pending requests (Chadivarius/Bardtholemu/Dafeet/Lowang) recover **The Final Arbiter**; verify cards as they land. Sentinel invariant stands (#42). Stage branch `claude/sharp-lamport-dC0TW-stage-web-1-1-62` still needs deletion from a local session (cloud 403s ref deletes) |
-| **3-tick short raids until PoP (Hitya, 2026-08-16 live)** | Alt raids and Seru+misc nights run **3 ticks / 2 hours** until Planes of Power. Platform tick math unaffected (RA is count-agnostic); CLAUDE.md schedule line updated; deploy freeze deliberately kept full-length. Night resolved: the kite failed → keyed off Zlandicar → ST tonight, Tunare never engaged (no wipe to classify). The **Ventani dance verified live** (all 9 breaths) and recalibrated 15→13s from measurement; Caustic Mist fired 3× on Zlandicar's shared Putrefy Flesh line (predicted — scoping call still Hitya's); fold zero-lag; no phantoms; `dot_stacking_exempt` local-session backfill queued (Partil's stacking post) |
-| **Architect's rebuild — U1/U2 DONE, O1 remains** | 2026-08-16: Hitya ordered U1 + the unique index and ratified *"discord was a source of semi-truth. now it should just be a projection."* Landed same night: `loot_observations_award_uniq` (560 rows deduped+backed up, dup groups **0**, re-insert refused 23505), one paginator per runtime + the 85-site over-cap RATCHET (`test/db-read-discipline.test.js`), `rollup_threat_ranks` anon-execute revoked (it WRITES), 4 per-row `auth.uid()` policies → InitPlan. Remaining: the ratchet backlog (priority table in ARCHITECT doc Part II), the Discord-projection migration order (state.json → roster → hate → parses), O1 review 2026-12-01 |
-| **Data Sentinel — designed, awaiting go (prime-agent reviewed)** | Hitya asked how prime-agent-style long-running actions fit for continuous ingest review during raids + reviewing live test cases. Verdict in `docs/DESIGN-sentinel.md`: don't adopt the stack (a code-executing daemon next to the service-role key, LLM tokens on quiet ticks, no good host), adopt the two loops — deterministic invariant battery IN THE BOT (10 seeds, each cited to a real incident; live probe tonight: **47 unlabeled roll sessions in 14d** — the 3.5.84 fix hasn't reached the fleet), judgment via post-raid scheduled Claude sessions. Plus the **live-test promotion rule**: a ship's production-verification check graduates into the battery in the same change. ~3–4h to build, deliberately NOT before Sunday's 2.5.0 raid. Needs: officer-thread choice + go (task #42) |
-| **2.5.0 raid watch — Tunare/ST/Vulak (docs/RAID-WATCH-2026-08-16.md)** | Pre-raid review shipped 08:xx ET: 4 slow triggers explicitly re-anchored + compiler-verified firing (and a DOCTRINE CORRECTION found doing it: agent 3.5.46's `_rewriteAnchorsForRawLine` auto-heals bare `^` at compile — the Aug-4 '37 dead' measurement predates it, **runbook needs re-measuring**); Final Arbiter + Progenitor added to the board (ST has FIVE named, we had four); Herald-of-Vulak false-timer risk retired by reading the exact-match code. Tonight's headline hazard: TWO Tunares, one name, tied 500k HP (127001 lootless kite / 127002 the kill) — watch for knit encounters + loot-tab binding. **#27 gate CLEARED** (178 chars on 3.5.80) — restore is now purely Hitya's noise call, ST trash night is when they'd matter. ANSWERED same morning: the dance keys on **Ventani's Freezing Breath** (845, from `eqemu_npc_spells`), cycle **~15s measured from our own Aug-7 Ventani kill** — trigger pair upgraded to Hitya's spec (timer 15s, "Melee out" at T-3, "A O E" on land). Also shipped: **`/preraiddrill`** (the #75 drill from Discord, read-only) + CHANGELOGS. Fight Cards designed (`docs/DESIGN-fight-cards.md`) — the Quartermaster's original concept, task #43 |
-| **Does guild membership belong in front of PERSONAL tooling?** | Hitya, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs Hitya's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
+| **P1 RESOLVED — bot 3.1.52 self-healing encounter persistence (task #47 SHIPPED 2026-08-17)** | the guild lead's morning backfill exposed the SECOND half of the P1: backfill uploads skip the bosses.json match by design (so replays can't re-arm timers), so they slug the display name — `nanzata_the_warder` ≠ curated `nanzata_warder`, `the_progenitor` ≠ `progenitor` — meaning even patched bosses could not be backfilled, and his replay's Progenitor + **Master of the Guard** (a 6th ST named, 128120, now in the table) were refused too. Fix in `_resolveBossForPersist` (bot 3.1.52, 10 source-slice tests): curated id → slug → article-stripped slug → EXACT eqemu name match reusing a curated row by npc_id → **self-registration for first-time content**. Refusal now only for names with no exact/unambiguous eqemu match (the junk filter that keeps a mis-parsed 'Labanab' out). **Remaining recovery:** the guild lead to re-run his backfill (heals Progenitor + Master of the Guard + old trash); the 4 pending requests (a member/a member/a member/a member) recover **The Final Arbiter**; verify cards as they land. Sentinel invariant stands (#42). Stage branch `claude/sharp-lamport-dC0TW-stage-web-1-1-62` still needs deletion from a local session (cloud 403s ref deletes) |
+| **3-tick short raids until PoP (guild lead, 2026-08-16 live)** | Alt raids and Seru+misc nights run **3 ticks / 2 hours** until Planes of Power. Platform tick math unaffected (RA is count-agnostic); CLAUDE.md schedule line updated; deploy freeze deliberately kept full-length. Night resolved: the kite failed → keyed off Zlandicar → ST tonight, Tunare never engaged (no wipe to classify). The **Ventani dance verified live** (all 9 breaths) and recalibrated 15→13s from measurement; Caustic Mist fired 3× on Zlandicar's shared Putrefy Flesh line (predicted — scoping call still the guild lead's); fold zero-lag; no phantoms; `dot_stacking_exempt` local-session backfill queued (Partil's stacking post) |
+| **Architect's rebuild — U1/U2 DONE, O1 remains** | 2026-08-16: the guild lead ordered U1 + the unique index and ratified *"discord was a source of semi-truth. now it should just be a projection."* Landed same night: `loot_observations_award_uniq` (560 rows deduped+backed up, dup groups **0**, re-insert refused 23505), one paginator per runtime + the 85-site over-cap RATCHET (`test/db-read-discipline.test.js`), `rollup_threat_ranks` anon-execute revoked (it WRITES), 4 per-row `auth.uid()` policies → InitPlan. Remaining: the ratchet backlog (priority table in ARCHITECT doc Part II), the Discord-projection migration order (state.json → roster → hate → parses), O1 review 2026-12-01 |
+| **Data Sentinel — designed, awaiting go (prime-agent reviewed)** | the guild lead asked how prime-agent-style long-running actions fit for continuous ingest review during raids + reviewing live test cases. Verdict in `docs/DESIGN-sentinel.md`: don't adopt the stack (a code-executing daemon next to the service-role key, LLM tokens on quiet ticks, no good host), adopt the two loops — deterministic invariant battery IN THE BOT (10 seeds, each cited to a real incident; live probe tonight: **47 unlabeled roll sessions in 14d** — the 3.5.84 fix hasn't reached the fleet), judgment via post-raid scheduled Claude sessions. Plus the **live-test promotion rule**: a ship's production-verification check graduates into the battery in the same change. ~3–4h to build, deliberately NOT before Sunday's 2.5.0 raid. Needs: officer-thread choice + go (task #42) |
+| **2.5.0 raid watch — Tunare/ST/Vulak (docs/RAID-WATCH-2026-08-16.md)** | Pre-raid review shipped 08:xx ET: 4 slow triggers explicitly re-anchored + compiler-verified firing (and a DOCTRINE CORRECTION found doing it: agent 3.5.46's `_rewriteAnchorsForRawLine` auto-heals bare `^` at compile — the Aug-4 '37 dead' measurement predates it, **runbook needs re-measuring**); Final Arbiter + Progenitor added to the board (ST has FIVE named, we had four); Herald-of-Vulak false-timer risk retired by reading the exact-match code. Tonight's headline hazard: TWO Tunares, one name, tied 500k HP (127001 lootless kite / 127002 the kill) — watch for knit encounters + loot-tab binding. **#27 gate CLEARED** (178 chars on 3.5.80) — restore is now purely the guild lead's noise call, ST trash night is when they'd matter. ANSWERED same morning: the dance keys on **Ventani's Freezing Breath** (845, from `eqemu_npc_spells`), cycle **~15s measured from our own Aug-7 Ventani kill** — trigger pair upgraded to the guild lead's spec (timer 15s, "Melee out" at T-3, "A O E" on land). Also shipped: **`/preraiddrill`** (the #75 drill from Discord, read-only) + CHANGELOGS. Fight Cards designed (`docs/DESIGN-fight-cards.md`) — the Quartermaster's original concept, task #43 |
+| **Does guild membership belong in front of PERSONAL tooling?** | the guild lead, on the mule upload: *"Being in the guild should not be a limiter for someone making a new character and trying to use the inventory function or target info overlays or any of those things outside of raids."* The claim rule is fixed (below); **the two sign-in gates are not** — someone outside the guild can't reach `/me`, so the upload they need is behind a door they can't open. Splitting personal surfaces from guild surfaces changes who can see guild data, so it needs the guild lead's call on shape: guest role, a separate personal tier, or Mimic-only with no web account (task #40) |
 | **Roll labels — one line of chat is still unreachable** | Agent 3.5.84 reads commas, tier lists and bare `Item 333` calls, but `"Do a 777 if you want a Shield of the Immaculate"` names the item AFTER the number mid-sentence, and every rule that would catch it also catches real chatter. It stays unlabeled — the same line the `roll_set_overrides` migration cites as why officer edits exist. Also accepted: a roll for TURN ORDER (`Holytomato 111, Emoo 222…`) labels player names as items |
-| **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on Hitya's word |
+| **Task #27 — the 8 muted trash triggers** | Gate is *"the fleet is on the fix"*, not *"the fix exists"*. Mimic 2.5.0 (agent 3.5.80) shipped 04:08 UTC and **nobody has installed it yet** — flipping the rows on now puts the wall back for every raider still on 2.4.x, which is exactly what the gate prevents. Also a raid-noise call, not a code change: it reaches the whole fleet in ~2 min with no review. Restore after the fleet has updated, on the guild lead's word |
 | **Mimic 2.5.0 — first raid** | The whole 2.5 line (History tab, CH ✕, dashboard split, pet fold, backup-log rule) is browser-verified and unit-tested but has not been through a raid. Sunday is the first real test |
-| **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (Bwavair: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
+| **Stale live-state can shadow fresher inferred buffs** | A character who returns after a swap keeps their OLD `character_live_state` buff list (A member: 9 buffs, 2h old) because `live?.buffs ?? inferred` prefers any live row over inference. Not changed — she only has 2 observed casts, so falling back would paint a cleric RED "no buffs" and that is a worse lie than a timestamped stale list. Revisit if inferred coverage improves |
 | **Item icons DISABLED — needs a local session** | The atlas maps to the wrong icon ids (633 = boots → shovel). Off behind `ICON_ATLAS_DISABLED` since web 1.1.50. Repack via `scripts/pack-item-icons.ps1` on the EQ machine, check `uifiles/default` is stock, and VERIFY 633 is boots before re-enabling |
-| **Who rewrites guild chat?** | Hawkner + Syko ship punctuation-stripped, capitalised copies of lines they witnessed. Not our code (same agent build on both sides). Have Hawkner grep his own eqlog for one of the lines — that says client-side vs ours in one step |
+| **Who rewrites guild chat?** | a member + a member ship punctuation-stripped, capitalised copies of lines they witnessed. Not our code (same agent build on both sides). Have a member grep his own eqlog for one of the lines — that says client-side vs ours in one step |
 | **Zeal `EPERM` → ask about compat mode FIRST** | XP compatibility mode on eqgame.exe kills the pipe, and the guide we recommend tells people to turn it on. Mechanism unconfirmed; `lastError` still isn't surfaced anywhere in the UI |
 | **#204–#207** | Graduate to stable after beta test + one raid cycle |
 | **Item icons** | Above icon 1723 render blank — count how many real items are affected. Atlas is 1.6 MB; `pngquant` would roughly halve it |
@@ -33,22 +33,22 @@ first and reach back for the older detail.
 
 ## The number is what makes it a CH chain
 
-**The call (Hitya, live on the Aten Ha Ra pull).** Pyxil was spot-healing the
+**The call (the guild lead, live on the Aten Ha Ra pull).** a member was spot-healing the
 RAMPAGE target and shouting each heal:
 
 ```
-[R] [Pyxil]: TUNARE'S RENEWAL Inc to Timberowl - 98% Mana Left
+[R] [Quillon]: TUNARE'S RENEWAL Inc to Lorne - 98% Mana Left
 ```
 
 Tunare's Renewal is in `CH_EQUIVALENT_SPELLS`, so the agent auto-assigned her a
-chain slot the first time it saw one. She landed on **006 — where Mcdorf
+chain slot the first time it saw one. She landed on **006 — where a member
 actually was** — which lit the ORDER CONFLICT banner and dropped a druid who was
 nowhere near the rotation into the middle of it. *"She shouldn't be placed back
 onto the CH chain even though she's posting CHs."*
 
 **Where it landed.** The auto-slot branch is gone (agent 3.5.79). An un-numbered
 personal-macro shout now becomes a **spot heal**, whatever the spell is, keeping
-its CH-equivalent label so the banner can read "Pyxil spot healing (Druid CH)".
+its CH-equivalent label so the banner can read "a member spot healing (Druid CH)".
 A druid who calls a number still joins the rotation exactly as before.
 
 **Why the old reasoning was wrong, since it sounded right.** The auto-slot
@@ -60,7 +60,7 @@ exactly like a working one until a beat is missed.
 
 ## ✕ removes someone from the chain — and keeps them off
 
-**The call (Hitya).** *"For the Pyxil scenario we should be able to remove from
+**The call (the guild lead).** *"For the a member scenario we should be able to remove from
 the chain via a [x]Remove button."*
 
 `POST /api/chchain/remove {num,name}` → `removeChChainSlot`. The half that is
@@ -78,9 +78,9 @@ missing a real cleric kills the tank:**
 - the block dies with the chain (5-minute idle reset) — it never carries into
   the next pull;
 - on a **contested** slot the row survives and passes to the remaining claimant.
-  This matters more than it looks: the LAST caller owns the row, so in Pyxil's
+  This matters more than it looks: the LAST caller owns the row, so in a member's
   own scenario she is the row's owner by the time anyone reaches for the ✕.
-  Deleting the slot would have taken Mcdorf's 006 down with her.
+  Deleting the slot would have taken a member's 006 down with her.
 
 ## ⚠ Hover-reveal controls do not work on a repainting overlay
 
@@ -108,11 +108,11 @@ countdown.
 
 ## Loot rows really are missing — 758 of them
 
-**The question (Hitya).** Target Info → Loot showed *Silver Band of Secrets*
-with no "N× won" pill, but Kazmodon had won it. *"Are we missing rows of loot
+**The question (the guild lead).** Target Info → Loot showed *Silver Band of Secrets*
+with no "N× won" pill, but a member had won it. *"Are we missing rows of loot
 drops?"*
 
-**Yes, and the boundary is exact.** Kazmodon won it at **raid 98561 for 150
+**Yes, and the boundary is exact.** a member won it at **raid 98561 for 150
 DKP** — present in `opendkp_loot`, which syncs automatically and was current
 (last fetch 02:22 that night, up to raid 100367). The Loot tab reads
 `loot_observations`, which **stops at raid 96805 / 2026-06-04**: **758 awards
@@ -127,7 +127,7 @@ surface, but do not mistake it for the source.
 **Where it lands.** Immediate: `/backfillopendkploot days:90`, no deploy needed.
 Durable: a scheduled fold of new `opendkp_loot` rows into `loot_observations`
 reusing the existing NPC resolution (single-NPC-drop = confident, multi =
-ambiguous) — task #37, bot, after the raid freeze. Hitya: *"Yes we need that."*
+ambiguous) — task #37, bot, after the raid freeze. Guild lead: *"Yes we need that."*
 
 **The shape to recognise.** A derived table fed only by a manual command looks
 identical to a working one right up until someone notices a specific missing
@@ -138,13 +138,13 @@ command needs a staleness alarm or an automatic feeder.**
 
 ## A character swap ends when they log back in — and POSITION is what proves it
 
-**The report (Hitya, live).** */raid* showed **Bwavair** under "Not seen /
-offline — *(swapped to Bardtholemu)*", 2h ago, and Group 2 rendered "5 chars"
+**The report (the guild lead, live).** */raid* showed **a member** under "Not seen /
+offline — *(swapped to a member)*", 2h ago, and Group 2 rendered "5 chars"
 without her. In game she was right there in Group 2 with a full health bar.
 The roster entry and the game disagreed because a second raider was playing
 that cleric at the time — a routine hand-off the roster had no way to see.
 
-**Everything upstream was correct.** Earlier in the night Bardtholemu really did
+**Everything upstream was correct.** Earlier in the night a member really did
 play her toon on his client, and the same-pid detector in `apps/mimic/main.js`
 stamped a legitimate swap at **00:12:40**. The defect is that nothing ever ends
 a swap: `swapFor` honoured the marker for a flat six hours, and a marked
@@ -155,8 +155,8 @@ character has `raidGroup` nulled and `inRaid:false`, which files them under
 
 | | group | loc | sampled |
 |---|---|---|---|
-| Bwavair | 2 | 109.13, −1705.99 → 109.14, −1705.95 (moving) | 0.3s ago |
-| Bardtholemu | 8 | −392, −567 | 0.3s ago |
+| a member | 2 | 109.13, −1705.99 → 109.14, −1705.95 (moving) | 0.3s ago |
+| a member | 8 | −392, −567 | 0.3s ago |
 
 Two bodies, two groups, two positions, same instant, both moving. **One client
 cannot do that**, so the swap was over hours earlier.
@@ -179,14 +179,14 @@ cases, including the ones that must NOT clear it.
 
 ## Live combined damage comes off the in-fight view
 
-**The call (Hitya).** *"Instead of displaying the combined damage during the
+**The call (the guild lead).** *"Instead of displaying the combined damage during the
 fight, perhaps we just have the overlay give the last few mobs in a history tab
 that can be opened up once it's properly deduped — the overcount from time skew
 and whatnot is too much to account for in a live stat review and it is
 legitimately doubling damage."*
 
-Bot 3.1.44's corroboration estimator got the headline numbers right (Atlasius
-99,979 vs his own 100k; Hitya, Damyu and Wabumkin all within ~1%), but
+Bot 3.1.44's corroboration estimator got the headline numbers right (a member
+99,979 vs his own 100k; the guild lead, a member and a member all within ~1%), but
 corroboration is a settling process and mid-fight it has not settled. The
 decision is about **when** a number is shown, not whether the estimator works:
 combined damage becomes a post-fight artifact, and the live view stays on what
@@ -204,7 +204,7 @@ the explicit ask and because every hour it waits is more availability of the
 kind that has no second copy.
 
 **2. Mimic 2.5.0 stable.** Graduated the whole beta line — nine agent versions,
-3.5.72 → 3.5.80 — because the two things Hitya hit live during the raid (the CH
+3.5.72 → 3.5.80 — because the two things the guild lead hit live during the raid (the CH
 chain picking up a spot-healer, the damage meter doubling people) were both
 fixed on beta and both worth the fleet having before Sunday. A meaningful line
 takes a minor bump.
@@ -277,7 +277,7 @@ the destination, on the day it ships — not by trusting green CI.
 
 ## Holding the file is the claim
 
-**The call (Hitya, overruling me the same session).** The mule upload's
+**The call (the guild lead, overruling me the same session).** The mule upload's
 `claimVerdict` shipped with four cases; three were uncontroversial and the
 fourth was wrong:
 
@@ -285,7 +285,7 @@ fourth was wrong:
 
 My reasoning was that an OpenDKP row with no `discord_id` is a *real member who
 merely hasn't linked Discord*, so linking it to whoever uploaded a file would
-silently transfer someone's character. It sounded careful. Hitya:
+silently transfer someone's character. It sounded careful. Guild lead:
 
 > "We should at least take the data and allow them to see their characters in
 > their account if they have the inventory files and are not already claimed by
@@ -328,13 +328,13 @@ other, and it's the one that doesn't break the legitimate case.
 **The general form is still open** (top table, task #40): the *claim* rule no
 longer gates on guild membership, but the *site* still does — two sign-in gates
 stand in front of `/me`, so a non-member cannot reach the upload at all. That
-one is Hitya's call on shape, not a flag flip.
+one is the guild lead's call on shape, not a flag flip.
 
 ---
 
 ## The Quartermaster shows you YOUR raiders, not everyone's
 
-**The call (Hitya).** *"quartermaster should display raider information for that
+**The call (the guild lead).** *"quartermaster should display raider information for that
 user not for everyone. it can display for everyone for admins."*
 
 Board 1 (utility-kit coverage) shipped in #82 naming every owner of every kit
@@ -376,7 +376,7 @@ are actually policy.
 
 ## A roll call is not a pipe-separated list
 
-**The report (Hitya).** *"These rolls didn't get consolidated to loot in the
+**The report (the guild lead).** *"These rolls didn't get consolidated to loot in the
 website but did on here"* — the /rolls page showing eleven sessions for the
 night, every one **unlabeled roll**, LOOTED BY empty, next to a Command Center
 screenshot of the same four ranges.
@@ -387,10 +387,10 @@ screenshot of the same four ranges.
 if (!line || line.indexOf('|') === -1) return;   // the convention always separates with |
 ```
 
-The convention did not always separate with `|`. Canopy's call was:
+The convention did not always separate with `|`. a member's call was:
 
 ```
-[G] [Canopy]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
+[G] [Kestrelle]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
 ```
 
 **Why one missing label emptied two columns.** `attributeLoot()` opens with
@@ -398,7 +398,7 @@ The convention did not always separate with `|`. Canopy's call was:
 the JOIN KEY to `looted_items`. No name, no loot attribution, no LOOTED BY. The
 loot itself had been captured perfectly all along: all four Tears were in
 `looted_items`, and two of them went to someone **other** than the roll winner
-(333 Canopy → looted by Gnomistakes, 444 Fargan → looted by Mammy), which is
+(333 a member → looted by a member, 444 a member → looted by a member), which is
 precisely the case the column exists to show. The data was there; the join
 wasn't.
 
@@ -427,7 +427,7 @@ nearly proof of intent; a comma is not, and the parser now reads every chat
 line. So I swept it over every captured line within 20 minutes of a live roll
 set — the actual blast radius — and it wanted to label four of them:
 
-- `I think we were randoming 100.  Hawkner got a 22 I think?`
+- `I think we were randoming 100.  Cordove got a 22 I think?`
 - `You didn't even bid 100. Doubt!`
 - `DI - Guts 100 )`
 - `Do a 777 if you want a Shield of the Immaculate`
@@ -462,7 +462,7 @@ loot attribution, so the two pass/re-roll cases now show their real looter.
 
 ## Agent-Reach evaluated for blocked sources — NO for cloud, marginal for local
 
-**The question (Hitya).** Would `github.com/Panniantong/Agent-Reach` let us read
+**The question (the guild lead).** Would `github.com/Panniantong/Agent-Reach` let us read
 sources our cloud sessions can't reach?
 
 **What it is.** MIT-licensed CLI that routes "read this URL / platform" through a
@@ -525,7 +525,7 @@ measurement above.
 
 ## "Discord was a source of semi-truth. Now it should just be a projection."
 
-**The call (Hitya, 2026-08-16, verbatim above).** Ratifies the architect doc's
+**The call (guild lead, 2026-08-16, verbatim above).** Ratifies the architect doc's
 decision #1 as direction, not just assessment. The rule going forward: **no new
 durable state in Discord messages or state.json — Postgres is the home, Discord
 renders it.** Migration of the existing estate is opportunistic and ordered by
@@ -557,7 +557,7 @@ have not designed in" — designed in tonight):
 
 ## Fleet counts are PLAYERS, not characters
 
-**The call (Hitya, 2026-08-16).** *"when we talk about who's using the
+**The call (guild lead, 2026-08-16).** *"when we talk about who's using the
 releases, character counts mean almost nothing. use distinct player counts by
 discord ID."*
 
@@ -592,7 +592,7 @@ Two claims re-checked under the new metric, both survive but read differently:
 
 ---
 
-## 2026-08-16 raid night — 3-tick short raids until PoP (Hitya, live mid-raid)
+## 2026-08-16 raid night — 3-tick short raids until PoP (the guild lead, live mid-raid)
 
 **The call:** *"tonight's raid should only be 3 ticks, new change. two types
 of raids are going to be 3 ticks, 2 hours. alt raids and Seru+misc nights,
@@ -603,7 +603,7 @@ code: the platform's tick math is count-agnostic — roster RA is distinct
 ticks attended ÷ total valid ticks, and nothing assumes 4 per night. Updated
 the CLAUDE.md raid-schedule policy line. Checked and deliberately NOT
 changed: the 19:30→00:30 ET deploy freeze (short raids can spill; shortening
-it is a separate call for Hitya), `utils/timezone.js` RAID_WINDOW
+it is a separate call for the guild lead), `utils/timezone.js` RAID_WINDOW
 (20:30–23:30, cosmetic consumers), `utils/raidNight.js` night bucketing
 (day-keyed, unaffected).
 
@@ -614,7 +614,7 @@ it is a separate call for Hitya), `utils/timezone.js` RAID_WINDOW
   "…flesh begins to liquefy."). Predicted in the trigger's notes; now
   observed. Open call: leave it (rare fight, 3 callouts of noise) or find a
   scoping mechanism — the LINE cannot distinguish the two spells, so a
-  text-level fix does not exist; deferred to Hitya, NOT a mid-raid edit.
+  text-level fix does not exist; deferred to the guild lead, NOT a mid-raid edit.
 - **The Tunare kite FAILED — no kill.** As of ~20:35 ET no Tunare encounter
   row exists at all. Post-raid: check what (if anything) recorded once
   agents flush, and classify any wipe engagement so it stays out of kill
