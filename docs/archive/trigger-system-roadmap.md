@@ -167,9 +167,9 @@ ambiguous for same-named trash (no instance id).
 
 1. **Dragon Punch attribution — FIXED (display anonymized).** Root cause: the
    proc line `"<target> is stricken by the force of a dragon."` names only the
-   target, never the kicker, and is **bystander-visible** — boxed/grouped chars
-   all saw Hitya's proc and the agent credited each log owner (Bwavair 111,
-   Hitya 2), both mis-attributing AND over-counting. Fix (web `/fun` only): count
+   target, never the kicker, and is **bystander-visible** — every grouped
+   character saw the same proc and the agent credited each log owner, both
+   mis-attributing AND over-counting. Fix (web `/fun` only): count
    **DISTINCT `(target, event_ts)`** = actual physical repositions, shown as an
    anonymous guild total ("Mobs have been repositioned by Dragon Punch X times").
    No names, no double-count, works on existing data. *Minor follow-up:* the

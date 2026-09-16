@@ -377,8 +377,9 @@ overlays missing exactly one of these.
 PvP-event lockouts named for the war gods name-match Plane of Tactics bosses and
 will synthesize phantom timers if you skip the gate.
 
-**Adoption is counted in PLAYERS, never characters.** One person runs 3–12
-characters, so character counts inflate roughly 10×. The honest figure is
+**Adoption is counted in PLAYERS, never characters.** `agent_upload_stats` is
+keyed per character while an install is keyed per person, so a character count
+overstates adoption by roughly an order of magnitude. The honest figure is
 distinct `uploaded_by_discord_id`.
 
 ---

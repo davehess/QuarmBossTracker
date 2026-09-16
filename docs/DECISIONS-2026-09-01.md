@@ -28,9 +28,9 @@ would report it incapable. All three ids count (`spawn_id` / `target_id` /
 `pet_id`) — a client parked at the guild lobby with nothing targeted still
 streams its own `spawn_id` every frame.
 
-**Counted in players, never characters** (per the 2026-08-16 rule). One person
-runs several characters off ONE Zeal install, so a character count overstates adoption
-roughly tenfold.
+**Counted in players, never characters** (per the 2026-08-16 rule). A Zeal
+install reports once per install rather than once per character, so a character
+count overstates adoption.
 
 **"Not yet proven" renders as nothing, not as a red failure.** It genuinely does
 not distinguish stock Zeal from a patched client that hasn't fought yet, and

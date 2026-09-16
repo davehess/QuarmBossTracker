@@ -413,7 +413,7 @@ next touch one rather than assuming a missing row means a missing doc.
   recharging on Currynote: *"Currynote is currygoat's bard, he does not have
   defensive."* The protective tracker reads raid-chat announces and credits
   whoever SPOKE the line — which is right, and is why it works for tanks who run
-  no macro — but Currygoat's announce went out on his bard box.
+  no macro — but that announce went out from a different character.
   `_protClassAllows` gates on the speaker's `/who` class, folding level titles
   through `normalizeClass` first (a 65 bard reports "Maestro").
   ⚠ **The lock has exactly ONE entry and that is deliberate.** Suppressing a
@@ -638,8 +638,8 @@ next touch one rather than assuming a missing row means a missing doc.
   incapable. The version chases adoption; only "this client actually sent an
   id" answers capability. Both facts are sticky (`coalesce` / `greatest`):
   proving it once is enough, and an upload carrying neither must not retract it.
-  ⚠ Counted in **players, not characters** — one person runs several characters off one
-  Zeal install. Details in `HOW-ITS-BUILT.md`.
+  ⚠ Counted in **players, not characters** — a Zeal install reports once per
+  install, not once per character. Details in `HOW-ITS-BUILT.md`.
 - **Extended Target: same-name mobs separated by spawn id (bot 3.1.106 · Mimic
   2.6.4, 2026-09-01).** At ≥2 distinct `(zone, target_id)` pairs for one name,
   the id REPLACES the HP-clustering guess, and the overlay swaps the amber `*`
@@ -3426,7 +3426,7 @@ next touch one rather than assuming a missing row means a missing doc.
     to the agent's slow table with magnitudes, and the slow badge now names the
     class (`BST SLOW 50%`).
   - **CH chain**: a stale log file is no longer "you" (3-minute freshness gate —
-    this is what made Dant hear Aimey's callouts on their shared machine), and
+    this is what made one raider hear another's callouts), and
     bracketed heal targets parse.
   - **`golden-log.yml` had never run once** — invalid YAML (colon-space in a
     plain scalar) since the day it was added. Fixed, plus

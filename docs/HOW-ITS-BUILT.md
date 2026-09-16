@@ -130,9 +130,9 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ### Reporter fleet: one account, several machines, one slot (bot 3.1.102)
 
-The fleet registry keys on discord_id, so a player's second PC used to clobber
-their first on every heartbeat — Hitya's two machines flip-flopped Canopy
-(idle, 320h since a log line) against Rockin (live, 4s) in the officer panel.
+The fleet registry keys on discord_id, so a second machine on one account used
+to clobber the first on every heartbeat — an idle machine (320h since a log
+line) flip-flopped against a live one (4s) in the officer panel.
 `_reporterClaimAllowed` now gates the ingest: **the freshest LOG holds the
 slot, not the latest heartbeat.** Ages are projected to now; a 5s slack keeps a
 lone idle machine updating its own entry (without it, an unchanged log ties
@@ -141,7 +141,7 @@ always claimable; agents too old to send `last_line_ms` keep last-writer
 behavior between themselves but never displace a signalled incumbent. A refused
 machine loses only the panel row — roles and elections key on the shared
 discord_id either way. Two machines BOTH actively logging still trade the slot
-within the slack; that is one member on two characters, not a bug. Behaviour-tested by
+within the slack; that is one account signalling from two machines, not a bug. Behaviour-tested by
 executing the helper (`test/reporter-claim.test.js`).
 
 ### Raid timers & boards
@@ -540,8 +540,8 @@ parked at the guild lobby still streams its own `spawn_id` every frame.
 
 **Board half** (`/admin/agents`, 🧿 Zeal card): players active 24h, players
 reporting a version, players proven capable — **counted in PLAYERS, never
-characters** (one person runs several characters off one Zeal install, so a character
-count overstates adoption ~10×). Per-character rows get a `zeal <ver> 🎯` chip.
+characters** (a Zeal install reports once per install, not once per character,
+so a character count overstates adoption). Per-character rows get a `zeal <ver> 🎯` chip.
 ⚠ **"Not yet proven" is rendered as nothing, not as a red failure** — it does
 not distinguish stock Zeal from a patched client that has not fought yet, and
 showing that ambiguity as a failure sends officers chasing people with nothing

@@ -567,15 +567,15 @@ taking each player's most-recent upload:
 
 | version | players (7d) | active 48h |
 |---|---|---|
-| 3.5.85 (beta) | 1 | 1 — Hitya |
+| 3.5.85 (beta) | 1 | 1 |
 | 3.5.83 (beta) | 1 | 0 |
 | **3.5.80 (stable 2.5.0)** | **16** | **15** |
 | 3.5.72 | 1 | 1 |
 | 3.5.71 | 4 | 0 (idle since Thu; auto-update on launch) |
 | older | 2 | 0 |
 
-The 178 characters were 16 players' character rosters — each player plays
-several characters distinctly, a ~10× inflation. Standing
+The character figure counts rows in a per-character table, not people, which
+is where the order-of-magnitude inflation comes from. Standing
 rule (folded into CLAUDE.md domain policies): any adoption gate, graduation
 argument, or sentinel invariant that counts the fleet counts distinct
 discord ids at their latest-upload version.
@@ -584,8 +584,8 @@ Two claims re-checked under the new metric, both survive but read differently:
 - **#27's "fleet is on the fix" gate**: 15 of 17 active players are ≥3.5.80 —
   still cleared, but "88% of players" is the honest phrasing, not "178
   characters."
-- **The beta channel is effectively ONE player** — Hitya's boxes, plus one
-  tester last seen Friday. That is a structural fact about how much real-raid
+- **The beta channel is effectively ONE player**, plus one tester last seen
+  Friday. That is a structural fact about how much real-raid
   validation beta features get before graduation, and part of why the
   beta→stable cadence leans on browser/unit verification: the beta "fleet"
   cannot exercise a raid.

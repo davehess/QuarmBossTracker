@@ -215,8 +215,7 @@ Recommend a small `item_expansion` lookup table seeded from PQDI/known drops,
 filled incrementally. Until then, show a flat recent-items list.
 
 ### 🧙 CothBot labels + parked location (owner 2026-06-02)
-Some characters are CoTH-bot porter mages (Okigetyou, Pearlclutcher, etc.) —
-parked to Call-of-the-Hero raiders. Add a per-character flag + a free-text
+Some characters are porter mages parked to Call-of-the-Hero raiders. Add a per-character flag + a free-text
 "parked location" so /me (and rosters) can label them. Schema: add
 `characters.is_cothbot boolean default false` + `characters.cothbot_location
 text`. UI: a toggle + location field on /me per character (officer or
