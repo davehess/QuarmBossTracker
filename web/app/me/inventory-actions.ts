@@ -87,13 +87,13 @@ async function writeInventory(canonical: string, rows: ParsedInvRow[]): Promise<
   return {};
 }
 
-// ── Multi-file mule upload (Hitya 2026-08-14) ───────────────────────────────
+// ── Multi-file mule upload (the guild lead, 2026-08-14) ───────────────────────────────
 // "Can you make it so that anyone can upload additional inventory files from
 // the /me page and have it bring in their other characters/mules?"
 //
 // The per-character upload above cannot do this: it is gated on the character
 // ALREADY existing in `characters` with your discord_id, which is exactly what
-// a bank mule is not. Pyxil's (Archanistsells, Lavenderna, Pyxtrade…) exist
+// a bank mule is not. A member's (Archanistsells, Lavenderna, Pyxtrade…) exist
 // only as files on her disk — no logs, no /who sighting, no OpenDKP row — so
 // the FILE is the only evidence they exist and its NAME the only claim of
 // whose they are.

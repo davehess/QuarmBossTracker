@@ -30,7 +30,7 @@ async function loadRecent() {
   try {
     const sb = supabaseAdmin();
     // Curated bosses only — same filter as /parses, or the widget fills with
-    // whatever someone farmed overnight (Hitya 2026-08-19).
+    // whatever someone farmed overnight (the guild lead, 2026-08-19).
     const curated = await curatedNpcIds(sb);
     const { data } = await sb
       .from('encounters')

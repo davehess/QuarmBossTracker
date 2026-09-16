@@ -1,6 +1,6 @@
 // utils/backfillScan.js — outcome-driven backfill requests (#f3).
 //
-// Hitya, 2026-08-02: "backfill requests based on outcomes where we have bad
+// The guild lead, 2026-08-02: "backfill requests based on outcomes where we have bad
 // data would be great. if one player reported 200% of a mobs HP was taken while
 // others had less, we should look for the bystanders that were there from the
 // tick that we saw doing melee damage, ideally tanks or those that did not die."
@@ -11,9 +11,9 @@
 //            evidence, not from a hunch. Grounded in the 2026-07-30 incident
 //            (docs/STATUS.md, `state.petOwners` night-accumulation): one
 //            uploader per fight carried stale charm residue and reported far
-//            more damage than the mob could possibly have — Hawkner 380k on a
-//            200k Blood of Ssraeshza, Bardtholemu 3.05M on the Emperor,
-//            Uilnayar 338k on Rhag`Mozdezh.
+//            more damage than the mob could possibly have — a member 380k on a
+//            200k Blood of Ssraeshza, a member 3.05M on the Emperor,
+//            A member 338k on Rhag`Mozdezh.
 //
 //   TARGET — ask the two or three people whose log would actually SETTLE it,
 //            not everyone who was in the zone. The 92 stale `pending` rows in
@@ -28,7 +28,7 @@
 // DMs anybody — delivery stays pull-based, exactly as it is today.
 //
 // NOTHING HERE FIRES ON A TIMER. `/backfillscan` previews by default and only
-// writes when an officer passes `apply:true`. Automatic filing needs Hitya's
+// writes when an officer passes `apply:true`. Automatic filing needs the guild lead's
 // sign-off first — see docs/DESIGN-outcome-backfill.md §"Why officer-triggered".
 //
 // Layers (so the whole thing is unit-testable with no Supabase and no Discord —
@@ -245,7 +245,7 @@ function meleeHitsOf(rollupRow) {
 /**
  * Rank the bystanders whose log would settle this fight.
  *
- * Hitya's three criteria, in order of how hard they are to fake:
+ * The guild lead's three criteria, in order of how hard they are to fake:
  *   1. THERE, AND IN RANGE — melee swings landed on the target (>= 20, so a
  *      stray proc doesn't qualify), or they were being hit by it. You cannot
  *      melee a mob you were culled away from, so this is a positional proof,

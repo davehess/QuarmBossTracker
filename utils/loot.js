@@ -255,7 +255,7 @@ function enrichLootItems(items, dropHistory, dropTable) {
 // bossName:    string or null (shown in embed title)
 // bidMinutes:  number (default 20) — auction duration hint shown in footer
 // Guild's OpenDKP base + the live-auctions page every loot post links to
-// (Hitya 2026-07-31 — raiders kept asking where to watch the clock).
+// (the guild lead, 2026-07-31 — raiders kept asking where to watch the clock).
 // Defaults to https://wolfpack.opendkp.com/#/auctions.
 function opendkpBaseUrl()     { return `https://${process.env.OPENDKP_CLIENT_NAME || 'wolfpack'}.opendkp.com`; }
 function opendkpAuctionsUrl() { return `${opendkpBaseUrl()}/#/auctions`; }

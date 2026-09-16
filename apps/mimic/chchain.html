@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><title>ch chain</title>
 <style>
   /* CH Chain overlay — cleric Complete Heal rotation, read from the zone-
-     visible shout/raid callouts ("004 - CH - Naggato - Mana: 52%" /
+     visible shout/raid callouts ("004 - CH - Drayvon - Mana: 52%" /
      "005 GO GO GO"). One row per chain slot: number, cleric, mana%, and
      either a live 10s cast bar (the slot that just called CH) or how long
      ago they last cast. Footer: NEXT slot + beat countdown. Reads
@@ -36,7 +36,7 @@
     text-shadow:0 1px 2px #000;border-left:2px solid transparent;
     transition:background 200ms ease}
   /* Slot number — was hard to read at 10px / dim grey. Larger + amber +
-     bold + tabular numerals + a subtle dark chip to anchor it. (Uilnayar
+     bold + tabular numerals + a subtle dark chip to anchor it. (a member
      2026-06-26: 'the left side numbers are hard to see with ch chain.
      needs to be more distinct'.) Casting/next rows tint it brighter via
      row-state overrides below so the active slot's number jumps. */
@@ -64,7 +64,7 @@
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
   /* Casting row — BLUE accent + a 10s CH cast bar that fills RIGHT-TO-LEFT
-     (Hitya 2026-08-11: every countdown fills left-to-right, so the cast bar
+     (the guild lead, 2026-08-11: every countdown fills left-to-right, so the cast bar
      runs the other way and in its own color — one glance tells a cast from a
      countdown). GO stays green (green = go), interrupted stays red-frozen. */
   .row.casting{background:rgba(88,166,255,0.12);border-left-color:#58a6ff}
@@ -92,7 +92,7 @@
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
     border-radius:2px;overflow:hidden;margin-top:3px;position:relative}
   /* Anchored LEFT by default: a COUNTDOWN fills left→right, toward the GO at
-     the right end (Hitya 2026-08-20: "The Yellow on the CH chain should go
+     the right end (the guild lead, 2026-08-20: "The Yellow on the CH chain should go
      Left to Right, then say GO on the right when its time, then right to left
      in blue when casting"). The in-flight cast bar re-anchors right below, so
      the two read as opposite motions at a glance. */
@@ -123,7 +123,7 @@
   .row.next .bar .fill{background:#f0b429}
   .row.next .bar.due .fill{background:#f87171}
   .row.next .stat{color:#f0b429}
-  /* ORDER CONFLICT (Hitya 2026-08-11): two callers on one slot number. Bright
+  /* ORDER CONFLICT (the guild lead, 2026-08-11): two callers on one slot number. Bright
      yellow letters with a red outline — loud on purpose; a contested rotation
      is a wipe risk the raid should see before the missed beat. Static text,
      not clickable, so no hover-interact handshake is needed. */
@@ -136,7 +136,7 @@
   .xbadge{display:inline-block;font-weight:800;font-size:11px;color:#fff;
     background:rgba(220,38,38,0.85);border-radius:8px;padding:0 6px;
     text-shadow:none;box-shadow:0 0 8px rgba(248,113,113,0.6)}
-  /* ── Per-row ✕ "take them off the chain" (Hitya 2026-08-14) ─────────────
+  /* ── Per-row ✕ "take them off the chain" (the guild lead, 2026-08-14) ─────────────
      ⚠ ALWAYS RENDERED, only dimmed — do NOT "tidy" this into a hover-reveal.
      That was the first attempt and it fails exactly when the button is needed.
      The rows' innerHTML is rebuilt on every paint while a cast bar is moving,
@@ -154,7 +154,7 @@
     opacity:0.30;transition:opacity 120ms ease,color 120ms ease}
   .row:hover .rmv{opacity:0.75}
   .row .rmv:hover{opacity:1;color:#f87171;background:rgba(220,38,38,0.25)}
-  /* ── DDR grade sticker (Hitya 2026-07-31) ──────────────────────────────
+  /* ── DDR grade sticker (the guild lead, 2026-07-31) ──────────────────────────────
      Arcade-style GOOD / GREAT / PERFECT / MARVELOUS flash slapped on top of
      that cleric's own cast bar. Bold condensed italic, warm gradient fill,
      thick dark outline, scale-pop then fade — pure CSS, no images (this is a
@@ -291,7 +291,7 @@
   #go-btn.on{color:#7ee787;border-color:rgba(126,231,135,0.6);opacity:0.9}
   #go-btn.off{color:#6e7681}
   body.setup #go-btn{top:30px}
-  /* DDR grading toggle (Hitya 2026-07-31). Furthest LEFT of the button row
+  /* DDR grading toggle (the guild lead, 2026-07-31). Furthest LEFT of the button row
      (right:86px) so it stays well clear of the ✕ at right:6 and its ~30px
      gutter — go(66) / cfg(46) / mute(26) / hide(6) keep their positions. */
   #ddr-btn{position:fixed;top:6px;right:86px;z-index:65;width:18px;height:18px;
@@ -322,7 +322,7 @@
   /* Off-heal candidates — raiders taking repeated single-target damage
      outside the MT/Rampage (see offHealCandidatesSnapshot in the agent).
      Sits at the bottom of the overlay since healers already have this
-     window open — Uilnayar 2026-07-04. Independent of chain state (renders
+     window open — a member 2026-07-04. Independent of chain state (renders
      even with no active CH chain), so it's its own card, not a table row. */
   .offheal{margin-top:5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
   .offheal-hd{font-size:9px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;
@@ -332,7 +332,7 @@
   .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
   .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* HP% of the candidate (who needs an off-heal) — colored by severity, not
-     seconds-under-fire (Uilnayar 2026-07-06: "we should see their percentage"). */
+     seconds-under-fire (a member, 2026-07-06: "we should see their percentage"). */
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
   .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
   /* DI readiness chips — green = up, amber = recast countdown. When only ONE
@@ -465,11 +465,11 @@
       <div id="dicallNote" class="dicall-note" style="display:none"></div>
     </div>
     <div id="rows" class="rows"></div>
-    <!-- Pivot banner — v1.1.5 (Uilnayar 2026-06-26). Flashes red when the
+    <!-- Pivot banner — v1.1.5 (a member, 2026-06-26). Flashes red when the
          chain has slipped (next caller didn't shout within 1.5× the beat).
          Hidden when chain is healthy. Display name + suggest who's next. -->
     <div id="pivotrow" class="pivotrow" style="display:none"></div>
-    <!-- Spot-heal banner (Uilnayar 2026-07-02: "our druids will hop in and
+    <!-- Spot-heal banner (a member, 2026-07-02: "our druids will hop in and
          fill the CH gaps, are they able to be included?"). A CH-equivalent
          cast (Tunare's Renewal) folds straight into the numbered rows above
          instead — this banner is only for a one-off heal that ISN'T a
@@ -481,7 +481,7 @@
       <span class="cd" id="cd"></span>
     </div>
     <div id="empty">waiting for CH calls…</div>
-    <!-- Off-heal candidates (Uilnayar 2026-07-04: "who's taking repeated
+    <!-- Off-heal candidates (a member, 2026-07-04: "who's taking repeated
          single target damage outside of the current main tank and rampage
          ... CH chain could list off heal candidates at the bottom").
          Independent of chain state — shows even with no active chain. -->
@@ -489,7 +489,7 @@
       <div class="offheal-hd">⚕ Off-heal candidates</div>
       <div id="offhealRows"></div>
     </div>
-    <!-- Divine Intervention readiness (BACKLOG §1, Uilnayar 2026-07-14):
+    <!-- Divine Intervention readiness (BACKLOG §1, a member 2026-07-14):
          per-cleric DI up/cooldown chips from log-driven recast tracking
          (cast = 6s + 90s recast; interrupts refund). Independent of chain
          state; hidden until at least one Mimic cleric reports. -->
@@ -591,7 +591,7 @@
     });
   }
 
-  // DDR grading toggle (Hitya 2026-07-31). Default ON. Same contract as the
+  // DDR grading toggle (the guild lead, 2026-07-31). Default ON. Same contract as the
   // "0X GO" button above — the AGENT owns the grading (it stamps a grade on the
   // slot the moment a cast starts), so this button just tells the agent whether
   // to. Persist locally, POST on every change AND on load, and re-sync if the
@@ -639,7 +639,7 @@
   // Alert-lead knob — how many seconds BEFORE the next cleric is due we
   // start screaming. AUTO (default): derived live from the chain's own
   // measured beat_ms (median gap between callouts) instead of a fixed
-  // guess. A flat 1.5s lead on a real 2-4s chain (Uilnayar 2026-07-02: "it
+  // guess. A flat 1.5s lead on a real 2-4s chain (a member, 2026-07-02: "it
   // goes off far too frequently... we typically set delays of 2-4 seconds")
   // left GAP SOON active for well over half of every single cycle — it
   // fired on almost every handoff even when the chain was running exactly
@@ -1021,7 +1021,7 @@
       + '<span class="txt" data-g="' + esc(label) + '">' + esc(label) + '</span></span>';
   }
 
-  // ✕ that takes a healer off the chain (Hitya 2026-08-14). Emitted on every
+  // ✕ that takes a healer off the chain (the guild lead, 2026-08-14). Emitted on every
   // row; CSS keeps it invisible until that row is hovered. The name rides in a
   // data attribute so a CONTESTED slot removes the right claimant — see
   // removeChChainSlot in the agent.
@@ -1181,7 +1181,7 @@
     // from the same two fields (next_expected_at, else last_ch.atMs + beat_ms),
     // so the row and the footer can never disagree — the healer who is up next
     // reads their own number under their own name instead of having to find it
-    // in the strip at the bottom (Hitya 2026-08-13).
+    // in the strip at the bottom (the guild lead, 2026-08-13).
     var nextRemSec = null;
     if (c.next_num != null && c.last_ch && beatSecs) {
       var _dueMsRow = (c.next_expected_at > 0) ? c.next_expected_at : (c.last_ch.atMs + c.beat_ms);
@@ -1206,19 +1206,19 @@
       var isCasting = !isInterrupted && slotElapsedMs < castSecs * 1000;
       // Explicit GO cue for THIS slot (server-gated: fresh + not yet cast).
       // Outranks the passive NEXT — a called "GO GO GO" is louder than "you're
-      // up next" (Uilnayar 2026-07-06).
+      // up next" (a member, 2026-07-06).
       var goActive  = !isCasting && !isInterrupted && c.last_go && c.last_go.num === n;
       var isNext    = !isCasting && !isInterrupted && !goActive && c.next_num === n;
       // Two live claimants on this number → ONE ROW EACH, in first-claimed
-      // order, rather than the last caller silently owning the row (Mcdorf
-      // stays first when Pyxil mis-calls 001). Separate rows because a merged
-      // "Mcdorf / Stupidric…" truncates AND collapses two different casts into
+      // order, rather than the last caller silently owning the row (a member
+      // stays first when a member mis-calls 001). Separate rows because a merged
+      // "Zelbarr / Stupidric…" truncates AND collapses two different casts into
       // one bar — you could see that the slot was contested but not what either
-      // cleric was actually doing (Hitya, live test 2026-08-12).
+      // cleric was actually doing (the guild lead, live test 2026-08-12).
       // Age them out HERE too. The agent's order_conflict flag applies the claim
       // window, but this row check did not, so a stale claimant kept the rows
       // split and the banner lit long after the agent had stopped flagging it —
-      // the two could disagree indefinitely (Hitya, live 2026-08-12).
+      // the two could disagree indefinitely (the guild lead, live 2026-08-12).
       var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
       var liveClaims = (s.claimants || []).filter(function (cl) {
         return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
@@ -1237,7 +1237,7 @@
         var el = slotElapsedMs / 1000;
         var remain = Math.max(0, castSecs - el);
         // Seconds LEFT on the cast, unit included so it reads as a cast time
-        // rather than a bare number (Hitya 2026-07-31).
+        // rather than a bare number (the guild lead, 2026-07-31).
         stat = remain.toFixed(1) + 's';
         bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / castSecs) * 100).toFixed(1) + '%"></div></div>';
       } else if (goActive) {

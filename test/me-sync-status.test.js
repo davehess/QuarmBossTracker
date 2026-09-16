@@ -1,6 +1,6 @@
 // test/me-sync-status.test.js — the /me "is Mimic connected" banner and the
-// per-character sync grid (Hitya, 2026-09-04: "the parser was syncing message
-// is wrong, mimic is on and i'm on Hitya now" · "anyone that has no uploads
+// per-character sync grid (the guild lead, 2026-09-04: "the parser was syncing message
+// is wrong, mimic is on and i'm on the guild lead now" · "anyone that has no uploads
 // should be grouped into a collapsed section that you can open up. Sort by
 // how recently it was seen or uploaded/updated").
 //

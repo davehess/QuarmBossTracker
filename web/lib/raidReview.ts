@@ -19,7 +19,7 @@
 //   1. Phantom suppression — if ANY single contributor reported a name dying
 //      ≥2 times in one encounter, drop that name entirely for that encounter (a
 //      real player dies once per fight; a repeat is an NPC namesake mis-credited
-//      to the player — the "Syphon" case).
+//      to the player — the "Varnok" case).
 //   2. Window dedup — collect survivors across contributors, sort by (name, ts),
 //      and drop any within DEATH_DEDUP_MS of the last KEPT death for that name.
 //      Cross-parser clock skew collapses; a real rez-and-die stays separate.
@@ -101,7 +101,7 @@ export function dedupEncounterDeaths(contribDeaths: (RawDeath[] | null | undefin
 // ── Night-level death post-processing (field feedback, 2026-07-23) ──────────
 // dedupEncounterDeaths runs PER ENCOUNTER, but find_or_create_encounter's
 // ±30min window means adds + boss fights OVERLAP — the same death lands in two
-// encounters' contributions and shows twice ("Naggato 8:36 on a glyph covered
+// encounters' contributions and shows twice ("a member 8:36 on a glyph covered
 // serpent" AND "on Vyzh`dra the Exiled"). Night rule from the guild lead:
 // "assume people can't die twice in the same minute" — collapse same-name
 // deaths within 60s ACROSS encounters, keeping the earliest row (and its boss

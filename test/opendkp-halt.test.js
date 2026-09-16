@@ -3,7 +3,7 @@
 // 2026-08-25: OpenDKP's owner reported API Gateway costs past $200/month and
 // asked anyone running automation to make contact. Wolf Pack runs the heaviest
 // automation we know of against that API, so we stopped first and measured
-// second (Hitya: "can you halt all traffic to opendkp").
+// second (The guild lead: "can you halt all traffic to opendkp").
 //
 // This guards the property that matters: the halt sits at the two HTTP
 // primitives every one of the ~25 endpoint wrappers funnels through, so no

@@ -1,16 +1,16 @@
 -- 20260914043000_me_family_rpcs.sql
--- /me ran a dozen queries PER CHARACTER on every load — Hitya's account has
+-- /me ran a dozen queries PER CHARACTER on every load — the guild lead's account has
 -- 46 characters (mains, alts, mules), so a fresh load was ~550 PostgREST
 -- round trips, two of them a 385 ms chat count each (stale visibility map;
 -- vacuumed 2026-09-14, now 1.5 ms) and one an 82 ms spellbook seq scan.
--- Hitya, 2026-09-13: "when the page loads fresh i get a huge lag spike."
+-- The guild lead, 2026-09-13: "when the page loads fresh i get a huge lag spike."
 --
 -- Three family-wide helpers so the page asks once for the whole account:
 --   me_chat_counts   — /gu message counts per speaker, all-time + since
 --   me_levels        — best-known level per name (who history ∪ spellbook)
 --   me_active_names  — which names have ANY parse / upload / rollup row, so
 --                      the page skips the per-character fan-out for the rest
---                      (37 of Hitya's 46 have nothing to fetch).
+--                      (37 of the guild lead's 46 have nothing to fetch).
 -- All security definer for the service role only, like scrap_damage_leaderboard.
 
 create or replace function public.me_chat_counts(p_names text[], p_since timestamptz)

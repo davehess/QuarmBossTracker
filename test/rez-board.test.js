@@ -2,7 +2,7 @@
 // SOURCE-SLICE tier: the call-out parser and the board state machine are
 // sliced out of the shipped agent, so edits to the real code are exercised.
 //
-// Hitya 2026-08-20: "lets build in a 'needs rez' section of command center …
+// The guild lead 2026-08-20: "lets build in a 'needs rez' section of command center …
 // if the rezzer has mimic and we see them rezzing the corpse OR if someone
 // calls it out in guild/raid chat as 'REZ <name>' or 'rezzing <name>' we can
 // make that person's name glow brighter until it says 'rezzed' next to them.
@@ -127,7 +127,7 @@ describe('the board', () => {
 
 describe('pets never reach the board', () => {
   it('a summoned/charm pet is not a rez candidate', () => {
-    // Hitya, 2026-08-30: "Jtik is a pet". A healer reading that row spends a
+    // The guild lead, 2026-08-30: "Jtik is a pet". A healer reading that row spends a
     // rez on something no rez can touch, and it pushes a real corpse down.
     _setPetNames(['jtik']);
     _noteDeath('Jtik', Date.now() - 30_000);

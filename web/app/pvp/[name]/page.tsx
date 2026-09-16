@@ -132,8 +132,8 @@ async function load(name: string) {
   const decoded = decodeURIComponent(name);
 
   // Fold alts into the requested name. If `decoded` is a main, we want
-  // their kills + every alt's kills under one heading (e.g. Wabumkin's page
-  // should include Adiwen's 1 kill). Resolve the family up front so all
+  // their kills + every alt's kills under one heading (e.g. A member's page
+  // should include a member's 1 kill). Resolve the family up front so all
   // four queries can use a single .in() filter.
   const { data: famRows } = await sb
     .from('characters')
@@ -190,8 +190,8 @@ async function load(name: string) {
   const assists = (assistData ?? []) as Assist[];
   // Co-assisters: assists frequently aren't linked to a pvp_kill_id — each
   // agent correlates its OWN assist independently with no shared FK, and clocks
-  // skew a second or two between machines (Wabumkin's row stamped :48, Hitya's
-  // :47 on the same Bardtholemu→Rylex kill). So match on killer+victim within a
+  // skew a second or two between machines (a member's row stamped :48, the guild lead's
+  // :47 on the same a member→Rylex kill). So match on killer+victim within a
   // time window rather than relying on the id; pvp_kill_id is still honored when
   // both rows happen to carry it.
   const killers = [...new Set(assists.map(a => a.killer).filter(Boolean))];

@@ -1,7 +1,7 @@
 // test/mobinfo-sight-chips.test.js — "will invis hide me from this?", answered
 // with one chip instead of four.
 //
-// Hitya, 2026-09-02: "mob info needs to also denote if a mob can see invis."
+// The guild lead, 2026-09-02: "mob info needs to also denote if a mob can see invis."
 //
 // ⚠ THE NAIVE VERSION IS WORSE THAN NOTHING. Measured over the 18,033-row
 // catalog:

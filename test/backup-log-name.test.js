@@ -1,18 +1,18 @@
 // test/backup-log-name.test.js — a copied-aside log is not a new raider.
 //
-// EverQuest character names cannot contain digits (Hitya, 2026-08-13), so
+// EverQuest character names cannot contain digits (the guild lead, 2026-08-13), so
 // "eqlog_Dant3_pq.proj.txt" was never written by the client. It is what a
 // raider ends up with after copying their log aside and letting EQ start a
 // fresh one. We were treating the copy as a separate person.
 //
 // What that cost: on Va Xi Aten Ha Ra an uploader calling itself "Atlasius2"
-// reported 288,169 for Atlasius while ten real clients — and Atlasius himself —
+// reported 288,169 for a member while ten real clients — and a member himself —
 // agreed on ~100,000. The live-DPS merge took a max across clients, so the
 // phantom set the number for the whole raid (bot 3.1.44 fixed the estimator;
 // this fixes the source).
 //
 // Two halves, and the second is the one that could make things worse if it were
-// forgotten: resolving Dant3 -> Dant is only safe if the backup is ALSO kept out
+// forgotten: resolving a member3 -> a member is only safe if the backup is ALSO kept out
 // of the live tail. Tailing both files under one name would replay every event
 // twice — a doubled real raider instead of a phantom extra one.
 //

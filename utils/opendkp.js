@@ -30,7 +30,7 @@ const https = require('https');
 // characters, raids list, auctions, audits and adjustments, and the register
 // queue polls every 20s. Whether or not we are the cause, the right move
 // while a third party is paying real money and asking questions is to stop
-// first and measure second (Hitya: "can you halt all traffic to opendkp").
+// first and measure second (The guild lead: "can you halt all traffic to opendkp").
 //
 // Deliberately at the two HTTP primitives rather than at each of the ~25
 // endpoint wrappers or the loop schedulers: a halt that lives at the choke
@@ -371,7 +371,7 @@ async function createCharacter(payload) {
 // OPENDKP_CLIENT_ID read token — it's the client's internal id, constant per
 // OpenDKP client and present on every character row. We cache it (env override
 // first, then read it off any character row, then a known fallback) so linking
-// never needs a manual config step. Hitya 2026-06-23.
+// never needs a manual config step. The guild lead 2026-06-23.
 let _openDkpClientHash = null;
 async function _resolveClientHash() {
   if (_openDkpClientHash) return _openDkpClientHash;
@@ -395,7 +395,7 @@ async function _resolveClientHash() {
 // establish the link (confirmed 2026-06-23 — newly created chars came up
 // un-parented), so this separate call is required. Body shape captured from
 // the OpenDKP UI:  { ParentId: "<id>", ChildId: <id>, ClientId: "<hash>" }.
-// No follow-up save is needed (confirmed by Uilnayar).
+// No follow-up save is needed (confirmed by a member).
 async function linkCharacter(parentId, childId) {
   const clientId = await _resolveClientHash();
   const headers  = await _bearerHeaders(true);
@@ -808,7 +808,7 @@ async function updateRaid(payload) {
 //     "Items":      [{
 //       "ItemId":         17005,
 //       "ItemName":       "Backpack",
-//       "CharacterName":  "Hitya",       (NB: name not id — server resolves)
+//       "CharacterName":  "Rethlan",       (NB: name not id — server resolves)
 //       "Dkp":            1,
 //       "Notes":          "free-form",
 //       "GameItemId":     17005

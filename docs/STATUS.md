@@ -62,6 +62,7 @@ folly** — it's here.*
 | `pop-raids-local.md` | Local-session playbook: capture PoTime slideshow stubs | Actionable pending local task |
 | `spell-levels-local.md` | Local-session playbook: fill `spell_level_seed` via PQDI scrape | Actionable; seed still used |
 | `pvp-capture-audit.md` | Reusable local runbook for PvP kill/assist recovery (`scripts/pvp-audit.js`) | Diagnostic runbook |
+| `DECISIONS-2026-09-16.md` | **The sanitization record**: attribution by role, the source-comment sweep (what was rewritten, the invented-name convention, what verified it) and the two surfaces it deliberately left alone — test fixtures/golden logs, and the real-raider mock data on public pages | **Newest — this is the one the SessionStart digest prints.** Its open table carries everything forward from 09-10 |
 | `DECISIONS-2026-08-07.md` | **The decision record** for the 2026-08-07→09 sessions: storage/threat, attendance, release process, Zeal `/tag`, loot bidding, the `{s}` P1, the beta re-sync — each as *the call · why · where it landed*, with an "Open — read this first" table at the bottom | Read FIRST via the SessionStart digest; newest `DECISIONS-*.md` wins |
 | `DECISIONS-2026-08-13.md` | Dashboard navigation: the sidebar + the tab split, why the split carves by the QUESTION a card answers rather than by card count, and what deliberately stayed put (crash card on Info, the whole Dashboard tab) | Current — carries the live "Open — read this first" table |
 | `DESIGN-SKILLS.md` | Which design skills are installed, what each ACTUALLY earned (incl. impeccable's 357k-line documenter failure and its one real finish-review catch), what to load for a new dashboard, and the open palette question | Written 2026-09-16 |
@@ -1665,7 +1666,7 @@ next touch one rather than assuming a missing row means a missing doc.
     `CLAUDE.md` → Branches; the DNS/registrar step is human-only — **no Porkbun
     integration exists** and cloud sessions cannot reach the API or read the zone.
   - **`/about`** — the walkthrough page, with live numbers and three verified
-    overlay demos (a member, the a member DA, the CH chain, Shei Vinitras).
+    overlay demos (the tank, the paladin DA, the CH chain, Shei Vinitras).
     Headline stats: OpenDKP attendance **avg 49 · biggest 67 · 132 raids · 21
     parsers in the busiest night**; since-April combat **650 fights · 288.3M
     damage · 88 bosses**; **612 PvP broadcasts**. **`/shortabout`** tells the same
@@ -2350,7 +2351,7 @@ next touch one rather than assuming a missing row means a missing doc.
   files said "keep in sync", nothing enforced it. Web + /whois + agent
   parse were already normalized; this was the one raw hole.
 - **Melody AE badge: pulse merge fix + kite damage totals (agent 3.5.88 +
-  mimic, beta, 2026-08-19 — a member via the guild lead).** a member's overlay read
+  mimic, beta, 2026-08-19 — a member via the guild lead).** Their overlay read
   ⚔123/12 / ⚔152/12 — "it's adding the number of hits." Root cause: pulse
   bursts in noteSongAoeLine were bounded by wall-clock arrival, and the EQ
   client flushes the log in multi-second batches under swarm-kite load, so

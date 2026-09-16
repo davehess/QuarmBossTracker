@@ -1,6 +1,6 @@
 // #117 — pet-buff attribution on the Pet tracker. SOURCE-SLICE fidelity tier.
 //
-// Reproduces the field bug: Canopy (druid) casts Girdle of Karana on her
+// Reproduces the field bug: a member (druid) casts Girdle of Karana on her
 // SUMMONED pet Kabn; the in-game pet window + Zeal show the buff, but the Mimic
 // Pet tracker shows Kabn's HP and NO buffs.
 //
@@ -308,7 +308,7 @@ describe('#117 pet-buff attribution (source-sliced from agent)', () => {
 
 // ── Pet identity: buffs belong to the PET, not the owner slot ────────────────
 //
-// Field report (Hitya 2026-08-05): a charmed "a giant plague rat" carried
+// Field report (the guild lead, 2026-08-05): a charmed "a giant plague rat" carried
 // Glamour of Tunare and Tunare's Request (1800 ticks — three hours). The charm
 // broke, was NOT recast, and a summoned warder "Goneker" took its place. The
 // Pet tracker showed Goneker with both of the rat's spells, because
@@ -404,7 +404,7 @@ describe('pet identity change (charm break → summoned warder)', () => {
 
 // ── Same-name re-charm: the gap the NAME check structurally cannot see ──────
 // "Charm overlay could also do well to have the spawn IDs in case people switch
-// their charmed pets" (Hitya, 2026-08-31).
+// their charmed pets" (the guild lead, 2026-08-31).
 //
 // _reconcilePetIdentity compared pet NAMES, so swapping one `an orc warrior`
 // for another read as "unchanged" and the dead pet's buffs stayed on the new

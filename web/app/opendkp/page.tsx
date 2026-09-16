@@ -1,6 +1,6 @@
 // /opendkp — a PUBLIC live counter of every request Wolf Pack sends OpenDKP.
 //
-// WHY THIS IS OPEN ACCESS (Hitya, 2026-08-26): "moncs is ready to unblock us,
+// WHY THIS IS OPEN ACCESS (the guild lead, 2026-08-26): "moncs is ready to unblock us,
 // so I need a live counter site that's open access." On 2026-08-25 our traffic
 // cost OpenDKP's owner real money and got our IP blocked at his WAF. He is
 // about to lift that on our word. "Trust us, it's fixed" is not a reasonable

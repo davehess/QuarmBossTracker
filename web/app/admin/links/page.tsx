@@ -6,9 +6,9 @@
 // us as far as the OpenDKP `discord` field, which most members leave blank.
 //
 // We infer ownership from wolfpack_members.nickname / global_name, which
-// many members already use to list their roster (e.g. "Abrahms/Canniball/
-// Fischer", "Ang/Ness/Hass/Catt/Shuttle", "Antero | Person | HotG"). Two
-// passes:
+// many members already use to list their roster — the shapes we see are
+// slash-separated ("Main/Alt/Alt"), short-form runs ("Ang/Ness/Hass/Catt"),
+// and pipe-separated ("Main | Person | Guild"). Two passes:
 //   1) Direct token match — character name appears as a /, |, comma, hyphen,
 //      or space-separated token of nickname or global_name.
 //   2) Main-name fallback — character is an alt whose main_name matches.
@@ -120,8 +120,8 @@ function isSelfPinChar(c: Character): boolean {
 }
 
 // Pick the member's REAL main from a same-uploader cluster. The old default
-// (alphabetically-first "home" family) picked "Bonebro" for Hitya's cluster
-// purely because B < C < H — it carries the discord_id but isn't the main.
+// (alphabetically-first "home" family) picked whichever family root sorted
+// first — it carries the discord_id but isn't the main.
 // Prefer, in order: the home family whose name IS the member's Discord
 // identity (nickname / global_name), then the highest guild rank, then a
 // self-pinned main (an officer already declared it a main), then alpha.
@@ -287,7 +287,7 @@ async function _linkOneUnder(
 }
 
 // Bulk "confirm these are all one family" — folds every family root the
-// officer selected under a single main in one action (Hitya 2026-07-05:
+// officer selected under a single main in one action (the guild lead, 2026-07-05:
 // "needs a way to confirm these are all part of the same family/main").
 // `names` is a comma-joined list of the cluster's HOME family roots (the ones
 // that carry this Discord account); the chosen main is skipped. Deliberately
@@ -311,7 +311,7 @@ async function setFamilyLinkBulk(formData: FormData) {
 }
 
 // "Remove linkage" — declare a character a standalone main, NOT an alt of
-// anyone (Hitya 2026-06-22: "Luter is his own person"). Sets main_name =
+// anyone (the guild lead, 2026-06-22 — a character who is nobody's alt). Sets main_name =
 // name and main_name_override = name (self-pin) so the character (a) stops
 // rendering as someone else's alt immediately and (b) survives the next
 // OpenDKP sync re-parenting them. The self-pin is deliberate here — unlike
@@ -580,7 +580,7 @@ export default async function AdminLinksPage({
     //   • Non-home families an officer marked "Not an alt" (override === self)
     //     — they've been reviewed, the row in the cluster was spurious.
     //   • Raid Packs — anyone Raid Pack is a main and doesn't need linking
-    //     anywhere (Hitya 2026-06-23). Hiding them keeps the cluster
+    //     anywhere (the guild lead, 2026-06-23). Hiding them keeps the cluster
     //     focused on the actual decisions: Raid Alts that should be folded
     //     under a Raid Pack root.
     // Home stays so the cluster still anchors visually. If fewer than 2
@@ -614,12 +614,12 @@ export default async function AdminLinksPage({
   // every same-uploader row. A "main" = a character whose name equals
   // (main_name || name) — i.e. the family root. Pre-fix the row's
   // dropdown only listed OTHER families IN THE SAME CLUSTER, which
-  // wasn't enough when a character (Luter, Borowhay, Bardtholemu)
-  // showed up in three different officers' clusters because their own
-  // Mimic isn't authenticated and several other players' installs tail their log.
-  // Officers need to be able to link that row to a main OUTSIDE the
-  // current cluster — Bardtholemu to themselves (he IS a main),
-  // Luter to whichever real owner he is. Hitya 2026-06-21.
+  // wasn't enough when a character showed up in three different officers'
+  // clusters because their own Mimic isn't authenticated and several other
+  // players' installs tail their log. Officers need to be able to link that
+  // row to a main OUTSIDE the current cluster — a character who IS a main
+  // back to themselves, an alt to whichever real owner it belongs to.
+  // (the guild lead, 2026-06-21.)
   const allMains = [...new Set(
     allChars
       .map(c => ((c.main_name && c.main_name.trim()) || c.name).trim())
@@ -655,9 +655,9 @@ export default async function AdminLinksPage({
   // Per-uploader family-root resolution: for each Discord ID that uploads
   // unregistered characters, find which OpenDKP family (= main_name cluster)
   // their existing characters live under, and pick the most-populous one
-  // as the parent. Hitya's box uploads Hitya/Bonebro/Canopy + a handful of
-  // alts — OpenDKP has the whole family rooted at Canopy, so Canopy wins
-  // and new alts land under it. Multi-main accounts pick the largest
+  // as the parent. One box can upload several family roots plus a handful of
+  // alts — OpenDKP roots the whole lot at one of them, so that one wins and
+  // new alts land under it. Multi-main accounts pick the largest
   // cluster; officer can re-parent via the family-link section after the
   // fact if it's wrong.
   const parentByDid = new Map<string, { name: string; opendkpId: number | null }>();
@@ -713,11 +713,11 @@ export default async function AdminLinksPage({
 
   // Targeted /who level fill — the recency-windowed whoRows above misses
   // characters last /who'd outside the most-recent 3000 observations, which
-  // is exactly the long-tail alt case (Uilmuley/Sanamar showed "?"). For
+  // is exactly the long-tail alt case (rarely-played alts showed "?"). For
   // every unregistered name still missing a level, look it up directly by
   // name across ALL of who_observations (bounded to the candidate set) and
   // keep the highest level + most recent class seen — including the owner's
-  // own /who when their Mimic captured it (Hitya 2026-06-22).
+  // own /who when their Mimic captured it (the guild lead, 2026-06-22).
   {
     const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
     if (needLevel.length > 0) {
@@ -763,7 +763,7 @@ export default async function AdminLinksPage({
 
   // Recent OpenDKP register-queue rows — surface who requested each one and
   // whether the bot succeeded, so a failed/stuck registration is visible
-  // (Hitya 2026-06-22 "whoever made the updates... should be shown").
+  // (the guild lead, 2026-06-22 "whoever made the updates... should be shown").
   type RegisterReq = {
     id: string; name: string; status: string; error: string | null;
     requested_by_discord_id: string | null; opendkp_id: number | null;
@@ -1073,7 +1073,7 @@ export default async function AdminLinksPage({
                   {/* Bulk "these are all one person" confirm — folds every
                       home family (proven to carry THIS Discord account) under
                       one main in a single click, instead of clicking Link on
-                      each of Bonebro / Canopy / … one at a time. Scoped to
+                      each family root one at a time. Scoped to
                       home families only: a cluster member who's actually
                       someone else's toon (different discord_id) is never swept
                       in and stays a per-row decision below. */}
@@ -1096,7 +1096,7 @@ export default async function AdminLinksPage({
                       // they were auto-stamped by the linker as a no-op
                       // "pin to default" so OpenDKP wouldn't re-parent the
                       // row. Showing them as "override" misled officers
-                      // (Hitya 2026-06-21 — every HOME row was rendering
+                      // (the guild lead, 2026-06-21 — every HOME row was rendering
                       // with a gold "override" tag that looked like a
                       // contradiction). Now only flag the GENUINE case:
                       // override points to a name DIFFERENT from the
@@ -1112,9 +1112,9 @@ export default async function AdminLinksPage({
                       const ovrConflict = !!ovr && !isSelfPin && f.isHome;
                       const ovrMoves    = !!ovr && !isSelfPin && !f.isHome;
                       // OpenDKP's view of who this character is parented
-                      // under — surfaces "(Shavimo in OpenDKP)" next to
-                      // Gnomistakes when OpenDKP has Gnomistakes rooted
-                      // under Shavimo (Hitya 2026-06-23). main_name is
+                      // under — surfaces "(<parent> in OpenDKP)" next to a
+                      // character whom OpenDKP has rooted under someone else
+                      // (the guild lead, 2026-06-23). main_name is
                       // set by the OpenDKP sync from ParentId, so if it
                       // differs from the row's own name AND we have the
                       // parent's OpenDKP id, link out to that character
@@ -1145,10 +1145,10 @@ export default async function AdminLinksPage({
                               </span>
                             )
                           )}
-                          {/* HOME label removed 2026-06-21 (Hitya) — it
+                          {/* HOME label removed 2026-06-21 (the guild lead) — it
                               fired on every family whose root carried the
                               uploader's discord_id, which meant clusters
-                              like Hitya's painted three identical green
+                              carrying three families painted three identical green
                               HOME chips and the label conveyed no usable
                               signal. The cluster header already names the
                               uploader, so "this family is the uploader's"
@@ -1161,10 +1161,9 @@ export default async function AdminLinksPage({
                         </div>
                         {/* Link form now appears on every row, including the
                             former HOME ones — officers may want to re-parent
-                            a family root to a different main (the Bonebro/
-                            Canopy/Hitya case, where one Discord owns three
-                            mains in the roster and you want to consolidate
-                            them). The autocomplete spans every main on the
+                            a family root to a different main — one Discord
+                            account can own three mains in the roster and you
+                            want to consolidate them. The autocomplete spans every main on the
                             roster, not just the cluster's siblings. */}
                         {(
                           <form action={setFamilyLink} className="flex items-center gap-1.5">
@@ -1190,8 +1189,9 @@ export default async function AdminLinksPage({
                         )}
                         {/* "Not an alt" — declare this character their own
                             standalone main so they stop showing as an alt
-                            candidate under this uploader (Hitya 2026-06-22:
-                            "Luter is his own person"). Pins main_name to self
+                            candidate under this uploader (the guild lead,
+                            2026-06-22 — a character who is nobody's alt).
+                            Pins main_name to self
                             so it sticks through the OpenDKP sync. */}
                         <form action={makeOwnMain}>
                           <input type="hidden" name="name" value={f.main.name} />

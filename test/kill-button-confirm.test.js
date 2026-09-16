@@ -1,6 +1,6 @@
 // Board kill buttons must ASK before they record.
 //
-// Why (Hitya 2026-08-09): a phone left within reach of the dog recorded a
+// Why (the guild lead, 2026-08-09): a phone left within reach of the dog recorded a
 // "Thall Va Xakra (North)" kill via the board button. The audit trail proved it
 // was a real Discord click — the agent relay never writes audit rows — so the
 // only fix is a confirmation step. /announce messages already had one; the

@@ -236,7 +236,7 @@ export default async function RaidHubPage() {
   // ── Concurrent-raid clustering ─────────────────────────────────────────────
   // raid_roster now holds one SNAPSHOT per uploader (pk guild,uploader,name).
   // Snapshots sharing any member are the same raid; disjoint snapshots are
-  // separate raids running at once (the Dafeet/Utoh "Raid 2" report). Union-
+  // separate raids running at once (the "Raid 2" report). Union-
   // find over uploaders via shared members → cluster ordinals, biggest first.
   const snapsByUploader = new Map<string, RosterRow[]>();
   for (const r of rosterClean) {
@@ -519,7 +519,7 @@ export default async function RaidHubPage() {
     // Non-Mimic raiders use observed buff_casts as the buff list — a group
     // V2 cast (Talisman of Epuration, Aegolism, …) creates one row per
     // target, so if a groupmate's Mimic caught the cast we know what
-    // Arakhan got and when. Marked `inferred:true` so the UI can say
+    // A member got and when. Marked `inferred:true` so the UI can say
     // "from observed casts" rather than pretending it's Zeal-authoritative.
     const inferred = inferredBuffsByName.get(lower) ?? null;
     const buffsForRow: { name: string; ticks: number | null }[] = live?.buffs ?? (
@@ -535,7 +535,7 @@ export default async function RaidHubPage() {
     // different question: is THIS PERSON running Mimic. Conflating them made
     // /raid report 43/43 (100%) on a night when 40 characters across 18
     // accounts had uploaded, because on a well-buffed raid nearly everyone
-    // picks up an inferred buff (Hitya 2026-08-06).
+    // picks up an inferred buff (the guild lead, 2026-08-06).
     const hasAgent = !!live;
     const swappedTo = swapFor(live, lower);
     rows.push({

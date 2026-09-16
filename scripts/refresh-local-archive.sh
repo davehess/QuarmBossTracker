@@ -1,7 +1,7 @@
 #!/bin/bash
 # Merge the newest production dump into the LOCAL ARCHIVE — never losing history.
 #
-# Replaces refresh-local-sandbox.sh (Hitya, 2026-08-12: "local should not lose
+# Replaces refresh-local-sandbox.sh (the guild lead, 2026-08-12: "local should not lose
 # any history"). That script restored with --clean, which dropped and reloaded
 # `public` — so the local copy faithfully mirrored production INCLUDING its
 # retention deletes, and was therefore no more of an archive than production is.

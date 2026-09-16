@@ -1,6 +1,6 @@
 -- opendkp_call_stats — a public, live counter of every request we send OpenDKP.
 --
--- WHY (Hitya, 2026-08-26): "moncs is ready to unblock us, so I need a live
+-- WHY (the guild lead, 2026-08-26): "moncs is ready to unblock us, so I need a live
 -- counter site that's open access on wolfpack.quest." After an incident where
 -- our traffic cost a third party real money, "trust us, it's fixed" is not a
 -- reasonable ask. He gets a URL that shows what we are actually sending, in his

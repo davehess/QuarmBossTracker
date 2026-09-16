@@ -1,6 +1,6 @@
 -- Who is running which Zeal, and whose client can actually give us a spawn id.
 --
--- Hitya, 2026-09-01: "let me start tracking zeal versions so we can work
+-- The guild lead, 2026-09-01: "let me start tracking zeal versions so we can work
 -- towards knowing when someone has that Target and spawn ID. fall back is if
 -- they tag."
 --

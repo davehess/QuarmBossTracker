@@ -1,4 +1,4 @@
--- Officer corrections to captured roll sets (#91 follow-up, Hitya 2026-08-12).
+-- Officer corrections to captured roll sets (#91 follow-up, the guild lead 2026-08-12).
 --
 -- Two real cases from the Aug 11 night: a 0-22 set that was a misfire and needs
 -- removing, and "Do a 777 if you want a Shield of the Immaculate" — a phrasing

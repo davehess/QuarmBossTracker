@@ -232,7 +232,7 @@ export default async function RollsPage() {
   );
 }
 
-// Winner(s) up top, and a drop-down for everyone else who rolled (Hitya,
+// Winner(s) up top, and a drop-down for everyone else who rolled (the guild lead,
 // 2026-08-14: "a drop-down to open up lower rolls on the page and see who else
 // rolled").
 //

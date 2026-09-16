@@ -1,4 +1,4 @@
-// test/parse-curve-and-header-fit.test.js — two bugs Hitya hit on 2026-09-06,
+// test/parse-curve-and-header-fit.test.js — two bugs the guild lead hit on 2026-09-06,
 // both of which looked like "the data is wrong" and were neither.
 //
 // 1. The damage-over-the-fight chart drew half a fight. PostgREST's 1000-row
@@ -62,7 +62,7 @@ describe('hovering a nav category does not fold the header', () => {
     expect(nav).toMatch(/data-nav-revealed=""/);
   });
 
-  // Hitya, 2026-09-13: "the top design jumps around when hovering, it needs to
+  // The guild lead, 2026-09-13: "the top design jumps around when hovering, it needs to
   // stay in place." In flow, the revealed row grew the header by a row on every
   // mouseover. On hover devices it now floats under the chips; touch keeps the
   // in-flow row (a tap opens it, and it must never cover a phone's first

@@ -1,5 +1,5 @@
 'use client';
-// The alternative below "Continue with Discord" (Hitya 2026-08-24, from
+// The alternative below "Continue with Discord" (the guild lead, 2026-08-24, from
 // Lacunanight — Discord's phone-verification wall blocks OAuth consent).
 //
 // Only members with an officer-issued invite (/auth/claim) have one of these

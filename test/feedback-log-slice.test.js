@@ -1,6 +1,6 @@
 // test/feedback-log-slice.test.js — the log a bug report is allowed to carry.
 //
-// Hitya, 2026-09-02: "give mimic a feedback entry point that allows for direct
+// The guild lead, 2026-09-02: "give mimic a feedback entry point that allows for direct
 // log collection timeframe."
 //
 // ⚠ THE WHOLE RISK IS ON ONE SIDE. A bug report with no log is a guessing game,

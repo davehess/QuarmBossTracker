@@ -1,7 +1,7 @@
 // test/ui-studio-dupe-windows.test.js — one window, one row.
 //
-// Hitya, 2026-09-02, with a screenshot: "UI studio shows multiple copies of
-// several chats and windows." The header read "Hitya (2 ini files)" and
+// The guild lead, 2026-09-02, with a screenshot: "UI studio shows multiple copies of
+// several chats and windows." The header read "the guild lead (2 ini files)" and
 // "loaded 258 windows" for a layout holding about 129 — two of everything,
 // with ZealItemDisplay0-4, Chat 14, Compass, Raid and ZealOptions all drawn
 // twice on top of each other.

@@ -1,6 +1,6 @@
 name: Sync beta from main
 
-# RULE (Hitya, 2026-08-10): when main gets something, beta gets it too.
+# RULE (the guild lead, 2026-08-10): when main gets something, beta gets it too.
 #
 # Why this is a workflow and not a habit. `beta` is supposed to be `main` + the
 # Mimic park, but nothing ever pushed main→beta, so beta only ever aged. It

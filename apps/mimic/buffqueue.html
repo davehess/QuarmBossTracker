@@ -523,7 +523,7 @@
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
-      // Already carrying the burst buff → countdown instead of damage (Hitya
+      // Already carrying the burst buff → countdown instead of damage (the guild lead
       // 2026-08-19: "should have timers left on feral avatar targets") so the
       // shaman/BL times the recast instead of the row vanishing.
       if (r.carrying) {
@@ -554,7 +554,7 @@
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
-    // Section filters from the dashboard's "Buff queue options" card (Hitya
+    // Section filters from the dashboard's "Buff queue options" card (the guild lead
     // 2026-08-19: "debuff / feral only"). Absent field = show (older agent).
     var sec = (payload && payload.sections) || {};
     var html = '';
@@ -594,7 +594,7 @@
       for (var ci = 0; ci < catOrder.length; ci++) {
         var label = catOrder[ci];
         var rowsC = byCat[label];
-        // Collapsed by DEFAULT (Hitya 2026-08-19: "buff queue is off the page
+        // Collapsed by DEFAULT (the guild lead, 2026-08-19: "buff queue is off the page
         // - needs to collapse buff types down groups"): a mid-raid queue with
         // every section expanded is a wall. Absent = collapsed; an explicit
         // false (the user expanded it) persists their choice.

@@ -1,6 +1,6 @@
 // commands/preraiddrill.js — the #75 pre-raid drill, runnable from Discord.
 //
-// Hitya, 2026-08-16: "I would also like to dig into the golden log number 75
+// The guild lead, 2026-08-16: "I would also like to dig into the golden log number 75
 // for us to be able to run those pre-raid checks." The CLI half
 // (scripts/preraid-drill.js) answers "is the chain alive?" from a workstation;
 // this command answers it from inside production, where an officer actually
@@ -12,7 +12,7 @@
 // Every probe is READ-ONLY (GETs + a local replay) — safe mid-raid, safe
 // inside the deploy freeze. The write-path drill (a synthetic encounter
 // through the whole chain) stays designed-but-disabled in
-// docs/DESIGN-75-golden-log.md § "The drill" pending Hitya's sign-off.
+// docs/DESIGN-75-golden-log.md § "The drill" pending the guild lead's sign-off.
 const { SlashCommandBuilder, MessageFlags, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const path = require('node:path');
 

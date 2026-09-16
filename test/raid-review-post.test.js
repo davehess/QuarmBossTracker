@@ -535,7 +535,7 @@ describe('composition', () => {
   it('uses the SAME death dedup as the parse card (#134), then collapses across encounters', () => {
     const t = FIRST_PULL + 10_000;
     const iso = (ms) => new Date(ms).toISOString();
-    // Three parsers see one Hitya death (clock skew), and one parser reports
+    // Three parsers see one the guild lead death (clock skew), and one parser reports
     // "Shavimo" twice — the NPC-namesake phantom rule drops Shavimo entirely.
     const contribs = [
       { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(t),        class: 'Monk' },
@@ -645,7 +645,7 @@ describe('composition', () => {
   });
 });
 
-// ── Content additions: the timeline strip + trash (Hitya 2026-08-02) ─────────
+// ── Content additions: the timeline strip + trash (the guild lead, 2026-08-02) ─────────
 
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -685,7 +685,7 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     const quiet = enc({ id: 'e2', npc_id: 162039, eqemu_npc_types: { name: '#Vyzh`dra_the_Exiled', zone_short: null } });
     const sum = raidReview.summarizeNight(nightData({
       encounters: [enc(), quiet],
-      // Two parsers see ONE Hitya death — the shared dedup keeps one, so the
+      // Two parsers see ONE the guild lead death — the shared dedup keeps one, so the
       // timeline must show one, not two.
       deathContribs: [
         { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(FIRST_PULL + 5000), class: 'Monk' }] },
@@ -697,7 +697,7 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     expect(sum.deaths).toHaveLength(1);
   });
 
-  // Hitya 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
+  // The guild lead 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
   // night with 12 kills. The suppression was correct (the other 8 were clean),
   // but the embed printed "Fight timelines (4)" a few lines under "12 down"
   // with nothing connecting them, so a suppressed clean kill was
@@ -1023,7 +1023,7 @@ describe('(f) _handleAgentUpload is unchanged by the live hook', () => {
   });
 });
 
-// ── Intentional deaths (R2, Hitya 2026-08-06) ─────────────────────────────
+// ── Intentional deaths (R2, the guild lead 2026-08-06) ─────────────────────────────
 //
 // "Fawx and Dant both 'made corpses' on purpose with Kaas Thox Xi Ans Dyek, so
 // while they did have 2 deaths, they were intentional. Perhaps officers can
@@ -1155,7 +1155,7 @@ describe('intentional deaths', () => {
   });
 });
 
-// ── Reserved top-of-thread slots (R3, Hitya 2026-08-06) ───────────────────
+// ── Reserved top-of-thread slots (R3, the guild lead 2026-08-06) ───────────────────
 //
 // "the /raidreview posted to the third line of the page — when the raid night
 // thread opens up it should reserve the first two lines of it for the raid
@@ -1239,7 +1239,7 @@ describe('reserved review slots', () => {
     // "here:true" makes the CURRENT CHANNEL the night's target, so
     // getRaidNightTarget can hand back #raid-chat itself. Six placeholder cards
     // are fine at the top of a quiet per-night thread and are pure spam in the
-    // guild's busiest channel (Hitya, 2026-08-06).
+    // guild's busiest channel (the guild lead, 2026-08-06).
     const kv = fakeKv();
     const channel = fakeThread('RAID_CHAT');
     channel.isThread = () => false;                 // a plain text channel

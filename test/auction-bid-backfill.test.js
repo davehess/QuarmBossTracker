@@ -1,7 +1,7 @@
 // Full auction bids: the missing half of RECENT MISSES.
 //
-// Hitya's field report (2026-08-30): Utoh bid 8 on Vengeful Mail of the Void
-// and lost — no row; a 15/15 tie showed a blank runner-up; Rockin's WIN of a
+// The guild lead's field report (2026-08-30): a member bid 8 on Vengeful Mail of the Void
+// and lost — no row; a 15/15 tie showed a blank runner-up; a member's WIN of a
 // second Thorny Chain Helm rendered as a family miss with CHAR "—".
 // Measured cause: the auctions LIST payload carries only winning bids (1.08
 // bids/auction mirrored, 92% of auctions with zero losing bids), and

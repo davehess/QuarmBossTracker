@@ -739,7 +739,7 @@ function getPetOwners() { return loadState().petOwners || {}; }
 // Declaration order is meaningful: the LAST entry is the most recently
 // declared owner. A re-declaration moves the owner to the tail with a fresh
 // timestamp — the encounter fold uses `at` to find owners with a CURRENT
-// claim on a charm-cycled name (Hitya 2026-07-31: same-named charm pets are
+// claim on a charm-cycled name (the guild lead, 2026-07-31: same-named charm pets are
 // indistinguishable until Zeal ships spawn ids, so damage splits equally
 // among this-fight claimants, never the whole night's history).
 function _petDeclare(list, owner, at) {

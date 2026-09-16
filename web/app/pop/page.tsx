@@ -24,7 +24,7 @@
 // It does NOT apply to ?view=mine — PoP flagging is commonly done on alts
 // (a chance at Justice trial loot, a Storms-quest medallion run, whatever's
 // up), so a member tracking their OWN roster needs every character they own,
-// not just the one flagged as their main (Hitya, 2026-08-26: "due to the
+// not just the one flagged as their main (the guild lead, 2026-08-26: "due to the
 // nature of pop flagging they may do it for many of their toons and we
 // shouldn't only track mains").
 
@@ -411,7 +411,7 @@ export default async function PopFlagsPage(
         // ── My Characters — every character on the viewer's account, main
         // AND alt. Deliberately ignores the Mains/All scope toggle above:
         // PoP flagging isn't a mains-only activity, so tracking your own
-        // roster means tracking every toon you own (Hitya, 2026-08-26).
+        // roster means tracking every toon you own (the guild lead, 2026-08-26).
         <section className="bg-panel border border-border rounded-lg p-4 space-y-4">
           <div>
             <h3 className="text-base text-orange mb-1">🧍 My Characters</h3>

@@ -1,6 +1,6 @@
 // PoP spell turn-ins — which parchment buys which spell, per class.
 //
-// Hitya 2026-08-20: "look at the PoP spell quests. Add some of that
+// The guild lead 2026-08-20: "look at the PoP spell quests. Add some of that
 // information to the spells page so people know what they need to turn in."
 //
 // v1 inferred the pools from spell LEVELS (Ethereal→61-62, Spectral→63-64,

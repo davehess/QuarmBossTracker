@@ -1,5 +1,5 @@
 // test/suggest-nudge.test.js — the forum nudge's tap-through request flow
-// (Hitya 2026-08-17: "fungal would have hit '1' if he could have" — the card
+// (the guild lead, 2026-08-17: "fungal would have hit '1' if he could have" — the card
 // must BE the flow, not describe the /suggest command).
 //
 // Real module import (utils/ is bootable without the Discord client); the pure

@@ -1,7 +1,7 @@
 // test/me-family-prefetch.test.js — /me asks once per account, not a dozen
 // times per character.
 //
-// Hitya, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
+// The guild lead, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
 // account holds 46 characters and the page ran ~12 queries for each — ~550
 // PostgREST round trips, two of them a 385 ms chat count apiece — then ran it
 // all again twice on every Strips/Blocks click. Now chat counts, levels, loot,

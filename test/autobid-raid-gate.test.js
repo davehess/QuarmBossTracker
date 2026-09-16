@@ -2,7 +2,7 @@
 // feature, because getting it wrong spends someone else's DKP while they are
 // not looking. Almost every test here is a NEGATIVE case.
 //
-// Hitya set it in two passes, and the second corrected my first build:
+// The guild lead set it in two passes, and the second corrected my first build:
 //   "you have to be in the raid for it to fire"
 //   "one of your characters needs to be in the raid currently OR have been on a
 //    tick so far that night"

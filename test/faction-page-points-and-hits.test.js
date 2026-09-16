@@ -1,7 +1,7 @@
 // test/faction-page-points-and-hits.test.js — the faction page shows points AND
 // hits, and never lets one stand in for the other.
 //
-// Hitya, 2026-09-03: "this is still inaccurate. We should have how many
+// The guild lead, 2026-09-03: "this is still inaccurate. We should have how many
 // positive and negative hits total in parentheses for raised and lowered, and
 // the raised/lowered should specifically call out how much the faction has been
 // raised or lowered."

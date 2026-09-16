@@ -1,7 +1,7 @@
 // test/dock-overlay.test.js — the Dock: many overlays, one Chromium renderer.
 //
 // Every Electron BrowserWindow is its own renderer at ~80 MB resident before it
-// paints anything (measured by Uilnayar, 2026-08-04 — the reason main.js reaps
+// paints anything (measured by a member, 2026-08-04 — the reason main.js reaps
 // windows whose pref is off). The dock hosts overlays as same-origin <iframe>
 // panes in ONE window, so five docked overlays cost one renderer.
 //
@@ -199,7 +199,7 @@ describe('the pane ✕ is drawn, not hover-revealed', () => {
   });
 });
 
-// ── Round two (Hitya, 2026-08-14) ───────────────────────────────────────────
+// ── Round two (the guild lead, 2026-08-14) ───────────────────────────────────────────
 // Ten findings from the first live look. The ones with a rule behind them are
 // pinned here; the rest (setup bar, spans, per-pane background, drag-reorder,
 // auto-height, grow-upward) are exercised in the headless-Chromium pass.

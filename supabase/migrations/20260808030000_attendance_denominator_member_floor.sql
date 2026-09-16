@@ -1,11 +1,11 @@
 -- member_attendance_metrics: measure each member against the ticks THEY could
 -- have attended, not every tick the guild has ever run.
 --
--- Reported by Hitya 2026-08-07: "Gonner has never missed a raid tick" while the
+-- Reported by the guild lead 2026-08-07: "Quorvin has never missed a raid tick" while the
 -- attendance page showed him at 64% lifetime. Both were true statements about
 -- different denominators.
 --
---   Gonner's first tick        2024-12-01
+--   A member's first tick        2024-12-01
 --   ticks since he joined             966
 --   ticks he attended                 958   -> 99.2%  (the truth, and what
 --                                                      OpenDKP reports)
@@ -14,14 +14,14 @@
 --
 -- The `denom` CTE computed guild-wide counts with no member scoping and was
 -- CROSS JOINed onto every family, so every member carried an identical
--- denominator. This is not a Gonner bug — EVERY member who joined after the
+-- denominator. This was never one member's bug — EVERY member who joined after the
 -- guild started was under-reported, worst for the newest people, which is
 -- exactly backwards from what a recruiting or gap-detection view wants.
 --
 -- Fix: the denominator is now per-family and floored at that family's first
 -- attended tick, for every window. GREATEST(window_start, first_attended)
 -- means a member who joined 10 days ago is measured over 10 days, not 30 —
--- the same rule OpenDKP applies (Gonner reads 56/56, 104/104, 152/152 there).
+-- the same rule OpenDKP applies (a member reads 56/56, 104/104, 152/152 there).
 --
 -- CLAUDE.md already declares this policy under "Per-character data floor"
 -- (`member_since` across the character's family); it simply was never applied

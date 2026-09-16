@@ -1,6 +1,6 @@
 // The wolf plate, and the page's one authored moment.
 //
-// The reveal is a sequence, not a fade (Hitya, 2026-08-28), reordered 2026-08-29
+// The reveal is a sequence, not a fade (the guild lead, 2026-08-28), reordered 2026-08-29
 // to: her eyes in the dark → HER, whole → the pack's eyes around her → the pack.
 //
 // The first cut interleaved them — every eye, then every body — so the alpha
@@ -16,7 +16,7 @@
 // read as ghosts rather than as distance.
 //
 // ⚠ Brightness alone was NOT enough, and the overlaps looked wrong on a phone
-// (Hitya, 2026-08-28: "the transparency overlap looks bad"). Only the BONE is
+// (the guild lead, 2026-08-28: "the transparency overlap looks bad"). Only the BONE is
 // opaque in the keyed art — every dark line is a hole, 121,313 px of them — so
 // a wolf in front was showing the wolf behind through its own linework. Each
 // wolf therefore gets a filled silhouette of itself in the page ground beneath
@@ -69,7 +69,7 @@ function Plate({ priority = false }: { priority?: boolean }) {
 //
 // The keying left the eye interior OPAQUE BONE and cut only the dark linework,
 // so a warm source behind the wolf does not read through the eye — it reads
-// through the brow strokes, which is the smear this replaces (Hitya, 2026-08-28:
+// through the brow strokes, which is the smear this replaces (the guild lead, 2026-08-28:
 // "this is the area that should glow"). `wolf-eyes.png` is that exact interior,
 // measured off the shipped asset as its two isolated opaque islands and painted
 // gold on the same 973² canvas — so it needs no coordinates of its own and can

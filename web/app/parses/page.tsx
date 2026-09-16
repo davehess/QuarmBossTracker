@@ -230,7 +230,7 @@ function toCardData(enc: EncounterRow): KillCardData {
     player_count: players.length,
     classification: enc.classification,
     // ENGAGED: encounters with no ended_at are mid-fight — agent flushed a
-    // partial parse but never saw a slain line for the boss. (Hitya
+    // partial parse but never saw a slain line for the boss. (the guild lead
     // 2026-06-26: 'we registered vulaks death on engage instead of on
     // death … this should say engaged and be listed at the top'.)
     inProgress: enc.ended_at == null,
@@ -368,7 +368,7 @@ export default async function ParsesPage(
   // — officers review these on /admin/anomalies, not dimmed inline like wipes.
   // Hide both officer-marked foreign AND auto-detected foreign (conservative:
   // <1/3 roster members in a 10+ raid, which a real Wolf Pack raid never is).
-  // (Hitya 2026-06-29: "if the majority … are not Wolfpack members … not
+  // (the guild lead, 2026-06-29: "if the majority … are not Wolfpack members … not
   // display on parses".)
   const rows = allRows.filter(r => {
     if (r.classification === 'foreign') return false;
@@ -381,7 +381,7 @@ export default async function ParsesPage(
   const tz = await userTz();
   // In-progress encounters (ended_at null, last upload within 90min so we don't
   // surface stranded rows from old crashes forever). These render in their own
-  // 'Engaged now' section at the top of the page. (Hitya 2026-06-26.)
+  // 'Engaged now' section at the top of the page. (the guild lead, 2026-06-26.)
   const NINETY_MIN_MS = 90 * 60 * 1000;
   const nowMs = Date.now();
   const engagedRows = rows.filter(r => {
@@ -528,7 +528,7 @@ export default async function ParsesPage(
 
             {dayOff.length > 0 && (() => {
               // Raid trash and someone's afternoon farming are different
-              // things and no longer share a line (Hitya 2026-08-20). A kill
+              // things and no longer share a line (the guild lead, 2026-08-20). A kill
               // is the RAID's when the bot stamped it with a raid_night_id
               // AND enough of the raid was on it — the night tag alone is
               // time-based, so it also caught the lone wolf one raider killed

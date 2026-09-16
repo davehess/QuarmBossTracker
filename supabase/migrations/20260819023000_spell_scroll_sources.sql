@@ -1,4 +1,4 @@
--- Spell-scroll sources (Hitya 2026-08-18: the spellbook page's PQDI links —
+-- Spell-scroll sources (the guild lead, 2026-08-18: the spellbook page's PQDI links —
 -- "those don't work. We should say where it's from"). merchant_id joins the
 -- mirrored merchantlist to actual vendors; the column fills on the next
 -- forced sync-quarm run (the dump has always carried it — we just never

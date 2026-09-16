@@ -267,7 +267,7 @@ type Family = {
   linked: boolean;            // any member uploads with a per-user Discord token
   // Other family mains whose streams ride the SAME per-user token as this
   // family's — almost always one human whose alts were never parented in
-  // OpenDKP (Adiwen/Wabumkin). Fixable from /admin/links → Family links.
+  // OpenDKP. Fixable from /admin/links → Family links.
   sameUploaderAs: string[];
   // Zeal, rolled up to the player. Version = the newest reading any of their
   // characters reported (Zeal is per-machine; a family usually spans one box).
@@ -282,7 +282,7 @@ type Family = {
 //   1. A character in the OpenDKP roster folds into its main (as before).
 //   2. A character NOT in the roster but uploaded under a per-user Discord token
 //      folds into whatever family that Discord account owns — so an un-rostered
-//      extra box (e.g. "Dant3", run by Dant's owner) lands under Dant instead of
+//      extra box (e.g. "Lorrimer3", run by a member's owner) lands under a member instead of
 //      floating as its own orphan main.
 //   3. Anything else (no roster row, no recognizable uploader) stays on its own.
 // The most-recent uploader is still compared to the owner to flag cross-account
@@ -370,8 +370,7 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 
   // Same-token detection: when one per-user Discord token uploads for
   // MULTIPLE families, flag each so officers spot the un-parented-alt split
-  // (the Adiwen/Wabumkin case) instead of believing two separate people are
-  // running agents. The fix lives at /admin/links → Family links.
+  // instead of believing two separate people are running agents. The fix lives at /admin/links → Family links.
   const famsByToken = new Map<string, Family[]>();
   for (const f of fams.values()) {
     const tokens = new Set<string>();
@@ -396,11 +395,11 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 
 // Second pass: fold every family whose uploads share an uploader Discord
 // token into one row. Pre-fix the page rendered N rows for N family roots
-// even when one Mimic install was uploading all of them — Hitya's install
-// uploaded 15 characters across 3 family roots (Hitya/Canopy/Bonebro)
-// and showed up as 3 top-level rows + a 'same uploader as' warning fan-out.
-// Now those 3 collapse into one "Hitya install" row with all 15 members
-// underneath, sorted by most-recent activity (Hitya 2026-06-21,
+// even when one Mimic install was uploading all of them — one install
+// uploaded 15 characters across 3 family roots and showed up as 3 top-level
+// rows + a 'same uploader as' warning fan-out. Now those 3 collapse into one
+// install row with all 15 members underneath, sorted by most-recent activity
+// (the guild lead, 2026-06-21,
 // instructing "should be grouped under one uploader … show the current
 // character that's online, THEN order the uploaders underneath").
 //
@@ -410,8 +409,8 @@ function groupByMain(summaries: CharSummary[], roster: RosterRow[], memberName: 
 // characters.discord_id matches the upload token (un-rostered owner, or
 // the install owner only ever runs alts).
 //
-// Cross-account corner cases (Aimey-on-Dant's-box, Ashieron-on-Hitya's-
-// box per the user's note) read naturally under this scheme: the
+// Cross-account corner cases — one member's character running on another
+// member's box — read naturally under this scheme: the
 // borrowed character lands as a row inside the install owner's group,
 // which is the easiest pattern for officers to recognize. We don't try
 // to be clever about un-merging those — they're outliers.
@@ -551,7 +550,7 @@ export default async function AdminAgentsPage() {
 
   // Family view: fold characters into their main, then SECOND-PASS fold
   // every family sharing an uploader Discord token into one combined row
-  // (so Hitya's install renders once with all 15 characters underneath
+  // (so the guild lead's install renders once with all 15 characters underneath
   // instead of three separate family rows + warning). Split into active/
   // stale/dormant by the merged family's most-recent activity.
   const familiesRaw    = groupByMain(summaries, roster, memberName);
@@ -580,7 +579,7 @@ export default async function AdminAgentsPage() {
 
   // ── Zeal: who runs what, and whose client can hand us a spawn id ────────
   //
-  // ⚠ COUNTED IN PLAYERS, NEVER CHARACTERS (Hitya, 2026-08-16: "character
+  // ⚠ COUNTED IN PLAYERS, NEVER CHARACTERS (the guild lead, 2026-08-16: "character
   // counts mean almost nothing"). One person runs several characters, so a character
   // count inflates roughly 10x and would read as fleet-wide adoption when it is
   // a handful of people. A family here IS a player.

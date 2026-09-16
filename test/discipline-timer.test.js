@@ -1,7 +1,7 @@
 // test/discipline-timer.test.js — the SELF-ONLY discipline reuse timer.
 //
 // "discipline cooldowns should be tracked on the command center for the user
-// only" (Hitya, 2026-08-30), reported with the line that produced it:
+// only" (the guild lead, 2026-08-30), reported with the line that produced it:
 //
 //   [Sat Aug 30 22:46:23 2026] You can use a new discipline in 10 minutes 34 seconds.
 //

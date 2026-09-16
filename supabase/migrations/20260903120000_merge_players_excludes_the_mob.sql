@@ -1,6 +1,6 @@
 -- merge_encounter_players: the mob being fought is not one of its own raiders.
 --
--- Hitya, 2026-09-03: "Vkjor is showing as having taken a death and having a
+-- The guild lead, 2026-09-03: "Vkjor is showing as having taken a death and having a
 -- character page. It's an NPC."
 --
 -- The RPC took every entry in contributions.raw_parse->'players' verbatim. The

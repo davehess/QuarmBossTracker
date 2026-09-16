@@ -1,6 +1,6 @@
 // Mimic mini mode — the guild picks. Every overlay is shown in full next to
 // three mini renditions; members vote for one and leave feedback that stays on
-// the page (Hitya 2026-09-11: "the guild's opinions matter here"). Member-only:
+// the page (the guild lead, 2026-09-11: "the guild's opinions matter here"). Member-only:
 // the mocks use real raider names, the same ones /parses and /who show.
 //
 // Data: overlay_design_votes (one row per member per overlay, changeable) and

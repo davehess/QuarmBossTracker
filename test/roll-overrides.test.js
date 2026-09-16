@@ -1,6 +1,6 @@
 // test/roll-overrides.test.js — officer corrections to captured roll sets.
 //
-// Two real cases from the Aug 11 night (Hitya, 2026-08-12): a 0-22 set that was
+// Two real cases from the Aug 11 night (the guild lead, 2026-08-12): a 0-22 set that was
 // a misfire and needs removing, and "Do a 777 if you want a Shield of the
 // Immaculate" — a phrasing the agent's loot-link convention does not match, so
 // it landed as an unlabeled roll and needs a name typed in.

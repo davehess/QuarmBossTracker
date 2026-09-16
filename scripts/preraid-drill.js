@@ -14,7 +14,7 @@
 // WHAT IT IS NOT (yet). It does not prove the WRITE path end to end (a synthetic
 // encounter POSTed through the bot into Supabase and back out as a Discord parse
 // card). That drill is designed in docs/DESIGN-75-golden-log.md § "The drill"
-// and is deliberately not enabled — it writes to production and needs Hitya's
+// and is deliberately not enabled — it writes to production and needs the guild lead's
 // sign-off first.
 //
 // Env:

@@ -47,7 +47,7 @@ const byId = rows => Object.fromEntries(rows.map(r => [r.discord_id, r.offset_ms
 
 describe('finding the one bad clock', () => {
   it('names the skewed install and leaves the rest at zero', () => {
-    // Fargan's machine, the real case: ~56s behind while everyone else is fine.
+    // A member's machine, the real case: ~56s behind while everyone else is fine.
     const out = byId(resolveOffsets(fleetStore({ fargan: 56_000, a: 0, b: 0, c: 0, d: 0 })));
     expect(out.fargan).toBeGreaterThan(54_000);
     expect(out.fargan).toBeLessThan(58_000);

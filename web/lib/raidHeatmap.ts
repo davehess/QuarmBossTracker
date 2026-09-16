@@ -1,11 +1,11 @@
 // web/lib/raidHeatmap.ts — pure helpers behind the raid-attendance heatmaps.
 //
-// Two surfaces share this (Hitya, 2026-09-03): the member's own attendance on
+// Two surfaces share this (the guild lead, 2026-09-03): the member's own attendance on
 // /me ("mouse over on dates and raid names and links to the raids") and the
 // guild-wide /raidhistory page ("a scale from red at half raiders to green
 // full raiders, orange middle of the way").
 //
-// Shape (Hitya, 2026-09-04: the week×weekday grid "looks odd … come up with a
+// Shape (the guild lead, 2026-09-04: the week×weekday grid "looks odd … come up with a
 // better format that is both mobile and desktop friendly"): nights are grouped
 // by MONTH, and each night is a chip carrying its weekday and day number. A
 // month block stacks on a phone and tiles on a desktop; with only three raid
@@ -99,7 +99,7 @@ export function nightLabel(key: string): string {
 
 // ── Which raids, which night ─────────────────────────────────────────────────
 
-// OpenDKP rows that are not nights. Hitya, 2026-09-04: "the timeline itself
+// OpenDKP rows that are not nights. The guild lead, 2026-09-04: "the timeline itself
 // only needs to be our official raid nights … first time kill bonuses don't
 // need to show up." Name-matched: the officer's label has said "Bonus" every
 // time (First Time Kill Bonus, Sign Up Bonus, Thanksgiving Bonus DKP), and the
@@ -225,7 +225,7 @@ function mix(a: string, b: string, t: number): string {
 }
 
 /**
- * Hitya's scale: red at HALF a raid, orange midway, green at a FULL raid.
+ * The guild lead's scale: red at HALF a raid, orange midway, green at a FULL raid.
  * Below half stays red; at or above full stays green. `ratio` is
  * raiders / full.
  */

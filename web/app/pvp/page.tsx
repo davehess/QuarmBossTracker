@@ -53,13 +53,13 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   // broadcast". Older broadcasts had no guild suffix and members who
   // transferred IN from other guilds carry their prior guild on their old
   // rows — both cases would silently drop from the leaderboard otherwise.
-  // (Concrete example: Malthur, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
+  // (Concrete example: a member, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
   // his prior guild Tranquility, 12 NULL — the broken filter showed 144 then
   // 73 once a partial fetch landed.) Filter by roster membership instead.
   //
   // We also pull main_name so each alt's kills fold up under their main on the
-  // leaderboard. Concrete case: Adiwen (Wabumkin's alt) had her 1 kill listed
-  // separately from Wabumkin's 19; we want one "Wabumkin · 20" row.
+  // leaderboard. Concrete case: an alt's single kill was listed separately from
+  // the main's 19; we want one folded row of 20.
   const { data: roster } = await sb
     .from('characters')
     .select('name, main_name')
@@ -181,7 +181,7 @@ async function loadBossTimers(): Promise<BossKill[]> {
   //      spawn_earliest — useful camp planning.
   //   2. Already-open rows (camp now): newest killed_at first — most recently
   //      camped/contested floats to the top so you can spot fresh activity
-  //      and friend the killers. (Hitya 2026-06-23.)
+  //      and friend the killers. (the guild lead, 2026-06-23.)
   const now = Date.now();
   out.sort((a, b) => {
     const aOpen = new Date(a.spawn_latest).getTime() < now;

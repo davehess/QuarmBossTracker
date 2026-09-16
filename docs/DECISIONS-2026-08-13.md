@@ -206,7 +206,7 @@ tried:
    can open a Medium/Low-integrity object, so if the shim is perturbing the
    pipe's label or default DACL, elevating the *client* should punch through.
    Untested as of writing; costs one minute. Note this is the exact inverse of
-   the a member fix, which is a good reminder that "run as admin" is not a
+   the earlier fix, which is a good reminder that "run as admin" is not a
    universal answer — it is a specific answer to a specific mismatch.
 2. **Check whether XP SP2 specifically is required.** The Xanax checklist's own
    author ranks items 2/3/4 (AV exclusion, `#server-files` patch files, latest
@@ -289,7 +289,7 @@ must not double-post:
 a rewritten copy lands in its own slot, so that uploader's testimony about the
 speaker is lost for that line. Merging them would strictly improve attribution,
 but the witness map is what drives speaker relabelling and has its own history
-of subtle bugs (the a member→a member ghost). Left alone on purpose; separate,
+of subtle bugs (the stray-log ghost-rename). Left alone on purpose; separate,
 considered change. Tests: `test/chat-rewrite-dedup.test.js`.
 
 ## The item icon atlas draws the wrong art — disabled before raid

@@ -79,7 +79,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
   const thread = feedback.filter(f => f.overlay === active);
   const votersFor = (c: Choice) => votes.filter(v => v.overlay === active && v.choice === c).map(v => v.voter_name || 'member');
   const pickOf = (userId: string | null, overlay: string) => (userId ? votes.find(v => v.overlay === overlay && v.user_id === userId)?.choice ?? null : null);
-  // Ballot rows: only people who have picked something (Hitya 2026-09-11),
+  // Ballot rows: only people who have picked something (the guild lead, 2026-09-11),
   // you first once you have, the rest by name.
   const ballotRows: Member[] = (() => {
     const byId = new Map<string, string>();
@@ -90,7 +90,7 @@ export default function MiniReview({ me, votes: initialVotes, feedback: initialF
 
   const go = (i: number) => { setActive(OVERLAYS[(i + OVERLAYS.length) % OVERLAYS.length].key); setDraft(''); setErr(''); topRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); };
 
-  // Picking the option you already picked removes the pick (Hitya 2026-09-11:
+  // Picking the option you already picked removes the pick (the guild lead, 2026-09-11:
   // "let people remove their votes"). Same path from the cards and the ballot.
   const vote = async (overlay: string, choice: Choice) => {
     if (busy) return;

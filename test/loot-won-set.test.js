@@ -1,11 +1,11 @@
 // test/loot-won-set.test.js — the "already won" set must NOT be the display list.
 //
-// The bug (Hitya, 2026-08-09): items the family had genuinely won kept showing
+// The bug (the guild lead, 2026-08-09): items the family had genuinely won kept showing
 // up under "your wishlist · bid on but not yet won" and in RECENT MISSES.
 //
 // Cause: `wonItemIds` was seeded from the `wins` array, and `wins` is the
 // DISPLAY list — `opendkp_loot … order=fetched_at.desc&limit=100`. The family
-// Hitya/Melting/Canopy has 187 awards, so 87 of them fell off the end of that
+// that reported it has 187 awards, so 87 of them fell off the end of that
 // page and read as unwon. The three items reported were at rows 101, 120 and
 // 184 of that ordering. `fetched_at` made it worse: that is the MIRROR SYNC
 // time, not the award time, so which 100 survived was effectively arbitrary.
@@ -65,7 +65,7 @@ const helpers = evalBlock(
 );
 
 describe('a won item never resurfaces as wishlist or miss', () => {
-  // The three items Hitya reported, with the row they sat at under the old
+  // The three items the guild lead reported, with the row they sat at under the old
   // fetched_at.desc/limit=100 ordering.
   const WON = [11616, 30506, 28996];   // rows 101, 120, 184 — all past the cap
 

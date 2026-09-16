@@ -85,13 +85,13 @@ type RawHealer    = {
   firstHealAt?: number;
   lastHealAt?: number;
   // Per-recipient heal totals — agent v3.1.69+. Lets the heal panel show
-  // "Ashieron 320k · Moash 180k" instead of a bare name list.
+  // "Corvale 320k · Cindral 180k" instead of a bare name list.
   byTarget?: Record<string, number>;
   // Heal-spell cast counts from the uploader's own log — agent v3.1.69+.
   // EQ only shows the spell name on the caster's "You begin casting X" line
   // (bystanders get "X begins to cast a spell"), so this is populated ONLY
   // on the healer whose name equals the contribution's uploader.
-  // (Hitya 2026-06-25: "x CHs and other heal types".)
+  // (the guild lead, 2026-06-25: "x CHs and other heal types".)
   spells?: Record<string, number>;
 };
 // CH-chain gap analysis on the primary tank — agent fills in when it saw at
@@ -195,7 +195,7 @@ async function load(id: string) {
     // nothing but noise.
     // Failure here must never take the parse page down; the curve is additive.
     // ⚠ PAGED, because PostgREST's 1000-row cap applies to an RPC exactly as it
-    // does to a select — and it truncates SILENTLY (Hitya, 2026-09-06: "this
+    // does to a select — and it truncates SILENTLY (the guild lead, 2026-09-06: "this
     // parse appears to be split in half for the damage over the fight bar").
     // Measured on 57f45a22: the function returns 1,846 rows totalling 1,198,871
     // damage across 340s — the mob's full 1.2M health bar — and the unpaged call
@@ -443,7 +443,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const curve = (timelineRows && timelineRows.length)
     ? buildFightCurve(timelineRows, 5)
     : null;
-  // Class per contributor — the chart stacks BY CLASS now (Hitya 2026-08-16),
+  // Class per contributor — the chart stacks BY CLASS now (the guild lead, 2026-08-16),
   // so every name in the unfolded series needs its class, not just the top-7
   // bands. Unknowns stay null; the grouping labels them 'Unknown'.
   const classOf: Record<string, string | null> = {};
@@ -495,10 +495,10 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // names that any SINGLE contributor reported dying 2+ times — a real player
   // can only die once per encounter (corpses don't respawn mid-fight), so a
   // repeat death from one machine's view means it's an NPC namesake getting
-  // mis-attributed (Hitya 2026-06-25: 30+ phantom "Syphon" deaths in
-  // Ssra because "Syphon" is both an SK player and a Quarm-custom NPC; the
+  // mis-attributed (the guild lead, 2026-06-25: 30+ phantom "Varnok" deaths in
+  // Ssra because "Varnok" is both an SK player and a Quarm-custom NPC; the
   // agent's confirmedPlayer check matched the player and credited every
-  // NPC-Syphon kill to him). One agent's view is enough to discredit the
+  // NPC kill of that name to the player). One agent's view is enough to discredit the
   // name across the whole fight.
   const phantomNames = new Set<string>();
   for (const c of contribs) {
@@ -516,7 +516,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // sorted by (name, ts) and drop any within DEATH_DEDUP_MS of the last KEPT
   // death for that name. Cross-parser skew (a few seconds) collapses; a genuine
   // rez-and-die-again (well beyond the window) stays a separate row.
-  // (Hitya 2026-07-14: 4× Xobobab / 3× Currygoat on one Aten Ha Ra kill.)
+  // (the guild lead, 2026-07-14: 4× Xobobab / 3× a member on one Aten Ha Ra kill.)
   const DEATH_DEDUP_MS = 30_000;
   const collected: RawDeath[] = [];
   for (const c of contribs) {
@@ -563,7 +563,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     .filter(e => e.kind === 'raid_event')
     // Subtype colors the row dot (#105); actor names whose event it was — many
     // callouts are personal to one character, and naming them is the first
-    // step toward the future per-type toggles (Hitya 2026-08-16).
+    // step toward the future per-type toggles (the guild lead, 2026-08-16).
     .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const, subtype: e.subtype, actor: e.actor }));
   const fireEvents = tlKept
     .filter(e => e.kind === 'fire')
@@ -863,7 +863,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
-      {/* Damage curve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md),
+      {/* Damage curve — the guild lead's napkin sketch (docs/DESIGN-fight-timeline.md),
           reshaped by his 2026-08-16 review: stacked by CLASS with right-edge
           percents, drill into a class for per-character percents, hover
           highlighting, and honest "nobody taking hits" gaps on the MT strip.
@@ -883,7 +883,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       )}
 
       {/* Fight timeline (#98) as a collapsible LIST — deaths + raid-wide
-          events + which callouts fired, in order, with names (Hitya
+          events + which callouts fired, in order, with names (the guild lead
           2026-08-16: the marker view was "useless in this format"; /raid/review
           keeps the marker chart where wipe-spotting is the job). */}
       {(deaths.length > 0 || raidEvents.length > 0 || fireEvents.length > 0) && (
@@ -1292,7 +1292,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               // "Complete Heal" (the real Cleric spell, no "ing") never
               // matched here before — only the "Complete Healing" item-click
               // spelling did — so a cleric's own CH casts always fell through
-              // to the raw unabbreviated name (Hitya 2026-07-02 confirmed
+              // to the raw unabbreviated name (the guild lead, 2026-07-02 confirmed
               // via Supabase: zero rows have ever shown ANY "Complete Heal"
               // spelling, across the whole database — the label bug masked
               // whether that's "nobody's cast it" or "it's mislabeled," but
@@ -1414,7 +1414,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       ) : null}
                     </div>
                   ) : null}
-                  {/* Officer-only (Hitya 2026-07-02: "can we start showing
+                  {/* Officer-only (the guild lead, 2026-07-02: "can we start showing
                       CHs cast per fight just for admins?"). The data has
                       existed since v3.1.69 but was visible to every signed-in
                       raider — gating it here, not by removing the data from

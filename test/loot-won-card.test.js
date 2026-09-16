@@ -1,7 +1,7 @@
 // test/loot-won-card.test.js — the "Loot won" archive card.
 //
 // "Move Past Items to a different 'loot won' area on the loot page of mimic"
-// (Hitya, 2026-08-30). Past Items used to be the last section of the Loot
+// (the guild lead, 2026-08-30). Past Items used to be the last section of the Loot
 // bidding card, which mixed two different questions: the bidding card is your
 // LIVE HAND (what is up, what you lost, what you plan to spend) and this is
 // your ARCHIVE. Splitting them splits the privacy gate too.

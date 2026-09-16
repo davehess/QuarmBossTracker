@@ -299,7 +299,7 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
             <Stat label="CR" value={cat.cr != null ? String(cat.cr) : '—'} />
             <Stat label="DR / PR" value={`${cat.dr ?? '—'} / ${cat.pr ?? '—'}`} accent={(cat.pr ?? 0) >= 500 ? 'text-red' : undefined} />
           </div>
-          {/* Hitya 2026-08-19 (Emperor Ssraeshza): "Tash is unresistable. Same
+          {/* the guild lead 2026-08-19 (Emperor Ssraeshza): "Tash is unresistable. Same
               with Malo. Slow is a disease slow." Corroborated by the spell
               mirror: the Tash line + top-rank Malo/Mala are resist_type 0
               (unresistable); the lesser Malosi/Malosini are magic and DO

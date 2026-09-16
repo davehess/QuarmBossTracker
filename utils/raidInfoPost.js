@@ -1,16 +1,16 @@
 // Midday raid-info post — the member-facing "here's tonight" summary.
 //
-// Hitya 2026-08-21, with the RaidHelper signup embed: "this is the information
+// The guild lead 2026-08-21, with the RaidHelper signup embed: "this is the information
 // that we go off of from signups. post the raid info midday to our channel."
 //
 // The signup post already carries the important header block as free text:
 //
 //   Raid Set 1 - Vex Thal
 //   Muster Point - Umbral Plains
-//   Raid Lead - Bardtholemu
-//   Raid Window - Elyas
-//   Loot - Alukit
-//   Ticks - Moash
+//   Raid Lead - a member
+//   Raid Window - a member
+//   Loot - a member
+//   Ticks - a member
 //
 // so we re-surface it at midday rather than inventing our own format — the
 // officers already decided what matters and typed it once.

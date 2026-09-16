@@ -124,7 +124,7 @@ describe('placeholders have exactly one owner, filled after it', () => {
     wpMechanics:      'renderDiag',
     wpZealExplorer:   'renderDiag',
     wpRecentFires:    'renderTriggers',
-    wpCrashReview:    'renderInfo',     // Hitya put the crash card on Info on purpose
+    wpCrashReview:    'renderInfo',     // The guild lead put the crash card on Info on purpose
     wpBackupsCard:    'renderInfo',
     wpMeCard:         'renderDash',
     wpEngine:         'renderDash',
@@ -175,7 +175,7 @@ describe('the split actually moved the cards', () => {
   });
 
   it('Loot owns rolls AND bidding — Stats no longer carries rolls', () => {
-    // Hitya, 2026-08-27: "move the opendkp bits to their own loot tab with
+    // The guild lead, 2026-08-27: "move the opendkp bits to their own loot tab with
     // rolls". Rolls were on Stats and bidding was on the Dashboard, which put
     // the two ways of handing out the same drop on two different screens.
     // This exact assertion caught the move when it happened, which is the

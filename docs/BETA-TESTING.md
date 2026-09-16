@@ -255,7 +255,7 @@ below stay as stable-fleet regression checks. Post-raid audit query is still
   `confirmed`** (the corpse-run tail back-patches it). Get a rez instead and it
   stays unconfirmed — **that's correct**, not a bug.
 - 👥 **Multi:** one player dies with 5+ Mimic users present. **Pass = ONE row on
-  the parse card, not one per observer.** This is the a member case; it may still
+  the parse card, not one per observer.** This is that member’s case; it may still
   fail until #202 lands, and if it does, capture the timestamps — that IS the
   measurement #201 needs.
   - **Update 2026-08-09:** #202 **did** land, as ingest-time correction in bot

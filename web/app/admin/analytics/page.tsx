@@ -1,4 +1,4 @@
-// /admin/analytics — which pages are getting the most use (Hitya
+// /admin/analytics — which pages are getting the most use (the guild lead
 // 2026-06-24). Sourced from page_views, logged by middleware.ts on every
 // authenticated GET (admin pages skipped so officer scrolling doesn't dominate
 // the numbers). Officer-only via the parent admin/layout.tsx gate.

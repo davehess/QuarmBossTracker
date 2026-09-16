@@ -1,7 +1,7 @@
 // test/optin-imported-logs.test.js — old logs from ANYWHERE on the drive reach
 // the opt-in backfill list.
 //
-// Hitya, 2026-09-13: "can we add in a command in mimic logsync to import more
+// The guild lead, 2026-09-13: "can we add in a command in mimic logsync to import more
 // logs, or a drag to page to allow you to add that directory or file" — and
 // for the first-run flow: "ask if there are log file backups anywhere else on
 // the drive that they want to add in."

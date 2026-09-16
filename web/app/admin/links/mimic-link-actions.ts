@@ -1,5 +1,5 @@
 'use server';
-// Officer-assisted Mimic link authorization (Hitya 2026-08-24, from Gonner:
+// Officer-assisted Mimic link authorization (the guild lead, 2026-08-24, from A member:
 // Discord's unverified-account wall blocks OAuth consent, so the member-side
 // /auth/mimic-link page can never work for him).
 //

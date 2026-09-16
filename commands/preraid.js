@@ -1,6 +1,6 @@
 // commands/preraid.js — the officer-chat pre-raid checklist.
 //
-// Hitya 2026-08-21: "let's build an admin-facing officer-chat pre-raid
+// The guild lead 2026-08-21: "let's build an admin-facing officer-chat pre-raid
 // checklist, active mimics, class shortages below our average, lockouts, other
 // pertinent details."
 //
@@ -242,7 +242,7 @@ async function postPreRaidChecklist(client) {
 }
 
 // ── Midday member-facing post ─────────────────────────────────────────────
-// Hitya 2026-08-21: "post the raid info midday to our channel." Re-surfaces the
+// The guild lead 2026-08-21: "post the raid info midday to our channel." Re-surfaces the
 // header block the officers already typed into the signup post (muster point,
 // lead, window, loot, ticks) plus who's signed and which classes are still
 // wanted. Deliberately NOT the officer checklist: no Mimic coverage, no

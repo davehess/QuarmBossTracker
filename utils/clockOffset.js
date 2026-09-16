@@ -8,7 +8,7 @@
 // its deaths 63s behind. Death dedup collapses sightings within 30s of each
 // other, so that observer's copy of a SHARED death falls outside the window and
 // escapes as a second death — the parse shows two deaths where one happened
-// (Fargan's install, Hitya 2026-08-06). Widening the dedup window cannot
+// (a member's install, the guild lead 2026-08-06). Widening the dedup window cannot
 // substitute for this: 63s is wider than a real rez-and-die-again, so a window
 // big enough to swallow the skew would also swallow genuine second deaths.
 //
@@ -24,7 +24,7 @@
 //   spread_ms is max-minus-min across every sample the process ever took, so it
 //   is dominated by the worst round-trip in hours of heartbeats, NOT by clock
 //   wander. Measured across the fleet 2026-08-06: median 7.2s, max 10.9s, and
-//   15 of 28 installs above 5s. A "tight" 5s gate would have rejected Fargan's
+//   15 of 28 installs above 5s. A "tight" 5s gate would have rejected a member's
 //   10.3s machine — the exact one this exists to fix — while looking perfectly
 //   reasonable in review. The gate is here to catch a genuinely unstable clock
 //   (spread wider than the dedup window it would corrupt), not a noisy network.
@@ -51,7 +51,7 @@ const CLOCK_APPLY_MAX_AGE_MS    = 6 * 60 * 60 * 1000;
  * Caller must pass a 'pulse' row. The 'consensus' rows in the same table are a
  * dead end — that estimator was backfilled once on 2026-08-04 and has zero
  * write sites, so every consensus row is frozen at that date and drifts further
- * from reality daily. Fargan's machine reads 42s by consensus and 63.5s by
+ * from reality daily. A member's machine reads 42s by consensus and 63.5s by
  * pulse; pulse is the one still being measured.
  */
 function trustedOffsetMs(row, nowMs = Date.now()) {
@@ -72,7 +72,7 @@ function trustedOffsetMs(row, nowMs = Date.now()) {
  * Rewrite each death's `ts` to server time, preserving the original as `tsRaw`.
  *
  * SIGN: offset_ms is server-minus-client, so a machine reading EARLY (behind)
- * stores a POSITIVE offset and its stamps are corrected by ADDING it. Fargan's
+ * stores a POSITIVE offset and its stamps are corrected by ADDING it. A member's
  * install reads 63.5s behind; his 21:10:00 death really happened at 21:11:03.
  *
  * Correcting `ts` in place — rather than adding a `tsCorrected` field that

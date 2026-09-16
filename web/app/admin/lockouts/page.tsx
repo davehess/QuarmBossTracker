@@ -1,7 +1,7 @@
 // /admin/lockouts — raid lockouts our characters are carrying, split by
 // whether the kill was OURS.
 //
-// ⚠ A lockout is an ENGAGE lock, not a loot lock (Hitya 2026-08-21): the
+// ⚠ A lockout is an ENGAGE lock, not a loot lock (the guild lead, 2026-08-21): the
 // character cannot fight the mob at all — on engage the server teleports them
 // OUT OF THE ZONE. So this is a pre-pull question, not a loot-distribution
 // one: a locked raider who pulls anyway is a body that vanishes mid-fight.
@@ -9,7 +9,7 @@
 // carries one — a main raiding with us has no way to pick one up elsewhere,
 // which is why the Main/Alt column is worth a glance.
 //
-// Hitya 2026-08-21: "several raiders have spent time with Breakfast Club doing
+// The guild lead 2026-08-21: "several raiders have spent time with Breakfast Club doing
 // raids on alts. we need to remain vigilant about these not being included, but
 // also capture loot lockouts for raid mobs when they don't occur with our
 // guild — put those into another admin section."
@@ -31,7 +31,7 @@
 // boss-kill parse we already had; its expiry is computed from the boss timer.
 // The second exists because the first needs a human to type /sll in game, and
 // in the day after this page shipped it produced ZERO rows while the encounter
-// pipe had already captured three foreign raid kills from one player. Hitya,
+// pipe had already captured three foreign raid kills from one player. The guild lead,
 // on that parse: "taeya reported this Ventani kill so they should have a
 // lockout." A kill row never overwrites a live /sll row.
 import Link from 'next/link';
@@ -143,7 +143,7 @@ export default async function LockoutsPage() {
   }
   const kindOf = (n: string): Kind => kindByName.get(n.toLowerCase()) ?? 'unknown';
 
-  // Era, so the page can lead with the content we actually raid (Hitya
+  // Era, so the page can lead with the content we actually raid (the guild lead
   // 2026-08-22: "only the lockouts from current era or night's targets really
   // matter"). expansion_label is populated for every curated boss, which is
   // the only kind that produces a lockout.

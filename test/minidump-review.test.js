@@ -1,7 +1,7 @@
 // test/minidump-review.test.js — reading a Zeal minidump well enough to tell a
 // raider what broke, with no symbol server and no npm dependency.
 //
-// WHY THIS EXISTS: crash_reason.txt for Razek's 2026-08-12 crash said, in full,
+// WHY THIS EXISTS: crash_reason.txt for a member's 2026-08-12 crash said, in full,
 // "0x6ef in kernelbase.dll". Nobody can act on that. The minidump in the same
 // zip named the audio stack, the exact playback device, and a graphics driver
 // that had reset four times in under six minutes. The design doc had listed

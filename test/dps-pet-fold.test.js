@@ -1,11 +1,11 @@
 // test/dps-pet-fold.test.js — a pet's damage belongs to the raider who brought
 // it, even when that raider never swung.
 //
-// Hitya, live 2026-08-13: "Shavimo`s warder should be added to Shavimo's damage
-// and have a little (+pet) next to their name."
-// Hitya, live 2026-09-02, with a screenshot showing "Vkjor (Chadivarius)" as
-// its own row: "it looks like when Chad charmed him it attributed to him, but
-// it should be the other way around as Chad +pet."
+// The guild lead, live 2026-08-13: "<name>`s warder should be added to <name>'s
+// damage and have a little (+pet) next to their name."
+// The guild lead, live 2026-09-02, with a screenshot showing a charmed pet as its
+// own row: "it looks like when the enchanter charmed him it attributed to him,
+// but it should be the other way around as enchanter +pet."
 //
 // ⚠ THE MISSING CASE WAS THE COMMON ONE. The fold required the owner to
 // ALREADY have a row, and an enchanter running a charm pet often does little or
@@ -46,7 +46,7 @@ describe('a pet whose owner is already on the meter', () => {
 
 describe('a pet whose owner has NO row — the charmer case', () => {
   it('creates the owner and folds into them, instead of listing the pet', () => {
-    // The exact screenshot: Vkjor doing 2.60K for Chadivarius, who never swung.
+    // The exact screenshot: Vkjor doing 2.60K for a member, who never swung.
     const out = _foldPetsIntoOwners([row('Hitya', 4440), row('Vkjor', 2600, 'Chadivarius')]);
     const names = out.map(r => r[0]);
     expect(names).toContain('Chadivarius');
@@ -98,7 +98,7 @@ describe('what must not change', () => {
   });
 
   it('re-sorts by damage after folding, so a charmer lands at their real rank', () => {
-    // Chadivarius contributes nothing until his pet folds in; if the sort ran
+    // A member contributes nothing until his pet folds in; if the sort ran
     // before the fold he would sit at the bottom on 0.
     const out = _foldPetsIntoOwners([
       row('Hitya', 900), row('Fittir', 500), row('Vkjor', 5000, 'Chadivarius'),

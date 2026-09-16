@@ -2,7 +2,7 @@
 /**
  * Derive character lockouts from a confirmed raid-boss kill.
  *
- * Hitya 2026-08-22, pointing at a Ventani parse Taeya had uploaded from a
+ * The guild lead 2026-08-22, pointing at a Ventani parse a member had uploaded from a
  * non-guild raid: "taeya reported this Ventani kill so they should have a
  * lockout."
  *
@@ -104,7 +104,7 @@ const MIN_PLAYERS_TO_JUDGE = 3;
  *
  *   true  — bound to one of our raid nights, OR most of the named players are
  *           on our roster. The second clause exists because a raid night is
- *           not the only thing we run: Hitya 2026-08-22, on the Friday classic
+ *           not the only thing we run: the guild lead 2026-08-22, on the Friday classic
  *           kills this first shipped as foreign — "Friday was a guild rolling
  *           event, so internal, but still a lockout." An internal event off
  *           the calendar is ours; only the roster share can tell us that.

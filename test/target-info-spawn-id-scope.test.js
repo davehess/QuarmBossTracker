@@ -1,7 +1,7 @@
 // test/target-info-spawn-id-scope.test.js — Target Info stops pooling effects
 // across same-name mobs once the client can name the spawn.
 //
-// Hitya, 2026-09-02: "we also need to incorporate the spawn ID into the target
+// The guild lead, 2026-09-02: "we also need to incorporate the spawn ID into the target
 // info window so we dedup those effects between same named mobs, off of spawn
 // id."
 //
@@ -58,7 +58,7 @@ describe('what survives the spawn-id filter', () => {
     expect(_idScopeKeep(undefined, 4471)).toBe(true);
   });
 
-  // ⚠ THE LIVE BUG, 2026-09-06 (Hitya, mid-fight on Kaas Thox Xi Aten Ha Ra).
+  // ⚠ THE LIVE BUG, 2026-09-06 (the guild lead, mid-fight on Kaas Thox Xi Aten Ha Ra).
   // Zeal reports target id 0 when there is no target, Number.isFinite(0) is
   // true, so the agent stamped 0 rather than null. 111 of 134 rows on that boss
   // carried 0; the one raider whose Zeal sent a REAL id compared 0 === 592 and
@@ -144,7 +144,7 @@ describe('wiring', () => {
   });
 });
 
-// ── target-casts: spawn id first, name second (Hitya 2026-09-02) ────────────
+// ── target-casts: spawn id first, name second (the guild lead, 2026-09-02) ────────────
 //
 // ⚠ mob-info is deliberately NOT scoped this way and that is not an omission.
 // It returns catalog rows from eqemu_npc_types — HP, AC, resists, loot for the

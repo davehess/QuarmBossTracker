@@ -2,7 +2,7 @@
 // Real-imports the pure lib (web/lib/characterRoles.ts) shared by the officer
 // surface (/admin/links) and the member surface (/me).
 //
-// The rule (Hitya 2026-08-20): "Raid Alts must be 46 or higher at minimum for
+// The rule (the guild lead, 2026-08-20): "Raid Alts must be 46 or higher at minimum for
 // classic raids, 50+ for Kunark, 55+ for velius, 60 for luclin. Anything else,
 // they don't need to be put into openDKP. They can be non-raiding alts or
 // traders." And the thing that was blocking him: "I can't easily make them

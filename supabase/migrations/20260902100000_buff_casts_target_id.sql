@@ -1,6 +1,6 @@
 -- Which SPAWN a buff/debuff landed on, not just which name.
 --
--- Hitya, 2026-09-02: "we also need to incorporate the spawn ID into the target
+-- The guild lead, 2026-09-02: "we also need to incorporate the spawn ID into the target
 -- info window so we dedup those effects between same named mobs, off of spawn
 -- id."
 --

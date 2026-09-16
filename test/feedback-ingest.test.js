@@ -1,6 +1,6 @@
 // test/feedback-ingest.test.js — the bot half of in-Mimic feedback.
 //
-// Hitya, 2026-09-02: "give mimic a feedback entry point that allows for direct
+// The guild lead, 2026-09-02: "give mimic a feedback entry point that allows for direct
 // log collection timeframe."
 //
 // ⚠ THE BOT DOES NOT REDACT AND MUST NOT PRETEND TO. Redaction happens in the

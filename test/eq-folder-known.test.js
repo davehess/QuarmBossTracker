@@ -1,6 +1,6 @@
 // test/eq-folder-known.test.js — a folder you configured counts as known.
 //
-// THE DEADLOCK (Pyxil's onboarding, 2026-08-14). She pointed Mimic at
+// THE DEADLOCK (a member's onboarding, 2026-08-14). She pointed Mimic at
 // C:\TAKPv22. Settings listed it, ticked, as "eqclient.exe · no logs yet". The
 // dashboard still said "No EQ folder selected", and "Set up EQ for me" answered
 // "No EQ folder known yet — point Mimic at your EverQuest folder in Settings
@@ -177,7 +177,7 @@ describe('the onboarding says WHY there are no characters', () => {
   const loading = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'loading.html'), 'utf8');
 
   it('distinguishes "no folder" from "folder, no logs"', () => {
-    // Pyxil had configured C:\TAKPv22 and still got "configure an EverQuest
+    // A member had configured C:\TAKPv22 and still got "configure an EverQuest
     // folder above" — which reads as "the thing you just did did not work",
     // when her actual state needed no change in Mimic at all.
     expect(loading).toMatch(/var haveFolder = \(_checkedFound\.size \+ _manualFolders\.length\) > 0;/);

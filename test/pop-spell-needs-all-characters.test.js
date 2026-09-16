@@ -1,7 +1,7 @@
 // test/pop-spell-needs-all-characters.test.js — pop_spell_needs v4 (all
 // characters, not just mains) and the who_directory perf fix it required.
 //
-// Hitya, 2026-08-26: "let's have a my characters mode on the pop page ...
+// The guild lead, 2026-08-26: "let's have a my characters mode on the pop page ...
 // due to the nature of pop flagging they may do it for many of their toons
 // and we shouldn't only track mains." The RPC's `mains` CTE hard-filtered to
 // `main_name IS NULL OR main_name = name`; an alt with a submitted spellbook

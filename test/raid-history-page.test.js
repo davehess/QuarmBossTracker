@@ -1,6 +1,6 @@
 // test/raid-history-page.test.js — the wiring around the raid-attendance
 // heatmaps: /raidhistory, the /me section, the shared grid component, nav and
-// link-preview metadata (Hitya, 2026-09-03).
+// link-preview metadata (the guild lead, 2026-09-03).
 //
 // The pure math is covered by raid-heatmap.test.js. This file is the
 // call-site half: the page reads the right tables the right way (paged, tick

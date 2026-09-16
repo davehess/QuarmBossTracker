@@ -1,7 +1,7 @@
 // /fun/lord-of-ire — full breakdown behind the "Lord of Ire vanquished" counter
 // on /fun. Counts every lord_of_ire_killed fun_event, rolled up per MAIN (alts
-// fold into their main via characters.main_name — e.g. Hopeya + Melting → Hitya,
-// Adiwen → Wabumkin), with the per-alt split shown under each main.
+// fold into their main via characters.main_name), with the per-alt split shown
+// under each main.
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';

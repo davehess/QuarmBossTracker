@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.encounter_threat_snapshots (
   started_at   timestamptz,
   snapshot_at  timestamptz NOT NULL,
   uploader     text,
-  per_player   jsonb NOT NULL,    -- { "Hitya": { swing:0, proc:0, spell:0, heal:0 }, ... }
+  per_player   jsonb NOT NULL,    -- { "Rethlan": { swing:0, proc:0, spell:0, heal:0 }, ... }
   total        numeric,
   created_at   timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT encounter_threat_snapshots_unique

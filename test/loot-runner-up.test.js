@@ -1,6 +1,6 @@
 // Second place on a settled auction — the number people bid against.
 //
-// Hitya, 2026-08-30, against OpenDKP's own results pages: Thorny Chain Sleeves
+// The guild lead, 2026-08-30, against OpenDKP's own results pages: Thorny Chain Sleeves
 // showed 10 when second was 5; Bone Chill Shield showed 20 when second was 7.
 // Cause: BOTH auctions carry two rows at the winning value (the account login
 // and the character name are the same bid, mirrored twice, both position 1),
@@ -23,8 +23,8 @@ describe('second place', () => {
   it('Thorny Chain Sleeves 1068644 — real data: 5, not the duplicated 10', () => {
     const bids = [
       { value: 10, position: 1 },   // FawxFF  (account login)
-      { value: 10, position: 1 },   // Fawx    (same bid, character name)
-      { value: 5,  position: 2 },   // Fittir  ← real second
+      { value: 10, position: 1 },   // A member    (same bid, character name)
+      { value: 5,  position: 2 },   // A member  ← real second
       { value: 4,  position: 3 }, { value: 4, position: 4 }, { value: 3, position: 5 },
     ];
     const s = _lootItemSummary(auction(1068644, 'FawxFF', 10), { 1068644: bids });
@@ -34,7 +34,7 @@ describe('second place', () => {
   it('Bone Chill Shield 1068673 — real data: 7, not the duplicated 20', () => {
     const bids = [
       { value: 20, position: 1 }, { value: 20, position: 1 },
-      { value: 7, position: 2 },  // Ellah ← real second
+      { value: 7, position: 2 },  // A member ← real second
       { value: 5, position: 3 }, { value: 5, position: 4 }, { value: 4, position: 5 },
     ];
     const s = _lootItemSummary(auction(1068673, 'fromuthman', 20), { 1068673: bids });
@@ -43,7 +43,7 @@ describe('second place', () => {
 
   it('keeps a GENUINE tie at the winning value — Thorny Chain Helm', () => {
     // Fayce@15 (1), Philomena@15 (2), Smokestomp@7 (3). Philomena is a second
-    // bidder who really did bid 15, and Hitya asked for 15 here. This is the
+    // bidder who really did bid 15, and the guild lead asked for 15 here. This is the
     // case a "drop every row at the winning value" rule would get wrong, which
     // is why the rule is position and not value.
     const bids = [

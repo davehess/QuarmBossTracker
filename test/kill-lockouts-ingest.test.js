@@ -64,7 +64,7 @@ beforeEach(() => { calls = []; });
 
 describe('_recordKillLockouts', () => {
   it('writes a row for the uploader even though they never appear in the damage list', async () => {
-    // Taeya is a cleric: zero damage, so no encounter_players row exists for
+    // A member is a cleric: zero damage, so no encounter_players row exists for
     // her. She is still locked, and this is the case that prompted the work.
     const fn = load({ supabase: makeSupabase() });
     await fn(baseArgs());
@@ -91,7 +91,7 @@ describe('_recordKillLockouts', () => {
   });
 
   it('calls an off-calendar guild event ours, not foreign', async () => {
-    // Hitya 2026-08-22: "Friday was a guild rolling event, so internal, but
+    // The guild lead 2026-08-22: "Friday was a guild rolling event, so internal, but
     // still a lockout." No raid-night binding, outside the window, but the
     // named players are ours.
     const fn = load({ supabase: makeSupabase({ roster: ['Taeya', 'Badcop', 'Sevilla'] }) });

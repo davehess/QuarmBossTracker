@@ -1,12 +1,12 @@
 // Rampage invulnerability mark — three sources, and the one that needs nothing.
 //
-// Hitya 2026-08-05, mid-raid: "we didn't see Syko's DA and we wasted heals
+// The guild lead 2026-08-05, mid-raid: "we didn't see a member's DA and we wasted heals
 // on him as he was Rampage", and separately "we need to include Harmshield into
 // the Rampage DA mark".
 //
-// Why Syko was invisible: BOTH existing sources need the tank to have set
+// Why a member was invisible: BOTH existing sources need the tank to have set
 // something up. `_findDA` reads the target's uploaded BUFF list (needs Mimic
-// uploading live-state — Syko was installing Zeal that night), and
+// uploading live-state — a member was installing Zeal that night), and
 // `_daBroadcastForName` reads a /rsay announce macro (his raid chat has none).
 // Neither could ever have fired.
 //

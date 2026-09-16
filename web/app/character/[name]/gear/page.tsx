@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic';
 type GearRow = { loc: string; slot: string; item_id: number; item_name: string; count: number; updated_at: string };
 type AaRow = { aa_index: number; rank: number };
 // AA catalog: the export's AAIndex matches eqemu_altadv_vars.eqmacid
-// (verified: Hitya's AAIndex 10 rank 4 ↔ Quarmy skill_id 47 / eqmacid 10 =
+// (verified: the guild lead's AAIndex 10 rank 4 ↔ Quarmy skill_id 47 / eqmacid 10 =
 // Innate Magic Protection). Quarmy's web payload keys on skill_id instead.
 // classes is a bitmask keyed 1 << classId (SHM=10 → 1024); aa_expansion
 // 3 = Luclin (live), 4 = PoP (locked until 2026-10-01).
@@ -375,7 +375,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     // stat — the worn spell is how the item DELIVERS its attack, so they're
     // equal on every atk piece (Hoop 10 = Vengeance II 10, Legs 50 = Vengeance
     // X 50, …). Take the MAX per item, never the sum. Adding both double-counted
-    // every piece: a set whose real worn atk is 150 read 300 (Hitya
+    // every piece: a set whose real worn atk is 150 read 300 (the guild lead
     // 2026-07-14; the in-game ItemAtk 250 was 150 gear + 100 self-Avatar).
     atkSum += Math.max(it.attack ?? 0, wfx?.atk ?? 0);
     if (wfx) { ftSum += wfx.ft; regenSum += wfx.regen; }
@@ -385,7 +385,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     if ((!it.haste || it.haste <= 0) && /\bhaste\b/.test(wornNameLower)) hasteUnknownItems++;
   }
 
-  // Worn ATK caps at 250 in-game (Hitya 2026-07-14: page showed 300, game
+  // Worn ATK caps at 250 in-game (the guild lead, 2026-07-14: page showed 300, game
   // capped ItemAtk at 250). Item `attack` columns and EVERY worn-effect +ATK
   // stack toward ONE 250 ceiling — so a set with five Aura of Battle / Vengeance
   // pieces still tops out at 250. Buff spell-ATK (shaman/druid/bard/beastlord/SK,
@@ -437,7 +437,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
   for (const a of aaCatalog) if (!aaByMac.has(a.eqmacid)) aaByMac.set(a.eqmacid, a);
   const classBit = char?.class ? 1 << (CLASS_ID[String(char.class).toLowerCase()] ?? 0) : 0;
   // Quarmy's exporter writes JUNK rows for some AA indices — rank-255
-  // sentinels and stray bytes (Hitya the monk carried "Jewelcraft Mastery
+  // sentinels and stray bytes (the guild lead the monk carried "Jewelcraft Mastery
   // r255" and "Elemental Form: Fire r79", 2026-07-09). A trained row only
   // renders when it's plausible: a catalog entry exists, the rank fits the
   // catalog's max_level, and the character's class can actually train it.
@@ -612,7 +612,7 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                   {equipped.map(g => {
                     const it = items[g.item_id];
                     const worn = fx(it?.worneffect, spellNames);
-                    // What the worn effect grants, shown inline (Hitya
+                    // What the worn effect grants, shown inline (the guild lead
                     // 2026-07-14: "Vengeance X (+50 atk)", plus regen + FT).
                     // Makes it legible which pieces feed the 250 item-atk pool —
                     // once capped, a raider gains nothing from more ITEM atk and

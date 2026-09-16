@@ -1,6 +1,6 @@
 -- character_bid_prefs — make planned bids survive a reinstall.
 --
--- Hitya, 2026-08-26: "have these all local and sync them up to the DB and bring
+-- The guild lead, 2026-08-26: "have these all local and sync them up to the DB and bring
 -- them back down to a local mimic." Today `logsync.plannedbids.json`,
 -- `logsync.lootdismiss.json` and `logsync.bidfamily.json` are LOCAL ONLY with
 -- no bot-side counterpart at all — reinstall Mimic, switch machines, or play on

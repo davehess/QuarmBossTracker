@@ -3,7 +3,7 @@
 # ./graphify-out/ (gitignored) so `graphify explain`, `graphify path` and
 # `python -m graphify.serve graphify-out/graph.json` work from the repo root.
 #
-# Decided 2026-09-13 (Hitya): keep the regen script, keep the outputs OUT of
+# Decided 2026-09-13 (the guild lead): keep the regen script, keep the outputs OUT of
 # the repo (graph.json is ~15 MB and regenerates faster than it merges), and
 # do NOT run `graphify claude install` — its "query the graph before reading
 # files" hook is the opposite of the lesson that week (read the block, not the

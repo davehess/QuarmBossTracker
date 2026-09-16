@@ -1,4 +1,4 @@
-// Two mid-raid overlay bugs from one report (Hitya, 2026-08-30).
+// Two mid-raid overlay bugs from one report (the guild lead, 2026-08-30).
 import { describe, it, expect } from 'vitest';
 import { AGENT_INDEX, readSource, sliceBlock, evalBlock, stripJs } from './_source-slice.js';
 
@@ -15,7 +15,7 @@ describe('what counts as invulnerable', () => {
   );
 
   it('Divine Intervention is NOT an invulnerability', () => {
-    // The reported bug: the Tank card showed "INV 5:36" on Hawkner. DI is a
+    // The reported bug: the Tank card showed "INV 5:36" on a member. DI is a
     // one-shot death save — under it the tank takes full damage and can die —
     // and the catalog proves the confusion: every true invuln is 3 ticks (18s)
     // while DI (spell 1546) is 100 ticks = 10 minutes.

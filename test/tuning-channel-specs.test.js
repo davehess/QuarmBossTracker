@@ -1,7 +1,7 @@
 // test/tuning-channel-specs.test.js — the bot resolves the join specs; the
 // agent never holds policy or a secret.
 //
-// Hitya, 2026-09-03: "We can save the channel:pass as an environmental
+// The guild lead, 2026-09-03: "We can save the channel:pass as an environmental
 // variable for officer chat and for tagging. The tagging piece is critical."
 //
 // Env is the default, the /admin/overlays tuning row overrides it live, and

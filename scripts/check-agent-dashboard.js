@@ -138,7 +138,7 @@ function checkScripts(html, label) {
 // that is a live hazard, and it shipped: a seconds formatter named _wpDur was
 // added above a pre-existing MILLISECONDS formatter of the same name, so every
 // buff on the Buffs tab rendered 1/1000 of its real time — Girdle of Karana's
-// 56 minutes read "3s" (Hitya 2026-09-02, screenshot against the in-game buff
+// 56 minutes read "3s" (the guild lead, 2026-09-02, screenshot against the in-game buff
 // window). Nothing threw, nothing looked broken, and the numbers were plausible
 // enough to read past.
 //
@@ -248,7 +248,7 @@ function main() {
     process.exit(1);
   }
 
-  // RULE (Hitya 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
+  // RULE (the guild lead, 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
   // every <details> the dashboard emits MUST persist its open state through
   // the wpKeep store — section repaints (and PARENT-section repaints, which
   // destroy nested placeholders before their own render runs) reset plain

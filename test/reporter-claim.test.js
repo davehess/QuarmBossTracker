@@ -1,4 +1,4 @@
-// One account, several machines, one fleet slot (Hitya, 2026-08-30): the
+// One account, several machines, one fleet slot (the guild lead, 2026-08-30): the
 // freshest LOG holds the slot, not the latest heartbeat. Behaviour-tested by
 // executing the shipped helper — the flip-flop was invisible to text.
 import { describe, it, expect } from 'vitest';
@@ -15,7 +15,7 @@ const claim = (incoming, incumbent, ttlMs = 90_000) =>
 
 describe('the fleet slot', () => {
   it('refuses the idle machine while a live one holds the slot — the reported bug', () => {
-    // Canopy's PC: 320h since a log line. Rockin's: 4s, seen 10s ago.
+    // The idle PC: 320h since a log line. The live one: 4s, seen 10s ago.
     const idle = { last_line_ms: 320 * 3600 * 1000 };
     const live = { last_line_ms: 4000, last_seen: NOW - 10_000 };
     expect(claim(idle, live)).toBe(false);

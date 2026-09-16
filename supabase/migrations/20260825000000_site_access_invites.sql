@@ -1,4 +1,4 @@
--- Site access without Discord OAuth (Hitya 2026-08-24, from Lacunanight:
+-- Site access without Discord OAuth (the guild lead, 2026-08-24, from Lacunanight:
 -- "discord is not getting my phone number ... as I have 2FA already").
 --
 -- Discord's unverified-account wall blocks OAuth CONSENT for some members who

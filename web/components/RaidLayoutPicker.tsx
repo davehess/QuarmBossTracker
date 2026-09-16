@@ -3,7 +3,7 @@
 //
 // Writes the wp_raid_layout cookie (a year, SameSite=Lax, same attributes as
 // the timezone picker). With an `onChange` the caller owns the switch — /me
-// holds both layouts' data and flips locally, no round trip (Hitya,
+// holds both layouts' data and flips locally, no round trip (the guild lead,
 // 2026-09-13: the server re-render was two full loads of the whole account
 // per click). Without one it re-renders the page from the server, dropping
 // any `?layout=` from the address so the cookie is what the page reads next —

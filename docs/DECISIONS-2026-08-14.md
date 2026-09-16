@@ -60,7 +60,7 @@ exactly like a working one until a beat is missed.
 
 ## ✕ removes someone from the chain — and keeps them off
 
-**The call (the guild lead).** *"For the a member scenario we should be able to remove from
+**The call (the guild lead).** *"we should be able to remove from
 the chain via a [x]Remove button."*
 
 `POST /api/chchain/remove {num,name}` → `removeChChainSlot`. The half that is

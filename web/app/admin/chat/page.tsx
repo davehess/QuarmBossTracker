@@ -10,8 +10,8 @@
 //   - **Log mode**: when a day is selected, render the chat scrollback for
 //     that day with the active filters. Up to ROW_LIMIT lines.
 //
-// Filters can stack: ?speaker=Hitya&year=2025&month=8 will show Hitya's
-// August 2025 days with message counts; ?speaker=Hitya alone shows which
+// Filters can stack: ?speaker=the guild lead&year=2025&month=8 will show the guild lead's
+// August 2025 days with message counts; ?speaker=the guild lead alone shows which
 // years they were active. Date input is replaced by the breadcrumb +
 // drilldown — quicker than guessing at a date.
 

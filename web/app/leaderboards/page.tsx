@@ -47,7 +47,7 @@ type AttendanceRow = {
 type LootSpend = { character_name: string; total_dkp: number; items: number };
 
 // The single-encounter board ranks CURATED bosses only, and only parses the
-// median merge produced (Hitya, 2026-09-04: "Leaderboards should only count
+// median merge produced (the guild lead, 2026-09-04: "Leaderboards should only count
 // bosses, not trash. Many of parses are severely inflated from the time
 // offset issues we had where people were being double or triple counted").
 // The doubling was the old merge rule — max damage per player across

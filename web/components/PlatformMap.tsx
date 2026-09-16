@@ -8,7 +8,7 @@ import { BRANCHES, TINT, STATS } from './platformData';
 // this?" hero for curious visitors).
 // Identity is carried by label + icon + position; color is reinforcement only.
 //
-// ⚠ TOP-DOWN, not radial (Hitya, 2026-08-28): "Wolfpack.quest up top and all
+// ⚠ TOP-DOWN, not radial (the guild lead, 2026-08-28): "Wolfpack.quest up top and all
 // the other elements feeding it. vertical columns underneath and when you hover
 // over them list each of the elements of that column."
 //

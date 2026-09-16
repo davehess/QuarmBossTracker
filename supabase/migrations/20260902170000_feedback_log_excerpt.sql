@@ -1,6 +1,6 @@
 -- Let a bug report carry the log that proves it.
 --
--- Hitya, 2026-09-02: "give mimic a feedback entry point that allows for direct
+-- The guild lead, 2026-09-02: "give mimic a feedback entry point that allows for direct
 -- log collection timeframe."
 --
 -- A report with no log is a guessing game. A report carrying someone's whole log

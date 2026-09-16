@@ -1,7 +1,7 @@
 // test/ext-target-death-eviction.test.js — a killed mob leaves the Extended
 // Target board when it DIES, not when a timer says it probably has.
 //
-// Hitya, 2026-09-01: "Adiwen and I just killed Lord of Ire and his pet got the
+// The guild lead, 2026-09-01: "a member and I just killed Lord of Ire and his pet got the
 // kill. it was announced but stayed on the extended target even after getting
 // that message." Screenshot: Lord of Ire at 5%, "last seen 56s ago", still
 // carrying its full debuff list, while #general already had the kill.
@@ -12,7 +12,7 @@
 // to learn a mob had died — while the bot had already announced the kill.
 //
 // ⚠ AND THE PET IS INCIDENTAL. The killing blow came from "a kiraikuei",
-// Adiwen's pet, so the death line named an article-prefixed NPC rather than a
+// A member's pet, so the death line named an article-prefixed NPC rather than a
 // player. That is a red herring for this bug: the row would have lingered
 // identically had a player landed the blow. Anyone tempted to "fix" this by
 // filtering death lines to known players would rebuild the bug — hence the

@@ -11,7 +11,7 @@
 // Rendered only when NEXT_PUBLIC_IS_BETA is set, which next.config.js derives
 // from the branch being built (see the note there).
 //
-// It is dismissible (Hitya, 2026-08-28), because the person who reads it most
+// It is dismissible (the guild lead, 2026-08-28), because the person who reads it most
 // is the one reviewing beta all evening and it costs ~100px of a phone's first
 // viewport on every page. Dismissing collapses it to a thin strip in the same
 // amber rather than removing it: "you are not on production" has to survive

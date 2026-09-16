@@ -3,12 +3,12 @@
 -- Every agent stamps events from its OWN machine clock -- including deaths,
 -- which EQ writes into the log using that same clock. Measured on the
 -- 2026-08-02 Lord Inquisitor Seru parse, two installs ran ~16s behind the pack
--- (Fargan to -48s) while everyone else sat within +/-8s. Death dedup collapses
+-- (one as far as -48s) while everyone else sat within +/-8s. Death dedup collapses
 -- reports within 30s, so a skewed observer's copy escapes as a phantom second
--- death: Dongru and Uilnayar each "died twice" when they died once.
+-- death: two raiders each "died twice" when they died once.
 --
 -- Widening the dedup window CANNOT fix this, and that is the whole reason this
--- table exists. Syko genuinely died 10 times in that fight, and the minimum gap
+-- table exists. A member genuinely died 10 times in that fight, and the minimum gap
 -- between two real consecutive deaths -- measured inside ONE observer's log, so
 -- no skew is involved -- was 10 seconds. Real signal 10s, noise up to 48s. Any
 -- window wide enough to absorb the skew merges genuine deaths. The skew has to

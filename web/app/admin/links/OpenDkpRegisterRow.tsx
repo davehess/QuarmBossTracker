@@ -2,7 +2,7 @@
 
 // Interactive form row for the "Not in OpenDKP" table on /admin/links.
 //
-// Streamlined 2026-07-05 (Hitya): the old row forced the officer to pick a
+// Streamlined 2026-07-05 (the guild lead): the old row forced the officer to pick a
 // RACE before Register would enable — but /who never reports race, so that
 // field was ALWAYS the red blocker. Now race defaults to Human (a correctable
 // placeholder — "click add without making something up; fix it in OpenDKP or
@@ -166,7 +166,7 @@ export default function OpenDkpRegisterRow({
         <input type="checkbox" checked={canDm && dmOwner} disabled={!canDm || busy} onChange={e => setDmOwner(e.target.checked)} />
         DM
       </label>
-      {/* Two common ranks as one-click register buttons (Hitya: "simple
+      {/* Two common ranks as one-click register buttons (The guild lead: "simple
           trader / raid alt button"). Raid Alt goes to OpenDKP; Trader stays
           local-only. Both blocked only when the class is genuinely unknown. */}
       <button type="button" onClick={() => register('Raid Alt')} disabled={busy || raidAltBlocked}
@@ -176,7 +176,7 @@ export default function OpenDkpRegisterRow({
       </button>
       {/* Trader takes NO class/level — a bank mule /who never saw has neither,
           and it never reaches OpenDKP. Blocking it on class is what stranded
-          ~110 uploading characters (Hitya 2026-08-20). */}
+          ~110 uploading characters (the guild lead, 2026-08-20). */}
       <button type="button" onClick={() => register('Trader')} disabled={busy}
         title="Register as a Trader — level 1 Human placeholder, linked to the owner on our side, never sent to OpenDKP. No class needed."
         className="px-2 py-0.5 rounded border border-border bg-bg text-text hover:border-blue disabled:opacity-40 disabled:cursor-not-allowed">

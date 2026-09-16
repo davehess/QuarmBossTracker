@@ -1,6 +1,6 @@
 // test/standings-shape-probe.test.js — the one-shot /dkp shape probe.
 //
-// Hitya, 2026-08-31: the DKP pill showed 192 where OpenDKP says 143. OpenDKP's
+// The guild lead, 2026-08-31: the DKP pill showed 192 where OpenDKP says 143. OpenDKP's
 // docs say /clients/{client}/dkp returns "current DKP ... and calculated values
 // for different time periods (30, 60, 90 days, and lifetime)" — so the right
 // number is already in the response we fetch, and _pickAccountDkpFromModels is

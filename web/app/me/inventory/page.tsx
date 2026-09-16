@@ -68,7 +68,7 @@ export default async function MyInventoryPage() {
     const admin = supabaseAdmin();
     // Paginated: an active player's family is 2,238 rows today and PostgREST
     // silently caps a single response at 1000 (lib/selectAll.ts) — .limit(50000)
-    // never raised it. Hitya 2026-08-05: "inventory rows for an account looks
+    // never raised it. The guild lead 2026-08-05: "inventory rows for an account looks
     // to be capped at 1000".
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
@@ -79,7 +79,7 @@ export default async function MyInventoryPage() {
       .range(from, to));
     rowCount = rows.length;
 
-    // Shared-bank dedup (Hitya 2026-08-20). The shared bank is ACCOUNT-level:
+    // Shared-bank dedup (the guild lead, 2026-08-20). The shared bank is ACCOUNT-level:
     // every character on a game account reads the SAME physical bank, so
     // summing their rows counted one stack once per character (ten characters
     // each reporting SharedBank6-Slot9 = Words of the Spectre x3).

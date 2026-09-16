@@ -1,7 +1,7 @@
 // Pre-raid lockout briefing — who on the roster cannot ENGAGE what we plan to
 // pull tonight, grouped by zone.
 //
-// Hitya 2026-08-21: "put it into a post in officer chat about characters
+// The guild lead 2026-08-21: "put it into a post in officer chat about characters
 // currently locked out for the upcoming night's raid by zone from the raid
 // planner's event."
 //
@@ -15,7 +15,7 @@
 // that carries one. A MAIN on this list is the surprising case and is called
 // out — that's the "someone raided with another guild" signal.
 //
-// THE VERDICT IS MAINS, NOT THE HEADCOUNT (Hitya 2026-08-22: "as long as mains
+// THE VERDICT IS MAINS, NOT THE HEADCOUNT (the guild lead, 2026-08-22: "as long as mains
 // are good to go"). A blocked alt is a swap; a blocked main is a hole in the
 // raid. So `mainsBlocked` drives the ✅/⚠ and the checklist flag, and the alt
 // count rides along as detail.

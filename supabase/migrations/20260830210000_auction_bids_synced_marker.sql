@@ -3,7 +3,7 @@
 -- The auctions LIST payload carries only the winning bid(s): measured
 -- 2026-08-30, the mirror held 1.08 bids/auction and only 7–8% of auctions had
 -- any losing bid, so RECENT MISSES was computing losses from a dataset that
--- was ~92% winners-only (Hitya's report: Utoh's losing bid on Vengeful Mail of
+-- was ~92% winners-only (the guild lead's report: a member's losing bid on Vengeful Mail of
 -- the Void absent; a 15/15 tie showing a blank runner-up). Full bids come from
 -- the per-auction DETAIL endpoint; this marker makes that ONE call per auction
 -- per lifetime — a closed auction's bid list never changes, so a synced

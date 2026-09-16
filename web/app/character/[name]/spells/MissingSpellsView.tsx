@@ -1,7 +1,7 @@
 'use client';
 
 // MissingSpellsView — the missing-spells list with per-spell "where from"
-// dropdowns, Expand all, and the zone-by-zone 🛒 Shopping list mode (Hitya
+// dropdowns, Expand all, and the zone-by-zone 🛒 Shopping list mode (the guild lead
 // 2026-08-18). Sources come pre-resolved from OUR mirror via
 // spell_scroll_sources — PQDI is the escape hatch, not the answer.
 

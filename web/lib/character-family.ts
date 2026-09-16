@@ -84,9 +84,9 @@ export async function loadFamily(
   //       grouping sometimes splits ONE person's characters across roots
   //       (e.g. when an officer's newer main becomes its own root), which
   //       breaks the era timeline because each split sees only part of the
-  //       person's DKP history. (Hitya 2026-06-23: Hitya was its own root,
-  //       split from Canopy/Melting, so Hitya's page claimed Hitya was the
-  //       Classic main when the player was actually Canopy then.)
+  //       person's DKP history. (the guild lead, 2026-06-23: their current main
+  //       was its own root, split from the earlier ones, so the page claimed
+  //       that main for Classic when the player was on a different one then.)
   const queries = [
     sb.from('characters').select(FAMILY_COLS)
       .or(`main_name.eq.${rootName},name.eq.${rootName}`)
@@ -166,8 +166,8 @@ export async function loadEraTimeline(
   // is 1,149 rows, the unordered query returned heap order, so the 149 rows
   // dropped were the NEWEST. A main who started this era has ALL of their ticks
   // in that tail, so "most ticks" kept naming the previous main and no swap was
-  // ever detected (Chadivarius → still showing Moash for Luclin, Uilnayar
-  // 2026-08-05). The .order() calls are load-bearing: range pagination over an
+  // ever detected — a family that had swapped mains still showed the OLD one
+  // for Luclin (a member, 2026-08-05). The .order() calls are load-bearing: range pagination over an
   // unordered query may repeat or skip rows between pages.
   const bidSelect = 'character_id, character_name, value, auction_id, opendkp_auctions!inner(end_at)';
   const [bidsById, bidsByName, loot, ticks] = await Promise.all([
@@ -275,8 +275,8 @@ export async function loadEraTimeline(
     // A single end-of-era big bid shouldn't override a season of attendance,
     // so big-bid count is only a tiebreaker — and stands in alone when there
     // were no ticks at all (e.g. a main who bid but whose ticks predate our
-    // OpenDKP history). Rank breaks remaining ties. (Hitya 2026-06-23:
-    // big-bid-first wrongly flipped Classic from Canopy→Melting on one bid.)
+    // OpenDKP history). Rank breaks remaining ties. (the guild lead, 2026-06-23:
+    // big-bid-first wrongly flipped one family's Classic main on a single bid.)
     const candidates = new Set<string>([...tickCounts.keys(), ...bidVotes.keys()]);
     let detectedMain: string | null = null;
     let mainSource: EraSummary['mainSource'] = 'no_activity';
@@ -327,7 +327,7 @@ export async function loadEraTimeline(
 
   // Mark main swaps: an era whose main differs from the previous known main.
   // Runs AFTER carry-forward so quiet eras (which inherit the prior main)
-  // don't register a false swap. (Hitya 2026-06-23: surface WHEN the main
+  // don't register a false swap. (the guild lead, 2026-06-23: surface WHEN the main
   // changed in the timeline.)
   let prevMain: string | null = null;
   for (const r of results) {

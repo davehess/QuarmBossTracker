@@ -9,7 +9,7 @@
 // the cost scaled with how many people had Mimic open, and none of it appeared
 // in our own call counter because it never passed through the bot.
 //
-// Hitya: "agents shouldnt be reaching out to opendkp like this." So the call
+// The guild lead: "agents shouldnt be reaching out to opendkp like this." So the call
 // moved to the bot, where it is counted, governed and haltable, and this file
 // holds BOTH halves of that: the agent has no line to OpenDKP at all, and the
 // bot's refresh policy spends a call only when one is warranted.
@@ -73,7 +73,7 @@ describe('the agent has no line to OpenDKP', () => {
 
 describe('the bot spends an upstream call only when one is warranted', () => {
   it('NEVER goes live outside a raid — not even for an open auction', () => {
-    // Hitya, 2026-08-27: "the live dkp checkin should be raids-only since users
+    // The guild lead, 2026-08-27: "the live dkp checkin should be raids-only since users
     // are getting more dkp with each tick. the rest of the time the checkin
     // should be just to the bot and database."
     //

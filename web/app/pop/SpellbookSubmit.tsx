@@ -1,6 +1,6 @@
 'use client';
 
-// Submit a spellbook from the PoP page (Hitya 2026-08-20: "Allow people to
+// Submit a spellbook from the PoP page (the guild lead, 2026-08-20: "Allow people to
 // submit their spellbook as well on that page to add them to that").
 //
 // Reuses the /me uploader and its server action verbatim — same parse, same

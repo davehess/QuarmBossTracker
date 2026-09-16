@@ -1,6 +1,6 @@
 'use server';
 
-// Officer corrections for captured roll sets (Hitya, 2026-08-12): "the 22 roll
+// Officer corrections for captured roll sets (the guild lead, 2026-08-12): "the 22 roll
 // was a misfire, and the Shield of the Immaculate roll wasn't the right format.
 // The rolls on that page should be officer editable or deletable."
 //

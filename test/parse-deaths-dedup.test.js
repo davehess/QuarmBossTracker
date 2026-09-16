@@ -3,8 +3,8 @@
 // Under test: dedupParseDeaths in utils/parseDeaths.js — the port of the web
 // parse page's cross-uploader death dedup + phantom suppression
 // (web/app/parses/[id]/page.tsx ~369-418). The bot's Discord auto-parse card
-// USED to SUM each parser's sighting of the same death (Melting ×3 when three
-// parsers each saw Melting die once); this helper collapses them so the card
+// USED to SUM each parser's sighting of the same death (a member ×3 when three
+// parsers each saw a member die once); this helper collapses them so the card
 // matches the website.
 
 import { describe, it, expect } from 'vitest';
@@ -14,7 +14,7 @@ const byName = (rows) => Object.fromEntries(rows.map(r => [r.name, r.count]));
 
 describe('dedupParseDeaths — cross-parser collapse (#134 repro)', () => {
   it('collapses three parsers each seeing the same six deaths once → each ×1', () => {
-    // The confirmed fight (parse bdf0b801): Kebarer, Gabekn, Gibobab, Melting,
+    // The confirmed fight (parse bdf0b801): Kebarer, Gabekn, Gibobab, a member,
     // Gonobtik, Vebober each died ONCE — three parsers, ts within ~2s skew.
     const names = ['Kebarer', 'Gabekn', 'Gibobab', 'Melting', 'Gonobtik', 'Vebober'];
     const contrib = (skewSec) => names.map((n, i) => ({
@@ -32,7 +32,7 @@ describe('dedupParseDeaths — cross-parser collapse (#134 repro)', () => {
 describe('dedupParseDeaths — phantom suppression', () => {
   it('drops a name any SINGLE contributor reported dying 2+ times', () => {
     // "Syphon" is both an SK player and a Quarm NPC — one parser credits every
-    // NPC-Syphon kill to the player. That name must vanish entirely.
+    // NPC-a member kill to the player. That name must vanish entirely.
     const c1 = [
       { name: 'Syphon', ts: '2026-07-22T01:00:00Z' },
       { name: 'Syphon', ts: '2026-07-22T01:03:00Z' },

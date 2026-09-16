@@ -272,7 +272,7 @@ describe('_syncListEndpoint early break', () => {
 });
 
 // ── Idle backoff (2026-08-26) ───────────────────────────────────────────────
-// Hitya, looking at the live counter: "the dkp numbers don't change outside of
+// The guild lead, looking at the live counter: "the dkp numbers don't change outside of
 // raids unless we have to override something. why are we auditing so
 // frequently". Measured that day: 17 calls / 6.2 MB EVERY 30 MINUTES, byte for
 // byte identical — 297 MB/day spent discovering nothing had happened. The
@@ -450,7 +450,7 @@ describe('oldest-first fast path', () => {
   });
 });
 
-// ── Calendar-anchored full sweep (Hitya, 2026-08-27) ────────────────────────
+// ── Calendar-anchored full sweep (the guild lead, 2026-08-27) ────────────────────────
 // "we don't need a full download that often, just before a raid. three times
 // a week" — then, an hour later, "let's make the full audit once per week then
 // until we have the new version that has the since tag."

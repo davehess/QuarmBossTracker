@@ -9,7 +9,7 @@
 // Slot families come straight from the EQ /outputfile inventory shape
 // (Location column): "Ear","Chest",… for equipped; "General1"…"General8" for
 // the bag tops + "General1-Slot1" for bag contents. Mirror semantics for
-// Bank1-Slot* and SharedBank1-Slot*. (Validated against on-disk Canopy file:
+// Bank1-Slot* and SharedBank1-Slot*. (Validated against on-disk a member file:
 // 35 equipped, 16 General containers, 60 Bank containers, 20 SharedBank
 // containers across the guild snapshot.)
 //

@@ -1,4 +1,4 @@
-// /mimic/mini — the Mimic mini-mode review page (Hitya 2026-09-11).
+// /mimic/mini — the Mimic mini-mode review page (the guild lead, 2026-09-11).
 //
 // The catalog in web/lib/miniReview.ts is pure, so its validators run for
 // real here; the page/action/migration checks are text checks over
@@ -95,7 +95,7 @@ describe('page + actions + migration', () => {
   });
 
   it('the ballot has a spot for every Pack member (Hitya 2026-09-11)', () => {
-    // Voters only (Hitya 2026-09-11) — the page fetches no member list.
+    // Voters only (the guild lead, 2026-09-11) — the page fetches no member list.
     expect(page).not.toMatch(/is_member/);
     expect(review).toMatch(/Who has picked what/);
     expect(review).toMatch(/for \(const v of votes\) if \(!byId\.has\(v\.user_id\)\)/);

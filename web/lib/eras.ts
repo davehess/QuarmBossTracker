@@ -24,7 +24,7 @@ export function eraForTimestamp(iso: string | Date | null | undefined): EraName 
 /**
  * The eras whose raid content we are currently RUNNING.
  *
- * Hitya 2026-08-22, on lockouts: "only the lockouts from current era or
+ * The guild lead 2026-08-22, on lockouts: "only the lockouts from current era or
  * night's targets really matter." A lockout on Lady Vox is real and changes
  * nothing about a Sunday in Vex Thal.
  *

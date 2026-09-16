@@ -1,6 +1,6 @@
 'use client';
 
-// The whole top bar, in two shapes (Hitya, 2026-08-28).
+// The whole top bar, in two shapes (the guild lead, 2026-08-28).
 //
 // FULL, at the top of a wide window — one row: brand, the three download
 // channels, the link categories in the middle, then the clock, the utility
@@ -64,7 +64,7 @@ export default function SiteHeader({
   }, []);
 
   // ── Does the full bar actually FIT? ────────────────────────────────────────
-  // ROOMY alone could not answer that (Hitya, 2026-08-30: "Top nav is broken
+  // ROOMY alone could not answer that (the guild lead, 2026-08-30: "Top nav is broken
   // when you log in on desktop in chrome"). It was measured on the SIGNED-OUT
   // bar, and signing in adds five things to the row — the search box, Tour,
   // Admin, the avatar chip and Sign out — so a 1400px window passed the media
@@ -85,7 +85,7 @@ export default function SiteHeader({
     const measure = () => {
       const el = row.current;
       if (!el) return;
-      // ⚠ Skip while a nav group is open (Hitya, 2026-09-06: "the mouseover at
+      // ⚠ Skip while a nav group is open (the guild lead, 2026-09-06: "the mouseover at
       // the top of the window immediately shrinks down to menu on desktop").
       // Nav renders the hovered group's links inside this row — floated on
       // hover devices, in flow on touch so they never cover a phone's first

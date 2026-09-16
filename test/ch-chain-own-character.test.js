@@ -2,15 +2,16 @@
 // SOURCE-SLICE fidelity tier: both units are sliced out of the shipped agent
 // source, so edits to the real code are exercised here.
 //
-// Field bug (2026-08-03, Dant + Aimey): the agent tails EVERY
+// Field bug (2026-08-03, two members): the agent tails EVERY
 // eqlog_*_pq.proj.txt in the EQ folder and seeds stats.watchedLogs from all of
-// them at startup. Aimey had played on Dant's machine once, so her log sat in
-// his folder forever — which made _isOwnCharacterName('Aimey') true on HIS box
-// with no Aimey client running. Result: the CH-chain "0N GO" TTS spoke HER slot
-// at him (_maybeAnnounceChGo), and the overlay highlighted her slot as his
-// (you_nums). The fix gates on the log actually being written.
+// them at startup. One raider had played on another's machine once, so that log
+// sat in the folder forever — which made _isOwnCharacterName() true for a
+// character with no client running. Result: the CH-chain "0N GO" TTS spoke the
+// absent raider's slot at the machine's owner (_maybeAnnounceChGo), and the
+// overlay highlighted that slot as theirs (you_nums). The fix gates on the log
+// actually being written.
 //
-// Second defect found the same night: Mcdorf's macro brackets the heal target
+// Second defect found the same night: a member's macro brackets the heal target
 // ("004 CH < Dongru > Mana: 53%"). The separator class had no '<', so the
 // target never captured — on EVERY client, clean name or not. The chain only
 // showed a target because other healers use the " - Dongru - " dash form.
@@ -114,9 +115,9 @@ describe('_CH_CALL_RX — real callout styles from the 2026-08-03 chain', () => 
   });
 
   it('every other style captured before and still does', () => {
-    expect(target('001 - CH - Dongru - Mana: 38%')).toBe('Dongru');          // Fargan
-    expect(target('002 -CH - Dongru - Mana 26%')).toBe('Dongru');            // Aimey
-    expect(target('003 - CH- Dongru - Bananarama Mana: 39%')).toBe('Dongru');// Uilnayar
+    expect(target('001 - CH - Dongru - Mana: 38%')).toBe('Dongru');          // A member
+    expect(target('002 -CH - Dongru - Mana 26%')).toBe('Dongru');            // A member
+    expect(target('003 - CH- Dongru - Bananarama Mana: 39%')).toBe('Dongru');// A member
     expect(target('002 Druid CH Dongru Mana: 44%')).toBe('Dongru');
     expect(target('001 -> CH on Dongru Mana: 70%')).toBe('Dongru');
   });

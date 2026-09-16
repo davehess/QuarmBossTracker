@@ -1,6 +1,6 @@
 // GET /api/agent/item-catalog — the wishlist picker's local universe.
 //
-// Hitya asked what syncing the item list down would cost before agreeing to it,
+// The guild lead asked what syncing the item list down would cost before agreeing to it,
 // so the numbers are part of the contract, not trivia:
 //   11,099 rows · ~380 kB JSON · ~130 kB gzipped · ~16 players · source moves
 //   weekly ⇒ ~2 MB/week egress, 304 on every other startup.
@@ -72,7 +72,7 @@ describe('the migration that backs it', () => {
   });
 
   it('includes Planes of Power by DROP TABLE, not by tracked boss', () => {
-    // Hitya, 2026-08-30: PoP items must be wishlistable before the unlock. Only
+    // The guild lead, 2026-08-30: PoP items must be wishlistable before the unlock. Only
     // 12 PoP bosses are registered (vs 407 Luclin) because that board is built
     // out after unlock — a boss-driven universe reached 113 of 1,212 PoP items.
     expect(sql).toMatch(/eqemu_npc_drops/);

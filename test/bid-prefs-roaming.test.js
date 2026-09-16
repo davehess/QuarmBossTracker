@@ -1,6 +1,6 @@
 // Roaming bid prefs — the half that makes planned bids survive a reinstall.
 //
-// Hitya, 2026-08-26: "have these all local and sync them up to the DB and bring
+// The guild lead, 2026-08-26: "have these all local and sync them up to the DB and bring
 // them back down to a local mimic." Before this, logsync.plannedbids.json /
 // lootdismiss.json / bidfamily.json were LOCAL ONLY with no bot-side
 // counterpart at all — reinstall Mimic, or play the Deck instead of the

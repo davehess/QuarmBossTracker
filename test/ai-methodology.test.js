@@ -1,6 +1,6 @@
 // test/ai-methodology.test.js — /ai cannot quietly disagree with the repo.
 //
-// Hitya 2026-08-23 asked for the methodology to be published at
+// The guild lead 2026-08-23 asked for the methodology to be published at
 // wolfpack.quest/ai, human- and agent-readable. Publishing a restatement of
 // rules that actually live in CLAUDE.md and docs/ creates a second copy, and
 // a second copy rots — which is precisely the failure mode several of the

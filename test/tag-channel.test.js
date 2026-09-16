@@ -1,6 +1,6 @@
 // #194 — Zeal /tag capture: the spawn-id side door.
 //
-// First cut of this feature invented a social grammar ("tag %T 87") — Uilnayar
+// First cut of this feature invented a social grammar ("tag %T 87") — a member
 // corrected it (2026-08-05): Zeal has a NATIVE /tag command that applies to
 // your current target and broadcasts through rsay/gsay/a joined ZT* channel.
 // The wire format, VERIFIED from CoastalRedwood/Zeal nameplate.cpp (cloned and
@@ -148,7 +148,7 @@ describe('noteTagChannelLine — the real wire format', () => {
     expect(h.zealTagsSnapshot(NOW)[0].tagger).toBe('Naggato');
   });
 
-  // ── The transports the first cut missed. Hitya's first live test (two
+  // ── The transports the first cut missed. The guild lead's first live test (two
   // `a Darkpaw warrior`s tagged Bardy and Cano, NOT in a raid) captured
   // NOTHING — the parser knew only the ZT channel and rsay, and `/tag gsay`
   // is the natural transport when you're in a group and not a raid.
@@ -459,7 +459,7 @@ describe('bot integration points', () => {
   });
 });
 
-// ── Append semantics (Hitya 2026-08-06) ──────────────────────────────────
+// ── Append semantics (the guild lead, 2026-08-06) ──────────────────────────────────
 // "tags can append as well if you do a /tag chat +<tag> with a plus symbol."
 //
 // The prefix used to be stripped and thrown away, which was harmless while the

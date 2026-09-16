@@ -1,6 +1,6 @@
 -- Lockouts derived from kills we already have parses for.
 --
--- Hitya 2026-08-22, on a Ventani parse Taeya uploaded from a non-guild raid:
+-- The guild lead 2026-08-22, on a Ventani parse a member uploaded from a non-guild raid:
 -- "taeya reported this Ventani kill so they should have a lockout."
 --
 -- The 2026-08-21 table only ever filled from an /sll relay, and /sll is a

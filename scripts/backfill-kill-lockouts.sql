@@ -1,6 +1,6 @@
 -- One-shot backfill: character_lockouts from kills we already have parses for.
 --
--- Hitya 2026-08-22: "taeya reported this Ventani kill so they should have a
+-- The guild lead 2026-08-22: "taeya reported this Ventani kill so they should have a
 -- lockout." The table shipped reading only /sll relays and had never held a
 -- row, while `encounters` already carried the kills. This walks the history
 -- the live ingest path (index.js `_recordKillLockouts`) will handle from now
@@ -148,8 +148,8 @@ kill AS (
    WHERE e.ended_at IS NOT NULL          -- confirmed kill only; a wipe locks nobody
 ),
 -- Everyone the parses can PROVE was there. Four sources, because a damage list
--- alone misses the case that prompted this: Taeya is a cleric, so she has no
--- encounter_players row on the very kill she uploaded.
+-- alone misses the case that prompted this: a cleric does no damage, so they
+-- have no encounter_players row on the very kill they uploaded.
 present AS (
   SELECT k.id, c.contributor_character AS nm FROM kill k
     JOIN contributions c ON c.encounter_id = k.id
@@ -199,7 +199,7 @@ latest AS (
            AS expires_at,
          -- Same three-state rule as utils/killLockouts.classifyOurs, including
          -- the roster-share clause: a raid night is not the only thing we run
-         -- (Hitya 2026-08-22: "Friday was a guild rolling event, so internal,
+         -- (the guild lead, 2026-08-22: "Friday was a guild rolling event, so internal,
          -- but still a lockout"). Measured over ten days, our raids sit at
          -- 0.75-0.89 roster share and the pug raids our people joined at
          -- 0.14-0.22, so 0.5 separates them with room on both sides.

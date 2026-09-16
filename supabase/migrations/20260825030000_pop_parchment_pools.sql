@@ -66,7 +66,7 @@ JOIN class_bits cb ON cb.bit = nc.common_bits   -- only cleanly single-class tra
 JOIN eqemu_items i ON i.id = tu.scroll_item_id;
 
 -- pop_spell_needs v2: same job (who still needs which PoP spell, level-desc
--- priority per Hitya's first-dibs rule), two fixes and one new column:
+-- priority per the guild lead's first-dibs rule), two fixes and one new column:
 --   • membership now includes 'Song: %' scrolls — bards existed all along;
 --   • NEW `tier` column: the parchment that buys this spell FOR THIS
 --     CHARACTER'S CLASS, from the script pools. NULL means "your class's

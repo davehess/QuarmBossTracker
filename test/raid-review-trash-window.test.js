@@ -1,6 +1,6 @@
 // noteTrashKill must only count mobs killed DURING the raid.
 //
-// Field bug (2026-08-02 review, reported by Uilnayar): the "Trash cleared"
+// Field bug (2026-08-02 review, reported by a member): the "Trash cleared"
 // section read "967 mobs cleared · 17.49M damage · 9h 22m in combat" for a raid
 // that ran 8:54p → 10:42p — 1h48m. Its top entries (A Poxed Soriz ×85, a
 // grimling priest ×81, …) were mobs the raid never engaged; raiders had killed

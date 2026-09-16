@@ -1,7 +1,7 @@
 // test/pop-hail-witness.test.js — witnessed hails as PoP flag coverage for
 // raiders who don't run Mimic. SOURCE-SLICE tier.
 //
-// Hitya 2026-08-20: "we need people that don't use mimic to be covered as
+// The guild lead 2026-08-20: "we need people that don't use mimic to be covered as
 // well. When someone Hails a flagging NPC and we see that from a mimic-enabled
 // raider, we should record that as a proper flag."
 //

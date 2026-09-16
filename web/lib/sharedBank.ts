@@ -1,7 +1,7 @@
 // Grouping characters into GAME ACCOUNTS by their shared bank, tolerant of
 // snapshot skew. Pure + tested (test/shared-bank.test.js).
 //
-// The server rules that shape this (Hitya, 2026-08-20):
+// The server rules that shape this (the guild lead, 2026-08-20):
 //   • A game account holds at most 8 characters.
 //   • One person can own ~10 game accounts under a single forum account, so
 //     "same owner" and "same account" are DIFFERENT questions. Ownership is

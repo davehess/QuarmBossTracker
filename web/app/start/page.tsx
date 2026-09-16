@@ -1,6 +1,6 @@
 // /start — the click-by-click install walkthrough.
 //
-// Hitya, 2026-08-28: "Run with us." on the landing page links here, and it
+// The guild lead, 2026-08-28: "Run with us." on the landing page links here, and it
 // wants "a click by click on what to do to get installed, setup buttons
 // mentioned and deep linked to."
 //

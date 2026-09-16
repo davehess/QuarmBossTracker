@@ -419,7 +419,7 @@ async function syncAuctions(opts = {}) {
       // Minimal-return: the auction upsert often batches more than 1000
       // rows on a full sync, and PostgREST caps the representation response
       // at max-rows (default 1000), which made the "upserted" count read
-      // 1000 even when more rows were written (Hitya 2026-06-23: "12,797
+      // 1000 even when more rows were written (the guild lead, 2026-06-23: "12,797
       // actual auctions but the report said 1000"). All rows ARE written;
       // count from the input length.
       await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id', { minimal: true });
@@ -559,7 +559,7 @@ async function syncRaidsList() {
   if (rows.length === 0) return { fetched: raids.length, upserted: 0 };
 
   // Minimal-return: same 1000-row PostgREST cap that hit the auctions upsert
-  // (Hitya 2026-06-23). We're at 385 raids today but the count will grow,
+  // (the guild lead, 2026-06-23). We're at 385 raids today but the count will grow,
   // and getting capped silently 18 months from now is exactly the failure
   // mode we just fixed elsewhere. Count from the input length.
   await supabase.upsert('opendkp_raids', rows, 'raid_id', { minimal: true });
@@ -577,7 +577,7 @@ async function syncRaidsList() {
 //     mid-raid before attendance was finalized, or a fetch returned partial
 //     data — this is the bug behind the wildly-low attendance %: empty-
 //     attendee ticks still count in the denominator but credit nobody, so
-//     regulars like Rorschach/Gonner read far below their true RA). Forcing
+//     regulars read far below their true RA). Forcing
 //     a re-fetch until every tick is populated backfills the real attendance.
 //   - the upstream Version (from summary) is newer than ours.
 // Empty-tick re-fetch only matters for raids the attendance page actually
@@ -703,7 +703,7 @@ async function syncRaidDetail(raidId) {
 //
 // opts.full = true forces detail fetch for every raid (use sparingly — only for
 // manual /syncopendkp).
-// ── Off-raid sync cadence (Hitya, 2026-08-27: "cut down the number of calls as
+// ── Off-raid sync cadence (the guild lead, 2026-08-27: "cut down the number of calls as
 // much as possible outside of raid times") ─────────────────────────────────
 // The mirror sync runs every 30 minutes, around the clock, and it is now the
 // bulk of what OpenDKP sees from us: over a recent 12h window, /auctions cost
@@ -954,7 +954,7 @@ async function _maxMirroredId(table, pkCol) {
 // a redeploy just buys one extra (write-free) full offer.
 const _lastFullSweepAt = new Map();
 
-// ── Idle backoff (Hitya, 2026-08-26: "the dkp numbers don't change outside of
+// ── Idle backoff (the guild lead, 2026-08-26: "the dkp numbers don't change outside of
 // raids unless we have to override something. why are we auditing so
 // frequently") ──────────────────────────────────────────────────────────────
 // Measured that day: the audits walk cost 17 calls / 6.2 MB EVERY 30 MINUTES,
@@ -1056,7 +1056,7 @@ function _noteIdleResult(table, freshCount) {
   _nextDueAt.set(table, Date.now() + wait);
 }
 // ── Full sweep cadence: anchored to the raid calendar, not a rolling clock ──
-// Hitya, 2026-08-27, twice. First: "we don't need a full download that often,
+// The guild lead, 2026-08-27, twice. First: "we don't need a full download that often,
 // just before a raid. three times a week." Then, an hour later:
 // "let's make the full audit once per week then until we have the new version
 // that has the since tag."
@@ -1692,7 +1692,7 @@ async function reconcileRecentLoot(opts = {}) {
 // not just an integer.
 // Pull every page of characters. OpenDKP's /characters endpoint paginates
 // (the web UI exposes page-size + page controls), and a single un-paged call
-// only returns the first slice — that's how active level-60 mains like Dant
+// only returns the first slice — that's how active level-60 mains like a member
 // went missing from our mirror. We walk ?page=N until a page yields no NEW
 // CharacterIds (handles both real pagination AND an endpoint that ignores
 // ?page and returns the same full list every time — the new-id check stops
@@ -1751,7 +1751,7 @@ async function syncCharacters() {
   }
 
   // Officer family-link overrides (/admin/links). OpenDKP parentage is
-  // routinely incomplete — rank "Raid Alt" with ParentId 0 (Adiwen) splits
+  // routinely incomplete — rank "Raid Alt" with ParentId 0 (a member) splits
   // one human into two families. When main_name_override is set, it wins
   // over the ParentId resolution so the officer's fix survives every sync.
   const overrideByName = new Map();
@@ -1793,12 +1793,12 @@ async function syncCharacters() {
 
   // Dedup by (guild_id, lower(name)) BEFORE upserting. OpenDKP rosters
   // frequently contain duplicate character names — the same toon registered
-  // twice, a main + a stale dupe, etc. (the live roster shows "Fronzz" listed
+  // twice, a main + a stale dupe, etc. (the live roster shows "Pellwyn" listed
   // twice). The upsert conflict target is (guild_id, name), so two rows with
   // the same name in ONE PostgREST batch trigger Postgres's "ON CONFLICT DO
   // UPDATE command cannot affect row a second time" error — which fails the
   // ENTIRE batch and silently drops up to 200 unrelated characters. THIS is
-  // why Ashieron / Abrahms / Damyu / Ghalix never imported despite being
+  // why four characters never imported despite being
   // clearly present in OpenDKP: they happened to share a batch with a
   // duplicate-name pair. Collapse duplicates first, keeping the best row.
   const RANK_SCORE = {
@@ -1854,8 +1854,8 @@ async function syncCharacters() {
 // counts — and until now the ONLY thing that ever wrote the OpenDKP half of it
 // was an officer typing `/backfillopendkploot`. Somebody last ran that on
 // 2026-06-04, so by 2026-08-14 the Loot tab was missing **758 awards across 28
-// raids**: Kazmodon won Silver Band of Secrets at raid 98561 for 150 DKP and the
-// item still read as never dropped (Hitya spotted it, "are we missing rows of
+// raids**: a member won Silver Band of Secrets at raid 98561 for 150 DKP and the
+// item still read as never dropped (the guild lead spotted it, "are we missing rows of
 // loot drops?").
 //
 // The failure mode is the point: a derived table fed only by a human command

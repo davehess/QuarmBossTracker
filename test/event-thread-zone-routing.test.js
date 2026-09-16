@@ -1,5 +1,5 @@
 // test/event-thread-zone-routing.test.js — two events at once, each thread gets
-// ITS OWN kills (Hitya, 2026-09-07: "there are two events going on tonight and
+// ITS OWN kills (the guild lead, 2026-09-07: "there are two events going on tonight and
 // mobs are being posted to each one, instead of specific ones posted per zone").
 //
 // The fixtures are that night, verbatim: Fargan's "Seru mini for Dongru" and

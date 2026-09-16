@@ -1,5 +1,5 @@
 // The platform map: wolfpack.quest on top, everything else feeding it in
-// columns, hover to list a column's elements (Hitya, 2026-08-28).
+// columns, hover to list a column's elements (the guild lead, 2026-08-28).
 //
 // ⚠ The assertion that matters most is the module split. Making the map a
 // client component marked EVERY export in its file client-side — including the

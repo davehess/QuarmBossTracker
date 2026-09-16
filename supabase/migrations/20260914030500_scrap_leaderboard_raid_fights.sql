@@ -1,6 +1,6 @@
 -- 20260914030500_scrap_leaderboard_raid_fights.sql
 -- The Scrap (the /me damage competition, scrap_damage_leaderboard) counted
--- every fight in the last 30 days. Hitya, 2026-09-13: "Chadivarius's 26.8M
+-- every fight in the last 30 days. The guild lead, 2026-09-13: "a member's 26.8M
 -- damage on a non-raid swarm shouldn't be in here for the leaderboards" —
 -- 25.96M of that 26.8M was one-to-two-player Shik`nar farming.
 --
@@ -12,8 +12,8 @@
 -- applies. Same signature; /me needs no change.
 --
 -- Measured 2026-09-13 on the live 30 days: a floor of 6 and a floor of 12
--- produce the same top five (Wabumkin 8.7M, Atlasius, Fittir, Lenolshot,
--- Damyu); seven is "more than a group".
+-- produce the same top five (8.7M at the head of it); seven is "more than a
+-- group".
 create or replace function public.scrap_damage_leaderboard(p_since timestamptz)
 returns table(character_name text, total_damage bigint, best_dps int, encounters bigint)
 language sql

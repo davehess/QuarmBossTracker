@@ -14,7 +14,7 @@
 //   · 2026-08-05 (/character era timeline): the family tick pull returns 1,149
 //     rows, so 149 were dropped — and because the query had no .order(),
 //     PostgREST returned heap order, meaning the dropped rows were the NEWEST.
-//     All 36 of Chadivarius's ticks were in that tail, so main detection could
+//     All 36 of a member's ticks were in that tail, so main detection could
 //     not see he had ever raided and kept naming the previous main.
 //
 // ORDERING IS NOT OPTIONAL. Range pagination over an unordered query can repeat

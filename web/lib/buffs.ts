@@ -17,14 +17,14 @@ export type BuffCategory =
   | 'levitate' | 'seeInvis' | 'invis' | 'resists';
 
 export const CATEGORY_ORDER: BuffCategory[] = [
-  // 2026-06-21 (Hitya): dropped 'mana' from the displayed order — the
+  // 2026-06-21 (the guild lead): dropped 'mana' from the displayed order — the
   // raw mana category on its own renders as an empty column on the
   // /buffs grid (we don't track flat-mana buffs separately from
   // Mana Regen, so every row's Mana cell was '·' and the column just
   // ate horizontal width). The CATEGORY_LABELS entry below still has
   // 'mana': 'Mana' so any other consumer that looks the label up by
   // name continues to work.
-  // 2026-06-22 (Hitya): added 'seeInvis' + 'invis' so the Mimic raid-
+  // 2026-06-22 (the guild lead): added 'seeInvis' + 'invis' so the Mimic raid-
   // detail panel surfaces them as their own rows instead of dumping them
   // into Other (worn-item detection still TODO — the buff signal alone
   // covers the cast case).
@@ -66,7 +66,7 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
   // its rank variants don't share a stem with the other regen spells; add
   // them explicitly so they categorize instead of falling into "Other"
-  // (Hitya 2026-06-22 — "Nature's Recovery is HP Regen").
+  // (the guild lead, 2026-06-22 — "Nature's Recovery is HP Regen").
   regen: ['regrowth', 'regenerat', 'chloroplast', 'replenish', 'pack regen',
           "nature's recovery", 'natures recovery'],
   // Max-mana boosts.
@@ -116,7 +116,7 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   // See Invisible and Invisibility — separate categories so the dashboard
   // and /buffs page surface them as their own rows. seeInvis comes first
   // in CATEGORY_ORDER so categorizeBuff returns it before invis's broader
-  // 'invisib' substring would match (Hitya 2026-06-22).
+  // 'invisib' substring would match (the guild lead, 2026-06-22).
   seeInvis: ['see invis'],
   invis:    ['invisib', 'camouflage', 'cloak of shadows', 'shauri'],
   // Resist buffs (single + group). Circle of Seasons = Fire + Cold only;
@@ -201,7 +201,7 @@ export const UPGRADE_CHAINS: UpgradeChain[] = [
   {
     key: 'aego',
     label: 'Aego line',
-    // Bottom-up Cleric "Type One" HP+AC line (Hitya-confirmed), then group
+    // Bottom-up Cleric "Type One" HP+AC line (the guild lead-confirmed), then group
     // versions: Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor
     // L34 → Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55
     // → Temperance (group) → Aegolism (group, A+B) → Blessing of Aegolism
@@ -388,7 +388,7 @@ export function isCurseBuff(name: string | null | undefined): boolean {
 }
 
 // EQ corpses register as their own "character" named "<Owner>'s corpse<id>"
-// (e.g. "Hitya's corpse2854"). They leak into character_live_state / raid_roster
+// (e.g. "Rethlan's corpse2854"). They leak into character_live_state / raid_roster
 // but are NOT raiders, so the raid + buff views must filter them out.
 const CORPSE_RX = /'s\s+corpse\d*$/i;
 export function isCorpse(name: string | null | undefined): boolean {
@@ -418,7 +418,7 @@ export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
   C: 'Shaman (Khura/Kragg/Tnarg/Inner Fire) · Cleric (Brell) · Wizard (Arch)',
 };
 
-// EQ HP buff slots (canonical, confirmed by Hitya):
+// EQ HP buff slots (canonical, confirmed by the guild lead):
 //   A — Cleric "Type One" HP+AC line:
 //        Courage (L1) → Center (L9) → Daring (L19) → Bravery (L24) →
 //        Valor (L34) → Resolution (L44) → Heroism (L49) → Heroic Bond (L54)
@@ -443,7 +443,7 @@ const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
 };
 // 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot,
 // bigger numbers) and matches Quarm's PoP-beta reward "Beta Virtue" too.
-// Beta buffs OUTRANK the era tops (Hitya 2026-07-09: "beta virtue should
+// Beta buffs OUTRANK the era tops (the guild lead, 2026-07-09: "beta virtue should
 // show as above ancient aego") — without this, a Beta Virtue holder read as
 // HP slots A+B EMPTY, went orange, and the queue told clerics to land Ancient
 // Aego over the strictly better buff.

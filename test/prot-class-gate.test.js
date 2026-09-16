@@ -1,13 +1,13 @@
 // test/prot-class-gate.test.js — a box announcing its owner's discipline must
 // not put that discipline on the box.
 //
-// Hitya, live 2026-09-02, with a Command Center screenshot showing a 10:10
-// Defensive recharging on Currynote: "Currynote is currygoat's bard, he does
+// The guild lead, live 2026-09-02, with a Command Center screenshot showing a 10:10
+// Defensive recharging on A member: "a member is currygoat's bard, he does
 // not have defensive."
 //
 // The protective tracker reads raid-chat announces and credits whoever SPOKE
 // the line — which is right, and is what made it work for tanks who run no
-// macro at all. But Currygoat's announce went out on his bard box, so the bard
+// macro at all. But a member's announce went out on his bard box, so the bard
 // got the Defensive.
 //
 // ⚠ THE ASYMMETRY DECIDES HOW FAR THIS GATE GOES. Suppressing a REAL defensive

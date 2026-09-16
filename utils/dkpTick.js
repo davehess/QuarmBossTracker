@@ -1,6 +1,6 @@
 // utils/dkpTick.js — shared DKP-tick submission used by BOTH the Discord
 // /tick command (attachment path) and the Mimic dashboard officer panel
-// (live-roster / detected-file path). Extracted 2026-07-16 (Hitya) so the two
+// (live-roster / detected-file path). Extracted 2026-07-16 (the guild lead) so the two
 // surfaces submit identical payloads to OpenDKP. The Discord command's own
 // slot-ordering + 1-hour-overwrite rules live here so they hold everywhere.
 //
@@ -53,7 +53,7 @@ function todayStr(tz)              { return new Date().toLocaleDateString('en-CA
 function raidDateStr(ts, tz)       { return new Date(ts).toLocaleDateString('en-CA', { timeZone: tz }); }
 
 // Sun/Wed/Thu are raid nights — the dashboard only auto-CREATES a raid on
-// those days (Hitya 2026-07-16). Any other day, a missing raid is an error the
+// those days (the guild lead, 2026-07-16). Any other day, a missing raid is an error the
 // officer must resolve on OpenDKP rather than have the tool invent one.
 function isRaidDay(tz) {
   const dow = new Date().toLocaleDateString('en-US', { timeZone: tz, weekday: 'long' }).toLowerCase();

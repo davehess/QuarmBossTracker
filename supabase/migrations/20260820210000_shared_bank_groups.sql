@@ -1,4 +1,4 @@
--- Shared-bank account fingerprinting (Hitya 2026-08-20: "build fingerprinting
+-- Shared-bank account fingerprinting (the guild lead, 2026-08-20: "build fingerprinting
 -- on shared bank lines" — "The goal is that we don't overcount items in shared
 -- banks (up to 8x if we don't review and dedup)").
 --

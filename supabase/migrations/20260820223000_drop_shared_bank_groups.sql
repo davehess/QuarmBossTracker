@@ -6,7 +6,7 @@
 -- last ran /outputfile inventory, so one account's snapshots sit minutes or
 -- hours apart and drift (107 / 104 / 108 rows on one real account). A single
 -- differing row broke the hash, so nothing grouped and one stack of Words of
--- the Spectre was still counted ten times (Hitya, same day: "Fairly certain
+-- the Spectre was still counted ten times (the guild lead, same day: "Fairly certain
 -- that these are duplicates for the shared bank bits of 1 or 3 items").
 --
 -- Replaced by slot-agreement clustering in web/lib/sharedBank.ts, which scores

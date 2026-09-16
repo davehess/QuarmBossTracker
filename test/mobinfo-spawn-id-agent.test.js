@@ -1,7 +1,7 @@
 // test/mobinfo-spawn-id-agent.test.js — the AGENT half of scoping Target Info
 // effects to a spawn instead of a name.
 //
-// Hitya, 2026-09-02: "we also need to incorporate the spawn ID into the target
+// The guild lead, 2026-09-02: "we also need to incorporate the spawn ID into the target
 // info window so we dedup those effects between same named mobs, off of spawn
 // id." Bot half + the read filter: test/target-info-spawn-id-scope.test.js.
 //

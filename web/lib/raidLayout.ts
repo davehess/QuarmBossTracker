@@ -1,6 +1,6 @@
 // web/lib/raidLayout.ts — which attendance layout a member sees.
 //
-// Hitya, 2026-09-04, after the A/B/C side-by-side on b.wolfpack.quest: "I like
+// The guild lead, 2026-09-04, after the A/B/C side-by-side on b.wolfpack.quest: "I like
 // blocks and strips, let's keep both as options, default to strips." So two
 // layouts stay, chosen per browser and remembered in a cookie — the same shape
 // the timezone picker uses (wp_tz) — with a `?layout=` query override so a
