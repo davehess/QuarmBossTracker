@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read this first — running it for your own guild
+    url: https://github.com/davehess/QuarmBossTracker/blob/main/docs/SELFHOSTING.md
+    about: The self-host guide, in the order that actually works. Free for your own guild under the license.
+  - name: The license, in plain words
+    url: https://github.com/davehess/QuarmBossTracker/blob/main/docs/LICENSING.md
+    about: What you can do free, when you need to talk to us, and what happens to a pull request.
+  - name: What's shipped and what's next
+    url: https://wolfpack.quest/roadmap
+    about: The roadmap in plain language — check here before asking for something.
