@@ -4617,3 +4617,16 @@ roadmaps.
   histories, and handle→character matching. **Private artifact, not in the
   repo** (it names other guilds): link in the open table. Fifteen raid-sized
   guilds with no known tooling; four with their own; re-run in 60 days.
+- **⚠ Open — `/about` has no Extended Target panel, so our best capability shot
+  is unpostable.** A live Ssraeshza capture (the guild lead, 2026-09-18) shows a
+  dozen identically-named mobs separated by spawn id with a tank assignment on
+  each — several `Disciple of Rhag`, four `Ssraeshzian … Priest` — which is
+  field proof of the Zeal 1.4.6 spawn-id work at N≈12 in a real pull, and the
+  thing no other tool on the server does. It is also one real character name per
+  chip, so it sits in the ❌ row of `docs/marketing/discord-post.md` §3. The demo
+  renders only Tank / Command Center / CH chain / loot TTS
+  (`web/components/about/OverlayDemo.tsx`), so there is nothing safe to
+  substitute. **Next: add an Extended Target panel to the demo on the same
+  invented-name roster** — makes the capability screenshottable permanently
+  rather than for one conversation. Scrubbing the capture is the weak option;
+  the assignment chips are the payload.
