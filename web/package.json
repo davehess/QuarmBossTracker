@@ -3,7 +3,7 @@
   "version": "1.7.42",
   "private": true,
   "description": "Wolf Pack EQ \u2014 guild-wide tracker dashboard (Vercel-hosted, reads from the same Supabase as the Discord bot).",
-  "license": "BUSL-1.1",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

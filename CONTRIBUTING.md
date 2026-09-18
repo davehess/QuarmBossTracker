@@ -195,37 +195,34 @@ they're how we keep the raid's data spine safe, not a knock on the work.
 
 ## 9. Licensing — what happens to your contribution
 
-The platform is licensed under the **Business Source License 1.1**, converting
-to **AGPL-3.0-or-later** four years after each release (`LICENSE`; the
-plain-language version is `docs/LICENSING.md`). In short: any guild may run,
-modify and self-host it for its own use; offering it to *others* for a fee needs
-a commercial arrangement with the Licensor; and every version ends up fully open
-source on the Change Date.
+The platform is **open source under AGPL-3.0-or-later** (`LICENSE`; the
+plain-language version is `docs/LICENSING.md`). Any guild may run, modify, fork
+and self-host it, free. The one obligation is AGPL **§13**: modify it, let people
+use your version over a network, and you must offer them your source.
 
 There is no CLA to sign. **Opening a pull request is the agreement.** By
 submitting a contribution you confirm that:
 
 1. **You have the right to contribute it** — it is your own work, or you are
    permitted to contribute it on these terms.
-2. **It is licensed the same way as the rest.** Your contribution is offered
-   under the Business Source License 1.1 with the parameters in `LICENSE`, and
-   converts to the Change License on the same Change Date as the version it
-   ships in.
+2. **It is licensed the same way as the rest** — AGPL-3.0-or-later.
 3. **You grant the Licensor the right to relicense it.** A perpetual,
    worldwide, irrevocable, royalty-free right to license your contribution
-   under any terms — including the commercial license offered to hosted
-   operators, and the Change License. This is the clause that keeps both of
-   those workable once the code is no longer one person's: without it, every
-   outside contribution would carve a hole in the commercial license and in
-   the four-year conversion, and each would need chasing down individually.
+   under other terms as well. This is what keeps the commercial-license option
+   available for anyone who wants to host a modified version without §13's
+   source obligation; without it, every outside contribution would carve a hole
+   in that option and each would need chasing down individually. It does not
+   take anything away from you — your contribution stays AGPL for everyone,
+   including you.
 4. **You keep your authorship.** Credit stays in the git history and, where
    the project records it, in the release notes. The Licensor will not strip
    attribution from your work.
 
 If you self-host and improve it — a database port, a performance fix, platform
-compatibility — **please send it upstream.** Until the Change Date the license
-does not compel that, and we are asking rather than requiring: a fork that
-carries its optimisations back is how the next guild gets them.
+compatibility — **send it upstream.** Where your fork serves people over a
+network, §13 already requires you to offer them the source; a pull request here
+is the version of that which actually helps the next guild, instead of a tarball
+nobody finds.
 
 ## Quick reference
 
