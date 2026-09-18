@@ -483,6 +483,62 @@ nothing once slice 2 exists — it is the `||` on the other side of each config
 read — and avoids a second thing to release and keep in sync. ⚠ **What it is
 called is the guild lead's call**, not a design decision.
 
+## 12. Renaming the repository — the risk is the auto-updater, not the URL
+
+> *"this project has become so much more than a quarm boss tracker perhaps the
+> GitHub repository name also needs to update?"*
+
+**The name is out of date and the guild lead is right about that.** But this is
+not a settings change — it is a fleet operation, and the analysis below exists
+so it is done in the right order rather than discovered live.
+
+**The repo name is hardcoded in ~30 places**, and four of them are load-bearing:
+
+| Site | What breaks | GitHub's redirect covers it? |
+|---|---|---|
+| `apps/mimic/package.json` `build.publish` = `{provider: github, owner: davehess, repo: QuarmBossTracker}` | **The auto-updater in every already-installed Mimic.** This value is compiled into the binary at build time — clients on today's build will keep asking for the old name forever | electron-updater's HTTP client follows redirects, so **probably** — but this is the one to verify, not assume |
+| `index.js:66` `_AGENT_RAW_BASE` → `raw.githubusercontent.com/davehess/QuarmBossTracker/<ref>/…` | The agent hot-swap chain: the bot serves agent versions by fetching raw bytes | ⚠ **raw.githubusercontent.com is NOT believed to follow repo renames.** Highest-risk unknown |
+| `index.js:10874` the `#mimic-releases` announcer, `https.get` to the GitHub API | Announcements stop **silently** — the code has **no 30x handling**, so a 301 parses as an empty release list | API redirects, but a raw `https.get` does not follow it. **Breaks** |
+| `utils/mimicReleases.js`, the web `/mimic*` routes, `web/app/admin/agents` | `/mimic` download links, the agents page | These use `fetch`, which follows redirects → **fine** |
+
+**Two things blunt the worst case, and they are worth knowing before anyone
+panics:** the bot ships a **bundled agent fallback** (`_bundledAgentVersion`) so
+a dead raw chain degrades to "no new agent versions" rather than a broken fleet;
+and `AGENT_RELEASE_REF` is already an env var, so the ref side is tunable
+without a deploy.
+
+**The order that makes it safe:**
+
+1. **Centralise the name.** One constant plus an env override (`GITHUB_REPO`),
+   replacing ~30 literals. Cheap, and useful on its own — it is the same
+   de-branding problem as `DESIGN-guild-kit.md` §7a, so **do it as part of slice
+   2, not as a separate sweep.**
+2. **Fix the announcer's missing redirect handling** regardless of the rename —
+   `https.get` with no 30x branch is a latent bug today.
+3. **Verify the raw.githubusercontent behaviour on a throwaway repo first.**
+   Create a scratch repo, commit a file, fetch it via `raw.githubusercontent.com`,
+   rename the repo, fetch again. Five minutes, and it removes the single biggest
+   unknown instead of discovering it against the live fleet.
+4. **Cut a Mimic stable carrying the new publish config _after_ the rename** —
+   it cannot be shipped before, because the target repo would not exist yet. The
+   window between rename and fleet adoption is exactly what step 3 is testing.
+5. **Rename during a quiet window, never a raid night**, and verify within
+   minutes: the announcer, `/mimic` and `/mimic/beta`, an agent update check.
+
+**On the name itself — that is the guild lead's call**, not a design decision
+(`CLAUDE.md`: naming is never proposed unilaterally). One consideration worth
+putting on the table: it interacts with §11's generic-build question. A name
+that is still Wolf-Pack-specific does not help a forking guild; a neutral one
+supports the "Wolf Pack is a configuration, not the configuration" direction
+already chosen. Whatever it becomes, `appId` `quest.wolfpack.mimic` is a
+**separate** identifier with the same problem and should be decided at the same
+time.
+
+**Recommendation: do not rename yet.** Fold step 1 into slice 2, do steps 2 and
+3 whenever, and rename when the name is decided and the fleet is on a build that
+carries it. The URL redirect is the easy part; the auto-updater is the part that
+strands people.
+
 ## Open — read this first
 
 *(Rows carried forward from `DECISIONS-2026-09-16.md`; the sanitization sweep
@@ -490,7 +546,8 @@ itself is done and recorded there.)*
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Cost accounting for donations** — `docs/COSTS.md` | **done 2026-09-18 (§11).** ≈$120 infrastructure to date, measured. Railway's bill is the plan floor not usage; Supabase Pro is org-level and shared, with the causal basis (~$25/mo) recommended because the DB is 2.20 GB against Free's 500 MB | ⚠ **two figures need you: the domain, and Claude/development.** They are blank, not estimated — fill them and the accounting is complete. Then stand up the donation link with §6's wording (buys nothing, gates nothing) |
+| **Rename the repository** — "QuarmBossTracker" no longer describes it | **analysed 2026-09-18 (§12), NOT done and should not be done yet.** The name is hardcoded in ~30 places; 4 are load-bearing. The auto-updater's repo is compiled into every installed Mimic, `raw.githubusercontent.com` is not believed to follow renames, and the release announcer's `https.get` has no 30x handling so it would fail silently | **verify raw-redirect behaviour on a throwaway repo first** (5 min, removes the biggest unknown); fold the name-centralisation into guild-kit slice 2; fix the announcer redirect bug regardless; then rename in a quiet window and cut a Mimic stable after. **The name is the guild lead's call**, and `appId` should be decided with it |
+| **Cost accounting for donations** — `docs/COSTS.md` | **done 2026-09-18 (§11).** ≈$120 infrastructure to date, measured. Railway's bill is the plan floor not usage; Supabase Pro is org-level and shared, with the causal basis (~$25/mo) recommended because the DB is 2.20 GB against Free's 500 MB | ⚠ **two figures need you: the domain, and Claude/development.** They are blank, not estimated — the domain is the last one — Claude came in at $100/mo since April (≈$600, 6 months), putting total spend ≈$720. Then stand up the donation link with §6's wording (buys nothing, gates nothing) |
 | **Code-signing case rebuilt** — `docs/code-signing.md` | **done 2026-09-18 (§11).** The OSI blocker is gone; the case is written from 2,278 commits / 730 release tags / public repo / GitHub-hosted builds | **re-apply to SignPath first** (free, and its attribution is already live in the site footer). State the licence as AGPL-3.0-or-later. Put the user count in the application, never in the repo |
 | **De-branding cost measured** — `DESIGN-guild-kit.md` §7a | **answered 2026-09-18 (§11).** ~966 visible strings + 7 icons + 4 build-identity fields; the real cost is re-paying them on every upstream merge | **this reorders the queue — slice 2 now outranks the overlay renditions.** Design the `guild/assets/` override with it, and put `appId` on the wizard's checklist loudly |
 | **License → AGPL-3.0-or-later, open source, not for profit** | **done 2026-09-18 (§10)**, replacing the BSL decision of the same morning (§1, kept as history). All four `package.json` fields are `AGPL-3.0-or-later`; `LICENSE` is the canonical AGPL text with §13 verified intact | **verify the four `license` fields on `beta` after the sync.** Then: stand up a donation link that states plainly it confers nothing; **re-pursue free code signing — AGPL is OSI-approved so eligibility is back** (`docs/code-signing.md`); take `TERMS-hosted.md` §9 to a professional before the first cost-share arrangement |

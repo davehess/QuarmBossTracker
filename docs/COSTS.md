@@ -34,11 +34,24 @@ them.
 | **Railway** (bot) | Hobby | 2026-04-21 | $5/mo | 4.9 mo | **≈ $25** |
 | **Supabase** (database, auth) | Pro | 2026-05-25 | $25/mo + compute | 3.8 mo | **≈ $95** org-wide — see §3 |
 | **Vercel** (web) | Hobby | 2026-05-27 | **$0** | 3.7 mo | **$0** |
+| **Claude** (development) | subscription | 2026-04 | **$100/mo** | 6 billing months (Apr–Sep) | **≈ $600** |
 | **Domain** `wolfpack.quest` | — | — | — | — | ⚠ **needs your figure** (§4) |
-| **Claude / development** | subscription | — | — | — | ⚠ **needs your figure** (§4) |
 
-**Measured infrastructure to date: roughly $120**, before the domain and before
-any development cost.
+### The total
+
+| | |
+|---|---|
+| Infrastructure (Railway + Supabase + Vercel) | **≈ $120** |
+| Development tooling (Claude, $100/mo × 6) | **≈ $600** |
+| Domain | *pending* |
+| **Total spend to date** | **≈ $720**, plus the domain |
+
+**The shape of that number is the story: development tooling is ~5× the
+infrastructure.** If someone asks what the donations are for, the honest answer
+is that the servers are the small half. ⚠ And state which kind of subscription
+it is — a plan you would hold anyway is weaker justification than one taken out
+for this work. Six months at $100 is what was paid; whether all of it is
+attributable to this project is yours to say.
 
 ### Railway — the bill is the plan, not the usage
 Measured over the last 30 days: **0.080 GB RAM average, 0.0196 vCPU average.**
@@ -57,36 +70,64 @@ model — donations are not payment for a service — but if the arrangement eve
 became a paid service, this line stops being $0
 (`docs/DESIGN-selfhost-wizard.md` §2a).
 
-## 3. The Supabase line needs a decision, and you should make it deliberately
+## 3. The Supabase line — why Pro, honestly
 
-The Supabase **Pro plan is billed per organisation, not per project**, and the
+The **Pro plan is billed per organisation, not per project**, and the
 organisation (`hesstastic`) holds **two** projects: `RaidBosses` (this platform,
 created 2026-05-25) and an unrelated one created the day before. So "$25/month"
 is not automatically this project's cost.
 
-Two defensible attributions, and they differ by more than double:
+⚠ **An earlier draft of this page said "this platform cannot run on the free
+tier." That was too strong, and the guild lead was right to push back.** The
+accurate statement is narrower and more useful:
+
+**Pro is required by retention decisions we made, not by the platform.**
+`docs/DESIGN-selfhost-wizard.md` §2a already established that a guild *can* run
+on Supabase Free with retention tuned down, and named the exact settings. Our
+2.20 GB is what our own choices produced:
+
+| Table | Size | Share | Why it is that size |
+|---|---|---|---|
+| `encounter_threat_snapshots` | **1,266 MB** | **56.2%** | ⚠ **Its 30-day sweep has never worked** (`DECISIONS-2026-09-01.md`). This is a bug's worth of disk, not a requirement |
+| `chat_messages` | 225 MB | 10.0% | Deliberate — years of guild history, no retention by choice |
+| `who_observations` | 142 MB | 6.3% | 60-day raw + latest-sighting |
+| `target_observations` | 93 MB | 4.1% | — |
+| everything else | ~528 MB | ~23% | includes the ~119 MB `eqemu_*` reference catalog, which is the same for every deployment |
+
+**So: more than half the database is a retention sweep that does not run.** Fix
+it and the database roughly halves. At the 7-day window §2a recommends for a
+free deployment, that table would be ~105 MB instead of 1,266 MB.
+
+That still would not fit Free's 500 MB with our full chat history — but the
+honest framing is *"we keep more than we need to, and one sweep is broken"*,
+not *"the software demands a paid plan."* A guild starting fresh on the settings
+§2a recommends would fit Free for a good while.
+
+### What to tell someone who asks
 
 | Basis | Monthly | To date | The argument |
 |---|---|---|---|
-| **Marginal** — what this project *adds* to a bill that would exist anyway | ~$10 | ~$38 | The other project would keep the org on Pro; this one adds a second compute instance |
-| **Causal** — the plan exists *because of* this project | ~$25 | ~$95 | **This is the stronger argument.** The database is **2.20 GB**, which is **4.5× the 500 MB ceiling of Supabase Free**. This platform cannot run on the free tier. The other project plausibly could |
+| **Marginal** — what this project adds to a bill that would exist anyway | ~$10 | ~$38 | The other project keeps the org on Pro regardless; this adds a second compute instance |
+| **Causal** — the plan is on Pro because of this project's data | ~$25 | ~$95 | Our 2.20 GB is 4.5× Free's ceiling. True, but the honest footnote is that 56% of it is the broken sweep |
 
-**Recommendation: use the causal basis (~$25/month), and say which basis you
-used.** The size figure is the justification and it is checkable by anyone who
-asks. What matters for your stated purpose is not maximising the number — it is
-that the number has a reason attached.
+**Use whichever you like, but state the basis and state the footnote.** The
+credible version of this is "we're on Pro because of how much we keep, over half
+of which is a bug we haven't fixed yet" — that is a better answer than a bigger
+number, and it comes with an obvious action attached.
 
-## 4. The two figures I cannot measure
+## 4. The figure still outstanding
 
-I have no visibility into either. **Do not let anyone, including me, estimate
-these — get them from the source:**
+I have no visibility into this one. **Do not let anyone, including me, estimate
+it — get it from the source:**
 
 | Figure | Where it lives | Note |
 |---|---|---|
 | **Domain** `wolfpack.quest` | Your registrar's billing page. `web/next.config.js` names Porkbun, and `CLAUDE.md` flags that as **unverified** — a cloud session cannot check (DNS-over-HTTPS and the registrar API are both blocked by the egress proxy) | Registration + renewals since inception. `.quest` renewals are typically the larger number, not the first-year promo |
-| **Claude / development tooling** | Your Anthropic account billing or subscription invoices | ⚠ **If this is a flat monthly subscription, the honest line is `subscription × months`, not a token count.** A subscription you would pay for anyway is weaker justification than one taken out for this work — say which it is. Per-session cost inside Claude Code is visible with `/cost`, but that is one session, not a total |
 
-**Fill these in and the accounting is complete.** Leave them blank rather than
+*(Claude was supplied by the guild lead on 2026-09-18 as **$100/month since
+April** and is now in §2. Only the domain is outstanding.)*
+
+**Fill the domain in and the accounting is complete.** Leave it blank rather than
 guessing; a made-up number is worse than a missing one for the purpose this page
 serves.
 
@@ -133,11 +174,10 @@ answers "why are you accepting donations".
    is a very large number of evenings, and it is unpaid. It is deliberately not
    converted into a dollar figure here — doing so would invite an argument about
    the rate, and the rate is not the point.
-2. **Infrastructure cost grows with retention, not with guild size.**
-   `docs/DESIGN-selfhost-wizard.md` §2a has the measured breakdown; the single
-   biggest table is threat telemetry, whose 30-day sweep has never worked
-   (`docs/DECISIONS-2026-09-01.md`). **Fixing that sweep would reduce the bill**,
-   and is a better answer to cost than asking for money.
+2. **Infrastructure cost grows with retention, not with guild size** — see §3.
+   **Fixing the threat-snapshot sweep would roughly halve the database**, and
+   that is a better answer to cost than asking for money. It is arguably the
+   single highest-value item on the open list for this reason.
 3. **Nothing here is tax or accounting advice.** How donations are treated where
    you live is a question for an accountant — `docs/DESIGN-business.md` §7.2 has
    the specific questions to ask.
