@@ -60,6 +60,7 @@
   },
 
   "features": {
+    "_comment": "pvp gates the competitive components (PvP /who collection, PvP timers). Overriding anonymous players additionally needs ALLIANCE_CODE in .env — a generated secret issued between allied guilds, never set by the wizard. Off by default on purpose.",
     "web": true,
     "opendkp": true,
     "pvp": false,

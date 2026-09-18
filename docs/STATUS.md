@@ -46,6 +46,7 @@ folly** — it's here.*
 | `DESIGN-external-tenancy.md` | Letting OTHER guilds use Mimic + the platform: self-host vs tenant-on-our-Supabase vs hybrid, the honest self-host cost, the **PvP `/who` carve-out** and how it's enforced, the Mimic-points-elsewhere angle, a staged plan, and the open business questions | Unbuilt — design only (2026-08-02). Read before any tenancy/self-host/`guild_id` work. Stage 0 (publish the `eqemu_*` catalog) + Stage 1 (split PvP data to its own project) are worth doing on their own merits |
 | `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Designed 2026-09-18, slice 0 landed** (`guild/`). Four picks pending (§8); then slice 1 before the de-branding sweep |
 | `LICENSING.md` | The plain-language license: what a guild may do free, what needs an arrangement, what happens to a PR, and why BSL→AGPL over BSD-3 or AGPL alone | **Live 2026-09-18.** `LICENSE` is binding; this is what people actually read |
+| `TERMS-hosted.md` | **DRAFT hosted-service terms, for legal review:** sizes S/M/L, monthly in advance, no SLA, your data is yours (per-incident consent, no `/who` ingestion, cross-tenant never merged), encrypted handover at term end, the guild owns its domain, gated components, and the §9 list a lawyer must settle | Drafted 2026-09-18 from the guild lead's §10 answers. **Not binding until reviewed** |
 | `DESIGN-onboarding-overhaul.md` | "New Here?" walkthrough on web (`/start`) + Discord, shared screenshot set, auto-checkoff from existing signals | Unbuilt — the spec (2026-07-31); also documents the live `/onboarding` embed-overflow break |
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
 | `raid-hub-roadmap.md` | `/raid` hub design; Stages 1-2 shipped, Stages 3-5 open | CLAUDE.md roadmap ref; open TODOs in ledger |
@@ -4574,3 +4575,14 @@ roadmaps.
   does not hash it. Three Mimic EQ-folder discovery bugs found on the same
   setup (child-folder descent; `_zealEqDir` log-gated; "Set up for me" says ✓
   on a no-op) — all open, in `DECISIONS-2026-09-18.md`.
+- **The tenancy questions answered, and terms drafted.** All ten of
+  `DESIGN-external-tenancy.md` §10 answered by the guild lead
+  (`DECISIONS-2026-09-18.md` §8): size for the **free tiers** first; the server
+  has **~9 months** of viability for large guilds, so export outranks hosting
+  and merges are coming; gate the competitive parts (`features.pvp` +
+  `ALLIANCE_CODE`); commercial = managed hosting, best-effort requests, no SLA,
+  monthly in advance, **encrypted handover at term end**; the guild owns its
+  domain; t-shirt sizes S/M/L all at once; Mimic keeps its name. **"Terms
+  first":** `docs/TERMS-hosted.md` drafted for legal review, `PRIVACY.md`
+  gained a tenant edition, `LICENSING.md` points at both. Slice 1 of the guild
+  kit is next.

@@ -114,3 +114,27 @@ Scope of the exception:
   meets the prerequisites, which we cannot see. These rows carry
   `source = 'hail_witnessed'` and are shown as provisional, never as equal to
   a self-reported grant.
+
+## If your guild runs this — the tenant edition (2026-09-18)
+
+Everything above applies to a deployment run for or by another guild exactly as
+it applies to ours. Five rules on top, decided by the guild lead and written
+into the hosted terms (`docs/TERMS-hosted.md` §5):
+
+- **Observations made under your deployment belong to your guild** — parses,
+  timers, rosters, chat relays, everything your members' clients upload.
+- **Nobody operating the platform reads your guild's data without your express
+  consent for a specific troubleshooting request.** Access is per incident,
+  never standing; the support tooling is built so its output cannot carry your
+  secrets or your members' data in the first place.
+- **Anonymised aggregates only, computed inside your deployment** before
+  anything leaves it — counts and totals, never names or characters.
+- **Your `/who` observations are never ingested into anyone else's dataset.** A
+  future per-person "be known" opt-in may let an individual publish their own
+  presence; it will be that person's choice, never the guild's, and it does not
+  exist today.
+- **No tenant's observations are merged into another's as fact.** Observations
+  can be fabricated; separation is the protection.
+
+If you self-host under the free license, these are yours to keep for your own
+members; the software is built to make them the default.

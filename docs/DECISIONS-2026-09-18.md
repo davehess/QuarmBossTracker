@@ -175,6 +175,99 @@ Route upward: their repo is a fork; `sync-upstream.yml` never touches
 `guild/`; `wolfpack diff-upstream` lists what changed outside it — improvement
 candidates by definition — and a PR brings them here under `CONTRIBUTING.md` §9.
 
+## 8. The tenancy questions, answered (the guild lead)
+
+Ten answers to `DESIGN-external-tenancy.md` §10, each with the decision it
+makes and where it landed. The one-line versions are appended to that doc's
+§10; the hosted terms they imply are drafted in `docs/TERMS-hosted.md`.
+
+1. **Size for the free tiers.** *"its more talking about the setup wizard, if
+   they would size the environment for the free levels of railway, supabase,
+   and vercel."* → The wizard gets a **free-tier profile** (the S size in §8.8):
+   retention windows derived from the tier's storage, features that do not fit
+   turned off, and honesty where free is impossible — **Railway Free cannot run
+   the bot** (0.5 GB ceiling against a 0.70 GB peak, `CLAUDE.md`), so the S
+   profile runs the bot on the guild's own box via Docker or names the smallest
+   paid tier. Vercel Hobby is fine for a guild and not for anything paid.
+2. **The window is short, and that shapes everything.** *"this server only has
+   about 9 months or less in viability for large groups before people start to
+   merge together to have enough people to play … people leaving and coming back
+   to guilds a quarter their size, or raiding severely less often. eventually
+   [the operator] may turn off this server."* → Three consequences: keep the
+   commercial ambition proportionate — Stage 5 is not where the effort goes;
+   **design for merges** — tenants combining, rosters shrinking to a quarter,
+   raid cadence dropping (tick math already assumes nothing per night; roster
+   and DKP merges do not exist yet); and **export and portability outrank
+   hosting** — a shutdown must leave every guild holding its own archive, and
+   the Quarm-specific seams (`_pq.proj` log suffix, the `eqemu_*` catalog) are
+   the portability list for any other EQEmu server.
+3. **Gate the competitive parts; "commercial" means managed hosting.** *"I
+   would rather gate certain components, like the pvp who collection or pvp
+   timers. but that's for competition. the commercial part would be if I were
+   hosting it and providing feature requests without set timelines for a fee
+   that would cover the architecture of their deployment and my time and
+   resources."* → PvP /who collection and PvP timers are **feature-gated**, not
+   license-gated. The commercial offering is **managed hosting plus best-effort
+   feature requests with no committed timelines**, priced to cover that
+   deployment's infrastructure and the guild lead's time. **No SLA.**
+4. **Privacy, stated up front — and cross-tenant data is untrusted.** *"yes
+   privacy is important, observations made by a guild are their own. data is
+   easily fake able and could be garbage."* → Confirms §3 and answers the
+   "do we say so" half: yes, in the terms. New rule: **observations made under
+   another tenant are never merged into ours as fact** — the same data can be
+   fabricated, and a shared pool would be a poisoning vector.
+5. **Exit: monthly, in advance, encrypted handover at term end.** *"if the
+   tenant costs money it needs to be exited by the next month, or the guild
+   needs to be on a cycle where they've already paid for that month. if they
+   have not paid or renewed the hosted option by then, their data will be
+   encrypted and provided to them at term end."* → Paid tenants are on a
+   monthly cycle paid in advance; non-renewal ends the term; **at term end
+   their data is exported, encrypted to a key they hold, and handed over.**
+   Deletion from our side after handover follows; its window is the one open
+   detail (terms draft §6).
+6. **No `/who` ingestion — with a per-person opt-in kept for later.** *"no we
+   don't ingest their who data, unless individuals choose to have their who
+   data synced up to a central repository - it lets them be known if they want
+   to, as not everyone pvps. many just want their current player online to be
+   known … our members could also have this info synced if they so chose, not
+   to be taken lightly."* → Default **no**. Recorded, not built, and flagged
+   sensitive: a **per-individual "be known" presence opt-in** — one player
+   choosing to publish that they are online as a given character — applying
+   equally to our own members, consent-gated per person, never per guild.
+7. **PvP code ships; de-anonymising is double-locked.** *"lock the ability to
+   override anon players without a feature flag or generated alliance code."*
+   → The code ships in the bundle; the **anon-override path (the who-lookup
+   de-anonymisation) requires BOTH `features.pvp` AND a generated alliance
+   code** supplied as a secret. Stage 1's intent (split the PvP data) is served
+   by this gate for tenants; our own project is unchanged.
+8. **T-shirt sizes, all available at once; whatever we set up is in their
+   name.** *"what can stand on its own? t-shirt sizes for effort and features
+   make sense to me. some guild should be able to have everything if they
+   deploy a website and own the domain. same thing with hosting, if I make it
+   for them, they have everything for billing in their names, own the server.
+   if I'm hosting it and pay for the domain perhaps we need what the industry
+   permits. do I own the domain or do they? I think all at once."* → **S** =
+   bot + Mimic on free tiers; **M** = + the web app on the guild's own domain;
+   **L** = everything. All three offered from the start. **Ownership rule:
+   anything we set up is in the guild's name — billing, server, domain.** On
+   the question asked back — *who owns the domain when we host?* — the answer
+   recorded is **the guild, always**: we take DNS delegation, never the
+   registrar account, because §8.5's exit promise is impossible if the host
+   owns the name. A subdomain under `wolfpack.quest` is the zero-setup start
+   and is ours by nature; moving to their own domain is supported and expected.
+9. **Mimic stays Mimic; guilds may rename their copy.** *"mimic is probably
+   pretty engrained but if people want to change it for their guild I think
+   that's fine."* → The binary and installer keep the name; the displayed name
+   is per-tenant (`wording.mimicName`, already in the kit).
+10. **Terms first, then the path, then the instructions.** *"make sure if
+    someone starts doing some of it today, I'm covered. terms first then start
+    on the way to spin it off, instructions for other guilds to follow."* →
+    Order of work: (1) coverage — the license (done), `CONTRIBUTING.md` §9
+    (done), **`docs/TERMS-hosted.md` drafted today for legal review**, tenant
+    privacy folded into it and pointed to from `PRIVACY.md`; (2) the guild-kit
+    slices; (3) `SELFHOSTING.md` → the wizard, as the instructions other guilds
+    follow. Stages 0–1 of the tenancy plan are not scheduled ahead of these.
+
 ## Open — read this first
 
 *(Rows carried forward from `DECISIONS-2026-09-16.md`; the sanitization sweep
@@ -183,9 +276,14 @@ itself is done and recorded there.)*
 | Item | Where it stands | Next |
 |---|---|---|
 | **License → BSL 1.1 / AGPL Change License** | **done 2026-09-18** on `main` (§1). `beta` receives it via the sync workflow; the two version-parked `package.json` files there may keep `BSD-3-Clause` if the sync sides with beta | verify the four `license` fields on `beta` after the sync; if two are stale, fix them with the next beta push. **Commercial terms (the percentage) are undecided** — decide before the first arrangement, not in the license |
-| **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). The tenancy doc's §10 business/data questions are being answered by the guild lead |
-| Hosted tenants — fork-per-tenant model (§2) | recorded; the mechanism is now in the guild-kit design §6 | the three prerequisites in §2 before any tenant |
-| Tenant data policy (§3) | recorded | `docs/PRIVACY.md` tenant edition before the first tenant |
+| **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). **§10 answered (§8); terms first → `docs/TERMS-hosted.md` drafted.** Slice 1 next |
+| **Hosted terms — `docs/TERMS-hosted.md`, DRAFT for legal review** | **drafted 2026-09-18** from §8: managed hosting + best-effort requests, no timelines, **no SLA**; monthly in advance; **exit = encrypted export handed over at term end**; the guild owns billing, server and **domain** (we take DNS delegation only); gated components identical hosted or self-hosted | a lawyer settles §9: service liability/warranty, governing law, the **deletion window after handover**, the notice period, and the conversation with the server's operators — a prerequisite to the first paid arrangement |
+| Hosted tenants — fork-per-tenant model (§2) | recorded; mechanism in the guild-kit design §6; the offering's shape in §8.3/8.8 and the terms draft | the three prerequisites in §2, plus the terms' legal review, before any tenant |
+| Tenant data policy (§3, §8.4/8.6) | **recorded and written down for members**: `PRIVACY.md` tenant edition + terms §5 — observations are the guild's; per-incident consent only; anonymise inside the tenant; **no `/who` ingestion**; **cross-tenant data never merged as fact** | nothing until a tenant exists |
+| **Free-tier profile (size S)** | decided 2026-09-18 (§8.1): the wizard sizes for Supabase Free / Vercel Hobby, derives retention from the tier (7-day threat window or shed — wizard doc §2a), and is honest that **Railway Free cannot run the bot** (0.5 GB vs 0.70 GB peak) — S runs it on the guild's box via Docker | belongs to wizard slice 5; the retention-from-tier rule must be computed, not typed |
+| **Alliance-code gate** on the anon-override | decided 2026-09-18 (§8.7): PvP /who collection + PvP timers behind `features.pvp` (off by default); de-anonymising anonymous players additionally needs a generated `ALLIANCE_CODE` secret, never set by the wizard | build with slice 2 (the flags) — the who-lookup path is the seam |
+| Per-person "be known" presence opt-in | **noted for later, NOT to be built now, sensitive** (§8.6): one player choosing to publish that they are online as a character; applies to our own members too; consent per person, never per guild | design only when asked; the guild lead: *"not to be taken lightly"* |
+| **~9 months of viability** — merges, quarter-size rosters, fewer raids, possible shutdown (§8.2) | recorded as the planning horizon | keep Stage 5 proportionate; **export completeness outranks hosting**; a **tenant/roster/DKP merge** operation does not exist and will be needed; the Quarm-specific seams (`_pq.proj` suffix, `eqemu_*` catalog) are the portability list |
 | MSSQL / other databases (§4) | recorded, not started | data-access layer first; do not attempt a port before it exists |
 | Release workflow: publish as draft → verify installer → flip live | **designed + half-written, stashed** (`git stash` on the session's beta checkout, "release-mimic draft-verify-publish"). Held for the raid freeze | land on `main` AND `beta` in one go — the workflow file runs from the branch pushed |
 | `v2.6.9-beta.4` is a published release with no installer | open — the guild lead's call, deletion is destructive | delete it, or let it age out of the 10-entry atom feed |

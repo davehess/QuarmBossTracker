@@ -811,6 +811,21 @@ fact: Mimic does honor the bot-supplied `verification_url` (§7.2), and
     catalog) + Stage 1 (split the PvP data)** — because both are worth doing on
     their own merits and neither commits us to being anyone's host.
 
+### Answers — 2026-09-18 (the guild lead; full text in `DECISIONS-2026-09-18.md` §8)
+
+| Q | Answer, in one line | Landed |
+|---|---|---|
+| 1 | Not "do we charge" — **the wizard sizes for the free tiers** (S profile); Railway Free cannot run the bot, so S runs it on the guild's box | wizard doc §3; kit §4 |
+| 2 | **~9 months of viability for large guilds**; merges, quarter-size rosters, fewer raids, possible shutdown. Export and portability outrank hosting | DECISIONS §8.2 |
+| 3 | **Gate the competitive parts** (PvP /who, PvP timers); commercial = managed hosting + best-effort requests, no timelines, no SLA, fee covers infra + time | `TERMS-hosted.md` |
+| 4 | Yes, stated up front; a guild's observations are its own; **cross-tenant data is untrusted** | `TERMS-hosted.md` §5; `PRIVACY.md` |
+| 5 | Monthly, paid in advance; **non-renewal → encrypted export handed over at term end** | `TERMS-hosted.md` §6 |
+| 6 | **No** ingestion; a per-person "be known" presence opt-in noted for later, not built | DECISIONS §8.6 |
+| 7 | Code ships; **anon-override needs `features.pvp` AND a generated alliance code** | kit §3; wizard doc §3 |
+| 8 | **T-shirt sizes S/M/L, all offered at once**; whatever we set up is in the guild's name; **the guild owns its domain even when we host** | kit §4; `TERMS-hosted.md` §7 |
+| 9 | Mimic stays Mimic; per-tenant display rename is fine | kit `wording.mimicName` |
+| 10 | **Terms first**, then the spin-off path, then instructions for other guilds | `TERMS-hosted.md` drafted; slices follow |
+
 ---
 
 ## Appendix A — where the tenancy seams already are (good news)
