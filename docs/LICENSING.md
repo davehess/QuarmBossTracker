@@ -33,7 +33,10 @@ titled "Commercial license" and we will work out terms.
 Come and talk. That is the whole point of the choice: the code stays open to
 read, run and improve, and a paid hosted offering is a conversation rather than
 a free ride. The terms of that conversation are not fixed in the license; they
-are agreed per arrangement.
+are agreed per arrangement. The shape of an arrangement — sizes, monthly cycle,
+no SLA, your data stays yours, encrypted handover when you leave, you own your
+domain — is drafted in plain language in `docs/TERMS-hosted.md`, marked for
+legal review.
 
 ## If you are contributing
 

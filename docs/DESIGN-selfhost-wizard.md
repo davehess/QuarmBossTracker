@@ -483,3 +483,34 @@ and the same never-refetch guarantee.
   build. `doctor` reads config, the manifest and health endpoints — never
   `.env`, never member tables — so its bundle cannot leak by construction (the
   tenant-data policy, `DECISIONS-2026-09-18.md` §3, applied to support).
+- **2026-09-18 — the wizard sizes for the FREE tiers first (the guild lead's
+  answer to "do we charge": *"if they would size the environment for the free
+  levels of railway, supabase, and vercel"*).** A **free-tier profile** is the S
+  size: retention windows derived from the tier's storage rather than copied
+  from ours (our 30-day threat retention is a PAID default — §2a), features that
+  cannot fit switched off, and honesty where free is impossible — Railway Free
+  cannot run the bot, so S runs it on the guild's own box via Docker or names
+  the smallest paid tier; Vercel Hobby is fine for a guild and not for anything
+  paid. **The wizard must compute retention from the chosen tier and show the
+  ceiling before provisioning**, the same way §2 says it must show cost.
+- **2026-09-18 — t-shirt sizes, all offered at once.** S = bot + Mimic on free
+  tiers; M = + the web app on the guild's own domain; L = everything. The wizard
+  asks size first and derives the rest; nothing is held back from a size that
+  can pay for it.
+- **2026-09-18 — ownership: whatever the wizard sets up is in the guild's name.**
+  Billing, server, and **domain** — the guild owns its domain even when we host
+  (we take DNS delegation, never the registrar), because the exit promise
+  (encrypted handover at term end) is impossible if the host owns the name. A
+  subdomain under ours is the zero-setup start; migration to their own domain is
+  a supported path the wizard must know how to do.
+- **2026-09-18 — the competitive components are gated twice.** PvP /who
+  collection and PvP timers sit behind `features.pvp`; the anon-override
+  (who-lookup de-anonymisation) additionally requires a generated
+  `ALLIANCE_CODE` secret. The wizard never enables `pvp` by default and never
+  generates the code — that is an officer action after an alliance exists.
+- **2026-09-18 — design for merges and for shutdown.** The guild lead's
+  estimate is ~9 months of viability for large guilds; expect tenants to merge,
+  rosters to shrink to a quarter, raid cadence to drop, and the server to end.
+  The wizard's export must be complete enough to stand as the guild's archive
+  on its own, and a **tenant merge** (two rosters, two DKP histories, two sets
+  of anchors → one) is a real operation the tenancy design does not yet have.

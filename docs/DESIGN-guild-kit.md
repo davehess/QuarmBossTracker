@@ -137,7 +137,7 @@ comes upstream.
 | raid nights, window, timezone, deploy-freeze window | the freeze *mechanism* |
 | channel names; which expansions are locked and until when | the lock logic |
 | sites and APIs: web domain, bot base, OpenDKP host, PQDI | the OpenDKP citizenship budgets (env, per §3 of the wizard doc) |
-| feature flags: pvp, opendkp, web, assistant | the features |
+| feature flags: pvp, opendkp, web, assistant — `pvp` is **off by default**, and de-anonymising anonymous players additionally needs a generated `ALLIANCE_CODE` secret issued between allied guilds (the guild lead, 2026-09-18) | the features, and the gate itself — identical hosted or self-hosted |
 
 Palette is the one to be careful with. The tokens are shared across all four
 surfaces on purpose (`.claude/skills/frontend-design`), and colour is semantic
@@ -202,7 +202,20 @@ freemium or paid models."* Same questions, different targets:
 | bot | their Railway / docker / box | a bot process we run per guild (tenancy §5.2) |
 | web | their Vercel / Coolify | our deployment, their subdomain |
 | secrets | written to their `.env` / platform | held by us; they never see ours |
-| cost | **shown before starting**, from `DESIGN-selfhost-wizard.md` §2a | the arrangement (`docs/LICENSING.md`) |
+| cost | **shown before starting**, from `DESIGN-selfhost-wizard.md` §2a | the arrangement (`docs/LICENSING.md`, drafted in `docs/TERMS-hosted.md`) |
+
+**Sizes and ownership (the guild lead, 2026-09-18).** The wizard asks *size*
+first and derives the rest — **S** = bot + Mimic on the free tiers (with the
+bot on the guild's own box via Docker, because Railway Free cannot run it);
+**M** = + the web app on the guild's own domain; **L** = everything. All three
+are offered at once; nothing is held back from a size that can pay for it, and
+S's retention windows are computed from the tier rather than copied from ours.
+Whatever the wizard sets up is **in the guild's name** — billing, server, and
+domain. The guild owns its domain even when we host; we take DNS delegation,
+never the registrar, because the exit promise in the terms (encrypted handover
+at term end) cannot be kept by a host that owns the name. A subdomain under
+ours is the zero-setup start and is ours by nature; moving off it is a path
+the wizard must know.
 
 ⚠ "Freemium" is a product decision the tenancy doc's §10 leaves open, and the
 Vercel Hobby non-commercial clause applies the moment anyone pays. The wizard
