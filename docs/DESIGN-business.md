@@ -1,13 +1,46 @@
 # DESIGN — The business: positioning, selling, hosting, and getting paid
 
+> # ⚠ READ THIS FIRST — the model changed on 2026-09-18, after this was written
+>
+> This document was commissioned while the plan was **commercial managed
+> hosting under BSL 1.1**. Hours later the guild lead settled the actual
+> position: *"I don't think someone should make money off of the work that I've
+> put in without me also making money off of it. that said we're playing a very
+> old game that is not for profit and that's specifically how things have been
+> run… I'd be interested in running in a model that allows us to just cover the
+> costs of development and infrastructure."*
+>
+> The project is now **AGPL-3.0-or-later — open source — and not for profit.**
+> Money, where any moves, is **cost recovery**: donations, and guilds sharing
+> the cost of a deployment run for them. There is no paid tier and no product.
+> Decision and reasoning: `docs/DECISIONS-2026-09-18.md` §10; plain-language
+> license: `docs/LICENSING.md`; arrangement shape: `docs/TERMS-hosted.md`.
+>
+> **What that does to the sections below:**
+>
+> | Section | Still holds? |
+> |---|---|
+> | §1 Positioning, §2 Sales and marketing, §3 Onboarding funnel | **Yes** — who it is for and how they hear about it does not change. Read "customer" as "guild we help". |
+> | §4 Pricing mechanics | **Partly.** The infrastructure arithmetic (§4.1–4.2) is the basis of a cost share and still stands. "How to state a fee" (§4.3) becomes "how to state a cost share"; there is no margin to set. |
+> | §5 Taking payment | **Inverted at §5.1.** It rejected donation platforms as the wrong shape for a contracted service. Under cost recovery a donation is exactly the right shape — corrected in place below. |
+> | §6 Incorporation | **Softer.** Its own argument is that this is a liability question, not a revenue one; with no contracted service, no SLA and no invoices, that surface shrinks. The questions for a professional still stand. |
+> | §7 Accounting | **Yes,** and simpler. Track infrastructure per guild and what came in against it. |
+> | §8 Risk register | **Yes,** and §8.1 improves: cost recovery reads as a guild sharing a tool, which is a far easier conversation with the server's operators than a paid service. |
+> | §9 The 9-month plan | **Yes,** with "take money only if it is earned" reading as "take nothing beyond what it costs". |
+>
+> Nothing below was deleted, because the reasoning is the useful part and the
+> commercial option still exists for anyone who wants to host a modified version
+> without AGPL §13 — see `docs/LICENSING.md`.
+
+
 > **This is not legal, tax or accounting advice, and nobody who wrote it is a
 > lawyer or an accountant.** Where a professional has to decide something, this
 > document writes down the **exact question to ask them** instead of inventing
 > an answer. Treat every section below as preparation for those conversations,
-> not a substitute for them. The binding documents are `LICENSE` (Business
-> Source License 1.1, converting to AGPL-3.0-or-later four years after each
-> version ships — explained in `docs/LICENSING.md`) and, once a lawyer has been
-> through it, `docs/TERMS-hosted.md`, which is still marked DRAFT.
+> not a substitute for them. The binding documents are `LICENSE`
+> (**AGPL-3.0-or-later** — explained in `docs/LICENSING.md`) and, once a
+> professional has been through it, `docs/TERMS-hosted.md`, which is still
+> marked DRAFT. *(Updated 2026-09-18: this preamble originally named BSL 1.1.)*
 
 **Written 2026-09-18, as the architecture pass that follows the licensing and
 terms decisions of the same day** (`docs/DECISIONS-2026-09-18.md` §1, §2, §8).
@@ -19,11 +52,11 @@ they want to pay for it, what has to be true first.
 
 | Fact | Where it is decided |
 |---|---|
-| The license lets any guild run this free, forever, for itself. Charging others for it needs an arrangement with the Licensor. Every version turns AGPL after four years. | `LICENSE`, `docs/LICENSING.md` |
-| The hosted offering is **managed hosting + best-effort feature requests, no timelines, no SLA**, monthly in advance, fee = infrastructure + the guild lead's time, encrypted data handover at term end, the guild owns its domain. | `docs/TERMS-hosted.md` |
+| The license is **AGPL-3.0-or-later — open source**. Any guild may run, modify and fork it free, forever. The one obligation is §13: modify it and let others use it over a network, and you must offer them your source. Hosting a modified version commercially *without* that needs a separate commercial license. *(Revised 2026-09-18 from BSL 1.1.)* | `LICENSE`, `docs/LICENSING.md` |
+| Running a deployment for another guild is **cost-share, not a product**: best-effort feature requests, no timelines, **no SLA**, monthly in advance, the share = infrastructure + the guild lead's time and *no margin*, encrypted data handover at term end, the guild owns its domain. *(Revised 2026-09-18 from a commercial hosting offering.)* | `docs/TERMS-hosted.md` |
 | **S / M / L, all three offered at once.** S is sized for free tiers — with the honest caveat that Railway's free tier cannot run the bot. | `docs/DECISIONS-2026-09-18.md` §8.1, §8.8 |
 | **The planning horizon is roughly nine months** of viability for large guilds on this server before merges and shrinkage, and the server may eventually close. | `docs/DECISIONS-2026-09-18.md` §8.2 |
-| This is tooling for an EverQuest emulator, running on the game owner's tolerance. A conversation with the server's operators is a **prerequisite** to the first paid arrangement. | `docs/DECISIONS-2026-09-18.md` §2; `docs/TERMS-hosted.md` §9.5 |
+| This is tooling for an EverQuest emulator, running on the game owner's tolerance. A conversation with the server's operators is a **prerequisite** to the first arrangement — and cost recovery is a far easier conversation than a paid service would have been. | `docs/DECISIONS-2026-09-18.md` §2; `docs/TERMS-hosted.md` §9.5 |
 
 Two more that constrain the money specifically:
 
@@ -33,7 +66,7 @@ Two more that constrain the money specifically:
   (`docs/DESIGN-selfhost-wizard.md` §2a).
 - **The guild lead is one person.** Every commitment in this document is a
   commitment of one person's evenings, against a nine-month clock, next to a
-  raid schedule. That is the single strongest argument for keeping all of this
+  raid schedule — and none of it is paid work. That is the single strongest argument for keeping all of this
   small.
 
 ---
@@ -446,14 +479,25 @@ real conversation is not the first time the number is computed — **an hour**.
 |---|---|---|---|
 | **Stripe** (invoicing or subscriptions) | Business details; can usually start as an individual/sole proprietor, but ask (§5.2). Bank account. Tax ID | Roughly a few percent plus a fixed amount per transaction | **The default answer.** Proper invoices, recurring billing, clean records for an accountant. Overkill at one guild, right at three |
 | **PayPal** (invoices, or business account) | Least setup. Individual accounts exist | Similar order | Fastest to start. Weaker records, and hold and reserve policies that should be confirmed in writing before relying on it (§5.2 item 5) — worth asking about before relying on it |
-| **Ko-fi / Patreon / "buy me a coffee"** | Almost nothing | Platform cut | **Wrong shape.** These are donation platforms. Taking money for a contracted service through one blurs gift and invoice, which is exactly the ambiguity an accountant and a lawyer both need removed |
+| **Ko-fi / Patreon / GitHub Sponsors** | Almost nothing | Platform cut | ⚠ **Revised 2026-09-18 — now the right shape for the general case.** These are donation platforms, and under cost recovery a donation is precisely what is being taken: no invoice, no contracted service, no deliverable promised. Lowest setup, and the clearest signal to a community that is deliberately not-for-profit. (The original entry called this the wrong shape — true of a *paid service*, which this is no longer.) |
 | **Direct invoice + bank transfer** | A bank account and an invoice template | Near zero | Perfectly viable at a handful of guilds. Manual, no automatic recurrence, no card |
 | **Crypto** | — | — | No. Volatile, records are harder not easier, and it signals the wrong thing to a guild leader deciding whether to trust you with their data |
 
-**Recommendation: Stripe invoicing, or direct invoice + bank transfer, and
-nothing donation-shaped.** The distinction that matters is not fees — at these
-amounts fees are noise — it is that a paid service needs a record that looks
-like a service, because that is what §6 and §7 are built on.
+**Recommendation, revised 2026-09-18 for cost recovery.** Two different things,
+two different mechanisms:
+
+- **General cost recovery → a donation platform** (Ko-fi, GitHub Sponsors).
+  Donations cover the bill and confer nothing: no priority, no feature, no
+  support tier. Say that plainly wherever the link appears, so a donation can
+  never be mistaken for buying something.
+- **A guild sharing the cost of a deployment run for them → direct invoice or
+  bank transfer**, per `docs/TERMS-hosted.md` §4. Small, monthly, in advance,
+  and documented — not because it is a sale, but because §6 and §7 need a
+  record of what came in and what it covered.
+
+*(The original recommendation was Stripe invoicing and "nothing donation-shaped".
+That was correct for a paid service and is wrong for this one — fees were never
+the deciding factor; the shape of the thing was.)*
 
 ### 5.2 The questions for a professional
 
@@ -583,7 +627,7 @@ another guild's members' data as yourself.*
 4. "Do I need any specific privacy language or a privacy policy given that the
    data includes other people's chat messages, and does it matter that those
    people are not my customers — they are my customer's members?"
-5. "My code license is BSL 1.1 converting to AGPL-3.0. Does hosting for a fee
+5. "My code license is AGPL-3.0-or-later and I take cost-share contributions rather than fees. Does that
    under my own license need anything written down beyond the service terms?"
 
 **For an accountant:** the four questions in §5.2, plus:

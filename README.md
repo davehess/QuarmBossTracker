@@ -444,15 +444,20 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ## License
 
-**The code is public and free for your own guild** — read it, change it, fork it,
-run it, with no time limit and without asking. The only thing that needs an
-arrangement first is offering it to *others* for a fee: open an issue titled
-"Commercial license".
+**Open source under the GNU Affero General Public License v3 or later
+(AGPL-3.0-or-later).** Read it, change it, fork it, run it for your guild —
+free, no time limit, no asking.
 
-Formally that is the **Business Source License 1.1**, and every release converts
-to **AGPL-3.0-or-later** four years after it ships, so nothing can be pulled back
-later. ⚠ BSL is *source-available*, not an OSI-approved open-source license —
-say so anywhere that distinction matters (it already cost us an inaccurate
-code-signing application; see `docs/code-signing.md`). Binding text: `LICENSE`.
-Plain-language version, including what happens to a pull request:
-`docs/LICENSING.md`.
+The one obligation: if you modify it and let other people use your version
+**over a network**, you must offer them your source (AGPL **§13**). That is the
+point of this license rather than a permissive one — your fixes come back to
+everyone instead of dying in a private fork.
+
+**Nothing here is for profit.** Money, where any moves, is cost recovery for
+infrastructure and time — donations, or sharing the cost of a deployment someone
+else runs for you. There is no paid tier and no feature behind a paywall.
+Hosting a modified version commercially *without* publishing your changes needs a
+separate commercial license: open an issue titled "Commercial license".
+
+Binding text: `LICENSE`. Plain-language version, including what happens to a pull
+request: `docs/LICENSING.md`.

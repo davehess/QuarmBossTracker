@@ -1,6 +1,13 @@
 # Decisions — 2026-09-18
 
-## 1. The license: Business Source License 1.1, converting to AGPL-3.0-or-later (the guild lead)
+## 1. The license: Business Source License 1.1 (the guild lead) — ⚠ SUPERSEDED THE SAME DAY BY §10
+
+> **Read §10 first.** This section is the record of a decision that stood for a
+> few hours. The project is now **AGPL-3.0-or-later**. The reasoning below is
+> kept because §10 is only intelligible next to it — in particular, the BSL
+> limitation it uncovered (the Additional Use Grant cannot impose share-back)
+> is what decided the move to AGPL.
+
 
 > *"we're not making any money from this, but perhaps we could make it off
 > hosting the services like opendkp or raid helper does?"*
@@ -343,6 +350,70 @@ tax or accounting advice; it writes the questions for the professionals.
 **Stale figure found on the way:** `CLAUDE.md` says 133 bosses;
 `data/bosses.json` holds **135** across five expansions.
 
+## 10. The license again: AGPL-3.0-or-later, open source, not for profit (the guild lead)
+
+> *"I don't think someone should make money off of the work that I've put in
+> without me also making money off of it. that said we're playing a very old
+> game that is not for profit and that's specifically how things have been run.
+> quite frankly I'd be interested in running in a model that allows us to just
+> cover the costs of development and infrastructure if that changes how this
+> operates."*
+
+It changes it, and **the project relicensed a second time the same day**: BSD-3
+→ BSL 1.1 (§1) → **AGPL-3.0-or-later**. Recording why, because two relicenses in
+one day looks like flailing and was not.
+
+**What actually shifted.** The requirement in §1 was two things that pull apart:
+nobody profits from this work without the guild lead, *and* this is a
+not-for-profit community. BSL served the first at the cost of the second. Cost
+recovery collapses the tension, because of one fact that had not been stated
+plainly: **cost recovery does not need a restrictive license at all.** Under any
+licence, including AGPL, you may charge whatever you like for hosting *you*
+operate — no open-source licence restricts that. A restrictive licence only buys
+the power to stop *other people* charging.
+
+**The three reasons AGPL won:**
+1. **It does the thing BSL structurally could not.** §1 records that BSL's
+   Covenants let the Additional Use Grant only *add* permission, so share-back
+   from self-hosters was a request in `CONTRIBUTING.md`, not a term. **AGPL §13
+   makes it an obligation** — modify it, serve people over a network, offer them
+   your source. That is what the guild lead asked for on the 18th and could not
+   have under BSL.
+2. **It fits where this lives.** An emulated server run as a labour of love, with
+   every neighbouring tool free. `DESIGN-business.md` §8.1 already said charging
+   "is visibly different from a guild sharing a tool, and it raises the profile
+   of the whole thing". Cost recovery reads as the former.
+3. **It is genuinely open source** (OSI-approved), which BSL is not — and that
+   restores free code-signing eligibility, which BSL had disqualified
+   (`docs/code-signing.md`). The unsigned-installer SmartScreen warning is now
+   fixable.
+
+**What was given up:** the ability to stop a third party charging for hosting.
+Sized honestly — one server, a few hundred players, every competing tool free,
+and under §13 even a commercial host must publish its improvements, so the bad
+case still returns code. **Retained copyright plus the contribution grant
+(`CONTRIBUTING.md` §9 item 3) keeps a commercial licence available** for anyone
+wanting to host a modified version without §13. That grant was written for
+exactly this and survived the change unaltered.
+
+**The money model.** Not for profit. Cost recovery only: donations (which confer
+nothing — no priority, no feature, no support tier) and guilds sharing the cost
+of a deployment run for them. No paid tier, no feature behind a paywall.
+`docs/TERMS-hosted.md` rewritten from commercial hosting to cost-share;
+`DESIGN-business.md` carries a superseding banner plus in-place corrections
+where it inverted (its §5.1 had rejected donation platforms as "wrong shape" —
+true of a contracted service, wrong for this).
+
+**Landed:** `LICENSE` (canonical AGPL-3.0 text, verified §13 intact, with a
+project header), `docs/LICENSING.md` rewritten, `README.md`, `CONTRIBUTING.md`
+§9, `docs/TERMS-hosted.md`, `docs/code-signing.md`, the brochure and its PDF,
+and `license: "AGPL-3.0-or-later"` in all four `package.json` files.
+
+⚠ **The relicense was clean only because the repository still has one copyright
+holder.** That was true for the BSD→BSL move and it is still true now; it stops
+being true at the first merged outside contribution. Two relicenses were
+affordable because nobody had adopted it yet. A third, later, would not be.
+
 ## Open — read this first
 
 *(Rows carried forward from `DECISIONS-2026-09-16.md`; the sanitization sweep
@@ -350,7 +421,7 @@ itself is done and recorded there.)*
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **License → BSL 1.1 / AGPL Change License** | **done 2026-09-18** on `main` (§1). `beta` receives it via the sync workflow; the two version-parked `package.json` files there may keep `BSD-3-Clause` if the sync sides with beta | verify the four `license` fields on `beta` after the sync; if two are stale, fix them with the next beta push. **Commercial terms (the percentage) are undecided** — decide before the first arrangement, not in the license |
+| **License → AGPL-3.0-or-later, open source, not for profit** | **done 2026-09-18 (§10)**, replacing the BSL decision of the same morning (§1, kept as history). All four `package.json` fields are `AGPL-3.0-or-later`; `LICENSE` is the canonical AGPL text with §13 verified intact | **verify the four `license` fields on `beta` after the sync.** Then: stand up a donation link that states plainly it confers nothing; **re-pursue free code signing — AGPL is OSI-approved so eligibility is back** (`docs/code-signing.md`); take `TERMS-hosted.md` §9 to a professional before the first cost-share arrangement |
 | **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). **§10 answered (§8); terms first → `docs/TERMS-hosted.md` drafted. Slice 1a landed (bot 3.1.129):** `guild/discord.json` fills unset anchor env at boot, refuses secret-shaped keys, env wins; `discord.example.json` generated from the 44 anchor reads. ⚠ There is no anchor resolver in the bot — the layer runs in front of env, not behind a function. Next: 1b (`config.json` + the manifest's `guildLabel`/`webBaseUrl`), then the sweep |
 | **The brochure** — `docs/marketing/guild-brochure.html`, the published page (https://claude.ai/artifact/QwY1JG18UzZQNgkDtJAPgF, private until shared), the one-page PDF (§9) | **done 2026-09-18**, critic's six fixes applied before publishing; the share line is in §9's workflow result | the guild lead adds context or reworks wording; **enable GitHub Discussions** (Settings → Features, one click); hand the PDF to guild leaders |
 | **Brochure targeting — which guilds already have tooling** | **done 2026-09-18 as a PRIVATE artifact** (https://claude.ai/artifact/LaCnGk8duoBohSCE1V4PCx), deliberately not in this public repo because it names other guilds and public tool authors. Method: every guild seen in `who_observations` over 60 days ranked by characters seen (never players — other guilds' alt families cannot be resolved); PQ Companion and DnDOverlay READMEs + `git shortlog`; Zeal's last 211 commits; the TAKP server codebase; every contributor handle matched against characters seen in 180 days. Result: four guilds with their own tooling or an active tool-builder (two high-confidence from self-credits and exact handle matches, two medium), **fifteen raid-sized guilds with no known tooling** — the brochure's list — and a smaller tail. quarm.guide is blocked from cloud sessions and GitHub search is session-scoped, so those two sources are missing | hand the top five a brochure each; treat the tooling guilds as an alliance conversation (merged parses across allied raids), not a sales one; **re-run in 60 days** — the 9-month forecast says the rosters will move |

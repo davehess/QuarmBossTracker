@@ -1,82 +1,88 @@
 # Licensing — the plain-language version
 
-`LICENSE` is the binding text. This page is what it means for the three kinds
-of people who will read it. It is not legal advice; nobody involved is a lawyer,
-and if real money ever moves under the commercial arrangement, have one read
-both files first.
+`LICENSE` is the binding text. This page is what it means for the three kinds of
+people who will read it. It is not legal advice; nobody involved is a lawyer.
 
-**The license is the Business Source License 1.1, and every version becomes
-AGPL-3.0-or-later four years after it ships.**
+**The license is the GNU Affero General Public License, version 3 or later
+(AGPL-3.0-or-later). It is open source** — OSI-approved, FSF-published, the same
+license Grafana, Mastodon and Nextcloud use.
 
 ## If you are a guild that wants to run this
 
-You can. Free, no arrangement needed.
+Take it. No arrangement, no fee, no asking.
 
-- Clone it, fork it, modify it, and run it — on your own box, in your own cloud,
-  or on hosting you pay for — for your guild, your raid, or a player community
-  you belong to.
-- Keep your changes private or publish them; the license does not compel you
-  either way until the Change Date. **We ask that you send them upstream** (a
-  database port, a performance fix, platform compatibility) — see
-  `CONTRIBUTING.md`. A fork that carries its improvements back is how the next
-  guild gets them.
-- Covering your own costs from your own members is your business, not ours.
+- Read the code, change it, fork it, redistribute it, and run it for your
+  guild — on your own box, in your own cloud, or on hosting you pay for.
+- Charge your own members for the server bill if you like. That is between you
+  and them.
+- There is no time limit and nothing expires.
 
-The one thing you may not do without talking to us: **offer it to other people
-for money.** Hosting it for third-party guilds for a fee or subscription,
-selling a service built substantially on it, or bundling it into something you
-charge for — those need a commercial license from the Licensor. Open an issue
-titled "Commercial license" and we will work out terms.
+**The one obligation, and it is the point of choosing this license:** if you
+modify the platform and let other people use your modified version **over a
+network** — a Discord bot, a website, anything they reach remotely — you must
+offer those users its source. That is AGPL **§13**, and it is why this license
+rather than a permissive one: the fix you made for your guild's hardware, or
+your database port, or your platform-compatibility work, comes back to everyone
+instead of dying in a private fork.
 
-## If you want to host it for others commercially
+Using it unmodified, or keeping your changes to yourself and never letting
+outsiders use them over a network, triggers nothing.
 
-Come and talk. That is the whole point of the choice: the code stays open to
-read, run and improve, and a paid hosted offering is a conversation rather than
-a free ride. The terms of that conversation are not fixed in the license; they
-are agreed per arrangement. The shape of an arrangement — sizes, monthly cycle,
-no SLA, your data stays yours, encrypted handover when you leave, you own your
-domain — is drafted in plain language in `docs/TERMS-hosted.md`, marked for
-legal review.
+## If you want to host it for other guilds
+
+You can, under AGPL, including for money — and if you do, §13 applies: your
+users get your source. That is the deal, and it is a fair one.
+
+If you want to host a modified version commercially **without** publishing your
+changes, that needs a separate commercial license from the Licensor, who retains
+copyright. Open an issue titled "Commercial license" and we will work out terms.
+
+## Paying for it
+
+**Nothing about this project is for profit.** It is tooling for an emulated
+server that the community runs as a labour of love, and that is the posture here
+too. The only money that changes hands is **cost recovery** — infrastructure
+bills, and time spent on development.
+
+- **Donations** are the mechanism: they cover the hosting bill and nothing more.
+  Giving nothing costs you nothing and changes nothing about what you can do.
+- **If the maintainer runs a deployment for your guild**, the cost of that
+  deployment is shared with you. No license permits or forbids that — charging
+  for a service you operate is outside every open-source license. The shape of
+  such an arrangement is in `docs/TERMS-hosted.md`.
+- There is no paid tier, no feature behind a paywall, and no plan for one. Every
+  feature is in the repository, under this license, for everyone.
 
 ## If you are contributing
 
 There is no CLA to sign. Opening a pull request is the agreement, and the terms
-are in `CONTRIBUTING.md` under *Licensing*. The short version: you keep your
-authorship, your contribution is licensed the same way as the rest, and you
-grant the Licensor the right to relicense it — which is the clause that keeps
-the commercial license and the four-year conversion workable once the code is
-no longer one person's.
+are in `CONTRIBUTING.md` under *Licensing*. In short: you keep your authorship,
+your contribution is AGPL like the rest, and you grant the Licensor the right to
+license it under other terms as well — which is what keeps the commercial-license
+option above available once the code is no longer one person's.
 
-## Why this license and not the obvious ones
+## How it got here, and why not the alternatives
 
-- **Not BSD-3 (where it started).** Permissive licensing lets anyone take the
-  code, host it, charge for it and owe nothing back — including a guild we
-  would decline. That is the story behind every relicensing-under-pressure of
-  the last decade, and choosing correctly up front is far less ugly.
-- **Not AGPL alone.** AGPL would enforce the share-back we want from
-  self-hosters, but its §10 forbids adding any further restriction, royalties
-  included — under it anyone may charge freely as long as they publish their
-  changes. A revenue arrangement is impossible on AGPL.
-- **BSL, converting to AGPL.** Commercial use is reserved to the Licensor now,
-  so charging requires an arrangement; the Change License means the whole
-  thing still ends up fully open source, on the copyleft license that actually
-  reaches hosted services. The Covenants of Licensor mean the Additional Use
-  Grant can only *add* permission, so share-back cannot be a condition of the
-  grant — until the Change Date it is a norm we ask for, not a term we enforce.
+Worth recording, because the project changed licenses twice in two days and the
+reasoning is the useful part:
 
-Two footnotes for the lawyer, if there is ever one:
-
-1. Covenant 1 requires the Change License to be compatible with GPL-2.0 *or a
-   later version*. AGPL-3.0 combines with GPL-3.0 under GPL-3.0 §13, which is
-   the reading relied on here. If that is judged too thin, GPL-3.0-or-later is
-   the fallback and loses only the network-service clause.
-2. Relicensing from BSD-3 was clean because the repository has effectively one
-   copyright holder. That stops being true at the first merged outside
-   contribution, which is why the contribution grant exists and why it landed
-   in the same change as the license.
+- **BSD-3** (until 2026-09-18) let anyone take the code, host it, charge for it
+  and give nothing back. That is fine for a library and wrong for a platform.
+- **BSL 1.1** (2026-09-18, one day) reserved commercial use to the Licensor.
+  It did that job, but at three costs: it is *not* open source, which reads badly
+  in a community that is deliberately not-for-profit; it disqualified the project
+  from free code signing; and — the one that decided it — the BSL Covenants let
+  its Additional Use Grant only *add* permission, never impose a condition, so it
+  **could not compel share-back at all**. Self-hosters' improvements were a
+  request in `CONTRIBUTING.md`, not a term.
+- **AGPL-3.0** (2026-09-18, current) is open source, fits a not-for-profit game
+  community, and its §13 makes share-back an obligation rather than a request —
+  the thing that was actually wanted. What it gives up is the ability to stop
+  someone else charging; retained copyright plus the contribution grant keeps a
+  commercial license available for anyone who wants to host without §13.
 
 ## The bundled third-party code is unchanged
 
 `.claude/skills/impeccable` (Apache-2.0) and `.claude/skills/ponytail` (MIT) are
-vendored under their own licenses, which they keep. Nothing here relicenses
-anyone else's work.
+vendored under their own licenses, which they keep. Both are AGPL-compatible
+inbound. Nothing here relicenses anyone else's work.

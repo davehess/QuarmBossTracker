@@ -4546,6 +4546,14 @@ roadmaps.
 
 ### 🧾 2026-09-18 — the license, the guild-kit contract, and a broken beta release
 
+- ⚠ **Relicensed TWICE on 2026-09-18, ending at AGPL-3.0-or-later.** The entry
+  below records the first move (BSD-3 → BSL 1.1); hours later the guild lead
+  settled on **cost recovery, not profit**, and the project moved to
+  **AGPL-3.0-or-later — open source** (`DECISIONS-2026-09-18.md` §10). AGPL §13
+  gives the share-back BSL structurally could not, fits a not-for-profit game
+  community, and restores free code-signing eligibility. Money is donations and
+  cost-share only; no paid tier. `TERMS-hosted.md` rewritten to cost-share;
+  `DESIGN-business.md` carries a superseding banner.
 - **Relicensed BSD-3 → Business Source License 1.1, Change License
   AGPL-3.0-or-later** (`main` `e83520c6`). Any guild may run, modify and
   self-host free; offering it to others for a fee needs an arrangement; every

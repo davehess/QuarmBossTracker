@@ -85,11 +85,13 @@ over downloads on an OV cert; only an EV cert is instant. We chose the free
 OV route.)
 
 ## Provider: SignPath.io Foundation (free, for open source)
-Applied 2026-06. The project qualified at the time (public repo, OSI license
-BSD-3-Clause, real users). ⚠ **No longer true as of 2026-09-18:** the project
-relicensed to the Business Source License 1.1, which is *not* an OSI-approved
-license (`docs/LICENSING.md`). Any future free-for-open-source signing provider
-must not be told it is; the paid fallbacks below do not care. Attribution is required and already live in the site footer
+Applied 2026-06 under BSD-3-Clause. ⚠ **The license moved twice on 2026-09-18** —
+to BSL 1.1 (which is *not* OSI-approved and would have disqualified the project),
+then the same day to **AGPL-3.0-or-later, which is OSI-approved**. So free
+open-source signing is **eligible again**, and this is worth re-pursuing: it
+removes the SmartScreen "unknown publisher" warning that scares off
+non-technical guildies, and every Mimic installer still ships unsigned.
+State the license as AGPL-3.0-or-later on any application (`docs/LICENSING.md`). Attribution is required and already live in the site footer
 (`web/app/layout.tsx`): *"Windows code signing … provided free by SignPath.io,
 certificate by SignPath Foundation."* Cheaper paid fallbacks if it's declined:
 **Certum Open Source** (~$80/yr, individual-friendly) or **Azure Trusted
