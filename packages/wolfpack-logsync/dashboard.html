@@ -3262,7 +3262,7 @@ function renderTriggers(s) {
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
-           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild's version">⎘ Copy to personal</button></td></tr>';
+           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\'s version">⎘ Copy to personal</button></td></tr>';
     }
     h += '</table>';
   }
