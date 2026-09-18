@@ -1,7 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Mimic Settings</title>
 <style>
-  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px}
+  /* Bottom padding reserves the strip the floating Save sits in, so the last
+     control on the page can never end up underneath it. */
+  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px 20px 76px}
   h1{color:#f6c365;font-size:16px;font-weight:normal;margin:0 0 4px}
   h2{color:#58a6ff;font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
   .sub{color:#8b949e;font-size:11px;margin-bottom:8px}
@@ -30,6 +32,21 @@
   .toast.pending{background:#1f6feb;color:#fff;border-color:#3a8bff}
   .toast.success{background:#1a7f37;color:#fff;border-color:#56d364}
   .toast.error  {background:#a3260a;color:#fff;border-color:#f87171}
+  /* Save floats bottom-right and only appears once something has actually
+     changed (the guild lead, 2026-09-18). This page is a long scroll — nine
+     sections — and a Save button parked after the last one is off-screen for
+     almost the whole form, so a change made at the top meant scrolling to the
+     bottom to commit it, or worse, not realising you had to.
+     Fixed rather than sticky: sticky still needs the button's own row to be in
+     view, which is the problem. z-index sits UNDER .toast (1000) so the save
+     result banner is never covered by the button that produced it. */
+  #save{
+    position:fixed;right:20px;bottom:20px;z-index:900;margin:0;
+    box-shadow:0 6px 18px rgba(0,0,0,0.55);
+    opacity:0;transform:translateY(12px);pointer-events:none;
+    transition:opacity .18s ease-out,transform .18s ease-out;
+  }
+  #save.show{opacity:1;transform:translateY(0);pointer-events:auto}
 </style></head>
 <body>
   <div id="toast" class="toast"></div>
@@ -354,6 +371,11 @@
   function _updateWarning() {
     const total = _checkedFound.size + _manualFolders.length;
     document.getElementById('eqWarning').style.display = total === 0 ? 'block' : 'none';
+    // Folder edits live in JS state, not in a form control, so they raise no
+    // input/change event the document listener could catch. Every folder
+    // mutation already funnels through here, which makes this the one hook
+    // that keeps the Save button honest about them.
+    try { _refreshDirty(); } catch (e) {}
   }
 
   async function _loadEqFolders(c) {
@@ -610,6 +632,12 @@
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
+    // Baseline for the floating Save. Placed HERE, at the end of load(), because
+    // every field the signature reads is populated by now — _loadEqFolders is
+    // awaited at the top, and the tells radios are set just above. Baselining
+    // any earlier would record a half-filled form as "clean" and leave the
+    // button showing on a window nobody had touched.
+    _markClean();
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
@@ -628,12 +656,62 @@
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
   });
 
+  // ── Dirty tracking for the floating Save ─────────────────────────────────
+  // The button only appears once something Save would actually SEND has
+  // changed, so an untouched Settings window carries no call to action.
+  //
+  // The signature is built from the same fields the save handler posts, not
+  // from a generic sweep of the DOM, for two reasons. The EQ folder list lives
+  // in JS state (_collectEqPaths / _excludedFound) rather than in an input, so
+  // a DOM sweep would miss folder edits entirely. And the overlay-scale slider
+  // is deliberately NOT part of Save — it applies live over its own IPC — so a
+  // sweep would light the button up for a control that has already taken
+  // effect, teaching people the button lies.
+  let _cleanSig = null;    // null until load() has populated the form
+  let _saveBusy = false;   // hold the button up while a save result plays out
+  function _settingsSig(){
+    try {
+      return JSON.stringify({
+        eqPaths: _collectEqPaths().slice().sort(),
+        eqPathsExcluded: [..._excludedFound].sort(),
+        botUrl: document.getElementById('botUrl').value.trim(),
+        // Write-only field: compare WHETHER one was typed, never the value, so
+        // the signature can never hold a credential.
+        tokenTyped: document.getElementById('token').value.trim().length > 0,
+        tellsMode: (document.querySelector('input[name=tells]:checked') || {}).value || 'off',
+        quietMode:        document.getElementById('quietMode').checked,
+        hideOverlays:     document.getElementById('hideOverlays').checked,
+        showHud:          document.getElementById('showHud').checked,
+        enableTriggerTts: document.getElementById('enableTriggerTts').checked,
+        overlaysUnlocked: document.getElementById('overlaysUnlocked').checked,
+        autoStart:              document.getElementById('autoStart').checked,
+        hideOverlaysWhenEqDown: document.getElementById('hideOverlaysWhenEqDown').checked,
+        zealAutoCheck:          document.getElementById('zealAutoCheck').checked,
+      });
+    } catch (e) { return null; }
+  }
+  function _refreshDirty(){
+    const btn = document.getElementById('save');
+    if (!btn) return;
+    const sig = _settingsSig();
+    const dirty = _cleanSig !== null && sig !== null && sig !== _cleanSig;
+    btn.classList.toggle('show', dirty || _saveBusy);
+  }
+  function _markClean(){ _cleanSig = _settingsSig(); _refreshDirty(); }
+  // Capture phase so this still fires for controls the folder picker re-renders
+  // after load, and on BOTH events because a checkbox reports `change` while a
+  // text field reports `input`.
+  document.addEventListener('input',  _refreshDirty, true);
+  document.addEventListener('change', _refreshDirty, true);
+
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save');
     const origLabel = btn.textContent;
+    _saveBusy = true;
     btn.disabled = true;
     btn.textContent = 'Saving…';
     btn.className = '';
+    _refreshDirty();   // className reset drops .show — put it straight back
     showToast('pending', 'Saving settings…', 0);
     try {
       const eqPaths = _collectEqPaths();
@@ -677,12 +755,25 @@
       btn.className = 'success';
       document.getElementById('token').value = '';
       _loaded = { eqPaths: eqPaths.slice(), botUrl, token: null };
-      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3000);
+      // Re-baseline AFTER the token field is cleared, so what was just saved is
+      // what "unchanged" means from here. _saveBusy keeps the button up so the
+      // ✓ is readable even though the form is now clean.
+      _markClean();
+      setTimeout(() => {
+        btn.textContent = origLabel; btn.className = ''; btn.disabled = false;
+        _saveBusy = false; _refreshDirty();
+      }, 3000);
     } catch (e) {
       btn.textContent = '✕ Save failed';
       btn.className = 'error';
+      _refreshDirty();
       showToast('error', '✕ Save failed: ' + (e && e.message ? e.message : String(e)), 8000);
-      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 6000);
+      // Deliberately NOT re-baselined: the edits were never persisted, so the
+      // form is still dirty and the button must stay up to be clicked again.
+      setTimeout(() => {
+        btn.textContent = origLabel; btn.className = ''; btn.disabled = false;
+        _saveBusy = false; _refreshDirty();
+      }, 6000);
     }
   };
   // ── Wolf Pack account section (Discord login via device-code flow) ─────
