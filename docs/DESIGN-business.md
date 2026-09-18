@@ -445,7 +445,7 @@ real conversation is not the first time the number is computed — **an hour**.
 | Option | What it needs | Fees | Fit here |
 |---|---|---|---|
 | **Stripe** (invoicing or subscriptions) | Business details; can usually start as an individual/sole proprietor, but ask (§5.2). Bank account. Tax ID | Roughly a few percent plus a fixed amount per transaction | **The default answer.** Proper invoices, recurring billing, clean records for an accountant. Overkill at one guild, right at three |
-| **PayPal** (invoices, or business account) | Least setup. Individual accounts exist | Similar order | Fastest to start. Weaker records, and a well-known history of holding funds on unusual account activity — worth asking about before relying on it |
+| **PayPal** (invoices, or business account) | Least setup. Individual accounts exist | Similar order | Fastest to start. Weaker records, and hold and reserve policies that should be confirmed in writing before relying on it (§5.2 item 5) — worth asking about before relying on it |
 | **Ko-fi / Patreon / "buy me a coffee"** | Almost nothing | Platform cut | **Wrong shape.** These are donation platforms. Taking money for a contracted service through one blurs gift and invoice, which is exactly the ambiguity an accountant and a lawyer both need removed |
 | **Direct invoice + bank transfer** | A bank account and an invoice template | Near zero | Perfectly viable at a handful of guilds. Manual, no automatic recurrence, no card |
 | **Crypto** | — | — | No. Volatile, records are harder not easier, and it signals the wrong thing to a guild leader deciding whether to trust you with their data |

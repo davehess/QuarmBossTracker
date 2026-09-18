@@ -47,6 +47,8 @@ folly** — it's here.*
 | `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Designed 2026-09-18, slice 0 landed** (`guild/`). Four picks pending (§8); then slice 1 before the de-branding sweep |
 | `LICENSING.md` | The plain-language license: what a guild may do free, what needs an arrangement, what happens to a PR, and why BSL→AGPL over BSD-3 or AGPL alone | **Live 2026-09-18.** `LICENSE` is binding; this is what people actually read |
 | `TERMS-hosted.md` | **DRAFT hosted-service terms, for legal review:** sizes S/M/L, monthly in advance, no SLA, your data is yours (per-incident consent, no `/who` ingestion, cross-tenant never merged), encrypted handover at term end, the guild owns its domain, gated components, and the §9 list a lawyer must settle | Drafted 2026-09-18 from the guild lead's §10 answers. **Not binding until reviewed** |
+| `DESIGN-business.md` | **The architecture pass from positioning to getting paid:** who S/M/L are for, channels that reach emulator guilds, the onboarding funnel, cost-plus pricing and merges, taking payment as one person, incorporation as a liability question, proportionate bookkeeping, a risk register, the 30/90/270-day plan | Landed 2026-09-18. **Not legal, tax or accounting advice** — it writes the questions to ask the professionals |
+| `marketing/guild-brochure.html` | **The one-page brochure** guild leaders hand to other guilds: the pitch, four proof-backed sections, self-host vs managed, the license in one line. Source of the published page (https://claude.ai/artifact/QwY1JG18UzZQNgkDtJAPgF — private until shared from its Share menu) and the PDF | Landed 2026-09-18, critic-checked; the wolf mark is referenced from `web/public/`. Regenerate the PDF with Chromium `--print-to-pdf` after edits |
 | `DESIGN-onboarding-overhaul.md` | "New Here?" walkthrough on web (`/start`) + Discord, shared screenshot set, auto-checkoff from existing signals | Unbuilt — the spec (2026-07-31); also documents the live `/onboarding` embed-overflow break |
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
 | `raid-hub-roadmap.md` | `/raid` hub design; Stages 1-2 shipped, Stages 3-5 open | CLAUDE.md roadmap ref; open TODOs in ledger |
@@ -4586,3 +4588,18 @@ roadmaps.
   first":** `docs/TERMS-hosted.md` drafted for legal review, `PRIVACY.md`
   gained a tenant edition, `LICENSING.md` points at both. Slice 1 of the guild
   kit is next.
+- **Guild kit slice 1a** (bot 3.1.129): `guild/discord.json` fills unset
+  anchor env at boot, refuses secret-shaped keys, env wins;
+  `discord.example.json` generated from the 44 real anchor reads. The design's
+  "anchor resolver" did not exist — the layer runs in front of env.
+- **The launch pack** (`DECISIONS-2026-09-18.md` §9): a brochure for guild
+  leaders to hand to other guilds (`docs/marketing/guild-brochure.html`, a
+  published page, a one-page PDF — critic-checked, nobody named), three GitHub
+  issue forms as the public request page, `docs/DESIGN-business.md` (sales,
+  marketing, funnel, pricing, payment, incorporation, accounting, risks, the
+  9-month plan — not legal advice, questions for professionals), and the
+  plain-words polish on beta.8/beta.9 (quiet mode finally says what it does).
+  ⚠ **Incident:** 3.6.46 would have shipped a blank dashboard — the gate caught
+  it but a `| tail` swallowed the exit code; the release run was cancelled
+  before publish and 3.6.47 fixed it. 3.6.45's note over-described its
+  contents. Three rules recorded in §9.
