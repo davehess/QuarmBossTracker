@@ -444,9 +444,15 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ## License
 
-**Business Source License 1.1, converting to AGPL-3.0-or-later four years after
-each release.** Any guild may run, modify and self-host it for its own use, free
-and without asking. Offering it to *others* for a fee needs a commercial
-arrangement with the Licensor — open an issue titled "Commercial license". The
-binding text is `LICENSE`; the plain-language version, including what happens
-to contributions, is `docs/LICENSING.md`.
+**The code is public and free for your own guild** — read it, change it, fork it,
+run it, with no time limit and without asking. The only thing that needs an
+arrangement first is offering it to *others* for a fee: open an issue titled
+"Commercial license".
+
+Formally that is the **Business Source License 1.1**, and every release converts
+to **AGPL-3.0-or-later** four years after it ships, so nothing can be pulled back
+later. ⚠ BSL is *source-available*, not an OSI-approved open-source license —
+say so anywhere that distinction matters (it already cost us an inaccurate
+code-signing application; see `docs/code-signing.md`). Binding text: `LICENSE`.
+Plain-language version, including what happens to a pull request:
+`docs/LICENSING.md`.
