@@ -36857,6 +36857,44 @@ function _expandTemplate(template, captures) {
   return out;
 }
 
+// ── "That's me" → You ───────────────────────────────────────────────────────
+// A callout naming a character THIS machine plays should say "You", from every
+// direction it can arrive.
+//
+// The local log line already does. EQ writes the event in second person on the
+// recipient's own client — "You feel the watchful eyes of the gods upon you." —
+// so the Divine Intervention trigger's {tank} captures "You" and the flash
+// reads "D.I. ✓ You".
+//
+// A RELAYED fire does not, and that is the bug (the guild lead, 2026-09-18:
+// "it should only ever show YOU for that person"). A relay carries the
+// ORIGINATOR's captures, and on their client the same event reads
+// "<Tank> feels the watchful eyes…" — so the tank gets their own name from
+// every other raider's relay and "You" only from their own client, for one
+// event. Mid-fight that reads as two different people.
+//
+// ⚠ DISPLAY AND SPEECH ONLY — deliberately NOT inside _expandTemplate, which
+// also builds two things this must never touch:
+//   • the cross-raider DEDUP KEY. Every raider's agent computes it from the
+//     same captures so N raiders firing one event collapse to one fire; swap
+//     a name for "You" on one machine and its key stops matching everyone
+//     else's, so the fan-out duplicates instead of collapsing.
+//   • the Discord post / raid-voice message. "D.I. ✓ You" broadcast to the
+//     guild names nobody — the whole point of that surface is the name.
+function _youifyForMe(s) {
+  if (!s) return s;
+  const mine = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  if (!mine.length) return s;
+  let out = String(s);
+  for (const name of mine) {
+    // Whole-word, so a short character name can never be rewritten inside a
+    // longer word (or inside a mob name that merely contains it).
+    const esc = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp('\\b' + esc + '\\b', 'gi'), 'You');
+  }
+  return out;
+}
+
 // ── Trigger checkpoint journal (#76) ────────────────────────────────────────
 // "Why didn't my trigger fire?" answered from the dashboard. A small in-memory
 // ring buffer (NO disk, NO upload) records, per candidate evaluation, how far
@@ -37264,12 +37302,16 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     if (!a || !a.type) continue;
     _actionsBuilt++;
     if (a.type === 'text_overlay') {
-      const text = _expandTemplate(a.text || '', captures || {});
+      // _youifyForMe: a callout about one of THIS machine's characters reads
+      // "You", whether it was detected here or relayed from another raider.
+      // Applied to the two local surfaces only — see the function's header for
+      // why the dedup key and the Discord/voice message are excluded.
+      const text = _youifyForMe(_expandTemplate(a.text || '', captures || {}));
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
       // something different than it shows — e.g. EQLP TextToSpeak vs
       // TextToDisplay). When absent, the overlay window falls back to the
       // display text so every alert is audible by default.
-      const ttsText = a.tts ? _expandTemplate(a.tts, captures || {}) : '';
+      const ttsText = a.tts ? _youifyForMe(_expandTemplate(a.tts, captures || {})) : '';
       const overlay = {
         text,
         color:       a.color || 'red',
