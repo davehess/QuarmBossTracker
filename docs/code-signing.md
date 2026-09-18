@@ -23,6 +23,42 @@
 > Electron EQ Legends companion, ships an installer signed this way — publisher
 > "Joshua Moyers", via a custom electron-builder sign hook.
 
+## The case as it stands on 2026-09-18 (rebuilt — the OSI blocker is gone)
+
+Two of the three historical rejections were **"not an OSI licence"** and
+**"user base too small"**. Both have moved, and this section exists so the
+application can be written from measured facts rather than adjectives. Every
+figure below is checkable by the reviewer.
+
+| Criterion a free-for-OSS signer asks | Where we now stand | Checkable at |
+|---|---|---|
+| **OSI-approved open-source licence** | ✅ **AGPL-3.0-or-later**, since 2026-09-18. This was the disqualifier under BSL 1.1 for part of one day and under nothing else — the project was BSD-3 before that | `LICENSE`, `docs/LICENSING.md` |
+| **Source publicly available** | ✅ Public repository, full history, no private build steps | github.com/davehess/QuarmBossTracker |
+| **Sustained development, not a weekend project** | ✅ **2,278 commits over 4.9 months**, first commit 2026-04-21, active daily | `git log` |
+| **A real release history** | ✅ **730 published release tags — 145 stable, 584 prereleases** — with an automated build pipeline and a beta channel | the repository's Releases page |
+| **Real users, not a demo** | ✅ An active raiding guild plus a separate beta-tester channel, with an auto-updater fleet. ⚠ **Put the actual number in the application, not in this file** — `CLAUDE.md` forbids publishing fleet-size figures, and this repo is public. Count PLAYERS, never characters (distinct `uploaded_by_discord_id`) | ask an officer; `agent_upload_stats` |
+| **An identifiable maintainer** | ✅ One maintainer, named, contactable through the repository | — |
+| **Reproducible, inspectable build** | ✅ GitHub-hosted runner, `release-mimic.yml`, no local build step | `.github/workflows/release-mimic.yml` |
+
+**What to actually say in the application**, in one paragraph: *an open-source
+(AGPL-3.0) Windows desktop client for an EverQuest emulator community, four
+surfaces, 2,278 commits and 730 published releases in five months, built entirely
+on GitHub-hosted runners, distributed to a raiding guild and its beta testers
+through electron-updater. Installers are unsigned today, and the SmartScreen
+"unknown publisher" warning is the single largest obstacle to non-technical
+players installing it.*
+
+**Why it is worth re-applying now rather than paying.** The free route was
+closed by a licence that no longer applies. Before spending $9.99/month on Azure
+Artifact Signing (below), re-apply to SignPath — the attribution it requires is
+**already live in the site footer** (`web/app/layout.tsx`), so that side of the
+bargain is pre-paid.
+
+⚠ **If SignPath is approached again, state the licence as AGPL-3.0-or-later.**
+The 2026-06 application claimed OSI status while the project was BSD-3 — which
+was true then, and stopped being true for the few hours the project sat on BSL.
+It is true again now. Do not describe the project as "source-available".
+
 ## What signing does and does NOT do
 
 Worth stating plainly, because "no SmartScreen prompt" is not what signing buys

@@ -414,6 +414,75 @@ holder.** That was true for the BSD→BSL move and it is still true now; it stop
 being true at the first merged outside contribution. Two relicenses were
 affordable because nobody had adopted it yet. A third, later, would not be.
 
+## 11. Cost accounting, the code-signing case, and what de-branding actually costs
+
+> *"I would like to have an accounting for how much this project has cost since
+> its inception… so that I can justify donations against it… I'd rather have
+> someone contribute quality enhancements over dollars… update our case for
+> getting this open source signed… if a guild decided to use this tomorrow and
+> didn't want to have all of the wolf pack branding… how difficult would it be?"*
+
+**Cost accounting → `docs/COSTS.md`.** Measured: **≈ $120 of infrastructure to
+date** — Railway $5/mo since 2026-04-21 (≈$25), Supabase Pro $25/mo since
+2026-05-25 (≈$95), Vercel $0 on Hobby. Two figures could NOT be measured and are
+marked as needing the guild lead: the domain, and Claude/development tooling.
+They are deliberately blank rather than estimated.
+
+Three findings that shape the answer:
+- **Railway's bill is the plan floor, not usage.** Measured 0.080 GB RAM and
+  0.0196 vCPU average = **$1.20/mo of actual resources** against a $5 plan that
+  includes $5. The bot is cheap; the database is the cost.
+- **Supabase Pro is billed per ORGANISATION and the org holds two projects** —
+  so "$25/mo" is not automatically this project's. Two defensible attributions
+  (~$10 marginal, ~$25 causal) differ by more than double. **The causal basis is
+  the stronger argument and the recommendation**, because the database is
+  **2.20 GB — 4.5× the 500 MB ceiling of Supabase Free**. This platform cannot
+  run free; the plan exists because of it. Whichever basis is used, say which.
+- **The largest real cost is deliberately not converted to dollars:** 2,278
+  commits over 4.9 months of unpaid evenings. Putting a rate on it invites an
+  argument about the rate, and the rate is not the point.
+
+`COSTS.md` §6 states what a donation is and is not — buys nothing, gates nothing
+— and records the guild lead's own ordering: **contributions beat dollars.**
+§7 notes the cheapest way to cut the bill is fixing the threat-snapshot
+retention sweep, which has never worked (`DECISIONS-2026-09-01.md`) — a better
+answer to cost than asking for money.
+
+**Code signing → `docs/code-signing.md`, case rebuilt.** Two of the three
+historical rejections were "not an OSI licence" and "user base too small". The
+first is **gone** — AGPL-3.0-or-later is OSI-approved (§10). The case is now
+written from checkable facts: 2,278 commits in 4.9 months, **730 published
+release tags (145 stable, 584 prereleases)**, public repo, GitHub-hosted builds,
+one named maintainer. ⚠ **The user count goes in the application, never in the
+repo** — `CLAUDE.md` forbids publishing fleet-size figures, and it is public.
+Re-apply to SignPath (free; its required attribution is already live in the site
+footer) before paying for Azure Artifact Signing.
+
+**De-branding → `DESIGN-guild-kit.md` §7a.** Measured: **1,217 brand tokens, of
+which 251 are internal identifiers a fork should keep** (package names, env
+vars, table names), leaving **~966 visible strings**; plus 7 brand-carrying build
+icons, and 4 build-identity fields in `apps/mimic/package.json`.
+
+**The finding that matters: the cost is not the 966 replacements — a fork does
+those in an afternoon. It is that they pay them again on every upstream merge,
+against a repo taking 12–42 commits a day.** Within a month such a fork either
+stops merging or becomes a full-time rebase. So de-branding is *today* hard and
+**permanently** hard, and **after slice 2 it is one JSON file.** That reorders
+the queue: slice 2 is worth more than any single overlay rendition.
+
+Three things config cannot fix and the wizard must handle: the **images**
+(needs a `guild/assets/` override convention, designed into slice 2 rather than
+bolted on), the **`appId`** (`quest.wolfpack.mimic` — a fork MUST change it or
+its installer collides with ours and their updates fight ours), and the
+**update feed** (a fork publishes from its own repository).
+
+**Generic build: yes, as a default rather than a second product.** When
+`guild/config.json` is absent the build falls back to neutral naming and plain
+marks; Wolf Pack becomes *a* configuration rather than *the* one. Costs almost
+nothing once slice 2 exists — it is the `||` on the other side of each config
+read — and avoids a second thing to release and keep in sync. ⚠ **What it is
+called is the guild lead's call**, not a design decision.
+
 ## Open — read this first
 
 *(Rows carried forward from `DECISIONS-2026-09-16.md`; the sanitization sweep
@@ -421,6 +490,9 @@ itself is done and recorded there.)*
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Cost accounting for donations** — `docs/COSTS.md` | **done 2026-09-18 (§11).** ≈$120 infrastructure to date, measured. Railway's bill is the plan floor not usage; Supabase Pro is org-level and shared, with the causal basis (~$25/mo) recommended because the DB is 2.20 GB against Free's 500 MB | ⚠ **two figures need you: the domain, and Claude/development.** They are blank, not estimated — fill them and the accounting is complete. Then stand up the donation link with §6's wording (buys nothing, gates nothing) |
+| **Code-signing case rebuilt** — `docs/code-signing.md` | **done 2026-09-18 (§11).** The OSI blocker is gone; the case is written from 2,278 commits / 730 release tags / public repo / GitHub-hosted builds | **re-apply to SignPath first** (free, and its attribution is already live in the site footer). State the licence as AGPL-3.0-or-later. Put the user count in the application, never in the repo |
+| **De-branding cost measured** — `DESIGN-guild-kit.md` §7a | **answered 2026-09-18 (§11).** ~966 visible strings + 7 icons + 4 build-identity fields; the real cost is re-paying them on every upstream merge | **this reorders the queue — slice 2 now outranks the overlay renditions.** Design the `guild/assets/` override with it, and put `appId` on the wizard's checklist loudly |
 | **License → AGPL-3.0-or-later, open source, not for profit** | **done 2026-09-18 (§10)**, replacing the BSL decision of the same morning (§1, kept as history). All four `package.json` fields are `AGPL-3.0-or-later`; `LICENSE` is the canonical AGPL text with §13 verified intact | **verify the four `license` fields on `beta` after the sync.** Then: stand up a donation link that states plainly it confers nothing; **re-pursue free code signing — AGPL is OSI-approved so eligibility is back** (`docs/code-signing.md`); take `TERMS-hosted.md` §9 to a professional before the first cost-share arrangement |
 | **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). **§10 answered (§8); terms first → `docs/TERMS-hosted.md` drafted. Slice 1a landed (bot 3.1.129):** `guild/discord.json` fills unset anchor env at boot, refuses secret-shaped keys, env wins; `discord.example.json` generated from the 44 anchor reads. ⚠ There is no anchor resolver in the bot — the layer runs in front of env, not behind a function. Next: 1b (`config.json` + the manifest's `guildLabel`/`webBaseUrl`), then the sweep |
 | **The brochure** — `docs/marketing/guild-brochure.html`, the published page (https://claude.ai/artifact/QwY1JG18UzZQNgkDtJAPgF, private until shared), the one-page PDF (§9) | **done 2026-09-18**, critic's six fixes applied before publishing; the share line is in §9's workflow result | the guild lead adds context or reworks wording; **enable GitHub Discussions** (Settings → Features, one click); hand the PDF to guild leaders |
