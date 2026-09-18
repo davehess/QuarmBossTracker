@@ -219,7 +219,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
     <button id="wpResourcesBtn" type="button"
        style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
-       title="What Mimic costs this machine — live CPU and memory for every Mimic process, measured here and never uploaded">📊 Resources</button>
+       title="How much CPU and memory Mimic is using on this computer right now (measured here only, never uploaded)">📊 Resources</button>
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
     <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
     <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
@@ -3262,7 +3262,7 @@ function renderTriggers(s) {
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
-           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger into your personal trigger editor so you can tweak your own version">⎘ Copy to personal</button></td></tr>';
+           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild's version">⎘ Copy to personal</button></td></tr>';
     }
     h += '</table>';
   }
@@ -8558,7 +8558,7 @@ async function dismissTopDamage(key) {
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
-        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Rehearse: drive a synthesized matching line through the REAL pipeline (pattern, cooldown, suppression) and speak the real TTS — local only, no DB, no relay. See the checkpoint journal below for what it exercised.">▶ Rehearse</button>'
+        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Test-fire this trigger: run a fake matching log line through the same matching/cooldown logic and speak the real alert out loud — stays on this computer only, nothing saved or sent. See the checkpoint log below for what it checked.">▶ Rehearse</button>'
         + '<button type="button" data-trig-promote="' + esc(t.id || '') + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Open wolfpack.quest/admin/triggers prefilled with this trigger so an officer can promote it to the guild set">↑ Promote</button>'
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
