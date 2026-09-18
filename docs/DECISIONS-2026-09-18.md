@@ -162,10 +162,11 @@ always-on-top windows are composited by the same 15 W iGPU that renders EQ.
    across the four surfaces (297 × "Wolf Pack", 267 × `wolfpack.quest`) plus
    seven source files that hardcode the Discord guild id or the Supabase ref.
    It does not start until slice 1 gives it somewhere to point.
-3. **Wizard shape recommended, not picked:** a CLI engine that provisions the
-   Discord layout itself (the tenancy doc's #1 abandonment point), with the
-   hosted path stubbed until Stage 5. Options and four-number costs in the
-   design §4.
+3. **Wizard shape picked (the guild lead, same day, "yes" to all four):** a
+   CLI engine that provisions the Discord layout itself (the tenancy doc's #1
+   abandonment point); fork as the default repo shape; palette as a semantic
+   set; the hosted path stubbed to "talk to us" until Stage 5. Options and
+   four-number costs in the design §4.
 4. **AI assistance is the `CLAUDE.md` pattern, generated per tenant, vendor
    neutral:** `TENANT.md` + `tenant.json` + `wolfpack doctor`, whose bundle
    cannot contain a secret or member data because it never reads either.
@@ -182,7 +183,7 @@ itself is done and recorded there.)*
 | Item | Where it stands | Next |
 |---|---|---|
 | **License → BSL 1.1 / AGPL Change License** | **done 2026-09-18** on `main` (§1). `beta` receives it via the sync workflow; the two version-parked `package.json` files there may keep `BSD-3-Clause` if the sync sides with beta | verify the four `license` fields on `beta` after the sync; if two are stale, fix them with the next beta push. **Commercial terms (the percentage) are undecided** — decide before the first arrangement, not in the license |
-| **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | the guild lead's four picks (design §8: wizard shape, fork vs template, palette as a set, what the hosted stub says); then **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver — before the ~580-site de-branding sweep (slice 2) |
+| **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). The tenancy doc's §10 business/data questions are being answered by the guild lead |
 | Hosted tenants — fork-per-tenant model (§2) | recorded; the mechanism is now in the guild-kit design §6 | the three prerequisites in §2 before any tenant |
 | Tenant data policy (§3) | recorded | `docs/PRIVACY.md` tenant edition before the first tenant |
 | MSSQL / other databases (§4) | recorded, not started | data-access layer first; do not attempt a port before it exists |

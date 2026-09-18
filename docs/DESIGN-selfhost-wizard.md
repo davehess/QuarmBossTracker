@@ -468,7 +468,9 @@ and the same never-refetch guarantee.
   config AND keeps the compiled pattern, so a mis-set name cannot switch a
   protection off. The wizard verifies the name it wrote matches the pattern it
   compiled.
-- **2026-09-18 — wizard shape: a CLI engine (recommended, NOT yet picked).**
+- **2026-09-18 — wizard shape: a CLI engine (picked by the guild lead the same
+  day, with fork as the default repo shape, palette as a semantic set, and the
+  hosted path stubbed to "talk to us").**
   Three options costed in `DESIGN-guild-kit.md` §4. The engine must run on-prem
   (it is the only thing that can reach a LAN) and provision the Discord layout
   itself — the ~30-id ceremony is `DESIGN-external-tenancy.md`'s #1 give-up
