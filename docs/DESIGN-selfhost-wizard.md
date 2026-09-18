@@ -444,3 +444,40 @@ and the same never-refetch guarantee.
 - **Where does the eqemu catalog come from?** Unresolved and load-bearing.
 - **How much does it own vs check?** Writing `.env` files is easy; the value is
   in verifying each layer and naming the failure.
+
+### Guild kit — the config split, and the wizard's shape (2026-09-18)
+- **2026-09-18 — a guild's "own bits" split into a committed `guild/config.json`
+  + generated `guild/discord.json`, versus the platform secret store.** Measured
+  against `.env.example`: of 114 variables, **75 are Discord identifiers that
+  were never secrets** and **11 are real secrets**. Identifiers belong in a
+  committed file (their repo then describes their deployment); the ~11 secrets
+  stay in `.env` / Railway / Vercel and are referenced by name. The test for
+  "config vs code" is the guild lead's own: *"their own style and format"* —
+  if two guilds would legitimately differ and neither is wrong, it is config.
+  Contract landed as `guild/config.example.json` + `guild/README.md`; design in
+  `docs/DESIGN-guild-kit.md`. **The wizard must therefore write two files and
+  one secret store, never one env file** — and resolve every value env → file →
+  fallback so env keeps winning for us.
+- **2026-09-18 — channel passwords are the one "their bit" that must not be in
+  the committed config.** They ride `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC`
+  as secrets; `config.json` carries the channel *names*. Same line `CLAUDE.md`
+  draws for our own repo. The wizard asks for the password once and writes it
+  to the secret store only.
+- **2026-09-18 — safety-critical values keep a hardcoded fallback under the
+  config.** The officer-chat privacy filter derives its channel name from
+  config AND keeps the compiled pattern, so a mis-set name cannot switch a
+  protection off. The wizard verifies the name it wrote matches the pattern it
+  compiled.
+- **2026-09-18 — wizard shape: a CLI engine (recommended, NOT yet picked).**
+  Three options costed in `DESIGN-guild-kit.md` §4. The engine must run on-prem
+  (it is the only thing that can reach a LAN) and provision the Discord layout
+  itself — the ~30-id ceremony is `DESIGN-external-tenancy.md`'s #1 give-up
+  point and the provisioner is the wizard's whole value. The hosted path is the
+  same engine behind a web skin, Stage 5 only, stubbed to "talk to us" until
+  then. GitHub-native's *repo shape* (fork + `sync-upstream.yml` that never
+  touches `guild/`) is adopted regardless.
+- **2026-09-18 — AI-assist is `TENANT.md` + `tenant.json` + `wolfpack doctor`,
+  vendor-neutral.** The same thing `CLAUDE.md` is for us, generated for their
+  build. `doctor` reads config, the manifest and health endpoints — never
+  `.env`, never member tables — so its bundle cannot leak by construction (the
+  tenant-data policy, `DECISIONS-2026-09-18.md` §3, applied to support).
