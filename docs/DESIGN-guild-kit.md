@@ -378,6 +378,83 @@ decision** (`CLAUDE.md`: naming is never proposed unilaterally). The mechanism
 above works with any name. What it must NOT keep is `appId` `quest.wolfpack.mimic`
 or the Wolf Pack marks.
 
+## 7b. Runtime branding — the app dresses itself after Discord login
+
+The guild lead, 2026-09-18: *"I'm imagining that in the deployment of this
+unified agent would be able to pull a fresh icon to use when the end user
+completes their Discord authentication but perhaps the windows taskbar icon ends
+up being something that's stuck in place, which quite frankly I don't mind."*
+
+**That instinct is right, and the split is cleaner than §7a assumed.** §7a listed
+seven brand-carrying images as "config cannot fix these — they are pixels". Most
+of them can, if they are fetched at runtime instead of compiled in. Verified
+against the code:
+
+| Surface | Runtime-changeable? | Today |
+|---|---|---|
+| **Tray icon** | ✅ `tray.setImage()` any time | `new Tray(img)` once at `main.js:6062` from `assets/tray.png`. **`setImage` is called zero times** — the capability exists and is unused |
+| **Running app's taskbar button / window icon** | ✅ `win.setIcon()`; on Windows the taskbar button follows the window icon | set once at construction, `main.js:2893`, from `assets/icon-256.png` |
+| **Overlays, dashboard, web** | ✅ ordinary `<img>` | bundled paths |
+| **The `.exe`'s embedded icon** | ❌ compiled in (`build.win.icon`) | drives the **pinned** shortcut, Start Menu, Explorer, and the icon shown before the window sets its own |
+| **Installer / uninstaller icon** | ❌ compiled in (`build.nsis.installerIcon`) | — |
+| **`appId`** | ❌ `quest.wolfpack.mimic` | taskbar grouping identity; a fork **must** change it regardless (§7a) |
+
+So the honest version of the guild lead's guess: **the tray icon and the running
+window are dynamic; the pinned/installer icon is welded.** Windows also caches
+shortcut icons aggressively, so even a rebuilt binary can show a stale one —
+"stuck in place" is doubly true and not worth fighting.
+
+### Where the icon comes from — Discord already has it
+
+The link flow exists and already returns `{user_id, discord_id, display_name,
+is_officer, role_names}` (`main.js:1953`). It does **not** return the guild's
+name or icon, and the bot never reads them — but the bot holds a discord.js
+client and `DISCORD_GUILD_ID`, so `guild.iconURL()` is one call away. That makes
+the guild's own Discord icon the natural source: **every guild already has one,
+already maintains it, and nobody has to supply an asset.**
+
+Sketch, deliberately small:
+1. Bot adds `guild_name` and `guild_icon_url` to the identity/manifest response;
+   cache it, it changes rarely.
+2. Mimic downloads it once on link and on identity refresh to
+   `userData/brand/` — the same download-and-cache shape `ghDownload.js` and
+   `uiPacks.js` already use — validating type and size, never executing anything.
+3. `tray.setImage()` and `win.setIcon()` from the cached file.
+4. Overlays and the dashboard read the same cached path for their headers.
+5. **Bundled default on any failure** — offline, 404, malformed. The app must
+   never come up iconless because a CDN was slow.
+
+### Why this matters more than it looks
+
+**It makes the generic build (§7a) stop being a downgrade.** The objection to a
+neutrally-branded binary is that it feels like a lesser product. But a neutral
+binary that dresses itself in your guild's icon and name the moment you log in is
+*better* than a Wolf-Pack-branded one for everybody except Wolf Pack — and no
+worse for us. It also means **a forking guild gets its own identity without
+rebuilding the binary at all**, which removes the most painful item from the
+de-branding list.
+
+It shrinks §7a's "config cannot fix these" from seven images to three things:
+the exe icon, the installer icon, and `appId` — and those only matter when a
+fork cuts its own release, which it is doing anyway.
+
+### The caveats worth writing down now
+
+- **Trust boundary:** the image comes from Discord's CDN for the guild the user
+  authenticated to. Reasonable, but validate content-type and size, cap it, and
+  cache locally rather than fetching every launch.
+- **It is a new outbound call** from the client. Same CDN Discord itself uses,
+  but it belongs in `docs/PRIVACY.md` when built.
+- **It does not solve `appId`.** Two guilds on the same `appId` still collide on
+  a machine that has both. Icon ≠ identity.
+- **Scope:** this is a *branding* mechanism, not a theming one. The palette
+  already lives in `guild/config.json` (§3); this is the one asset that cannot
+  sensibly be typed into JSON.
+
+**Status: designed, not built.** Fits naturally with slice 2 (de-branding), and
+the bot half — adding two fields to an existing response — is small enough to
+land earlier if wanted.
+
 ## 8. Picked — 2026-09-18 (the guild lead: "yes" to all four)
 
 1. **Wizard shape: A, the CLI engine.** B's repo shape adopted for §6; C
