@@ -268,6 +268,81 @@ makes and where it landed. The one-line versions are appended to that doc's
     slices; (3) `SELFHOSTING.md` → the wizard, as the instructions other guilds
     follow. Stages 0–1 of the tenancy plan are not scheduled ahead of these.
 
+## 9. The launch pack — brochure, request page, polish, and the business pass (the guild lead)
+
+> *"the output when I wake up tomorrow is that we'll be able to give our guild
+> leaders a brochure style ad to the other guilds on the server … start a
+> public request page built into the GitHub perhaps? the app probably needs a
+> lot of polish, like making the quiet mode actually say 'quiet mode (no TTS
+> audio)' … primarily use sonnet and opus subagents … go through all forms of
+> what we need to implement in an architect capacity, from sales and marketing
+> to accounting and if we would take payment how we would have to incorporate."*
+
+**How it was run, because the guild lead asked for utilization to last the
+week:** one workflow, eleven agents — four Sonnet readers at low effort
+(features with evidence, the offer, public-safe numbers, a copy-polish
+inventory), three Sonnet brochure angles → one Opus judge, one Opus business
+architect, one Opus verifier over the polish inventory, one Opus public-repo
+critic. ~1.06M subagent tokens, fourteen minutes, no adversarial fan-out.
+
+**Brochure — `docs/marketing/guild-brochure.html`, a published page, and a
+one-page PDF.** The judge chose the *less admin* angle (the reader is an
+officer doing bookkeeping) and grafted the "One parse, not six" opener from
+the *better data* draft. The critic returned six findings and all six were
+applied before anything was published: "5 expansions" implied PoP is live
+(it is locked until 10-01 — now "Classic through Luclin, with PoP flag
+tracking in preview"); "backed up automatically" overstated a one-click
+capture; "tells are filtered out" is false for a raider who opts into the
+relay; the self-host CTA now says "budget an evening or two"; the terms are
+named as a DRAFT with the no-SLA line on the page itself; and a reputational
+claim about a named payment processor in the business doc was neutralised.
+Numbers on the page are the public aggregates already used on the site plus
+the boss count from `data/bosses.json`. Nobody is named.
+
+**Request page — `.github/ISSUE_TEMPLATE/`.** Three issue forms (a guild's
+request, a feature request, a bug report), each opening with the one warning
+a public page needs, and a `config.yml` that turns off blank issues and links
+SELFHOSTING, LICENSING and the roadmap first. **Enabling Discussions is one
+click in Settings → Features — a repository setting, not a file.**
+
+**Polish — beta.8 (agent 3.6.45) and beta.9 (3.6.47).** Quiet mode's wording
+was not vague, it was wrong: the first-run page still said it hid overlays and
+the tray called it "I use EQLogParser / other parser (Quiet mode)", while the
+control has been mute-only since the 09-11 split. All three surfaces now say
+"no TTS audio or sounds (overlays still show)". Nine more labels and tooltips
+verified against their code before applying.
+
+⚠ **Incident, recorded honestly.** Three things went wrong in that batch and
+each has a rule now:
+1. **3.6.46 (`e4c89158`) would have blanked the dashboard** — a tooltip with
+   "guild's" folded into a single-quoted JS string unescaped. `check:dashboard`
+   caught it *and the chain committed anyway*, because the check was piped
+   through `tail`, which swallowed the non-zero exit. The release run was
+   cancelled 52 seconds in and never published; 3.6.47 is the fix. **Rule: a
+   gate's exit code must reach the shell — never `npm run check:dashboard |
+   tail`.** This is the third apostrophe-class blank (v2.4.25, v2.4.27, now).
+2. **3.6.45's release note described ten changes; three landed.** The apply
+   step aborted on the first escaped apostrophe and the chain continued. The
+   note reposted to `#mimic-releases` overclaimed for one build; 3.6.46/47's
+   notes correct it. **Rule: escape apostrophes in the PROPOSED text whenever
+   the target is inside a JS string, not only when the current text had one.**
+3. **The verifier approved a change that would have broken a test** — it
+   grepped for the full label and missed that `quiet-mode-split.test.js`
+   asserts on its *prefix*. Caught by reading the test. **Rule: a verifier
+   checks prefixes and regexes, not just whole strings.**
+
+**Business — `docs/DESIGN-business.md`,** §0–§9: positioning and the offer,
+channels that reach emulator guilds, the funnel with the tenancy doc's
+abandonment estimate, cost-plus pricing from the real infrastructure numbers
+and what a merge does to two paying guilds, taking payment as one person,
+incorporation as a liability question with the sequence entity → bank →
+processor → signed terms, proportionate bookkeeping, a risk register, and a
+30/90/270-day plan with the point at which it is not worth doing. Not legal,
+tax or accounting advice; it writes the questions for the professionals.
+
+**Stale figure found on the way:** `CLAUDE.md` says 133 bosses;
+`data/bosses.json` holds **135** across five expansions.
+
 ## Open — read this first
 
 *(Rows carried forward from `DECISIONS-2026-09-16.md`; the sanitization sweep
@@ -277,6 +352,12 @@ itself is done and recorded there.)*
 |---|---|---|
 | **License → BSL 1.1 / AGPL Change License** | **done 2026-09-18** on `main` (§1). `beta` receives it via the sync workflow; the two version-parked `package.json` files there may keep `BSD-3-Clause` if the sync sides with beta | verify the four `license` fields on `beta` after the sync; if two are stale, fix them with the next beta push. **Commercial terms (the percentage) are undecided** — decide before the first arrangement, not in the license |
 | **The guild kit** — config spot · wizard · AI-assist manifest · route upstream (§7) | **designed 2026-09-18, slice 0 landed:** `docs/DESIGN-guild-kit.md`, `guild/config.example.json`, `guild/README.md`. Code does not read `guild/` yet | **four picks made 2026-09-18** — CLI engine · fork · palette as a set · "talk to us" stub. Next: **slice 1** — config loader + `guild/discord.json` in the bot's anchor resolver (env still wins) — before the ~580-site de-branding sweep (slice 2). **§10 answered (§8); terms first → `docs/TERMS-hosted.md` drafted. Slice 1a landed (bot 3.1.129):** `guild/discord.json` fills unset anchor env at boot, refuses secret-shaped keys, env wins; `discord.example.json` generated from the 44 anchor reads. ⚠ There is no anchor resolver in the bot — the layer runs in front of env, not behind a function. Next: 1b (`config.json` + the manifest's `guildLabel`/`webBaseUrl`), then the sweep |
+| **The brochure** — `docs/marketing/guild-brochure.html`, the published page (https://claude.ai/artifact/QwY1JG18UzZQNgkDtJAPgF, private until shared), the one-page PDF (§9) | **done 2026-09-18**, critic's six fixes applied before publishing; the share line is in §9's workflow result | the guild lead adds context or reworks wording; **enable GitHub Discussions** (Settings → Features, one click); hand the PDF to guild leaders |
+| **Request page** — three issue forms + `config.yml` (§9) | **done 2026-09-18** | watch the first `guild-request` issues; labels are created on first use |
+| **Plain-words polish** — beta.8 / beta.9 (§9) | **done**; the "Don't show any overlays" label kept on purpose (a test asserts its prefix) | the inventory found more than ten; a second pass is cheap once these are seen in the wild |
+| ⚠ **Release gate incident** — 3.6.46 would have blanked the dashboard; 3.6.45's note overclaimed (§9) | contained: run cancelled before publish, 3.6.47 fixed, notes corrected | the three rules in §9 are now standing; the draft → verify → publish workflow hardening (row above) would have made the first one impossible to publish even if the gate were skipped |
+| `CLAUDE.md` says 133 bosses; `data/bosses.json` has 135 | noted 2026-09-18 | fix on the next `CLAUDE.md` touch |
+| `docs/DESIGN-business.md` — the architecture pass (§9) | **landed 2026-09-18**; not legal/tax/accounting advice by its own first paragraph | the professional questions in §5.2, §6.3, §7.2 are the guild lead's to take to a lawyer and an accountant before any money moves |
 | **Hosted terms — `docs/TERMS-hosted.md`, DRAFT for legal review** | **drafted 2026-09-18** from §8: managed hosting + best-effort requests, no timelines, **no SLA**; monthly in advance; **exit = encrypted export handed over at term end**; the guild owns billing, server and **domain** (we take DNS delegation only); gated components identical hosted or self-hosted | a lawyer settles §9: service liability/warranty, governing law, the **deletion window after handover**, the notice period, and the conversation with the server's operators — a prerequisite to the first paid arrangement |
 | Hosted tenants — fork-per-tenant model (§2) | recorded; mechanism in the guild-kit design §6; the offering's shape in §8.3/8.8 and the terms draft | the three prerequisites in §2, plus the terms' legal review, before any tenant |
 | Tenant data policy (§3, §8.4/8.6) | **recorded and written down for members**: `PRIVACY.md` tenant edition + terms §5 — observations are the guild's; per-incident consent only; anonymise inside the tenant; **no `/who` ingestion**; **cross-tenant data never merged as fact** | nothing until a tenant exists |

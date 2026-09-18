@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Less Bookkeeping, More Raiding</title>
+</head>
+<body>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prata&family=Faustina:ital,wght@0,400;0,500;0,700;1,400&display=swap">
+<style>
+  /* The platform's own tokens (web/tailwind.config.ts), dark-first because that is
+     what the product looks like. Light is the print / paper rendition. */
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#8b949e;
+    --bone:#f2ede1; --gold:#d29922; --blue:#58a6ff; --green:#56d364;
+    --display:'Prata',Georgia,'Times New Roman',serif;
+    --body:'Faustina',Georgia,'Times New Roman',serif;
+    --mono:'Cascadia Code','Consolas',ui-monospace,SFMono-Regular,Menlo,monospace;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#f4f1ea; --panel:#ffffff; --border:#d9d4c7; --text:#1f2328; --dim:#5b6470;
+      --bone:#1a1f26; --gold:#9a6b00; --blue:#1f5fb3; --green:#1a7f37; color-scheme:light;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f1ea; --panel:#ffffff; --border:#d9d4c7; --text:#1f2328; --dim:#5b6470;
+    --bone:#1a1f26; --gold:#9a6b00; --blue:#1f5fb3; --green:#1a7f37; color-scheme:light;
+  }
+  body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.5;margin:0}
+  .page{max-width:900px;margin:0 auto;padding-block:28px 40px;padding-inline:20px}
+  header{display:grid;grid-template-columns:120px 1fr;gap:22px;align-items:center;margin-bottom:26px}
+  header img{width:120px;height:120px;max-width:100%;filter:drop-shadow(0 0 18px rgba(210,153,34,.25))}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin:0 0 8px}
+  h1{font-family:var(--display);font-weight:400;font-size:clamp(30px,5vw,44px);line-height:1.08;color:var(--bone);margin:0 0 10px;text-wrap:balance}
+  .sub{font-size:17px;color:var(--text);margin:0;max-width:62ch;text-wrap:pretty}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px 20px;display:flex;flex-direction:column;gap:8px;break-inside:avoid}
+  .card h2{font-family:var(--display);font-weight:400;font-size:21px;color:var(--bone);margin:0;line-height:1.2;text-wrap:balance}
+  .card p{margin:0;font-size:15.5px}
+  .proof{margin-top:auto;padding-top:10px;border-top:1px solid var(--border);font-family:var(--mono);font-size:12.5px;line-height:1.45;color:var(--dim)}
+  .proof b{color:var(--gold);font-weight:600;font-variant-numeric:tabular-nums}
+  .cta{margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .cta > div{border:1px solid var(--gold);border-radius:8px;padding:16px 20px;background:color-mix(in srgb,var(--gold) 7%,var(--panel))}
+  .cta h3{font-family:var(--display);font-weight:400;font-size:19px;color:var(--bone);margin:0 0 6px}
+  .cta p{margin:0;font-size:15px}
+  code{font-family:var(--mono);font-size:.92em;color:var(--blue)}
+  a{color:var(--blue);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--blue) 40%,transparent)}
+  a:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  footer{margin-top:22px;padding-top:14px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr auto;gap:12px;align-items:end;font-size:13.5px;color:var(--dim)}
+  footer .lic{max-width:62ch;text-wrap:pretty;margin:0}
+  footer .site{font-family:var(--mono);font-size:12.5px;text-align:right;white-space:nowrap}
+  @media (max-width:620px){
+    header{grid-template-columns:84px 1fr;gap:14px} header img{width:84px;height:84px}
+    .grid,.cta{grid-template-columns:1fr} footer{grid-template-columns:1fr} footer .site{text-align:left;white-space:normal}
+  }
+  @media (prefers-reduced-motion:no-preference){ header img{transition:filter .4s ease} }
+  @media print{
+    @page{size:Letter;margin:9mm}
+    :root{--bg:#ffffff;--panel:#ffffff;--border:#cfcac0;--text:#1a1f26;--dim:#4c5561;--bone:#111;--gold:#7a5400;--blue:#1a4f96;color-scheme:light}
+    body{font-size:12.2px;line-height:1.38} .page{padding-block:0;padding-inline:0;max-width:none}
+    header{margin-bottom:10px;grid-template-columns:76px 1fr;gap:14px} header img{width:76px;height:76px;filter:none}
+    .kicker{font-size:10px;margin-bottom:4px} h1{font-size:25px;margin-bottom:6px} .sub{font-size:12.4px}
+    .grid{gap:9px} .card{padding:9px 11px;gap:4px;border-radius:5px} .card h2{font-size:15px} .card p{font-size:11.8px}
+    .proof{font-size:10px;padding-top:6px} .cta{margin-top:9px;gap:9px} .cta > div{padding:8px 11px;border-radius:5px} .cta h3{font-size:14px;margin-bottom:3px} .cta p{font-size:11.8px}
+    footer{margin-top:9px;padding-top:8px;font-size:10.2px} footer .site{font-size:10px} a{border-bottom:none}
+  }
+</style>
+
+<div class="page">
+  <header>
+    <img src="../../web/public/wolf.png" alt="Wolf Pack mark">
+    <div>
+      <p class="kicker">A raid platform for Project Quarm guilds · free to self-host</p>
+      <h1>Less bookkeeping. More raiding.</h1>
+      <p class="sub">A free, self-hostable platform that does the raid-night admin your officers currently do by hand — parses, boards, loot, attendance and recaps that keep themselves up to date.</p>
+    </div>
+  </header>
+
+  <section class="grid" aria-label="What it does">
+    <article class="card">
+      <h2>One parse, not six</h2>
+      <p>Every client only sees what's in range, so six people paste six different parses and someone has to referee. Here, each raider's log feeds one merged record of the fight automatically — no pasting, no screenshots, no argument. Damage and healing for every kill land in Discord and on your guild site on their own.</p>
+      <p class="proof"><b>12,891</b> fights parsed and merged this way so far, across <b>217</b> recorded raid nights and <b>691,427,699</b> points of recorded damage.</p>
+    </article>
+
+    <article class="card">
+      <h2>The board updates itself</h2>
+      <p>Boss timers live in a dedicated channel that edits in place as mobs die and windows open — nobody maintains a spreadsheet mid-raid. When the night ends, a written recap posts on its own: kills, standouts, loot, and who showed up. Attendance shows up as a simple grid instead of a tally someone keeps by hand.</p>
+      <p class="proof"><b>135</b> bosses tracked, Classic through Luclin, with Planes of Power flag tracking already built and in preview ahead of the October unlock — so you can see who's flagged before anyone has to ask.</p>
+    </article>
+
+    <article class="card">
+      <h2>Your raiders see it too, not just your officers</h2>
+      <p>A desktop overlay puts DPS and heals, trigger warnings with countdowns, buff and charm/pet status, mob info and who needs a rebuff right on screen — no alt-tabbing mid-fight. New members get walked through setup (Zeal install, the Windows Defender exception, log import) instead of being handed a wiki page, and quiet mode does exactly what it says: mute the voice callouts, nothing else.</p>
+      <p class="proof"><b>13</b> overlays ship with the client, plus <b>88</b> slash commands covering raid, loot and roster management.</p>
+    </article>
+
+    <article class="card">
+      <h2>Loot, and everything else, stays yours</h2>
+      <p>Loot bids stay sealed and encrypted until reveal, and DKP balances and wishlists are one command away instead of a spreadsheet nobody remembers to update. Officer chat never leaves the raider's machine, and tells are filtered out too by default — the private tell-history relay is opt-in and off unless a raider turns it on for themselves. Custom EverQuest UI layouts can be backed up to the cloud in one click, so a crash doesn't cost someone an evening rebuilding theirs.</p>
+      <p class="proof">Sealed bids are stored encrypted (AES-256-GCM) until reveal; log filtering happens locally, before upload — see <code>docs/PRIVACY.md</code>.</p>
+    </article>
+  </section>
+
+  <section class="cta" aria-label="How to get it">
+    <div>
+      <h3>Run it yourself, free</h3>
+      <p>Clone the repo and follow <code>docs/SELFHOSTING.md</code> — budget an evening or two for first setup. Your own box costs nothing but electricity; hosting it yourself on cloud services runs about $30/mo. Free to use, modify and self-host for your own guild.</p>
+    </div>
+    <div>
+      <h3>Don't want to run it at all?</h3>
+      <p>Ask us about a managed setup in whichever size fits — a starter bot with overlays, or the full guild site on your own domain. Plain-language draft terms are in <code>docs/TERMS-hosted.md</code> — no uptime guarantee or service-level promise, and you own your data and your domain. Open an issue titled <em>Request from a guild</em> to start.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p class="lic">Free to use, modify and self-host for your own guild. Offering it to other guilds for money needs a conversation with us first — and every release automatically becomes fully open-source (AGPL) four years after it ships, so the community is never locked out.</p>
+    <div class="site"><a href="https://github.com/davehess/QuarmBossTracker">github.com/davehess/QuarmBossTracker</a><br><a href="https://wolfpack.quest">wolfpack.quest</a></div>
+  </footer>
+</div>
+
+</body>
+</html>
