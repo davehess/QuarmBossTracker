@@ -4603,3 +4603,8 @@ roadmaps.
   it but a `| tail` swallowed the exit code; the release run was cancelled
   before publish and 3.6.47 fixed it. 3.6.45's note over-described its
   contents. Three rules recorded in §9.
+- **Brochure targeting** — which guilds on the server already have tooling,
+  from `/who` activity, the three community projects' credits and commit
+  histories, and handle→character matching. **Private artifact, not in the
+  repo** (it names other guilds): link in the open table. Fifteen raid-sized
+  guilds with no known tooling; four with their own; re-run in 60 days.
