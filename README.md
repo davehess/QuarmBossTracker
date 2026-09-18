@@ -441,3 +441,12 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 | Create Public Threads | Create announce and raid-night threads |
 
 ---
+
+## License
+
+**Business Source License 1.1, converting to AGPL-3.0-or-later four years after
+each release.** Any guild may run, modify and self-host it for its own use, free
+and without asking. Offering it to *others* for a fee needs a commercial
+arrangement with the Licensor — open an issue titled "Commercial license". The
+binding text is `LICENSE`; the plain-language version, including what happens
+to contributions, is `docs/LICENSING.md`.
