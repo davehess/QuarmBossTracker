@@ -1,6 +1,42 @@
 // index.js — Quarm Raid Timer Bot
 
 require('dotenv').config();
+// ── guild/discord.json → unset env anchors (the guild kit, slice 1a) ────────
+// The bot resolves every Discord anchor straight from process.env, at ~54
+// sites — there is no single resolver to put a file layer BEHIND. So the file
+// layer goes in FRONT: read guild/discord.json once, here, before anything
+// reads env, and fill ONLY the keys env does not already set. Env wins, so a
+// deployment that sets everything (ours) is untouched, and a fork that commits
+// its provisioner-generated discord.json needs no anchor env at all.
+// Runs immediately after dotenv on purpose: utils/hateBoard.js reads env at
+// require time, so this must precede every require below.
+//
+// Refuses secret-shaped keys (SPEC / TOKEN / KEY / SECRET / PASSWORD) by
+// design. A channel password pasted into a committed file must not silently
+// work — it is logged and skipped, so the mistake is visible instead of
+// load-bearing. Names are config; passwords are secrets (guild/README.md).
+// Design: docs/DESIGN-guild-kit.md §2.
+function _loadGuildDiscordJson(dir, env) {
+  const fs = require('fs'), path = require('path');
+  const out = { filled: [], skipped: [], refused: [] };
+  const file = path.join(dir, 'discord.json');
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return out; }   // no file → nothing to do
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { console.warn(`[guild] ${file} is not valid JSON — ignored (${e.message})`); return out; }
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (k.startsWith('_') || v == null) continue;                        // _comment, nulls
+    if (/SPEC|TOKEN|KEY|SECRET|PASSWORD/.test(k)) { out.refused.push(k); continue; }
+    if (env[k] != null && String(env[k]).trim() !== '') { out.skipped.push(k); continue; }
+    env[k] = Array.isArray(v) ? v.join(',') : String(v);
+    out.filled.push(k);
+  }
+  if (out.refused.length) console.warn(`[guild] discord.json: refused secret-shaped key(s) ${out.refused.join(', ')} — secrets belong in .env, never in a committed file`);
+  if (out.filled.length)  console.log(`[guild] discord.json filled ${out.filled.length} unset anchor(s): ${out.filled.join(', ')}`);
+  return out;
+}
+_loadGuildDiscordJson(require('path').join(__dirname, 'guild'), process.env);
 
 const {
   Client, GatewayIntentBits, Collection, Events, REST, Routes, MessageFlags,

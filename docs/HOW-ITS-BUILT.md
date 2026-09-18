@@ -87,7 +87,12 @@ writes.
 ## Release & deploy pipeline
 
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
-**Designed, slice 0 only — no code reads it yet.** `guild/config.example.json`
+**Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of
+`index.js` reads `guild/discord.json` right after dotenv and fills only the
+anchor env keys that are unset — env wins, secret-shaped keys are refused,
+no file is a no-op (`test/guild-discord-json.test.js`).
+`guild/discord.example.json` is generated from the bot's real anchor reads.
+`config.json` is still unread (slice 1b). `guild/config.example.json`
 is the schema-by-example for a guild's *own* bits (identity, palette as a set
 with named semantics, wording, channel **names**, raid schedule, sites, APIs,
 feature flags); `guild/discord.json` will be the provisioner-generated anchor

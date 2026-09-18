@@ -5,9 +5,11 @@ and format** — the things two guilds would legitimately want different, where
 neither is wrong. Everything else in the repository is code, and improvements to
 it belong upstream (`CONTRIBUTING.md`).
 
-Design: `docs/DESIGN-guild-kit.md`. Status: **the contract exists; the code does
-not read it yet** (slice 1 of that design wires it in). Until then this folder
-documents the target, and `config.example.json` is the schema by example.
+Design: `docs/DESIGN-guild-kit.md`. Status: **slice 1a is live — the bot reads
+`discord.json` at boot** (bot 3.1.129) and fills any anchor it finds unset in
+the environment; `config.json` is not read yet (slices 1b–2).
+`discord.example.json` lists every anchor key the bot knows, generated from the
+code; `config.example.json` is the schema by example.
 
 ## What goes where
 

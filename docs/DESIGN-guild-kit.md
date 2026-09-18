@@ -111,9 +111,16 @@ Three rules that make it work:
   ships `config.example.json`; a tenant's `config.json` is theirs. The upstream
   sync (§6) is configured to never touch `guild/`.
 - **Every consumer resolves in one order: env → `guild/` → built-in
-  fallback.** The bot's anchor resolver already does `process.env.<KEY>` →
-  `state.channelSlots` → `null`; slice 1 inserts `guild/discord.json` between
-  the first two. Env keeps winning so nothing we run today changes.
+  fallback.** ⚠ Corrected while building slice 1 (2026-09-18): the bot has
+  **no single anchor resolver** — anchors are read straight from
+  `process.env` at ~54 sites, so there is nothing to put a file layer *behind*.
+  The layer therefore runs in *front*: `_loadGuildDiscordJson` at the top of
+  `index.js`, immediately after dotenv and before any `require` that reads env,
+  fills **only the keys env does not set**. Env keeps winning — a deployment
+  that sets everything (ours) is byte-for-byte unaffected — and every existing
+  read picks the file up with zero call-site edits. It **refuses**
+  secret-shaped keys (`SPEC/TOKEN/KEY/SECRET/PASSWORD`) from the file, so a
+  password in a committed file is logged and ignored rather than load-bearing.
 - **A built-in fallback stays for anything safety-critical.** The agent's
   officer-chat privacy filter (`DEFAULT_DROP_PATTERNS`) derives the channel name
   from config *and keeps the hardcoded pattern* — a tenant who misconfigures the
@@ -284,7 +291,8 @@ their GitHub."*
 | Slice | What | Tenancy stage | Size (est.) |
 |---|---|---|---|
 | **0** | `guild/config.example.json`, `guild/README.md`, this design | — | **done 2026-09-18** |
-| 1 | Config loader + `guild/discord.json` in the bot's anchor resolver (env → file → state → null). Agent + Mimic read `guildLabel` / `webBaseUrl` from the bot manifest | 2 (partial), 3 | 1–2 days |
+| **1a** | `guild/discord.json` fills unset anchor env at boot, refusing secret-shaped keys; `discord.example.json` generated from the code's 44 anchor reads; behaviour test | 2 (partial) | **done 2026-09-18** (bot 3.1.129) |
+| 1b | `config.json` loader; agent + Mimic read `guildLabel` / `webBaseUrl` from the bot manifest | 3 | 1 day |
 | 2 | The de-branding sweep: ~580 sites → config; the seven identifier hardcodes; the officer-filter fallback rule | 3 | 2–3 days (the tenancy doc's own estimate, now with a target) |
 | 3 | The Discord provisioner — layout → `discord.json`. Usable standalone, before a bot exists | 2 | 2–3 days |
 | 4 | `wolfpack doctor` + `TENANT.md` / `tenant.json` generation | 2 | 1–2 days |
