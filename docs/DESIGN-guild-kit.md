@@ -305,6 +305,79 @@ the one that should not start until slice 1 gives it somewhere to point.
 
 ---
 
+## 7a. "A guild wants none of our branding" — what that actually costs
+
+The guild lead, 2026-09-18: *"if a guild decided to use this tomorrow and didn't
+want to have all of the wolf pack branding and everything from the website down
+to the name and look of the application how difficult would it be for us to
+generate different versions of that? should there be a generic Quarm miMIC?"*
+
+Measured 2026-09-18, so the answer is a number rather than a feeling.
+
+### The surface, split by what it actually is
+
+| Kind | Count | Does a fork have to change it? |
+|---|---|---|
+| Every `wolfpack` / `Wolf Pack` / `WOLFPACK` token in code | **1,217** | — |
+| …of which **internal identifiers** — `wolfpack-logsync`, `WOLFPACK_AGENT_TOKEN`, `wolfpack_members`, `wolfpack-mimic` | **251** | **No.** Package names, env vars and table names are plumbing. Renaming them is pure churn and breaks every migration |
+| …leaving **visible display strings** | **~966** | Yes — but see below |
+| of those, the literal **"Wolf Pack"** | ~298 | Yes |
+| and the **`wolfpack.quest`** domain | ~267 | Yes |
+| **Files whose NAME carries the brand** | **88** | Mostly no — a filename is not user-visible |
+| **Brand-carrying image assets** | **7** (`icon-256.png`, `icon.ico`, `icon.png`, two `tray.png`, two `@2x`) plus the site's `wolf.png`, `mimic-logo.png`, `apple-icon.png`, `icon.png` | **Yes, and config cannot fix these** — they are pixels |
+| **Build identity** in `apps/mimic/package.json` | 4 fields: `productName` "Wolf Pack Mimic", `appId` `quest.wolfpack.mimic`, two `artifactName` patterns | **Yes** — these name the installer, the Start-menu entry and the update feed |
+
+### The honest answer: the cost is not the 966 strings
+
+A fork could find-and-replace its way through those in an afternoon. **That is
+not the expensive part.** The expensive part is that they pay it again on
+*every upstream merge*, forever — 966 conflict sites against a repository that
+takes 12–42 commits a day. Within a month their fork either stops merging or
+becomes a full-time rebase job. That is how a friendly fork turns into a dead
+one, and it is the real reason to solve this in the product rather than leave it
+to the forker.
+
+**With the guild kit finished, it is one JSON file.** `guild/config.json`
+already carries `guild.name`, `guild.short`, `sites.web`, the palette and
+`wording.*` (slice 0, landed). Slice 1b reads it; slice 2 is precisely the sweep
+that replaces those ~966 literals with reads from it. After that a new guild
+edits one file and merges upstream cleanly forever.
+
+So: **today, hard and permanently hard. After slice 2, trivial.** That is the
+strongest argument yet for doing slice 2, and it reorders the queue — it is
+worth more than any single overlay rendition.
+
+### The three things config will still not fix
+
+1. **Images.** Seven build/tray icons plus the site marks. The kit needs an
+   assets convention — `guild/assets/` overriding the defaults by filename, with
+   ours as the fallback. Cheap to add, must be designed in slice 2 rather than
+   bolted on.
+2. **`appId`.** `quest.wolfpack.mimic` is the Windows application identity. A
+   fork **must** change it or their installer collides with ours on any machine
+   that has both, and their auto-updates fight ours. This one is not cosmetic and
+   belongs in the wizard's checklist, loudly.
+3. **The update feed.** `artifactName` and the release tags drive electron-updater.
+   A fork publishes its own releases from its own repository; the wizard has to
+   point the updater at their repo, not ours.
+
+### Should there be a generic build?
+
+**Yes — but as a default, not a second product.** One codebase, one release
+pipeline. When `guild/config.json` is absent or unfilled, the build falls back to
+neutral naming and the plain marks; when it is filled, it is that guild's client.
+Wolf Pack becomes *a* configuration rather than *the* configuration.
+
+That costs almost nothing extra once slice 2 exists — the fallback is the
+`||` on the other side of every config read — and it avoids the two failure
+modes of a separate "generic" fork: a second thing to release, and a second
+thing to keep in sync.
+
+⚠ **What the generic build is called is the guild lead's call, not a design
+decision** (`CLAUDE.md`: naming is never proposed unilaterally). The mechanism
+above works with any name. What it must NOT keep is `appId` `quest.wolfpack.mimic`
+or the Wolf Pack marks.
+
 ## 8. Picked — 2026-09-18 (the guild lead: "yes" to all four)
 
 1. **Wizard shape: A, the CLI engine.** B's repo shape adopted for §6; C
