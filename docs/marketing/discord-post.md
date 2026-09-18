@@ -67,11 +67,34 @@ the correct screenshot source: on-brand, always current, and nobody's name on it
 | Overlay montage (CH chain, tank, buffs) | `/about` | ✅ invented names since 2026-09-18 |
 | Boss board / timer channel | a Discord capture | ⚠ check for member names in the sidebar and any kill-credit line |
 | Parse card | a Discord capture | ❌ real names and a damage ranking — scrub or skip |
+| **Extended Target (pre-targeting)** | a client capture | ❌ a name on every assignment chip, plus the online count — and there is no safe source for it yet (see below) |
 | Mimic dashboard | a client capture | ⚠ shows the signed-in character and the Discord display name |
 | Installer / first-run | `docs/screenshot-install.png`, `docs/screenshot-logsync-setup.png` | ✅ already in the repo, no names |
 
 **Two or three images is right.** Lead with the overlay montage — it is the thing
 nobody else on the server has.
+
+⚠ **The Extended Target overlay is the strongest capability shot we have, and
+we cannot post one.** A live Ssraeshza capture (the guild lead, 2026-09-18) shows
+a dozen identically-named mobs separated cleanly — several `Disciple of Rhag`,
+four `Ssraeshzian ... Priest` — each carrying its own spawn id and its own tank
+assignment. That is spawn-id disambiguation working in a real pull at N≈12, and
+it is exactly the thing no other tool on the server does. It is also **one real
+character name per assignment chip**, roughly a dozen of them, which puts it
+firmly in the ❌ row above.
+
+`/about`'s demo has no Extended Target panel — it renders the tank overlay, the
+Command Center, the CH chain and loot TTS (`web/components/about/OverlayDemo.tsx`),
+so there is nothing safe to substitute. Two options, neither done:
+- **Scrub the capture** — the assignment chips are the payload, so blurring them
+  removes the point of the shot. Weak.
+- **Add an Extended Target panel to the demo** on the same invented-name roster
+  as the others. That makes the capability screenshottable permanently, on-brand,
+  and for every future conversation rather than this one. Queued in
+  `docs/STATUS.md`; the right answer if the shot matters.
+
+Until one of those lands, **describe it in words instead** — the post's overlay
+bullet already covers it, and the capability survives a sentence better than most.
 
 ⚠ **`/mimic/mini` still renders real raiders** (`web/app/mimic/mini/mocks.tsx`,
 `web/lib/miniReview.ts`). Its vote has closed, so it can be swapped the same way
