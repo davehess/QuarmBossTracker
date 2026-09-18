@@ -86,6 +86,21 @@ writes.
 
 ## Release & deploy pipeline
 
+### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
+**Designed, slice 0 only — no code reads it yet.** `guild/config.example.json`
+is the schema-by-example for a guild's *own* bits (identity, palette as a set
+with named semantics, wording, channel **names**, raid schedule, sites, APIs,
+feature flags); `guild/discord.json` will be the provisioner-generated anchor
+ids; `guild/TENANT.md` / `tenant.json` the generated, vendor-neutral
+description of that deployment for people and AI assistants; `.env` stays the
+home of the ~11 real secrets (channel *passwords* included). Resolution order
+everywhere is env → `guild/` file → built-in fallback, so env keeps winning for
+our own deployment. Measured target for the de-branding sweep: ~580 hardcoded
+sites + 7 files with the guild id / Supabase ref. Full design, wizard options
+with four-number costs, and the fork + `sync-upstream.yml` route back upstream:
+`docs/DESIGN-guild-kit.md`. Deployment decisions: `DESIGN-selfhost-wizard.md`
+§3 (2026-09-18). Builds on `DESIGN-external-tenancy.md` Stages 2–3.
+
 - **Branches**: `main` ships bot (Railway, deploy name = merge commit
   message) + web (Vercel) + stable Mimic; `beta` ships Mimic/agent betas.
 - **Mimic releases**: `.github/workflows/release-mimic.yml` triggers on

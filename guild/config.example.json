@@ -1,0 +1,73 @@
+{
+  "_comment": "Schema by example. Copy to guild/config.json and edit. NO SECRETS HERE — passwords, tokens and keys go in .env and are referenced by name. See guild/README.md and docs/DESIGN-guild-kit.md.",
+
+  "guild": {
+    "name": "Wolf Pack",
+    "short": "WP",
+    "tagline": "One wolf starts to growl. The whole pack will howl.",
+    "server": "Project Quarm",
+    "timezone": "America/New_York",
+    "raidNights": ["Sun", "Wed", "Thu"],
+    "raidWindow": { "start": "20:00", "end": "00:00" },
+    "deployFreeze": { "start": "19:30", "end": "00:30" }
+  },
+
+  "sites": {
+    "web": "https://wolfpack.quest",
+    "webBeta": "https://b.wolfpack.quest",
+    "botApiBase": "https://<your-bot-host>/api/agent",
+    "opendkp": "https://<your-guild>.opendkp.com",
+    "pqdi": "https://www.pqdi.cc"
+  },
+
+  "discord": {
+    "guildId": "<discord-guild-id>",
+    "layout": "./discord.json",
+    "roles": {
+      "member": "Pack Member",
+      "raider": "Raid Pack",
+      "officer": "Officer"
+    }
+  },
+
+  "channels": {
+    "_comment": "Names only. The join passwords for these are secrets: TAG_CHANNEL_SPEC / OFFICER_CHANNEL_SPEC in .env, each as name:password.",
+    "raidTag": "Ztwolfpacktag",
+    "officer": "Wolfpackofficer"
+  },
+
+  "theme": {
+    "_comment": "One set, with meaning. red = death / conflict, gold = a roll value, blue = a cast bar or link, green = healthy, purple = rare. Re-skin the set; do not reassign the meanings.",
+    "bg": "#0d1117",
+    "panel": "#161b22",
+    "border": "#30363d",
+    "text": "#c9d1d9",
+    "dim": "#6e7681",
+    "blue": "#58a6ff",
+    "gold": "#d29922",
+    "green": "#56d364",
+    "red": "#f85149",
+    "orange": "#ffa657",
+    "purple": "#a371f7",
+    "accent": "#1f6feb",
+    "displayFont": "Prata"
+  },
+
+  "wording": {
+    "assistantName": "Lord Mobsincamp",
+    "mimicName": "Mimic",
+    "parserName": "wolfpack-logsync"
+  },
+
+  "features": {
+    "web": true,
+    "opendkp": true,
+    "pvp": false,
+    "assistant": false
+  },
+
+  "expansions": {
+    "_comment": "ISO date the named expansion unlocks on your server; boss buttons and relays for it stay locked until then.",
+    "planesOfPower": "2026-10-01"
+  }
+}

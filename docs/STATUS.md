@@ -44,6 +44,8 @@ folly** — it's here.*
 | `DESIGN-87-officer-console.md` | #87 officer runbooks + console: the runbook set (RB-01…RB-12, each grounded in a dated incident), the health-signal set, button safety classes, and the anti-rot mechanism | Phase 1 shipped (`/admin/console`); §7.2 bot-side levers still proposed |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
 | `DESIGN-external-tenancy.md` | Letting OTHER guilds use Mimic + the platform: self-host vs tenant-on-our-Supabase vs hybrid, the honest self-host cost, the **PvP `/who` carve-out** and how it's enforced, the Mimic-points-elsewhere angle, a staged plan, and the open business questions | Unbuilt — design only (2026-08-02). Read before any tenancy/self-host/`guild_id` work. Stage 0 (publish the `eqemu_*` catalog) + Stage 1 (split PvP data to its own project) are worth doing on their own merits |
+| `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Designed 2026-09-18, slice 0 landed** (`guild/`). Four picks pending (§8); then slice 1 before the de-branding sweep |
+| `LICENSING.md` | The plain-language license: what a guild may do free, what needs an arrangement, what happens to a PR, and why BSL→AGPL over BSD-3 or AGPL alone | **Live 2026-09-18.** `LICENSE` is binding; this is what people actually read |
 | `DESIGN-onboarding-overhaul.md` | "New Here?" walkthrough on web (`/start`) + Discord, shared screenshot set, auto-checkoff from existing signals | Unbuilt — the spec (2026-07-31); also documents the live `/onboarding` embed-overflow break |
 | `mimic-1.4-roadmap.md` | **Active Mimic beta queue** (overlay layout sync, UI-Studio UX, trigger onboarding) | Real open work; see ledger |
 | `raid-hub-roadmap.md` | `/raid` hub design; Stages 1-2 shipped, Stages 3-5 open | CLAUDE.md roadmap ref; open TODOs in ledger |
@@ -4538,3 +4540,37 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
 the Extended-Target glide animation, and per-character overlay position+opacity
 (B-2) are all **shipped**, not pending. Trust this ledger over the archived
 roadmaps.
+
+### 🧾 2026-09-18 — the license, the guild-kit contract, and a broken beta release
+
+- **Relicensed BSD-3 → Business Source License 1.1, Change License
+  AGPL-3.0-or-later** (`main` `e83520c6`). Any guild may run, modify and
+  self-host free; offering it to others for a fee needs an arrangement; every
+  version turns AGPL four years after release. `LICENSE`, `docs/LICENSING.md`,
+  `CONTRIBUTING.md` §9 (no CLA — opening a PR is the agreement, with a
+  relicense grant), `license: "BUSL-1.1"` in all four `package.json`s. Why not
+  AGPL alone: its §10 forbids royalties. The commercial terms themselves are
+  deliberately undecided. ⚠ `packages/wolfpack-logsync/package.json` on `beta`
+  still says `BSD-3-Clause` — the sync sided with beta on that version-parked
+  file; fix rides the next real beta push.
+- **The guild kit — designed, slice 0 landed.** `docs/DESIGN-guild-kit.md`;
+  contract in `guild/` (`config.example.json`, `README.md`). The measured facts
+  it rests on: 114 env vars of which **75 are Discord identifiers** (never
+  secrets) and **11 are secrets**; ~580 hardcoded identity sites across the
+  four surfaces. Wizard shape recommended (CLI engine that provisions the
+  Discord layout), not picked. Decisions in `DESIGN-selfhost-wizard.md` §3.
+- **Mini-mode framework** on `beta` (2.6.9-beta.5) — the vote closed with one
+  voter; renditions not built. **Settings Save floats** (beta.6). **Callouts
+  about your own character say "You"** from every direction (agent 3.6.44,
+  beta.7) — applied to overlay text + speech only, never the dedup key or the
+  Discord/voice message.
+- ⚠ **`v2.6.9-beta.4` published with no installer** — the `.exe` upload failed
+  after the release was live; a re-run resolved the *next* tag (beta.5) and
+  reported success while beta.4 stayed broken. Fix (publish as draft → verify
+  the asset → flip live) designed and stashed; deleting beta.4 is the guild
+  lead's call.
+- **Field finding:** Intel-iGPU login-screen ghosting on a member's laptop was
+  a missing `ddraw.dll` beside a present `d3d8.dll`; `CRASH_FINGERPRINT_FILES`
+  does not hash it. Three Mimic EQ-folder discovery bugs found on the same
+  setup (child-folder descent; `_zealEqDir` log-gated; "Set up for me" says ✓
+  on a no-op) — all open, in `DECISIONS-2026-09-18.md`.
