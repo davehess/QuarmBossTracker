@@ -284,13 +284,14 @@ the one that should not start until slice 1 gives it somewhere to point.
 
 ---
 
-## 8. Open for the guild lead
+## 8. Picked — 2026-09-18 (the guild lead: "yes" to all four)
 
-1. **Wizard shape** — A is recommended; B's repo shape adopted; C deferred to
-   Stage 5. Pick, or say why not.
-2. **Fork vs template as the default** — fork (public, native PRs) is
-   recommended; see the privacy caveat in §6.
-3. **Palette as a set or as free fields** — a set with named semantics is
-   recommended (§3).
-4. **What the hosted stub says** — a "talk to us" page is the minimum; the
-   tenancy doc §10 questions 1–3 decide anything more.
+1. **Wizard shape: A, the CLI engine.** B's repo shape adopted for §6; C
+   deferred to Stage 5 as a skin over the same engine.
+2. **Fork is the default.** Template stays available for a guild that needs a
+   private repo, at the cost of one-click PRs (§6 caveat stands).
+3. **Palette ships as a set with named semantics**, not free fields (§3).
+4. **The hosted stub says "talk to us."** Anything more waits on the tenancy
+   doc's §10 business questions, which the guild lead is answering next.
+
+Slice 1 is unblocked.
