@@ -1,0 +1,48 @@
+name: "Bug report"
+description: "Something broke — an overlay, the parser, a command, a page."
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before pasting a log:** strip character names, tells, guild chat and channel names. The parser never uploads those — please don't paste them here either. Everything on this page is public.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - A Mimic overlay (in-game)
+        - The Mimic dashboard, Settings or UI Studio
+        - The parser / uploads
+        - The website (wolfpack.quest)
+        - The Discord bot
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "From the top of the Mimic dashboard, e.g. 'v2.6.9-beta.7 (agent 3.6.44)'. For the site or bot, leave blank."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      description: "Numbered steps if you can. If it only happens mid-raid, say which fight."
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Log lines or screenshot (names removed)
+      render: text
