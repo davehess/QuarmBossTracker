@@ -35410,6 +35410,17 @@ function _crashVerdict(parsed, dump) {
       + 'devices attached to the graphics card.');
     out.checks.push('Try running EverQuest windowed or borderless instead of full screen — '
       + 'that avoids most display resets.');
+    // ⚠ The LINK is the load-bearing part (a member, 2026-09-20: "I tried
+    // finding these voodoo files from the zeal repo and cant find them").
+    // dgVoodoo is a separate project and is NOT shipped with Zeal, which is the
+    // first place everyone looks — so say the repo, both files, and where they
+    // go. BOTH: d3d8 alone leaves the DirectDraw-era 2D screens on the native
+    // driver, which is the 2026-09-18 login-screen ghosting all over again.
+    out.checks.push('If it keeps happening, dgVoodoo2 makes the game draw through a modern '
+      + 'graphics layer instead of the 2002 one, so a driver reset stops killing it. Get it from '
+      + 'github.com/dege-diosg/dgVoodoo2/releases (it is NOT part of the Zeal download) and copy '
+      + 'BOTH d3d8.dll and ddraw.dll out of its MS\\x86 folder into the folder that has '
+      + 'eqgame.exe in it. Copying only d3d8.dll leaves the login screen glitching.');
   }
 
   if (ex.noncontinuable) out.notes.push('This one was not survivable — the game could not have kept going.');
