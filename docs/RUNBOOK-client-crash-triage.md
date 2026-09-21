@@ -98,9 +98,38 @@ regression — so *upgrading or downgrading Zeal cannot fix it*, and a raider wh
 has already tried that has not wasted a step so much as run the experiment. It
 is the client failing to render the first frame of a large outdoor zone.
 
-**What it does not rule out.** Which *input* makes the client fall over — the
-character's saved UI layout, the zone's files, or something being drawn in that
-zone. §5 separates those in the order that costs the raider least.
+### What actually causes it: the graphics driver resets, and the client dies
+
+Corrected 2026-09-21. The dumps behind the three 2026-07-04 reports say it
+outright, and this runbook's first draft did not look at them:
+
+| | |
+|---|---|
+| `dump_churn` | `nvwgf2um.dll`, `nvldumd.dll`, `nvgpucomp32.dll`, `NvMemMapStorage.dll`, `D3D11.DLL`, `DXGI.DLL` — **the NVIDIA user-mode driver stack, unloaded and reloaded 4 times each** |
+| `crash_subsystem` | *the graphics driver* |
+| `dump_uptime_sec` | **32s, 73s, 33s** — dead inside a minute, three times running |
+
+A member hit the same address on 2026-09-20 on a completely different machine,
+and their local review named the **AMD** equivalent — `amdihk32.dll`,
+`aticfx32.dll` — resetting several times in three minutes.
+
+**So: two raiders, two GPU vendors, one client address.** The client is a 2002
+Direct3D 8 application that does not handle a lost device. When the driver
+resets under load it dereferences a stale pointer on the very next frame, which
+is why the fault is always at a fixed address in `eqgame.exe`, always in
+`RenderUI`, always on the first frame of a zone (game state 4), and always in a
+big outdoor one — the heaviest thing it ever has to draw.
+
+⚠ **This reframes the whole triage.** The crash is a *symptom of the display
+path*, so the saved UI layout, the zone's files and the character are all
+downstream of it. A raider who restores a known-good config and still crashes
+has not failed to find the right file — they have confirmed the diagnosis.
+
+⚠ **A second crash on the same machine may look unrelated and not be.** The
+2026-09-20 machine also threw a Windows-audio crash — `mss32` → `winmmbase` →
+`wdmaud2` → `rpcrt4` — which is what a GPU reset does to sound devices attached
+to the GPU: HDMI and DisplayPort audio endpoints vanish with the display. One
+cause, two very different-looking dialogs.
 
 **It is survivable.** One earlier raider hit it three times in seven minutes and
 went on to play for months afterwards. Say so — someone staring at a client that
@@ -138,34 +167,53 @@ and run `python3 scripts/read-minidump.py minidump.dmp` — that names the modul
 that actually faulted, plus uptime and any graphics-driver resets. **This is the
 only step that can replace guessing with an answer**, which is why it is first.
 
-**Step 1 — log in a different character (zero effort, splits the problem).**
-- Another character loads fine → it is *this character or its zone*, go to 2.
-- Every character crashes the same way → it is the install or the machine, go to 4.
+**Step 1 — if the dump shows driver churn, go straight to the display path.**
+Everything below is aimed at the driver resetting, in rising order of effort:
 
-**Step 2 — rename that character's saved UI layout.** It is written on every
-exit, it is read during the UI build at exactly the moment this crash happens,
-and it is the classic thing that is fine one day and corrupt the next. The game
-rebuilds it; the only loss is window positions. Paste into Win+R:
+- **Run windowed or borderless, not exclusive full screen.** Exclusive full
+  screen is what makes a display-mode change a device loss. Cheapest real fix.
+- **Move Windows sound output off the graphics card** — motherboard or a USB
+  headset. An HDMI/DisplayPort audio endpoint disappears every time the GPU
+  resets, which is the second crash in the same story.
+- **Clean-reinstall the graphics driver** (DDU, then a fresh installer), or roll
+  it back if it updated recently. "Worked yesterday" fits a driver update, and
+  we have already had one this month — a member's login-screen ghosting, fixed
+  by restoring `ddraw.dll` beside `d3d8.dll` from **dgVoodoo2's MS/x86 folder**
+  (`github.com/dege-diosg/dgVoodoo2/releases` — ⚠ it is **not** in the Zeal
+  repo, which is where people look first).
+- **dgVoodoo2 proper** is the strongest version of this: it replaces the D3D8
+  path with D3D11/12, so the ancient code that cannot survive a device loss is
+  no longer the code doing the drawing. Both `d3d8.dll` and `ddraw.dll` go
+  **beside `eqgame.exe`**, not in a subfolder.
+
+**Step 2 — log in a different character.** Useful mainly to *disprove* a
+character-specific cause: if every character dies the same way, stop looking at
+config. ⚠ Two crashes in two different zones does the same job — this signature
+has been seen in The Maiden's Eye and Jaggedpine Forest on one machine a day
+apart, which rules out the zone as the cause on its own.
+
+**Step 3 — rename that character's saved UI layout.** Written on every exit,
+read during the UI build at the exact moment of this crash, and the classic
+thing that is fine one day and corrupt the next. The game rebuilds it; the only
+loss is window positions. ⚠ Worth one paste, **not** worth a long hunt: a
+raider who has already restored a known-good backup has ruled this out.
 
 ```
 cmd /c ren "<EQ folder>\UI_<Character>_pq.proj.ini" UI_<Character>_pq.proj.ini.bak
 ```
 
-**Step 3 — cut down what the first frame has to draw.** Only if 1 and 2 did not
-land, and only because this crash is in the render path. The dialog prints the
-two flags that were set, so use those names: with **EQ closed** (it rewrites the
-file on exit), open `eqclient.ini`, find `ShowSpellEffects` in `[Defaults]` and
-set it to `FALSE`. Keep a copy of the file first.
+**Step 4 — cut down what the first frame has to draw.** With **EQ closed** (it
+rewrites the file on exit), open `eqclient.ini`, find `ShowSpellEffects` in
+`[Defaults]` and set it to `FALSE`. Keep a copy first. The dialog prints the
+flag names, so use those.
 
-**Step 4 — take Zeal out of the picture, to prove it is not Zeal.** Rename
+**Step 5 — take Zeal out of the picture, to prove it is not Zeal.** Rename
 `Zeal.asi` to `Zeal.asi.off` and start the game. On this signature the corpus
 predicts it still crashes; that is a *useful* result — it ends the "is it Zeal"
 question and the raider can stop chasing versions. Rename it back either way.
-
-**Step 5 — what changed since it worked.** "Worked yesterday" points at state,
-not code: a Windows update or a graphics-driver update overnight is a real cause
-and we have already had one this month (a member's login-screen ghosting, fixed
-by restoring `ddraw.dll` beside `d3d8.dll` from dgVoodoo2's MS/x86 folder).
+⚠ Our own reviewer already answers this from the dump — on the 2026-09-20
+crash it said *"Zeal was running but was NOT involved in this crash — it does
+not appear anywhere in the failure."*
 
 ## 6. What we would have known automatically
 
@@ -177,3 +225,13 @@ Mimic is a raider we triage by hand from a screenshot.
 ⚠ Not a reason to push Mimic at someone mid-problem. It is a reason for the
 crash review to be worth finishing, and an argument for `read-minidump.py`
 staying stdlib-only so it can be run on a bundle somebody emails in.
+
+⚠ **A Mimic user can still be invisible to us, and usually is.** The local
+reviewer runs for everyone; *uploading* is a separate opt-in (`cfg.crashReports`
+→ `WOLFPACK_CRASH_REPORTS=1`), default off. So a raider can be reading a perfect
+diagnosis on their own dashboard while our table has nothing — which is exactly
+what happened on 2026-09-20, and why the triage above ran off screenshots.
+**The switch is on the same card they are already looking at:** Dashboard →
+🩺 Crash review → *"Automatically send crash reports to the guild"* (or the tray
+item, "Share crash reports with the guild"). One click, and it restarts the
+parser engine. Dumps still never leave the machine — only what the crash says.
