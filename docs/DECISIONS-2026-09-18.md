@@ -121,7 +121,12 @@ saw a doubled/ghosted cursor on the EQ login and server-select screens. Their
 EQ folder had `D3D8.dll`, `dgVoodoo.conf` and `dpvs.dll` byte-size-identical to
 our known-good install — so dgVoodoo was present, not missing. **Copying
 `d3d8.dll` and `ddraw.dll` from dgVoodoo2's `MS/x86` folder into the game folder
-fixed it.** The mechanism that fits every observation: the login screens are
+fixed it.** ⚠ **dgVoodoo2 lives at
+`https://github.com/dege-diosg/dgVoodoo2/releases` and is NOT part of the Zeal
+download** — written down because the omission cost a second member an evening
+on 2026-09-20, hunting the Zeal repo for files that were never in it (the guild
+lead relayed the link the same night). Agent 3.6.48's crash review now prints
+the URL, both filenames and the destination whenever it reports driver churn. The mechanism that fits every observation: the login screens are
 DirectDraw-era 2D surfaces; with only `d3d8.dll` wrapped, the 3D world went
 through dgVoodoo while the 2D UI still hit Intel's native DirectDraw, which has
 no real legacy path. Two follow-ups: `CRASH_FINGERPRINT_FILES` in the agent does
