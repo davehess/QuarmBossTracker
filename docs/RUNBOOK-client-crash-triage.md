@@ -179,8 +179,11 @@ Everything below is aimed at the driver resetting, in rising order of effort:
   it back if it updated recently. "Worked yesterday" fits a driver update, and
   we have already had one this month — a member's login-screen ghosting, fixed
   by restoring `ddraw.dll` beside `d3d8.dll` from **dgVoodoo2's MS/x86 folder**
-  (`github.com/dege-diosg/dgVoodoo2/releases` — ⚠ it is **not** in the Zeal
-  repo, which is where people look first).
+  (**`https://github.com/dege-diosg/dgVoodoo2/releases`** — ⚠ it is **not** in
+  the Zeal repo, which is where everyone looks first, and that cost a member an
+  evening on 2026-09-20. Agent 3.6.48's crash review now prints this URL itself
+  whenever it reports driver churn, so the card that raises the problem also
+  says where to go next).
 - **dgVoodoo2 proper** is the strongest version of this: it replaces the D3D8
   path with D3D11/12, so the ancient code that cannot survive a device loss is
   no longer the code doing the drawing. Both `d3d8.dll` and `ddraw.dll` go
