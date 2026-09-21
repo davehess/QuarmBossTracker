@@ -4630,3 +4630,33 @@ roadmaps.
   invented-name roster** — makes the capability screenshottable permanently
   rather than for one conversation. Scrubbing the capture is the weak option;
   the assignment chips are the payload.
+- **🩺 Crash triage — `eqgame.exe` @ `0x004E138A` is a graphics-driver reset,
+  and the runbook is written** (`docs/RUNBOOK-client-crash-triage.md`,
+  2026-09-21). Five occurrences, three raiders, and the dumps name it: the
+  2026-07-04 trio carries the whole NVIDIA user-mode driver stack plus `D3D11`
+  and `DXGI` unloading **4× each**, `crash_subsystem` *the graphics driver*, and
+  uptimes of **32s / 73s / 33s**; a member hit the same address on 2026-09-20
+  with the **AMD** equivalent (`amdihk32`, `aticfx32`) churning. Two vendors,
+  one client address — a D3D8 app that cannot survive a lost device, so it
+  faults on the next frame: always `RenderUI`, always game state 4, always a
+  large outdoor zone. Zeal is exonerated twice (three major lines a year apart;
+  our own reviewer put it nowhere on the failing stack). The runbook also
+  records that **Zone ID and Game state are hex on Zeal ≥ 1.2.0** — 0 of 149
+  pre-1.2.0 reports contain a hex letter, so misreading one sends you to the
+  wrong zone.
+  ⚠ **Two follow-ups this exposed.** (1) **Uploading crash reports is opt-in and
+  off by default**, so a Mimic user can read a perfect local diagnosis while our
+  table has nothing — which is why this triage ran off Discord screenshots. The
+  toggle is already on the Crash review card and in the tray; consider
+  defaulting it on, or prompting once after a raider's first crash. (2) The
+  reviewer surfaces driver churn as a *note* but the headline for this signature
+  still reads "inside the EverQuest client" — for an `eqgame.exe` fault with GPU
+  churn in the same dump it should say the driver reset and the client could not
+  survive it. Both are small; neither is done.
+- ⚠ **`scripts/` was missed by the 2026-09-16 name sweep** (found 2026-09-21).
+  `read-minidump.py` names a member twice in prose, `mimic-netdiag.ps1` names one
+  in prose **and in its own user-facing output** telling people where to send a
+  diagnostic zip, and `gen_screenshots.py` bakes a real name into generated
+  screenshots — the same category as the `OverlayDemo` swap, on a published
+  surface. `test-archive-merge.sh`'s names are fixture DATA and stay. Not fixed:
+  it is unrelated to the change that found it.
