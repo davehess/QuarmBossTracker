@@ -733,6 +733,20 @@ export default async function AdminAgentsPage() {
           // matches how Downloads (latest) is read below.
           const newest = mimicReleases[0];
           const newestExe = newest?.assets?.find(a => /\.exe$/i.test(a.name));
+          // The newest N by date, with the two most recent STABLES forced in
+          // (the guild lead, 2026-09-21: "mimic versions should at least display
+          // the most recent 2 main releases"). A fast beta line buries them —
+          // nine 2.6.9-beta.N builds inside four days pushed stable 2.6.8 clean
+          // off an 8-row list, so this panel showed nothing but prereleases
+          // while the Stat directly above it read "Latest stable 2.6.8". Stable
+          // is what the fleet actually runs; it is never the row to drop.
+          const recent = (() => {
+            const picked = new Map<string, MimicRelease>();
+            for (const r of mimicReleases.slice(0, 8)) picked.set(r.tag_name, r);
+            for (const r of stable.slice(0, 2))        picked.set(r.tag_name, r);
+            return [...picked.values()]
+              .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+          })();
           return (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
@@ -762,7 +776,7 @@ export default async function AdminAgentsPage() {
             <div className="mt-5">
               <div className="text-xs text-dim uppercase tracking-widest mb-2">Recent releases</div>
               <div className="space-y-2">
-                {mimicReleases.slice(0, 8).map(r => {
+                {recent.map(r => {
                   const exe = r.assets.find(a => /\.exe$/i.test(a.name));
                   const isLatestStable = r === latestStable;
                   const isLatestBeta   = r === latestBeta;

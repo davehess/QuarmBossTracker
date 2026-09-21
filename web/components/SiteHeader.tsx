@@ -158,7 +158,22 @@ export default function SiteHeader({
 
   return (
     <div ref={wrap} className="border-b border-border/60 bg-bg/95 backdrop-blur">
-      <div ref={row} className="mx-auto flex max-w-[1800px] items-center gap-2 overflow-hidden px-3 py-2 sm:px-4">
+      {/* ⚠ overflow-x-CLIP, not overflow-hidden (the guild lead, 2026-09-21: "top nav
+          still isn't working when not collapsed"). Two correct changes collided:
+          this row clips so that "does not fit" is a measurable overflow the fold
+          reads (2026-08-30), and Nav's revealed row became `absolute top-full` so
+          it stops shoving the page down on hover (2026-09-13). A floated panel
+          whose containing block is INSIDE an overflow:hidden ancestor is clipped
+          away entirely — the chip highlighted, the chevron turned, and no menu
+          ever appeared. Compact was unaffected because its menu renders BELOW
+          this row, outside the clip, which is why only the full bar was broken.
+          `overflow-x: clip` is the one value that clips horizontally while
+          leaving the vertical axis visible — `overflow-x: hidden` cannot, since
+          a non-visible axis forces the other to `auto`. Measured in Chromium on
+          this exact nesting: scrollWidth/clientWidth reads 534/300 under BOTH
+          values, so the fold measurement below is untouched, while the panel
+          goes from unhittable to hit-testable. Do not "simplify" this back. */}
+      <div ref={row} className="mx-auto flex max-w-[1800px] items-center gap-2 overflow-x-clip px-3 py-2 sm:px-4">
 
         {/* Brand. The wordmark is the first thing to go when space is short. */}
         <Link href="/" aria-label="WolfPack.quest — home" className="flex shrink-0 items-center gap-2 no-underline">

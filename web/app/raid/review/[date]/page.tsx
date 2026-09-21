@@ -555,7 +555,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
                       key={e.id}
                       className={`flex items-baseline gap-2 flex-wrap text-xs border-b border-border/30 py-1 ${e.classification || engaged ? 'opacity-75' : ''}`}
                     >
-                      <span className="text-dim tabular-nums whitespace-nowrap w-14 shrink-0">
+                      <span className="text-dim tabular-nums whitespace-nowrap w-16 shrink-0">
                         {fmtTime(new Date(killAtMs(e)).toISOString(), tz)}
                       </span>
                       <span className="text-text truncate min-w-0">
@@ -615,10 +615,17 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
                 <span aria-hidden>💀</span><span>Deaths</span>
                 <span className="text-dim text-xs">· {playerDeaths.length} across the night</span>
               </h3>
+              {/* ⚠ w-16, not w-14 (the guild lead, 2026-09-21: "the alignment on times
+                     needs slightly more space"). Measured at text-xs in the site's
+                     mono stack: "10:47 PM" is 57.8px against w-14's 56px, so the
+                     8-character times wrapped to a second line while 7-character
+                     ones ("8:39 PM", 50.6px) sat flush — a ragged column that read
+                     as a rendering fault. whitespace-nowrap is the actual
+                     guarantee; the width just stops it overflowing the name. */}
               <ul className="text-xs space-y-0.5">
                 {playerDeaths.map((d, i) => (
                   <li key={i} className="flex gap-3 flex-wrap">
-                    <span className="text-dim tabular-nums w-14 shrink-0">{fmtTime(d.ts, tz)}</span>
+                    <span className="text-dim tabular-nums whitespace-nowrap w-16 shrink-0">{fmtTime(d.ts, tz)}</span>
                     <span className="text-text">{d.name}</span>
                     {d.class && <span className="text-dim">({d.class})</span>}
                     {d.riposteDeath && <span className="text-red">⚔ riposte kill</span>}
@@ -653,7 +660,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
                 {fightTimelines.map((t, i) => (
                   <details key={t.enc.id} open={i === 0} className="group">
                     <summary className="cursor-pointer text-xs flex items-baseline gap-2 flex-wrap py-1">
-                      <span className="text-dim tabular-nums w-14 shrink-0">{fmtTime(new Date(killAtMs(t.enc)).toISOString(), tz)}</span>
+                      <span className="text-dim tabular-nums whitespace-nowrap w-16 shrink-0">{fmtTime(new Date(killAtMs(t.enc)).toISOString(), tz)}</span>
                       <span className="text-text">{bossFor(t.enc)}</span>
                       <span className="text-dim">{fmtDuration(t.enc.duration_sec)}</span>
                       {t.deaths.length > 0 && <span className="text-red">💀 {t.deaths.length}</span>}
@@ -687,7 +694,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
               <ul className="text-xs space-y-0.5">
                 {slowRows.map((s, i) => (
                   <li key={i} className="flex gap-3 flex-wrap">
-                    <span className="text-dim tabular-nums w-14 shrink-0">{fmtTime(s.at, tz)}</span>
+                    <span className="text-dim tabular-nums whitespace-nowrap w-16 shrink-0">{fmtTime(s.at, tz)}</span>
                     <span className="text-text">{s.spell}</span>
                     <span className="text-dim">on {s.target}</span>
                   </li>

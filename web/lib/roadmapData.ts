@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-7-44-nav-and-times-2026-09-21',
+    title: 'Web 1.7.44',
+    version: 'Web 1.7.44',
+    date: '2026-09-21',
+    headline: 'The top menus open again, and the death times line up.',
+    features: [],
+    fixes: [
+      'The Raid, Stats and Prep menus at the top of the site did nothing on a full-width window — the button lit up and the arrow turned, but no menu appeared. It was being cut off by the bar above it. They open normally again; the narrow-window Menu button was never affected.',
+      'On a raid night review, times after 10pm wrapped onto a second line and knocked the list of deaths out of alignment. The column is wider now.',
+      'The officer agents page listed only beta builds when betas had been coming fast, hiding the current stable release. It now always shows the last two stable releases as well.',
+    ],
+  },
+  {
     key: 'mimic-2-6-8-stable-2026-09-13',
     title: 'Mimic 2.6.8',
     version: 'Mimic 2.6.8 \u00b7 Agent 3.6.42',

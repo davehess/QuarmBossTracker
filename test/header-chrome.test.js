@@ -195,9 +195,28 @@ describe('the signed-in bar fits, or folds — never stacks', () => {
     expect(headerCode).toMatch(/w > tightAt\.current \+ \d+/);
   });
 
-  it('clips rather than scrolls the page sideways while it is deciding', () => {
-    const row = headerCode.slice(headerCode.indexOf('<div ref={row}'), headerCode.indexOf('<div ref={row}') + 200);
-    expect(row).toContain('overflow-hidden');
+  it('clips SIDEWAYS only — overflow-hidden here eats the nav dropdown', () => {
+    // Both halves matter and they were learned the hard way (2026-09-21).
+    // Horizontal: the row must still clip, or a bar that does not fit scrolls
+    // the whole page sideways while the layout effect decides to fold.
+    // Vertical: Nav's revealed row is `absolute top-full` with its containing
+    // block INSIDE this element, so any non-visible vertical overflow clips it
+    // out of existence — chip lights up, chevron turns, no menu. That shipped,
+    // and only on the full bar, because the compact menu renders below the row.
+    // `overflow-x: clip` is the only value that does one without the other:
+    // `overflow-x: hidden` forces the other axis to `auto`. Measured in
+    // Chromium on this exact nesting — scrollWidth/clientWidth is 534/300 under
+    // BOTH values, so the fold measurement above is indifferent, while the
+    // panel goes from unhittable to hit-testable.
+    //
+    // ⚠ Sliced from the opening tag on purpose: the class list is the claim,
+    // and the comment above it in the source names 'overflow-hidden' several
+    // times. Asserted against the whole file, the negative below would fail on
+    // prose and the positive would pass on it.
+    const at  = headerCode.indexOf('<div ref={row}');
+    const row = headerCode.slice(at, at + 200);
+    expect(row).toContain('overflow-x-clip');
+    expect(row).not.toContain('overflow-hidden');
   });
 
   it('gives the header row more than the 1280px content column', () => {
