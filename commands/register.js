@@ -1,6 +1,14 @@
 // commands/register.js — Create a new character in OpenDKP and add to the local roster.
 // Defaults: Level=10, Active=1.
-// Rank choices: 'Non-raid Alt' (default) or 'Trader level 1'.
+// Rank choices: 'Recruit' (a new raid main), 'Non-raid Alt' (default) or
+// 'Trader level 1'.
+// ⚠ 'Trader level 1' is UNVERIFIED against OpenDKP. Every other choice here
+// appears in the `characters` rank mirror ('Non-raid Alt' 1, 'Recruit' 17,
+// alongside 'Raid Alt' 232, 'Raid Pack' 50, 'Trader' 36, 'Officer' 9, …) but
+// 'Trader level 1' appears on ZERO characters while a bare 'Trader' has 36.
+// That is either a rank OpenDKP renames on write, or a stale value that has
+// been silently creating traders under a name nothing else uses. Confirm
+// against OpenDKP before trusting it; do not "fix" it by guessing.
 // If a main is specified, the character is linked via ParentId set to the family root's
 // CharacterId (the ParentId=0 root in OpenDKP's family tree, NOT necessarily the rank-
 // priority main's own CharacterId).
@@ -117,11 +125,20 @@ module.exports = {
     )
     .addStringOption(opt =>
       opt.setName('rank')
-        .setDescription('Rank to assign (default: Non-raid Alt)')
+        .setDescription('Rank to assign (default: Non-raid Alt — pick Recruit for a new raid main)')
         .setRequired(false)
+        // ⚠ Recruit added 2026-09-22: there was no way to register a new RAID
+        // MAIN here at all, only an alt or a trader (the guild lead: "I should
+        // be able to register a new raid main from that, this wasn't available
+        // as an option… raid mains often start as 'Recruit'").
+        // Listed first for discoverability; the default is unchanged, so an
+        // officer who picks nothing still gets Non-raid Alt.
+        // The string is the one OpenDKP actually uses — 17 characters in the
+        // mirror carry it — not an invented label.
         .addChoices(
-          { name: 'Non-raid Alt',   value: 'Non-raid Alt' },
-          { name: 'Trader level 1', value: 'Trader level 1' },
+          { name: 'Recruit (new raid main)', value: 'Recruit' },
+          { name: 'Non-raid Alt',            value: 'Non-raid Alt' },
+          { name: 'Trader level 1',          value: 'Trader level 1' },
         )
     ),
 
