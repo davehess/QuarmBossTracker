@@ -115,8 +115,44 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Understand-Anything** | **assessed 2026-09-21 (§1), not adopted.** Overlaps `scripts/graphify.sh`, which already owns the deterministic half by decision; the LLM layer answers 1 of the 4 problems that test was built on, and that one is a grep | the guild lead's call on the bounded trial: run `/understand` against `packages/wolfpack-logsync/` **from a desktop session**, diff its tour against `HOW-ITS-BUILT.md`. Output is a draft for a human, never a committed authority. No auto-update hook, no `curl \| bash` |
+| **Target Info: mana bar + Factions tab** | **designed 2026-09-22 (§3), nothing built.** Spell identification from the landing message measured at **97.6%** once narrowed by `npc_spells_id` + level; the Factions tab is mostly plumbing over the existing `_factionValueMap()` | the guild lead picks an option (A/B/C in the design). ⚠ The mana bar needs a **local session** to answer whether Quarm NPCs spend mana and at what regen — our mirror has no `mana_regen` column |
 | Crash reports are opt-in and OFF by default | open — a Mimic user can read a perfect local diagnosis while our table has nothing, which is why 2026-09-20 was triaged off screenshots | consider defaulting the toggle on, or prompting once after a raider's first crash |
 | Crash review headline says "inside the EverQuest client" when the same dump shows GPU churn | open | for an `eqgame.exe` fault with driver churn, say the driver reset and the client could not survive it |
 | ⚠ `scripts/` missed by the 2026-09-16 name sweep | open — `read-minidump.py` (prose ×2), `mimic-netdiag.ps1` (prose **and** user-facing output), `gen_screenshots.py` (bakes a name into published screenshots). `test-archive-merge.sh` is fixture DATA and stays | sweep the three; treat `gen_screenshots.py` like the `OverlayDemo` swap |
 | ⚠ **Nothing warns a raider that their EQ log has grown to gigabytes** | open (2026-09-22). A member's `eqlog_<name>_pq.proj.txt` reached **1.33 GB, unbroken since Nov 2024**, and they only noticed by accident. Our own source already says players rotate by hand *"to keep it small — EQ slows down on multi-GB logs"*, but no surface says so: nothing in `docs/`, nothing on the dashboard. ⚠ And renaming in place does not help — `_isEqLogFile` accepts `.txt2`/`.txt.old`/`" BACKUP.txt"` on the stem + welcome-line sniff, so a renamed log in the EQ folder is still tailed | surface the size where the logs are already listed (Logsync tab / Setup card) with a threshold and the move-it-out-and-add-as-old-log-folder action. UI, so it gets options first |
 | `beta.yml` vs `latest.yml` | observation 2026-09-21 — `CLAUDE.md`'s channel table says Windows beta publishes `beta.yml`; beta.8/9/10 all publish `latest.yml`, and beta.9's has 163 downloads, so the channel demonstrably works | doc looks stale, not the build. Confirm next time the release workflow is open |
+
+## 3. Target Info — mana bar + Factions tab, measured 2026-09-22
+
+Asked for by the guild lead; feasibility pass in
+`docs/DESIGN-target-info-mana-and-factions.md`. The findings that matter:
+
+- **The log never names an NPC's spell** — only `X begins to cast a spell.` The
+  way in is the LANDING message, which the guild lead spotted live: *"This
+  should display the spell he cast that covers his hand with a dull aura"* →
+  `eqemu_spells.cast_on_other` → **Grim Aura, 25 mana**.
+- **Text matching alone is unsafe**: 153 landing strings are ambiguous and the
+  worst maps to 27 spells. On The Spire Lord's own list `"staggers."` is seven
+  lifetaps from 9 to 225 mana.
+- **Narrowing by `npc_spells_id` + the NPC's level fixes it: 7,621 of 7,806
+  (NPC, landing) pairs — 97.6% — resolve to exactly one spell**, worst residual
+  4. For The Spire Lord at 49 the collision vanishes entirely.
+  `eqemu_npc_spells_entries.manacost` is a per-entry override and is the cost to
+  use, not `eqemu_spells.mana`.
+- ⚠ **Two unknowns gate the bar itself, and a cloud session cannot close
+  either**: whether Quarm NPCs actually spend mana, and at what rate it returns
+  — **our `eqemu_npc_types` mirror has no `mana_regen` column**, so "resting
+  regen" has no authoritative number behind it.
+- **Other players' mana is not on the Zeal raid pipe.** Our own code proves it:
+  the CH-chain roster is `mana: null` per slot and the healer roster parses
+  percentages out of raid chat. Player bars work only for raiders uploading live
+  state.
+- ⚠ **The Factions tab is mostly already built** — `_factionValueMap()` resolves
+  mob → faction values, is 6h-cached, and was validated against a real client
+  log. It already knows that names come from `eqemu_faction_list_full` because
+  `eqemu_faction_list` is **empty** in our mirror.
+
+**Recommendation: ship the Factions tab and a "last cast" line first** (the
+second thing actually asked for), and hold the mana bar until a local session
+answers the two unknowns — an invented number on a mid-raid overlay is the one
+thing this platform's design rules forbid.
