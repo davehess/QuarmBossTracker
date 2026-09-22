@@ -259,6 +259,21 @@ and the same never-refetch guarantee.
   10s abort kills silently — **every retention window the wizard sets needs a
   matching index, and a sweep that reports how many rows it actually removed.**
   A sweep that fails quietly looks exactly like a sweep that had nothing to do.
+- **2026-09-22 — an aggregate is a one-way door; store the EVENT if a window
+  will ever be wanted.** `faction_standing` kept only running counters, so when
+  the guild lead asked for "last N days worth" the answer was that 749,753
+  recorded hits could not be split by date at all — the detail had reached the
+  bot and been discarded on the way in. `faction_hits` now keeps one row per
+  event (~851/day guild-wide, ~310k rows and tens of MB a year — two orders of
+  magnitude under the threat-snapshot table, and it carries the `ts`-leading
+  index the rule above demands *before* any sweep exists). The wizard-level
+  lesson is the ordering, not the table: **a counter can always be derived from
+  events, never the reverse**, so any stream where someone might later ask "how
+  much this month" should land as events first and roll up second. ⚠ And the
+  cost of getting it backwards is not symmetrical — the aggregate history here
+  is unrecoverable from the database, and is only rebuildable because the
+  RAIDERS still hold their own logs and a backfill replays them. A deployment
+  that had pruned its logs would have lost it outright.
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows
   production prunes survive locally forever. The wizard must ask *"do you want
