@@ -8487,6 +8487,13 @@ async function _handleAgentFaction(req, res) {
   // contain the same key twice (Postgres rejects double-update in one
   // statement), so collapse here too.
   const latestCon = new Map();
+  // Raw per-hit rows for faction_hits. Not deduped here — the table carries a
+  // unique index and the insert is ON CONFLICT DO NOTHING, so a raider
+  // re-running a backfill over the same logs cannot double-count. That matters
+  // because re-backfilling IS the documented way to enrich history, and it is
+  // also how the pre-2026-09-22 history can be rebuilt at all: the aggregate
+  // lost it, but the raiders' own log files did not.
+  const hits = [];
 
   for (const e of events) {
     if (!e || !e.character || !e.ts) continue;
@@ -8536,6 +8543,21 @@ async function _handleAgentFaction(req, res) {
       if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
       if (iso < a.first_hit_at) a.first_hit_at = iso;
       if (iso >= a.last_hit_at) { a.last_hit_at = iso; a.last_direction = dir; }
+      // ── Keep the EVENT, not just the counter (the guild lead, 2026-09-22) ──
+      // The aggregate above answers "how much, ever". It cannot answer "how
+      // much this week", because the per-hit detail was computed right here
+      // and then thrown away — 749,753 hits reduced to counters. Everything
+      // the windowed view needs is already resolved at this point, so keeping
+      // it costs one more row.
+      hits.push({
+        guild_id: guildId, character, faction,
+        mob: e.mob ? String(e.mob).slice(0, 64) : null,
+        direction: dir > 0 ? 'better' : 'worse',
+        // Mirrors the aggregate's priced/unpriced split: a hit with no
+        // magnitude still COUNTS but must never be summed.
+        amount: mag, priced: mag != null,
+        ts: iso,
+      });
     } else if (e.kind === 'con' && e.mob && e.standing) {
       // Defense in depth — the agent drops hostile cons (rank ≤ 1) before
       // upload, but never trust the wire.
@@ -8564,6 +8586,18 @@ async function _handleAgentFaction(req, res) {
   if (latestCon.size) {
     const r = await supabase.upsert('faction_cons', Array.from(latestCon.values()), 'guild_id,character,mob')
       .catch(err => { console.warn('[faction] cons upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  // ⚠ insertIgnoreDuplicates, not upsert: the dedup index is an EXPRESSION
+  // index (coalesce(mob,'')), which PostgREST's `on_conflict=` cannot name.
+  // Chunked rather than truncated — a backfill chunk carries up to ~1,500
+  // events and silently dropping the tail would put holes in the very history
+  // this table exists to keep. Failure here must never cost the aggregate,
+  // which has already been written above.
+  for (let i = 0; i < hits.length; i += 500) {
+    const chunk = hits.slice(i, i + 500);
+    const r = await supabase.insertIgnoreDuplicates('faction_hits', chunk)
+      .catch(err => { console.warn('[faction] hits insert failed:', err?.message); return null; });
     if (Array.isArray(r)) written += r.length;
   }
   _trackUpload({ endpoint: 'faction', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
