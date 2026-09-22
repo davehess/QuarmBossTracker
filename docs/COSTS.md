@@ -94,6 +94,47 @@ on Supabase Free with retention tuned down, and named the exact settings. Our
 | `target_observations` | 93 MB | 4.1% | — |
 | everything else | ~528 MB | ~23% | includes the ~119 MB `eqemu_*` reference catalog, which is the same for every deployment |
 
+### 3a. The trend — measured again 2026-09-22
+
+Three dated measurements now exist, so the shape is visible rather than
+inferred. Sizes are `pg_total_relation_size`, i.e. table + indexes + TOAST.
+
+| | 2026-09-01 | 2026-09-18 | **2026-09-22** | Δ over the 21 days |
+|---|---|---|---|---|
+| **Database total** | 1,761 MB | 2,253 MB | **2,451 MB** | **+690 MB (+39%)** |
+| `encounter_threat_snapshots` | 920 MB | 1,266 MB | **1,414 MB** | **+494 MB (+54%)** |
+| `chat_messages` | — | 225 MB | 227 MB | +2 MB in 4 days |
+| `who_observations` | — | 142 MB | 142 MB | flat |
+| `target_observations` | — | 93 MB | **111 MB** | **+18 MB in 4 days** |
+
+**One broken sweep is 72% of all growth.** Of the 690 MB the database gained
+in three weeks, 494 MB is the threat table — roughly **23 MB/day** of the
+~33 MB/day total. Everything else combined adds under 10 MB/day, and the two
+big deliberate tables (`chat_messages`, `who_observations`) are effectively
+flat.
+
+⚠ **The sweep is measurably still not running**, and it is getting worse, not
+holding: **1,190,281 rows, of which 746,964 (62.8%) are past the 30-day
+retention window, oldest 2026-07-02** — 82 days old under a 30-day policy. On
+2026-09-01 the same measurement was 448k stale rows at 52%. It has added
+~299k stale rows since.
+
+**Headroom against Pro's 8 GB ceiling:** 2,451 of 8,192 MB = **29.9% used**,
+5,741 MB free. At the 21-day average (~33 MB/day) that is **~5.7 months**; at
+the last-four-days rate (~50 MB/day) it is **~3.8 months**. Neither is
+urgent, and neither is far away.
+
+**Fixing the sweep reclaims ~890 MB immediately** — 62.8% of the threat
+table — taking the database to roughly **1,560 MB, below where it stood on
+2026-09-01**, and removing ~23 MB/day of ongoing growth. That is still the
+single highest-value item on the list, and it is now worth about eight months
+of headroom rather than the four it was worth three weeks ago.
+
+⚠ **Watch `target_observations`.** It is small but it is the second-fastest
+grower at ~4.5 MB/day over the last four days, faster than `chat_messages`
+which we keep on purpose. Nobody has checked whether it has a retention
+policy at all.
+
 **So: more than half the database is a retention sweep that does not run.** Fix
 it and the database roughly halves. At the 7-day window §2a recommends for a
 free deployment, that table would be ~105 MB instead of 1,266 MB.
