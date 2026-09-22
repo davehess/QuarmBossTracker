@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'target-info-factions-and-mana-2026-09-22',
+    title: 'Target Info: factions, and what that mob just cast',
+    version: 'Mimic 2.6.9-beta \u00b7 Agent 3.6.50 \u00b7 Bot 3.1.130',
+    date: '2026-09-22',
+    channel: 'beta',
+    headline: 'Target Info now names the spell a mob just cast, and shows what killing it does to your faction.',
+    features: [
+      {
+        name: 'What did it just cast?',
+        blurb: 'EverQuest never tells you \u2014 a mob\u2019s cast shows up as \u201cbegins to cast a spell\u201d and nothing more. Target Info now works it out from the message the spell prints when it lands, and names it. If several of that mob\u2019s spells print the same message, it says so with a question mark rather than guessing at you.',
+      },
+      {
+        name: 'Factions tab',
+        blurb: 'What killing this mob does to your standing, before you pull it. Kill the Royal Scribe in Icewell and you are down 50 with the Dain and the Coldain, and up 25 with King Tormax.',
+      },
+      {
+        name: 'A mana bar for mobs',
+        blurb: 'For mobs that have a mana pool, an estimate of what is left \u2014 full when you engage, less every time we can name something it cast. It is a floor, not a readout: a resisted or interrupted cast still costs it mana and says nothing. The \u26a1 button turns the bar on and off.',
+      },
+    ],
+    fixes: [
+      'The mob mana bar had never actually appeared \u2014 it was waiting on a number the server was not sending.',
+    ],
+  },
+  {
     key: 'web-1-7-44-nav-and-times-2026-09-21',
     title: 'Web 1.7.44',
     version: 'Web 1.7.44',
