@@ -268,7 +268,7 @@ module.exports = {
     // ── Add to local roster ──────────────────────────────────────────────────
     // For a new main (no mainName), rootCharId = their own CharacterId (they become family root)
     const rootCharId = mainName ? null : newCharId;
-    addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName, rootCharId, localOnly });
+    addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName, rootCharId });
 
     saveRosters(interaction.client, `/register ${name} by ${interaction.user?.tag || interaction.user?.id || '?'}`).catch(err =>
       console.warn('[register] saveRosters failed:', err?.message)

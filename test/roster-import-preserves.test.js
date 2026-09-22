@@ -8,10 +8,15 @@
 // character never created upstream is simply absent from the export, so the
 // next import would delete it with no error anywhere.
 //
+// ⚠ The first version gated this on a `_local` flag, justified as protecting
+// against upstream deletions. The guild lead pushed back that nobody has ever
+// been deleted from OpenDKP, and checking agrees: leaving the raid sets
+// `Active = 0`, which moves a character to the INACTIVE roster — they stay in
+// the export. So the flag was machinery for a case that does not occur, and it
+// is gone. The pass now keeps every absent name.
+//
 // These drive the real `processOpenDkpExport` against a real export shape.
-// Seeding goes through `addCharacterEntry` rather than a test-only setter —
-// the module's own lookup is what the local-only pass reads, so using the
-// public path is both honest and what `/register` actually does.
+// Seeding goes through `addCharacterEntry`, which is what `/register` does.
 //
 // Run: npx vitest run test/roster-local-only.test.js
 
@@ -37,20 +42,23 @@ const names = (bucket) => {
 
 describe('local-only characters survive a roster import', () => {
   it('re-adds a locally registered trader the export has never heard of', () => {
-    addCharacterEntry({ name: 'Corvale', race: 'Gnome', charClass: 'Magician', localOnly: true });
+    addCharacterEntry({ name: 'Corvale', race: 'Gnome', charClass: 'Magician' });
     expect(names(processOpenDkpExport(EXPORT).active)).toContain('Corvale');
   });
 
-  // ⚠ This is a SCOPE guard, not a deletion guard. Nobody has ever been
-  // deleted from OpenDKP here (leaving the raid sets Active = 0, which moves a
-  // character to the inactive roster — they stay in the export), so the
-  // original framing of this test was wrong. What it actually pins is that the
-  // pass only re-adds LOCAL entries: keeping every absent name would mean
-  // `/rosterimport` could no longer remove anyone, and a truncated export file
-  // would silently merge the old roster back in and look like a clean import.
-  it('re-adds ONLY local entries, never every name missing from the export', () => {
-    addCharacterEntry({ name: 'Rethlan', race: 'Ogre', charClass: 'Shaman' });   // no localOnly
-    expect(names(processOpenDkpExport(EXPORT).active)).not.toContain('Rethlan');
+  // ⚠ The cost of the simpler rule, pinned so it is a choice and not a
+  // surprise: `/rosterimport` can no longer REMOVE anyone. It adds and
+  // updates. A truncated or wrong export leaves the roster intact rather than
+  // emptying it — the safer failure — but a genuine upstream deletion has to
+  // be removed by hand.
+  it('keeps an upstream character the export no longer mentions', () => {
+    addCharacterEntry({ name: 'Rethlan', race: 'Ogre', charClass: 'Shaman' });
+    expect(names(processOpenDkpExport(EXPORT).active)).toContain('Rethlan');
+  });
+
+  it('does not empty the roster when handed a truncated export', () => {
+    addCharacterEntry({ name: 'Mirenne', race: 'Halfling', charClass: 'Rogue' });
+    expect(names(processOpenDkpExport([]).active)).toContain('Mirenne');
   });
 
   it('re-nests a local alt under its main when the main is still in the export', () => {
@@ -58,25 +66,15 @@ describe('local-only characters survive a roster import', () => {
     // the main has to be present for this to be the real scenario. Without it
     // the alt lands standalone — correct behaviour, wrong test.
     addCharacterEntry({ name: 'Aldenmar', race: 'Human', charClass: 'Warrior' });
-    addCharacterEntry({ name: 'Nyssara', race: 'Erudite', charClass: 'Enchanter', mainName: 'Aldenmar', localOnly: true });
+    addCharacterEntry({ name: 'Nyssara', race: 'Erudite', charClass: 'Enchanter', mainName: 'Aldenmar' });
     const main = processOpenDkpExport(EXPORT).active.find(e => e.n === 'Aldenmar');
     expect((main.a || []).map(a => a.n)).toContain('Nyssara');
   });
 
   it('does not duplicate one that later DOES appear upstream', () => {
-    addCharacterEntry({ name: 'Aldenmar', race: 'Human', charClass: 'Warrior', localOnly: true });
+    addCharacterEntry({ name: 'Aldenmar', race: 'Human', charClass: 'Warrior' });
     const got = names(processOpenDkpExport(EXPORT).active).filter(n => n === 'Aldenmar');
     expect(got.length).toBe(1);
   });
 
-  // ⚠ The flag has to ride through Discord. `/rosterimport` saves the rebuilt
-  // roster to the threads and then reloads from them, so `_local` is only
-  // durable if it is part of the serialised entry — not a runtime-only field.
-  it('keeps the _local flag on the rebuilt entry so the NEXT import sees it', () => {
-    addCharacterEntry({ name: 'Zarrin', race: 'Troll', charClass: 'Shadow Knight', localOnly: true });
-    const entry = processOpenDkpExport(EXPORT).active.find(e => e.n === 'Zarrin');
-    expect(entry).toBeTruthy();
-    expect(entry._local).toBe(true);
-    expect(JSON.parse(JSON.stringify(entry))._local).toBe(true);   // survives the thread round-trip
-  });
 });
