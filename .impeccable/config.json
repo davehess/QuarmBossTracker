@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "apps/mimic/mobinfo.html"
+        ],
+        "createdAt": "2026-09-22T17:19:31.043Z",
+        "reason": "Repo design authority overrides: .claude/skills/frontend-design says mid-raid overlays are read in peripheral vision and 'density beats whitespace — a raider needs eight rows visible'. The 9/10/11/12/13px scale is a deliberately compressed ladder for a small always-on-top window over a 3D scene; a 1.25 ratio would cost rows. CLAUDE.md: impeccable's DETECTORS are used freely, its AESTHETIC guidance is a default that repo-specific guidance overrides."
+      }
+    ]
+  }
+}
