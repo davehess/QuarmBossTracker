@@ -3822,11 +3822,18 @@ function identifyNpcCast(spells, body, leadMs) {
   if (!Array.isArray(spells) || !body) return null;
   const hits = [];
   for (const sp of spells) {
-    const other = sp && sp.other;
-    if (!other) continue;
+    if (!sp) continue;
     // endsWith, never split-on-space: the target may be multi-word, and the
     // possessive form ("'s hand is…") carries no leading space at all.
-    if (body.endsWith(other)) hits.push(sp);
+    if (sp.other && body.endsWith(sp.other)) { hits.push(sp); continue; }
+    // ⚠ AND the message for a spell that lands on YOU (the guild lead,
+    // 2026-09-22: "Last spell cast was on me"). cast_on_you is a whole
+    // sentence with no name in front of it — "You feel your life force drain
+    // away." — so it never matches the cast_on_other suffix, and the first
+    // version simply could not see the half of a mob's casting aimed at the
+    // person reading the overlay. The field was already on the payload and
+    // was going unread.
+    if (sp.you && body.endsWith(sp.you)) { hits.push(sp); }
   }
   if (!hits.length) return null;
   let best = hits[0];
@@ -3842,8 +3849,14 @@ function identifyNpcCast(spells, body, leadMs) {
     if (bestDelta <= _NPC_CAST_TIME_TOL_MS) confidence = 'timed';
     else best = hits[0];
   }
-  const target = body.slice(0, body.length - best.other.length).replace(/\s+$/, '');
-  return { spell: best, target, confidence, candidates: hits };
+  // ⚠ Derive the target from the field that ACTUALLY matched. A cast_on_other
+  // line is "<Target><suffix>", so the target is what precedes the suffix; a
+  // cast_on_you line has no name in it at all and the target is the reader.
+  // Reading best.other unconditionally threw the moment a spell landed on the
+  // player — which is most of what a mob casts at you.
+  const suffix = (best.other && body.endsWith(best.other)) ? best.other : null;
+  const target = suffix ? body.slice(0, body.length - suffix.length).replace(/\s+$/, '') : 'You';
+  return { spell: best, target, confidence, candidates: hits, on_you: !suffix };
 }
 
 // ── The estimated mana ledger ───────────────────────────────────────────────
@@ -3878,7 +3891,45 @@ function identifyNpcCast(spells, body, leadMs) {
 // cleric once and its whole beneficial list is known from then on.
 // It does NOT fetch for an unseen caster; that would put a network call on the
 // log-line path, which is the hottest loop in the agent.
-let _lastNpcCast = null;   // { mob, spell, mana, confidence, target, atMs }
+// ⚠ A CAST BELONGS TO AN INDIVIDUAL, AND A NAME IS NOT ONE (the guild lead,
+// 2026-09-22: "we're never updating the last seen spell on these and they're
+// not unique to the mob casting them because we don't have a surface to weld
+// them to even with the spawn-ids"). Both halves of that were true of the first
+// version: `Gate 1170s ago` sat on the panel for nineteen minutes, and it was
+// attributed by NAME — so one `A Greater Spire Spirit` casting bled onto every
+// other one you targeted afterwards. On trash that is most of the zone.
+//
+// The surface problem is real and cannot be solved from the log: neither
+// `<Caster> begins to cast a spell.` nor the landing line carries a spawn id,
+// so a cast can never be welded to an individual *from the log alone* — which
+// is exactly why Zeal 1.4.6's ids do not rescue this on their own.
+//
+// What DOES weld it: only record a cast when the caster is the mob we are
+// TARGETING at that moment, and stamp the target's spawn id on it. Then the
+// pipe supplies the identity the log cannot. Casts by mobs we are not looking
+// at are dropped rather than mis-attributed — showing nothing beats showing
+// another mob's spell.
+const _NPC_LASTCAST_TTL_PROVEN_MS = 10 * 60 * 1000;  // identity proven by spawn id
+const _NPC_LASTCAST_TTL_NAMED_MS  = 45 * 1000;       // name-only (pre-1.4.6 Zeal): short leash
+let _lastNpcCast = null;   // { mob, mobId, spell, mana, confidence, target, atMs }
+// The spawn id of what we are targeting, or null. ⚠ 0 means "no target", NOT
+// spawn zero — the guard CLAUDE.md records for buff_casts.target_id.
+function _currentTargetId() {
+  try {
+    if (typeof _currentTargetState !== 'function') return null;
+    const st = _currentTargetState();
+    const id = st && st.target_id;
+    return (Number.isFinite(id) && id > 0) ? id : null;
+  } catch { return null; }
+}
+function _casterIsCurrentTarget(caster) {
+  try {
+    if (typeof _currentTargetState !== 'function' || typeof _normMobNameAgent !== 'function') return false;
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return false;
+    return _normMobNameAgent(st.target_name) === _normMobNameAgent(caster);
+  } catch { return false; }
+}
 function noteNpcLanding(line) {
   if (!line || line.indexOf(']') === -1) return null;
   const body = line.replace(/^\[[^\]]*\]\s*/, '').trim();
@@ -3887,12 +3938,15 @@ function noteNpcLanding(line) {
   const atMs = t ? t.getTime() : Date.now();
   const pair = _npcCasterFor(atMs);
   if (!pair) return null;                       // nothing was casting — not ours to name
+  // Unattributable unless it is the mob in front of us. See the header.
+  if (!_casterIsCurrentTarget(pair.caster)) return null;
   const mob = _npcMobInfoFor(pair.caster);
   if (!mob || !Array.isArray(mob.spells) || !mob.spells.length) return null;
   const hit = identifyNpcCast(mob.spells, body, pair.leadMs);
   if (!hit) return null;
+  const mobId = _currentTargetId();
   _lastNpcCast = {
-    mob: pair.caster, spell: hit.spell.name, spell_id: hit.spell.id,
+    mob: pair.caster, mobId, spell: hit.spell.name, spell_id: hit.spell.id,
     mana: hit.spell.mana ?? null, confidence: hit.confidence,
     target: hit.target, atMs,
   };
@@ -3900,7 +3954,7 @@ function noteNpcLanding(line) {
   // family landed, but billing 225 mana for what might have been 9 would make
   // the bar worse than no bar.
   if (hit.confidence !== 'guess' && Number(hit.spell.mana) > 0 && Number(mob.mana) > 0) {
-    npcManaNote(pair.caster, mob.mana, Number(hit.spell.mana), atMs);
+    npcManaNote(pair.caster, mobId, mob.mana, Number(hit.spell.mana), atMs);
   }
   return _lastNpcCast;
 }
@@ -3914,16 +3968,37 @@ function _npcMobInfoFor(name) {
   }
   return null;
 }
-function lastNpcCast(mobName) {
-  if (!_lastNpcCast) return null;
-  if (mobName && _normMobNameAgent && _normMobNameAgent(_lastNpcCast.mob) !== _normMobNameAgent(mobName)) return null;
-  return _lastNpcCast;
+// Show a cast only when it can be tied to the mob in front of you, and only
+// while it is still worth showing. Both guards earn their place:
+//   · IDENTITY — with spawn ids on both sides, require them equal. Without
+//     them the name is all we have, so the leash is 45s instead of 10 minutes.
+//   · AGE — the first version had none, and parked `Gate 1170s ago` on the
+//     panel for nineteen minutes.
+function lastNpcCast(mobName, mobId) {
+  const lc = _lastNpcCast;
+  if (!lc) return null;
+  if (typeof _normMobNameAgent !== 'function') return null;
+  if (!mobName || _normMobNameAgent(lc.mob) !== _normMobNameAgent(mobName)) return null;
+  const haveBoth = Number.isFinite(lc.mobId) && lc.mobId > 0 && Number.isFinite(mobId) && mobId > 0;
+  if (haveBoth && lc.mobId !== mobId) return null;      // provably a different individual
+  const age = Date.now() - (lc.atMs || 0);
+  if (age > (haveBoth ? _NPC_LASTCAST_TTL_PROVEN_MS : _NPC_LASTCAST_TTL_NAMED_MS)) return null;
+  return lc;
 }
 const _NPC_MANA_REGEN_PCT_PER_TICK = null;
-const _npcManaByMob = new Map();   // normName → { max, spent, lastCastMs, engaged }
-function _npcManaKey(name) { return String(name || '').trim().toLowerCase(); }
-function npcManaNote(mobName, manaMax, spentDelta, atMs) {
-  const key = _npcManaKey(mobName);
+const _npcManaByMob = new Map();   // key → { max, spent, lastCastMs, engaged }
+// ⚠ Keyed by INDIVIDUAL, not by name. Keying on the name alone pooled every
+// `A Greater Spire Spirit` in the zone into one ledger, so the bar you saw had
+// been spent down by mobs you never fought (the guild lead, 2026-09-22). The
+// spawn id off the Zeal pipe is the only thing that separates them; without one
+// (pre-1.4.6 Zeal) it degrades to the old name key, which is wrong in the same
+// way but is the best that client can do.
+function _npcManaKey(name, mobId) {
+  const base = String(name || '').trim().toLowerCase();
+  return (Number.isFinite(mobId) && mobId > 0) ? base + '#' + mobId : base;
+}
+function npcManaNote(mobName, mobId, manaMax, spentDelta, atMs) {
+  const key = _npcManaKey(mobName, mobId);
   if (!key || !(Number(manaMax) > 0)) return null;
   let rec = _npcManaByMob.get(key);
   if (!rec) { rec = { max: Number(manaMax), spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
@@ -3933,21 +4008,21 @@ function npcManaNote(mobName, manaMax, spentDelta, atMs) {
     rec.lastCastMs = atMs || Date.now();
     rec.engaged = true;
   }
-  return npcManaState(mobName);
+  return npcManaState(mobName, mobId);
 }
 // A reset (mob evaded / despawned / returned home) restores it. Disengaging
 // alone does NOT — the guild lead was explicit that the spend survives a
 // disengage, which is what makes the number useful across a wipe and a re-pull.
-function npcManaReset(mobName) {
-  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+function npcManaReset(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
   if (rec) { rec.spent = 0; rec.engaged = false; }
 }
-function npcManaDisengage(mobName) {
-  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+function npcManaDisengage(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
   if (rec) rec.engaged = false;
 }
-function npcManaState(mobName) {
-  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+function npcManaState(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
   if (!rec || !(rec.max > 0)) return null;
   const cur = Math.max(0, rec.max - rec.spent);
   return {
@@ -35204,8 +35279,12 @@ function buildMobInfo() {
     // ⚠ target_mana.estimated is always true and the overlay must say so: the
     // number is a FLOOR on mana used, because a resisted or interrupted cast
     // spends mana and prints no landing line at all.
-    target_mana:    npcManaState(st.target_name),
-    target_lastcast: lastNpcCast(st.target_name),
+    // ⚠ Scoped to the INDIVIDUAL, not the name. `_curIdForRelay` is the Zeal
+    // spawn id already resolved above (null on a client too old to send one),
+    // and without it a zone full of same-named trash shares one ledger and one
+    // "last cast" — which is exactly what shipped and was wrong.
+    target_mana:    npcManaState(st.target_name, _curIdForRelay),
+    target_lastcast: lastNpcCast(st.target_name, _curIdForRelay),
   };
 }
 

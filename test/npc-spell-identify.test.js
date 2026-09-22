@@ -16,25 +16,33 @@
 //
 // Run: npx vitest run test/npc-spell-identify.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readSource, AGENT_INDEX, sliceBlock, evalBlock } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
+// Stubs for what the block reaches out to: the log clock, the Zeal target, and
+// the mob-info cache. Driving those is how the identity rules get tested.
 const PRELUDE = `
   function parseEqTimestamp(line) {
     const m = /^\\[(\\d+)\\]/.exec(line);
     return m ? new Date(Number(m[1])) : null;
   }
+  let __tgt = null, __mobs = new Map();
+  function __setTarget(name, id){ __tgt = name ? { target_name: name, target_id: id ?? null } : null; }
+  function __setMob(mob){ __mobs.set(mob.name, { at: Date.now(), mob }); }
+  function _currentTargetState(){ return __tgt; }
+  function _normMobNameAgent(n){ return String(n||'').trim().toLowerCase().replace(/[\\s\`']+/g,'_'); }
+  const _mobInfoByName = __mobs;
 `;
 const api = evalBlock(
   PRELUDE + sliceBlock(src,
     'const _NPC_CAST_RX =',
     "    estimated: true,\n  };\n}"),
-  ['identifyNpcCast', 'noteNpcCastStart', '_npcCasterFor',
-   'npcManaNote', 'npcManaReset', 'npcManaDisengage', 'npcManaState'],
+  ['identifyNpcCast', 'noteNpcCastStart', '_npcCasterFor', 'noteNpcLanding', 'lastNpcCast',
+   'npcManaNote', 'npcManaReset', 'npcManaDisengage', 'npcManaState', '__setTarget', '__setMob'],
 );
-const { identifyNpcCast, noteNpcCastStart, _npcCasterFor,
-        npcManaNote, npcManaReset, npcManaDisengage, npcManaState } = api;
+const { identifyNpcCast, noteNpcCastStart, _npcCasterFor, noteNpcLanding, lastNpcCast,
+        npcManaNote, npcManaReset, npcManaDisengage, npcManaState, __setTarget, __setMob } = api;
 
 // The Spire Lord's real list, trimmed to the rows that matter here.
 const GRIM_AURA = { id: 346, name: 'Grim Aura', mana: 25, cast_ms: 3000, other: "'s hand is covered with a dull aura." };
@@ -122,39 +130,106 @@ describe('pairing a landing with the mob that cast it', () => {
   });
 });
 
+// ── the two bugs the guild lead caught in the first version ─────────────────
+// "we're never updating the last seen spell on these and they're not unique to
+// the mob casting them because we don't have a surface to weld them to even
+// with the spawn-ids" — `Gate 1170s ago` sat on the panel for nineteen minutes,
+// on whichever same-named mob you happened to target next.
+describe('a cast belongs to an individual, not to a name', () => {
+  const SPIRIT = { name: 'A Greater Spire Spirit', mana: 1300, spells: [
+    { id: 393, name: 'Steelskin', mana: 149, cast_ms: 3000, other: "'s skin gleams like steel." },
+    { id: 341, name: 'Lifetap',   mana: 9,   cast_ms: 2500, you: 'You feel your life force drain away.' },
+  ] };
+  const land = (t, msg) => noteNpcLanding(`[${t}] ${msg}`);
+  const cast = (t, who) => noteNpcCastStart(`[${t}] ${who} begins to cast a spell.`);
+
+  beforeEach(() => { __setMob(SPIRIT); });
+
+  it('records a cast by the mob you are looking at', () => {
+    __setTarget('A Greater Spire Spirit', 101);
+    cast(Date.now() - 3000, 'A Greater Spire Spirit');
+    expect(land(Date.now(), "A Greater Spire Spirit's skin gleams like steel.")).not.toBeNull();
+    expect(lastNpcCast('A Greater Spire Spirit', 101).spell).toBe('Steelskin');
+  });
+
+  it('does NOT show it on a different spawn of the same name', () => {
+    __setTarget('A Greater Spire Spirit', 101);
+    cast(Date.now() - 3000, 'A Greater Spire Spirit');
+    land(Date.now(), "A Greater Spire Spirit's skin gleams like steel.");
+    expect(lastNpcCast('A Greater Spire Spirit', 202)).toBeNull();
+  });
+
+  // The other half: a cast by a mob we are not targeting cannot be attributed
+  // at all, because neither log line carries an id. Drop it rather than guess.
+  it('ignores a cast from a mob that is not the current target', () => {
+    __setTarget('A Lesser Spire Spirit', 77);
+    cast(Date.now() - 3000, 'A Greater Spire Spirit');
+    expect(land(Date.now(), "A Greater Spire Spirit's skin gleams like steel.")).toBeNull();
+  });
+
+  it('ages out a name-only attribution instead of parking it forever', () => {
+    __setTarget('A Greater Spire Spirit', null);
+    const old = Date.now() - 20 * 60 * 1000;
+    cast(old - 3000, 'A Greater Spire Spirit');
+    land(old, "A Greater Spire Spirit's skin gleams like steel.");
+    expect(lastNpcCast('A Greater Spire Spirit', null)).toBeNull();
+  });
+
+  // "Last spell cast was on me" — cast_on_you is a whole sentence with no name
+  // in front of it, so the cast_on_other suffix match never sees it.
+  it('names a spell that landed on YOU', () => {
+    __setTarget('A Greater Spire Spirit', 101);
+    cast(Date.now() - 2500, 'A Greater Spire Spirit');
+    const got = land(Date.now(), 'You feel your life force drain away.');
+    expect(got).not.toBeNull();
+    expect(got.spell).toBe('Lifetap');
+  });
+});
+
 describe('the estimated mana ledger', () => {
   it('starts full and spends what it can name', () => {
-    npcManaReset('The Spire Lord');
-    let st = npcManaNote('The Spire Lord', 2058, 0, 1000);
+    npcManaReset('The Spire Lord', 11);
+    let st = npcManaNote('The Spire Lord', 11, 2058, 0, 1000);
     expect(st.cur).toBe(2058);
-    st = npcManaNote('The Spire Lord', 2058, 25, 2000);
+    st = npcManaNote('The Spire Lord', 11, 2058, 25, 2000);
     expect(st.cur).toBe(2033);
     expect(st.spent).toBe(25);
   });
 
+  // ⚠ The bug the guild lead caught: a zone full of same-named trash shared one
+  // ledger, so the bar you were looking at had been spent down by mobs you
+  // never fought. Two spawn ids must be two ledgers.
+  it('keeps two same-named mobs apart by spawn id', () => {
+    npcManaReset('A Greater Spire Spirit', 101);
+    npcManaReset('A Greater Spire Spirit', 102);
+    npcManaNote('A Greater Spire Spirit', 101, 1300, 400, 1000);
+    expect(npcManaState('A Greater Spire Spirit', 101).cur).toBe(900);
+    expect(npcManaState('A Greater Spire Spirit', 102)).toBeNull();   // untouched
+  });
+
   it('never goes below zero however much it observes', () => {
-    npcManaReset('Corvale');
-    npcManaNote('Corvale', 100, 5000, 1000);
-    expect(npcManaState('Corvale').cur).toBe(0);
-    expect(npcManaState('Corvale').pct).toBe(0);
+    npcManaReset('Corvale', 1);
+    npcManaNote('Corvale', 1, 100, 5000, 1000);
+    expect(npcManaState('Corvale', 1).cur).toBe(0);
+    expect(npcManaState('Corvale', 1).pct).toBe(0);
   });
 
   // The guild lead was explicit: disengaging KEEPS the spend, resetting clears it.
   it('keeps the spend across a disengage and clears it on a reset', () => {
-    npcManaReset('Brackwyn');
-    npcManaNote('Brackwyn', 1000, 400, 1000);
-    npcManaDisengage('Brackwyn');
-    expect(npcManaState('Brackwyn').cur).toBe(600);
-    expect(npcManaState('Brackwyn').engaged).toBe(false);
-    npcManaReset('Brackwyn');
-    expect(npcManaState('Brackwyn').cur).toBe(1000);
+    npcManaReset('Brackwyn', 2);
+    npcManaNote('Brackwyn', 2, 1000, 400, 1000);
+    npcManaDisengage('Brackwyn', 2);
+    expect(npcManaState('Brackwyn', 2).cur).toBe(600);
+    expect(npcManaState('Brackwyn', 2).engaged).toBe(false);
+    npcManaReset('Brackwyn', 2);
+    expect(npcManaState('Brackwyn', 2).cur).toBe(1000);
   });
 
   // No pool in the catalog → no bar at all, not an empty one. ~79% of NPCs.
   it('reports nothing for a mob with no mana pool', () => {
-    expect(npcManaNote('Nyssara', 0, 10, 1000)).toBeNull();
-    expect(npcManaState('Nyssara')).toBeNull();
-    expect(npcManaState('never-seen')).toBeNull();
+    expect(npcManaNote('Nyssara', 3, 0, 10, 1000)).toBeNull();
+    expect(npcManaState('Nyssara', 3)).toBeNull();
+    expect(npcManaState('never-seen', 9)).toBeNull();
   });
 
   // The whole number is a floor, and the UI has to be told so.
