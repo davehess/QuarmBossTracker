@@ -32,6 +32,10 @@ function _buildLookup() {
       // _rootId: CharacterId of the ParentId=0 root in the OpenDKP family tree.
       // Used by /register to set the correct ParentId for new alts.
       rootCharId: char._rootId || null,
+      // Registered in our DB only, never created in OpenDKP. Carried through
+      // so processOpenDkpExport can re-add them after an import rebuilds the
+      // roster from upstream — see the local-only pass there.
+      _local: !!char._local,
       isAlt, mainName, active,
       alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null, dkpUrl: a.d || null })),
     });
@@ -124,7 +128,7 @@ function setRosterDkpLink(name, url) {
 // rootCharId: CharacterId of the ParentId=0 family root (stored on top-level entries so
 //             /register can resolve the correct OpenDKP ParentId for future alts).
 // Call saveRosters(client) afterward to persist the change to Discord threads.
-function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null }, isActive = true) {
+function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null, localOnly = false }, isActive = true) {
   const target  = isActive ? _active : _inactive;
   const nameKey = name.toLowerCase();
 
@@ -138,6 +142,7 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
       const altObj = { n: name, r: race, c: charClass };
       if (dkpUrl)    altObj.d = dkpUrl;
       if (quarmyUrl) altObj.q = quarmyUrl;
+      if (localOnly) altObj._local = true;   // survives /rosterimport — see processOpenDkpExport
       mainEntry.a.push(altObj);
       _buildLookup();
       return;
@@ -149,6 +154,7 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
   const entry = { n: name, r: race, c: charClass, a: [] };
   if (dkpUrl)    entry.d = dkpUrl;
   if (quarmyUrl) entry.q = quarmyUrl;
+  if (localOnly) entry._local = true;        // survives /rosterimport — see processOpenDkpExport
   if (mainName)  entry._alt = true;                     // standalone alt (main not in roster)
   if (rootCharId && !mainName) entry._rootId = rootCharId; // only on true top-level mains
 
@@ -270,6 +276,37 @@ function processOpenDkpExport(rawArray) {
       addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }, c.CharacterId), c.Active === 1);
     }
     // UNKNOWN rank orphans: already in unknowns list, skip display
+  }
+
+  // ⚠ LOCAL-ONLY CHARACTERS SURVIVE THE IMPORT (the guild lead, 2026-09-22:
+  // "traders and non-raid Alts don't need to be in opendkp, only in our db").
+  // Everything above is rebuilt FROM the export, so a character that was never
+  // created upstream is simply absent from the result — and `/rosterimport`
+  // then writes that result over the threads. Without this pass, registering a
+  // trader locally and running an import would delete them, silently, with no
+  // error anywhere. The `_local` flag is set by addCharacterEntry and is the
+  // only thing that distinguishes "we chose not to create this upstream" from
+  // "this was deleted upstream".
+  const seen = new Set();
+  for (const bucket of [active, inactive]) {
+    for (const e of bucket) {
+      seen.add(e.n.toLowerCase());
+      for (const a of (e.a || [])) seen.add(a.n.toLowerCase());
+    }
+  }
+  for (const [key, val] of _lookup) {
+    if (!val._local || seen.has(key)) continue;
+    const entry = { n: val.name, r: val.race, c: val.class, _local: true };
+    if (val.quarmyUrl) entry.q = val.quarmyUrl;
+    // A local alt re-nests under its main when the main came back in the
+    // export; otherwise it stands alone, the same fallback addCharacterEntry
+    // uses. Local characters are active by definition — an inactive one would
+    // have come from upstream.
+    const mainEntry = val.mainName
+      ? active.find(m => m.n.toLowerCase() === String(val.mainName).toLowerCase() && !m._alt)
+      : null;
+    if (mainEntry) { (mainEntry.a = mainEntry.a || []).push(entry); }
+    else           { active.push({ ...entry, a: [], ...(val.mainName ? { _alt: true } : {}) }); }
   }
 
   return { active, inactive, unknowns };
