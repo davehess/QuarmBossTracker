@@ -3751,6 +3751,214 @@ function _correlateHealer(landMs) {
   if (best) { best.consumed = true; return best.caster; }
   return null;
 }
+
+// ── Naming an NPC's spell (the guild lead, 2026-09-22) ───────────────────────
+// EverQuest NEVER prints what a mob cast. The line is
+//   [Fri Sep 19 12:40:15 2026] The Spire Lord begins to cast a spell.
+// and that is all. The way in is the LANDING message, which the guild lead
+// spotted live: "The Spire Lord's hand is covered with a dull aura." is
+// eqemu_spells.cast_on_other for Grim Aura, and Grim Aura costs 25 mana.
+//
+// ⚠ DO NOT widen _OTHER_CAST_RX to catch NPCs. That regex is deliberately
+// player-only ("single capitalized token"), and _correlateHealer CONSUMES its
+// entries to attribute heals. A mob's cast landing in that list would silently
+// steal a heal's attribution — a wrong number on a parse card, from a change
+// that looks unrelated. This tracker is separate on purpose.
+//
+// It also catches what the player-only one cannot: named mobs are multi-word
+// ("Royal Scribe Kaavin", "The Spire Lord"), so they fail the single-token
+// pattern even though they are capitalised.
+const _NPC_CAST_RX = /\]\s+(.+?) begins to cast a spell\.\s*$/;
+const _NPC_CAST_WINDOW_MS = 15000;   // longest catalog cast + travel slack
+const _npcCastStarts = [];           // { caster, atMs }
+function noteNpcCastStart(line) {
+  if (line.indexOf('begins to cast a spell') === -1) return null;   // cheap gate
+  const m = line.match(_NPC_CAST_RX);
+  if (!m) return null;
+  const who = String(m[1] || '').trim();
+  if (!who) return null;
+  const t = parseEqTimestamp(line);
+  const atMs = t ? t.getTime() : Date.now();
+  _npcCastStarts.push({ caster: who, atMs });
+  const cutoff = atMs - _NPC_CAST_WINDOW_MS;
+  while (_npcCastStarts.length > 200 || (_npcCastStarts.length && _npcCastStarts[0].atMs < cutoff)) {
+    _npcCastStarts.shift();
+  }
+  return who;
+}
+// Who most plausibly cast the thing that just landed. The guild lead's point:
+// "If we're nearby a casting and we see what it is that's casting and we see
+// the thing that gets hit by the spell, many times we should be able to figure
+// that out." The cast START names the caster, so pairing it with a landing
+// gives BOTH ends — which is what makes the candidate list narrowable at all.
+function _npcCasterFor(landMs, preferName) {
+  let best = null, bestLead = Infinity;
+  for (const c of _npcCastStarts) {
+    const lead = landMs - c.atMs;
+    if (lead < 0 || lead > _NPC_CAST_WINDOW_MS) continue;
+    if (preferName && c.caster !== preferName) continue;
+    if (lead < bestLead) { best = c; bestLead = lead; }
+  }
+  return best ? { caster: best.caster, leadMs: bestLead } : null;
+}
+
+// ⚠ EQ log timestamps are WHOLE SECONDS. Cast time splits 151 of the 185
+// catalog collisions on paper, but the observed lead is quantised to ±1s, so a
+// 4.5s and a 5.0s cast are NOT separable in practice — only coarse differences
+// are. The tolerance is set from that, not from the catalog's precision, and
+// anything outside it is reported as a guess rather than a fact.
+const _NPC_CAST_TIME_TOL_MS = 1500;
+
+// Identify which of a mob's known spells just landed.
+//   spells  — mob-info's level-windowed list: { id, name, mana, cast_ms, other }
+//   body    — the log line's message, e.g. "The Spire Lord's hand is covered…"
+//   leadMs  — ms between that mob's "begins to cast" and this landing, or null
+// Returns { spell, target, confidence, candidates } | null.
+// confidence: 'exact'  one candidate — the message names it outright
+//             'timed'  several, split by how long the cast took
+//             'guess'  several, nothing to separate them; caller must not
+//                      spend mana on a guess without saying so
+function identifyNpcCast(spells, body, leadMs) {
+  if (!Array.isArray(spells) || !body) return null;
+  const hits = [];
+  for (const sp of spells) {
+    const other = sp && sp.other;
+    if (!other) continue;
+    // endsWith, never split-on-space: the target may be multi-word, and the
+    // possessive form ("'s hand is…") carries no leading space at all.
+    if (body.endsWith(other)) hits.push(sp);
+  }
+  if (!hits.length) return null;
+  let best = hits[0];
+  let confidence = hits.length === 1 ? 'exact' : 'guess';
+  if (hits.length > 1 && Number.isFinite(leadMs)) {
+    let bestDelta = Infinity;
+    for (const sp of hits) {
+      const ct = Number(sp.cast_ms);
+      if (!Number.isFinite(ct)) continue;
+      const d = Math.abs(leadMs - ct);
+      if (d < bestDelta) { bestDelta = d; best = sp; }
+    }
+    if (bestDelta <= _NPC_CAST_TIME_TOL_MS) confidence = 'timed';
+    else best = hits[0];
+  }
+  const target = body.slice(0, body.length - best.other.length).replace(/\s+$/, '');
+  return { spell: best, target, confidence, candidates: hits };
+}
+
+// ── The estimated mana ledger ───────────────────────────────────────────────
+// "We assume full mana for NPCs that have a mana total in the database, then
+// remove the mana amounts based on casts. If a mob is disengaged we should
+// still keep the mana total, but once they're reset their resting mana regen
+// should kick in" (the guild lead, 2026-09-22).
+//
+// ⚠ THIS IS AN ESTIMATE AND MUST BE LABELLED ONE. Three things make it drift
+// low-side, and all three are real rather than theoretical:
+//   · a RESISTED or interrupted cast still costs the mob mana and prints no
+//     landing line at all ("You resist the Retribution spell!" is in the very
+//     log this feature came from);
+//   · 194 of 1,384 NPC-castable spells (14%) have no landing text whatsoever —
+//     direct damage shows up only as "was hit by non-melee for N points";
+//   · we only ever see landings our own raiders' logs witnessed.
+// So the bar under-spends. It is a floor on mana used, not a reading.
+//
+// ⚠ AND the regen half is NOT sourced. eqemu_npc_types carries no mana_regen
+// column in our mirror (checked 2026-09-22), so a "resting regen" rate would be
+// a number we invented. Until a local session gets the real one off the peq DB,
+// a reset restores to FULL — which is at least a fact about how EQ works rather
+// than a fabricated rate. _NPC_MANA_REGEN_PCT_PER_TICK stays null deliberately;
+// setting it is the whole change when the number arrives.
+// Try to name the spell behind a landing line we just read, and bill it.
+//
+// Scope, deliberately: we can only identify against a spell list we HOLD, and
+// mob-info is fetched for the mob you are targeting. So this resolves (a) your
+// current target, and (b) any mob whose info is still in the cache because you
+// targeted it earlier this session — which is what covers the guild lead's
+// case of "a cleric mob near another friendly NPC will buff it": target the
+// cleric once and its whole beneficial list is known from then on.
+// It does NOT fetch for an unseen caster; that would put a network call on the
+// log-line path, which is the hottest loop in the agent.
+let _lastNpcCast = null;   // { mob, spell, mana, confidence, target, atMs }
+function noteNpcLanding(line) {
+  if (!line || line.indexOf(']') === -1) return null;
+  const body = line.replace(/^\[[^\]]*\]\s*/, '').trim();
+  if (!body) return null;
+  const t = parseEqTimestamp(line);
+  const atMs = t ? t.getTime() : Date.now();
+  const pair = _npcCasterFor(atMs);
+  if (!pair) return null;                       // nothing was casting — not ours to name
+  const mob = _npcMobInfoFor(pair.caster);
+  if (!mob || !Array.isArray(mob.spells) || !mob.spells.length) return null;
+  const hit = identifyNpcCast(mob.spells, body, pair.leadMs);
+  if (!hit) return null;
+  _lastNpcCast = {
+    mob: pair.caster, spell: hit.spell.name, spell_id: hit.spell.id,
+    mana: hit.spell.mana ?? null, confidence: hit.confidence,
+    target: hit.target, atMs,
+  };
+  // ⚠ Only spend on a spell we can NAME. A 'guess' still tells the raider what
+  // family landed, but billing 225 mana for what might have been 9 would make
+  // the bar worse than no bar.
+  if (hit.confidence !== 'guess' && Number(hit.spell.mana) > 0 && Number(mob.mana) > 0) {
+    npcManaNote(pair.caster, mob.mana, Number(hit.spell.mana), atMs);
+  }
+  return _lastNpcCast;
+}
+// Any cached mob-info row for this name, whatever zone bucket it landed in.
+function _npcMobInfoFor(name) {
+  if (typeof _mobInfoByName === 'undefined' || typeof _normMobNameAgent !== 'function') return null;
+  const want = _normMobNameAgent(name);
+  for (const [, v] of _mobInfoByName) {
+    const m = v && v.mob;
+    if (m && _normMobNameAgent(m.name) === want) return m;
+  }
+  return null;
+}
+function lastNpcCast(mobName) {
+  if (!_lastNpcCast) return null;
+  if (mobName && _normMobNameAgent && _normMobNameAgent(_lastNpcCast.mob) !== _normMobNameAgent(mobName)) return null;
+  return _lastNpcCast;
+}
+const _NPC_MANA_REGEN_PCT_PER_TICK = null;
+const _npcManaByMob = new Map();   // normName → { max, spent, lastCastMs, engaged }
+function _npcManaKey(name) { return String(name || '').trim().toLowerCase(); }
+function npcManaNote(mobName, manaMax, spentDelta, atMs) {
+  const key = _npcManaKey(mobName);
+  if (!key || !(Number(manaMax) > 0)) return null;
+  let rec = _npcManaByMob.get(key);
+  if (!rec) { rec = { max: Number(manaMax), spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
+  rec.max = Number(manaMax);
+  if (Number.isFinite(spentDelta) && spentDelta > 0) {
+    rec.spent = Math.min(rec.max, rec.spent + spentDelta);
+    rec.lastCastMs = atMs || Date.now();
+    rec.engaged = true;
+  }
+  return npcManaState(mobName);
+}
+// A reset (mob evaded / despawned / returned home) restores it. Disengaging
+// alone does NOT — the guild lead was explicit that the spend survives a
+// disengage, which is what makes the number useful across a wipe and a re-pull.
+function npcManaReset(mobName) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+  if (rec) { rec.spent = 0; rec.engaged = false; }
+}
+function npcManaDisengage(mobName) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+  if (rec) rec.engaged = false;
+}
+function npcManaState(mobName) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName));
+  if (!rec || !(rec.max > 0)) return null;
+  const cur = Math.max(0, rec.max - rec.spent);
+  return {
+    cur, max: rec.max,
+    pct: Math.max(0, Math.min(100, Math.round(cur / rec.max * 100))),
+    spent: rec.spent,
+    engaged: !!rec.engaged,
+    // The overlay renders this as "≥ spent" / "estimate", never as a gauge.
+    estimated: true,
+  };
+}
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
 // target's name (the guild lead, 2026-07-14: heal AMOUNTS are private to the healed,
 // but LANDINGS are public to everyone). Any single Mimic in the raid witnessing
@@ -34960,6 +35168,15 @@ function buildMobInfo() {
     // observed-landing + catalog-duration derived; the only path for mobs, which
     // have no authoritative buff readout on the Zeal pipe). null when unslowed.
     target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
+    // ── Target Info: mana + last cast (the guild lead, 2026-09-22) ──────────
+    // Both null for the ~79% of the catalog with no mana pool and for any mob
+    // we have not yet named a cast for. The overlay draws NOTHING in that case
+    // rather than an empty bar — "where applicable" was literal in the ask.
+    // ⚠ target_mana.estimated is always true and the overlay must say so: the
+    // number is a FLOOR on mana used, because a resisted or interrupted cast
+    // spends mana and prints no landing line at all.
+    target_mana:    npcManaState(st.target_name),
+    target_lastcast: lastNpcCast(st.target_name),
   };
 }
 
@@ -39042,6 +39259,10 @@ async function main() {
         if (!_sourceExcluded) noteHealLandLine(line);
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
+        // NPC cast-starts + landings → "what did that mob just cast", and the
+        // mana it implies. Separate tracker from the line above on purpose;
+        // see the _NPC_CAST_RX header for why widening that one is a trap.
+        if (!_sourceExcluded) { noteNpcCastStart(line); noteNpcLanding(line); }
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
