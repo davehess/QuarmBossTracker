@@ -1010,7 +1010,10 @@ Consequences that keep being got backwards:
   first.
 - **Database size is the one that only ever grows**, which is the real reason
   `buff_casts` prunes to 7 days and why the row-per-upload `agent_uploads` log
-  was retired — not a call cap. Measured 2026-09-01: **1.72 GB of 8 GB (21%)**.
+  was retired — not a call cap. Measured 2026-09-22: **2.39 GB of 8 GB (30%)**,
+  up from 1.72 GB on 2026-09-01 — **+39% in three weeks, and 72% of that
+  growth is the one broken sweep below**. Trend table + headroom projection in
+  `docs/COSTS.md` §3a; re-measure there rather than trusting this line.
 - ⚠ **Spend Cap is dashboard-only and unread.** On Pro with the cap ON, exceeding
   a quota means *restrictions* (read-only, 402s), not charges. Nobody has checked
   which way it is set; the Management API does not expose it. Check before
@@ -1032,13 +1035,20 @@ Railway Free cannot run the bot at all (0.5 GB ceiling vs our 0.70 GB peak), and
 why our 30-day threat retention is a PAID default — lives in
 `docs/DESIGN-selfhost-wizard.md` §2a. Keep it there, not here.
 
-⚠ **`encounter_threat_snapshots` is 920 MB — 57% of the whole database — and its
-30-day sweep has never worked.** The predicate `snapshot_at < cutoff` has no
+⚠ **`encounter_threat_snapshots` is 1,414 MB — 58% of the whole database — and
+its 30-day sweep has never worked.** The predicate `snapshot_at < cutoff` has no
 usable index (the only ones with `snapshot_at` lead on other columns or are
-partial), so the nightly DELETE seq-scans 857k rows, blows the client's 10s
-AbortController, and the catch logs a warning. 448k rows (52%) sit past
-retention in a flat age distribution — the signature of a sweep that has never
-removed anything. Unfixed as of 2026-09-01; see `docs/DECISIONS-2026-09-01.md`.
+partial), so the nightly DELETE seq-scans the table, blows the client's 10s
+AbortController, and the catch logs a warning.
+**Re-measured 2026-09-22 and it is getting worse, not holding:** 1,190,281 rows,
+of which **746,964 (62.8%) sit past retention**, oldest **2026-07-02** — 82 days
+old under a 30-day policy. On 2026-09-01 the same measurement was 448k stale
+rows at 52%, so it has added ~299k stale rows in three weeks.
+**This one table is 72% of all database growth** (+494 MB of the +690 MB the
+database gained in that period, ~23 MB/day of ~33). Fixing the sweep reclaims
+**~890 MB immediately**, putting the database *below* where it stood on
+2026-09-01. Still unfixed; see `docs/DECISIONS-2026-09-01.md` and the trend
+table in `docs/COSTS.md` §3a.
 
 
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
