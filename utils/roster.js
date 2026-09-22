@@ -284,9 +284,20 @@ function processOpenDkpExport(rawArray) {
   // created upstream is simply absent from the result — and `/rosterimport`
   // then writes that result over the threads. Without this pass, registering a
   // trader locally and running an import would delete them, silently, with no
-  // error anywhere. The `_local` flag is set by addCharacterEntry and is the
-  // only thing that distinguishes "we chose not to create this upstream" from
-  // "this was deleted upstream".
+  // error anywhere.
+  //
+  // ⚠ Why a FLAG rather than "keep anything missing from the export": the flag
+  // exists for SCOPE, not for deletions. An earlier version of this comment
+  // justified it as protecting against upstream deletions — the guild lead
+  // pushed back that nobody has ever been deleted from OpenDKP, and they are
+  // right. Leaving the raid sets `Active = 0`, which routes a character to the
+  // INACTIVE roster; they stay in the export either way. Absence means a hard
+  // delete, which has not happened here.
+  // The real reason: keeping every absent name would change what
+  // `/rosterimport` MEANS for all ~400 characters — it could no longer remove
+  // anyone, and a truncated or wrong export file would silently merge the old
+  // roster back in and look like a clean import. The flag keeps the new
+  // behaviour to exactly the new case.
   const seen = new Set();
   for (const bucket of [active, inactive]) {
     for (const e of bucket) {
