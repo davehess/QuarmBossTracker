@@ -156,7 +156,12 @@ const zealRow = (s) => rowsOf(s).find(r => r.label === 'Zeal connected');
 const detail  = (r) => String(r.info || (r.ok ? r.good : r.bad));
 
 describe('the "Zeal connected" row names the right problem', () => {
-  const base = { watchedLogs: [], zealClients: [] };
+  // ⚠ A FRESH log, deliberately (2026-09-22). Every case in this block is about
+  // a dead Zeal feed WHILE PLAYING — the field case was EQ running elevated —
+  // and since the checklist learned to say "EverQuest is not running" first,
+  // an empty watchedLogs means "EQ is shut", which is a different question with
+  // a different right answer. The old fixture was underspecified, not wrong.
+  const base = { watchedLogs: [{ lastSeen: Date.now() - 5000 }], zealClients: [] };
 
   it('ASKS about compatibility mode and admin when Zeal is already on disk', () => {
     const d = detail(zealRow({ ...base, eqFolder: { zealInstalled: true, writable: true } }));

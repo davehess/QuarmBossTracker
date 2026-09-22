@@ -1594,7 +1594,26 @@ function _setupCheckRows(s) {
     : eqf.zealInstalled === false
       ? 'no Zeal found in your EQ folder — use Check / install Zeal below (close EQ first), then restart EverQuest to load it.'
       : 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work';
+  // ⚠ EQ CLOSED IS ONE PROBLEM THAT SHOWS UP AS THREE WRONG ONES (the guild lead,
+  // 2026-09-22: "move the suggestion up top if EQ isn't loaded"). With the game
+  // shut, the logging row says "type /log on in EQ" and the Zeal row says
+  // "install/enable Zeal" — two different fixes, both unnecessary, for a
+  // machine where nothing is broken. That is exactly the trap the zealBad
+  // comment above already records: a row that names the wrong problem walks
+  // people into a second one. So say the real one FIRST and let the rows below
+  // defer to it.
+  // "Running" is inferred the way the rest of the agent infers it — a live Zeal
+  // client is proof, and failing that a log written in the last 90s, the same
+  // window the eqclient.ini writer uses to refuse a write while EQ holds the
+  // file. It is a NEUTRAL row, not a failure: opening the dashboard before
+  // launching the game is the normal setup order, and a red ✗ for doing the
+  // normal thing is how a checklist teaches people to ignore it.
+  const lastLogWrite  = logs.reduce((m, w) => Math.max(m, (w && w.lastSeen) || 0), 0);
+  const eqLooksClosed = !zealLive && !(lastLogWrite && (now - lastLogWrite) < 90 * 1000);
   const rows = [
+    ...(eqLooksClosed ? [{ ok: false, neutral: true, label: 'EverQuest running',
+      good: '',
+      bad: 'EverQuest does not look like it is running. Start it and log a character in — several checks below cannot pass until you do, and they will offer fixes you do not need.' }] : []),
     { ok: !!s.mimicSignedIn, label: 'Mimic account linked',
       good: 'signed in — uploads land under your name',
       bad: 'not linked — open Settings → Sign in with Discord (otherwise uploads are anonymous)' },
@@ -1606,10 +1625,14 @@ function _setupCheckRows(s) {
       bad: 'no eqlog_*_pq.proj.txt — turn on logging (/log on + Logging=on in eqclient.ini) and point Mimic at your EQ folder' },
     { ok: freshLog, label: 'In-game logging ON',
       good: 'a log updated in the last 15 min',
-      bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
+      bad: eqLooksClosed && logs.length > 0
+        ? 'nothing written recently — expected while EverQuest is closed; the row above is the one to act on'
+        : logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
     { ok: zealLive, label: 'Zeal connected',
       good: 'live buff/group data flowing from Zeal',
-      bad: zealBad,
+      bad: (eqLooksClosed && eqf.zealInstalled !== false)
+        ? 'no live feed — expected while EverQuest is closed. Zeal only reports while a character is logged in, so there is nothing to install or fix here yet.'
+        : zealBad,
       // `info` REPLACES the detail when set, so it may only win when it says
       // more than zealBad does — otherwise the compatibility/admin question
       // above is silently swallowed for anyone with a stale snapshot.
@@ -1636,6 +1659,7 @@ function renderSetupChecks(s) {
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
   for (const r of rows) {
     const mark = r.ok ? '<span style="color:var(--green)">✓</span>'
+                      : r.neutral ? '<span class="dim">·</span>'
                       : '<span style="color:var(--red)">✗</span>';
     const detail = r.ok ? r.good : r.bad;
     h += '<tr><td style="width:18px;text-align:center">' + mark + '</td>'
@@ -5598,12 +5622,26 @@ async function postOptin(action, extra) {
   } catch { return null; }
 }
 
+// Which tailed logs are big enough to warn about, as a NAMED module-scope rule
+// so a test can run it rather than match its text — check:dashboard only proves
+// the script parses, which is exactly what let the renderSetupChecks
+// ReferenceError reach the whole fleet.
+// Imported files are excluded on purpose: a big archive is the END STATE this
+// warning asks for, and flagging it would teach people to dismiss the card.
+var WP_LOG_WARN_BYTES = 512 * 1048576;
+var WP_LOG_BIG_BYTES  = 1024 * 1048576;
+function _wpBigLogs(files) {
+  return (files || [])
+    .filter(f => f && !f.imported && f.isWatched && (f.sizeBytes || 0) >= WP_LOG_WARN_BYTES)
+    .sort((a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0));
+}
 function renderOptin(o) {
   if (!o) { morphInto(document.getElementById('optin'), '<div class="dim">Loading...</div>'); return; }
   const list = _optinPane === 'active' ? o.files : o.ignored;
   const selCount = (o.files||[]).filter(f => f.selected).length;
 
   let h = '';
+  const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
 
   // Officer-filed backfill requests banner. Surfaces pending/acked requests
   // targeting characters this agent watches. Each row: character, scope,
@@ -5636,6 +5674,46 @@ function renderOptin(o) {
            '</div>';
     }
     h += '</div>';
+  }
+
+  // ── Oversized live log (the guild lead, 2026-09-22) ────────────────────────
+  // EverQuest never trims eqlog_<Name>_pq.proj.txt and the client slows down on
+  // multi-gigabyte ones. A member's reached 1.33 GB, unbroken since Nov 2024,
+  // and they found it by accident looking for something else — the size has
+  // always been in the table below, but a number is not a warning and nothing
+  // anywhere said which numbers are a problem.
+  // Only LIVE-TAILED, non-imported files are flagged: an imported archive being
+  // huge is the desired END STATE of this very fix, so warning about it would
+  // train people to ignore the card.
+  // ⚠ The remedy says MOVE, and says why. _isEqLogFile accepts '.txt2',
+  // '.txt.old' and ' BACKUP.txt' on the eqlog_<name>_pq.proj stem once the
+  // welcome-line sniff confirms it — deliberately, so a rotated history is not
+  // silently dropped — which means a log merely RENAMED in place is still
+  // tailed and nothing improves.
+  const bigLogs = _wpBigLogs(o.files);
+  if (bigLogs.length) {
+    const red = (bigLogs[0].sizeBytes || 0) >= WP_LOG_BIG_BYTES;
+    h += '<div class="card wide" id="wpBigLogs" style="border-color:' + (red ? '#a06628' : 'var(--border)') + '">' +
+         '<h2 style="color:' + (red ? 'var(--orange)' : 'var(--gold)') + '">' +
+           (red ? '&#9888; Your EverQuest log is very large' : '&#128452; Your EverQuest log is getting large') + '</h2>' +
+         '<div class="subtle">EverQuest never trims its own log, and the game gets slow on multi-gigabyte ones — ' +
+         'zoning and loading worst. Archiving it costs you nothing: your history stays readable, and you can add it ' +
+         'straight back as a backup folder below.</div>' +
+         '<table><tr><th>File</th><th>Size</th></tr>' +
+         bigLogs.map(f =>
+           '<tr><td class="dim">' + esc(f.path.split(/[/\\]/).pop()) + '</td>' +
+           '<td class="num" style="color:' + ((f.sizeBytes || 0) >= WP_LOG_BIG_BYTES ? 'var(--orange)' : 'var(--gold)') + '">' +
+           sizeFmt(f.sizeBytes) + '</td></tr>').join('') +
+         '</table>' +
+         '<ol style="margin:10px 0 0;padding-left:20px;font-size:12px;line-height:1.7">' +
+           '<li><b>Close EverQuest.</b></li>' +
+           '<li>Make a folder <b>outside</b> your EverQuest folder — e.g. <code>EQ-Log-Archive</code> beside it.</li>' +
+           '<li><b>Move</b> the file into it. &#9888; Move it, do not just rename it — a renamed log left in the ' +
+             'EverQuest folder is still read.</li>' +
+           '<li>Start EverQuest. It makes a fresh, empty log on its own.</li>' +
+           '<li>Come back here and use <b>&#128451; Add folder…</b> below to point at the archive — read once ' +
+             'for backfill, never tailed, so nothing is lost.</li>' +
+         '</ol></div>';
   }
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
@@ -5703,7 +5781,6 @@ function renderOptin(o) {
   for (const f of list) {
     (byChar[f.character] = byChar[f.character] || []).push(f);
   }
-  const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
 
   h += '<table><tr><th></th><th>Character</th><th>File(s)</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
   for (const char of Object.keys(byChar)) {
