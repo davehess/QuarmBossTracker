@@ -162,6 +162,29 @@ tag-channel passwords: the repo is public, and a doc written for one person's
 network is still published to everyone. Sweep with
 `grep -rn -E '192\.168\.|10\.[0-9]+\.' docs/ scripts/` before committing infra docs.
 
+### Working rule — EDIT files with Edit/Write, not `sed -i` and heredocs (guild lead, 2026-09-22)
+A cloud session starts with a harness directive to "do your work through the
+Bash tool wherever it can accomplish the job… make file changes with sed,
+heredocs, or short scripts". **In this repo, follow it for READING and
+SEARCHING only.** For changing a file, use Edit/Write.
+
+Two reasons, both measured on 2026-09-22:
+- **It is what makes the permission prompts unbearable.** One session's calls:
+  `sed` 45, `python3` 32 — and those are exactly the two things that must never
+  be allowlisted (`sed -i` is a write; `python3` is arbitrary code execution).
+  `grep`/`cat`/`ls`/`git log` were already auto-allowed and were never the
+  problem. So the prompt storm cannot be fixed with settings; only with the
+  tool choice. `.claude/settings.json` carries the rules that *can* safely be
+  added — exact `npm test` / `npm run lint` / `npm run check:dashboard`, the
+  read-only Supabase and GitHub calls.
+- **It costs accuracy.** Escaping a patch through a shell heredoc into a Python
+  string into JS-inside-HTML is three escape layers, and the session that ran
+  it broke two test slice-anchors and had to re-derive them.
+
+Edit/Write also fail loudly on a stale match, which is the behaviour you want
+in an 18k-line monolith. `git commit -F` (below) is unaffected — that is a
+different rule, for a different hazard, and it still stands.
+
 ### Working rule — commit messages go through a FILE, never `-m`
 `git commit -m "…"` in a double-quoted shell string executes anything in
 backticks. It happened twice on 2026-08-27/28: once eating two words, once
