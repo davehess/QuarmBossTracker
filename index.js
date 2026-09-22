@@ -3191,10 +3191,23 @@ function scheduleMidnightSummary(readyClient) {
       // snapshots. Still swept, because nothing here is worth keeping forever
       // and an unbounded telemetry table is how the last one reached 351 MB.
       // TARGET_OBSERVATION_RETENTION_DAYS (0 disables).
+      //
+      // ⚠ Default 90 → 1 day (the guild lead, 2026-09-22). Their reasoning is
+      // the whole justification and it is a USE-CASE argument, not a disk one:
+      // "Target observations do not matter the next day. they matter while
+      // you're in a raid and they matter while you are working on buffs or
+      // debuffs for someone." Both windows are same-session, so a day covers
+      // every real read and the other 89 were storing telemetry nobody asks
+      // for. It had grown to 111 MB and ~4.5 MB/day — the second-fastest
+      // grower in the database, ahead of the chat history we keep on purpose.
+      // ⚠ The FIRST run after this ships deletes ~48 days at once (the table
+      // starts 2026-08-04 and nothing has ever aged out of a 90-day window),
+      // which is exactly the DELETE shape that has been silently timing out on
+      // the threat table. Migration 20260923010000 adds the `at` index first.
       try {
         const supabase = require('./utils/supabase');
         const d = parseInt(process.env.TARGET_OBSERVATION_RETENTION_DAYS, 10);
-        const keep = Number.isFinite(d) ? d : 90;
+        const keep = Number.isFinite(d) ? d : 1;
         if (supabase.isEnabled() && keep > 0) {
           const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
           await supabase.del('target_observations', `at=lt.${encodeURIComponent(cutoff)}`);
