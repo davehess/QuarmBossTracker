@@ -123,7 +123,49 @@ is ephemeral. It is a desktop-session job.
 | Overlay progress bars animate `width`, not `transform` | open (2026-09-22, raised by the impeccable detector on 3 sites in `mobinfo.html`: `.hpbar`, `.manabar`, `.tbuff .bbar`). A real finding, not a false positive — animating `width` forces layout every frame, and these composite over a live 3D scene on machines whose GPU drivers we have watched reset under load. ⚠ **Not a CSS tweak**: the renderers set `style="width:N%"` in several places, so `scaleX` means `transform-origin:left` + changing every call site | do it as its own pass across the overlay family (pets/triggers/tank carry the same pattern), not folded into an unrelated change |
 | `apps/mimic/pets.html` has a second copy of `fmtNum` | open (2026-09-22) — still rounds to whole thousands, so the Pet tracker will read "5k" where Target Info now reads "4.7k" | match it, and decide whether the two copies should become one shared helper rather than drift again |
 | ⚠ **CAPTURED: the "too high of a level" failure string — for CHARM** | 2026-09-22, from a live bard pull: `Your target is too high of a level for your charm spell.` (followed in the same second by `Your target resisted the Solon's Bewitching Bravura spell.`). `CLAUDE.md`'s lull-line note says this failure family *"has a message we have not captured"* — now half of it is captured. ⚠ **The PACIFY/HARMONY wording is still NOT captured**; it is presumably the same template with a different spell word, but `CLAUDE.md` says do not invent the string and that still holds | grep confirms the agent handles `Your target resisted the …` and `Your charm spell has worn off.` but **not** the too-high line. Decide whether a too-high failure can leave `_pendingCharmSpell` staged when no resist line follows — if it can, that is a phantom charm timer |
+| **Faction history: real windowed TOTALS** | **half done 2026-09-22 (§5).** `faction_hits` is live and recording; the page filter ships, but it filters rows only — the numbers in them are still all-time and the UI says so. ⚠ The table knows nothing before 2026-09-22 | once there is enough history, recompute Raised/Lowered over the window from `faction_hits`. **To recover the pre-2026-09-22 history, raiders re-run a `--since` backfill over their own logs** — the unique index makes that safe to repeat. Also: no retention sweep yet (~851 rows/day; the `ts` index is in place for when one is wanted) |
 | `beta.yml` vs `latest.yml` | observation 2026-09-21 — `CLAUDE.md`'s channel table says Windows beta publishes `beta.yml`; beta.8/9/10 all publish `latest.yml`, and beta.9's has 163 downloads, so the channel demonstrably works | doc looks stale, not the build. Confirm next time the release workflow is open |
+
+## 5. Faction page, time-bound — and the aggregate that made it impossible (2026-09-22)
+
+The guild lead: *"I'm working on my faction and I think it would be worthwhile to
+have this data be timebound for how recently these hits have come in. Show last
+N days worth."*
+
+**It could not be answered as asked.** `faction_standing` is running counters
+only (`better_count` / `worse_count` / `better_total` / `worse_total` +
+`first_hit_at` / `last_hit_at`), written by the additive `bump_faction_standing`
+RPC. No per-hit table existed anywhere — `faction_cons` is latest-standing-per-mob,
+not a log. So **749,753 hits across 179 characters existed purely as numbers**,
+and no window could be computed from them at any price.
+
+⚠ **The events were reaching the bot the whole time.** `_handleAgentFaction`
+loops over them with `kind` / `faction` / `mob` / `ts`, resolves the point value
+from the line's magnitude or the catalog, aggregates — and dropped the detail.
+Capturing it was one extra row, not a rebuild.
+
+**Both halves shipped together, deliberately:**
+- **`faction_hits`** (migration `20260922200000`, applied live + committed
+  identical): one row per event. ⚠ Carries a unique index and inserts with
+  ignore-duplicates, because **re-running a backfill is the documented way to
+  enrich history** and the aggregate path has no such defence (a second pass
+  inflates the counters). That same property is what makes the lost history
+  recoverable: the database cannot rebuild it, but a `--since` backfill over the
+  raiders' own logs replays the identical lines.
+- **A recency filter** on `/character/<name>/factions` — 7 / 30 / 90 days,
+  filtering *which factions are listed* by `last_hit_at`. "Any time" stays the
+  default so nobody's page changes unasked.
+
+⚠ **The filter states in the UI that the totals are still all-time.** A window
+that silently showed lifetime numbers under a "last 7 days" heading would be
+worse than no window — and that caveat is precisely why the capture had to ship
+alongside rather than after.
+
+**Sizing** (database size being the metered thing that only grows): 851 hits/day
+measured guild-wide → ~310k rows and tens of MB a year, two orders of magnitude
+under `encounter_threat_snapshots`. **No sweep yet**, and the `ts`-leading index
+is already there so one will actually work when it is wanted — which is more
+than that table ever had.
 
 ## 4. NPC tells were reaching Discord DMs (2026-09-22)
 
