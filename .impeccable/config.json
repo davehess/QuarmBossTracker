@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-09-22T17:19:31.043Z",
         "reason": "Repo design authority overrides: .claude/skills/frontend-design says mid-raid overlays are read in peripheral vision and 'density beats whitespace — a raider needs eight rows visible'. The 9/10/11/12/13px scale is a deliberately compressed ladder for a small always-on-top window over a 3D scene; a 1.25 ratio would cost rows. CLAUDE.md: impeccable's DETECTORS are used freely, its AESTHETIC guidance is a default that repo-specific guidance overrides."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "apps/mimic/mobinfo.html"
+        ],
+        "createdAt": "2026-09-22T21:09:53.564Z",
+        "reason": "Domain-appropriate motion, plus a measured no-op. These are HP/mana/buff bars: the thing being animated IS a length, which is the rule's own sanctioned-exception category. Measured 2026-09-22: the panel already rebuilds via innerHTML and forces a synchronous layout via scrollHeight every 500ms, so the bars' contribution is a rounding error and converting to scaleX would change no perceivable frame while touching five overlays' call sites. The guild lead confirmed the Tank overlay's equivalent bar transition is load-bearing information ('the HP bar's transition pre/post heal is important to know where it will land the tank'), so a blanket family-wide conversion was explicitly abandoned rather than deferred. Revisit only if someone reports real overlay stutter."
       }
     ]
   }
