@@ -208,7 +208,7 @@ module.exports = {
     const rootCharId = mainName ? null : newCharId;
     addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName, rootCharId });
 
-    saveRosters(interaction.client).catch(err =>
+    saveRosters(interaction.client, `/register ${name} by ${interaction.user?.tag || interaction.user?.id || '?'}`).catch(err =>
       console.warn('[register] saveRosters failed:', err?.message)
     );
 

@@ -160,13 +160,22 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
 }
 
 // Re-saves both active and inactive rosters to their Discord threads.
-async function saveRosters(client) {
+//
+// ⚠ `reason` is not decoration. The importer label used to be the hardcoded
+// string 'quarmy update' for EVERY caller, so a roster rewrite triggered by
+// `/register` announced itself in Discord as a quarmy import — and when the
+// guild lead asked "why is this updating every minute?" (2026-09-22) the
+// footer actively pointed at the wrong command. Nothing logged either, so
+// there was no way to tell which of the two callers had fired.
+// Pass what actually caused it, and say so in the log.
+async function saveRosters(client, reason = 'roster update') {
   const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
   const inactiveId = process.env.ROSTER_INACTIVE_THREAD_ID;
   const now = new Date();
+  console.log(`[roster] saveRosters → rewriting both threads (reason=${reason})`);
   await Promise.all([
-    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now) : Promise.resolve(),
-    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now) : Promise.resolve(),
+    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   reason, now) : Promise.resolve(),
+    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, reason, now) : Promise.resolve(),
   ]);
 }
 

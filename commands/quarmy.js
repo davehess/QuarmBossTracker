@@ -74,7 +74,7 @@ module.exports = {
     if (sub === 'clear') {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       clearRosterQuarmyLink(name);
-      await saveRosters(interaction.client).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
+      await saveRosters(interaction.client, `/quarmy clear ${name} by ${interaction.user?.tag || interaction.user?.id || '?'}`).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
       return interaction.editReply(`✅ Quarmy link cleared for **${name}**.`);
     }
 
@@ -85,7 +85,7 @@ module.exports = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const found = setRosterQuarmyLink(name, url);
     if (!found) return interaction.editReply(`❌ **${name}** not found in the roster.`);
-    await saveRosters(interaction.client).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
+    await saveRosters(interaction.client, `/quarmy set ${name} by ${interaction.user?.tag || interaction.user?.id || '?'}`).catch(err => console.warn('[quarmy] saveRosters:', err?.message));
     return interaction.editReply(`✅ Quarmy link registered for **${name}**: ${url}\nTheir name will now appear as a clickable link in \`/who\` and \`/whoall\`.`);
   },
 };
