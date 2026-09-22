@@ -32,10 +32,6 @@ function _buildLookup() {
       // _rootId: CharacterId of the ParentId=0 root in the OpenDKP family tree.
       // Used by /register to set the correct ParentId for new alts.
       rootCharId: char._rootId || null,
-      // Registered in our DB only, never created in OpenDKP. Carried through
-      // so processOpenDkpExport can re-add them after an import rebuilds the
-      // roster from upstream — see the local-only pass there.
-      _local: !!char._local,
       isAlt, mainName, active,
       alts: isAlt ? [] : (char.a || []).map(a => ({ name: a.n, race: a.r, class: a.c, quarmyUrl: a.q || null, dkpUrl: a.d || null })),
     });
@@ -128,7 +124,7 @@ function setRosterDkpLink(name, url) {
 // rootCharId: CharacterId of the ParentId=0 family root (stored on top-level entries so
 //             /register can resolve the correct OpenDKP ParentId for future alts).
 // Call saveRosters(client) afterward to persist the change to Discord threads.
-function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null, localOnly = false }, isActive = true) {
+function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = null, mainName = null, rootCharId = null }, isActive = true) {
   const target  = isActive ? _active : _inactive;
   const nameKey = name.toLowerCase();
 
@@ -142,7 +138,6 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
       const altObj = { n: name, r: race, c: charClass };
       if (dkpUrl)    altObj.d = dkpUrl;
       if (quarmyUrl) altObj.q = quarmyUrl;
-      if (localOnly) altObj._local = true;   // survives /rosterimport — see processOpenDkpExport
       mainEntry.a.push(altObj);
       _buildLookup();
       return;
@@ -154,7 +149,6 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
   const entry = { n: name, r: race, c: charClass, a: [] };
   if (dkpUrl)    entry.d = dkpUrl;
   if (quarmyUrl) entry.q = quarmyUrl;
-  if (localOnly) entry._local = true;        // survives /rosterimport — see processOpenDkpExport
   if (mainName)  entry._alt = true;                     // standalone alt (main not in roster)
   if (rootCharId && !mainName) entry._rootId = rootCharId; // only on true top-level mains
 
@@ -278,26 +272,26 @@ function processOpenDkpExport(rawArray) {
     // UNKNOWN rank orphans: already in unknowns list, skip display
   }
 
-  // ⚠ LOCAL-ONLY CHARACTERS SURVIVE THE IMPORT (the guild lead, 2026-09-22:
-  // "traders and non-raid Alts don't need to be in opendkp, only in our db").
-  // Everything above is rebuilt FROM the export, so a character that was never
-  // created upstream is simply absent from the result — and `/rosterimport`
-  // then writes that result over the threads. Without this pass, registering a
-  // trader locally and running an import would delete them, silently, with no
-  // error anywhere.
+  // ⚠ CHARACTERS THE EXPORT DOES NOT MENTION ARE KEPT (the guild lead,
+  // 2026-09-22: "traders and non-raid Alts don't need to be in opendkp, only
+  // in our db"). Everything above is rebuilt FROM the export, so a character
+  // that was never created upstream is absent from the result — and
+  // `/rosterimport` then writes that result over the threads. Without this
+  // pass, registering a trader locally and running an import would delete
+  // them, silently, with no error anywhere.
   //
-  // ⚠ Why a FLAG rather than "keep anything missing from the export": the flag
-  // exists for SCOPE, not for deletions. An earlier version of this comment
-  // justified it as protecting against upstream deletions — the guild lead
-  // pushed back that nobody has ever been deleted from OpenDKP, and they are
-  // right. Leaving the raid sets `Active = 0`, which routes a character to the
-  // INACTIVE roster; they stay in the export either way. Absence means a hard
-  // delete, which has not happened here.
-  // The real reason: keeping every absent name would change what
-  // `/rosterimport` MEANS for all ~400 characters — it could no longer remove
-  // anyone, and a truncated or wrong export file would silently merge the old
-  // roster back in and look like a clean import. The flag keeps the new
-  // behaviour to exactly the new case.
+  // This keeps EVERY absent name, not a flagged subset. The flagged version
+  // that shipped first was justified as protection against upstream deletions,
+  // and the guild lead was right that this invents a case we do not have:
+  // leaving the raid sets `Active = 0`, which routes a character to the
+  // INACTIVE roster — they stay in the export either way. Absence would mean a
+  // hard delete, which has never happened here. So the flag was machinery for
+  // a scenario that does not occur, and it is gone.
+  // ⚠ The real consequence, stated plainly so nobody is surprised by it:
+  // `/rosterimport` can no longer REMOVE anyone. It adds and updates. If a
+  // truncated or wrong export is ever imported, the roster survives rather
+  // than being emptied — which is the safer failure, but it does mean a
+  // genuine upstream deletion would have to be removed by hand.
   const seen = new Set();
   for (const bucket of [active, inactive]) {
     for (const e of bucket) {
@@ -306,18 +300,18 @@ function processOpenDkpExport(rawArray) {
     }
   }
   for (const [key, val] of _lookup) {
-    if (!val._local || seen.has(key)) continue;
-    const entry = { n: val.name, r: val.race, c: val.class, _local: true };
+    if (seen.has(key)) continue;
+    const entry = { n: val.name, r: val.race, c: val.class };
     if (val.quarmyUrl) entry.q = val.quarmyUrl;
-    // A local alt re-nests under its main when the main came back in the
-    // export; otherwise it stands alone, the same fallback addCharacterEntry
-    // uses. Local characters are active by definition — an inactive one would
-    // have come from upstream.
+    if (val.dkpUrl)    entry.d = val.dkpUrl;
+    // Keep them in the bucket they were already in — an absent character that
+    // was inactive must not be promoted to active by surviving an import.
+    const bucket = val.active ? active : inactive;
     const mainEntry = val.mainName
-      ? active.find(m => m.n.toLowerCase() === String(val.mainName).toLowerCase() && !m._alt)
+      ? bucket.find(m => m.n.toLowerCase() === String(val.mainName).toLowerCase() && !m._alt)
       : null;
     if (mainEntry) { (mainEntry.a = mainEntry.a || []).push(entry); }
-    else           { active.push({ ...entry, a: [], ...(val.mainName ? { _alt: true } : {}) }); }
+    else           { bucket.push({ ...entry, a: [], ...(val.mainName ? { _alt: true } : {}) }); }
   }
 
   return { active, inactive, unknowns };
