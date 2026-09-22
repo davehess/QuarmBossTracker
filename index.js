@@ -8371,12 +8371,18 @@ async function _handleAgentTriggerFeedback(req, res) {
 // short table is missing rows (every faction_id on npc_faction 967 resolves to
 // NULL there) and a null name silently drops the value.
 const _FACTION_VALUE_TTL_MS = 6 * 3600 * 1000;
-let _factionValueCache = { at: 0, byMob: null };
+let _factionValueCache = { at: 0, byMob: null, rowsByMob: null };
 async function _factionValueMap() {
   if (_factionValueCache.byMob && Date.now() - _factionValueCache.at < _FACTION_VALUE_TTL_MS) {
     return _factionValueCache.byMob;
   }
   const byMob = new Map();   // normMobName → Map(factionLower → value)
+  // ⚠ A SECOND structure, not a change to the first. byMob lowercases the
+  // faction name because its consumer matches log text case-insensitively, and
+  // a UI needs "Dain Frostreaver IV" rather than a title-cased guess that gets
+  // the numeral wrong. Built in the same pass off the same rows, so it cannot
+  // drift from the map beside it, and no existing caller's shape changes.
+  const rowsByMob = new Map();   // normMobName → [{ name, value }]
   try {
     const supabase = require('./utils/supabase');
     if (supabase.isEnabled()) {
@@ -8404,6 +8410,7 @@ async function _factionValueMap() {
       }
       const factionName = new Map((names || []).map(r => [Number(r.id), String(r.name || '')]));
       const byNpcFaction = new Map();
+      const rowsByNpcFaction = new Map();
       for (const e of (entries || [])) {
         const fn = factionName.get(Number(e.faction_id));
         if (!fn) continue;
@@ -8412,18 +8419,32 @@ async function _factionValueMap() {
         let m = byNpcFaction.get(Number(e.npc_faction_id));
         if (!m) { m = new Map(); byNpcFaction.set(Number(e.npc_faction_id), m); }
         m.set(fn.toLowerCase(), v);
+        let rl = rowsByNpcFaction.get(Number(e.npc_faction_id));
+        if (!rl) { rl = []; rowsByNpcFaction.set(Number(e.npc_faction_id), rl); }
+        rl.push({ name: fn, value: v });
       }
       for (const n of (npcs || [])) {
         const m = byNpcFaction.get(Number(n.npc_faction_id));
         if (!m) continue;
         byMob.set(_normFactionMobName(n.name), m);
+        const rl = rowsByNpcFaction.get(Number(n.npc_faction_id));
+        if (rl) rowsByMob.set(_normFactionMobName(n.name), rl);
       }
     }
   } catch (err) {
     console.warn('[faction] value map build failed:', err && err.message);
   }
-  _factionValueCache = { at: Date.now(), byMob };
+  _factionValueCache = { at: Date.now(), byMob, rowsByMob };
   return byMob;
+}
+// Display-cased faction consequences for ONE mob, biggest swing first — what
+// the Target Info Factions tab renders. Shares the 6h cache above, so asking
+// for a mob costs nothing beyond the first build.
+async function _factionRowsFor(mobName) {
+  await _factionValueMap();                       // ensures the cache is warm
+  const rows = _factionValueCache.rowsByMob && _factionValueCache.rowsByMob.get(_normFactionMobName(mobName));
+  if (!rows || !rows.length) return null;
+  return rows.slice().sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
 }
 // npc_types stores "A_Greater_Spire_Spirit" and instanced rows carry a leading
 // "#"; the log prints "A Greater Spire Spirit". Normalise both to one key.
@@ -14026,7 +14047,7 @@ async function _handleAgentMobInfo(req, res) {
     // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
     // ceiling over the catalog's largest real-name cluster (34 rows; only the
     // junk "_" names go higher) so the payload stays bounded.
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,gender&limit=200`;
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,gender&limit=200`;
     const rows = await supabase.select('eqemu_npc_types',
       `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
     // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
@@ -14229,7 +14250,7 @@ async function _handleAgentMobInfo(req, res) {
           const ids = inWindow.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect&limit=80`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect,cast_on_other,cast_on_you&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
               // npc_spells_entries.manacost = -1 means "use the spell's catalog
               // mana cost"; same convention for recast_delay (-1 = spell default).
@@ -14258,6 +14279,13 @@ async function _handleAgentMobInfo(req, res) {
                   // tab — buffs render without the (always 'Unresist.') resist
                   // column. Null when the catalog isn't enriched yet.
                   good:         (c.good_effect == null ? null : (Number(c.good_effect) ? 1 : 0)),
+                  // ⚠ The landing text is what identifies an NPC's cast. EQ's
+                  // log says only "<Caster> begins to cast a spell." — never
+                  // the name — so the ONLY way to know what a mob cast is to
+                  // match the message its spell prints when it lands, against
+                  // this list. Shipped for that; harmless everywhere else.
+                  other:        c.cast_on_other || null,
+                  you:          c.cast_on_you   || null,
                   priority:     e.priority ?? null,
                   type:         e.type ?? null,
                   minlevel:     e.minlevel ?? null,
@@ -14276,6 +14304,17 @@ async function _handleAgentMobInfo(req, res) {
       // body is rooted, that one isn't" is two different mobs, not a warning).
       const move = mobSpecials.deriveMovement(r);
 
+      // Faction consequences of killing this mob. ⚠ Reuses the bot's existing
+      // resolver rather than re-deriving the npc_faction → faction_list chain:
+      // that map is already 6h-cached and was validated end to end against a
+      // real client log, and it already knows the trap that names live in
+      // eqemu_faction_list_full because eqemu_faction_list is EMPTY in our
+      // mirror (a null name silently drops the value).
+      // Fail-soft: a faction miss must never cost the overlay its stats.
+      let factions = null;
+      try { factions = await _factionRowsFor(r.name); }
+      catch (err) { console.warn('[mob-info] faction rows failed:', err?.message); }
+
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
@@ -14288,6 +14327,11 @@ async function _handleAgentMobInfo(req, res) {
         level:    r.level ?? null,
         maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,
+        // The NPC's mana pool. Only ~21% of the catalog has one (3,741 of
+        // 18,033), and 3,384 have both a pool and a spell list — so the
+        // overlay draws no bar at all when this is null rather than an empty
+        // one. "Where applicable" is literal here.
+        mana:    r.mana ?? null,
         ac:      r.ac ?? null,
         zone:    zoneLong,
         zone_short: zoneShort,
@@ -14335,6 +14379,9 @@ async function _handleAgentMobInfo(req, res) {
         placeholder: picked.placeholder,
         spells,
         loot,
+        // [{ name, value }] biggest swing first — what killing this does to
+        // your standing. Null when the mob has no faction rows.
+        factions,
       };
     }
   } catch (err) {
