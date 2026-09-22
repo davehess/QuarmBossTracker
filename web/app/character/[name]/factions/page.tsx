@@ -349,8 +349,32 @@ async function load(decoded: string) {
   };
 }
 
-export default async function CharacterFactionsPage({ params }: { params: Promise<{ name: string }> }) {
+// ⚠ This filters WHICH FACTIONS ARE LISTED, by when they were last hit. It
+// does NOT re-total the numbers over the window, and the page says so out
+// loud — `faction_standing` holds running totals only, so "3,891 hits" cannot
+// be split into "this week's share" for anything that happened before
+// `faction_hits` started recording on 2026-09-22 (the guild lead: "have this
+// data be timebound for how recently these hits have come in").
+// A filter that silently showed all-time numbers under a "last 7 days" heading
+// would be worse than no filter at all.
+const DAY_WINDOWS = [7, 30, 90] as const;
+function parseDays(v: string | string[] | undefined): number | null {
+  const raw = Array.isArray(v) ? v[0] : v;
+  const n = Number(raw);
+  return (Number.isFinite(n) && DAY_WINDOWS.includes(n as typeof DAY_WINDOWS[number])) ? n : null;
+}
+
+export default async function CharacterFactionsPage(
+  { params, searchParams }: {
+    params: Promise<{ name: string }>;
+    searchParams?: Promise<Record<string, string | string[] | undefined>>;
+  },
+) {
   const { name } = await params;
+  const sp = (await searchParams) || {};
+  // Default is ALL, deliberately — a filter that changes what the page shows
+  // before anyone asks for it is a surprise, not a feature.
+  const days = parseDays(sp.days);
   const decoded = decodeURIComponent(name);
   if (!/^[A-Za-z]{2,}$/.test(decoded)) notFound();
 
@@ -369,7 +393,14 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
   // together (Velious war, Seru vs Katta, Chardok vs the goblin mines, …),
   // most-active bloc first. Catalog members with no recorded hits show as
   // "?" rows with an estimated base standing from race/class.
-  const grouped = groupFactions(standings, f => f.better_count + f.worse_count, { race, cls });
+  // Applied BEFORE grouping so a bloc whose every faction is stale drops out
+  // entirely rather than rendering an empty heading.
+  const cutoffMs = days ? Date.now() - days * 86400000 : null;
+  const shown = cutoffMs === null
+    ? standings
+    : standings.filter(f => f.last_hit_at && Date.parse(f.last_hit_at) >= cutoffMs);
+  const hiddenCount = standings.length - shown.length;
+  const grouped = groupFactions(shown, f => f.better_count + f.worse_count, { race, cls });
   const conRows = cons;
 
   const fmtDate = (ts: string) => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -378,6 +409,45 @@ export default async function CharacterFactionsPage({ params }: { params: Promis
     <div className="space-y-6">
       <div className="text-sm">
         <Link href={`/character/${encodeURIComponent(decoded)}`} className="text-blue hover:underline">← back to {decoded}</Link>
+      </div>
+
+      {/* Plain links, not a client control — this is a server-rendered page and
+          a <select> would drag React state and a router push in for four
+          choices. Each window is its own URL, so it is shareable and the back
+          button works. */}
+      <div className="flex flex-wrap items-baseline gap-2 text-xs">
+        <span className="text-dim">Last hit within:</span>
+        {([null, ...DAY_WINDOWS] as const).map(w => {
+          const on = w === days;
+          const href = w === null
+            ? `/character/${encodeURIComponent(decoded)}/factions`
+            : `/character/${encodeURIComponent(decoded)}/factions?days=${w}`;
+          return (
+            <Link
+              key={String(w)}
+              href={href}
+              aria-current={on ? 'page' : undefined}
+              className={`rounded border px-2 py-0.5 no-underline ${
+                on ? 'bg-accent border-accent text-white' : 'bg-panel border-border text-text hover:bg-[#21262d]'
+              }`}
+            >
+              {w === null ? 'any time' : `${w} days`}
+            </Link>
+          );
+        })}
+        {days !== null && (
+          <span className="text-dim">
+            {hiddenCount > 0
+              ? `${hiddenCount} faction${hiddenCount === 1 ? '' : 's'} hidden`
+              : 'nothing hidden'}
+            {' · '}
+            {/* ⚠ Load-bearing caveat. The window picks the ROWS; the totals in
+                them are still all-time, because faction_standing only ever
+                stored counters. Saying so is the difference between a filter
+                and a lie. */}
+            <span className="text-orange">totals are still all-time</span>
+          </span>
+        )}
       </div>
 
       <section className="bg-panel border border-border rounded-lg p-6">

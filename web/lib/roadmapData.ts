@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'faction-recency-window-2026-09-22',
+    title: 'Faction page: what you have been working on lately',
+    version: 'Web 1.7.46 · Bot 3.1.131',
+    date: '2026-09-22',
+    headline: 'Filter your faction page down to what you have actually hit recently.',
+    features: [
+      {
+        name: 'Last hit within 7 / 30 / 90 days',
+        blurb: 'Your faction page lists everything you have ever touched, which buries the handful you are actually grinding. Pick a window and it shows only the factions hit in that time. “Any time” is still the default, so nothing changes unless you ask it to.',
+      },
+      {
+        name: 'We now keep each faction hit, not just the running total',
+        blurb: 'Until today only the totals were stored — 3,891 hits was a single number with no dates behind it. Every hit is now recorded as it happens, so a future version can show what a week actually moved. It only knows about hits from today onward, but re-importing your old logs fills in the history.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'target-info-factions-and-mana-2026-09-22',
     title: 'Target Info: factions, and what that mob just cast',
     version: 'Mimic 2.6.9-beta \u00b7 Agent 3.6.50 \u00b7 Bot 3.1.130',
