@@ -243,7 +243,20 @@
   if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
-  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
+  // ⚠ ONE TENTH, and drop it when it is zero (the guild lead, 2026-09-22:
+  // "please include tenths for HP, so it would be 4.7k vs 5k"). Rounding to
+  // whole thousands turned a 4,670 HP raider into "5k / 5k HP · 100%" — a
+  // number that is not only imprecise but actively wrong-looking beside a
+  // client window reading 4670/4670. A 330-point error is a heal.
+  // Trailing ".0" is stripped so a real 5,000 still reads "5k" rather than
+  // "5.0k": the tenth is there to carry information, not decoration.
+  function fmtK(v, unit){
+    var s = v.toFixed(1);
+    if (s.slice(-2) === '.0') s = s.slice(0, -2);
+    return s + unit;
+  }
+  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return fmtK(n/1000000, 'M'); if (n >= 1000) return fmtK(n/1000, 'k'); return String(n); }
+  // ── Durations ──────────────────────────────────────────────────────────────
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
   // Short slow name for the badge — "Turgur's Insects" → "Turgur's" (matches the
   // agent's _slowShortName so the badge, the callout, and the debuff row agree).

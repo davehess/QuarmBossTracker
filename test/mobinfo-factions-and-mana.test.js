@@ -27,6 +27,14 @@ const { renderFactions } = evalBlock(
   ['renderFactions'],
 );
 
+// ⚠ Ends on fmtSecs' opening line, the very next declaration — a slice that
+// reached the next SECTION comment would drag ~250 unrelated lines through
+// eval, and anything top-level in them would run.
+const { fmtNum } = evalBlock(
+  sliceBlock(src, '  function fmtK(v, unit){', '\n  // ── Durations '),
+  ['fmtNum'],
+);
+
 // Straight from eqemu_npc_faction_entries via the bot's resolver.
 const KAAVIN = [
   { name: 'Dain Frostreaver IV', value: -50 },
@@ -69,6 +77,41 @@ describe('the Factions tab', () => {
     const h = renderFactions({ factions: [{ name: '<img src=x>', value: 1 }] });
     expect(h).not.toContain('<img');
     expect(h).toContain('&lt;img');
+  });
+});
+
+describe('HP and mana numbers carry a tenth', () => {
+  // The report: a 4,670 HP raider rendered as "5k / 5k HP · 100%" beside a
+  // client window plainly reading 4670/4670. Rounding to whole thousands hid
+  // 330 points — a heal's worth — and looked like a bug rather than a rounding.
+  it('shows the tenth instead of rounding a raider up a whole heal', () => {
+    expect(fmtNum(4670)).toBe('4.7k');
+  });
+
+  // ...but a round number must stay round. "5.0k" is decoration, not detail.
+  it('drops the tenth when it is zero', () => {
+    expect(fmtNum(5000)).toBe('5k');
+    expect(fmtNum(12000)).toBe('12k');
+  });
+
+  it('keeps the tenth for a boss-sized pool', () => {
+    expect(fmtNum(11780)).toBe('11.8k');   // The Spire Lord, real catalog HP
+    expect(fmtNum(2058)).toBe('2.1k');     // and his mana
+  });
+
+  it('leaves values under a thousand exact', () => {
+    expect(fmtNum(940)).toBe('940');
+    expect(fmtNum(0)).toBe('0');
+  });
+
+  it('applies the same rule to millions', () => {
+    expect(fmtNum(2000000)).toBe('2M');
+    expect(fmtNum(2450000)).toBe('2.5M');
+  });
+
+  it('still answers for a missing number', () => {
+    expect(fmtNum(null)).toBe('?');
+    expect(fmtNum(undefined)).toBe('?');
   });
 });
 
