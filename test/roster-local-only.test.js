@@ -41,10 +41,14 @@ describe('local-only characters survive a roster import', () => {
     expect(names(processOpenDkpExport(EXPORT).active)).toContain('Corvale');
   });
 
-  // The whole point of the flag. A character that vanished because it was
-  // deleted UPSTREAM must still disappear — only "we chose not to create this"
-  // is protected. Without this, the pass would resurrect real deletions.
-  it('does NOT resurrect a character that was deleted upstream', () => {
+  // ⚠ This is a SCOPE guard, not a deletion guard. Nobody has ever been
+  // deleted from OpenDKP here (leaving the raid sets Active = 0, which moves a
+  // character to the inactive roster — they stay in the export), so the
+  // original framing of this test was wrong. What it actually pins is that the
+  // pass only re-adds LOCAL entries: keeping every absent name would mean
+  // `/rosterimport` could no longer remove anyone, and a truncated export file
+  // would silently merge the old roster back in and look like a clean import.
+  it('re-adds ONLY local entries, never every name missing from the export', () => {
     addCharacterEntry({ name: 'Rethlan', race: 'Ogre', charClass: 'Shaman' });   // no localOnly
     expect(names(processOpenDkpExport(EXPORT).active)).not.toContain('Rethlan');
   });
