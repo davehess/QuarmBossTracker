@@ -29308,6 +29308,34 @@ function _isNpcTellText(text) {
   if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
   return false;
 }
+// ⚠ The sender-name heuristic below cannot catch a BANKER or MERCHANT (the
+// guild lead, 2026-09-22: "Some NPCs will tell you things like this
+// privately"). "Gage" — a real eqemu_npc_types row — sent "Welcome to my bank!"
+// and "Come back soon!" straight into a raider's Discord DMs. It is ONE
+// capitalised word, so it passes the player-name shape, and the text carries no
+// "Master" and no coin, so _isNpcTellText passes it too.
+//
+// String-matching the greeting was the obvious fix and is the wrong one: the
+// banker/merchant lines are NOT in our mirror (they are server-side, not
+// eqemu_npc_emotes — checked), so the list could only ever be guessed at and
+// extended forever, and "Come back soon!" is something a player might actually
+// type. This file's own rule is that letting an NPC tell through is harmless
+// while dropping a real one is not.
+//
+// So: drop only when the sender is the mob we are LOOKING AT and that name
+// resolves to a catalog NPC. Both halves matter — you target a banker to bank
+// with it, and requiring the target match means a real player who happens to
+// share an NPC's name is only ever silenced if they tell you in the same
+// moment you are targeting their namesake. Fails open on every error.
+function _isNpcTellSender(other) {
+  try {
+    if (typeof _currentTargetState !== 'function' || typeof _normMobNameAgent !== 'function') return false;
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return false;
+    if (_normMobNameAgent(st.target_name) !== _normMobNameAgent(other)) return false;
+    return !!_npcMobInfoFor(other);   // a cached mob-info row = the catalog knows this name
+  } catch { return false; }
+}
 function parseTellLine(line, selfName) {
   // Cheap gate — both tell regexes require one of these literals.
   if (line.indexOf('tells you') === -1 && line.indexOf('You told') === -1) return null;
@@ -29341,6 +29369,7 @@ function parseTellLine(line, selfName) {
   // Always incoming; never a real player tell. Dropped from BOTH the local
   // Recent Tells card and the DM relay (parseTellLine returning null).
   if (direction === 'incoming' && _isNpcTellText(text)) return null;
+  if (direction === 'incoming' && _isNpcTellSender(other)) return null;
   // Stable dedup: sha1 over the tuple. ts in here so two identical messages
   // sent later get fresh rows (which is correct — they ARE separate tells).
   const key = crypto.createHash('sha1')
