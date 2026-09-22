@@ -122,7 +122,34 @@ is ephemeral. It is a desktop-session job.
 | ⚠ **Nothing warns a raider that their EQ log has grown to gigabytes** | open (2026-09-22). A member's `eqlog_<name>_pq.proj.txt` reached **1.33 GB, unbroken since Nov 2024**, and they only noticed by accident. Our own source already says players rotate by hand *"to keep it small — EQ slows down on multi-GB logs"*, but no surface says so: nothing in `docs/`, nothing on the dashboard. ⚠ And renaming in place does not help — `_isEqLogFile` accepts `.txt2`/`.txt.old`/`" BACKUP.txt"` on the stem + welcome-line sniff, so a renamed log in the EQ folder is still tailed | surface the size where the logs are already listed (Logsync tab / Setup card) with a threshold and the move-it-out-and-add-as-old-log-folder action. UI, so it gets options first |
 | Overlay progress bars animate `width`, not `transform` | open (2026-09-22, raised by the impeccable detector on 3 sites in `mobinfo.html`: `.hpbar`, `.manabar`, `.tbuff .bbar`). A real finding, not a false positive — animating `width` forces layout every frame, and these composite over a live 3D scene on machines whose GPU drivers we have watched reset under load. ⚠ **Not a CSS tweak**: the renderers set `style="width:N%"` in several places, so `scaleX` means `transform-origin:left` + changing every call site | do it as its own pass across the overlay family (pets/triggers/tank carry the same pattern), not folded into an unrelated change |
 | `apps/mimic/pets.html` has a second copy of `fmtNum` | open (2026-09-22) — still rounds to whole thousands, so the Pet tracker will read "5k" where Target Info now reads "4.7k" | match it, and decide whether the two copies should become one shared helper rather than drift again |
+| ⚠ **CAPTURED: the "too high of a level" failure string — for CHARM** | 2026-09-22, from a live bard pull: `Your target is too high of a level for your charm spell.` (followed in the same second by `Your target resisted the Solon's Bewitching Bravura spell.`). `CLAUDE.md`'s lull-line note says this failure family *"has a message we have not captured"* — now half of it is captured. ⚠ **The PACIFY/HARMONY wording is still NOT captured**; it is presumably the same template with a different spell word, but `CLAUDE.md` says do not invent the string and that still holds | grep confirms the agent handles `Your target resisted the …` and `Your charm spell has worn off.` but **not** the too-high line. Decide whether a too-high failure can leave `_pendingCharmSpell` staged when no resist line follows — if it can, that is a phantom charm timer |
 | `beta.yml` vs `latest.yml` | observation 2026-09-21 — `CLAUDE.md`'s channel table says Windows beta publishes `beta.yml`; beta.8/9/10 all publish `latest.yml`, and beta.9's has 163 downloads, so the channel demonstrably works | doc looks stale, not the build. Confirm next time the release workflow is open |
+
+## 4. NPC tells were reaching Discord DMs (2026-09-22)
+
+The guild lead: *"Some NPCs will tell you things like this privately."* The DM
+thread read **`Gage → Hitya: Welcome to my bank!`** and **`Come back soon!`**,
+twice over.
+
+`Gage` is a real `eqemu_npc_types` row, and it defeats **both** existing guards:
+the sender is one capitalised word (so it has a player's name shape, and the
+multi-word/lowercase heuristic passes it) and the text carries no `Master` and
+no coin (so `_isNpcTellText` passes it too).
+
+⚠ **String-matching the greeting was the obvious fix and is the wrong one.**
+Banker and merchant lines are **not in our mirror** — checked
+`eqemu_npc_emotes`, which holds 4,144 combat/quest emotes and neither of these —
+so the list could only ever be guessed at and extended forever. And *"Come back
+soon!"* is something a player might genuinely type. The rule already stated in
+that source file is the one that governs: **an NPC tell slipping through is
+harmless; dropping a real one is not.**
+
+**Shipped instead (agent 3.6.52):** drop only when the sender is **the mob we
+are looking at** *and* that name resolves to a catalog NPC. Both halves matter —
+you target a banker to bank with it, and requiring the target match means a real
+player who shares an NPC's name is silenced only if they tell you in the very
+moment you are targeting their namesake. Fails open on every error; never
+applies to outgoing tells. Mutation-checked both ways.
 
 ## 3. Target Info — mana bar + Factions tab, measured 2026-09-22
 
