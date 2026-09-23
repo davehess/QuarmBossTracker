@@ -448,6 +448,18 @@ and the same never-refetch guarantee.
   (`web/lib/supabase-paged.ts`). A self-hoster changing `max-rows` changes
   behaviour everywhere, which is itself a reason to page rather than configure.
 
+### Threat data retention (2026-09-23)
+- **Raw threat snapshots are disposable only after they are summarised.** Each
+  settled fight's curve and deaths are stored in `encounter_threat_graph`
+  (~150 bytes per fight-row; 2.4 MB for our first 17k fights, against ~1.4 GB
+  of raw snapshots). Deleting raw rows requires BOTH that summary and, for us,
+  the on-prem archive watermark. A deployment with no archive box needs a
+  different gate — our rule is "only delete what Tower holds", and a
+  single-host install has no Tower. The wizard must ask, not assume.
+- The 30-day raw retention and the 7-day thinning are **our paid-plan
+  defaults**; an on-prem deployment can keep raw snapshots forever for the price
+  of disk.
+
 ## 4. Open questions for whoever builds it
 
 - **What does the wizard run as?** A CLI in the repo, a page in the local web
