@@ -3,12 +3,87 @@
 **For the local session with Tower access.** Written 2026-09-23 02:03 UTC
 (2026-09-22 22:03 ET). Self-contained; no prior conversation needed.
 
-**You were right to stop at the checksum.** Tower's copies are *ahead* of the
-repo, not behind, and shipping the repo's file would have thrown away three hand
-fixes. So this is a patch against **your** file, not a replacement. Two edits,
-both drop-in, neither touching the parts that drifted.
+---
+
+## ★ Updated 2026-09-23 ~03:30 UTC — skip the hand-patching. Take the repo file.
+
+The first version of this doc said Tower was *ahead* of the repo, so you had to
+patch your own file. That was true then. **It is not now:** the repo's
+`archive-merge.sql` has absorbed all three of Tower's hand fixes, plus the FK
+order, the two-pass delete, and the unique-index fix. It is a functional superset
+of anything you could hand-build from the Parts below, and it passes **19 of 19**
+— no cosmetic failure. A full merge of a 200k-row table over postgres_fdw runs in
+1.55 s.
+
+⚠ And one of your three fixes turned out to be the important one. `=` instead of
+`is not distinct from` is **not** cosmetic: DISTINCT FROM cannot hash, so every
+join across the foreign table becomes a Nested Loop. Measured on 200k rows —
+`=` 224 ms, DISTINCT FROM still running at a 60 s cap, growing quadratically.
+At the archive's ~1.2M rows the old repo file would effectively never finish.
+That is very likely why you changed it on 09-06.
+
+This ends the two-copies drift that made tonight hard. Run these in order; each
+step says what it should print.
+
+**1 — Gate: is Tower's drift exactly the three known fixes?** Compares your
+pre-tonight backup against the repo version it came from, and filters out the
+three fixes. **Nothing printed = clean.** Anything printed = unknown drift: stop
+and send it to me, and fall back to the Parts below.
+
+```bash
+cd /mnt/user/backups/wolfpack/repo
+curl -fsSL https://raw.githubusercontent.com/davehess/QuarmBossTracker/2bc7b900480c7ed045eb0d201511142081d52269/scripts/lib/archive-merge.sql \
+  | diff - scripts/lib/archive-merge.sql.bak-20260923 | grep '^[<>]' \
+  | grep -v -e is_generated -e 'overriding system value' -e '= d\.%1\$I' \
+            -e 'is not distinct from d\.%1\$I' -e 'insert into public\.%1\$I (%2\$s) select %2\$s from snap\.%1\$I'
+```
+
+(Validated here both ways: silent on a simulated `.bak` carrying exactly your
+three fixes, and it printed an injected `order by c.relname desc` straight away.)
+
+**2 — Keep your hand-patched copy, then take the repo file.**
+
+```bash
+cp scripts/lib/archive-merge.sql scripts/lib/archive-merge.sql.handpatched-20260923
+curl -fsSL -o scripts/lib/archive-merge.sql \
+  https://raw.githubusercontent.com/davehess/QuarmBossTracker/bffb587132df37aeb6052ccb6a0f26a33d796118/scripts/lib/archive-merge.sql
+md5sum scripts/lib/archive-merge.sql    # 92f6a42c1c90658b9e8b0956c161a520
+```
+
+(Pinned to the commit, not the branch: raw GitHub caches branch URLs for a few
+minutes, so a branch fetch right after a push can quietly serve the previous
+file. A commit URL cannot change. If the md5 still differs, stop.)
+
+Leave **`refresh-local-archive.sh` exactly as it is** — your `drop … with
+(force)` and snapshot connection settings are not in the repo yet.
+
+**3 — Test. Expect 19 `ok` and `PASS`.** (You already have the 19-assertion test
+at `/tmp/test-archive-merge.sh`, md5 `a35e0943…`.)
+
+```bash
+docker exec -i supabase-db mkdir -p /tmp/mt/scripts/lib
+docker cp scripts/lib/archive-merge.sql  supabase-db:/tmp/mt/scripts/lib/
+docker cp /tmp/test-archive-merge.sh     supabase-db:/tmp/mt/scripts/test-archive-merge.sh
+docker exec -i supabase-db bash -lc 'cd /tmp/mt && PGUSER=postgres bash scripts/test-archive-merge.sh'
+docker exec -i supabase-db rm -rf /tmp/mt
+```
+
+**4 — Merge**, then send me the two queries in §5.
+
+```bash
+bash scripts/refresh-local-archive.sh
+```
+
+Everything below this line is the hand-patch route. Use it only if the gate in
+step 1 prints something.
 
 ---
+
+## The hand-patch route (fallback only)
+
+**You were right to stop at the checksum.** Tower's copies were *ahead* of the
+repo when this was first written, and shipping the repo's file then would have
+thrown away three hand fixes. This route patches **your** file instead.
 
 ## 0. What to do, in order
 
