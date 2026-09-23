@@ -9,9 +9,9 @@
 --   ARCHIVE  insert new rows, update changed ones, NEVER delete. Production
 --            prunes these on a retention timer (buff_casts at 7 days,
 --            raid_roster at 1 hour, threat snapshots at 30, who at 60,
---            target_observations at 90) — a row missing from the snapshot means
---            "aged out upstream", not "no longer true", so the local copy keeps
---            it forever.
+--            target_observations at 1 day) — a row missing from the snapshot
+--            means "aged out upstream", not "no longer true", so the local copy
+--            keeps it forever.
 --
 --   MIRROR   everything else. Insert, update, AND delete rows absent from the
 --            snapshot — because for these a production delete is a CORRECTION.
@@ -26,6 +26,30 @@
 -- copy match production. Getting it wrong the other way silently accumulates
 -- stale rows that look real.
 --
+-- ⚠ TABLE ORDER IS LOAD-BEARING, AND ALPHABETICAL ORDER IS WRONG. This file
+-- merged `order by c.relname` from 2026-08-12 until 2026-09-23, which put
+-- `charm_sessions` ahead of `encounters`, the table it references. The moment a
+-- charm session pointed at an encounter newer than the archive's copy, the
+-- insert failed its foreign key — and because the whole merge is ONE statement,
+-- one FK violation rolls back every table and writes no merge_log row at all.
+-- It failed that way silently for 17 consecutive nights (the archive froze at
+-- 2026-09-06 while the cron kept reporting OK, because the wrapper only prints
+-- `merge exit=` and the later steps still succeeded).
+--
+-- So the passes run in opposite directions, and both directions are required:
+--
+--   INSERT  parents first  — a child row cannot reference a parent the archive
+--                            has not received yet.
+--   DELETE  children first — a mirror parent whose row is gone upstream still
+--                            has local children until their own turn, so
+--                            dropping the parent first is the same violation
+--                            with the arrow reversed.
+--
+-- Alphabetical order got the delete direction right by luck about half the time
+-- (`bosses_local` happens to sort before `eqemu_npc_types`) and the insert
+-- direction wrong. Ordering by the real FK graph is what survives the next
+-- foreign key somebody adds.
+--
 -- Idempotent: re-running merges the same snapshot to the same result.
 
 create schema if not exists archive_meta;
@@ -38,6 +62,26 @@ create table if not exists archive_meta.merge_log (
   rows_after  bigint,
   rows_kept   bigint          -- archive only: rows we hold that the snapshot lost
 );
+
+-- The two passes must agree on what a table's primary key is, so they ask the
+-- same function rather than each carrying a copy of the catalog query.
+create or replace function archive_meta.pk_columns(p_table text)
+returns text[] language sql stable as $fn$
+  select array_agg(a.attname order by k.ord)
+    from pg_constraint con
+    cross join lateral unnest(con.conkey) with ordinality as k(attnum, ord)
+    join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum
+   where con.conrelid = ('public.' || quote_ident(p_table))::regclass
+     and con.contype = 'p';
+$fn$;
+
+-- Snapshot row `s` is the same row as archive row `d`. IS NOT DISTINCT FROM
+-- rather than `=` so a nullable key column still compares.
+create or replace function archive_meta.pk_match(p_cols text[])
+returns text language sql immutable as $fn$
+  select string_agg(format('s.%1$I is not distinct from d.%1$I', c), ' and ')
+    from unnest(p_cols) c;
+$fn$;
 
 do $merge$
 declare
@@ -53,37 +97,95 @@ declare
     'pvp_boss_kills', 'trigger_timing_feedback', 'zeal_tag_observations',
     'page_views', 'audit_log'
   ];
-  t            record;
-  pk_cols      text[];
-  shared_cols  text[];
-  col_list     text;
-  update_set   text;
-  is_archive   boolean;
-  before_n     bigint;
-  after_n      bigint;
-  kept_n       bigint;
+  merge_order   text[];            -- parents first, children after
+  before_counts bigint[] := '{}';  -- row counts taken BEFORE any delete, by ordinal
+  tbl           text;
+  i             int;
+  pk_cols       text[];
+  shared_cols   text[];
+  col_list      text;
+  update_set    text;
+  is_archive    boolean;
+  before_n      bigint;
+  after_n       bigint;
+  kept_n        bigint;
 begin
-  for t in
-    select c.relname as tbl
-    from pg_class c
-    join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relkind = 'r'
-      and exists (select 1 from pg_class c2 join pg_namespace n2 on n2.oid = c2.relnamespace
-                  where n2.nspname = 'snap' and c2.relname = c.relname)
-    order by c.relname
-  loop
+  -- Rank every table that exists on BOTH sides so its FK parents come first.
+  -- `depth` is the LONGEST path from any root, which is a valid topological
+  -- rank on a DAG; the `depth < 32` guard is what makes an FK cycle terminate
+  -- rather than loop forever. Inside a cycle the order is arbitrary — no single
+  -- pass can satisfy a cycle, and we have none today.
+  with recursive shared as (
+    select c.relname::text as tbl
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relkind = 'r'
+       and exists (select 1 from pg_class c2
+                     join pg_namespace n2 on n2.oid = c2.relnamespace
+                    where n2.nspname = 'snap' and c2.relname = c.relname)
+  ),
+  fk_edges as (
+    select cl.relname::text as child, pl.relname::text as parent
+      from pg_constraint con
+      join pg_class cl on cl.oid = con.conrelid
+      join pg_class pl on pl.oid = con.confrelid
+      join pg_namespace cn on cn.oid = cl.relnamespace
+      join pg_namespace pn on pn.oid = pl.relnamespace
+     where con.contype = 'f'
+       and cn.nspname = 'public' and pn.nspname = 'public'
+       and cl.relname <> pl.relname   -- self-reference: no table order can help
+  ),
+  -- Walked through EVERY public table, not just the shared ones, so a chain
+  -- that passes through a table absent from the snapshot still ranks correctly.
+  walk (tbl, depth) as (
+    select c.relname::text, 0
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public' and c.relkind = 'r'
+    union
+    select e.child, w.depth + 1
+      from walk w
+      join fk_edges e on e.parent = w.tbl
+     where w.depth < 32
+  )
+  select array_agg(r.tbl order by r.depth, r.tbl)
+    into merge_order
+    from (select w.tbl, max(w.depth) as depth from walk w group by w.tbl) r
+   where r.tbl in (select s.tbl from shared s);
+
+  if merge_order is null then
+    raise notice 'nothing to merge — no table exists in both public and snap';
+    return;
+  end if;
+
+  -- PASS 1 — mirror deletes, CHILDREN FIRST (see the header). Row counts are
+  -- taken here, before anything is removed, so merge_log's rows_before still
+  -- means "what the archive held when this run started".
+  for i in reverse array_length(merge_order, 1) .. 1 loop
+    tbl := merge_order[i];
+    pk_cols := archive_meta.pk_columns(tbl);
+    if pk_cols is null then continue; end if;   -- reported once, in pass 2
+
+    execute format('select count(*) from public.%I', tbl) into before_n;
+    before_counts[i] := before_n;
+
+    -- Archive tables skip this entirely — that omission IS the feature.
+    if not (tbl = any (archive_tables)) then
+      execute format(
+        'delete from public.%1$I d where not exists (select 1 from snap.%1$I s where %2$s)',
+        tbl, archive_meta.pk_match(pk_cols));
+    end if;
+  end loop;
+
+  -- PASS 2 — insert + update, PARENTS FIRST.
+  for i in 1 .. array_length(merge_order, 1) loop
+    tbl := merge_order[i];
+
     -- Primary key: the conflict target. No PK means we cannot merge safely, so
     -- the table is skipped loudly rather than duplicated on every run.
-    select array_agg(a.attname order by k.ord)
-      into pk_cols
-    from pg_constraint con
-    cross join lateral unnest(con.conkey) with ordinality as k(attnum, ord)
-    join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.attnum
-    where con.conrelid = ('public.' || quote_ident(t.tbl))::regclass
-      and con.contype = 'p';
-
+    pk_cols := archive_meta.pk_columns(tbl);
     if pk_cols is null then
-      raise notice 'SKIP % — no primary key, cannot merge without duplicating', t.tbl;
+      raise notice 'SKIP % — no primary key, cannot merge without duplicating', tbl;
       continue;
     end if;
 
@@ -92,9 +194,9 @@ begin
     select array_agg(quote_ident(column_name) order by ordinal_position)
       into shared_cols
     from information_schema.columns lc
-    where lc.table_schema = 'public' and lc.table_name = t.tbl
+    where lc.table_schema = 'public' and lc.table_name = tbl
       and exists (select 1 from information_schema.columns sc
-                  where sc.table_schema = 'snap' and sc.table_name = t.tbl
+                  where sc.table_schema = 'snap' and sc.table_name = tbl
                     and sc.column_name = lc.column_name);
 
     col_list := array_to_string(shared_cols, ', ');
@@ -103,41 +205,30 @@ begin
     from unnest(shared_cols) c
     where c <> all (select quote_ident(x) from unnest(pk_cols) x);
 
-    is_archive := t.tbl = any (archive_tables);
-    execute format('select count(*) from public.%I', t.tbl) into before_n;
-
-    -- MIRROR only: drop rows the snapshot no longer has. Archive tables skip
-    -- this entirely — that omission IS the feature.
-    if not is_archive then
-      execute format(
-        'delete from public.%1$I d where not exists (select 1 from snap.%1$I s where %2$s)',
-        t.tbl,
-        (select string_agg(format('s.%1$I is not distinct from d.%1$I', c), ' and ')
-           from unnest(pk_cols) c));
-    end if;
+    is_archive := tbl = any (archive_tables);
+    before_n   := before_counts[i];
 
     if update_set is null then         -- table is nothing but its primary key
       execute format('insert into public.%1$I (%2$s) select %2$s from snap.%1$I
                       on conflict (%3$s) do nothing',
-                     t.tbl, col_list, array_to_string(pk_cols, ', '));
+                     tbl, col_list, array_to_string(pk_cols, ', '));
     else
       execute format('insert into public.%1$I (%2$s) select %2$s from snap.%1$I
                       on conflict (%3$s) do update set %4$s',
-                     t.tbl, col_list, array_to_string(pk_cols, ', '), update_set);
+                     tbl, col_list, array_to_string(pk_cols, ', '), update_set);
     end if;
 
-    execute format('select count(*) from public.%I', t.tbl) into after_n;
+    execute format('select count(*) from public.%I', tbl) into after_n;
     if is_archive then
       execute format('select count(*) from public.%1$I d where not exists
-                      (select 1 from snap.%1$I s where %2$s)', t.tbl,
-        (select string_agg(format('s.%1$I is not distinct from d.%1$I', c), ' and ')
-           from unnest(pk_cols) c)) into kept_n;
+                      (select 1 from snap.%1$I s where %2$s)',
+                     tbl, archive_meta.pk_match(pk_cols)) into kept_n;
     else
       kept_n := 0;
     end if;
 
     insert into archive_meta.merge_log (table_name, mode, rows_before, rows_after, rows_kept)
-    values (t.tbl, case when is_archive then 'archive' else 'mirror' end,
+    values (tbl, case when is_archive then 'archive' else 'mirror' end,
             before_n, after_n, kept_n);
   end loop;
 end

@@ -4437,10 +4437,27 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   and update but NEVER delete; everything else mirrors production exactly,
   because for those a delete is a correction (`character_inventory` and friends
   are delete-then-reinsert on every upload). Proof:
-  `scripts/test-archive-merge.sh` — 9 assertions, run it after touching the SQL.
-  ⚠ Needs a local session: swap the User Scripts entry from
-  `refresh-local-sandbox.sh` to `refresh-local-archive.sh`; do not run both.
+  `scripts/test-archive-merge.sh` — 14 assertions, run it after touching the SQL.
+  Installed on Tower 2026-09-06 as User Script `wolfpack-nightly-archive`
+  (`30 5 * * *`), replacing `refresh-local-sandbox.sh`.
   Growth is real — ~9,500 buff_casts rows/day, a few GB/year.
+- **⚠ The merge then failed SILENTLY for 17 consecutive nights (2026-09-06 →
+  09-22), fixed 2026-09-23.** Tables merged alphabetically, so `charm_sessions`
+  inserted before `encounters`, the table it references; the FK violation rolled
+  back the whole single-statement merge and wrote no `merge_log` row, while the
+  wrapper's later steps kept printing OK. Now ordered by the real FK graph, with
+  deletes running children-first in their own pass — reproduced on a throwaway
+  Postgres and mutation-checked in both directions. `refresh-local-archive.sh`
+  additionally fails when a run writes no `merge_log` rows (its old check,
+  `encounters >= 1`, passes happily against a frozen archive).
+  ⚠ Needs a local session: **copy the three fixed files onto Tower and run the
+  catch-up** — `docs/HANDOFF-tower-archive-catchup.md` (Tower's repo copy is not
+  a git checkout). Until then the watermark stays at 2026-09-06 and production's
+  threat sweep deletes nothing.
+  ⚠ Already lost: `buff_casts` 2026-09-06 → 09-15, pruned by production's 7-day
+  sweep before Tower ever received it. ⚠ Still at risk: `target_observations`
+  (306,570 rows back to 2026-08-04) the first time its new 1-day sweep completes
+  — that sweep has no archive gate.
 - **⚠ PostgREST's 1000-row cap silently truncates reads across the site
   (audited 2026-08-12).** `.limit(N)` only LOWERS PostgREST's ceiling, never
   raises it, so any query matching >1000 rows returns the first 1000 with no

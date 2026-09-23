@@ -8,7 +8,7 @@
 #
 # Production prunes on timers, and correctly: raid_roster at 1 hour, buff_casts
 # at 7 days, encounter_threat_snapshots at 30, who_observations at 60,
-# target_observations at 90. Those sweeps exist because every live consumer reads
+# target_observations at 1 day. Those sweeps exist because every live consumer reads
 # ≤3 hours back and the tables were 118 MB before the first purge. This box has
 # no such pressure, so it keeps everything and becomes the long-horizon record:
 # slow uptime across an expansion, threat patterns over months — questions the
@@ -100,4 +100,10 @@ echo "archive: ~${BEFORE_TOTAL} -> ~${AFTER_TOTAL} rows; ${KEPT} rows exist ONLY
 # Success means the core tables are queryable, not that a count went up.
 CORE="$(psql_c "$DB" -tAc "select count(*) from encounters" | tr -d '[:space:]')"
 [ "${CORE:-0}" -ge 1 ] || { echo "FAILED: encounters is empty after merge"; exit 1; }
-echo "OK: archive merged (encounters=$CORE)"
+
+# ⚠ "OK" must mean THIS run merged — not that the archive still holds old rows.
+# The 2026-09-06..22 outage was silent precisely because every check downstream
+# of the merge kept passing against a frozen archive.
+FRESH="$(psql_c "$DB" -tAc "select count(*) from archive_meta.merge_log where ran_at > now() - interval '10 minutes'" | tr -d '[:space:]')"
+[ "${FRESH:-0}" -ge 1 ] || { echo "FAILED: no merge_log rows from this run — the archive is unchanged"; exit 1; }
+echo "OK: archive merged ($FRESH tables this run, encounters=$CORE)"
