@@ -189,26 +189,34 @@ For reference: the same Tower-shaped file *without* Part 1 still fails on
 `charm_sessions_encounter_id_fkey`, so your hand fixes are not what was fixing
 this — this patch is.
 
+⚠⚠ **FETCH THE TEST FIRST. Tower already has an OLD `test-archive-merge.sh`
+with 9 assertions and none of them touch FK ordering** — it passes against the
+broken file and against the fixed one equally, so a `PASS` from Tower's copy
+proves nothing about this patch. (It caught one of us out on the first run: nine
+`ok` lines and `PASS`, with the FK assertions simply absent.) **If the run does
+not print 14 lines, you ran the wrong script.**
+
+The repo is public, so pull it straight from the branch — no checkout needed:
+
+```bash
+curl -fsSL -o /tmp/test-archive-merge.sh \
+  https://raw.githubusercontent.com/davehess/QuarmBossTracker/claude/sharp-lamport-dC0TW/scripts/test-archive-merge.sh
+md5sum /tmp/test-archive-merge.sh    # 96f6318bde77b1b37c65b981b293f496
+grep -c '^check ' /tmp/test-archive-merge.sh   # 14
+```
+
 The test needs a real Postgres and only ever touches a database called
 `archive_merge_selftest`, which it drops at both ends. Unraid's host has no
-`psql`, so run it in the container:
+`psql`, so run it in the container — note the second `docker cp` takes the
+file from `/tmp`, **not** from Tower's `scripts/`:
 
 ```bash
 cd /mnt/user/backups/wolfpack/repo
 docker exec -i supabase-db mkdir -p /tmp/mt/scripts/lib
-docker cp scripts/lib/archive-merge.sql  supabase-db:/tmp/mt/scripts/lib/
-docker cp scripts/test-archive-merge.sh  supabase-db:/tmp/mt/scripts/
+docker cp scripts/lib/archive-merge.sql   supabase-db:/tmp/mt/scripts/lib/
+docker cp /tmp/test-archive-merge.sh      supabase-db:/tmp/mt/scripts/test-archive-merge.sh
 docker exec -i supabase-db bash -lc 'cd /tmp/mt && PGUSER=postgres bash scripts/test-archive-merge.sh'
 docker exec -i supabase-db rm -rf /tmp/mt
-```
-
-⚠ `scripts/test-archive-merge.sh` is the one file you **should** take from the
-repo — it is new (14 assertions, up from 9) and Tower has no copy to conflict
-with. Branch `claude/sharp-lamport-dC0TW`:
-
-```bash
-git fetch origin claude/sharp-lamport-dC0TW
-git show origin/claude/sharp-lamport-dC0TW:scripts/test-archive-merge.sh > /tmp/test-archive-merge.sh
 ```
 
 (`docker cp` is fine for these — they are ordinary files. The standing rule about
