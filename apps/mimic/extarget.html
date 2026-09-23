@@ -21,6 +21,16 @@
   .head .icon{flex-shrink:0}
   .head .ttl{color:#f6c365;font-weight:600;flex:1;min-width:0}
   .head .cnt{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
+  /* Stacked, right-aligned: "4 online" over "🛡 2 off-tanked". On one line the
+     pair grew until it squeezed the title into two lines (a member, 2026-09-23). */
+  .head .cnt{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;white-space:nowrap}
+  /* Title + two labelled toggles + the count need ~355px; a typical overlay
+     gives the header ~280. Below that the toggles drop to their icon (tooltip +
+     on/off colour unchanged) so the title stops being crushed onto them. The
+     title may still take two lines, but never overlaps. */
+  .head .ttl{min-width:min-content}
+  @media (max-width: 379px){ .head .offtank-btn .bl{display:none} }
+  @media (max-width: 319px){ .head{gap:4px} }
   .head .conn{font-size:11px;flex-shrink:0}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .rows{display:flex;flex-direction:column;gap:3px;background:rgb(0 0 0 / var(--bg-alpha));
@@ -200,8 +210,8 @@
       <span id="conn" class="conn bad">○</span>
       <span class="icon">🎯</span>
       <span class="ttl">Extended Target</span>
-      <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡 off-tanks</button>
-      <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥 players</button>
+      <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡<span class="bl"> off-tanks</span></button>
+      <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥<span class="bl"> players</span></button>
       <span class="cnt" id="cnt"></span>
     </div>
     <div id="rows" class="rows"></div>
@@ -607,20 +617,29 @@
       return true;
     });
     var offTankCount = (payload && payload.off_tank_count) || 0;
+    // Outside a raid the agent scopes the board to YOUR group (scope 'group'),
+    // so the count is your group, not the zone's online raiders.
+    var groupScope = !!(payload && payload.scope === 'group');
+    // Header count: one line per fact, stacked — never side by side.
+    function cntHtml(withOnline){
+      var h = '';
+      if (withOnline && payload && payload.online != null) h += '<span>' + esc(payload.online) + (groupScope ? ' in group' : ' online') + '</span>';
+      if (!_showOffTank && offTankCount) h += '<span>🛡 ' + esc(offTankCount) + ' off-tanked</span>';
+      return h;
+    }
     if (!targets.length) {
       rowsEl.innerHTML = '';
       emptyEl.style.display = 'block';
       emptyEl.textContent = (payload && payload.loading) ? 'loading…'
-        : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held' : 'waiting for raid targets…');
-      cntEl.textContent = (!_showOffTank && offTankCount) ? '🛡 ' + offTankCount + ' off-tanked' : '';
+        : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held'
+                      : (groupScope ? 'waiting for group targets…' : 'waiting for raid targets…'));
+      cntEl.innerHTML = cntHtml(false);
       footEl.style.display = 'none';
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
       return;
     }
     emptyEl.style.display = 'none';
-    var cntTxt = (payload.online != null ? payload.online + ' online' : '');
-    if (!_showOffTank && offTankCount) cntTxt += (cntTxt ? ' · ' : '') + '🛡 ' + offTankCount + ' off-tanked';
-    cntEl.textContent = cntTxt;
+    cntEl.innerHTML = cntHtml(true);
     var html = '';
     var anyAmb = false;
     // Group same-name mobs (ambiguous / same_name_count>1) so their debuffs

@@ -7672,10 +7672,16 @@ class EncounterBuilder {
     if (!p || !p.eventRef) return;
     const ev = p.eventRef;
     ev._dsSettled = true;
+    // A flavor line that arrived BEFORE the swing named the wearer was kept on
+    // the candidate (see the ds_flavor handler) rather than settling blind.
+    flavor = flavor || p.flavor || null;
     const amount = Number(ev.amount) || 0;
     const known  = amount > 0 ? this._knownDsPerHit(p.tank) : 0;
     const fits   = known > 0 && amount <= known + DS_UNLISTED_SLACK;
-    const isDs   = amount > 0 && (flavor ? (known === 0 || fits) : fits);
+    // No wearer, no shield: a candidate whose swing never arrived stays the
+    // anonymous hit it was. Without this a named shield with no known tank
+    // (known === 0) would be credited to nobody.
+    const isDs   = !!p.tank && amount > 0 && (flavor ? (known === 0 || fits) : fits);
     if (isDs) {
       ev.attacker = p.tank;
       ev.ds       = true;
@@ -7787,6 +7793,10 @@ class EncounterBuilder {
       const p = this._dsPending;
       const mine = !!(p && p.mobLower === String(event.defender || '').toLowerCase()
           && flavorTsMs - p.tsMs <= DS_PAIR_WINDOW_MS);
+      // Our candidate but its swing hasn't arrived yet (shield line logged
+      // before the swing it answered): keep the evidence and let the swing, or
+      // the window closing, settle it.
+      if (mine && !p.tank) { p.flavor = event.ability || null; return; }
       // Settle regardless — a flavor line marks the end of the pair window;
       // one for another mob (or too late) just settles without the evidence.
       if (p) this._settleDsPending(mine ? (event.ability || null) : null);
@@ -8090,6 +8100,12 @@ class EncounterBuilder {
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
+        // A shield line that arrived BEFORE this swing is waiting on it: this
+        // swing is the one it answered, so it names the wearer.
+        const dp = this._dsPending;
+        if (dp && !dp.tank && dp.mobLower === att.toLowerCase() && tsMs - dp.tsMs <= DS_PAIR_WINDOW_MS) {
+          dp.tank = tank;
+        }
         // Rolling record of who the mob's melee is actually connecting on —
         // the Main-Tank signal for the Tank overlay (majority of connects
         // over the last ~15s). Rampage hits are excluded: the rampage
@@ -8151,13 +8167,25 @@ class EncounterBuilder {
       // event carries _dsSettled and passes straight through.
       if (event.attacker === null && def && event.ability === 'non-melee' && !event._dsSettled) {
         const recent = this._lastIncomingHit.get(def.toLowerCase());
+        // Settle any older candidate before opening a new one (one mob's
+        // hit must not borrow another's flavor line).
+        if (this._dsPending) this._settleDsPending(null);
         if (recent && tsMs - recent.tsMs <= DS_PAIR_WINDOW_MS) {
-          // Settle any older candidate before opening a new one (one mob's
-          // hit must not borrow another's flavor line).
-          if (this._dsPending) this._settleDsPending(null);
           this._dsPending = { eventRef: event, tank: recent.tank, mobLower: def.toLowerCase(), tsMs };
           return;
         }
+        // No swing yet — held anyway, so the swing that follows can still name
+        // the wearer. The order is not fixed: a member tanking in Ssra saw ONE
+        // shield hit for a whole fight while wearing 60/hit of shields (Tank
+        // overlay, 2026-09-23), which is what "shield line before its swing"
+        // does to a pairing that only ever looked BACKWARD — it lost every
+        // return except the odd one landing within a second of an EARLIER
+        // swing. Replayed: swing-then-shield counted 10 of 10, shield-then-
+        // swing counted 0. The decision is unchanged (flavor or a fitting known
+        // shield); only who wore it is now found in either order. An orphan
+        // whose swing never comes re-enters as the anonymous hit it was.
+        this._dsPending = { eventRef: event, tank: null, mobLower: def.toLowerCase(), tsMs };
+        return;
       }
     }
 
@@ -24586,6 +24614,10 @@ function startWebDashboard(port) {
         // rows the overlay will. Fail-soft: never breaks the proxy.
         try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
         catch { /* engine must never break the ext-target proxy */ }
+        // Outside a raid, only your own group's rows. LAST, so every enricher
+        // above still saw the whole zone.
+        try { outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now()); }
+        catch { /* scoping must never break the proxy — fall back to the zone view */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -33047,8 +33079,10 @@ const SUGGESTED_TRIGGERS = [
     pattern: '\\brampages?\\s+on\\s+(?:you|YOU)\\b',
     overlay_text: 'RAMPAGE ON YOU', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 2 },
+  // EQ prints "<mob> has become ENRAGED." — this used to read `begins to enrage`,
+  // an invented string that appears in no log, so enabling it bought silence.
   { id: 'mob_enraged', category: 'mob', label: 'Mob is enraged',
-    pattern: '\\bbegins to enrage\\b',
+    pattern: '\\bhas become ENRAGED\\b',
     overlay_text: 'ENRAGED — STOP DPS', overlay_color: 'red', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'mob_fbss_dispel', category: 'mob', label: 'You were dispelled',
@@ -34952,6 +34986,43 @@ function _sampleExtMobHp(payload, nowMs) {
   for (const k of Array.from(_extMobHpHist.keys())) {
     if (!present.has(k)) { _extMobHpHist.delete(k); _extMobResetAt.delete(k); }
   }
+}
+
+// Outside a raid, Extended Target is about YOUR group. The bot aggregates every
+// online raider in the zone, so two groups working the same zone saw each other's
+// mobs and each other's hurt players (a member, 2026-09-23: "if we're in group
+// but not raid the default is to not show extended target for outside of
+// group"). Done here, not in the bot, because only this client knows its group
+// (Zeal type 6) — nothing new has to leave the machine.
+//
+// In a raid the board is raid-wide, exactly as before. "In a raid" = a Zeal raid
+// window within EXT_RAID_FRESH_MS: the raid roster set itself is never cleared
+// on leaving (an empty type-5 returns early), so its size cannot answer this.
+// The long window errs toward SHOWING: a late raid signal can only ever cost the
+// old raid-wide view for a minute, never hide the raid's mobs mid-fight.
+//
+// Fails open — no Zeal state, stale state, or no group list → unchanged.
+// Solo counts as a group of one.
+const EXT_RAID_FRESH_MS = 60_000;
+function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
+  if (!payload || !Array.isArray(payload.targets)) return payload;
+  if (raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS) return payload;
+  if (!selfCharacter || !selfSt || !Array.isArray(selfSt.group_members)) return payload;
+  if (nowMs - (selfSt.updatedAt || 0) > 60_000) return payload;
+  const mine = new Set([String(selfCharacter).toLowerCase()]);
+  for (const m of selfSt.group_members) if (m && m.name) mine.add(String(m.name).toLowerCase());
+  const has = (n) => n != null && mine.has(String(typeof n === 'object' ? n.name : n).toLowerCase());
+  const any = (arr) => Array.isArray(arr) && arr.some(has);
+  const targets = payload.targets.filter(t => {
+    if (!t) return false;
+    if (t.kind === 'player') return has(t.name);
+    if (t.kind === 'pet') return t.owner ? has(t.owner) : true;
+    return any(t.raiders) || any(t.tanks) || any(t.off_tank_raiders) || has(t.mob_victim);
+  });
+  const offTank = targets.reduce((n, t) =>
+    n + (Array.isArray(t.off_tank_raiders) ? t.off_tank_raiders.filter(has).length : 0), 0);
+  return { ...payload, targets, scope: 'group', online: mine.size,
+           ...(payload.off_tank_count != null ? { off_tank_count: offTank } : {}) };
 }
 
 // Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
@@ -37609,6 +37680,11 @@ const _CALLOUT_ALLOW_CATEGORIES = [
   { cat: 'disc',       rx: /\bdiscs?\b|\bdiscipline/i },
   { cat: 'deathtouch', rx: /death\s*touch|deathtouch|\bDT\b/i },
   { cat: 'charm',      rx: /\bcharm(?:ed|s|ing)?\b|charm\s*(?:break|broke|broken)/i },
+  // Enrage was never on this list, so every guild enrage trigger went mute the
+  // day it shipped — nobody chose that (a member, 2026-09-23: "Enrage didn't
+  // call out" on `Guard Sklinus has become ENRAGED.`). Whole word only: a loose
+  // /rage/ would wake "average" and "storage" back up.
+  { cat: 'enrage',     rx: /\benrage[ds]?\b/i },
   // Boss-mechanic countdowns already curated in the built-ins — keep audible
   // even when a guild trigger drives them (e.g. a voice-mark sequence).
   { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
