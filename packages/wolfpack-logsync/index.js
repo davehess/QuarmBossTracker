@@ -34267,10 +34267,23 @@ function _normMobNameAgent(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
+// The bot's _mobCaseKey, mirrored: case kept after the first letter, which is
+// folded (the log capitalises a sentence-start name; Zeal does not). Two NPCs
+// can differ ONLY in that case and be different mobs — `a_Shissar_acolyte` is a
+// Warrior, `A_Shissar_Acolyte` a Wizard (the guild lead, 2026-09-23).
+function _mobCaseKey(n) {
+  const s = String(n || '').trim()
+    .replace(/'s\s+corpse$/i, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
 // #141 — cache key carries the requester's zone id so a same-name mob in
 // ANOTHER zone re-resolves instead of serving a stale cross-zone catalog row.
+// The case-kept name rides LAST: keyed on the lowercased name alone, whichever
+// acolyte you targeted first was served for both for six hours. The lowercased
+// name stays FIRST because _pacifyImmuneKnown scans keys by that prefix.
 function _mobInfoCacheKey(name, zoneId) {
-  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*');
+  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name);
 }
 function fetchMobInfo(name, selfChar, zoneId) {
   const opts = _uploadOpts;
