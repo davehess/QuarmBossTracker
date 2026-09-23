@@ -40,9 +40,11 @@ describe('the rail sits below the bar', () => {
   });
 
   // A rail taller than the space under the bar pushes its own last tabs off the
-  // bottom — the same complaint, at the other end.
+  // bottom — the same complaint, at the other end. Since 2026-09-23 it is a fixed
+  // `height` rather than a `max-height` (Tour + Feedback sit at its foot, and
+  // margin-top:auto needs a bottom to push against); either bounds it the same.
   it('scrolls internally rather than overflowing the viewport', () => {
-    expect(railRule).toMatch(/max-height:calc\(100vh - var\(--wp-topbar-h/);
+    expect(railRule).toMatch(/height:calc\(100vh - var\(--wp-topbar-h/);
     expect(railRule).toMatch(/overflow-y:auto/);
   });
 });

@@ -5706,6 +5706,10 @@ const _DEFAULT_BACKDROP_HOTKEY = 'CommandOrControl+Shift+B';
 // after each (re)launch or the alert would silently revert to off.
 const _DEFAULT_DAMAGE_HOTKEY = 'CommandOrControl+Shift+D';
 let _registeredDamageAccel = null;
+// ▭ Minimize-all — the fourth member of the Ctrl+Shift+<letter> family
+// (H hide, B backdrop, D damage alert, M mini). Override with cfg.miniHotkey.
+const _DEFAULT_MINI_HOTKEY = 'CommandOrControl+Shift+M';
+let _registeredMiniAccel = null;
 function _damageAlertAccelerator() {
   const cfg = loadConfig();
   return (cfg && typeof cfg.damageAlertHotkey === 'string' && cfg.damageAlertHotkey.trim())
@@ -5791,6 +5795,18 @@ function registerHideAllHotkey() {
       const ok3 = globalShortcut.register(dAccel, toggleDamageAlert);
       if (ok3) _registeredDamageAccel = dAccel;
       else appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`);
+    }
+    // ▭ Minimize-all hotkey. Same shape again; the persisted latch is restored
+    // first so a restart taken while everything was mini still knows which way
+    // the next press should go.
+    if (typeof cfg.miniAllActive === 'boolean') _miniAllActive = cfg.miniAllActive;
+    if (cfg.miniAllPrev && typeof cfg.miniAllPrev === 'object') _miniAllPrev = cfg.miniAllPrev;
+    if (_registeredMiniAccel) { try { globalShortcut.unregister(_registeredMiniAccel); } catch {} _registeredMiniAccel = null; }
+    const mAccel = (typeof cfg.miniHotkey === 'string' && cfg.miniHotkey.trim()) ? cfg.miniHotkey.trim() : _DEFAULT_MINI_HOTKEY;
+    if (mAccel && cfg.miniHotkeyEnabled !== false) {
+      const ok4 = globalShortcut.register(mAccel, toggleMinimizeAllOverlays);
+      if (ok4) _registeredMiniAccel = mAccel;
+      else appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`);
     }
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
@@ -6064,6 +6080,30 @@ function makeTrayIcon() {
   buildTrayMenu();
 }
 
+// The Overlays submenu's overlay entries, alphabetical (a member, 2026-09-23:
+// "We need to reorder the overlays in alpha"). Sorted when the menu is built
+// rather than by hand, so a new overlay lands in place without anyone
+// remembering to. Only the run between the first two separators moves — the
+// Dock above and the lock / setup / hide-all controls below stay put — and a
+// "↳" sub-option travels with the entry above it. Leading symbols are ignored
+// for the key, so "/who" files under W.
+function _sortOverlayMenuItems(menu) {
+  const first = menu.findIndex(i => i && i.type === 'separator');
+  if (first < 0) return menu;
+  let end = menu.findIndex((i, n) => n > first && i && i.type === 'separator');
+  if (end < 0) end = menu.length;
+  const groups = [];
+  for (const item of menu.slice(first + 1, end)) {
+    const sub = !!(item && typeof item.label === 'string' && item.label.trim().startsWith('↳'));
+    if (sub && groups.length) groups[groups.length - 1].push(item);
+    else groups.push([item]);
+  }
+  const key = (g) => String((g[0] && g[0].label) || '').replace(/^[^A-Za-z0-9]+/, '');
+  groups.sort((a, b) => key(a).localeCompare(key(b), 'en', { sensitivity: 'base' }));
+  menu.splice(first + 1, end - first - 1, ...groups.flat());
+  return menu;
+}
+
 function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
@@ -6199,6 +6239,7 @@ function buildTrayMenu() {
     // set per toon, swapped automatically as the active character changes.
     ..._charProfileTrayItems(),
   ];
+  _sortOverlayMenuItems(overlaysSubmenu);
 
   // My /tells — its own section now (was buried inside the overlay submenu).
   const tellsSubmenu = [
@@ -6330,8 +6371,20 @@ function buildTrayMenu() {
     { label: '🧲 Rescue overlays to this screen', click: () => {
         try { _rescueOverlays(); } catch (e) { appendAgentLog('[rescue] failed: ' + e.message + '\n'); }
       } },
-    { label: 'I use EQLogParser / other parser (Quiet mode)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
+    { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
+        // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
+        // It used to be sent from the Settings save alone, so muting HERE never
+        // reached the CH-chain or charm voices at all.
+        _broadcastMute(cfg);
+        applyAllVisibility();
+        pushStatus();
+      } },
+    // The display-off half of the pair above. It lived only in Settings (a
+    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
+    // Same flag and the same apply path as the Settings save — not a parallel one.
+    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
         applyAllVisibility();
         pushStatus();
       } },
@@ -6906,6 +6959,84 @@ function _overlayGrowsUp(win) {
   } catch { return false; }
 }
 
+// ── ▭ Mini mode ────────────────────────────────────────────────────────────
+// A second, shorter rendition of an overlay: the same data, the rows that
+// matter mid-fight, a fraction of the height. Voted per-overlay by the guild at
+// wolfpack.quest/mimic/mini (web 1.7.31); the picks are recorded in
+// docs/DECISIONS-2026-09-17.md and each overlay implements its own winner
+// behind `body.wp-mini`.
+//
+// ONLY these nine were designed a mini. The rest (trigger alerts, /who, melody,
+// Zeal health, threat, command centre, dock) have no mini rendition, so they are
+// deliberately absent: Ctrl+Shift+M must not put a body class on an overlay
+// whose stylesheet has never heard of it, which would be a no-op the user reads
+// as a broken hotkey. Adding one here without adding its CSS is that bug.
+const _MINI_KEYS = ['hud', 'tank', 'mobinfo', 'chchain', 'charm', 'exttarget', 'pets', 'popraid', 'buffQueue'];
+
+function _miniSetting(cfg, key) {
+  if (!key) return false;
+  const map = (cfg && cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {};
+  return !!map[key];
+}
+// 📌 — "keep mini when everything else restores". Only meaningful on a
+// mini-capable overlay; a pin on anything else is inert by construction.
+function _miniPinSetting(cfg, key) {
+  if (!key) return false;
+  const map = (cfg && cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {};
+  return !!map[key];
+}
+// Push the flag to the renderer, which adds/removes `wp-mini` on <body>. Sent
+// on every flip AND on window load (see the wp-mini-state pull in preload) —
+// a window created while mini was on must come up mini, or the setting silently
+// resets itself every time an overlay is re-enabled.
+function _sendOverlayMini(key, win, on) {
+  try { win.webContents.send('wp-mini', { key, mini: !!on }); } catch { /* window mid-close */ }
+}
+function applyOverlayMini(win, key, cfg) {
+  if (!win || win.isDestroyed() || !key) return;
+  const c = cfg || loadConfig();
+  _sendOverlayMini(key, win, _miniSetting(c, key));
+}
+function applyAllOverlayMini() {
+  const cfg = loadConfig();
+  for (const [k, w] of _overlayEntries()) {
+    if (!_MINI_KEYS.includes(k)) continue;
+    applyOverlayMini(w, k, cfg);
+  }
+}
+// Ctrl+Shift+M. First press takes every mini-capable overlay to mini and
+// remembers what each one was. Second press restores that snapshot — EXCEPT
+// overlays carrying 📌, which stay mini. That exception is the whole point of
+// the pin: a raider parks two overlays small forever and uses the hotkey on the
+// rest (the guild lead, 2026-09-11).
+let _miniAllActive = false;
+let _miniAllPrev = null;
+function toggleMinimizeAllOverlays() {
+  const cfg = loadConfig();
+  const map = (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {};
+  if (!_miniAllActive) {
+    _miniAllPrev = {};
+    for (const k of _MINI_KEYS) { _miniAllPrev[k] = !!map[k]; map[k] = true; }
+    _miniAllActive = true;
+  } else {
+    // Same "their later choice wins" rule the hide-all restore uses: only put
+    // an overlay back if it is still mini. One a user un-minimised BY HAND
+    // while minimize-all was active must not be dragged back under.
+    for (const k of _MINI_KEYS) {
+      if (_miniPinSetting(cfg, k)) { map[k] = true; continue; }
+      if (map[k]) map[k] = _miniAllPrev ? !!_miniAllPrev[k] : false;
+    }
+    _miniAllActive = false;
+    _miniAllPrev = null;
+  }
+  cfg.overlayMini     = map;
+  cfg.miniAllActive   = _miniAllActive;
+  cfg.miniAllPrev     = _miniAllPrev;
+  saveConfig(cfg);
+  applyAllOverlayMini();
+  pushStatus();
+}
+
 // Ensure the calling overlay window has at least `h` px of height — the
 // shared right-click chrome menu needs ~280 px to render its 7 buttons,
 // and an XS-preset overlay (100 px tall) clips the bottom of the menu
@@ -7170,6 +7301,11 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     growUp: _growUpSetting(cfg, key),
     theme: cfg.overlayTheme || 'default',
+    // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
+    // the menu never offers a switch that would do nothing (see _MINI_KEYS).
+    miniCapable: !!key && _MINI_KEYS.includes(key),
+    mini: _miniSetting(cfg, key),
+    miniPinned: _miniPinSetting(cfg, key),
   };
 });
 // Overlay color theme — one global setting for every overlay window, applied
@@ -7248,6 +7384,64 @@ ipcMain.handle('wp-backdrop-toggle', (e) => {
   applyOverlayBackdrop(win, key);
   return !!map[key];
 });
+// ▭ Per-overlay mini toggle (right-click chrome menu + the dashboard's
+// Overlays tab — tray↔dashboard parity, CLAUDE.md). Flipping one by hand also
+// clears the minimize-all latch when nothing is mini any more, so Ctrl+Shift+M
+// can never get stuck believing it is "active" with everything full size.
+ipcMain.handle('wp-mini-toggle', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key || !_MINI_KEYS.includes(key)) return false;
+  return _setOverlayMini(key, !_miniSetting(loadConfig(), key));
+});
+// Single writer for one overlay's mini flag — the chrome menu, the dashboard
+// button and any future tray item all land here rather than each doing their
+// own load/save/send (two copies of that is how the surfaces drift apart).
+function _setOverlayMini(key, next) {
+  const cfg = loadConfig();
+  const map = (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {};
+  map[key] = !!next;
+  cfg.overlayMini = map;
+  if (_miniAllActive && !_MINI_KEYS.some(k => map[k])) {
+    _miniAllActive = false; _miniAllPrev = null;
+    cfg.miniAllActive = false; cfg.miniAllPrev = null;
+  }
+  saveConfig(cfg);
+  for (const [k, w] of _overlayEntries()) if (k === key) applyOverlayMini(w, k, cfg);
+  pushStatus();
+  return !!map[key];
+}
+ipcMain.handle('wp-mini-pin-toggle', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key || !_MINI_KEYS.includes(key)) return false;
+  const cfg = loadConfig();
+  const map = (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {};
+  map[key] = !map[key];
+  cfg.overlayMiniPinned = map;
+  saveConfig(cfg);
+  pushStatus();
+  return !!map[key];
+});
+// Load-time pull. An overlay window asks for its own mini flag as it boots —
+// the push in applyOverlayMini can land before the renderer has attached its
+// listener, so the renderer must be able to ask rather than only be told.
+ipcMain.handle('wp-mini-state', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key || !_MINI_KEYS.includes(key)) return { key, mini: false, capable: false };
+  return { key, mini: _miniSetting(loadConfig(), key), capable: true };
+});
+// Dashboard-driven flip (Overlays tab). Named rather than sender-derived,
+// because the caller is the dashboard window, not the overlay.
+ipcMain.handle('wp-mini-set', (_e, name, on) => {
+  if (!_MINI_KEYS.includes(name)) return null;
+  return _setOverlayMini(name, !!on);
+});
+ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return true; } catch { return false; } });
 
 // Hide the overlay that sent this — the ✕ in an overlay's corner. For the
 // named overlays (hud/trigger/charm) we flip the matching pref OFF (so it
@@ -8044,6 +8238,7 @@ ipcMain.handle('relaunch-agent', async () => {
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
+  _broadcastMute(cfg);   // see the tray's Quiet mode item — same gap
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility();
   pushStatus();
   return currentStatus();

@@ -39,6 +39,22 @@
   .manabar{height:5px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:2px}
   .manabar > div{height:100%;background:#5a8af0;transition:width 250ms linear}
   .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
+  /* "est" — the bar is a FLOOR on mana used, never a reading. Quiet on purpose:
+     it is a caveat, not a callout, and screen centre is sacred mid-raid. */
+  .mob .mana .est{font-size:8px;color:#6e7681;border:1px solid rgba(255,255,255,0.14);
+    border-radius:2px;padding:0 3px;margin-left:3px;letter-spacing:0.5px}
+  /* Last observed cast. Gold because it is a fact about the fight, not a
+     warning — red and orange are spoken for. A '?' tier is dimmed instead of
+     hidden: knowing the family still beats silence. */
+  .mob .lastcast{font-size:10px;color:#f0b429;margin-top:3px}
+  .mob .lastcast.guess{color:#b8912a}
+  .mob .lastcast .sn{color:#6e7681;font-size:9px}
+  /* Factions tab — what killing this does to your standing. */
+  .fac{display:flex;align-items:baseline;gap:6px;font-size:10px;padding:1px 0}
+  .fac .fn{flex:1 1 auto;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
+  .fac .up{color:#56d364}
+  .fac .dn{color:#f85149}
   /* #130 slow status — a distinct compact badge right under the HP header so
      "is it slowed, with what, how long left" reads at a glance (a slow matters
      more than a generic debuff row, so it is NOT buried in the debuff list). */
@@ -163,6 +179,9 @@
         <button id="tabStats"  class="tab on" type="button">Stats</button>
         <button id="tabLoot"   class="tab"    type="button">Loot</button>
         <button id="tabSpells" class="tab"    type="button">Spells</button>
+        <button id="tabFactions" class="tab"  type="button">Factions</button>
+        <button id="tabMana" class="tab" type="button"
+                title="Estimated mana bar on/off. OFF shows only the spell the mob was seen casting; ON also subtracts its mana cost from the catalog pool. The estimate is a FLOOR — a resisted or interrupted cast spends mana and prints no message.">&#9889;</button>
       </span>
     </div>
     <div id="body"></div>
@@ -224,7 +243,20 @@
   if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
-  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
+  // ⚠ ONE TENTH, and drop it when it is zero (the guild lead, 2026-09-22:
+  // "please include tenths for HP, so it would be 4.7k vs 5k"). Rounding to
+  // whole thousands turned a 4,670 HP raider into "5k / 5k HP · 100%" — a
+  // number that is not only imprecise but actively wrong-looking beside a
+  // client window reading 4670/4670. A 330-point error is a heal.
+  // Trailing ".0" is stripped so a real 5,000 still reads "5k" rather than
+  // "5.0k": the tenth is there to carry information, not decoration.
+  function fmtK(v, unit){
+    var s = v.toFixed(1);
+    if (s.slice(-2) === '.0') s = s.slice(0, -2);
+    return s + unit;
+  }
+  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return fmtK(n/1000000, 'M'); if (n >= 1000) return fmtK(n/1000, 'k'); return String(n); }
+  // ── Durations ──────────────────────────────────────────────────────────────
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
   // Short slow name for the badge — "Turgur's Insects" → "Turgur's" (matches the
   // agent's _slowShortName so the badge, the callout, and the debuff row agree).
@@ -397,16 +429,34 @@
   var tabStatsBtn  = document.getElementById('tabStats');
   var tabLootBtn   = document.getElementById('tabLoot');
   var tabSpellsBtn = document.getElementById('tabSpells');
+  var tabFactionsBtn = document.getElementById('tabFactions');
+  var tabManaBtn   = document.getElementById('tabMana');
+  // The A/B the guild lead asked to compare in beta: OFF is "just tell me what
+  // it cast", ON adds the estimated pool. Per-viewer convenience only, so
+  // localStorage is right — and every read/write is guarded because an overlay
+  // can be opened in contexts where site data is unavailable.
+  var _manaView = true;
+  try { _manaView = window.localStorage.getItem('wpTargetMana') !== 'off'; } catch (e) {}
   function _setTab(t){
     _tab = t;
     tabStatsBtn .classList.toggle('on', t === 'stats');
     tabLootBtn  .classList.toggle('on', t === 'loot');
     tabSpellsBtn.classList.toggle('on', t === 'spells');
+    if (tabFactionsBtn) tabFactionsBtn.classList.toggle('on', t === 'factions');
+    _renderBody(_lastMi);
+  }
+  function _setManaView(on){
+    _manaView = !!on;
+    if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
+    try { window.localStorage.setItem('wpTargetMana', _manaView ? 'on' : 'off'); } catch (e) {}
     _renderBody(_lastMi);
   }
   tabStatsBtn .addEventListener('click', function(){ _setTab('stats'); });
   tabLootBtn  .addEventListener('click', function(){ _setTab('loot'); });
   tabSpellsBtn.addEventListener('click', function(){ _setTab('spells'); });
+  if (tabFactionsBtn) tabFactionsBtn.addEventListener('click', function(){ _setTab('factions'); });
+  if (tabManaBtn) tabManaBtn.addEventListener('click', function(){ _setManaView(!_manaView); });
+  if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
 
   // #186 — PQDI link (delegated: the header re-renders every poll). Opens the
   // mob's pqdi.cc/npc page in the system browser via the open-external IPC
@@ -436,7 +486,7 @@
   // the click lands instead of going through. Same pattern the ✕ hide and
   // ✥ move buttons use. Without this, the Loot tab was un-clickable on a
   // locked overlay (the most common reason for "Loot is not clickable").
-  [tabStatsBtn, tabLootBtn, tabSpellsBtn].forEach(function(btn){
+  [tabStatsBtn, tabLootBtn, tabSpellsBtn, tabFactionsBtn, tabManaBtn].forEach(function(btn){
     if (!btn) return;
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -453,6 +503,28 @@
     return 't1';
   }
   function fmtPct(p){ if (p == null) return '?'; if (p >= 99.95) return '100%'; return p.toFixed(p < 10 ? 1 : 0) + '%'; }
+  // What killing this mob does to your standing. Values come from the bot's
+  // mob-info, which reuses the resolver already validated against a real
+  // client log — ⚠ names live in eqemu_faction_list_full because the short
+  // faction_list table is EMPTY in our mirror, and a null name silently drops
+  // the row. Sorted biggest swing first by the bot.
+  function renderFactions(mob){
+    var f = mob && mob.factions;
+    if (!f || !f.length) {
+      return '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
+           + (mob ? 'No faction change recorded for this mob.' : '') + '</div>';
+    }
+    var rows = f.map(function(r){
+      var up = Number(r.value) > 0;
+      return '<div class="fac">'
+           +   '<span class="fn">' + esc(r.name) + '</span>'
+           +   '<span class="fv ' + (up ? 'up' : 'dn') + '">' + (up ? '+' : '') + r.value + '</span>'
+           + '</div>';
+    }).join('');
+    return '<div class="facwrap"><div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+  }
+
+  // ── Loot tab ──────────────────────────────────
   function renderLoot(mob, mi){
     // Distinguish three empty states:
     //   1. We haven't targeted anything yet → nothing to render at all
@@ -515,7 +587,19 @@
     emptyEl.style.display = 'none';
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
-    var cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
+    // Two bodies share this name and differ in CLASS; only the sex tells them
+    // apart in game (Hitya 2026-09-15, Plane of Hate's forsaken revenants:
+    // male Magician, female Enchanter). Until Zeal puts the target's sex on
+    // the pipe, show the pair rather than one class as fact.
+    var cls = '';
+    if (mob && mob.class_ambiguous && mob.class_variants && mob.class_variants.length > 1) {
+      var sym = { male: '\u2642', female: '\u2640', neuter: '\u26b2' };
+      cls = ' <span class="cls" title="Two versions of this mob share the name; the sex tells them apart in game">('
+          + mob.class_variants.map(function (v) { return esc(v.class) + (sym[v.gender] ? ' ' + sym[v.gender] : ''); }).join(' / ')
+          + ')</span>';
+    } else if (mob && mob.class) {
+      cls = ' <span class="cls">(' + esc(mob.class) + ')</span>';
+    }
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
@@ -557,11 +641,45 @@
     // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
     // numeric line for any NPC with non-zero mana. Live tracking (per-cast
     // subtraction + regen) is a follow-up — this is the catalog baseline.
+    // Mana. The bar was a dead 100% stub until 2026-09-22 — the bot never sent
+    // mob.mana, so nothing rendered. It now draws the ESTIMATE: catalog pool
+    // minus the cost of every cast we could NAME (the log never names a mob's
+    // spell; see the agent's _NPC_CAST_RX header for how it is recovered from
+    // the landing message).
+    // ⚠ It is a FLOOR on mana used, not a reading — a resisted or interrupted
+    // cast spends mana silently, 14% of NPC spells print no landing text at
+    // all, and we only see what our own raiders' logs witnessed. The "est"
+    // chip and the tooltip say so; never render this as a plain gauge.
     var manaBar = '';
     var manaLine = '';
-    if (mob && mob.mana && mob.mana > 0) {
-      manaBar = '<div class="manabar"><div style="width:100%"></div></div>';
+    var mn = mi.target_mana;
+    if (_manaView && mn && mn.max > 0) {
+      var mpct = Math.max(0, Math.min(100, mn.pct));
+      manaBar = '<div class="manabar" title="Estimated: ' + fmtNum(mn.cur) + ' of ' + fmtNum(mn.max)
+              + ' — at least ' + fmtNum(mn.spent) + ' spent on casts we could name. Resisted and interrupted casts cost mana silently, so the real figure is lower.">'
+              + '<div style="width:' + mpct.toFixed(0) + '%"></div></div>';
+      manaLine = '<div class="mana">' + fmtNum(mn.cur) + ' / ' + fmtNum(mn.max) + ' mana'
+               + ' <span class="est" title="An estimate, and a floor — see the bar.">est</span></div>';
+    } else if (mob && mob.mana && mob.mana > 0) {
+      // Toggle off, or nothing observed yet: state the pool without implying
+      // we know what is left of it.
       manaLine = '<div class="mana">' + fmtNum(mob.mana) + ' max mana</div>';
+    }
+    // What it was last seen casting — the thing the guild lead actually asked
+    // for ("display the spell he cast that covers his hand with a dull aura").
+    // Shown in BOTH views; a 'guess' is labelled rather than hidden, because
+    // knowing the family is still worth more than silence mid-fight.
+    var lastCast = '';
+    var lc = mi.target_lastcast;
+    if (lc && lc.spell) {
+      var lcAge = Math.max(0, Math.round((Date.now() - lc.atMs) / 1000));
+      var lcSure = lc.confidence === 'guess';
+      lastCast = '<div class="lastcast' + (lcSure ? ' guess' : '') + '" title="'
+               + (lcSure ? 'Several of this mob\'s spells print this same message and the timing did not separate them — the family is right, the tier may not be.'
+                         : 'Named from the message its spell printed when it landed.')
+               + (lc.mana ? ' Costs ' + lc.mana + ' mana.' : '') + '">'
+               + '\u2728 ' + esc(lc.spell) + (lcSure ? '?' : '')
+               + '<span class="sn"> ' + lcAge + 's ago</span></div>';
     }
     var sub = [];
     // Live cur/max for a targeted raider (their own uploaded live-state) — the
@@ -586,7 +704,9 @@
     }
 
     var tabBody = '';
-    if (_tab === 'loot') {
+    if (_tab === 'factions') {
+      tabBody = renderFactions(mob);
+    } else if (_tab === 'loot') {
       tabBody = renderLoot(mob, mi);
     } else if (_tab === 'spells') {
       // Spells & abilities tab. Two surfaces stacked:
@@ -748,6 +868,7 @@
       + slowBadge
       + manaBar
       + manaLine
+      + lastCast
       + targetState
       + tabBody
       + lastFight

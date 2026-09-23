@@ -5,8 +5,10 @@
 // tour up there, as well as the feedback."
 //
 // Tour and Panels lived at the bottom of the left rail, so on a long page you
-// scrolled back up to reach them. They now live in a sticky top bar alongside
-// Feedback and Reload.
+// scrolled back up to reach them. They moved to the sticky top bar alongside
+// Feedback and Reload. On 2026-09-23 the bar ran out of width, so Tour and
+// Feedback went back to the rail's foot (the rail is sticky now too) and
+// Reload + mail moved up into the title row.
 //
 // ⚠ TWO THINGS BREAK SILENTLY WHEN A CONTROL MOVES INTO A STICKY CONTAINER, and
 // both are pinned below:
@@ -56,16 +58,55 @@ describe('the bar sticks', () => {
   });
 });
 
-describe('the controls moved up', () => {
+// The guild lead, 2026-09-23: "We're running out of horizontal real estate. Move
+// the reload button to the top right left of settings, mail as well. Move the
+// tour and feedback to the bottom left (near the bottom, stacked)."
+describe('where the controls live', () => {
   const bar = src.slice(src.indexOf('<div id="wpTopBar">'), src.indexOf('<div class="shell">'));
+  const h1  = bar.slice(bar.indexOf('<h1'), bar.indexOf('</h1>'));
+  const links = bar.slice(bar.indexOf('id="wpQuickLinks"'));
   const nav = src.slice(src.indexOf('<div class="nav">'), src.indexOf('<div id="wpPanelMenu"'));
+  const foot = nav.slice(nav.indexOf('<div class="wp-rail-foot">'));
 
-  it('Tour, Panels and Feedback are in the bar', () => {
-    for (const id of ['wpTourBtn', 'wpGear', 'wpFbBtn']) expect(bar).toContain('id="' + id + '"');
+  it('Reload and mail ride the title row, not the links row', () => {
+    const right = h1.slice(h1.indexOf('<span id="wpTopRight">'));
+    for (const id of ['wpReload', 'wpMailBtn']) {
+      expect(right).toContain('id="' + id + '"');
+      expect(links).not.toContain('id="' + id + '"');
+    }
   });
 
-  it('and are no longer in the left rail', () => {
-    for (const id of ['wpTourBtn', 'wpGear']) expect(nav).not.toContain('id="' + id + '"');
+  // Mimic's ⚙ is injected by preload.js at fixed top:10px right:12px, 34px wide.
+  // Without a right margin, Reload sits underneath it.
+  it('the title-row cluster is pushed right and kept clear of the Mimic gear', () => {
+    const css = stripJs(src);
+    expect(css).toMatch(/#wpTopRight\s*\{[^}]*margin-left:auto/);
+    const m = css.match(/#wpTopRight\s*\{[^}]*margin-right:(\d+)px/);
+    expect(m).not.toBeNull();
+    expect(Number(m[1])).toBeGreaterThanOrEqual(34);
+  });
+
+  it('Panels stays in the bar', () => {
+    expect(links).toContain('id="wpGear"');
+    expect(nav).not.toContain('id="wpGear"');
+  });
+
+  it('Tour and Feedback sit stacked at the foot of the rail', () => {
+    for (const id of ['wpTourBtn', 'wpFbBtn']) {
+      expect(foot).toContain('id="' + id + '"');
+      expect(bar).not.toContain('id="' + id + '"');
+    }
+    const css = stripJs(src);
+    expect(css).toMatch(/\.wp-rail-foot\s*\{[^}]*margin-top:auto/);
+    expect(css).toMatch(/\.wp-rail-foot\s*\{[^}]*flex-direction:column/);
+    // margin-top:auto only pushes to the bottom of a rail that HAS a height.
+    expect(css).toMatch(/\.shell > \.nav\s*\{[^}]*[^-]height:calc\(100vh/);
+  });
+
+  // No data-tab: the switcher binds '.nav button[data-tab]', and a data-tab here
+  // would turn Tour into a tab that blanks the page.
+  it('the rail-foot buttons are not tabs', () => {
+    expect(foot.slice(0, foot.indexOf('</div>'))).not.toContain('data-tab');
   });
 
   // The ids are what every existing handler binds to. Renaming them while moving

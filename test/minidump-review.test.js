@@ -285,6 +285,13 @@ describe('_crashVerdict', () => {
     const v = _crashVerdict(null, _readMinidump(razekish()));
     expect(v.notes.join(' ')).toMatch(/graphics driver reset itself several times in 6 minutes/);
     expect(v.checks.join(' ')).toMatch(/windowed or borderless/);
+    // ⚠ A raider lost an evening hunting dgVoodoo in the Zeal repo (2026-09-20),
+    // so the advice carries the real URL. Both files, or the login screen
+    // ghosts — that was the 2026-09-18 field fix on another machine.
+    const checks = v.checks.join(' ');
+    expect(checks).toContain('github.com/dege-diosg/dgVoodoo2/releases');
+    expect(checks).toContain('d3d8.dll');
+    expect(checks).toContain('ddraw.dll');
   });
 
   it('DOES implicate Zeal when Zeal is actually on the stack', () => {

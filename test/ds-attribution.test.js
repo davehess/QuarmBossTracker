@@ -97,13 +97,81 @@ describe('an anonymous non-melee hit after the mob connects on the tank', () => 
     expect(dsFor(b, 'Peopleslayer')).toBeNull();
   });
 
-  it('a connect two seconds earlier does not even make it a candidate', () => {
+  it('a connect two seconds earlier does not name the wearer', () => {
+    // Since 2026-09-23 the hit is still HELD (its swing may be about to
+    // arrive — see "shield line before its swing" below), but the stale
+    // connect names no wearer, and with no swing following it re-enters as the
+    // anonymous hit it was.
     const b = mk();
     feed(b, T0, `${MOB} hits Peopleslayer for 210 points of damage.`);
     feed(b, T2, `${MOB} was hit by non-melee for 9 points of damage.`);
+    expect(b._dsPending).toMatchObject({ tank: null });
+    feed(b, '[Sun Sep 13 20:40:05 2026]', `Hitya slashes ${MOB} for 40 points of damage.`);   // window closed
     expect(b._dsPending).toBeNull();
-    expect(b.events).toHaveLength(2);
     expect(anon(b)[0]).toMatchObject({ amount: 9, attacker: null });
+    expect(anon(b)[0].ds).toBeUndefined();
+    expect(dsFor(b, 'Peopleslayer')).toBeNull();
+  });
+});
+
+// A member tanking in Ssra, 2026-09-23, wearing 60/hit of shields: the Tank
+// overlay counted ONE return for a whole fight. The pairing only ever looked
+// BACKWARD from the shield line for a swing, so a shield line logged before the
+// swing it answered was lost — except the odd one that fell within a second of
+// an EARLIER swing. Replayed: swing-then-shield 10 of 10, shield-then-swing 0.
+describe('shield line before its swing (either order pairs)', () => {
+  const tanking = (perHit) => {
+    const b = mk();
+    b._knownDsPerHit = (name) => (String(name).toLowerCase() === 'hitya' ? perHit : 0);
+    return b;
+  };
+  const TRASH = 'A shissar disciple';
+
+  it('the swing that follows names the wearer — you, when it hits YOU', () => {
+    const b = tanking(60);
+    feed(b, T0, `${TRASH} was hit by non-melee for 60 points of damage.`);
+    feed(b, T0, `${TRASH} hits YOU for 45 points of damage.`);
+    feed(b, T3, `You punch ${TRASH} for 20 points of damage.`);
+    expect(dsFor(b, 'Hitya')).toMatchObject({ total: 60, hits: 1 });
+  });
+
+  it('a whole fight of reversed pairs counts every return', () => {
+    const b = tanking(60);
+    for (let i = 0; i < 10; i++) {
+      const t = `[Sun Sep 13 20:40:${String(i * 3).padStart(2, '0')} 2026]`;
+      feed(b, t, `${TRASH} was hit by non-melee for 60 points of damage.`);
+      feed(b, t, `${TRASH} hits YOU for 45 points of damage.`);
+    }
+    feed(b, '[Sun Sep 13 20:40:59 2026]', `You punch ${TRASH} for 20 points of damage.`);
+    expect(dsFor(b, 'Hitya')).toMatchObject({ total: 600, hits: 10 });
+  });
+
+  it('a named shield logged before the swing is kept, not settled blind', () => {
+    const b = mk();   // no known shield — the flavor line is the evidence
+    feed(b, T0, `${TRASH} was hit by non-melee for 14 points of damage.`);
+    feed(b, T0, `${TRASH} was pierced by thorns.`);
+    feed(b, T0, `${TRASH} hits Peopleslayer for 210 points of damage.`);
+    feed(b, T3, `Hitya slashes ${TRASH} for 40 points of damage.`);
+    const d = dsFor(b, 'Peopleslayer');
+    expect(d).toMatchObject({ total: 14, hits: 1 });
+  });
+
+  it('no swing ever comes: stays the anonymous hit, credited to nobody', () => {
+    const b = mk();
+    feed(b, T0, `${TRASH} was hit by non-melee for 14 points of damage.`);
+    feed(b, T0, `${TRASH} was pierced by thorns.`);
+    feed(b, T3, `Hitya slashes ${TRASH} for 40 points of damage.`);
+    expect(anon(b)[0]).toMatchObject({ amount: 14, attacker: null });
+    expect(anon(b)[0].ds).toBeUndefined();
+    expect(b.dsByTank.size).toBe(0);
+  });
+
+  it('the September guard still holds in this order: a 150 proc is not a 60 shield', () => {
+    const b = tanking(60);
+    feed(b, T0, `${TRASH} was hit by non-melee for 150 points of damage.`);
+    feed(b, T0, `${TRASH} hits YOU for 45 points of damage.`);
+    feed(b, T3, `You punch ${TRASH} for 20 points of damage.`);
+    expect(dsFor(b, 'Hitya')).toBeNull();
   });
 });
 

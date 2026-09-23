@@ -145,6 +145,45 @@ function _wpApplyTheme(theme) {
 }
 ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
 
+// ── ▭ Mini mode — the shared half ──────────────────────────────────────────
+// Each overlay owns its OWN `body.wp-mini` rules (the rendition the guild voted
+// for at wolfpack.quest/mimic/mini). What lives here is only what is identical
+// everywhere, so the muscle memory carries between overlays exactly as the
+// right-click menu does:
+//   • the bar is 4px and keeps the tank overlay's 50/25 green/amber/red steps;
+//   • ✥ and ✕ stay where they are and fade, and hover brings them back — they
+//     must not MOVE between modes or the click target shifts under the cursor;
+//   • a name gives way before a number does. Mid-fight the digits are the
+//     payload and the name is context, so names ellipsize and numbers never
+//     shrink (`wp-mini-name` / `wp-mini-num`).
+// Overlays opt in by tagging their markup with these classes; nothing here
+// restyles an overlay that has not.
+const _WP_MINI_CSS =
+  'body.wp-mini{--wp-mini-bar-h:4px}' +
+  // Chrome fades rather than hides: a mini overlay is still draggable and
+  // closable, and a control that vanishes reads as a control that is gone.
+  'body.wp-mini #move-btn,body.wp-mini #hide-btn{opacity:0.12;transition:opacity 0.12s ease}' +
+  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn{opacity:1}' +
+  'body.wp-mini .wp-mini-hide{display:none !important}' +
+  'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
+  'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
+  'body.wp-mini .wp-mini-num{flex:0 0 auto;font-variant-numeric:tabular-nums}' +
+  // Density: a mini overlay earns its name on height, not on hiding data.
+  'body.wp-mini #wrap{padding:2px 4px}' +
+  'body.wp-mini h1,body.wp-mini h2{display:none}';
+function _wpApplyMini(on) {
+  try {
+    if (!_wpOverlayDoc()) return;
+    document.body.classList.toggle('wp-mini', !!on);
+    // Overlays that lay out from JS (bar widths, row counts) need a nudge, and
+    // a mode flip changes the height every auto-height caller reads. Cheap,
+    // and far less brittle than each overlay wiring its own observer.
+    try { window.dispatchEvent(new Event('wp-mini-change')); } catch (e) {}
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+  } catch (e) {}
+}
+ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
+
 // Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
 // on every config save; read once at load so a freshly created overlay starts
 // right. Renderers ask window.mimic.isMuted() before speaking or playing.
@@ -184,11 +223,17 @@ document.addEventListener('DOMContentLoaded', function () {
         +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
         + 'body.setup:has(#drag-controls) #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
         + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
-      + _WP_THEME_CSS;
+      + _WP_THEME_CSS
+      + _WP_MINI_CSS;
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
+      // Mini is PULLED at load, not only pushed. A window created while its
+      // mini flag was already on (re-enabled from the tray, restored after a
+      // crash, or simply opened later) would otherwise come up full size and
+      // silently contradict its own setting.
+      if (s && s.miniCapable && s.mini) _wpApplyMini(true);
     }).catch(function () {});
   } catch (e) {}
 });
@@ -297,6 +342,15 @@ function _buildOverlayMenu(onClose, state) {
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
+  // ▭ / 📌 — mini mode. Built ONLY for the nine overlays that have a mini
+  // rendition (main's _MINI_KEYS sets miniCapable); offering the row on an
+  // overlay whose CSS has no mini rules would be a switch that does nothing.
+  if (st.miniCapable) {
+    menu.appendChild(mkItem('▭ Mini mode: ' + (st.mini ? 'ON' : 'off') + ' (this overlay)', '#1f4f47',
+      () => ipcRenderer.invoke('wp-mini-toggle')));
+    menu.appendChild(mkItem('📌 Keep mini on restore: ' + (st.miniPinned ? 'ON' : 'off'), '#4a3a1f',
+      () => ipcRenderer.invoke('wp-mini-pin-toggle')));
+  }
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
   menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
     () => ipcRenderer.invoke('wp-backdrop-toggle')));
@@ -501,6 +555,12 @@ contextBridge.exposeInMainWorld('mimic', {
   rescueOverlays:  ()     => ipcRenderer.invoke('rescue-overlays'),
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
+  // ▭ Mini mode, for the dashboard's Overlays tab. Tray↔dashboard parity
+  // (CLAUDE.md): the right-click menu's two rows and the Ctrl+Shift+M hotkey
+  // all reach the SAME internals through main's _setOverlayMini, never a
+  // parallel path.
+  setOverlayMini:  (n, on) => ipcRenderer.invoke('wp-mini-set', n, on),
+  toggleMiniAll:   ()     => ipcRenderer.invoke('wp-mini-all'),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),

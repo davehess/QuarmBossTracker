@@ -29,6 +29,81 @@ function fnSource(src, header) {
   return src.slice(i, j + 2);
 }
 
+// BEHAVIOUR, not text. The old "and still flashes" check only proved a flash()
+// function EXISTED — it passed the whole time fire() returned before calling
+// it under Mute, because the trigger window's own gate still read
+// `enableTriggerTts && !quietMode` (a member, 2026-09-23: "Mute Mimic" vs
+// "Trigger alerts speak out loud — which one works and which doesn't?").
+// This runs the real applyTtsStatus / fire / fireBlind with stubbed side effects.
+describe('triggers.html: Mute silences, it does not hide (run, not read)', () => {
+  const T = read('apps/mimic/triggers.html');
+  const cut = (start) => { const i = T.indexOf(start); expect(i, start).toBeGreaterThan(-1);
+                           const j = T.indexOf('\n  }', i); return T.slice(i, j + 4); };
+  const mk = () => new Function(`
+    const calls = []; let muted = false;
+    const el = { classList: { toggle(){}, remove(){} } };
+    function flash(x){ calls.push('flash'); }
+    function _wpMutedNow(){ return muted; }
+    function speak(x){ if (_wpMutedNow()) return; calls.push('speak'); }
+    function playSound(u){ if (!u || _wpMutedNow()) return; calls.push('sound'); }
+    function showFeedback(){} function pinSticky(){} function _speakable(s){ return s; }
+    ${cut('  let alertsEnabled = true;')}
+    ${cut('  function fire(t){')}
+    ${cut('  function fireBlind(e){')}
+    return { calls, applyTtsStatus, fire, fireBlind, mute: (m) => { muted = m; } };
+  `)();
+  const ENRAGE = { text: 'ENRAGE - Guard Sklinus', tts: 'Enrage on.', sound: 'x.wav' };
+
+  it('Mute on: the trigger alert still FLASHES, with no speech and no sound', () => {
+    const h = mk();
+    h.applyTtsStatus({ enableTriggerTts: true, quietMode: true }); h.mute(true);
+    h.fire(ENRAGE);
+    expect(h.calls).toEqual(['flash']);
+  });
+  it('Mute off: flash, speech and sound', () => {
+    const h = mk();
+    h.applyTtsStatus({ enableTriggerTts: true, quietMode: false });
+    h.fire(ENRAGE);
+    expect(h.calls).toEqual(['flash', 'speak', 'sound']);
+  });
+  it('Trigger alerts off: nothing at all — that switch is the whole trigger overlay', () => {
+    const h = mk();
+    h.applyTtsStatus({ enableTriggerTts: false, quietMode: false });
+    h.fire(ENRAGE);
+    expect(h.calls).toEqual([]);
+  });
+  it('blind callouts follow the same rule under Mute: flash, no speech', () => {
+    const h = mk();
+    h.applyTtsStatus({ enableTriggerTts: false, quietMode: true }); h.mute(true);
+    h.fireBlind({ kind: 'blind_selfhit', text: 'Blinded' });
+    expect(h.calls).toEqual(['flash']);
+  });
+});
+
+// Every writer of cfg.quietMode must broadcast it. Renderers learn Mute ONLY from
+// the wp-mute broadcast, which used to be sent from the Settings save alone — so
+// the tray's Quiet mode and the first-run screen's toggle changed the setting
+// without muting a single overlay (the CH-chain and charm voices never heard).
+describe('every quietMode write reaches the renderers', () => {
+  it('each assignment is followed by _broadcastMute(cfg) in the same handler', () => {
+    const writes = [...main.matchAll(/cfg\.quietMode = [^;]+;/g)];
+    expect(writes.length).toBeGreaterThanOrEqual(2);
+    for (const w of writes) {
+      const after = main.slice(w.index, w.index + 400);
+      expect(after, main.slice(w.index, w.index + 80)).toMatch(/_broadcastMute\(cfg\)/);
+    }
+  });
+});
+
+// Tray ↔ Settings parity (CLAUDE.md rule): "Don't show any overlays" was
+// Settings-only (a member, 2026-09-23). The tray drives the SAME flag through
+// the SAME apply path, never a parallel one.
+describe('tray parity: No overlays', () => {
+  it('the tray writes cfg.hideOverlays and applies it with applyAllVisibility', () => {
+    expect(main).toMatch(/cfg\.hideOverlays = mi\.checked; saveConfig\(cfg\);\s*applyAllVisibility\(\);/);
+  });
+});
+
 describe('hideOverlays owns visibility; quietMode no longer does', () => {
   it('every overlay gate reads hideOverlays and none read quietMode', () => {
     const gates = main.match(/const shouldShow = unlocked \|\|[^\n]*_eqGateOk\(cfg\)\)/g) || [];

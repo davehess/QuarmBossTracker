@@ -3007,6 +3007,14 @@ function _catalogDurationSec(spellName) {
   const t = _durTicksForLevel(e.durf, e.dur, _assumedCasterLevel());
   return t > 0 ? t * 6 : null;
 }
+// True only when the catalog says the spell never runs out (formula 50/51).
+// Zeal reporting no tick count is NOT that: Eye of Zomm (5 ticks) arrives with
+// none, and the Buffs tab called it "permanent" (the guild lead, 2026-09-23).
+function _catalogPermanent(spellName) {
+  const key = String(spellName || '').toLowerCase();
+  const e = _spellByNameLower.get(key) || _spellByNameLower.get(key.replace(/`/g, "'"));
+  return !!e && (Number(e.durf) === 50 || Number(e.durf) === 51);
+}
 
 // What every watched character is carrying right now, straight off the Zeal buff
 // window. Remaining time here is AUTHORITATIVE — it is the client's own counter,
@@ -3036,9 +3044,12 @@ function _activeBuffsForDashboard() {
         character: ch,
         name: b.name,
         song: !!b.song,
-        // Permanent buffs report no tick count; that is a fact about the buff,
-        // not a missing reading, so it is carried as null rather than zero.
+        // No tick count is carried as null rather than zero: it is a missing
+        // reading, not "about to fall off". Whether the buff is actually
+        // permanent is the catalog's call (`permanent` below), never inferred
+        // from the missing count.
         remaining_secs: (Number.isFinite(ticks) && ticks > 0) ? ticks * 6 : null,
+        permanent: _catalogPermanent(b.name),
         catalog_secs: _catalogDurationSec(b.name),
         measured_secs: measured ? measured.median : null,
         measured_n: measured ? measured.n : 0,
@@ -3750,6 +3761,289 @@ function _correlateHealer(landMs) {
   }
   if (best) { best.consumed = true; return best.caster; }
   return null;
+}
+
+// ── Naming an NPC's spell (the guild lead, 2026-09-22) ───────────────────────
+// EverQuest NEVER prints what a mob cast. The line is
+//   [Fri Sep 19 12:40:15 2026] The Spire Lord begins to cast a spell.
+// and that is all. The way in is the LANDING message, which the guild lead
+// spotted live: "The Spire Lord's hand is covered with a dull aura." is
+// eqemu_spells.cast_on_other for Grim Aura, and Grim Aura costs 25 mana.
+//
+// ⚠ DO NOT widen _OTHER_CAST_RX to catch NPCs. That regex is deliberately
+// player-only ("single capitalized token"), and _correlateHealer CONSUMES its
+// entries to attribute heals. A mob's cast landing in that list would silently
+// steal a heal's attribution — a wrong number on a parse card, from a change
+// that looks unrelated. This tracker is separate on purpose.
+//
+// It also catches what the player-only one cannot: named mobs are multi-word
+// ("Royal Scribe Kaavin", "The Spire Lord"), so they fail the single-token
+// pattern even though they are capitalised.
+const _NPC_CAST_RX = /\]\s+(.+?) begins to cast a spell\.\s*$/;
+const _NPC_CAST_WINDOW_MS = 15000;   // longest catalog cast + travel slack
+const _npcCastStarts = [];           // { caster, atMs }
+function noteNpcCastStart(line) {
+  if (line.indexOf('begins to cast a spell') === -1) return null;   // cheap gate
+  const m = line.match(_NPC_CAST_RX);
+  if (!m) return null;
+  const who = String(m[1] || '').trim();
+  if (!who) return null;
+  const t = parseEqTimestamp(line);
+  const atMs = t ? t.getTime() : Date.now();
+  _npcCastStarts.push({ caster: who, atMs });
+  const cutoff = atMs - _NPC_CAST_WINDOW_MS;
+  while (_npcCastStarts.length > 200 || (_npcCastStarts.length && _npcCastStarts[0].atMs < cutoff)) {
+    _npcCastStarts.shift();
+  }
+  return who;
+}
+// Who most plausibly cast the thing that just landed. The guild lead's point:
+// "If we're nearby a casting and we see what it is that's casting and we see
+// the thing that gets hit by the spell, many times we should be able to figure
+// that out." The cast START names the caster, so pairing it with a landing
+// gives BOTH ends — which is what makes the candidate list narrowable at all.
+function _npcCasterFor(landMs, preferName) {
+  let best = null, bestLead = Infinity;
+  for (const c of _npcCastStarts) {
+    const lead = landMs - c.atMs;
+    if (lead < 0 || lead > _NPC_CAST_WINDOW_MS) continue;
+    if (preferName && c.caster !== preferName) continue;
+    if (lead < bestLead) { best = c; bestLead = lead; }
+  }
+  return best ? { caster: best.caster, leadMs: bestLead } : null;
+}
+
+// ⚠ EQ log timestamps are WHOLE SECONDS. Cast time splits 151 of the 185
+// catalog collisions on paper, but the observed lead is quantised to ±1s, so a
+// 4.5s and a 5.0s cast are NOT separable in practice — only coarse differences
+// are. The tolerance is set from that, not from the catalog's precision, and
+// anything outside it is reported as a guess rather than a fact.
+const _NPC_CAST_TIME_TOL_MS = 1500;
+
+// Identify which of a mob's known spells just landed.
+//   spells  — mob-info's level-windowed list: { id, name, mana, cast_ms, other }
+//   body    — the log line's message, e.g. "The Spire Lord's hand is covered…"
+//   leadMs  — ms between that mob's "begins to cast" and this landing, or null
+// Returns { spell, target, confidence, candidates } | null.
+// confidence: 'exact'  one candidate — the message names it outright
+//             'timed'  several, split by how long the cast took
+//             'guess'  several, nothing to separate them; caller must not
+//                      spend mana on a guess without saying so
+function identifyNpcCast(spells, body, leadMs) {
+  if (!Array.isArray(spells) || !body) return null;
+  const hits = [];
+  for (const sp of spells) {
+    if (!sp) continue;
+    // endsWith, never split-on-space: the target may be multi-word, and the
+    // possessive form ("'s hand is…") carries no leading space at all.
+    if (sp.other && body.endsWith(sp.other)) { hits.push(sp); continue; }
+    // ⚠ AND the message for a spell that lands on YOU (the guild lead,
+    // 2026-09-22: "Last spell cast was on me"). cast_on_you is a whole
+    // sentence with no name in front of it — "You feel your life force drain
+    // away." — so it never matches the cast_on_other suffix, and the first
+    // version simply could not see the half of a mob's casting aimed at the
+    // person reading the overlay. The field was already on the payload and
+    // was going unread.
+    if (sp.you && body.endsWith(sp.you)) { hits.push(sp); }
+  }
+  if (!hits.length) return null;
+  let best = hits[0];
+  let confidence = hits.length === 1 ? 'exact' : 'guess';
+  if (hits.length > 1 && Number.isFinite(leadMs)) {
+    let bestDelta = Infinity;
+    for (const sp of hits) {
+      const ct = Number(sp.cast_ms);
+      if (!Number.isFinite(ct)) continue;
+      const d = Math.abs(leadMs - ct);
+      if (d < bestDelta) { bestDelta = d; best = sp; }
+    }
+    if (bestDelta <= _NPC_CAST_TIME_TOL_MS) confidence = 'timed';
+    else best = hits[0];
+  }
+  // ⚠ Derive the target from the field that ACTUALLY matched. A cast_on_other
+  // line is "<Target><suffix>", so the target is what precedes the suffix; a
+  // cast_on_you line has no name in it at all and the target is the reader.
+  // Reading best.other unconditionally threw the moment a spell landed on the
+  // player — which is most of what a mob casts at you.
+  const suffix = (best.other && body.endsWith(best.other)) ? best.other : null;
+  const target = suffix ? body.slice(0, body.length - suffix.length).replace(/\s+$/, '') : 'You';
+  return { spell: best, target, confidence, candidates: hits, on_you: !suffix };
+}
+
+// ── The estimated mana ledger ───────────────────────────────────────────────
+// "We assume full mana for NPCs that have a mana total in the database, then
+// remove the mana amounts based on casts. If a mob is disengaged we should
+// still keep the mana total, but once they're reset their resting mana regen
+// should kick in" (the guild lead, 2026-09-22).
+//
+// ⚠ THIS IS AN ESTIMATE AND MUST BE LABELLED ONE. Three things make it drift
+// low-side, and all three are real rather than theoretical:
+//   · a RESISTED or interrupted cast still costs the mob mana and prints no
+//     landing line at all ("You resist the Retribution spell!" is in the very
+//     log this feature came from);
+//   · 194 of 1,384 NPC-castable spells (14%) have no landing text whatsoever —
+//     direct damage shows up only as "was hit by non-melee for N points";
+//   · we only ever see landings our own raiders' logs witnessed.
+// So the bar under-spends. It is a floor on mana used, not a reading.
+//
+// ⚠ AND the regen half is NOT sourced. eqemu_npc_types carries no mana_regen
+// column in our mirror (checked 2026-09-22), so a "resting regen" rate would be
+// a number we invented. Until a local session gets the real one off the peq DB,
+// a reset restores to FULL — which is at least a fact about how EQ works rather
+// than a fabricated rate. _NPC_MANA_REGEN_PCT_PER_TICK stays null deliberately;
+// setting it is the whole change when the number arrives.
+// Try to name the spell behind a landing line we just read, and bill it.
+//
+// Scope, deliberately: we can only identify against a spell list we HOLD, and
+// mob-info is fetched for the mob you are targeting. So this resolves (a) your
+// current target, and (b) any mob whose info is still in the cache because you
+// targeted it earlier this session — which is what covers the guild lead's
+// case of "a cleric mob near another friendly NPC will buff it": target the
+// cleric once and its whole beneficial list is known from then on.
+// It does NOT fetch for an unseen caster; that would put a network call on the
+// log-line path, which is the hottest loop in the agent.
+// ⚠ A CAST BELONGS TO AN INDIVIDUAL, AND A NAME IS NOT ONE (the guild lead,
+// 2026-09-22: "we're never updating the last seen spell on these and they're
+// not unique to the mob casting them because we don't have a surface to weld
+// them to even with the spawn-ids"). Both halves of that were true of the first
+// version: `Gate 1170s ago` sat on the panel for nineteen minutes, and it was
+// attributed by NAME — so one `A Greater Spire Spirit` casting bled onto every
+// other one you targeted afterwards. On trash that is most of the zone.
+//
+// The surface problem is real and cannot be solved from the log: neither
+// `<Caster> begins to cast a spell.` nor the landing line carries a spawn id,
+// so a cast can never be welded to an individual *from the log alone* — which
+// is exactly why Zeal 1.4.6's ids do not rescue this on their own.
+//
+// What DOES weld it: only record a cast when the caster is the mob we are
+// TARGETING at that moment, and stamp the target's spawn id on it. Then the
+// pipe supplies the identity the log cannot. Casts by mobs we are not looking
+// at are dropped rather than mis-attributed — showing nothing beats showing
+// another mob's spell.
+const _NPC_LASTCAST_TTL_PROVEN_MS = 10 * 60 * 1000;  // identity proven by spawn id
+const _NPC_LASTCAST_TTL_NAMED_MS  = 45 * 1000;       // name-only (pre-1.4.6 Zeal): short leash
+let _lastNpcCast = null;   // { mob, mobId, spell, mana, confidence, target, atMs }
+// The spawn id of what we are targeting, or null. ⚠ 0 means "no target", NOT
+// spawn zero — the guard CLAUDE.md records for buff_casts.target_id.
+function _currentTargetId() {
+  try {
+    if (typeof _currentTargetState !== 'function') return null;
+    const st = _currentTargetState();
+    const id = st && st.target_id;
+    return (Number.isFinite(id) && id > 0) ? id : null;
+  } catch { return null; }
+}
+function _casterIsCurrentTarget(caster) {
+  try {
+    if (typeof _currentTargetState !== 'function' || typeof _normMobNameAgent !== 'function') return false;
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return false;
+    return _normMobNameAgent(st.target_name) === _normMobNameAgent(caster);
+  } catch { return false; }
+}
+function noteNpcLanding(line) {
+  if (!line || line.indexOf(']') === -1) return null;
+  const body = line.replace(/^\[[^\]]*\]\s*/, '').trim();
+  if (!body) return null;
+  const t = parseEqTimestamp(line);
+  const atMs = t ? t.getTime() : Date.now();
+  const pair = _npcCasterFor(atMs);
+  if (!pair) return null;                       // nothing was casting — not ours to name
+  // Unattributable unless it is the mob in front of us. See the header.
+  if (!_casterIsCurrentTarget(pair.caster)) return null;
+  const mob = _npcMobInfoFor(pair.caster);
+  if (!mob || !Array.isArray(mob.spells) || !mob.spells.length) return null;
+  const hit = identifyNpcCast(mob.spells, body, pair.leadMs);
+  if (!hit) return null;
+  const mobId = _currentTargetId();
+  _lastNpcCast = {
+    mob: pair.caster, mobId, spell: hit.spell.name, spell_id: hit.spell.id,
+    mana: hit.spell.mana ?? null, confidence: hit.confidence,
+    target: hit.target, atMs,
+  };
+  // ⚠ Only spend on a spell we can NAME. A 'guess' still tells the raider what
+  // family landed, but billing 225 mana for what might have been 9 would make
+  // the bar worse than no bar.
+  if (hit.confidence !== 'guess' && Number(hit.spell.mana) > 0 && Number(mob.mana) > 0) {
+    npcManaNote(pair.caster, mobId, mob.mana, Number(hit.spell.mana), atMs);
+  }
+  return _lastNpcCast;
+}
+// Any cached mob-info row for this name, whatever zone bucket it landed in.
+function _npcMobInfoFor(name) {
+  if (typeof _mobInfoByName === 'undefined' || typeof _normMobNameAgent !== 'function') return null;
+  const want = _normMobNameAgent(name);
+  for (const [, v] of _mobInfoByName) {
+    const m = v && v.mob;
+    if (m && _normMobNameAgent(m.name) === want) return m;
+  }
+  return null;
+}
+// Show a cast only when it can be tied to the mob in front of you, and only
+// while it is still worth showing. Both guards earn their place:
+//   · IDENTITY — with spawn ids on both sides, require them equal. Without
+//     them the name is all we have, so the leash is 45s instead of 10 minutes.
+//   · AGE — the first version had none, and parked `Gate 1170s ago` on the
+//     panel for nineteen minutes.
+function lastNpcCast(mobName, mobId) {
+  const lc = _lastNpcCast;
+  if (!lc) return null;
+  if (typeof _normMobNameAgent !== 'function') return null;
+  if (!mobName || _normMobNameAgent(lc.mob) !== _normMobNameAgent(mobName)) return null;
+  const haveBoth = Number.isFinite(lc.mobId) && lc.mobId > 0 && Number.isFinite(mobId) && mobId > 0;
+  if (haveBoth && lc.mobId !== mobId) return null;      // provably a different individual
+  const age = Date.now() - (lc.atMs || 0);
+  if (age > (haveBoth ? _NPC_LASTCAST_TTL_PROVEN_MS : _NPC_LASTCAST_TTL_NAMED_MS)) return null;
+  return lc;
+}
+const _NPC_MANA_REGEN_PCT_PER_TICK = null;
+const _npcManaByMob = new Map();   // key → { max, spent, lastCastMs, engaged }
+// ⚠ Keyed by INDIVIDUAL, not by name. Keying on the name alone pooled every
+// `A Greater Spire Spirit` in the zone into one ledger, so the bar you saw had
+// been spent down by mobs you never fought (the guild lead, 2026-09-22). The
+// spawn id off the Zeal pipe is the only thing that separates them; without one
+// (pre-1.4.6 Zeal) it degrades to the old name key, which is wrong in the same
+// way but is the best that client can do.
+function _npcManaKey(name, mobId) {
+  const base = String(name || '').trim().toLowerCase();
+  return (Number.isFinite(mobId) && mobId > 0) ? base + '#' + mobId : base;
+}
+function npcManaNote(mobName, mobId, manaMax, spentDelta, atMs) {
+  const key = _npcManaKey(mobName, mobId);
+  if (!key || !(Number(manaMax) > 0)) return null;
+  let rec = _npcManaByMob.get(key);
+  if (!rec) { rec = { max: Number(manaMax), spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
+  rec.max = Number(manaMax);
+  if (Number.isFinite(spentDelta) && spentDelta > 0) {
+    rec.spent = Math.min(rec.max, rec.spent + spentDelta);
+    rec.lastCastMs = atMs || Date.now();
+    rec.engaged = true;
+  }
+  return npcManaState(mobName, mobId);
+}
+// A reset (mob evaded / despawned / returned home) restores it. Disengaging
+// alone does NOT — the guild lead was explicit that the spend survives a
+// disengage, which is what makes the number useful across a wipe and a re-pull.
+function npcManaReset(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
+  if (rec) { rec.spent = 0; rec.engaged = false; }
+}
+function npcManaDisengage(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
+  if (rec) rec.engaged = false;
+}
+function npcManaState(mobName, mobId) {
+  const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
+  if (!rec || !(rec.max > 0)) return null;
+  const cur = Math.max(0, rec.max - rec.spent);
+  return {
+    cur, max: rec.max,
+    pct: Math.max(0, Math.min(100, Math.round(cur / rec.max * 100))),
+    spent: rec.spent,
+    engaged: !!rec.engaged,
+    // The overlay renders this as "≥ spent" / "estimate", never as a gauge.
+    estimated: true,
+  };
 }
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
 // target's name (the guild lead, 2026-07-14: heal AMOUNTS are private to the healed,
@@ -5895,14 +6189,36 @@ function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
   if (!best) return;
   const prev = _slowCalloutState.get(targetLower);
   const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
-  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });
-  if (changed) _announceSlowLand(best);
+  // `display` keeps the mob's name as the log cased it; the fading and drop
+  // callouts run off the lowercased key alone and have no other source for it.
+  const display = targetName || (prev && prev.display) || null;
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display });
+  if (changed) _announceSlowLand(best, _slowCalloutMob(display, targetLower));
 }
-function _announceSlowLand(best) {
+// Which mob a slow callout is about — "A Plagued Soriz #4745" (a member,
+// 2026-09-23: "we should say the target these are based around, name of mob and
+// spawnid"). The id is shown only when a watched client's Zeal target PROVES it:
+// its current target is this mob and carries a real id. Two watched clients on
+// different ids of one name → no id; the callout never guesses which one.
+function _slowCalloutMob(display, targetLower) {
+  const name = String(display || targetLower || '').trim();
+  if (!name) return '';
+  const want = _normMobNameAgent(name);
+  const ids = new Set();
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > 60000) continue;
+    if (!Number.isFinite(st.target_id) || st.target_id <= 0) continue;
+    if (_normMobNameAgent(st.target_name) === want) ids.add(st.target_id);
+  }
+  return name + (ids.size === 1 ? ' #' + [...ids][0] : '');
+}
+function _announceSlowLand(best, mob) {
   const magTxt    = best.magnitude ? ' ' + best.magnitude + '%' : '';
   const casterTxt = best.caster ? ' · ' + best.caster : '';
   _pushOverlay({
-    text:        '🐌 Slowed — ' + best.name + magTxt + casterTxt,
+    text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + best.name + magTxt + casterTxt,
     tts:         'Slowed. ' + _slowShortName(best.name),
     color:       'amber',
     duration_ms: 5000,
@@ -5913,9 +6229,9 @@ function _announceSlowLand(best) {
     test:        false,
   });
 }
-function _announceSlowDrop(name) {
+function _announceSlowDrop(name, mob) {
   _pushOverlay({
-    text:        '🐌 Slow dropped — reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
+    text:        '🐌 Slow dropped ' + (mob ? 'on ' + mob + ' ' : '') + '— reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
     tts:         'Slow dropped. Reslow.',
     color:       'red',
     duration_ms: 6000,
@@ -5965,12 +6281,13 @@ function _tickSlowCallouts() {
         && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
       if (nameChanged || warnDue) {
         _slowCalloutState.set(targetLower, {
-          name: best.name, magnitude: best.magnitude,
+          name: best.name, magnitude: best.magnitude, display: prev.display || null,
           warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
         });   // name change is a silent downgrade; warn stamps the window
       }
       if (warnDue) {
-        _pushOverlay({ text: '🐌 Slow fading — re-slow soon (' + _slowShortName(best.name) + ')',
+        const mob = _slowCalloutMob(prev.display, targetLower);
+        _pushOverlay({ text: '🐌 Slow fading ' + (mob ? 'on ' + mob + ' ' : '') + '— re-slow soon (' + _slowShortName(best.name) + ')',
                        tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
                        shownAt: Date.now(), firedAt: Date.now(),
                        trigger: 'Slow fading', scope: 'slow', test: false });
@@ -5978,7 +6295,7 @@ function _tickSlowCallouts() {
       continue;
     }
     _slowCalloutState.delete(targetLower);
-    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name);
+    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name, _slowCalloutMob(prev.display, targetLower));
   }
 }
 // ── end #130 slow status ─────────────────────────────────────────────────────
@@ -7389,10 +7706,16 @@ class EncounterBuilder {
     if (!p || !p.eventRef) return;
     const ev = p.eventRef;
     ev._dsSettled = true;
+    // A flavor line that arrived BEFORE the swing named the wearer was kept on
+    // the candidate (see the ds_flavor handler) rather than settling blind.
+    flavor = flavor || p.flavor || null;
     const amount = Number(ev.amount) || 0;
     const known  = amount > 0 ? this._knownDsPerHit(p.tank) : 0;
     const fits   = known > 0 && amount <= known + DS_UNLISTED_SLACK;
-    const isDs   = amount > 0 && (flavor ? (known === 0 || fits) : fits);
+    // No wearer, no shield: a candidate whose swing never arrived stays the
+    // anonymous hit it was. Without this a named shield with no known tank
+    // (known === 0) would be credited to nobody.
+    const isDs   = !!p.tank && amount > 0 && (flavor ? (known === 0 || fits) : fits);
     if (isDs) {
       ev.attacker = p.tank;
       ev.ds       = true;
@@ -7504,6 +7827,10 @@ class EncounterBuilder {
       const p = this._dsPending;
       const mine = !!(p && p.mobLower === String(event.defender || '').toLowerCase()
           && flavorTsMs - p.tsMs <= DS_PAIR_WINDOW_MS);
+      // Our candidate but its swing hasn't arrived yet (shield line logged
+      // before the swing it answered): keep the evidence and let the swing, or
+      // the window closing, settle it.
+      if (mine && !p.tank) { p.flavor = event.ability || null; return; }
       // Settle regardless — a flavor line marks the end of the pair window;
       // one for another mob (or too late) just settles without the evidence.
       if (p) this._settleDsPending(mine ? (event.ability || null) : null);
@@ -7807,6 +8134,12 @@ class EncounterBuilder {
       if (_isMob(att) && _isPlayer(def)) {
         const tank = (def === 'YOU' || def === 'You') ? (this.character || def) : def;
         this._lastIncomingHit.set(att.toLowerCase(), { tank, tsMs });
+        // A shield line that arrived BEFORE this swing is waiting on it: this
+        // swing is the one it answered, so it names the wearer.
+        const dp = this._dsPending;
+        if (dp && !dp.tank && dp.mobLower === att.toLowerCase() && tsMs - dp.tsMs <= DS_PAIR_WINDOW_MS) {
+          dp.tank = tank;
+        }
         // Rolling record of who the mob's melee is actually connecting on —
         // the Main-Tank signal for the Tank overlay (majority of connects
         // over the last ~15s). Rampage hits are excluded: the rampage
@@ -7868,13 +8201,25 @@ class EncounterBuilder {
       // event carries _dsSettled and passes straight through.
       if (event.attacker === null && def && event.ability === 'non-melee' && !event._dsSettled) {
         const recent = this._lastIncomingHit.get(def.toLowerCase());
+        // Settle any older candidate before opening a new one (one mob's
+        // hit must not borrow another's flavor line).
+        if (this._dsPending) this._settleDsPending(null);
         if (recent && tsMs - recent.tsMs <= DS_PAIR_WINDOW_MS) {
-          // Settle any older candidate before opening a new one (one mob's
-          // hit must not borrow another's flavor line).
-          if (this._dsPending) this._settleDsPending(null);
           this._dsPending = { eventRef: event, tank: recent.tank, mobLower: def.toLowerCase(), tsMs };
           return;
         }
+        // No swing yet — held anyway, so the swing that follows can still name
+        // the wearer. The order is not fixed: a member tanking in Ssra saw ONE
+        // shield hit for a whole fight while wearing 60/hit of shields (Tank
+        // overlay, 2026-09-23), which is what "shield line before its swing"
+        // does to a pairing that only ever looked BACKWARD — it lost every
+        // return except the odd one landing within a second of an EARLIER
+        // swing. Replayed: swing-then-shield counted 10 of 10, shield-then-
+        // swing counted 0. The decision is unchanged (flavor or a fitting known
+        // shield); only who wore it is now found in either order. An orphan
+        // whose swing never comes re-enters as the anonymous hit it was.
+        this._dsPending = { eventRef: event, tank: null, mobLower: def.toLowerCase(), tsMs };
+        return;
       }
     }
 
@@ -13745,8 +14090,12 @@ tr:hover td { background:#1f242c }
    --wp-topbar-h is MEASURED and republished by _wpSyncTopBarHeight(); the
    fallback only covers the first paint. A hardcoded offset would be wrong the
    moment the bar wraps or the short-window breakpoint fires. */
+/* A fixed HEIGHT, not just a max, so the rail has a bottom for .wp-rail-foot to
+   sit on. The 64px is body padding (32) + the rail's margins (24) + the bar's
+   margin (4) + slack: any less and a short page grows a scrollbar it has no
+   content for. */
 .shell > .nav { flex:0 0 168px; position:sticky; top:calc(var(--wp-topbar-h, 118px) + 8px);
-                max-height:calc(100vh - var(--wp-topbar-h, 118px) - 20px); overflow-y:auto; }
+                height:calc(100vh - var(--wp-topbar-h, 118px) - 64px); overflow-y:auto; }
 .panes { flex:1 1 auto; min-width:0; }   /* min-width:0 or wide tables blow the flex item out */
 .nav { display:flex; flex-direction:column; gap:4px; margin:12px 0; align-items:stretch; }
 .nav button { text-align:left; }
@@ -13756,13 +14105,25 @@ tr:hover td { background:#1f242c }
    back to the original wrapping row. */
 @media (max-width: 700px) {
   .shell { display:block; }
-  .shell > .nav { position:static; }
+  .shell > .nav { position:static; height:auto; }
+  .nav .wp-rail-foot { display:contents; }   /* Tour + Feedback just join the wrapping row; .nav outranks the base rule declared below */
   .nav { flex-direction:row; flex-wrap:wrap; align-items:center; }
   .nav button { text-align:center; }
 }
 .nav button { background:#21262d; color:var(--text); border:1px solid var(--border); padding:5px 12px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12px; }
 .nav button:hover { background:#30363d }
 .nav button.active { background:#1f6feb; border-color:#1f6feb; color:#fff }
+/* Tour + Feedback at the foot of the rail (the guild lead, 2026-09-23). Dim, so
+   they don't read as two more tabs. */
+.wp-rail-foot { margin-top:auto; padding-top:8px; display:flex; flex-direction:column; gap:4px; }
+.wp-rail-foot button { color:var(--dim); }
+.wp-rail-foot button:hover { color:var(--text); }
+/* Reload + ✉ ride the title row's right edge (the guild lead, 2026-09-23). The
+   right margin keeps them clear of Mimic's ⚙ Settings button, which preload.js
+   pins at fixed top:10px right:12px, 34px wide — i.e. 30px into this row past
+   the body's 16px padding. In a plain browser the gap is just empty. */
+#wpTopRight { margin-left:auto; margin-right:40px; display:inline-flex; gap:6px; align-items:center;
+              font-size:12px; font-weight:normal; }
 .wp-ov-toggle { min-width:42px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-toggle:hover { border-color:var(--blue); color:var(--text); }
 .wp-ov-toggle.on { background:#196c2e; border-color:#2ea043; color:#fff; }
@@ -13893,7 +14254,11 @@ body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
 <div id="wpTopBar">
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : ''}</h1>
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAYF0lEQVR42sWaeZRdVZ3vP3ufc+481FypSk1JJZWkQhIghBCGkMjgc4iAmBJERbAZhOfwsFtb7e5KtQvFfoK2UwtPjKAIVoVBRJExBBAICSSQpDJWpea56t5bdz7D3u+PSmTSfmv1eu951rrrnnXWOfd+f8P+7d/v+z3wnkOLP5/pt87/1kd7e7t8Cxd/FZcAGNr7fIsw5i50dnYaf0vgc06cc2T/nheWv/nmY6V/0bm6XUuAh7776/afXfsr995vbX1E6zdL56zfbv4totHe3m4CIOGhn93zDz+9/h593zfu26317pDWWmithTgZno6ODtXb+1hj562Hj86UW5bfsYjpzL6Lr2m5ftWqS145GY22tjbv/0u6dEAHHUrrqdgvvtv1vd7DuWuzpaYbTnrmmrPKrv3IZz+zdXv7dvNkXkmAVx8ZvajoE1bFkhI3tKzEG7GtFV0/6N6x7e6tt2p9JNbW1uZ1bv5/m1KdnZ1GR0eH6jA71LO/7/z4d75w784jvfa1JasbvOqWEtKmq4Z60lcLA57reE6ZAN3dyzXA5ET2oqLP0k3RCv706uvGaRtXqvRwxvfqzrGv9+977GPP/e7Bf9yw6fKHQQutBUKg/2+Db2tr847P/nHpsz86/m9Pdh3bpCtLqVtV73Xv32esOX25lkuFGDs8eKpy91YJceqEBERXV5untTZSGfsUI2yJ1iULZOuyFl59+XVpxExdcWa9O235WrY/1PtQ50+23mZYUm8R7eI/WxcnclTq9nbZ2dlpvL2K/Gfgn3/y/gs6v3Hghb5xsal63RKvaXWD2rt7t2HbRRY1N4tYeVQ7SsRf2zm4BMDUWiOEAPqimVShvGFFE6Zfirq6eRzs6WPXzj1iyeLFZnxRqSqWB/UbO6e/+ovbfhr79D/ccFPtDaPW9vPb9XMnQHTv6NYArXRpIYSC90RIbmazANgMHDi/VQAsr0K2tbXZT2y7d9PT9/Zsy5REfHUry13XLppHDvYhhObcs9fiOA6RkohWjhTjB1JxAHPLli0C0GNjA6VYMh6OR8kXHNCK01Ys4fVdexnq7yccCsvS6phuuGiZM7x77HMP/fL+/suuuvI77ynCYm5FpZ101Stbn2zMzKRVMBwymta1TC4987TjXW4XaOjSwI63Hh2YeWnFw//zwP0lq1t94Uje6z181BSGSXJ2mrPWriEaDYPyiEejyrQsmcvYVQDmyR+YmSmayvMMw2fieZpcOkchU6S6poaDBw9RUlVKf89RMXhwjynSqLEu99af/nN7s5zyZ1xHW07Ok9rw4mg3aITs4C+u+qczyFGZc4tEAz56n34pe8cnbnlF2P6ERDqm37KlEBlDm66KaufH/33rJROzKly7qsobP5gwKpqWcfTQYRrqa7ELOZKJBEHLwgoGkKZBsWD73mFAOKxdKfAMISy76JDJ5Fi7dgXHe/uwApLupx8l3bePllWNQtoZkeidwLNOu85nRPAZElC4joPWCl/CZkKkueaOT4GXJxDx6c4fPRWefnn0gvr5tWjPwHQkUgsc2yOTcJjt78aIpHU0vcwYOnSc/ft3s+i897N40WIaGuqZzWXIZnPEI0GkJZAB0waQW7Zs0QCNjctnpavTmZkMpmWglUPYb7Bh/RqCmUHUyF7+44F/5ru3X01dSLDujAa9aJl2Kxel3MrmhFvZPOPOX5R0GxbPevH5Cc+s8uuYOYYvsYtgoU+UzvPritq017Q4481bOO2WN064pfXjbsXCKbe5Ne1e1bZMnd1UKq746GrufPTbtNT5mHhjJ+vPOZOWlkXkMmkMQ1AsFIVEEI2bswDm3AIGmJ8yLTGTmSlUZnIZrRxPDAxN0nOwmwd/fie/efhr1C+SPHDLD9ETM4Qb54venkHTNASmBGkYGIaJJSGXtZHRIPbYAZzRPly3QDwcECPZvDE+PE22UEADQoJhSECQSifxBYL8ov3n3Pw9ze2/+gJXXbiFB+/8AZs+exPp2TQl0SjpRFoW01kq5teNARgAmzd3GmzupvhU4X2OsJaalVLV1tTKZc11fOfvP8/nrlvHulMdnrv3KV5+9jhNC2tJZvIUXUXBURRtje1B0VYUXcVkMosM+zj77CocxyMQDDI47rDnlX78AT9FW6E8gesq7IIiX1AkU3mUEBQck6EjR1mxLM+6jWdx5/e30bp6DaevO5fhkQk9NZ4Ss8eHs5dce+a3AoGatATo6mpTbaLNi7SqfUMTA1ja0kXX4dH77qWlzuDyzU1Mv3mUh7ftw4yVYSuN3zKI+E0iQYtgyMIyDdAaRykkgmDARAYsDNPCkC5usUjaFZiWQJoSw29i+PwI08QyDCLBAD4hqJwXZf+bkxx+oZe6hgxXXLWOh+76DyaGhsjbtj56qB9Z7kzNb1o70NHRoSQgXnzkkchT93R+vnf/zDXDqQSJZMFws2m6fnkPV31yJSQH6D1UxLAtogGD0Zk80xmHgitwPcF0apbBqSRp28VnGUgBAVOj3SwOLlp4BAMgtIdyBQofidkio9MpZm0XJS3ytks276Jsj7JoCbt2JikODnDpBXEmRo7wx0cfwQr4ZbqQ1GOp3Py7v3vXfX/a9uhSA+DLl37urJ4ddmePyMWaTm1gNpMTA92vUR0Y51OXVTDbP8LDD/aihY9AyMS2HTBM9h6b4Lm9x0h7IQaSmiO9g8RM8PtDhGKSlSsCFGwXnz9AMqEY6J7GBf7wp4P0pDwmCj72HhlhcmKaunllaK1QnkYELA4eHmdJY5zaBZC3Q3TvG2d+cyvKMIQtw2R3qpX1sdJFsr29XUY/bu0qVI8/6GRS+sjhPmUYBq+9sINLP7AEw3IZGMixc/8ok5k0qUyWeDjIwMAoxzOC//GDe7l7+24e3XOQ2x98klH/fP7wcg8ahSkMTNPCQyCRDI2n2b5/iMu/citdL+/n/ud38ZPfPkP56o08/sphCp5gLJlhYibF8EyBN96cBiXY9KEl5GcG6T3czdj4uJ7oPy6Czbmh8Kl8SwI0iLPz137zss+U1dpjlvKJTHpKhUSO5YtDqJRNX49HPBilPB7H1QajYykGEoJ7fv8EbVd8gnA4yMHu/SxqXc7/evwFwk0toFzwLOyMwMnZ+A3BnsEUf/+jX3HDF7/E8NAAEs2pp6/mrvsfZt7q83nxjR5C4TB+v4/6eTHGhvIUEy6V/llqqi0O7dtHMBz2Kist1t4Yv/WsCze9IJcvXy4Adj7+4in+0bJ5sUhEdL/6qmxp9FMms+RG0/T2TROKBlBao7B49ego5155Nc0trYyM9PPA/b/h9tu+w7LGJn7zy1/wr//+fY6M2eRzmkK2gJtTHDg0yPs2f4LT157JT378I/7xi1/gvNNO43cPdwLwlfYtpByTQqGIVJpI0E//SJ7RngwqleKsVeUkB/vwm5YRnCkXg/fJU9vb2+VbHeK0z1ocacoG8wnXLMzoU+qjZDMpJhMe+49OU3RsbNdDCLACPtaeuxbPdbn7rrtYfcYarvm7z6ITKb5+03Wk8g6BkkYmx5JoB7Rj0D9mc/5/ez8/+eEPueFzN7B+w/kM9PTxza99mcnJQZa1trKweSnFTA7tSZRyGZuYZXAggWM7tC6tpirskRvpyzaLqmKFW+Hv6OhQ5skJ66xPbXrhjTceXPbhlR+uvm3zwO/qytI1xaKnnWBcNK9cTH/fNFOZPCqZx3Y8qqpKMEyT3gN7uPm3D1LMZSmtCJPJ59m793Xqa+uZnXqTcDyOXbDxqwCxaJxnH32I7Y89ysxIPy1NJUxNTzEy0kdl5XmEw2GO75vCKoVoJMDSlQspbV5AOpPCyCRUc6xerv1g8+fXn7niuZ7cYIJvvq0Xam9vl6tWXT60u6cnXZ6JBMr8M+QTRSQe13xsGRktmUllmJ4s8NSLfex8eTeu8lNMzNC3/zAlpT4aaytIpnxU+qa48OIKnFQzrilQpuT88yNU1U4T92n6Du3FCEWwfEFKA/DGK7vwXA0iz1U3X0BZbYCquI+SkA8vkyU74xA2taqWpXL4aS1LL1nXd5KAeItCaW+XbNmid9z/9Kn773no9fXv71VlJUIWizau4+IpjTQhWhnj2FiUV3f1E4ho8DSelkwnkvQdnWL5qYs47aIzeGbXIKliGMOy8LSH8NKsX1VJ0Fbcc+dvqa+NU18dpjwWp+AKZrJFSqIhPvrBanRmkkK2iON4WJj4TD9Wmc957tFqMx9f/a3+8sl/qR2tNW646wbnHRyQEILdL7xQf+SuP73Rc+yJknykTy9oiokF1WHKoiaxoDHXdSoI+SRaC7SWKCkpIihgkA5X8rWtfdQ1tdJQV4vP8lFwHaZmE+zb2811H4hzXnURZ2KaeMxCILGEAO2RKzhoT2H5/DhKULA1g+MZ9h6b0olBS6xccDkNF6y5cuNNlz6gOzsN0dbm/TmFhBD6hBEDL+58YuP4XanbX3txeOOTew7qklBQ1JQHqAxblEX9NFQHaagKEw1LAj4DwxDkiy7VC0uZSk0zNp4mW9zHoe7X8QeCOLaN1i6zRYOhoSILTi/nUH+egvZQQNHR2K4gm/c4dHya/f050kVFsVBkMpnXUgY5Z+2Hh0ouWvy1jTdf+sAJnN475oGTRmzfvt08d+3GvQ89ftedy0cWvi/kn1H9yawwKxZy9uUf5vVX9vLS8Ci/23WMaMhHxC+IhWHBvBLOLQ+woirCh1YFuPuZXkrKSqiPREilcvQeH2TdkhquWNtAOlVgNC1587URxqfzJPMST7soz2TxylNZ8/EVDA+N8Mi9v6a5JqoWVdQZTevrd11y42d+1bm50zgJ/s90ytvXwcaNG91DPc+vPPy9N39a5U7qRdVhYSjB8d7jnLJ6ObduvYMFSxqZzGk2f+mLrL/q05StuoDf70nxencSN1Hk8xeV8q8fbaAu4DI9NopVyHHN2bXccUUd5TrB+ECGe54+xkx8IadfdiWf3fJVqluXMzRb5JM3tnHtLdeRnBhBakXINI2ldaje+/Zd1nn73V9q62rz3k4QGO+YaHdsEM/pB0L33LjtEaOwd+Hi06T6/c4JmVYGqZkEExNJYpFSfvRv32c6keXiTe/jI9dcSy41yRN/eIaJyQwRKQloj9Yqi41L4qTHJ7j2nBquXBNH55P09mf47Y5h9vZO0dK6mFs6vkBFVRW//ul9HOoeJFwSYvD4AA/9/JeEozEGZiVVNTFOaUZPHlAXf+OOf3rx09ff2NvZudno6urW5ttoDdnW1uatu3vFRcHCzOr3fW6h6zc889vrTmFgOMt373iU/S+9xIFXXkUKk/JyP11bt7H+g5dx36/+wOhIiosu3MRrs2me2d9LPCDJFR1Gpgo8u+s4ew75yRU1WRXktPMuYN7UEzzc9QSf+fzNvLHzNY4e7mFxSxmPP/gIjjawi/CpT57DhosW4yRnxLymgPfkVts89Nujn0XwLF1/IYUA8ukijp3UqX1viqldr5F5/RUWFHu57kMrUEqSyRb5yrf/iUs/cSW7X3qNr/7dTfTt348hIJHO8q2tP2bdRy5hx75hXjmWZjhRZFdfmsd39TNrhPjhtp+xYNkSRgenqAmG+fev38adt/2Yyvl1fP/+rSxeuhQ7k2P9mhYuqLPhwMu4xw8ytOM1kc1M6YJhMzfDvMuAzQc2a4DSBaX9OVuTyzhGMOrD0RaDw1kqgzk+vG4pFeWltK5cxJqzTyUcNNn11HPMm1fJVTdezTN/3M6fnnqJnp4hPMfD7zMQGnyepqWiBiOV4+Wde3js14+wIBCh7cw1nBUJs6GlmfmRGD5lU1PfwJqWRVxyTiNH+0Y5NuYhpEFZPKb9riF8UX8fGlrbW9+1kc2VJp3Wo1Xf29hxcNXyPWWrz4rqbQ8Pi8O9SWRA0txQTXV1JY+/eoxFa1ZzYMeLFNKzbLl3K7VNTXzynA3EY1GKriaTTeMzDSplhNaa+ZzeWIuHx2NHurliw0YyeYcj3YfZcMoSapoaGLQdfrbtYZRPs2bZfI4e6sEzLbKZHNdvXkAobHrbn240qjZcdF3bLZ/52fb2dnNjR4cr31ZCAYgwb5qQf8xVIYIRU4dLLErLS1hQX0s2VySZmGTjqnom9+0lb+coqa2hPGZQVao5a8OZTE+kcAsepvBRIcNcuLiFdY3zkZkC1abFl9avZ4HfYk3LAjZedAG7j/UzMTLKivoavnL11YRdQd/AMLGyUipLwiypL6GmoYx0UcrJpCZeGzkCMLl8js+V76AzQUi/9CJl4XGUhS8kdUmZgdIuQcsjHPaRKbikZ2e4+MyFXHXxWVSH/Xzt+i/zzS/9C8WCg/bP3V/i83NG40IqI3HGUikOJqfZOzrO7GwODAONpqk8QmvrUoYSKdLTU1THo3zgwvdTzBQx/YLRRBpbSkrKgzrgj4tgMGTPX71gBODAgQPvMYCuzZ1S25pIONKDDmGFpS6viuHYHoaQoBUBw0BoiyM9QyQTk5yxtIpN61ooLSYosTOsaamjtjJKKGxwdHaCR3v2sWN0gAOZKZ7v7+W1gXESySx2JstsMsGixvkIDelcgdTUJCsb6olHqvFLQSQaBUvgCyidSgtkKDC+fNHpYwBbtnTo9+zEla0HBIC/JNQz3eNHGyb1jQGC/hGKnovtKaTWIBRCmszmXGZyY/gtk9JYhHlllYR8Bi4K1wPHdVGIE6EVjEykOXpwlOaqMmJlcUx8KLtIY2Mjji0wlItPZagrn8/gTDdBv8nyxSVYcb9OTGUpqsCoFbYyJzL+vQacZJlDpdHe6UIQW9qirNakKE0yRYUhJFpINAKURmmN0Ca5nEdyNkk6NYhpSsKxEH6fRcA0saREComrFGMzWSYKORKZLDrvoE0/ds4mZJoox8W1i0i7QFgIZjIulusxrz4KsYBWnkcwFDrm5l02s1l20fXeXmjLFlRHB1S2Vh4//KzQM8NFo7ZG4WibgZEUFbEgUkg0Eg8NQmJKiSkFAVPiL43RPznL4dEJfIYg5DcxjDmNznE90raNKkgUJp7r4hWzuEWNYVho5eDkc6hAAFMoUrNp7KxBIODDyzjknSDltZE+NNzU3iq6Ov7CRrZly9z3KZtOG/U8MzfTbyNtdEO1n5DfhyMNMo4iVfDIFjS2o7E9h6LnkXE90o5HeVmYJXWl1JRG8FkmBWfuurJ8VFVWUFISJlnMMpvO4uWKuK7DbHKGxMwMxVweCYxPTlIRD1EeDxEJmSQnsmJiXBEsDx97e6a8JwIdHXMLo5y6iVAsPDQz6i5RnqFrq8JieKCAp3wooTAtScAwMKQGXDwNSkm01qA14YCPgC9IyIMSpUBq/OYc4TXgFDgyNsqKefMwUlnKGuvIBHLkZnOE8RidmOTQyAix+RGqI5qSkMnMRFYk02Gaa6uGAZafKKHvMQDQ7bRLYQr7jsu+cTQ1aSyxs2ktDB99w7PEKlxAIYUgwxyVqNBzwIUCOTfkoDVKaUwhMA0DA01OKfKOR8p2KdgOuwdGOGdZC1Pj44R8fkKWj7HkLL/btYfhYp6xEYfWRTEsQ+n0pJLS8uvqM2om5rjcA3/VADgfyQ5UpCrcU0z5GRua0HXVfm7+yvsJhsw50Uh7KOWh0WgpMIQxRzULgdIKpefadVMbCDlXLpRSaK1JZYsUsy4D+0d55JWXmRcrA6VI5QtkyXLex5ZyWVM5dsFGZmaZHEwyOSKIRINTS5evGDyR7Bo6/rIBGzZAxw4Ixcv7U8ekdpRW5UFbWcaE1rZAaoFAo7WH1voEbgnCEAKhxZxZeEqDRmittJRgSIk0JcWoFAk7T/lSg6ESi3RiEkMKYkGLhQ0V1FR72lCTmAEoeAVhCumNDdpSF6MjMWIzJwevd7xa8C51UQoh1NP3/fHM4W3P77T8u5FWfk7tF6DlnBAmEAihQZwEK0DPVQV5gm46aYw+ofUpDQoQWuAoDyE1SIllGfgNA6/oUXBcNAIpJKYPhAZ7fCnWytXfu+K262/p3NxptHW9JbaLvyaRCin0Mz/u/FT/rv6bpjPjfkMLG41wxdz4bEip5ZyyhKOUEEjDUygphBBoTxpaYiC1h9JKCOWCVkpLA0OaQghLoJXGcbTWas4vpmloaWk8T6EKGoI6EDHDsrqm4fnzbzv/q+UsTv8fI/Cetz8CAtMw8VwPxJzvT3r0zyKqECeaQX3SAXNREmIuzd72T39WhN4lwOqT3djbkLk5V8w9ItR/TTmfe61AvEtE/Wsf/sK973aS+K/i+Gui+v8GlRj1P1QhM0QAAAAASUVORK5CYII=" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : ''}<span id="wpTopRight">
+    <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
+       title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
+    <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
+  </span></h1>
 <div class="subtle" id="header"></div>
 <div class="wp-quicklinks" id="wpQuickLinks" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">
   <a id="wolfpackQuestLink" href="https://wolfpack.quest" target="_blank" rel="noreferrer"
@@ -13907,18 +14272,13 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
     <a id="wpRaidLink" href="https://wolfpack.quest/raid" target="_blank" rel="noreferrer"
        style="color:var(--orange);border:1px solid var(--orange);border-radius:5px;padding:3px 9px;text-decoration:none"
        title="Raid hub — live grouped roster, color-tier coverage, click-into-character side panel">⚔ /raid ↗</a>
-    <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
-       title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpUiStudioBtn" type="button"
        style="background:transparent;border:1px solid var(--green);color:var(--green);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
        title="Open the UI Studio — graphical rescaler for EQ window layouts (move a 1440 UI to 1080, drag/snap windows visually)">UI Studio</button>
     <button id="wpResourcesBtn" type="button"
        style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit"
-       title="What Mimic costs this machine — live CPU and memory for every Mimic process, measured here and never uploaded">📊 Resources</button>
-    <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
+       title="How much CPU and memory Mimic is using on this computer right now (measured here only, never uploaded)">📊 Resources</button>
     <button id="wpGear" class="wp-gear" title="Customize panels — show or hide sections (per page)">⚙ Panels</button>
-    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
-    <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
   </span>
 </div>
 </div>
@@ -13946,9 +14306,15 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
        officer-gated card DATA is served only to officers, so this is a real
        gate, not a CSS hide. -->
   <button data-tab="admin" id="wpAdminTab" style="display:none" title="Officer quick menu — DKP ticks, loot capture, admin links">🛡 Admin</button>
-  <!-- ✨ Tour and ⚙ Panels moved to the sticky top bar (the guild lead, 2026-09-02) so
-       they are reachable from anywhere on a long page, alongside Feedback. The
-       ids are unchanged, so every handler that binds to them still binds. -->
+  <!-- ✨ Tour and 💬 Feedback sit at the FOOT of the rail, stacked (the guild lead,
+       2026-09-23: "We're running out of horizontal real estate"). They went up to
+       the top bar on 2026-09-02 so a long page never meant scrolling back for
+       them; the rail is sticky too, so that still holds. No data-tab, so the
+       tab switcher ignores them. The ids are unchanged, so their handlers bind. -->
+  <div class="wp-rail-foot">
+    <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
+    <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
+  </div>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
@@ -14415,7 +14781,7 @@ function renderBuffsTab(s) {
         +     '<span style="font-size:11px;font-weight:600;color:' + (b.good === 0 ? 'var(--red)' : 'var(--text)') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(b.name) + '</span>'
         +     (b.song ? '<span class="dim" style="font-size:9px">song</span>' : '')
         +     '<span style="margin-left:auto;font-size:11px;color:' + col + ';font-variant-numeric:tabular-nums">'
-        +       (b.remaining_secs == null ? 'permanent' : _wpSecs(b.remaining_secs)) + '</span>'
+        +       (b.remaining_secs == null ? (b.permanent ? 'permanent' : 'no timer') : _wpSecs(b.remaining_secs)) + '</span>'
         +   '</div>'
         +   (pct != null
               ? '<div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;margin-top:4px;overflow:hidden">'
@@ -15092,12 +15458,17 @@ function renderMeCard(s) {
   else {
     h += '<div style="font-size:11px;line-height:1.5">';
     for (const t of tells) {
-      const arrow = t.direction === 'outgoing' ? '→' : '←';
+      // SPEAKER → LISTENER, so the left name is always who spoke (Hitya
+      // 2026-09-14: a received tell drawn as "Other ← You" read as You
+      // speaking). Same convention as the Recent Tells table and the DM relay.
       const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
       // NOTE: t.other is not always a player — keep it a plain span (no
       // class="name") so the /character click-delegation can't misfire on it.
+      const otherSpan = '<span style="color:var(--blue)">' + esc(t.other) + '</span>';
+      const meSpan    = '<span class="dim">' + esc(t.character || 'you') + '</span>';
+      const who = t.direction === 'outgoing' ? meSpan + ' → ' + otherSpan : otherSpan + ' → ' + meSpan;
       h += '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-         + '<span class="dim">' + arrow + '</span> <span style="color:var(--blue)">' + esc(t.other) + '</span>: '
+         + who + ': '
          + esc(String(t.text || '').slice(0, 48))
          + (tsMs ? ' <span class="dim" style="font-size:10px">' + fmtAgo(tsMs) + '</span>' : '')
          + '</div>';
@@ -15284,7 +15655,26 @@ function _setupCheckRows(s) {
     : eqf.zealInstalled === false
       ? 'no Zeal found in your EQ folder — use Check / install Zeal below (close EQ first), then restart EverQuest to load it.'
       : 'no live Zeal feed — install/enable Zeal so buffs, groups and Target Info work';
+  // ⚠ EQ CLOSED IS ONE PROBLEM THAT SHOWS UP AS THREE WRONG ONES (the guild lead,
+  // 2026-09-22: "move the suggestion up top if EQ isn't loaded"). With the game
+  // shut, the logging row says "type /log on in EQ" and the Zeal row says
+  // "install/enable Zeal" — two different fixes, both unnecessary, for a
+  // machine where nothing is broken. That is exactly the trap the zealBad
+  // comment above already records: a row that names the wrong problem walks
+  // people into a second one. So say the real one FIRST and let the rows below
+  // defer to it.
+  // "Running" is inferred the way the rest of the agent infers it — a live Zeal
+  // client is proof, and failing that a log written in the last 90s, the same
+  // window the eqclient.ini writer uses to refuse a write while EQ holds the
+  // file. It is a NEUTRAL row, not a failure: opening the dashboard before
+  // launching the game is the normal setup order, and a red ✗ for doing the
+  // normal thing is how a checklist teaches people to ignore it.
+  const lastLogWrite  = logs.reduce((m, w) => Math.max(m, (w && w.lastSeen) || 0), 0);
+  const eqLooksClosed = !zealLive && !(lastLogWrite && (now - lastLogWrite) < 90 * 1000);
   const rows = [
+    ...(eqLooksClosed ? [{ ok: false, neutral: true, label: 'EverQuest running',
+      good: '',
+      bad: 'EverQuest does not look like it is running. Start it and log a character in — several checks below cannot pass until you do, and they will offer fixes you do not need.' }] : []),
     { ok: !!s.mimicSignedIn, label: 'Mimic account linked',
       good: 'signed in — uploads land under your name',
       bad: 'not linked — open Settings → Sign in with Discord (otherwise uploads are anonymous)' },
@@ -15296,10 +15686,14 @@ function _setupCheckRows(s) {
       bad: 'no eqlog_*_pq.proj.txt — turn on logging (/log on + Logging=on in eqclient.ini) and point Mimic at your EQ folder' },
     { ok: freshLog, label: 'In-game logging ON',
       good: 'a log updated in the last 15 min',
-      bad: logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
+      bad: eqLooksClosed && logs.length > 0
+        ? 'nothing written recently — expected while EverQuest is closed; the row above is the one to act on'
+        : logs.length > 0 ? 'logs exist but none updated recently — type /log on in EQ' : 'enable logging: /log on (and Logging=on in eqclient.ini)' },
     { ok: zealLive, label: 'Zeal connected',
       good: 'live buff/group data flowing from Zeal',
-      bad: zealBad,
+      bad: (eqLooksClosed && eqf.zealInstalled !== false)
+        ? 'no live feed — expected while EverQuest is closed. Zeal only reports while a character is logged in, so there is nothing to install or fix here yet.'
+        : zealBad,
       // \`info\` REPLACES the detail when set, so it may only win when it says
       // more than zealBad does — otherwise the compatibility/admin question
       // above is silently swallowed for anyone with a stale snapshot.
@@ -15326,6 +15720,7 @@ function renderSetupChecks(s) {
   let h = '<h2>🩺 Setup checklist</h2><table style="font-size:12px">';
   for (const r of rows) {
     const mark = r.ok ? '<span style="color:var(--green)">✓</span>'
+                      : r.neutral ? '<span class="dim">·</span>'
                       : '<span style="color:var(--red)">✗</span>';
     const detail = r.ok ? r.good : r.bad;
     h += '<tr><td style="width:18px;text-align:center">' + mark + '</td>'
@@ -15638,11 +16033,11 @@ function renderRecentTellsCard(s) {
   const _rtVisible = _rt.slice(-15).reverse();
   for (const t of _rtVisible) {
     const outgoing = t.direction === 'outgoing';
-    const arrow = outgoing ? '→' : '←';
+    // SPEAKER → LISTENER in both directions — the left name is who spoke.
     const otherLink = '<a href="https://wolfpack.quest/me/tells" target="_blank" rel="noreferrer" class="tell-other" style="color:var(--blue);text-decoration:none">' + esc(t.other) + '</a>';
     const who = outgoing
-      ? '<span class="dim">' + esc(t.character) + '</span> ' + arrow + ' ' + otherLink
-      : otherLink + ' ' + arrow + ' <span class="dim">' + esc(t.character) + '</span>';
+      ? '<span class="dim">' + esc(t.character) + '</span> → ' + otherLink
+      : otherLink + ' → <span class="dim">' + esc(t.character) + '</span>';
     const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : Date.now());
     h += '<tr><td style="white-space:nowrap">' + who + '</td><td>' + esc(t.text) + '</td><td class="dim" style="white-space:nowrap">' + fmtAgo(tsMs) + '</td></tr>';
   }
@@ -16952,7 +17347,7 @@ function renderTriggers(s) {
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
-           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger into your personal trigger editor so you can tweak your own version">⎘ Copy to personal</button></td></tr>';
+           '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
     }
     h += '</table>';
   }
@@ -19288,12 +19683,26 @@ async function postOptin(action, extra) {
   } catch { return null; }
 }
 
+// Which tailed logs are big enough to warn about, as a NAMED module-scope rule
+// so a test can run it rather than match its text — check:dashboard only proves
+// the script parses, which is exactly what let the renderSetupChecks
+// ReferenceError reach the whole fleet.
+// Imported files are excluded on purpose: a big archive is the END STATE this
+// warning asks for, and flagging it would teach people to dismiss the card.
+var WP_LOG_WARN_BYTES = 512 * 1048576;
+var WP_LOG_BIG_BYTES  = 1024 * 1048576;
+function _wpBigLogs(files) {
+  return (files || [])
+    .filter(f => f && !f.imported && f.isWatched && (f.sizeBytes || 0) >= WP_LOG_WARN_BYTES)
+    .sort((a, b) => (b.sizeBytes || 0) - (a.sizeBytes || 0));
+}
 function renderOptin(o) {
   if (!o) { morphInto(document.getElementById('optin'), '<div class="dim">Loading...</div>'); return; }
   const list = _optinPane === 'active' ? o.files : o.ignored;
   const selCount = (o.files||[]).filter(f => f.selected).length;
 
   let h = '';
+  const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
 
   // Officer-filed backfill requests banner. Surfaces pending/acked requests
   // targeting characters this agent watches. Each row: character, scope,
@@ -19326,6 +19735,46 @@ function renderOptin(o) {
            '</div>';
     }
     h += '</div>';
+  }
+
+  // ── Oversized live log (the guild lead, 2026-09-22) ────────────────────────
+  // EverQuest never trims eqlog_<Name>_pq.proj.txt and the client slows down on
+  // multi-gigabyte ones. A member's reached 1.33 GB, unbroken since Nov 2024,
+  // and they found it by accident looking for something else — the size has
+  // always been in the table below, but a number is not a warning and nothing
+  // anywhere said which numbers are a problem.
+  // Only LIVE-TAILED, non-imported files are flagged: an imported archive being
+  // huge is the desired END STATE of this very fix, so warning about it would
+  // train people to ignore the card.
+  // ⚠ The remedy says MOVE, and says why. _isEqLogFile accepts '.txt2',
+  // '.txt.old' and ' BACKUP.txt' on the eqlog_<name>_pq.proj stem once the
+  // welcome-line sniff confirms it — deliberately, so a rotated history is not
+  // silently dropped — which means a log merely RENAMED in place is still
+  // tailed and nothing improves.
+  const bigLogs = _wpBigLogs(o.files);
+  if (bigLogs.length) {
+    const red = (bigLogs[0].sizeBytes || 0) >= WP_LOG_BIG_BYTES;
+    h += '<div class="card wide" id="wpBigLogs" style="border-color:' + (red ? '#a06628' : 'var(--border)') + '">' +
+         '<h2 style="color:' + (red ? 'var(--orange)' : 'var(--gold)') + '">' +
+           (red ? '&#9888; Your EverQuest log is very large' : '&#128452; Your EverQuest log is getting large') + '</h2>' +
+         '<div class="subtle">EverQuest never trims its own log, and the game gets slow on multi-gigabyte ones — ' +
+         'zoning and loading worst. Archiving it costs you nothing: your history stays readable, and you can add it ' +
+         'straight back as a backup folder below.</div>' +
+         '<table><tr><th>File</th><th>Size</th></tr>' +
+         bigLogs.map(f =>
+           '<tr><td class="dim">' + esc(f.path.split(/[/\\\\]/).pop()) + '</td>' +
+           '<td class="num" style="color:' + ((f.sizeBytes || 0) >= WP_LOG_BIG_BYTES ? 'var(--orange)' : 'var(--gold)') + '">' +
+           sizeFmt(f.sizeBytes) + '</td></tr>').join('') +
+         '</table>' +
+         '<ol style="margin:10px 0 0;padding-left:20px;font-size:12px;line-height:1.7">' +
+           '<li><b>Close EverQuest.</b></li>' +
+           '<li>Make a folder <b>outside</b> your EverQuest folder — e.g. <code>EQ-Log-Archive</code> beside it.</li>' +
+           '<li><b>Move</b> the file into it. &#9888; Move it, do not just rename it — a renamed log left in the ' +
+             'EverQuest folder is still read.</li>' +
+           '<li>Start EverQuest. It makes a fresh, empty log on its own.</li>' +
+           '<li>Come back here and use <b>&#128451; Add folder…</b> below to point at the archive — read once ' +
+             'for backfill, never tailed, so nothing is lost.</li>' +
+         '</ol></div>';
   }
 
   // Imported log backups (the guild lead, 2026-09-13). Inside Mimic: native pickers plus
@@ -19393,7 +19842,6 @@ function renderOptin(o) {
   for (const f of list) {
     (byChar[f.character] = byChar[f.character] || []).push(f);
   }
-  const sizeFmt = (b) => !b ? '0' : b<1024 ? b+'B' : b<1048576 ? Math.round(b/1024)+'KB' : b<1073741824 ? (b/1048576).toFixed(1)+'MB' : (b/1073741824).toFixed(2)+'GB';
 
   h += '<table><tr><th></th><th>Character</th><th>File(s)</th><th>Size</th><th>Modified</th><th>Resume</th></tr>';
   for (const char of Object.keys(byChar)) {
@@ -22248,7 +22696,7 @@ async function dismissTopDamage(key) {
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
         + '<td style="white-space:nowrap">'
-        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Rehearse: drive a synthesized matching line through the REAL pipeline (pattern, cooldown, suppression) and speak the real TTS — local only, no DB, no relay. See the checkpoint journal below for what it exercised.">▶ Rehearse</button>'
+        + '<button type="button" data-trig-fire="' + esc(t.id || '') + '" style="background:#21262d;color:var(--green);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Test-fire this trigger: run a fake matching log line through the same matching/cooldown logic and speak the real alert out loud — stays on this computer only, nothing saved or sent. See the checkpoint log below for what it checked.">▶ Rehearse</button>'
         + '<button type="button" data-trig-promote="' + esc(t.id || '') + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:4px" title="Open wolfpack.quest/admin/triggers prefilled with this trigger so an officer can promote it to the guild set">↑ Promote</button>'
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
@@ -24221,6 +24669,10 @@ function startWebDashboard(port) {
         // rows the overlay will. Fail-soft: never breaks the proxy.
         try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
         catch { /* engine must never break the ext-target proxy */ }
+        // Outside a raid, only your own group's rows. LAST, so every enricher
+        // above still saw the whole zone.
+        try { outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now()); }
+        catch { /* scoping must never break the proxy — fall back to the zone view */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
       }
@@ -29018,6 +29470,34 @@ function _isNpcTellText(text) {
   if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
   return false;
 }
+// ⚠ The sender-name heuristic below cannot catch a BANKER or MERCHANT (the
+// guild lead, 2026-09-22: "Some NPCs will tell you things like this
+// privately"). "Gage" — a real eqemu_npc_types row — sent "Welcome to my bank!"
+// and "Come back soon!" straight into a raider's Discord DMs. It is ONE
+// capitalised word, so it passes the player-name shape, and the text carries no
+// "Master" and no coin, so _isNpcTellText passes it too.
+//
+// String-matching the greeting was the obvious fix and is the wrong one: the
+// banker/merchant lines are NOT in our mirror (they are server-side, not
+// eqemu_npc_emotes — checked), so the list could only ever be guessed at and
+// extended forever, and "Come back soon!" is something a player might actually
+// type. This file's own rule is that letting an NPC tell through is harmless
+// while dropping a real one is not.
+//
+// So: drop only when the sender is the mob we are LOOKING AT and that name
+// resolves to a catalog NPC. Both halves matter — you target a banker to bank
+// with it, and requiring the target match means a real player who happens to
+// share an NPC's name is only ever silenced if they tell you in the same
+// moment you are targeting their namesake. Fails open on every error.
+function _isNpcTellSender(other) {
+  try {
+    if (typeof _currentTargetState !== 'function' || typeof _normMobNameAgent !== 'function') return false;
+    const st = _currentTargetState();
+    if (!st || !st.target_name) return false;
+    if (_normMobNameAgent(st.target_name) !== _normMobNameAgent(other)) return false;
+    return !!_npcMobInfoFor(other);   // a cached mob-info row = the catalog knows this name
+  } catch { return false; }
+}
 function parseTellLine(line, selfName) {
   // Cheap gate — both tell regexes require one of these literals.
   if (line.indexOf('tells you') === -1 && line.indexOf('You told') === -1) return null;
@@ -29051,6 +29531,7 @@ function parseTellLine(line, selfName) {
   // Always incoming; never a real player tell. Dropped from BOTH the local
   // Recent Tells card and the DM relay (parseTellLine returning null).
   if (direction === 'incoming' && _isNpcTellText(text)) return null;
+  if (direction === 'incoming' && _isNpcTellSender(other)) return null;
   // Stable dedup: sha1 over the tuple. ts in here so two identical messages
   // sent later get fresh rows (which is correct — they ARE separate tells).
   const key = crypto.createHash('sha1')
@@ -32653,8 +33134,10 @@ const SUGGESTED_TRIGGERS = [
     pattern: '\\brampages?\\s+on\\s+(?:you|YOU)\\b',
     overlay_text: 'RAMPAGE ON YOU', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 2 },
+  // EQ prints "<mob> has become ENRAGED." — this used to read `begins to enrage`,
+  // an invented string that appears in no log, so enabling it bought silence.
   { id: 'mob_enraged', category: 'mob', label: 'Mob is enraged',
-    pattern: '\\bbegins to enrage\\b',
+    pattern: '\\bhas become ENRAGED\\b',
     overlay_text: 'ENRAGED — STOP DPS', overlay_color: 'red', overlay_ms: 5000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'mob_fbss_dispel', category: 'mob', label: 'You were dispelled',
@@ -33816,10 +34299,23 @@ function _normMobNameAgent(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
+// The bot's _mobCaseKey, mirrored: case kept after the first letter, which is
+// folded (the log capitalises a sentence-start name; Zeal does not). Two NPCs
+// can differ ONLY in that case and be different mobs — `a_Shissar_acolyte` is a
+// Warrior, `A_Shissar_Acolyte` a Wizard (the guild lead, 2026-09-23).
+function _mobCaseKey(n) {
+  const s = String(n || '').trim()
+    .replace(/'s\s+corpse$/i, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
 // #141 — cache key carries the requester's zone id so a same-name mob in
 // ANOTHER zone re-resolves instead of serving a stale cross-zone catalog row.
+// The case-kept name rides LAST: keyed on the lowercased name alone, whichever
+// acolyte you targeted first was served for both for six hours. The lowercased
+// name stays FIRST because _pacifyImmuneKnown scans keys by that prefix.
 function _mobInfoCacheKey(name, zoneId) {
-  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*');
+  return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name);
 }
 function fetchMobInfo(name, selfChar, zoneId) {
   const opts = _uploadOpts;
@@ -34560,6 +35056,43 @@ function _sampleExtMobHp(payload, nowMs) {
   }
 }
 
+// Outside a raid, Extended Target is about YOUR group. The bot aggregates every
+// online raider in the zone, so two groups working the same zone saw each other's
+// mobs and each other's hurt players (a member, 2026-09-23: "if we're in group
+// but not raid the default is to not show extended target for outside of
+// group"). Done here, not in the bot, because only this client knows its group
+// (Zeal type 6) — nothing new has to leave the machine.
+//
+// In a raid the board is raid-wide, exactly as before. "In a raid" = a Zeal raid
+// window within EXT_RAID_FRESH_MS: the raid roster set itself is never cleared
+// on leaving (an empty type-5 returns early), so its size cannot answer this.
+// The long window errs toward SHOWING: a late raid signal can only ever cost the
+// old raid-wide view for a minute, never hide the raid's mobs mid-fight.
+//
+// Fails open — no Zeal state, stale state, or no group list → unchanged.
+// Solo counts as a group of one.
+const EXT_RAID_FRESH_MS = 60_000;
+function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
+  if (!payload || !Array.isArray(payload.targets)) return payload;
+  if (raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS) return payload;
+  if (!selfCharacter || !selfSt || !Array.isArray(selfSt.group_members)) return payload;
+  if (nowMs - (selfSt.updatedAt || 0) > 60_000) return payload;
+  const mine = new Set([String(selfCharacter).toLowerCase()]);
+  for (const m of selfSt.group_members) if (m && m.name) mine.add(String(m.name).toLowerCase());
+  const has = (n) => n != null && mine.has(String(typeof n === 'object' ? n.name : n).toLowerCase());
+  const any = (arr) => Array.isArray(arr) && arr.some(has);
+  const targets = payload.targets.filter(t => {
+    if (!t) return false;
+    if (t.kind === 'player') return has(t.name);
+    if (t.kind === 'pet') return t.owner ? has(t.owner) : true;
+    return any(t.raiders) || any(t.tanks) || any(t.off_tank_raiders) || has(t.mob_victim);
+  });
+  const offTank = targets.reduce((n, t) =>
+    n + (Array.isArray(t.off_tank_raiders) ? t.off_tank_raiders.filter(has).length : 0), 0);
+  return { ...payload, targets, scope: 'group', online: mine.size,
+           ...(payload.off_tank_count != null ? { off_tank_count: offTank } : {}) };
+}
+
 // Attach mob_victim / mob_dps / mob_ttl_secs to each NPC row. Player/pet rows
 // (including "needs attention" hurt rows) are never enriched. Each field is
 // independently optional — a row carries only what's known.
@@ -34878,6 +35411,19 @@ function buildMobInfo() {
     // observed-landing + catalog-duration derived; the only path for mobs, which
     // have no authoritative buff readout on the Zeal pipe). null when unslowed.
     target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
+    // ── Target Info: mana + last cast (the guild lead, 2026-09-22) ──────────
+    // Both null for the ~79% of the catalog with no mana pool and for any mob
+    // we have not yet named a cast for. The overlay draws NOTHING in that case
+    // rather than an empty bar — "where applicable" was literal in the ask.
+    // ⚠ target_mana.estimated is always true and the overlay must say so: the
+    // number is a FLOOR on mana used, because a resisted or interrupted cast
+    // spends mana and prints no landing line at all.
+    // ⚠ Scoped to the INDIVIDUAL, not the name. `_curIdForRelay` is the Zeal
+    // spawn id already resolved above (null on a client too old to send one),
+    // and without it a zone full of same-named trash shares one ledger and one
+    // "last cast" — which is exactly what shipped and was wrong.
+    target_mana:    npcManaState(st.target_name, _curIdForRelay),
+    target_lastcast: lastNpcCast(st.target_name, _curIdForRelay),
   };
 }
 
@@ -35405,6 +35951,17 @@ function _crashVerdict(parsed, dump) {
       + 'devices attached to the graphics card.');
     out.checks.push('Try running EverQuest windowed or borderless instead of full screen — '
       + 'that avoids most display resets.');
+    // ⚠ The LINK is the load-bearing part (a member, 2026-09-20: "I tried
+    // finding these voodoo files from the zeal repo and cant find them").
+    // dgVoodoo is a separate project and is NOT shipped with Zeal, which is the
+    // first place everyone looks — so say the repo, both files, and where they
+    // go. BOTH: d3d8 alone leaves the DirectDraw-era 2D screens on the native
+    // driver, which is the 2026-09-18 login-screen ghosting all over again.
+    out.checks.push('If it keeps happening, dgVoodoo2 makes the game draw through a modern '
+      + 'graphics layer instead of the 2002 one, so a driver reset stops killing it. Get it from '
+      + 'github.com/dege-diosg/dgVoodoo2/releases (it is NOT part of the Zeal download) and copy '
+      + 'BOTH d3d8.dll and ddraw.dll out of its MS\\x86 folder into the folder that has '
+      + 'eqgame.exe in it. Copying only d3d8.dll leaves the login screen glitching.');
   }
 
   if (ex.noncontinuable) out.notes.push('This one was not survivable — the game could not have kept going.');
@@ -36852,6 +37409,44 @@ function _expandTemplate(template, captures) {
   return out;
 }
 
+// ── "That's me" → You ───────────────────────────────────────────────────────
+// A callout naming a character THIS machine plays should say "You", from every
+// direction it can arrive.
+//
+// The local log line already does. EQ writes the event in second person on the
+// recipient's own client — "You feel the watchful eyes of the gods upon you." —
+// so the Divine Intervention trigger's {tank} captures "You" and the flash
+// reads "D.I. ✓ You".
+//
+// A RELAYED fire does not, and that is the bug (the guild lead, 2026-09-18:
+// "it should only ever show YOU for that person"). A relay carries the
+// ORIGINATOR's captures, and on their client the same event reads
+// "<Tank> feels the watchful eyes…" — so the tank gets their own name from
+// every other raider's relay and "You" only from their own client, for one
+// event. Mid-fight that reads as two different people.
+//
+// ⚠ DISPLAY AND SPEECH ONLY — deliberately NOT inside _expandTemplate, which
+// also builds two things this must never touch:
+//   • the cross-raider DEDUP KEY. Every raider's agent computes it from the
+//     same captures so N raiders firing one event collapse to one fire; swap
+//     a name for "You" on one machine and its key stops matching everyone
+//     else's, so the fan-out duplicates instead of collapsing.
+//   • the Discord post / raid-voice message. "D.I. ✓ You" broadcast to the
+//     guild names nobody — the whole point of that surface is the name.
+function _youifyForMe(s) {
+  if (!s) return s;
+  const mine = (stats.watchedLogs || []).map(w => w && w.character).filter(Boolean);
+  if (!mine.length) return s;
+  let out = String(s);
+  for (const name of mine) {
+    // Whole-word, so a short character name can never be rewritten inside a
+    // longer word (or inside a mob name that merely contains it).
+    const esc = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp('\\b' + esc + '\\b', 'gi'), 'You');
+  }
+  return out;
+}
+
 // ── Trigger checkpoint journal (#76) ────────────────────────────────────────
 // "Why didn't my trigger fire?" answered from the dashboard. A small in-memory
 // ring buffer (NO disk, NO upload) records, per candidate evaluation, how far
@@ -37153,6 +37748,11 @@ const _CALLOUT_ALLOW_CATEGORIES = [
   { cat: 'disc',       rx: /\bdiscs?\b|\bdiscipline/i },
   { cat: 'deathtouch', rx: /death\s*touch|deathtouch|\bDT\b/i },
   { cat: 'charm',      rx: /\bcharm(?:ed|s|ing)?\b|charm\s*(?:break|broke|broken)/i },
+  // Enrage was never on this list, so every guild enrage trigger went mute the
+  // day it shipped — nobody chose that (a member, 2026-09-23: "Enrage didn't
+  // call out" on `Guard Sklinus has become ENRAGED.`). Whole word only: a loose
+  // /rage/ would wake "average" and "storage" back up.
+  { cat: 'enrage',     rx: /\benrage[ds]?\b/i },
   // Boss-mechanic countdowns already curated in the built-ins — keep audible
   // even when a guild trigger drives them (e.g. a voice-mark sequence).
   { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
@@ -37259,12 +37859,16 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     if (!a || !a.type) continue;
     _actionsBuilt++;
     if (a.type === 'text_overlay') {
-      const text = _expandTemplate(a.text || '', captures || {});
+      // _youifyForMe: a callout about one of THIS machine's characters reads
+      // "You", whether it was detected here or relayed from another raider.
+      // Applied to the two local surfaces only — see the function's header for
+      // why the dedup key and the Discord/voice message are excluded.
+      const text = _youifyForMe(_expandTemplate(a.text || '', captures || {}));
       // Spoken text: an explicit per-action `tts` wins (lets a trigger say
       // something different than it shows — e.g. EQLP TextToSpeak vs
       // TextToDisplay). When absent, the overlay window falls back to the
       // display text so every alert is audible by default.
-      const ttsText = a.tts ? _expandTemplate(a.tts, captures || {}) : '';
+      const ttsText = a.tts ? _youifyForMe(_expandTemplate(a.tts, captures || {})) : '';
       const overlay = {
         text,
         color:       a.color || 'red',
@@ -38907,6 +39511,10 @@ async function main() {
         if (!_sourceExcluded) noteHealLandLine(line);
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
+        // NPC cast-starts + landings → "what did that mob just cast", and the
+        // mana it implies. Separate tracker from the line above on purpose;
+        // see the _NPC_CAST_RX header for why widening that one is a trap.
+        if (!_sourceExcluded) { noteNpcCastStart(line); noteNpcLanding(line); }
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
         // Prefer the cast-correlated resolution (our own cast); fall back to the
