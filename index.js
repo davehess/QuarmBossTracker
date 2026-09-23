@@ -3165,13 +3165,55 @@ function scheduleMidnightSummary(readyClient) {
         // card queries exactly 30 days back, limit 2000; nothing on the web
         // reads this table).
         const keep = Number.isFinite(retainDays) ? retainDays : 30;
+        // ⚠ ARCHIVE-GATED, AND IT FAILS CLOSED (the guild lead, 2026-09-22:
+        // "let's keep threat data until it gets pulled out into the backup
+        // database on my server… make sure that the data isn't removed from
+        // the on-prem database then make deletions from the table").
+        //
+        // This sweep has never actually deleted a row — its predicate had no
+        // usable index, so the DELETE seq-scanned and the 10s abort killed it
+        // every night (migration 20260923010000 fixes that). Which means the
+        // moment the index lands, the FIRST working run would remove 747k rows
+        // — 62.8% of the table — whether or not Tower has them. A bug that was
+        // protecting data by failing is not protection, and the fix must not
+        // turn it into a deletion.
+        //
+        // So: delete only up to what the on-prem archive says it HAS. The
+        // watermark is written by the archive side (`bot_kv` key
+        // `archive_watermark_threat_snapshots`, an ISO timestamp meaning
+        // "every snapshot at or before this is on Tower"). No watermark, an
+        // unparseable one, or a read failure → delete NOTHING and say so.
+        // Losing a night's cleanup costs disk; deleting unarchived telemetry
+        // costs the data.
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        let archivedThrough = null;
+        try {
+          const rows = await supabase.select('bot_kv',
+            `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.archive_watermark_threat_snapshots&select=value&limit=1`);
+          const raw = Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.through;
+          const t = raw ? Date.parse(raw) : NaN;
+          if (Number.isFinite(t)) archivedThrough = new Date(t);
+        } catch (err) {
+          console.warn('[midnight] threat archive watermark unreadable:', err?.message);
+        }
         if (supabase.isEnabled() && keep > 0) {
-          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
-          await supabase.del(
-            'encounter_threat_snapshots',
-            `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
-          );
-          console.log(`[midnight] swept encounter_threat_snapshots older than ${keep} days`);
+          if (!archivedThrough) {
+            console.warn('[midnight] threat sweep SKIPPED — no on-prem archive watermark '
+              + '(bot_kv archive_watermark_threat_snapshots). Nothing deleted; the table will grow '
+              + 'until the archive reports in. This is deliberate: see the header above.');
+          } else {
+            // The older of the two bounds wins: never delete inside retention,
+            // and never delete past what Tower has.
+            const retentionCutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000);
+            const cutoffDate = archivedThrough < retentionCutoff ? archivedThrough : retentionCutoff;
+            const cutoff = cutoffDate.toISOString();
+            await supabase.del(
+              'encounter_threat_snapshots',
+              `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
+            );
+            console.log(`[midnight] swept encounter_threat_snapshots older than ${cutoff} `
+              + `(retention ${keep}d; archived through ${archivedThrough.toISOString()})`);
+          }
         }
         // Downsample the survivors: rows older than 7 days thin to the FIRST
         // snapshot per minute per (uploader, boss) — the rank card samples
