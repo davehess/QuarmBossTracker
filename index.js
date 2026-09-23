@@ -17016,7 +17016,7 @@ async function _handleRecentFiresGet(req, res) {
 // plus per-stream cursors reusing each stream's existing semantics:
 //   since_id=<n>      recent_fires cursor (id ring)
 //   tuning_ver=<hash> tuning bundle version (unchanged-gate)
-//   trig_ver=<ts>     guild-triggers version (max updated_at; unchanged-gate)
+//   trig_ver=<hash>   guild-triggers version (_guildTriggersVersion; unchanged-gate)
 //   classes=<csv>     guild-triggers class targeting
 //   characters=<csv>  prefs / backfill / ui_edits key list
 // Response: { ok, streams: { <key>: {data…} | { unchanged:true } }, agent_kill,
@@ -17571,10 +17571,20 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
     if (classes.length === 0) return true;
     return classes.some(c => arr.includes(c));
   });
-  const version = filtered.length
-    ? filtered.map(t => t.updated_at || '').sort().pop()
-    : '0';
-  return { version, triggers: filtered };
+  return { version: _guildTriggersVersion(filtered), triggers: filtered };
+}
+
+// The agent's no-change gate: it recompiles only when this string changes.
+// ⚠ It used to be max(updated_at) over the ENABLED rows served, which a disable
+// or delete can never move — the row simply leaves the set, taking its
+// timestamp with it. So switching a trigger off (from /admin/triggers or SQL)
+// never reached running agents: they kept firing it until some OTHER trigger
+// was edited or Mimic restarted. Found 2026-09-23 while disabling five duplicate
+// callouts that went on firing. A hash of which rows are served and when each
+// last changed moves on every add, edit, disable, enable and delete.
+function _guildTriggersVersion(rows) {
+  if (!rows || !rows.length) return '0';
+  return _pollTuningVersion(rows.map(t => `${t.id}@${t.updated_at || ''}`).sort());
 }
 
 async function _handleAgentGuildTriggers(req, res) {
