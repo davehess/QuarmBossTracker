@@ -6080,6 +6080,30 @@ function makeTrayIcon() {
   buildTrayMenu();
 }
 
+// The Overlays submenu's overlay entries, alphabetical (a member, 2026-09-23:
+// "We need to reorder the overlays in alpha"). Sorted when the menu is built
+// rather than by hand, so a new overlay lands in place without anyone
+// remembering to. Only the run between the first two separators moves — the
+// Dock above and the lock / setup / hide-all controls below stay put — and a
+// "↳" sub-option travels with the entry above it. Leading symbols are ignored
+// for the key, so "/who" files under W.
+function _sortOverlayMenuItems(menu) {
+  const first = menu.findIndex(i => i && i.type === 'separator');
+  if (first < 0) return menu;
+  let end = menu.findIndex((i, n) => n > first && i && i.type === 'separator');
+  if (end < 0) end = menu.length;
+  const groups = [];
+  for (const item of menu.slice(first + 1, end)) {
+    const sub = !!(item && typeof item.label === 'string' && item.label.trim().startsWith('↳'));
+    if (sub && groups.length) groups[groups.length - 1].push(item);
+    else groups.push([item]);
+  }
+  const key = (g) => String((g[0] && g[0].label) || '').replace(/^[^A-Za-z0-9]+/, '');
+  groups.sort((a, b) => key(a).localeCompare(key(b), 'en', { sensitivity: 'base' }));
+  menu.splice(first + 1, end - first - 1, ...groups.flat());
+  return menu;
+}
+
 function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
@@ -6215,6 +6239,7 @@ function buildTrayMenu() {
     // set per toon, swapped automatically as the active character changes.
     ..._charProfileTrayItems(),
   ];
+  _sortOverlayMenuItems(overlaysSubmenu);
 
   // My /tells — its own section now (was buried inside the overlay submenu).
   const tellsSubmenu = [
@@ -6348,6 +6373,18 @@ function buildTrayMenu() {
       } },
     { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
+        // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
+        // It used to be sent from the Settings save alone, so muting HERE never
+        // reached the CH-chain or charm voices at all.
+        _broadcastMute(cfg);
+        applyAllVisibility();
+        pushStatus();
+      } },
+    // The display-off half of the pair above. It lived only in Settings (a
+    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
+    // Same flag and the same apply path as the Settings save — not a parallel one.
+    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
         applyAllVisibility();
         pushStatus();
       } },
@@ -8201,6 +8238,7 @@ ipcMain.handle('relaunch-agent', async () => {
 ipcMain.handle('get-status', () => currentStatus());
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
+  _broadcastMute(cfg);   // see the tray's Quiet mode item — same gap
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility();
   pushStatus();
   return currentStatus();

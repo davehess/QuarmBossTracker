@@ -354,19 +354,22 @@
   const el = document.getElementById('alert');
   let hideTimer = null;
 
-  // Respect the user's "Trigger alerts (TTS)" toggle + Quiet mode. This window
-  // is only HIDDEN (not destroyed) when alerts are off, and a hidden window's
-  // script keeps running — so without this gate it would still SPEAK out loud
-  // even though nothing is visible. main pushes status on every change.
+  // Respect the user's "Trigger alerts" toggle. This window is only HIDDEN (not
+  // destroyed) when alerts are off, and a hidden window's script keeps running —
+  // so without this gate it would still SPEAK out loud even though nothing is
+  // visible. main pushes status on every change.
+  //
+  // ⚠ Mute ("Mute Mimic" / tray Quiet mode) is NOT this gate, and must not be.
+  // It used to be: this read `enableTriggerTts && !quietMode`, left over from
+  // when Quiet mode HID overlays. Quiet mode became sound-only, speak() and
+  // playSound() learned to check isMuted(), and this line was never updated —
+  // so muting also stopped every trigger alert from SHOWING, the opposite of
+  // what the setting promises ("overlays still show"; a member, 2026-09-23:
+  // "which one works and which doesn't?"). Mute is enforced where sound is
+  // made, and nowhere else.
   let alertsEnabled = true;
-  // Blind callouts (v1.1.9) are safety alerts the user explicitly opted into by
-  // clicking a blind clicky (or by being blinded) — they fire even when regular
-  // trigger TTS is OFF, but still go silent under Quiet mode. Track quietMode
-  // separately so the blind path can gate on just that.
-  let quietMode = false;
   function applyTtsStatus(s){
-    alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode);
-    quietMode = !!(s && s.quietMode);
+    alertsEnabled = !!(s && s.enableTriggerTts);
   }
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
@@ -635,8 +638,9 @@
 
   function fire(t){
     // Gate the whole alert (flash + speak + sound) on the user's preference —
-    // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
-    // silent rather than narrate fires nobody can see.
+    // when trigger alerts are off, this hidden window must stay silent rather
+    // than narrate fires nobody can see. Mute is NOT checked here: under Mute
+    // the alert still flashes, and speak()/playSound() stay quiet.
     if (!alertsEnabled) return;
     // Overlay text is written to be SEEN: it leads with an emoji and uses
     // punctuation as visual separators. Speech synthesis reads all of that
@@ -663,11 +667,11 @@
   }
 
   // Blind-mode callouts (v1.1.9). Separate from fire(): these fire even when
-  // regular trigger TTS is off (they're the alerts the user asked for when
-  // blinded), gated only on Quiet mode. Self-hits flash red + pulse; the other
-  // kinds reuse the normal amber flash. No feedback buttons (not a trigger).
+  // regular trigger alerts are off (they're the alerts the user asked for when
+  // blinded). Under Mute they still flash and speak() stays quiet — the same
+  // rule as fire(). Self-hits flash red + pulse; the other kinds reuse the
+  // normal amber flash. No feedback buttons (not a trigger).
   function fireBlind(e){
-    if (quietMode) return;
     const danger = e.kind === 'blind_selfhit';
     el.classList.toggle('blindwarn', danger);
     flash(e.text || e.tts || 'Blind');

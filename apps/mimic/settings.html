@@ -6,6 +6,17 @@
   body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px 20px 76px}
   h1{color:#f6c365;font-size:16px;font-weight:normal;margin:0 0 4px}
   h2{color:#58a6ff;font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
+  /* Maximized, the sections flow into as many ~520px columns as fit (a member,
+     2026-09-23). The page is a flat run of <h2> + controls, so a small script at
+     the end of <body> wraps each heading and its controls in a .sec; a section
+     never splits across two columns. Below 1200px it is the one column it was. */
+  @media (min-width: 1200px){
+    #cols{columns:520px;column-gap:44px;margin-top:22px}
+    #cols > .sec{break-inside:avoid}
+    /* A heading's top margin is dropped at a column break but kept on the very
+       first one, which sat column 1 lower than 2 and 3 by exactly that much. */
+    #cols > .sec:first-child > h2{margin-top:0}
+  }
   .sub{color:#8b949e;font-size:11px;margin-bottom:8px}
   label{display:block;color:#8b949e;font-size:11px;margin:12px 0 4px}
   input[type=text]{width:100%;box-sizing:border-box;background:#161b22;border:1px solid #2a3140;border-radius:4px;
@@ -178,8 +189,9 @@
   </div>
   <div class="row">
     <input id="enableTriggerTts" type="checkbox" />
-    <label for="enableTriggerTts">Trigger alerts speak out loud (text-to-speech)</label>
+    <label for="enableTriggerTts">⚡ Trigger alerts — on-screen banner and voice</label>
   </div>
+  <div class="hint">Off turns trigger alerts off completely: no banner and no voice. To keep the banner and silence only the voice, use Mute Mimic above. Same switch as "Trigger alerts (TTS)" in the tray.</div>
   <div class="row">
     <input id="overlaysUnlocked" type="checkbox" />
     <label for="overlaysUnlocked">Unlock overlays to move or resize them (unchecked: overlays stay in place and clicks pass through to EverQuest)</label>
@@ -283,6 +295,33 @@
   <div>
     <button id="save">Save</button>
   </div>
+
+<script>
+  // Section wrapper for the maximized column layout (CSS: #cols). Each <h2>
+  // and everything up to the next one moves into a <section class="sec">,
+  // stopping at the Save button and the scripts. Moving a node keeps its id and
+  // listeners, and nothing on this page reads its structure. Runs before the
+  // page's other scripts, so they see the final DOM.
+  (function wrapSettingsSections(){
+    const firstH2 = document.querySelector('body > h2');
+    if (!firstH2) return;
+    const cols = document.createElement('div');
+    cols.id = 'cols';
+    document.body.insertBefore(cols, firstH2);
+    let sec = null;
+    for (let n = cols.nextSibling; n; ) {
+      const next = n.nextSibling;
+      if (n.nodeType === 1 && (n.tagName === 'SCRIPT' || n.querySelector('#save'))) break;
+      if (n.nodeType === 1 && n.tagName === 'H2') {
+        sec = document.createElement('section');
+        sec.className = 'sec';
+        cols.appendChild(sec);
+      }
+      if (sec) sec.appendChild(n);
+      n = next;
+    }
+  })();
+</script>
 
 <script>
   // Toast helper — explicit save feedback that lives at the top of the
