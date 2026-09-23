@@ -13,12 +13,19 @@ both drop-in, neither touching the parts that drifted.
 ## 0. What to do, in order
 
 1. Back up Tower's current `archive-merge.sql`.
-2. Apply **Part 1** (required — this is the actual fix).
-3. Apply **Part 2** (recommended — see what skipping it costs).
-4. Run the self-test. Expect **13 ok + one specific known failure**, spelled out
-   in §3. Anything else red: stop, send it to me.
-5. Run `refresh-local-archive.sh`.
-6. Send back the two verification queries in §5.
+2. Apply **Part 1** (required — FK merge order).
+3. Apply **Part 3** (required — the `who_obs_dedup` failure; 17 tables can hit it).
+4. Apply **Part 2** (recommended — see what skipping it costs).
+5. Re-fetch the self-test (it grew to **19 assertions** tonight) and run it.
+   Expect **18 ok + one specific known failure**, spelled out in §3. Anything
+   else red: stop, send it to me.
+6. Run `refresh-local-archive.sh`.
+7. Send back the two verification queries in §5.
+
+⚠ **Two bugs down, and the second was hiding behind the first.** Each failure is
+atomic — the archive is untouched, your own verification proved it (915,340 rows,
+`merge_log` still 2026-09-06). There may be a third. Re-running is free, so the
+loop is: patch, test, merge, send me whatever it says.
 
 Do **not** write anything to production Supabase. The watermark is set
 separately, from the cloud side, after you confirm the new `max(snapshot_at)`.
@@ -89,6 +96,62 @@ sorts by how deep it sits, so `encounters` is merged before `charm_sessions`.
 Nothing else in the header, the loop body, or your three hand fixes is touched —
 which is why it is safe against drift I cannot see. `depth < 32` is the cycle
 guard; production's graph is a clean DAG four levels deep, so it never bites.
+
+### Part 3 — required, added 2026-09-23 03:00 UTC after the second failure.
+
+With Parts 1 and 2 in, the merge got past `charm_sessions` and died further
+along on a **different, older bug**:
+
+```
+ERROR:  duplicate key value violates unique constraint "who_obs_dedup"
+DETAIL: Key (guild_id, "character", observed_minute, uploaded_by)=(…) already exists.
+```
+
+`ON CONFLICT (id)` nominates **one** index, and Postgres allows only one. But
+**17 of the 25 archive tables carry a second unique index** beside the primary
+key — `who_obs_dedup`, `chat_messages_dedup`, `tells_dedup`, `looted_items_dedup`,
+`encounter_threat_snapshots_unique`, and a dozen more. When the archive keeps a
+row production later pruned and re-created under a fresh surrogate id, the
+snapshot offers the same observation under a *different* id: no primary-key
+conflict, so `ON CONFLICT (id)` never fires and the dedup index raises instead —
+taking the whole run down. Latent since 2026-08-12; invisible only because the FK
+bug aborted first. A per-table fix is worthless here.
+
+**Edit A** — one line. Find:
+
+```sql
+    select string_agg(format('%1$s = excluded.%1$s', c), ', ')
+```
+
+Replace with:
+
+```sql
+    select string_agg(format('%1$s = s.%1$s', c), ', ')
+```
+
+**Edit B** — replace the whole `if update_set is null then … end if;` insert
+block (both branches) with:
+
+```sql
+    -- Update matched rows by primary key, then insert the rest with a BARE
+    -- `on conflict do nothing` so EVERY unique index is covered, not just the
+    -- primary key. (17 of 25 archive tables carry a second one.)
+    if update_set is not null then
+      execute format('update public.%1$I d set %2$s from snap.%1$I s where %3$s',
+                     t.tbl, update_set,
+                     (select string_agg(format('s.%1$I = d.%1$I', c), ' and ')
+                        from unnest(pk_cols) c));
+    end if;
+
+    execute format('insert into public.%1$I (%2$s) overriding system value
+                    select %2$s from snap.%1$I on conflict do nothing',
+                   t.tbl, col_list);
+```
+
+A row skipped by `do nothing` is one the archive already holds under a different
+id — the same observation, not a loss. Mirror tables cannot reach that case at
+all: Part 2 has already removed anything the snapshot lacks, and two rows sharing
+a dedup key could never have coexisted upstream.
 
 ### Part 2 — recommended. Delete children before parents.
 
@@ -165,15 +228,19 @@ line. It is a safe thing to gamble on; it is not a safe thing to be surprised by
 
 ## 3. Self-test — and the one failure you should expect
 
-I rebuilt a Tower-shaped file (the repo's base plus your three fixes), applied
-both parts, and ran the suite. Result, measured, not predicted:
+The suite is now **19 assertions** (was 14, was 9). I rebuilt a Tower-shaped file
+— the repo's base plus your three fixes — applied all three parts, and ran it.
+Measured, not predicted:
 
 ```
-  ok   … 13 assertions, including:
+  ok   … 18 assertions, including:
   ok   FK parent inserted before its child
-  ok   FK child that sorts first still merges
   ok   FK child deleted before its parent
-  ok   mirror child went with it
+  ok   second unique index does not abort the run
+  ok   archive keeps ITS id, skips the new one
+  ok   the genuinely new row still lands
+  ok   generated column is recomputed, not copied
+  ok   identity column takes the snapshot's id
   FAIL rows_before is counted pre-delete — got '1->1' want '2->1'
 ```
 
@@ -183,11 +250,15 @@ main loop counts, `merge_log.rows_before` for mirror tables now reads the count
 repo's own version restructures the loop to avoid it, which is more surgery than
 tonight is worth.
 
-**13 ok + exactly that line = good. Any other red = stop.**
+**18 ok + exactly that line = good. Any other red = stop.**
 
-For reference: the same Tower-shaped file *without* Part 1 still fails on
-`charm_sessions_encounter_id_fkey`, so your hand fixes are not what was fixing
-this — this patch is.
+Each fix is mutation-checked against the Tower-shaped file: revert the ordering
+and it fails on `charm_sessions_encounter_id_fkey`; revert the bare
+`on conflict do nothing` and it fails on `who_obs_dedup` — your two live errors,
+reproduced on demand. Your own hand fixes are mutation-checked too: drop the
+generated-column filter and Postgres says *"column can only be updated to
+DEFAULT"*; drop `overriding system value` and it says *"cannot insert a
+non-DEFAULT value into column id"*.
 
 ⚠⚠ **FETCH THE TEST FIRST. Tower already has an OLD `test-archive-merge.sh`
 with 9 assertions and none of them touch FK ordering** — it passes against the

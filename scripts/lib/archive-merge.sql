@@ -191,16 +191,19 @@ begin
 
     -- Only columns present on BOTH sides, so a schema that has moved on locally
     -- or upstream degrades to a partial merge instead of erroring out.
+    -- Generated columns are excluded: they cannot be inserted into or updated,
+    -- and Postgres rejects the statement outright if you name one.
     select array_agg(quote_ident(column_name) order by ordinal_position)
       into shared_cols
     from information_schema.columns lc
     where lc.table_schema = 'public' and lc.table_name = tbl
+      and lc.is_generated = 'NEVER'
       and exists (select 1 from information_schema.columns sc
                   where sc.table_schema = 'snap' and sc.table_name = tbl
                     and sc.column_name = lc.column_name);
 
     col_list := array_to_string(shared_cols, ', ');
-    select string_agg(format('%1$s = excluded.%1$s', c), ', ')
+    select string_agg(format('%1$s = s.%1$s', c), ', ')
       into update_set
     from unnest(shared_cols) c
     where c <> all (select quote_ident(x) from unnest(pk_cols) x);
@@ -208,15 +211,35 @@ begin
     is_archive := tbl = any (archive_tables);
     before_n   := before_counts[i];
 
-    if update_set is null then         -- table is nothing but its primary key
-      execute format('insert into public.%1$I (%2$s) select %2$s from snap.%1$I
-                      on conflict (%3$s) do nothing',
-                     tbl, col_list, array_to_string(pk_cols, ', '));
-    else
-      execute format('insert into public.%1$I (%2$s) select %2$s from snap.%1$I
-                      on conflict (%3$s) do update set %4$s',
-                     tbl, col_list, array_to_string(pk_cols, ', '), update_set);
+    -- ⚠ TWO STATEMENTS, NOT ONE `INSERT … ON CONFLICT (pk) DO UPDATE`.
+    -- Postgres allows exactly one conflict target, and 17 of the 25 archive
+    -- tables carry a SECOND unique index beside the primary key
+    -- (`who_obs_dedup`, `chat_messages_dedup`, `tells_dedup`,
+    -- `encounter_threat_snapshots_unique`, …). An archive that keeps a row
+    -- production later pruned and re-created under a fresh surrogate id then
+    -- holds the old id while the snapshot offers the new one: no primary-key
+    -- conflict, so `ON CONFLICT (id)` never fires, and the dedup index raises
+    -- instead — taking the whole merge down with it. That is the
+    -- `who_obs_dedup` failure of 2026-09-23, latent since 2026-08-12 and
+    -- invisible only because the FK bug aborted the run first.
+    --
+    -- So: update matched rows by primary key, then insert the rest with a
+    -- BARE `on conflict do nothing`, which covers EVERY unique constraint
+    -- rather than one nominated index. A skipped row is one the archive
+    -- already holds under a different id — the same observation, not a loss.
+    -- Mirror tables cannot reach that case at all: pass 1 has already removed
+    -- anything the snapshot lacks, and two rows sharing a dedup key could
+    -- never have coexisted upstream.
+    if update_set is not null then
+      execute format('update public.%1$I d set %2$s from snap.%1$I s where %3$s',
+                     tbl, update_set, archive_meta.pk_match(pk_cols));
     end if;
+
+    -- `overriding system value` is required for a GENERATED ALWAYS AS IDENTITY
+    -- column and is a no-op on every other table (measured, not assumed).
+    execute format('insert into public.%1$I (%2$s) overriding system value
+                    select %2$s from snap.%1$I on conflict do nothing',
+                   tbl, col_list);
 
     execute format('select count(*) from public.%I', tbl) into after_n;
     if is_archive then

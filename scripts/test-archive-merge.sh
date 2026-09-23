@@ -70,6 +70,37 @@ create table public.bosses_local (id int primary key, name text,
 insert into public.bosses_local values (1,'Seru',100),(2,'disciple',101);
 create table snap.bosses_local (like public.bosses_local including all);
 insert into snap.bosses_local values (1,'Seru',100);
+
+-- SECOND UNIQUE INDEX beside the primary key. 17 of the 25 archive tables have
+-- one. The archive kept a row production later pruned and re-created under a
+-- fresh id, so the snapshot offers the same observation under a DIFFERENT id:
+-- no primary-key conflict, and the dedup index raises instead. Merged with
+-- `on conflict (id)`, that one row takes the entire run down. (Names here are
+-- invented, per the repo's public-docs convention.)
+create table public.who_observations (id bigint primary key, "character" text,
+       observed_minute timestamptz, uploaded_by text);
+create unique index who_obs_dedup
+    on public.who_observations ("character", observed_minute, uploaded_by);
+insert into public.who_observations values (1,'Rethlan','2025-11-15 19:23:00+00','Nyssara');
+create table snap.who_observations (id bigint primary key, "character" text,
+       observed_minute timestamptz, uploaded_by text);
+insert into snap.who_observations values (99,'Rethlan','2025-11-15 19:23:00+00','Nyssara'),
+                                         (100,'Corvale','2026-09-20 21:00:00+00','Nyssara');
+
+-- GENERATED column: cannot be inserted into or updated, and naming one is a
+-- hard error — so it must be dropped from the column list and recomputed.
+create table public.tells (id bigint primary key, body text,
+       body_len int generated always as (length(body)) stored);
+insert into public.tells (id, body) values (1,'hi');
+create table snap.tells (id bigint primary key, body text, body_len int);
+insert into snap.tells values (1,'hello',5),(2,'ok',2);
+
+-- IDENTITY column: an insert that supplies the id fails without
+-- `overriding system value`.
+create table public.page_views (id bigint generated always as identity primary key, path text);
+insert into public.page_views (id, path) overriding system value values (1,'/raid');
+create table snap.page_views (id bigint primary key, path text);
+insert into snap.page_views values (1,'/raid'),(2,'/parses');
 SQL
 
 fail=0
@@ -101,6 +132,11 @@ check "FK parent inserted before its child"       "$(q 'select count(*) from enc
 check "FK child that sorts first still merges"    "$(q 'select count(*) from charm_sessions where id=2')" 1
 check "FK child deleted before its parent"        "$(q 'select count(*) from eqemu_npc_types')" 1
 check "mirror child went with it"                 "$(q 'select count(*) from bosses_local')" 1
+check "second unique index does not abort the run" "$(q 'select count(*) from who_observations')" 2
+check "archive keeps ITS id, skips the new one"   "$(q 'select count(*) from who_observations where id=99')" 0
+check "the genuinely new row still lands"         "$(q 'select count(*) from who_observations where id=100')" 1
+check "generated column is recomputed, not copied" "$(q "select body||':'||body_len from tells where id=1")" hello:5
+check "identity column takes the snapshot's id"   "$(q 'select count(*) from page_views')" 2
 check "rows_before is counted pre-delete"         \
   "$(q "select rows_before||'->'||rows_after from archive_meta.merge_log
           where table_name='bosses_local' order by id limit 1")" "2->1"
