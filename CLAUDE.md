@@ -547,8 +547,16 @@ repo access, producing draft text a human carries back.)
   price files), `D:\EQServer` (local MariaDB — authoritative `peq` item/NPC
   DB; creds in `eqemu_config.json`), `D:\EQLegends` (modern-client
   reference), and open egress (pqdi.cc, quarm.guide, eqemulator.org).
-- **Cloud sessions** get the repo + Supabase MCP, but **no local files** and
-  a restrictive egress proxy (eqemulator.org and PQDI are blocked there).
+- **Cloud sessions** get the repo + Supabase MCP, but **no local files**.
+  Their web access is the cloud environment's **Network access** setting. It
+  was "Trusted" until 2026-09-23, which blocked eqemulator.org, PQDI and
+  typesafe.ai; the guild lead then switched the Default Cloud Environment to
+  **Full**, and a test the same day reached `www.pqdi.cc`, `www.eqemulator.org`,
+  `quarm.guide` and `typesafe.ai`. ⚠ PQDI answers only on **`www.`** — bare
+  `pqdi.cc` resets the connection. So a "needs a local session" item that only
+  needed one of those sites can now be done from the cloud; one that needs the
+  `A:\EQ` / `D:\EQServer` files still can't. If the setting goes back to
+  Trusted, the blocks come back.
 
 Rules that keep them married:
 1. **Durable state lives in committed docs, never chat.** Status + durable

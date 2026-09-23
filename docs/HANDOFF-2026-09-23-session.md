@@ -100,6 +100,12 @@ change state: `python3`, `node`, `perl`, `bash`, `awk`, `npx …`, `su`, `psql`,
   `execute_sql` + the committed file. But `execute_sql` does not record the
   migration in `supabase_migrations.schema_migrations`, so note it in the
   commit (see §3's migration caveat).
+- **Web access changed after this doc was first written:** the guild lead switched
+  the cloud environment's Network access from Trusted to **Full** (2026-09-23).
+  `www.pqdi.cc`, `www.eqemulator.org`, `quarm.guide` and `typesafe.ai` all answered
+  that day. Use `www.pqdi.cc`, because bare `pqdi.cc` resets the connection. That
+  means the Jev retention question (§9) and PQDI lookups can now be done from a
+  cloud session.
 - **Throwaway Postgres for local SQL tests:** `/usr/lib/postgresql/16/bin` exists in
   the container. It must run as the `postgres` user (so `su` prompts), with its
   socket in `/tmp/pgs`, because the scratchpad path is too long for a Unix socket.
