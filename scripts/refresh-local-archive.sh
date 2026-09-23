@@ -8,7 +8,7 @@
 #
 # Production prunes on timers, and correctly: raid_roster at 1 hour, buff_casts
 # at 7 days, encounter_threat_snapshots at 30, who_observations at 60,
-# target_observations at 90. Those sweeps exist because every live consumer reads
+# target_observations at 1 day. Those sweeps exist because every live consumer reads
 # ≤3 hours back and the tables were 118 MB before the first purge. This box has
 # no such pressure, so it keeps everything and becomes the long-horizon record:
 # slow uptime across an expansion, threat patterns over months — questions the
@@ -58,6 +58,18 @@ echo "local archive holds ~${BEFORE_TOTAL} rows; merging $(basename "$REAL") ($S
 psql_c postgres -q -c "drop database if exists $SNAPDB" >/dev/null 2>&1
 psql_c postgres -q -c "create database $SNAPDB" >/dev/null 2>&1 || {
   echo "could not create $SNAPDB"; exit 1; }
+# Production keeps uuid-ossp, pgcrypto and pg_trgm in schema `extensions`, and the
+# dump writes defaults schema-qualified: `DEFAULT extensions.uuid_generate_v4()`.
+# --schema=public never creates that schema, so without this, nine tables fail
+# CREATE TABLE and are simply absent from the snapshot — encounters, contributions,
+# raid_nights and audit_log among them. With encounters never restored, every child
+# row pointing at a newer encounter failed its FK: that, as much as the merge order,
+# is what froze the archive from 2026-09-06.
+psql_c "$SNAPDB" -q -v ON_ERROR_STOP=1 -c 'create schema if not exists extensions;
+  create extension if not exists "uuid-ossp" with schema extensions;
+  create extension if not exists pgcrypto with schema extensions;
+  create extension if not exists pg_trgm with schema extensions;' >/dev/null \
+  || { echo "could not prepare the extensions schema in $SNAPDB"; exit 1; }
 docker exec -i "$CONTAINER" pg_restore -U postgres -d "$SNAPDB" \
   --no-owner --no-acl --schema=public < "$REAL" 2>/tmp/arch-restore.err
 SNAP_TABLES="$(psql_c "$SNAPDB" -tAc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | tr -d '[:space:]')"
@@ -80,6 +92,12 @@ import foreign schema public from server snapsrv into snap;
 SQL
 
 # --- 3. merge ---------------------------------------------------------------
+# Mark the run BEFORE merging. merge_log.ran_at is now() inside the merge's one
+# transaction — the moment it STARTED — so the old "last 10 minutes" window
+# found nothing after any merge longer than that: the first successful
+# catch-up (2026-09-23, +716k rows) reported "(0 rows)" and "0 rows exist ONLY
+# here", and the freshness guard below would have called it a failure.
+RUN_START="$(psql_c "$DB" -tAc "select extract(epoch from now())" | tr -d '[:space:]')"
 psql_c "$DB" -q -v ON_ERROR_STOP=1 < "$MERGE_SQL" || { echo "MERGE FAILED — archive untouched by the failing table"; exit 1; }
 
 # --- 4. tear down the staging area -----------------------------------------
@@ -90,14 +108,20 @@ psql_c postgres -q -c "drop database if exists $SNAPDB" >/dev/null 2>&1
 echo
 psql_c "$DB" -c "select table_name, mode, rows_before, rows_after, rows_kept as only_in_archive
                  from archive_meta.merge_log
-                 where ran_at > now() - interval '10 minutes' and (rows_kept > 0 or rows_after <> rows_before)
+                 where ran_at >= to_timestamp($RUN_START) and (rows_kept > 0 or rows_after <> rows_before)
                  order by rows_kept desc, table_name limit 20"
 AFTER_TOTAL="$(psql_c "$DB" -tAc "select coalesce(sum(n_live_tup),0) from pg_stat_user_tables where schemaname='public'" | tr -d '[:space:]')"
-KEPT="$(psql_c "$DB" -tAc "select coalesce(sum(rows_kept),0) from archive_meta.merge_log where ran_at > now() - interval '10 minutes'" | tr -d '[:space:]')"
+KEPT="$(psql_c "$DB" -tAc "select coalesce(sum(rows_kept),0) from archive_meta.merge_log where ran_at >= to_timestamp($RUN_START)" | tr -d '[:space:]')"
 echo
 echo "archive: ~${BEFORE_TOTAL} -> ~${AFTER_TOTAL} rows; ${KEPT} rows exist ONLY here (production has pruned them)"
 
 # Success means the core tables are queryable, not that a count went up.
 CORE="$(psql_c "$DB" -tAc "select count(*) from encounters" | tr -d '[:space:]')"
 [ "${CORE:-0}" -ge 1 ] || { echo "FAILED: encounters is empty after merge"; exit 1; }
-echo "OK: archive merged (encounters=$CORE)"
+
+# ⚠ "OK" must mean THIS run merged — not that the archive still holds old rows.
+# The 2026-09-06..22 outage was silent precisely because every check downstream
+# of the merge kept passing against a frozen archive.
+FRESH="$(psql_c "$DB" -tAc "select count(*) from archive_meta.merge_log where ran_at >= to_timestamp($RUN_START)" | tr -d '[:space:]')"
+[ "${FRESH:-0}" -ge 1 ] || { echo "FAILED: no merge_log rows from this run — the archive is unchanged"; exit 1; }
+echo "OK: archive merged ($FRESH tables this run, encounters=$CORE)"

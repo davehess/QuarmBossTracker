@@ -56,6 +56,7 @@
       "Bash(npm test)",
       "Bash(npm run lint)",
       "Bash(npm run check:dashboard)",
+      "Bash(npm run golden:check)",
       "mcp__github__actions_list",
       "mcp__github__actions_get",
       "mcp__github__get_job_logs",
@@ -66,7 +67,8 @@
       "mcp__github__list_branches",
       "mcp__github__get_file_contents",
       "mcp__github__pull_request_read",
-      "mcp__github__issue_read"
+      "mcp__github__issue_read",
+      "mcp__Railway__get-logs"
     ]
   }
 }

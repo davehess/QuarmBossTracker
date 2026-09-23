@@ -102,6 +102,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Target Info tells same-name NPCs apart by capitalisation (bot 3.1.140 on branch `claude/sharp-lamport-dC0TW` + agent 3.6.56 on `beta`, 2026-09-23).** The guild lead: *"this a Shissar acolyte is always a Warrior, because the Wizard ones are a Capital letter on the Acolyte (162488 vs 162153)."* 76 NPC names differ only in case after the first letter, 19 in class. mob-info now prefers the exact-case bodies (first letter folded — the log capitalises sentence starts), and both caches key on the case-kept name. Needs BOTH halves: the agent's lowercased cache key would otherwise serve the first-targeted body for both.
+- **✅ Tower archive caught up (2026-09-23).** 17-night outage over; `buff_casts` and `target_observations` recovered from the older dumps. Production watermark held — see `DECISIONS-2026-09-21.md` open table.
+- **✅ Duplicate callouts removed (data, 2026-09-23).** Five guild triggers disabled, each doubled by a built-in agent callout on the same line (four slow-landed triggers vs "Slow landed"; "Divine Intervention fired" vs "DI DOWN"). No guild-vs-guild overlaps exist. Details + the one behavior difference: `DECISIONS-2026-09-21.md` §7.
+- **⏳ A disabled guild trigger now stops firing (bot 3.1.138 on branch `claude/sharp-lamport-dC0TW`, NOT yet on `main`, 2026-09-23).** The agents' no-change gate was max(updated_at) over enabled rows, which a disable or delete never moves — every disable from `/admin/triggers` kept firing until Mimic restarted. Now a membership hash. Data workaround applied meanwhile.
+- **⏳ Extended Target: one mob, one row when the spawn ids agree (bot 3.1.139, same branch, not on `main`, 2026-09-23).** Position clustering split one mob into #1/3 #2/3 #3/3 while every targeter's id agreed; ids now merge as well as split. A `0` target_id no longer mints a phantom `#0` instance.
+- **⏳ Enrage speaks, shields count, Extended Target minds its group (agent 3.6.54 on `beta`, 2026-09-23).** Enrage was never on the #136 allow-list; the Tank overlay's shield pairing only looked backward (0 of 10 counted with shield-then-swing); outside a raid Extended Target shows your own group (the guild lead's default); its title bar no longer crushes the title. `DECISIONS-2026-09-21.md` §7.
+- **⏳ Slow callouts name the mob + spawn id (agent 3.6.55 on `beta`, 2026-09-23).** Id shown only when a watched client's Zeal target proves it; speech unchanged.
+- **⏳ Mute silences instead of hiding; "No overlays" in the tray; overlays A–Z; Settings in columns (Mimic 2.6.9 line on `beta`, 2026-09-23).** Finishes the 2026-09-11 Quiet-mode split below: Mute still hid trigger alerts through a stale gate, and tray Quiet mode never reached the CH-chain or charm voices. "Trigger alerts speak out loud" relabeled — it is the whole trigger overlay's switch.
 - **✅ Code graph on demand (`scripts/graphify.sh`, 2026-09-13).** Rebuilds a graphify call graph of the tracked tree in ~30 s into gitignored `graphify-out/`; outputs stay out of the repo and the Claude hook is not installed (the guild lead's call). Good for "who calls X" and cycles; blind to config keys, cross-process payloads and `#if 0`.
 - **📐 Design-skill ledger written (2026-09-16).** the guild lead, starting a dashboard in another session: *"can you outline those … which you'd use if we rearchitected with more stylization and less generic AI formatting."* `docs/DESIGN-SKILLS.md`: the three vendored skills and their precedence, an honest per-skill impact ledger (impeccable's finish reviewer caught four shipped hero defects on 2026-08-28; its documenter produced 357,109 unusable lines; its two hooks surfaced nothing in a heavy UI session), the load order for a dashboard (`frontend-design` first, `dataviz` before the first chart, detectors + finish review, `ponytail` last), and the one decision that gates real stylization — our palette is GitHub Primer dark and that is the guild lead's call, not a refactor to slip in.
 - **✅ Mob Info: a name that is two bodies of two classes shows both (bot 3.1.127 + Mimic 2.6.9-beta.3, 2026-09-15).** the guild lead, Plane of Hate: *"Female forsaken revenant are enchanters, but show up as magicians … we have the model ID and sex, we should be able to differentiate."* `a_forsaken_revenant` is 76004 (male, Magician) and 76005 (female, Enchanter), identical otherwise; the row-picker returned one and mob-info reported its class as fact. Now `pickAndMergeMobRows` also returns its candidates, mob-info lists every (class, sex) as `class_variants` with `class_ambiguous`, and the overlay shows "Magician ♂ / Enchanter ♀" on a disagreement. Exact pick needs the target's sex: the Zeal pipe's target object is `{id, name}` today, so a `gender` hint on the request is wired and waiting (added to the Zeal ask in `docs/zeal-tot-pipe-request.md`). `test/mobinfo-class-variants.test.js` runs the real picker on the two live rows.
@@ -4437,10 +4445,39 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   and update but NEVER delete; everything else mirrors production exactly,
   because for those a delete is a correction (`character_inventory` and friends
   are delete-then-reinsert on every upload). Proof:
-  `scripts/test-archive-merge.sh` — 9 assertions, run it after touching the SQL.
-  ⚠ Needs a local session: swap the User Scripts entry from
-  `refresh-local-sandbox.sh` to `refresh-local-archive.sh`; do not run both.
+  `scripts/test-archive-merge.sh` — 14 assertions, run it after touching the SQL.
+  Installed on Tower 2026-09-06 as User Script `wolfpack-nightly-archive`
+  (`30 5 * * *`), replacing `refresh-local-sandbox.sh`.
   Growth is real — ~9,500 buff_casts rows/day, a few GB/year.
+- **⚠ The merge then failed SILENTLY for 17 consecutive nights (2026-09-06 →
+  09-22), fixed 2026-09-23 — FIVE bugs, each hidden behind the one before.**
+  Every failure rolled back the whole single-statement merge and wrote no
+  `merge_log` row, while the wrapper's later steps kept printing OK.
+  1. **The proximate cause: `encounters` was never in the snapshot.** Nine
+     production tables default their id to `extensions.uuid_generate_v4()`, and
+     the restore's `--schema=public` never creates the `extensions` schema — so
+     their `CREATE TABLE` failed, they were absent from `snap`, and the merge
+     silently left them out. Every child row pointing at a post-09-06 encounter
+     then failed its FK, in ANY merge order. Fixed in `refresh-local-archive.sh`
+     (prepare `extensions` + uuid-ossp/pgcrypto/pg_trgm before `pg_restore`);
+     reproduced exactly with a prod-shaped dump.
+  2. **Merge order was alphabetical** (`charm_sessions` before `encounters`).
+     Real, but masked by (1). Now FK-graph order, deletes children-first.
+  3. **`ON CONFLICT (id)` covered one index**; 17 of 25 archive tables have a
+     second (`who_obs_dedup`…). Now update-by-PK + bare `on conflict do nothing`.
+  4. **`IS NOT DISTINCT FROM` on the key joins** — no hashable operator, so a
+     Nested Loop over postgres_fdw: 224 ms vs >60 s on 200k rows. Now `=`.
+  5. **Generated and identity columns** broke the insert; Tower had hand-fixed
+     both on 09-06 and the repo never received them.
+  Guards so it cannot go quiet again: the merge now REFUSES to run if an
+  allowlisted archive table is missing from the snapshot (a silent skip is how
+  (1) hid), and `refresh-local-archive.sh` fails if a run writes no `merge_log`
+  rows. Suite 9 → 20 assertions, each new one mutation-checked.
+  Deploy + catch-up: `docs/PATCH-tower-merge-order.md`. Until it lands the
+  watermark stays at 2026-09-06 and production's threat sweep deletes nothing.
+  ⚠ Already lost: `buff_casts` 2026-09-06 → 09-15, pruned by production's 7-day
+  sweep before any dump on the box captured it. `target_observations` is NOT at
+  risk as first feared — the 2026-09-22 dump on disk already holds it.
 - **⚠ PostgREST's 1000-row cap silently truncates reads across the site
   (audited 2026-08-12).** `.limit(N)` only LOWERS PostgREST's ceiling, never
   raises it, so any query matching >1000 rows returns the first 1000 with no
