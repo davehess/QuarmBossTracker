@@ -10118,7 +10118,28 @@ function _normMobName(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
-const _mobInfoCache = new Map();   // normName → { at, row|null }
+// _normMobName with the CASE kept — except the first letter, which is folded
+// because the log capitalises a name that starts a sentence ("A Shissar acolyte
+// hits YOU") while Zeal and the catalog do not. Capitalisation after the first
+// letter is exact on every surface, and in the catalog it is real information:
+// `A_Shissar_Acolyte` (162153) is a Wizard, `a_Shissar_acolyte` (162488) a
+// Warrior (the guild lead, 2026-09-23). 76 names differ only this way; 19 of
+// them differ in class.
+function _mobCaseKey(n) {
+  const s = String(n || '').trim()
+    .replace(/'s\s+corpse$/i, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+// The bodies whose name matches the request's case exactly (first letter aside);
+// ALL rows when none do — a request that arrives lowercased, or a name with one
+// spelling, behaves exactly as before.
+function _mobRowsForCase(rows, caseKey) {
+  if (!Array.isArray(rows) || !caseKey) return rows;
+  const exact = rows.filter(r => r && _mobCaseKey(r.name) === caseKey);
+  return exact.length ? exact : rows;
+}
+const _mobInfoCache = new Map();   // caseKey → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
 const _MOB_INFO_MISS_TTL_MS = 60 * 1000;       // a MISS is retried in a minute, never pinned for 6h
 // ── Chat → loot detection ───────────────────────────────────────────────────
@@ -14173,7 +14194,10 @@ async function _handleAgentMobInfo(req, res) {
   const zoneMap = await _liveZoneMap();
   const reqZoneId = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_id ?? null) : null;
   const reqGender = _parseGender(new URL(req.url, 'http://x').searchParams.get('gender'));
-  const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '');
+  // Keyed on the CASE-KEPT name: keyed on `norm`, whichever of two same-name
+  // bodies was asked for first would be served for both for six hours.
+  const caseKey = _mobCaseKey(name);
+  const cacheKey = caseKey + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '');
 
   const cached = _mobInfoCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < (cached.ttl || _MOB_INFO_TTL_MS)) {
@@ -14208,7 +14232,9 @@ async function _handleAgentMobInfo(req, res) {
     // the full row set (an NPC id encodes its zone: id = zoneid*1000 + n) so a
     // zone that holds ONLY the placeholder body can fall through to the real
     // row instead of serving the un-killable one.
-    const picked = mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId });
+    // The ilike above is case-blind on purpose (it finds every body of the
+    // name); the case filter then keeps the ones that are actually THIS mob.
+    const picked = mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId });
     let r = picked.row;
     // Same name, different CLASS, told apart in game only by sex (the guild lead
     // 2026-09-15, Plane of Hate's revenants). List every (class, sex) the

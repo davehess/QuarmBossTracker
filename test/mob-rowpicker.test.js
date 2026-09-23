@@ -435,7 +435,9 @@ describe('#171 the shipped endpoint uses the shared picker (not a stale copy)', 
   });
 
   it('the handler calls pickAndMergeMobRows with the #141 zone id', () => {
-    expect(SRC).toContain('mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId })');
+    // Rows pass through the case filter first (2026-09-23 — same-name bodies
+    // that differ in capitalisation; test/mobinfo-case-variants.test.js).
+    expect(SRC).toContain('mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId })');
   });
 
   it('the mob payload carries the merged specials + movement fields', () => {
