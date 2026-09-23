@@ -75,11 +75,20 @@ returns text[] language sql stable as $fn$
      and con.contype = 'p';
 $fn$;
 
--- Snapshot row `s` is the same row as archive row `d`. IS NOT DISTINCT FROM
--- rather than `=` so a nullable key column still compares.
+-- Snapshot row `s` is the same row as archive row `d`.
+-- ⚠ `=`, NEVER `IS NOT DISTINCT FROM`. This file used the latter until
+-- 2026-09-23 and it is a performance cliff, not a style choice: DISTINCT FROM
+-- has no hashable operator, so every join and anti-join here — the mirror
+-- delete, the update, the rows_kept count, all across a postgres_fdw foreign
+-- table — degrades to a Nested Loop. Measured on 200k rows over a loopback
+-- fdw: `=` 224 ms (Hash Anti Join); DISTINCT FROM still running at the 60 s
+-- cap, and it grows quadratically. The archive's big tables are ~1.2M rows.
+-- Tower fixed this by hand on 2026-09-06, which is likely why that night's
+-- merge could finish at all. Nothing is lost by it: these are primary-key
+-- columns, and a primary key cannot be NULL.
 create or replace function archive_meta.pk_match(p_cols text[])
 returns text language sql immutable as $fn$
-  select string_agg(format('s.%1$I is not distinct from d.%1$I', c), ' and ')
+  select string_agg(format('s.%1$I = d.%1$I', c), ' and ')
     from unnest(p_cols) c;
 $fn$;
 
