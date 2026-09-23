@@ -3009,6 +3009,14 @@ async function computeHotDiceNightAward() {
   } catch (err) { console.warn('[hot-dice-night] fun_events upsert failed:', err?.message); }
 }
 
+// How far back threat snapshots may be deleted: the OLDEST of what Tower holds,
+// what the stored fight graphs cover, and the retention window — so no bound
+// can be crossed. Either watermark missing → null → delete nothing.
+function _threatDeleteCutoff({ archivedThrough, graphThrough, retentionCutoff }) {
+  if (!archivedThrough || !graphThrough || !retentionCutoff) return null;
+  return new Date(Math.min(archivedThrough.getTime(), graphThrough.getTime(), retentionCutoff.getTime()));
+}
+
 // ── Midnight tasks ─────────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
@@ -3196,32 +3204,60 @@ function scheduleMidnightSummary(readyClient) {
         } catch (err) {
           console.warn('[midnight] threat archive watermark unreadable:', err?.message);
         }
+        // CONSOLIDATE before anything can delete (the guild lead's order:
+        // consolidate → confirm on-prem → delete). Each settled fight's threat
+        // curve is stored in encounter_threat_graph with its deaths, and
+        // encounter_timeline serves it once the raw rows are gone (migration
+        // 20260923200000). threat_graph_built_through is the second watermark:
+        // every snapshot before it belongs to a fight whose graph is stored.
+        let graphThrough = null;
+        if (supabase.isEnabled()) {
+          try {
+            const built = await supabase.rpc('build_encounter_threat_graphs', { p_limit: 5000 });
+            if (built) console.log(`[midnight] stored ${built} fight threat graph(s)`);
+            const through = await supabase.rpc('threat_graph_built_through', {});
+            const t = through ? Date.parse(through) : NaN;
+            if (Number.isFinite(t)) graphThrough = new Date(t);
+          } catch (err) {
+            console.warn('[midnight] threat graph build failed — nothing will be deleted:', err?.message);
+          }
+        }
         if (supabase.isEnabled() && keep > 0) {
-          if (!archivedThrough) {
-            console.warn('[midnight] threat sweep SKIPPED — no on-prem archive watermark '
-              + '(bot_kv archive_watermark_threat_snapshots). Nothing deleted; the table will grow '
-              + 'until the archive reports in. This is deliberate: see the header above.');
+          const cutoffDate = _threatDeleteCutoff({ archivedThrough, graphThrough,
+            retentionCutoff: new Date(Date.now() - keep * 24 * 60 * 60 * 1000) });
+          if (!cutoffDate) {
+            console.warn('[midnight] threat sweep SKIPPED — '
+              + (!archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
+                                  : 'no threat-graph watermark')
+              + '. Nothing deleted; the table will grow until both report in. Deliberate: see the header above.');
           } else {
-            // The older of the two bounds wins: never delete inside retention,
-            // and never delete past what Tower has.
-            const retentionCutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000);
-            const cutoffDate = archivedThrough < retentionCutoff ? archivedThrough : retentionCutoff;
             const cutoff = cutoffDate.toISOString();
             await supabase.del(
               'encounter_threat_snapshots',
               `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
             );
             console.log(`[midnight] swept encounter_threat_snapshots older than ${cutoff} `
-              + `(retention ${keep}d; archived through ${archivedThrough.toISOString()})`);
+              + `(retention ${keep}d; archived through ${archivedThrough.toISOString()}; `
+              + `graphs through ${graphThrough.toISOString()})`);
           }
         }
         // Downsample the survivors: rows older than 7 days thin to the FIRST
-        // snapshot per minute per (uploader, boss) — the rank card samples
-        // per-minute shape fine, and this removes ~70% of aged volume
-        // (migration 20260709050000; one-time backfill already applied).
+        // snapshot per minute per (uploader, boss) (migration 20260709050000).
+        // ⚠ It DELETES, so it takes the same gate as the sweep: it may only
+        // touch rows the archive holds and the graphs cover. It had no gate
+        // until 2026-09-23 and was dormant only because it timed out on the
+        // same missing index as the sweep (measured: rows per uploader-minute
+        // identical either side of 7 days) — a fix to that index would have
+        // woken an ungated deletion.
         if (supabase.isEnabled()) {
-          const thinned = await supabase.rpc('thin_threat_snapshots', { p_older_than_days: 7 });
-          if (thinned) console.log(`[midnight] thinned ${thinned} old threat snapshots to 1/min`);
+          const thinFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          const thinCut = _threatDeleteCutoff({ archivedThrough, graphThrough, retentionCutoff: thinFrom });
+          if (thinCut && thinCut.getTime() >= thinFrom.getTime()) {
+            const thinned = await supabase.rpc('thin_threat_snapshots', { p_older_than_days: 7 });
+            if (thinned) console.log(`[midnight] thinned ${thinned} old threat snapshots to 1/min`);
+          } else {
+            console.log('[midnight] threat thinning skipped — the archive and graphs do not cover the last 7 days yet');
+          }
         }
       } catch (err) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);

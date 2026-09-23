@@ -2966,6 +2966,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   class to drill into its characters (one-axis premise holds in both views),
   hover highlights, MT strip with honest "nobody taking hits" gap tooltips
   (1-bucket sampling holes bridged; real gaps kept — the "it ran" case).
+  Its data is the `encounter_timeline` RPC, which since 2026-09-23 (migration
+  `20260923200000`, bot 3.1.141) is **live while raw threat snapshots exist and
+  the stored per-fight graph after**: `encounter_threat_graph` (curve rows + each
+  uploader's raw death list), built nightly for settled fights by
+  `build_encounter_threat_graphs`. Deleting raw snapshots requires the archive
+  watermark AND `threat_graph_built_through()` — `DECISIONS-2026-09-21.md` §8.
 - **Sprint board on `/roadmap`** — `SprintBoard.tsx` + `sprintItems` in
   `roadmapData.ts` (sortable, platform-color aspects).
 - **Missing-spells "where from" + shopping list** (web 1.1.67):

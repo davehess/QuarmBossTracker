@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted.** Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
-| **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set.** The guild lead's order was consolidate each fight into a flattened graph married to its deaths → confirm on-prem → delete. The consolidation is unbuilt; the watermark would let tonight's midnight sweep delete ~750k raw snapshots before it exists. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
+| **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Trigger disables never reached the fleet** | **FIXED 2026-09-23 (§7)** — bot 3.1.139 on branch `claude/sharp-lamport-dC0TW`, **not yet on `main`**. Worked around in data meanwhile | land the branch on `main` (outside 19:30–00:30 ET) |
@@ -370,4 +370,87 @@ and DISTINCT FROM joins that could not finish at 1.2M rows. The last manual run
 sat silent in the restore at ~06:2x PDT, possibly colliding with the 05:30
 nightly job. To check, from a second terminal:
 `ps -eo pid,etime,args | grep -E 'refresh-local-archive|pg_restore' | grep -v grep`
-— two refresh processes means a collision: stop both, run once.
+— two refresh processes means a collision: stop both, run once. (Resolved: the
+catch-up completed that afternoon.)
+
+## 8. The per-fight threat graph — built; deletion still waits on July (2026-09-23)
+
+The guild lead, 2026-09-22: *"per fight, consolidate the threat data into a
+flattened graph, married up with the player deaths from those fights. make sure
+that the data isn't removed from the on-prem database then make deletions from
+the table."* Consolidate → confirm on-prem → delete.
+
+**Consolidate — DONE (migration `20260923200000`, applied live via `execute_sql`,
+file committed).** The graph already existed as a query: `encounter_timeline`
+(5 s buckets, per character, damage and damage-taken deltas, best uploader per
+character). It is now stored once per fight in `encounter_threat_graph`:
+- `rows` holds `encounter_timeline`'s own output, in its own order.
+- `deaths` holds each uploader's RAW death array from
+  `contributions.raw_parse->'deaths'` — the exact input of the canonical JS
+  dedup. Stored raw because that rule already lives in three mirrored places
+  (`utils/parseDeaths.js`, the parse page, `web/lib/raidReview.ts`) and must not
+  gain a fourth copy in SQL.
+- `encounter_timeline` is now a wrapper: live while raw snapshots exist
+  (unchanged output), the stored graph once they don't. The live body is
+  `encounter_timeline_live`, copied verbatim from production (which carries a
+  later baseline fix the original migration file lacks).
+
+**Backfill: 16,980 fights, 508,035 rows, 2.4 MB** (against ~1.4 GB of raw
+snapshots). 21 sampled fights matched live exactly, including the largest
+(12,294 rows), five with deaths, and three empty ones. The stored-graph read
+path returned all 4,645 rows of the biggest fight identically, in the same
+positions, before the wrapper went live.
+
+**Bot 3.1.141** builds each day's graphs at midnight before anything can delete,
+and adds a second watermark, `threat_graph_built_through()`. **Both** deletion
+paths now require both watermarks:
+- the 30-day sweep;
+- the 7-day `thin_threat_snapshots`, which had **no gate at all** until today.
+  It was dormant only because it timed out on the same missing index as the
+  sweep — measured 2026-09-23: rows per uploader-minute are the same either side
+  of 7 days (3.78–4.77 older, 3.67–4.78 newer). Fixing that index would have
+  woken an ungated deletion.
+
+Rule tested by running it (`test/threat-delete-gates.test.js`); both gates
+mutation-checked.
+
+**⚠ Why deletion is still off — the guild lead's decision.** Graphs can only be
+built for snapshots that name their fight:
+
+| Month | Snapshots | Name the boss | No boss or target |
+|---|---|---|---|
+| July | 439,870 | **0** | **439,870** |
+| August | 416,245 | 358,539 | 55,094 |
+| September | 352,014 | 352,010 | 1 |
+
+`encounter_timeline` matches snapshots by boss name, and **every July snapshot
+has none**, so July fights show no curve today (live) and store empty graphs. The
+raw July data is intact on Tower and in production. Options:
+- **(a)** accept it — July's detail lives on Tower only; set the watermark and
+  let deletions start;
+- **(b)** attribute unnamed snapshots to a fight by time window + uploader.
+  That is a new heuristic that changes what the parse page shows for July
+  fights, so it needs building and checking first.
+
+The watermark stays unset until this is decided.
+
+**Two facts for that call, previously recorded only in the handoff:**
+- **A DELETE does not shrink the database.** Postgres reuses the space; the file,
+  and so the size Supabase bills, stays put until `VACUUM FULL` (locks the table
+  while it runs) or `pg_repack`. The "~890 MB reclaimed immediately" figure in
+  `CLAUDE.md` / `docs/COSTS.md` really means "no growth for about a month".
+- **The `snapshot_at` index** (`20260923010000`) has never been applied —
+  `CREATE INDEX CONCURRENTLY` cannot run inside a migration runner's transaction.
+  Now that thinning is gated it is safe to create by hand with `execute_sql`
+  (outside a transaction), but it only matters once deletion is switched on.
+
+**Also still open:** nobody advances the archive watermark nightly (needs a
+design — Tower writing `bot_kv` after a successful merge, or a manual step);
+Tower's archive never receives tables created after it was built (e.g.
+`faction_hits`, and now `encounter_threat_graph`); the Tower healthcheck ignores
+the merge; and Tower's own `refresh-local-archive.sh` lacks the repo's
+report-window fix (`0bf44d8`).
+
+**`docs/HANDOFF-2026-09-23-session.md` was deleted in this change** at the guild
+lead's word ("we no longer need this handoff document"). Everything durable in it
+is now here, in the open table above, or in `docs/STATUS.md`.
