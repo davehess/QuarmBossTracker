@@ -106,6 +106,7 @@ declare
     'pvp_boss_kills', 'trigger_timing_feedback', 'zeal_tag_observations',
     'page_views', 'audit_log'
   ];
+  missing       text;
   merge_order   text[];            -- parents first, children after
   before_counts bigint[] := '{}';  -- row counts taken BEFORE any delete, by ordinal
   tbl           text;
@@ -119,6 +120,22 @@ declare
   after_n       bigint;
   kept_n        bigint;
 begin
+  -- An ARCHIVE table the snapshot lacks does not mean "nothing to merge" — it
+  -- means the restore failed to create it, and skipping it is silent. That is how
+  -- `encounters` went unmerged from 2026-09-06: its id default lives in the
+  -- `extensions` schema, which a --schema=public restore never creates, so the
+  -- table was never in `snap` and the merge quietly left it out. For an archive
+  -- table a silent skip is the worst outcome — the archive stops growing while
+  -- every check reads green — so it stops the run instead.
+  select string_agg(a, ', ' order by a)
+    into missing
+    from unnest(archive_tables) a
+   where to_regclass('public.' || quote_ident(a)) is not null
+     and to_regclass('snap.'   || quote_ident(a)) is null;
+  if missing is not null then
+    raise exception 'archive table(s) missing from the snapshot: % — the restore did not create them (see /tmp/arch-restore.err); refusing to merge', missing;
+  end if;
+
   -- Rank every table that exists on BOTH sides so its FK parents come first.
   -- `depth` is the LONGEST path from any root, which is a valid topological
   -- rank on a DAG; the `depth < 32` guard is what makes an FK cycle terminate

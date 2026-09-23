@@ -58,6 +58,18 @@ echo "local archive holds ~${BEFORE_TOTAL} rows; merging $(basename "$REAL") ($S
 psql_c postgres -q -c "drop database if exists $SNAPDB" >/dev/null 2>&1
 psql_c postgres -q -c "create database $SNAPDB" >/dev/null 2>&1 || {
   echo "could not create $SNAPDB"; exit 1; }
+# Production keeps uuid-ossp, pgcrypto and pg_trgm in schema `extensions`, and the
+# dump writes defaults schema-qualified: `DEFAULT extensions.uuid_generate_v4()`.
+# --schema=public never creates that schema, so without this, nine tables fail
+# CREATE TABLE and are simply absent from the snapshot — encounters, contributions,
+# raid_nights and audit_log among them. With encounters never restored, every child
+# row pointing at a newer encounter failed its FK: that, as much as the merge order,
+# is what froze the archive from 2026-09-06.
+psql_c "$SNAPDB" -q -v ON_ERROR_STOP=1 -c 'create schema if not exists extensions;
+  create extension if not exists "uuid-ossp" with schema extensions;
+  create extension if not exists pgcrypto with schema extensions;
+  create extension if not exists pg_trgm with schema extensions;' >/dev/null \
+  || { echo "could not prepare the extensions schema in $SNAPDB"; exit 1; }
 docker exec -i "$CONTAINER" pg_restore -U postgres -d "$SNAPDB" \
   --no-owner --no-acl --schema=public < "$REAL" 2>/tmp/arch-restore.err
 SNAP_TABLES="$(psql_c "$SNAPDB" -tAc "select count(*) from information_schema.tables where table_schema='public' and table_type='BASE TABLE'" | tr -d '[:space:]')"

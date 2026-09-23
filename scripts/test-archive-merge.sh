@@ -141,6 +141,17 @@ check "rows_before is counted pre-delete"         \
   "$(q "select rows_before||'->'||rows_after from archive_meta.merge_log
           where table_name='bosses_local' order by id limit 1")" "2->1"
 
+# LAST, because it leaves the database unmergeable: an allowlisted ARCHIVE table
+# the snapshot lacks must STOP the run, never be skipped. That silent skip is how
+# `encounters` went unmerged from 2026-09-06 — its restore failed on a default in
+# the `extensions` schema, the table was simply absent from `snap`, and nothing
+# said so.
+run -q -c "create table public.chat_messages (id bigint primary key, body text)"
+if run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; then got=merged
+elif grep -q 'missing from the snapshot: chat_messages ' "$OUT"; then got=refused
+else got="failed for another reason: $(grep -m1 ERROR "$OUT")"; fi
+check "archive table missing from snapshot STOPS it" "$got" refused
+
 "${PSQL[@]}" -q -c "drop database if exists $T" >/dev/null 2>&1
 rm -f "$OUT"
 [ "$fail" = 0 ] && echo "PASS" || { echo "FAILED"; exit 1; }

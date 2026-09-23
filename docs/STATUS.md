@@ -4442,22 +4442,34 @@ one concrete detail. Shipped that night: stable 2.1.2 / agent 3.4.36.**
   (`30 5 * * *`), replacing `refresh-local-sandbox.sh`.
   Growth is real — ~9,500 buff_casts rows/day, a few GB/year.
 - **⚠ The merge then failed SILENTLY for 17 consecutive nights (2026-09-06 →
-  09-22), fixed 2026-09-23.** Tables merged alphabetically, so `charm_sessions`
-  inserted before `encounters`, the table it references; the FK violation rolled
-  back the whole single-statement merge and wrote no `merge_log` row, while the
-  wrapper's later steps kept printing OK. Now ordered by the real FK graph, with
-  deletes running children-first in their own pass — reproduced on a throwaway
-  Postgres and mutation-checked in both directions. `refresh-local-archive.sh`
-  additionally fails when a run writes no `merge_log` rows (its old check,
-  `encounters >= 1`, passes happily against a frozen archive).
-  ⚠ Needs a local session: **copy the three fixed files onto Tower and run the
-  catch-up** — `docs/HANDOFF-tower-archive-catchup.md` (Tower's repo copy is not
-  a git checkout). Until then the watermark stays at 2026-09-06 and production's
-  threat sweep deletes nothing.
+  09-22), fixed 2026-09-23 — FIVE bugs, each hidden behind the one before.**
+  Every failure rolled back the whole single-statement merge and wrote no
+  `merge_log` row, while the wrapper's later steps kept printing OK.
+  1. **The proximate cause: `encounters` was never in the snapshot.** Nine
+     production tables default their id to `extensions.uuid_generate_v4()`, and
+     the restore's `--schema=public` never creates the `extensions` schema — so
+     their `CREATE TABLE` failed, they were absent from `snap`, and the merge
+     silently left them out. Every child row pointing at a post-09-06 encounter
+     then failed its FK, in ANY merge order. Fixed in `refresh-local-archive.sh`
+     (prepare `extensions` + uuid-ossp/pgcrypto/pg_trgm before `pg_restore`);
+     reproduced exactly with a prod-shaped dump.
+  2. **Merge order was alphabetical** (`charm_sessions` before `encounters`).
+     Real, but masked by (1). Now FK-graph order, deletes children-first.
+  3. **`ON CONFLICT (id)` covered one index**; 17 of 25 archive tables have a
+     second (`who_obs_dedup`…). Now update-by-PK + bare `on conflict do nothing`.
+  4. **`IS NOT DISTINCT FROM` on the key joins** — no hashable operator, so a
+     Nested Loop over postgres_fdw: 224 ms vs >60 s on 200k rows. Now `=`.
+  5. **Generated and identity columns** broke the insert; Tower had hand-fixed
+     both on 09-06 and the repo never received them.
+  Guards so it cannot go quiet again: the merge now REFUSES to run if an
+  allowlisted archive table is missing from the snapshot (a silent skip is how
+  (1) hid), and `refresh-local-archive.sh` fails if a run writes no `merge_log`
+  rows. Suite 9 → 20 assertions, each new one mutation-checked.
+  Deploy + catch-up: `docs/PATCH-tower-merge-order.md`. Until it lands the
+  watermark stays at 2026-09-06 and production's threat sweep deletes nothing.
   ⚠ Already lost: `buff_casts` 2026-09-06 → 09-15, pruned by production's 7-day
-  sweep before Tower ever received it. ⚠ Still at risk: `target_observations`
-  (306,570 rows back to 2026-08-04) the first time its new 1-day sweep completes
-  — that sweep has no archive gate.
+  sweep before any dump on the box captured it. `target_observations` is NOT at
+  risk as first feared — the 2026-09-22 dump on disk already holds it.
 - **⚠ PostgREST's 1000-row cap silently truncates reads across the site
   (audited 2026-08-12).** `.limit(N)` only LOWERS PostgREST's ceiling, never
   raises it, so any query matching >1000 rows returns the first 1000 with no
