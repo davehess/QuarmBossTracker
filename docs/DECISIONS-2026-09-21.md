@@ -115,7 +115,10 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted.** Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
-| ⚠ **Tower archive merge FIXED, catch-up NOT yet run** | 2026-09-23. The nightly merge had failed 17 consecutive nights on an FK violation (alphabetical table order) and written no `merge_log` row, so nothing looked broken. Fixed + reproduced + mutation-checked on branch `claude/sharp-lamport-dC0TW`; Tower is still frozen at 2026-09-06 | a local session copies three files onto Tower (its repo copy is not a git checkout) and runs the catch-up — `docs/HANDOFF-tower-archive-catchup.md`. ⚠ `buff_casts` 09-06 → 09-15 is already gone for good, and `target_observations` (306k rows, back to 2026-08-04) goes the first time its new 1-day sweep completes |
+| ⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS** | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
+| **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
+| **Trigger disables never reached the fleet** | **FIXED 2026-09-23 (§7)** — bot 3.1.139 on branch `claude/sharp-lamport-dC0TW`, **not yet on `main`**. Worked around in data meanwhile | land the branch on `main` (outside 19:30–00:30 ET) |
+| **UI calls made on the guild lead's behalf today** | 2026-09-23, on `beta`. Extended Target's toggles drop to icons below 380px wide (alternative: a two-row header that keeps the labels). Settings columns via a load-time section wrap (alternative: pure CSS columns — cheaper, but splits a section's controls across two columns). Roadmap entry titled with the plain version string | the guild lead picks, or keeps, before stable; and names the release if it wants a name |
 | **Understand-Anything** | **assessed 2026-09-21 (§1), not adopted.** Overlaps `scripts/graphify.sh`, which already owns the deterministic half by decision; the LLM layer answers 1 of the 4 problems that test was built on, and that one is a grep | the guild lead's call on the bounded trial: run `/understand` against `packages/wolfpack-logsync/` **from a desktop session**, diff its tour against `HOW-ITS-BUILT.md`. Output is a draft for a human, never a committed authority. No auto-update hook, no `curl \| bash` |
 | **Target Info: mana bar + Factions tab** | **BUILT 2026-09-22** — bot 3.1.130 on `main` (mob-info carries `mana`, per-spell landing text, faction rows), agent 3.6.50 + overlay on `beta`. Identification measured at 97.6% via `npc_spells_id` + level, cast time splitting 151 of the remaining 185. 27 tests, all running the real functions, all mutation-checked | the guild lead compares the two views on beta with the ⚡ toggle. ⚠ **Resting regen is NOT implemented** — `eqemu_npc_types` has no `mana_regen` column, so a reset restores to full and `_NPC_MANA_REGEN_PCT_PER_TICK` is left null. **A local session against the `peq` DB is the only way to get the real rate** — and to confirm Quarm NPCs spend mana at all |
 | Crash reports are opt-in and OFF by default | open — a Mimic user can read a perfect local diagnosis while our table has nothing, which is why 2026-09-20 was triaged off screenshots | consider defaulting the toggle on, or prompting once after a raider's first crash |
@@ -305,3 +308,65 @@ read them in a minute.
 **Recommendation: do not commit it as a repo plugin.** If it is wanted, run it
 from a **desktop** session first, where the key stays on the box — and only after
 the retention answer is in hand.
+
+## 7. Callout and overlay fixes from a live afternoon (2026-09-23)
+
+Reported by the guild lead one screenshot at a time, mid-session. Each was traced
+to its cause before anything changed.
+
+**Duplicate callouts — five guild triggers disabled (data, reversible).** "Need to
+comb through duplicates and remove them." No two enabled guild triggers overlap:
+4,321 spell landing/fade lines checked, max one guild trigger per line, no
+identical patterns. Every duplicate was a guild trigger shadowing a BUILT-IN agent
+callout on the same line: Shaman / Shaman Plague / Enchanter / Bard Slow landed
+vs the built-in "Slow landed" (agent ≥3.4.17), and "Divine Intervention fired
+(death save)" vs "DI DOWN" (agent ≥3.5.59, which also names who recasts). All 32
+players active in 14 days run agent ≥3.6.38, so no one lost coverage. Disabled,
+not deleted, with a dated note on each row. ⚠ One real difference: the built-in
+slow callout is main-target only, so a slow landing on an ADD no longer calls out.
+
+**The disable did not reach anyone — bot bug, bot 3.1.138.** The guild-triggers
+`version` (the agent's no-change gate) was max(updated_at) over ENABLED rows; a
+disable or delete removes the row and never moves it. Every disable ever made
+from `/admin/triggers` kept firing until Mimic restarted. Worked around by
+touching one enabled all-classes trigger; fixed by hashing which rows are served
+and when each changed.
+
+**Enrage was mute — agent 3.6.54.** The #136 callout allow-list mutes guild
+triggers whose name/tags/text match none of its categories, and enrage was never
+one. Added whole-word. The suggested "Mob is enraged" trigger read an invented
+string (`begins to enrage`); now `has become ENRAGED`.
+
+**Damage shield undercount — agent 3.6.54.** "60 returned · 1 hit" for a fight on
+a tank wearing 60/hit. The pairing only looked BACKWARD from the shield line for
+its swing; replayed, shield-then-swing counted 0 of 10. Now either order pairs;
+what counts as a shield is unchanged.
+
+**Extended Target, outside a raid = your group (the guild lead's default).**
+"If we're in group but not raid the default is to not show extended target for
+outside of group." Agent-side (only the client knows its group); in a raid,
+unchanged; fails open. Also: one mob split into #1/3 #2/3 #3/3 by POSITION while
+the spawn ids agreed it was one — ids now merge rows too (bot 3.1.139), and a `0`
+target_id no longer mints a phantom `#0` instance.
+
+**Mute vs "Trigger alerts speak out loud" — "which one works?"** Neither did what
+it said. Mute also HID trigger alerts (a stale gate from when Quiet mode hid
+overlays), and the tray's Quiet mode never muted the CH-chain or charm voices
+(only a Settings save broadcast Mute). "Trigger alerts speak out loud" is the
+master switch for the whole trigger overlay, banner and voice — relabeled. The
+old test for "still flashes" only checked that a flash() function existed and
+passed throughout; replaced with one that runs fire().
+
+**Tray and Settings.** "No overlays" added to the tray (same flag, same apply
+path — parity rule). Overlays submenu sorted A–Z at build time. Settings flows
+into columns when maximized. Slow callouts name the mob and its spawn id when
+Zeal proves it (agent 3.6.55).
+
+**Tower archive, where it stands.** Three more merge bugs past the FK order —
+`encounters` never restored into the snapshot (its id default lives in the
+`extensions` schema), one conflict target for 17 tables with two unique indexes,
+and DISTINCT FROM joins that could not finish at 1.2M rows. The last manual run
+sat silent in the restore at ~06:2x PDT, possibly colliding with the 05:30
+nightly job. To check, from a second terminal:
+`ps -eo pid,etime,args | grep -E 'refresh-local-archive|pg_restore' | grep -v grep`
+— two refresh processes means a collision: stop both, run once.

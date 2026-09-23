@@ -37,6 +37,41 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'callouts-and-overlays-2026-09-23',
+    title: 'Agent 3.6.55 · Bot 3.1.139',
+    version: 'Mimic 2.6.9-beta · Agent 3.6.55 · Bot 3.1.139 · Web 1.7.47',
+    date: '2026-09-23',
+    channel: 'beta',
+    headline: 'Callouts that say what they mean: enrage speaks again, slows name their mob, and Mute no longer hides your alerts.',
+    features: [
+      {
+        name: 'Slow callouts name the mob',
+        blurb: '“Slowed A Plagued Soriz #4745 — Turgur’s Insects” instead of just the spell. The number is the mob’s spawn id, shown only when your Zeal target confirms it. Fading and dropped slows name the mob the same way.',
+      },
+      {
+        name: 'Extended Target minds your group outside a raid',
+        blurb: 'Two groups working the same zone no longer see each other’s mobs and hurt players. In a raid it is raid-wide, exactly as before.',
+      },
+      {
+        name: '“No overlays” in the tray',
+        blurb: 'The same switch as “Don’t show any overlays” in Settings, one click away. The tray’s Overlays list is now in alphabetical order too.',
+      },
+      {
+        name: 'Settings spreads into columns when maximized',
+        blurb: 'A maximized Settings window lays its sections side by side instead of one long scroll. A section is never split between two columns.',
+      },
+    ],
+    fixes: [
+      'Enrage callouts had gone silent: the raid callout filter never had enrage on its list. They speak again.',
+      'The Tank overlay was missing most damage shield returns and could show a single hit for a whole fight. It now counts them all.',
+      'Mute hid trigger alerts instead of just silencing them. Alerts now stay on screen while muted. Quiet mode from the tray also silences the CH chain and charm voices now — before, those only went quiet after saving Settings.',
+      'One mob could show on Extended Target as several rows (“#1/3, #2/3, #3/3”) when the raiders’ Zeal all agreed it was one mob. Now it is one row.',
+      'Extended Target’s title bar no longer crushes the title into the buttons; the off-tank count sits under the online count.',
+      'Slow and Divine Intervention callouts no longer fire twice. And switching off a guild trigger now takes effect for everyone within two minutes — before, it kept firing until Mimic restarted.',
+      'The suggested “Mob is enraged” trigger now matches what the game prints. It could never fire before.',
+    ],
+  },
+  {
     key: 'faction-recency-window-2026-09-22',
     title: 'Faction page: what you have been working on lately',
     version: 'Web 1.7.46 · Bot 3.1.131',
