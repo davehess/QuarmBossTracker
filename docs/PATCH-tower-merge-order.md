@@ -253,19 +253,30 @@ Expect `count` up from 915,340 by roughly 275,000, `max(snapshot_at)` at
 **2026-09-22 05:0x UTC** (the dump's timestamp, not "now"), `mode` = `archive`,
 and `charm_sessions` finally present as `mirror`.
 
-## 6. The `target_observations` clock — and what a successful merge buys
+## 6. The `target_observations` clock — softer than I first said
 
-You are right that it has no archive protection, and the arithmetic works out in
-our favour if the merge lands:
+⚠ **Correction to my own earlier framing.** I said missing tonight's merge would
+cost ~50 days of `target_observations`. That was wrong, and the reason matters:
+**the merge reads the dump on disk, never production.** Those rows were captured
+in `wolfpack-2026-09-22.dump` at 05:05 and are safe there whatever production
+does tonight. The sweep removes production's copy; it cannot reach the dump.
 
-- The sweep deletes `at < now() − 1 day`. At the next midnight-ET run that
-  cutoff is about **2026-09-22 04:00 UTC**.
-- After this merge the archive holds `target_observations` through the dump,
-  **2026-09-22 05:05 UTC**.
-- 05:05 is later than 04:00, so **everything that sweep deletes is already on
-  Tower.** Comfortably, with an hour to spare.
+The arithmetic, for the record:
 
-Miss the merge and ~50 days (306,570 rows, back to 2026-08-04) go instead.
+- The sweep deletes `at < now() − 1 day` — at the next midnight-ET run, about
+  **2026-09-22 04:00 UTC**. It has no archive gate, unlike the threat sweep.
+- The dump, and so the archive after any successful merge, holds
+  `target_observations` through **2026-09-22 05:05 UTC**.
+- 05:05 is later than 04:00, so everything that sweep deletes is already
+  captured — tonight, tomorrow, or whenever the merge actually runs.
+
+So run the merge because the backlog only grows and it is ready, not because
+something burns at midnight. The real deadline is dump rotation, which is days
+out, not hours.
+
+⚠ Still true and unchanged: **`buff_casts` 2026-09-06 → 09-15 is gone for good.**
+That one was not captured by any dump the box still holds — production's 7-day
+sweep got there first. It is the concrete cost of the 17 nights.
 
 ⚠ One correction to the earlier note: the sweep's delete is
 `at=lt.<cutoff>` with **no `guild_id`**, so it cannot use
