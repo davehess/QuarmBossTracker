@@ -447,6 +447,15 @@ and the same never-refetch guarantee.
   lowers that ceiling. Anything that can match more must page
   (`web/lib/supabase-paged.ts`). A self-hoster changing `max-rows` changes
   behaviour everywhere, which is itself a reason to page rather than configure.
+- **2026-09-23 — remote operator access to the on-prem box goes over Tailscale,
+  not open ports** (`docs/DECISIONS-2026-09-21.md` §9). Our cloud sessions join the
+  tailnet with a tagged, ephemeral key and reach exactly two ports: the Supabase
+  pooler (the database container itself publishes nothing) and the Coolify API.
+  They use a read-only role that cannot read tells or chat. The wizard should
+  offer this as an optional step, not assume it: it needs a Tailscale account, a
+  policy edit (the default allow-all grant must be narrowed to
+  `autogroup:member` first, or a tagged device reaches everything), and an auth
+  key that expires, so someone has to rotate it.
 
 ### Threat data retention (2026-09-23)
 - **Raw threat snapshots are disposable only after they are summarised.** Each

@@ -557,6 +557,12 @@ repo access, producing draft text a human carries back.)
   needed one of those sites can now be done from the cloud; one that needs the
   `A:\EQ` / `D:\EQServer` files still can't. If the setting goes back to
   Trusted, the blocks come back.
+  **Cloud sessions can also reach Tower (2026-09-23)**: the on-prem archive DB
+  (read-only `claude_ro`, via the pooler) and the Coolify API, by joining the
+  tailnet as `tag:claude-cloud`. The credentials are the `TS_AUTHKEY` / `TOWER_*` /
+  `COOLIFY_*` environment variables. How to bring the tunnel up, and the two
+  traps (`no_proxy`, and a `pgrep` guard that never starts the daemon), are in
+  `docs/DECISIONS-2026-09-21.md` §9.
 
 Rules that keep them married:
 1. **Durable state lives in committed docs, never chat.** Status + durable
