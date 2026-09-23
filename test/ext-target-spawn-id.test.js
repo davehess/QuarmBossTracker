@@ -152,8 +152,11 @@ describe('wiring (comment-stripped source)', () => {
     expect(clean).toContain('clusterByHp(g.obs)');       // still there for everyone else
   });
 
-  it('the observation carries a ZONE-SCOPED id', () => {
-    expect(clean).toContain('(r.target_id != null && r.zone_name) ?');
+  // Zone-scoped, and 0 is "no target" rather than spawn zero (_idScopeKeep's
+  // rule): a kept 0 became the id `<zone>|0`, a phantom "#0" instance.
+  it('the observation carries a ZONE-SCOPED id, and 0 is not an id', () => {
+    expect(clean).toContain('(Number(r.target_id) > 0 && r.zone_name) ?');
+    expect(clean).toContain('spawn_id: Number(r.target_id) > 0 ? Number(r.target_id) : null,');
   });
 
   // The off-tank columns sat 100% NULL for weeks because the row was consumed

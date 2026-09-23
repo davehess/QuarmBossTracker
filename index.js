@@ -12133,6 +12133,63 @@ function _extBindInstances(hpClusters, posInstances) {
   return out;
 }
 
+// Spawn ids overrule the position and HP guesses in BOTH directions.
+// _extIdInstances only ever used them to SPLIT (≥2 distinct ids). When the
+// targeters of a name all report ONE id, that is proof of one mob — and the
+// guesses downstream went on splitting it anyway: a member's Extended Target,
+// 2026-09-23, showed "A Shissar Taskmaster" as #1/3, #2/3, #3/3 — one targeter
+// per row, all at 14%, all being hit on the same tank. The rows carried the
+// asterisk, not an id, so ids had not split them; three engaged tanks standing
+// apart had, via _extPosCluster.
+//
+// So: rows whose targeters share an id are one mob and merge back. Rows with no
+// ids are untouched (returned as the same array — Object.is), so a fleet that
+// sends no ids behaves exactly as before, and a raider with no id stays wherever
+// the guesses put them.
+function _extMergeByAgreedId(rows, idOf, hpOf) {
+  if (!rows || rows.length < 2 || !idOf || idOf.size === 0) return rows;
+  const parent = rows.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const firstRowOfId = new Map();
+  rows.forEach((row, i) => {
+    for (const r of (row.raiders || [])) {
+      const id = idOf.get(String(r).toLowerCase());
+      if (id == null) continue;
+      if (!firstRowOfId.has(id)) { firstRowOfId.set(id, i); continue; }
+      const a = find(firstRowOfId.get(id)), b = find(i);
+      if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+    }
+  });
+  const groups = new Map();
+  rows.forEach((row, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(row);
+  });
+  if (groups.size === rows.length) return rows;
+  // Same median as the handler's (round-half-up on an even count).
+  const median = (arr) => {
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  const out = [];
+  for (const members of groups.values()) {
+    if (members.length === 1) { out.push(members[0]); continue; }
+    const raiders = [], seen = new Set(), tanks = [];
+    for (const m of members) {
+      for (const r of (m.raiders || [])) {
+        const k = String(r).toLowerCase();
+        if (!seen.has(k)) { seen.add(k); raiders.push(r); }
+      }
+      for (const t of (m.tanks || [])) if (!tanks.includes(t)) tanks.push(t);
+    }
+    const hps = raiders.map(r => hpOf && hpOf.get(String(r).toLowerCase())).filter(h => h != null);
+    const { pos_split, ...base } = members[0];
+    out.push({ ...base, raiders, hp: hps.length ? median(hps) : base.hp, ...(tanks.length ? { tanks } : {}) });
+  }
+  return out;
+}
+
 // #194 debuff attribution at K≥2. A landing's observer is the agent whose log
 // saw it — for self-casts the observer IS the caster (resolveSelfCastLanding),
 // and a caster targets what they debuff. The same landing reaches us once per
@@ -12736,8 +12793,12 @@ async function _handleAgentExtendedTarget(req, res) {
         // in Sebilis is an unrelated mob to slot 4425 in The Deep. An id whose
         // reporter has no zone_name cannot be matched against another
         // reporter's, so it is treated as absent rather than trusted.
-        id: (r.target_id != null && r.zone_name) ? `${r.zone_name}|${r.target_id}` : null,
-        spawn_id: r.target_id != null ? Number(r.target_id) : null,
+        //
+        // ⚠ 0 is "no target", not spawn zero (same rule as _idScopeKeep): a 0
+        // kept here became the id `<zone>|0`, a phantom instance that split a
+        // real mob into itself plus a "#0" row.
+        id: (Number(r.target_id) > 0 && r.zone_name) ? `${r.zone_name}|${r.target_id}` : null,
+        spawn_id: Number(r.target_id) > 0 ? Number(r.target_id) : null,
       });
     }
     // #194: an engaged tank is a TARGETER whether or not they run Mimic — a
@@ -12822,7 +12883,7 @@ async function _handleAgentExtendedTarget(req, res) {
           }
         } catch { /* telemetry only */ }
       }
-      const rows = _extBindInstances(clusters, posInstances);
+      let rows = _extBindInstances(clusters, posInstances);
       // A pos-split row inherits the merged cluster's median — recompute from
       // the raiders that actually landed on it so the two rows don't show one HP.
       const hpOfRaider = new Map(g.obs.filter(o => o.hp != null).map(o => [String(o.raider).toLowerCase(), o.hp]));
@@ -12831,6 +12892,9 @@ async function _handleAgentExtendedTarget(req, res) {
         const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
         if (hps.length) c.hp = median(hps);
       }
+      // Ids overrule the position/HP guesses in the MERGE direction too.
+      const idOfRaider = new Map(g.obs.filter(o => o.id != null).map(o => [String(o.raider).toLowerCase(), o.id]));
+      rows = _extMergeByAgreedId(rows, idOfRaider, hpOfRaider);
       const multi = rows.length > 1;         // proven duplicate same-name mobs
       const debuffs = debuffsFor(g.key);
       if (multi) {
