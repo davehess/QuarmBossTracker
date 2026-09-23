@@ -90,6 +90,14 @@ archive — that is the check that let this run silent.
 
 ## 3. Deploy the fix to Tower
 
+The fix is on branch **`claude/sharp-lamport-dC0TW`** (commit `789ca70`). If
+your local checkout is on `main` and does not have it yet:
+
+```bash
+git fetch origin claude/sharp-lamport-dC0TW
+git show origin/claude/sharp-lamport-dC0TW:scripts/lib/archive-merge.sql > /tmp/archive-merge.sql
+```
+
 ⚠ **Tower's copy of the repo is not a git checkout** (`fatal: not a git
 repository`), so you copy the files by hand. Three files changed:
 
