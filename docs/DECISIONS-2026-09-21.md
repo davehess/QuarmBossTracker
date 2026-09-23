@@ -118,7 +118,8 @@ is ephemeral. It is a desktop-session job.
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
-| **Trigger disables never reached the fleet** | **FIXED 2026-09-23 (§7)** — bot 3.1.139 on branch `claude/sharp-lamport-dC0TW`, **not yet on `main`**. Worked around in data meanwhile | land the branch on `main` (outside 19:30–00:30 ET) |
+| **Cloud sessions → Tower over Tailscale** | **WORKING 2026-09-23 (§9).** Database verified end to end as `claude_ro`; Coolify reachable. ⚠ `COOLIFY_TOKEN` in the environment holds the setup brief's placeholder text, not a token, so Coolify answers 401 | the guild lead pastes the real read-only token into `COOLIFY_TOKEN`. Rotate `TS_AUTHKEY` before it expires (90 days from 2026-09-23). Coolify's web UI returns 500 at `/` (the API is fine) — look when next in Coolify |
+| **Trigger disables never reached the fleet** | **FIXED 2026-09-23 (§7)** — bot 3.1.139, on `main` since the 467b0fc push. Worked around in data meanwhile | nothing |
 | **UI calls made on the guild lead's behalf today** | 2026-09-23, on `beta`. Extended Target's toggles drop to icons below 380px wide (alternative: a two-row header that keeps the labels). Settings columns via a load-time section wrap (alternative: pure CSS columns — cheaper, but splits a section's controls across two columns). Roadmap entry titled with the plain version string | the guild lead picks, or keeps, before stable; and names the release if it wants a name |
 | **Understand-Anything** | **assessed 2026-09-21 (§1), not adopted.** Overlaps `scripts/graphify.sh`, which already owns the deterministic half by decision; the LLM layer answers 1 of the 4 problems that test was built on, and that one is a grep | the guild lead's call on the bounded trial: run `/understand` against `packages/wolfpack-logsync/` **from a desktop session**, diff its tour against `HOW-ITS-BUILT.md`. Output is a draft for a human, never a committed authority. No auto-update hook, no `curl \| bash` |
 | **Target Info: mana bar + Factions tab** | **BUILT 2026-09-22** — bot 3.1.130 on `main` (mob-info carries `mana`, per-spell landing text, faction rows), agent 3.6.50 + overlay on `beta`. Identification measured at 97.6% via `npc_spells_id` + level, cast time splitting 151 of the remaining 185. 27 tests, all running the real functions, all mutation-checked | the guild lead compares the two views on beta with the ⚡ toggle. ⚠ **Resting regen is NOT implemented** — `eqemu_npc_types` has no `mana_regen` column, so a reset restores to full and `_NPC_MANA_REGEN_PCT_PER_TICK` is left null. **A local session against the `peq` DB is the only way to get the real rate** — and to confirm Quarm NPCs spend mana at all |
@@ -454,3 +455,46 @@ report-window fix (`0bf44d8`).
 **`docs/HANDOFF-2026-09-23-session.md` was deleted in this change** at the guild
 lead's word ("we no longer need this handoff document"). Everything durable in it
 is now here, in the open table above, or in `docs/STATUS.md`.
+
+## 9. Cloud sessions reach Tower over Tailscale (2026-09-23)
+
+The guild lead: *"how can we build you a path to work on the local instance of
+this database rather than me having to do it?"* The choice was between running
+Claude Code ON Tower (a container driven via `claude remote-control`) and letting
+cloud sessions JOIN the tailnet. **The guild lead picked Tailscale.** A Claude in
+Chrome session did the Tailscale-console and Unraid work, from a private
+setup brief (an artifact, not in the repo; it names the steps, not the values).
+
+**What exists now.** A cloud session joins as an ephemeral device tagged
+`tag:claude-cloud`, using a reusable, pre-approved, 90-day auth key. The tailnet
+policy lets that tag reach exactly two things: Tower on 5432 (the Supavisor
+pooler — `supabase-db` itself publishes no port, and still doesn't) and the
+Coolify VM on 8000, through Tower's existing subnet route. The default
+`src: ["*"]` grant became `autogroup:member`, because a tagged device counts as
+`*`. Policy `tests` refuse a save that opens anything else. The database login is
+`claude_ro`: SELECT on `public` + `archive_meta`, minus `tells` and
+`chat_messages`, password set with `\password` so it is in no history file. The
+Coolify token is read-only without `read:sensitive`, because that scope reads
+every deployed app's environment variables.
+
+**Verified the same evening** from this session: joined as `claude-cloud`;
+`select current_user` → `claude_ro`; `tells` → permission denied; Tower 22 and
+8000 time out (blocked by policy); Coolify answers. Relay-only over DERP, since
+UDP is blocked.
+
+**Three things that cost time, for the next session:**
+- **`no_proxy` sends LAN addresses around SOCKS.** The cloud environment's
+  `no_proxy` lists the private ranges, so `curl --socks5-hostname` to the Coolify
+  VM dials it DIRECTLY and times out. Prefix `no_proxy= NO_PROXY=`. psql goes
+  through a `socat` → `tailscale nc` forward, which is unaffected.
+- **`pgrep -f 'tailscaled --tun'` matches its own shell's command line**, so a
+  "start it unless running" guard never starts it. Run `tailscaled` and `socat` as
+  background tasks.
+- **Supavisor wants `claude_ro.<tenant-id>`** as the username; plain `claude_ro`
+  fails to log in.
+
+**The values live in the cloud environment's variables** (`TS_AUTHKEY`,
+`TOWER_TS_HOST`, `TOWER_DB_PORT`, `TOWER_PGDATABASE`, `TOWER_PGUSER`,
+`TOWER_PGPASSWORD`, `COOLIFY_HOST`, `COOLIFY_TOKEN`). Anyone who can use that
+environment can read them, which is why each is scoped as above. The repo carries
+names only, never values.
