@@ -5,7 +5,96 @@
 
 ---
 
-## ★ Updated 2026-09-23 ~03:30 UTC — skip the hand-patching. Take the repo file.
+## ★★ CURRENT — 2026-09-23 ~04:15 UTC. Do this; everything below is history.
+
+The repo file ran on Tower and failed on `charm_sessions` **again**, with the
+FK-order fix in place, on the same encounter id. The reason:
+**`encounters` was never in the snapshot.** Nine production tables default their
+id to `extensions.uuid_generate_v4()`, the restore's `--schema=public` never
+creates the `extensions` schema, so those tables fail `CREATE TABLE` and are
+simply absent from `snap` — `encounters`, `contributions`, `raid_nights`,
+`audit_log`, `loot_drops` among them. The merge only merges tables present on
+both sides, so it left them out without a word. That, not only the merge order,
+is what froze the archive on 09-06.
+
+Reproduced exactly with a prod-shaped dump: restored the way the script does it,
+the scratch DB says `schema "extensions" does not exist` and ends up with
+`charm_sessions` but no `encounters` — Tower's state. With the schema prepared
+first: zero restore errors, both tables present.
+
+Two changes: one block added to **your** `refresh-local-archive.sh` (your other
+edits untouched), and new copies of the merge SQL and the test. The merge now also
+**refuses to run** if an archive table is missing from the snapshot, so this can
+never hide again.
+
+```bash
+cd /mnt/user/backups/wolfpack/repo
+S=https://raw.githubusercontent.com/davehess/QuarmBossTracker/119552ee50bb136bd38966c6e20eeb1b2f69a0d7/scripts
+```
+
+**1 — Confirm the diagnosis (read-only).** The failed run left `snap` in place.
+
+```bash
+grep -c 'schema "extensions" does not exist' /tmp/arch-restore.err
+docker exec -i supabase-db psql -U postgres -d postgres -tAc \
+  "select string_agg(a, ', ') from unnest(array['encounters','contributions','raid_nights','audit_log','loot_drops']) a where to_regclass('snap.'||a) is null"
+```
+
+Expect a count of at least 1, then `encounters, contributions, raid_nights,
+audit_log, loot_drops`. If the list is empty, stop and send it to me — the
+diagnosis is wrong.
+
+**2 — Add the extensions block to YOUR refresh script**, right before its
+`pg_restore` line. The block is pulled from the repo, not pasted, so no quoting
+can mangle it. The insert refuses unless its anchor appears exactly once, and
+nothing is installed unless `bash -n` passes.
+
+```bash
+cp scripts/refresh-local-archive.sh scripts/refresh-local-archive.sh.bak-20260923
+curl -fsSL "$S/refresh-local-archive.sh" \
+  | sed -n '/^# Production keeps uuid-ossp/,/could not prepare the extensions schema/p' > /tmp/ext-prep.sh
+md5sum /tmp/ext-prep.sh     # 0c856b3f32f0c356e0f345be40cc252d
+awk -v blk=/tmp/ext-prep.sh '/^docker exec -i "\$CONTAINER" pg_restore/ { while ((getline l < blk) > 0) print l; close(blk); n++ } { print } END { if (n != 1) { print "ANCHOR FOUND " n " TIMES - NOT APPLIED" > "/dev/stderr"; exit 1 } }' \
+  scripts/refresh-local-archive.sh > /tmp/refresh.new \
+  && bash -n /tmp/refresh.new && cp /tmp/refresh.new scripts/refresh-local-archive.sh && echo APPLIED
+```
+
+Expect `APPLIED`. (Validated here against the repo's pre-change script as a
+stand-in: applied once, output byte-identical to the repo's own edit, `bash -n`
+clean. The block itself was run byte-for-byte against the prod-shaped dump, twice
+— it is `if not exists` throughout.)
+
+**3 — New merge SQL and test** (both changed):
+
+```bash
+curl -fsSL -o scripts/lib/archive-merge.sql "$S/lib/archive-merge.sql"
+curl -fsSL -o /tmp/test-archive-merge.sh    "$S/test-archive-merge.sh"
+md5sum scripts/lib/archive-merge.sql /tmp/test-archive-merge.sh
+# 0b2ceb1a5956abbecf6ec480027153df  scripts/lib/archive-merge.sql
+# 93254b813bd83556856f3b2b0299cfb1  /tmp/test-archive-merge.sh
+```
+
+**4 — Test (expect 20 `ok` and `PASS`), then merge:**
+
+```bash
+docker exec -i supabase-db mkdir -p /tmp/mt/scripts/lib
+docker cp scripts/lib/archive-merge.sql  supabase-db:/tmp/mt/scripts/lib/
+docker cp /tmp/test-archive-merge.sh     supabase-db:/tmp/mt/scripts/test-archive-merge.sh
+docker exec -i supabase-db bash -lc 'cd /tmp/mt && PGUSER=postgres bash scripts/test-archive-merge.sh'
+docker exec -i supabase-db rm -rf /tmp/mt
+bash scripts/refresh-local-archive.sh
+```
+
+`snapshot staged:` should now read about **140**, up from 131. The one table
+still short is very likely `faction_hits`, which production created after the
+dump was taken. Then send me the two queries in §5.
+
+If the merge now stops with `archive table(s) missing from the snapshot: …`,
+that is the new guard doing its job. Send me the line; it names the table.
+
+---
+
+## ★ Superseded 2026-09-23 ~04:15 UTC — take the repo file (history)
 
 The first version of this doc said Tower was *ahead* of the repo, so you had to
 patch your own file. That was true then. **It is not now:** the repo's
