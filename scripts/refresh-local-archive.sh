@@ -92,6 +92,12 @@ import foreign schema public from server snapsrv into snap;
 SQL
 
 # --- 3. merge ---------------------------------------------------------------
+# Mark the run BEFORE merging. merge_log.ran_at is now() inside the merge's one
+# transaction — the moment it STARTED — so the old "last 10 minutes" window
+# found nothing after any merge longer than that: the first successful
+# catch-up (2026-09-23, +716k rows) reported "(0 rows)" and "0 rows exist ONLY
+# here", and the freshness guard below would have called it a failure.
+RUN_START="$(psql_c "$DB" -tAc "select extract(epoch from now())" | tr -d '[:space:]')"
 psql_c "$DB" -q -v ON_ERROR_STOP=1 < "$MERGE_SQL" || { echo "MERGE FAILED — archive untouched by the failing table"; exit 1; }
 
 # --- 4. tear down the staging area -----------------------------------------
@@ -102,10 +108,10 @@ psql_c postgres -q -c "drop database if exists $SNAPDB" >/dev/null 2>&1
 echo
 psql_c "$DB" -c "select table_name, mode, rows_before, rows_after, rows_kept as only_in_archive
                  from archive_meta.merge_log
-                 where ran_at > now() - interval '10 minutes' and (rows_kept > 0 or rows_after <> rows_before)
+                 where ran_at >= to_timestamp($RUN_START) and (rows_kept > 0 or rows_after <> rows_before)
                  order by rows_kept desc, table_name limit 20"
 AFTER_TOTAL="$(psql_c "$DB" -tAc "select coalesce(sum(n_live_tup),0) from pg_stat_user_tables where schemaname='public'" | tr -d '[:space:]')"
-KEPT="$(psql_c "$DB" -tAc "select coalesce(sum(rows_kept),0) from archive_meta.merge_log where ran_at > now() - interval '10 minutes'" | tr -d '[:space:]')"
+KEPT="$(psql_c "$DB" -tAc "select coalesce(sum(rows_kept),0) from archive_meta.merge_log where ran_at >= to_timestamp($RUN_START)" | tr -d '[:space:]')"
 echo
 echo "archive: ~${BEFORE_TOTAL} -> ~${AFTER_TOTAL} rows; ${KEPT} rows exist ONLY here (production has pruned them)"
 
@@ -116,6 +122,6 @@ CORE="$(psql_c "$DB" -tAc "select count(*) from encounters" | tr -d '[:space:]')
 # ⚠ "OK" must mean THIS run merged — not that the archive still holds old rows.
 # The 2026-09-06..22 outage was silent precisely because every check downstream
 # of the merge kept passing against a frozen archive.
-FRESH="$(psql_c "$DB" -tAc "select count(*) from archive_meta.merge_log where ran_at > now() - interval '10 minutes'" | tr -d '[:space:]')"
+FRESH="$(psql_c "$DB" -tAc "select count(*) from archive_meta.merge_log where ran_at >= to_timestamp($RUN_START)" | tr -d '[:space:]')"
 [ "${FRESH:-0}" -ge 1 ] || { echo "FAILED: no merge_log rows from this run — the archive is unchanged"; exit 1; }
 echo "OK: archive merged ($FRESH tables this run, encounters=$CORE)"
