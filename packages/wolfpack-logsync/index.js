@@ -6178,14 +6178,36 @@ function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
   if (!best) return;
   const prev = _slowCalloutState.get(targetLower);
   const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
-  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude });
-  if (changed) _announceSlowLand(best);
+  // `display` keeps the mob's name as the log cased it; the fading and drop
+  // callouts run off the lowercased key alone and have no other source for it.
+  const display = targetName || (prev && prev.display) || null;
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display });
+  if (changed) _announceSlowLand(best, _slowCalloutMob(display, targetLower));
 }
-function _announceSlowLand(best) {
+// Which mob a slow callout is about — "A Plagued Soriz #4745" (a member,
+// 2026-09-23: "we should say the target these are based around, name of mob and
+// spawnid"). The id is shown only when a watched client's Zeal target PROVES it:
+// its current target is this mob and carries a real id. Two watched clients on
+// different ids of one name → no id; the callout never guesses which one.
+function _slowCalloutMob(display, targetLower) {
+  const name = String(display || targetLower || '').trim();
+  if (!name) return '';
+  const want = _normMobNameAgent(name);
+  const ids = new Set();
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > 60000) continue;
+    if (!Number.isFinite(st.target_id) || st.target_id <= 0) continue;
+    if (_normMobNameAgent(st.target_name) === want) ids.add(st.target_id);
+  }
+  return name + (ids.size === 1 ? ' #' + [...ids][0] : '');
+}
+function _announceSlowLand(best, mob) {
   const magTxt    = best.magnitude ? ' ' + best.magnitude + '%' : '';
   const casterTxt = best.caster ? ' · ' + best.caster : '';
   _pushOverlay({
-    text:        '🐌 Slowed — ' + best.name + magTxt + casterTxt,
+    text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + best.name + magTxt + casterTxt,
     tts:         'Slowed. ' + _slowShortName(best.name),
     color:       'amber',
     duration_ms: 5000,
@@ -6196,9 +6218,9 @@ function _announceSlowLand(best) {
     test:        false,
   });
 }
-function _announceSlowDrop(name) {
+function _announceSlowDrop(name, mob) {
   _pushOverlay({
-    text:        '🐌 Slow dropped — reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
+    text:        '🐌 Slow dropped ' + (mob ? 'on ' + mob + ' ' : '') + '— reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
     tts:         'Slow dropped. Reslow.',
     color:       'red',
     duration_ms: 6000,
@@ -6248,12 +6270,13 @@ function _tickSlowCallouts() {
         && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
       if (nameChanged || warnDue) {
         _slowCalloutState.set(targetLower, {
-          name: best.name, magnitude: best.magnitude,
+          name: best.name, magnitude: best.magnitude, display: prev.display || null,
           warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
         });   // name change is a silent downgrade; warn stamps the window
       }
       if (warnDue) {
-        _pushOverlay({ text: '🐌 Slow fading — re-slow soon (' + _slowShortName(best.name) + ')',
+        const mob = _slowCalloutMob(prev.display, targetLower);
+        _pushOverlay({ text: '🐌 Slow fading ' + (mob ? 'on ' + mob + ' ' : '') + '— re-slow soon (' + _slowShortName(best.name) + ')',
                        tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
                        shownAt: Date.now(), firedAt: Date.now(),
                        trigger: 'Slow fading', scope: 'slow', test: false });
@@ -6261,7 +6284,7 @@ function _tickSlowCallouts() {
       continue;
     }
     _slowCalloutState.delete(targetLower);
-    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name);
+    if (_isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower)) _announceSlowDrop(prev.name, _slowCalloutMob(prev.display, targetLower));
   }
 }
 // ── end #130 slow status ─────────────────────────────────────────────────────
