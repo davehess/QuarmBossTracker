@@ -350,6 +350,12 @@ If `rows / uploader_minutes` is about 1 for days older than 7 and about 3 for ne
 days, thinning works and has been deleting ungated since 2026-07-09. If the ratio is
 the same on both sides, it is dormant.
 
+**✅ Run 2026-09-23: DORMANT.** 09-07 → 09-15 (older than 7 days) measured
+3.78–4.77 rows per uploader-minute; 09-16 → 09-23 measured 3.67–4.78. That is the
+same on both sides, so nothing has been thinned and full-resolution snapshots are
+intact. The hazard stands exactly as described: the `snapshot_at` index could wake
+it up, so gate it first.
+
 **Recommended fix — the guild lead's call.** Gate thinning exactly like the sweep:
 skip unless the archive watermark (and, once built, the graph watermark) covers the
 rows. The alternative is removing thinning entirely, since once graphs exist the
