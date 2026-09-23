@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted.** Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
+| ⚠ **Tower archive merge FIXED, catch-up NOT yet run** | 2026-09-23. The nightly merge had failed 17 consecutive nights on an FK violation (alphabetical table order) and written no `merge_log` row, so nothing looked broken. Fixed + reproduced + mutation-checked on branch `claude/sharp-lamport-dC0TW`; Tower is still frozen at 2026-09-06 | a local session copies three files onto Tower (its repo copy is not a git checkout) and runs the catch-up — `docs/HANDOFF-tower-archive-catchup.md`. ⚠ `buff_casts` 09-06 → 09-15 is already gone for good, and `target_observations` (306k rows, back to 2026-08-04) goes the first time its new 1-day sweep completes |
 | **Understand-Anything** | **assessed 2026-09-21 (§1), not adopted.** Overlaps `scripts/graphify.sh`, which already owns the deterministic half by decision; the LLM layer answers 1 of the 4 problems that test was built on, and that one is a grep | the guild lead's call on the bounded trial: run `/understand` against `packages/wolfpack-logsync/` **from a desktop session**, diff its tour against `HOW-ITS-BUILT.md`. Output is a draft for a human, never a committed authority. No auto-update hook, no `curl \| bash` |
 | **Target Info: mana bar + Factions tab** | **BUILT 2026-09-22** — bot 3.1.130 on `main` (mob-info carries `mana`, per-spell landing text, faction rows), agent 3.6.50 + overlay on `beta`. Identification measured at 97.6% via `npc_spells_id` + level, cast time splitting 151 of the remaining 185. 27 tests, all running the real functions, all mutation-checked | the guild lead compares the two views on beta with the ⚡ toggle. ⚠ **Resting regen is NOT implemented** — `eqemu_npc_types` has no `mana_regen` column, so a reset restores to full and `_NPC_MANA_REGEN_PCT_PER_TICK` is left null. **A local session against the `peq` DB is the only way to get the real rate** — and to confirm Quarm NPCs spend mana at all |
 | Crash reports are opt-in and OFF by default | open — a Mimic user can read a perfect local diagnosis while our table has nothing, which is why 2026-09-20 was triaged off screenshots | consider defaulting the toggle on, or prompting once after a raider's first crash |
@@ -228,3 +230,78 @@ Asked for by the guild lead; feasibility pass in
 second thing actually asked for), and hold the mana bar until a local session
 answers the two unknowns — an invented number on a mid-raid overlay is the one
 thing this platform's design rules forbid.
+
+## 6. Jev compaction assessed — not adopted; the blocker is a privacy call (2026-09-23)
+
+The guild lead: *"please review and tell me your view of using Jev"* —
+`github.com/tamaratran/fast-jev-compaction`, MIT, v0.2.0, zero runtime
+dependencies. Reported on its GitHub page as **6.3k stars / 357 forks / 13
+watchers / 27 open issues / 45 open PRs / 30 total commits**; ⚠ figures read off
+the page, not the API (our GitHub access is scoped to our own repository).
+
+### What it actually does — read from the source, not the README
+
+A Claude Code plugin that replaces `/compact`'s summary. Instead of asking an
+LLM to summarise old turns, it scores every tool call and asks TypeSafe's **Jev**
+model two questions per call — *should the call stay* and *should its result stay
+verbatim* — then deletes or truncates the losers and leaves everything else byte
+for byte. Nothing is ever rewritten. Failures throw and the built-in summary
+takes over, so it is fail-open by construction.
+
+The claim worth checking is what leaves the machine, and the code answers it
+cleanly (`src/state.ts`):
+
+| Leaves the machine | Stays local |
+|---|---|
+| Every user and assistant message, **verbatim** (abridged head+tail only when the state will not fit) | **Tool results.** `resultNote()` sends `ok, 4213 chars (omitted)` — the contents are never transmitted |
+| Every tool **input**, JSON-serialised, capped at 1000 → 200 → 60 chars as the state is squeezed | |
+| `goal` — the last three user prompts, 500 chars each | |
+
+So file contents do not leave via results — but they leave via **inputs**, because
+`Edit` inputs carry `old_string`/`new_string`, `Write` carries file bodies, `Bash`
+carries whole command lines, and `execute_sql` carries the SQL. For a session like
+this one that would have shipped the Tower report, our retention figures, the
+database sizes and the guild lead's quotes to `api.typesafe.ai`.
+
+### Why it does not fit here, even though the problem is real
+
+**Our compaction loss is cross-session, and Jev is within-session.** This whole
+file exists because *"a decision that lives only in chat is lost: cloud and
+desktop sessions cannot share a conversation"* — no compaction strategy touches
+that. Jev keeps chat text verbatim inside one context window; committed docs keep
+it across sessions, machines and container resets. We already pay for the
+stronger mitigation, and it is the one that survives.
+
+Where it genuinely would help is the narrower case: one long session that
+compacts mid-task and then re-reads files it had already read. Real, and modest.
+
+### Cost, in the four numbers
+
+- **build** low — install the plugin, set `TYPESAFE_API_KEY`. For cloud sessions
+  the key has to live in the environment config, which is the guild lead's action.
+- **maintenance** ⚠ high — v0.2.0, 30 commits against 45 open PRs and 27 open
+  issues, one author, and a hard dependency on a proprietary early-access model
+  behind a waitlist. That ratio says the repo went viral faster than it is being
+  maintained.
+- **runtime** unknown, and unknowable from here — the full state is resent with
+  every request batch, so a long history costs several 25–30k-token calls to a
+  paid API, at the moment you are already stalled waiting to compact.
+- **change** low — one plugin, removable in a command, and it falls back to the
+  built-in summary on any failure.
+
+### The call this needs
+
+Not a tooling question. **Every message either of us types, plus every command
+and query, would go to a third party** — that is the same family as the standing
+rules on credentials, member privacy and the public repo, and it is the guild
+lead's to make, not a session's.
+
+⚠ **And it cannot be answered from a cloud session.** `typesafe.ai` and
+`docs.typesafe.ai` are both refused by the egress proxy, so the retention policy,
+whether submissions train the model, the price and the waitlist status are all
+unverified. Same shape as the eqemulator.org/PQDI block: a desktop session can
+read them in a minute.
+
+**Recommendation: do not commit it as a repo plugin.** If it is wanted, run it
+from a **desktop** session first, where the key stays on the box — and only after
+the retention answer is in hand.
