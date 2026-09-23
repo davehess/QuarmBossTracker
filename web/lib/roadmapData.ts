@@ -37,6 +37,48 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-0-stable-2026-09-23',
+    title: 'Mimic 2.7.0',
+    version: 'Mimic 2.7.0 · Agent 3.7.0 · Web 1.8.0',
+    date: '2026-09-23',
+    headline: 'Ten days of beta go stable: Target Info names what a mob just cast, callouts say who they are about, and Mute finally just mutes.',
+    features: [
+      {
+        name: 'Target Info: what did it just cast?',
+        blurb: 'EverQuest never names a mob’s spell. Target Info now works it out from the message the spell prints when it lands — on you or on anyone else — and names it. A new Factions tab shows what killing the mob does to your standing before you pull, and mobs with mana get an estimated mana bar (the ⚡ button turns it on and off).',
+      },
+      {
+        name: 'Callouts that say who they are about',
+        blurb: 'Slow callouts name the mob, with its spawn number when your Zeal target confirms it. Callouts about your own character always say “You”, even when another raider relayed them.',
+      },
+      {
+        name: 'Mute mutes, and nothing else',
+        blurb: 'Mute and Quiet mode silence the voices but leave trigger alerts on screen, and Quiet mode from the tray now silences the CH chain and charm voices too. “No overlays” is in the tray, and the tray’s overlay list is in A–Z order.',
+      },
+      {
+        name: 'Extended Target minds your group',
+        blurb: 'Outside a raid it shows only your own group’s mobs and hurt players, not every group in the zone. In a raid it is raid-wide, as before.',
+      },
+      {
+        name: 'Settings and the dashboard have more room',
+        blurb: 'Settings spreads into columns when maximized, and its Save button floats in the corner only when something changed. On the dashboard, Reload and mail moved up beside the Settings gear, and Tour and Feedback sit at the bottom of the left menu.',
+      },
+      {
+        name: 'Warnings that point at the real problem',
+        blurb: 'The Logsync tab warns when your EverQuest log has grown huge and walks you through archiving it. The setup checklist says “EverQuest isn’t running” first instead of sending you off to fix things that aren’t broken. If a crash was a graphics driver reset, the crash review tells you where to get dgVoodoo2 and which two files to copy.',
+      },
+    ],
+    fixes: [
+      'Enrage callouts had gone silent, and the suggested “Mob is enraged” trigger could never fire. Both work now.',
+      'The Tank overlay was missing most damage shield returns. It now counts them all.',
+      'Two different mobs with the same name no longer merge in Target Info — “a Shissar acolyte” (Warrior) and “A Shissar Acolyte” (Wizard) each show as themselves, and Plane of Hate’s revenants show both classes.',
+      'Target Info’s “last cast” sticks to the mob you are looking at and clears itself, and HP and mana show a tenth (4.7k, not 5k).',
+      'One mob could appear on Extended Target as several rows, and its title bar crushed into the buttons. Both fixed.',
+      'Bankers and merchants no longer send their greetings to your Discord tells, and tells on the dashboard read from whoever spoke.',
+      'The Buffs tab no longer calls a buff “permanent” just because the game sent no timer — Eye of Zomm lasts about 30 seconds.',
+    ],
+  },
+  {
     key: 'callouts-and-overlays-2026-09-23',
     title: 'Agent 3.6.55 · Bot 3.1.139',
     version: 'Mimic 2.6.9-beta · Agent 3.6.55 · Bot 3.1.139 · Web 1.7.47',
