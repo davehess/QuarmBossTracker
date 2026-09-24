@@ -402,6 +402,34 @@
   // see_improved_hide is 91 rows catalog-wide — rare enough to always be worth
   // saying. see_hide is 0 rows today; the branch costs nothing and covers a
   // future sync that sets one.
+  // A player target's card (2026-09-24). Level says where it came from — an
+  // exact /who, an even con, a con RANGE (in EverQuest's own con colours), or
+  // the last level /who history saw — because those are different confidences.
+  var CON_COLOURS = { green: '#56d364', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: '#f85149' };
+  var CON_NAMES = { green: 'green', lightblue: 'light blue', blue: 'blue', white: 'even', yellow: 'yellow', red: 'red' };
+  function playerCard(pl){
+    var lvl = '';
+    if (pl.level != null) {
+      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
+    } else if (pl.level_min != null || pl.level_max != null) {
+      lvl = 'level <b>' + (pl.level_max == null ? pl.level_min + '+' : (pl.level_min === pl.level_max ? pl.level_min : pl.level_min + '–' + pl.level_max)) + '</b>'
+          + (pl.history_level ? ' <span style="color:#8b949e">· last seen ' + pl.history_level + '</span>' : '');
+    }
+    var con = pl.con_colour ? ' <span style="color:' + (CON_COLOURS[pl.con_colour] || '#8b949e') + ';border:1px solid currentColor;border-radius:3px;padding:0 4px;font-size:9px">' + esc(CON_NAMES[pl.con_colour] || pl.con_colour) + ' con</span>' : '';
+    var who = (pl.class ? '<b>' + esc(pl.class) + '</b>' + (pl.class_src === 'history' ? ' <span style="color:#8b949e">(from /who history)</span>' : '') : (pl.anonymous ? 'anonymous' : 'class unknown'))
+            + (lvl ? ' · ' + lvl : '') + con;
+    if (!lvl && !pl.con_colour) who += ' <span style="color:#8b949e">— /consider them for a level range</span>';
+    var h = '<div class="sub" style="color:#e6edf3">' + who + '</div>';
+    if (pl.guild) h += '<div class="sub">&lt;' + esc(pl.guild) + '&gt;</div>';
+    // PvP: your drains. Full strength on a player, and an upper bound — the
+    // server only takes what they have.
+    if (pl.drain_immune) h += '<div class="sub">bards take no mana drain</div>';
+    else if (pl.no_mana) h += '<div class="sub">no mana to take (' + esc(pl.class) + ')</div>';
+    else if (pl.drained && pl.drained.mana > 0) {
+      h += '<div class="sub" title="Your drains this fight, at full strength. The server only takes what they have, so this is the most it could be.">drained up to <b style="color:#58a6ff">' + fmtNum(pl.drained.mana) + '</b> mana · ' + pl.drained.casts + ' cast' + (pl.drained.casts === 1 ? '' : 's') + '</div>';
+    }
+    return h;
+  }
   function sightChips(mob){
     if (!mob) return '';
     var out = [];
@@ -655,10 +683,15 @@
     var mn = mi.target_mana;
     if (_manaView && mn && mn.max > 0) {
       var mpct = Math.max(0, Math.min(100, mn.pct));
+      // Drains (2026-09-24): Theft of Thought, Mana Sieve, the Torments. An
+      // instant drain on a mob above level 52 is cut by the server (a third,
+      // at most 105, at 55+), and that is already applied to the number.
+      var drainedTxt = mn.drained > 0 ? ' and ' + fmtNum(mn.drained) + ' drained (yours, and timed drains we saw)' : '';
       manaBar = '<div class="manabar" title="Estimated: ' + fmtNum(mn.cur) + ' of ' + fmtNum(mn.max)
-              + ' — at least ' + fmtNum(mn.spent) + ' spent on casts we could name. Resisted and interrupted casts cost mana silently, so the real figure is lower.">'
+              + ' — at least ' + fmtNum(mn.spent) + ' spent on casts we could name' + drainedTxt + '. Resisted and interrupted casts cost mana silently, and other players\' instant drains cannot be seen, so the real figure is lower.">'
               + '<div style="width:' + mpct.toFixed(0) + '%"></div></div>';
       manaLine = '<div class="mana">' + fmtNum(mn.cur) + ' / ' + fmtNum(mn.max) + ' mana'
+               + (mn.drained > 0 ? ' <span style="color:#8b949e">· −' + fmtNum(mn.drained) + ' drained</span>' : '')
                + ' <span class="est" title="An estimate, and a floor — see the bar.">est</span></div>';
     } else if (mob && mob.mana && mob.mana > 0) {
       // Toggle off, or nothing observed yet: state the pool without implying
@@ -802,6 +835,11 @@
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
                        : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
+      // A PLAYER target (the guild lead, 2026-09-24): class and level from /who,
+      // or a level RANGE from your /consider when they are anonymous, and in
+      // PvP what your drains took from them. Replaces "no catalog stats".
+      var pl = mi.target_player;
+      if (pl) loadingNote = playerCard(pl);
       tabBody = res + spec + loadingNote;
     }
     // Corpse target → splice in the just-finished fight's top-damage

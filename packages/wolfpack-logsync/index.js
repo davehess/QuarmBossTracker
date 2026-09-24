@@ -4016,6 +4016,8 @@ function npcManaNote(mobName, mobId, manaMax, spentDelta, atMs) {
   let rec = _npcManaByMob.get(key);
   if (!rec) { rec = { max: Number(manaMax), spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
   rec.max = Number(manaMax);
+  rec.touchedMs = Date.now();
+  if (typeof _npcManaEvict === 'function') _npcManaEvict();
   if (Number.isFinite(spentDelta) && spentDelta > 0) {
     rec.spent = Math.min(rec.max, rec.spent + spentDelta);
     rec.lastCastMs = atMs || Date.now();
@@ -4037,15 +4039,176 @@ function npcManaDisengage(mobName, mobId) {
 function npcManaState(mobName, mobId) {
   const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
   if (!rec || !(rec.max > 0)) return null;
-  const cur = Math.max(0, rec.max - rec.spent);
+  // typeof-guarded: source-slice tests lift the ledger without its neighbours.
+  const drained = typeof _drainTotal === 'function' ? _drainTotal(rec, Date.now()) : 0;
+  const used = Math.min(rec.max, rec.spent + drained);
+  const cur = Math.max(0, rec.max - used);
   return {
     cur, max: rec.max,
     pct: Math.max(0, Math.min(100, Math.round(cur / rec.max * 100))),
     spent: rec.spent,
+    drained,
     engaged: !!rec.engaged,
     // The overlay renders this as "≥ spent" / "estimate", never as a gauge.
     estimated: true,
   };
+}
+
+// ── Mana drains (a member's request + the guild lead, 2026-09-24) ───────────
+// Theft of Thought, Mana Sieve, the Torments, drain songs and procs take mana
+// from the target. The rules are the Quarm SERVER's (EQMacEmu
+// zone/spell_effects.cpp, SE_CurrentMana; CalcSpellEffectValue_formula), read
+// from source rather than remembered:
+//   · the amount at the caster's level: formula 1–99 = base + level × f,
+//     100 = base, 101 = base + level/2, 102 = +level, 103 = +2·level,
+//     104 = +3·level, 105 = +4·level; never past the spell's cap;
+//   · an INSTANT drain (duration formula 0) on an NPC above level 52 is CUT —
+//     ÷2 at 53–54, ÷3 and at most 105 at 55+. So a Theft of Thought takes 105
+//     from a raid boss, not 400. Timed drains are not cut;
+//   · a timed drain does nothing on landing; it works every 6-second tick;
+//   · bards — NPC or player — take nothing, good or bad.
+// Which landings we see: our OWN drains exactly (the cast names the spell),
+// and other players' TIMED drains through the bystander path (their landing
+// texts are unique). Others' instant drains land as "<mob> staggers.", which
+// 96 spells print, so they cannot be counted and are not.
+function _drainAmount(drain, casterLevel) {
+  if (!drain || !(Number(drain.b) > 0)) return 0;
+  const L = Number(casterLevel) || _assumedCasterLevel();
+  const f = Number(drain.f) || 100;
+  const b = Number(drain.b);
+  let v;
+  if (f >= 1 && f <= 99) v = b + L * f;
+  else if (f === 101) v = b + Math.floor(L / 2);
+  else if (f === 102) v = b + L;
+  else if (f === 103) v = b + L * 2;
+  else if (f === 104) v = b + L * 3;
+  else if (f === 105) v = b + L * 4;
+  else v = b;          // 100, and any formula we do not model: the base
+  if (Number(drain.m) > 0) v = Math.min(v, Number(drain.m));
+  return v;
+}
+function _npcInstantDrainCut(amount, npcLevel) {
+  const L = Number(npcLevel) || 0;
+  if (L > 54) return Math.min(105, Math.trunc(amount / 3));
+  if (L > 52) return Math.trunc(amount / 2);
+  return amount;
+}
+// Ticks a timed effect has done `elapsedMs` after landing. The server ticks
+// every 6 seconds at a phase we cannot see, so the first tick comes anywhere
+// in the first 6s — the nearest whole tick is the unbiased count.
+function _ticksDone(elapsedMs, maxTicks) {
+  return Math.max(0, Math.min(maxTicks, Math.round(elapsedMs / 6000)));
+}
+// Instant drains so far plus every timed drain's ticks elapsed.
+function _drainTotal(rec, now) {
+  let total = Number(rec.drained) || 0;
+  if (rec.timed) {
+    for (const t of rec.timed.values()) total += _ticksDone(now - t.startMs, t.ticks) * t.perTick;
+  }
+  return total;
+}
+// Put a drain on a ledger record (mob or PvP). A timed drain re-landing
+// replaces its own earlier copy (same spell does not stack) — the ticks it
+// already did are banked first.
+function _addDrain(rec, e, casterLevel, atMs) {
+  const amt = _drainAmount(e.drain, casterLevel);
+  if (!(amt > 0)) return false;
+  if (Number(e.durf) > 0) {
+    const ticks = _durTicksForLevel(e.durf, e.dur, Number(casterLevel) || _assumedCasterLevel());
+    if (!(ticks > 0)) return false;
+    if (!rec.timed) rec.timed = new Map();
+    const k = String(e.name).toLowerCase();
+    const prev = rec.timed.get(k);
+    if (prev) rec.drained = (Number(rec.drained) || 0) + _ticksDone(atMs - prev.startMs, prev.ticks) * prev.perTick;
+    rec.timed.set(k, { perTick: amt, ticks, startMs: atMs });
+  } else {
+    rec.drained = (Number(rec.drained) || 0) + amt;
+  }
+  return true;
+}
+const _NO_MANA_CLASSES = /^(warrior|rogue|monk)$/i;
+function _levelOf(character) {
+  const cl = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() !== cl) continue;
+    const ci = Array.isArray(_zealState[ch].charInfo) ? _zealState[ch].charInfo : [];
+    const hit = ci.find(x => x && x.id === 2);
+    const n = hit ? parseInt(hit.value, 10) : NaN;
+    if (n > 0) return n;
+  }
+  const w = whoData.get(cl);
+  return (w && Number(w.level) > 0) ? Number(w.level) : null;
+}
+// PvP: what YOUR drains took from a player this fight. Full strength (the NPC
+// cut is NPC-only) and an UPPER bound — the server only takes what they have,
+// which nobody can see. Resets after five quiet minutes.
+const _pvpDrains = new Map();   // selfLower|targetLower → { drained, timed, casts, firstMs, lastMs }
+const PVP_DRAIN_IDLE_MS = 5 * 60_000;
+function _pvpNoteDrain(selfChar, target, e, casterLevel, atMs) {
+  const k = String(selfChar).toLowerCase() + '|' + String(target).toLowerCase();
+  let rec = _pvpDrains.get(k);
+  if (!rec || atMs - rec.lastMs > PVP_DRAIN_IDLE_MS) { rec = { drained: 0, timed: null, casts: 0, firstMs: atMs, lastMs: atMs }; _pvpDrains.set(k, rec); }
+  if (!_addDrain(rec, e, casterLevel, atMs)) return;
+  rec.casts++;
+  rec.lastMs = atMs;
+  if (_pvpDrains.size > 200) _pvpDrains.delete(_pvpDrains.keys().next().value);
+}
+function pvpDrainState(selfChar, target) {
+  const rec = _pvpDrains.get(String(selfChar).toLowerCase() + '|' + String(target).toLowerCase());
+  if (!rec || Date.now() - rec.lastMs > PVP_DRAIN_IDLE_MS) return null;
+  return { mana: _drainTotal(rec, Date.now()), casts: rec.casts, since_ms: rec.firstMs };
+}
+// A landing we resolved to a spell — does it drain, and whose ledger gets it?
+function _noteManaDrainLanding(evt, selfChar) {
+  if (!evt || !evt.spell_name || !evt.target) return;
+  const k = String(evt.spell_name).toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  if (!e || !e.drain) return;
+  const own = !!(evt._selfCast && selfChar);
+  const timed = Number(e.durf) > 0;
+  if (!own && !timed) return;   // someone else's instant drain: not identifiable (see above)
+  const atMs = evt.cast_at ? Date.parse(evt.cast_at) : Date.now();
+  const casterLevel = own ? _levelOf(selfChar) : null;
+  const mob = _npcMobInfoFor(evt.target);
+  if (mob) {
+    if (Number(mob.class) === 8) return;              // a bard NPC: immune
+    const max = Number(mob.mana);
+    if (!(max > 0)) return;                           // nothing to drain
+    const key = _npcManaKey(evt.target, Number.isFinite(evt.target_id) ? evt.target_id : null);
+    let rec = _npcManaByMob.get(key);
+    if (!rec) { rec = { max, spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
+    rec.max = max;
+    // The high-level cut applies to instant drains only; bake it into a copy
+    // of the drain so _addDrain stays one rule.
+    const ee = timed ? e : Object.assign({}, e, { drain: { b: _npcInstantDrainCut(_drainAmount(e.drain, casterLevel), mob.level), f: 100, m: 0 } });
+    if (_addDrain(rec, ee, casterLevel, atMs)) { rec.engaged = true; rec.touchedMs = Date.now(); }
+    _npcManaEvict();
+    return;
+  }
+  // No NPC by that name and a one-word name: a player.
+  if (own && !/\s/.test(String(evt.target).trim())) _pvpNoteDrain(selfChar, evt.target, e, casterLevel, atMs);
+}
+// A slain mob's ledger goes with it. Name-keyed entries (no spawn id) are
+// dropped by name; an id-keyed one only when an observer was targeting that
+// exact spawn — a same-name sibling still alive keeps its own.
+function _npcManaOnSlain(name) {
+  const base = String(name || '').trim().toLowerCase();
+  if (!base) return;
+  _npcManaByMob.delete(base);
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (st && Number.isFinite(st.target_id) && String(st.target_name || '').trim().toLowerCase() === base) {
+      _npcManaByMob.delete(base + '#' + st.target_id);
+    }
+  }
+}
+// Entries nobody touched for 30 minutes are spawns long gone.
+function _npcManaEvict() {
+  if (_npcManaByMob.size < 100) return;
+  const cutoff = Date.now() - 30 * 60_000;
+  for (const [k, r] of _npcManaByMob) {
+    if (Math.max(r.touchedMs || 0, r.lastCastMs || 0) < cutoff) _npcManaByMob.delete(k);
+  }
 }
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
 // target's name (the guild lead, 2026-07-14: heal AMOUNTS are private to the healed,
@@ -4562,6 +4725,131 @@ function parseConsiderLine(line, character) {
     rank:      entry[2],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
+}
+
+// ── /consider → a level (the guild lead, 2026-09-24) ────────────────────────
+// "fill in level data based on the current character's level if they consider
+// them and find them to be in specific ranges. this may mean capturing exact
+// level from even con or /who, or a range from con and anon."
+//
+// A consider prints "<name> <standing> -- <level phrase>". The phrase names the
+// con COLOUR, and the colour is the target's level against yours by the
+// server's own table — EQMacEmu zone/mob_ai.cpp Mob::GetLevelCon, mirrored
+// exactly in _levelCon. So a white con IS the level, and every other colour
+// is a range (_conLevelRange).
+//
+// ⚠ The phrase text is the CLIENT's, not the server's. Three are fixed and
+// documented (ZAM's consider page, the Project 1999 wiki): red "what would you
+// like your tombstone to say?", yellow "looks like quite a gamble.", white
+// "looks like an even fight.". The blue and green phrases change with the
+// player's level and the old references disagree, so they are LEARNED, not
+// typed in: every consider of something whose level we already know (an NPC
+// with a fixed catalog level, or a player /who showed) labels its phrase with
+// the colour the table gives, and the labels persist across restarts.
+// Each row: [highest level of yours it covers, green if diff ≤ g, light blue if diff ≤ lb].
+const _CON_BRACKETS = [
+  [7, -4, null], [8, -5, -4], [12, -6, -4], [16, -7, -5], [20, -8, -6], [24, -9, -7],
+  [28, -10, -8], [30, -11, -9], [32, -12, -9], [36, -13, -10], [40, -14, -11], [44, -16, -12],
+  [48, -17, -13], [52, -18, -14], [54, -19, -15], [56, -20, -15], [60, -21, -16], [61, -19, -14],
+  [62, -17, -12], [9999, -16, -11],
+];
+function _levelCon(my, other) {
+  const diff = other - my;
+  if (diff === 0) return 'white';
+  if (diff >= 1 && diff <= 2) return 'yellow';
+  if (diff >= 3) return 'red';
+  const b = _CON_BRACKETS.find(x => my <= x[0]);
+  if (diff <= b[1]) return 'green';
+  if (b[2] != null && diff <= b[2]) return 'lightblue';
+  return 'blue';
+}
+// The levels a colour allows, given yours. Red is open-ended (max null).
+function _conLevelRange(my, colour) {
+  const b = _CON_BRACKETS.find(x => my <= x[0]);
+  switch (colour) {
+    case 'white':     return { min: my, max: my };
+    case 'yellow':    return { min: my + 1, max: my + 2 };
+    case 'red':       return { min: my + 3, max: null };
+    case 'blue':      return { min: Math.max(1, my + (b[2] != null ? b[2] : b[1]) + 1), max: Math.max(1, my - 1) };
+    case 'lightblue': return b[2] == null ? null : { min: Math.max(1, my + b[1] + 1), max: Math.max(1, my + b[2]) };
+    case 'green':     return { min: 1, max: Math.max(1, my + b[1]) };
+    default:          return null;
+  }
+}
+const _CON_LEVEL_RX = new RegExp('\\]\\s+(.+?)\\s+(?:' + CON_STANDINGS.map(([p]) => p).join('|') + ')\\s+--\\s+(.+?)\\s*$', 'i');
+const _CON_PHRASE_SEED = new Map([
+  ['what would you like your tombstone to say', 'red'],
+  ['looks like quite a gamble', 'yellow'],
+  ['looks like an even fight', 'white'],
+]);
+function _conPhraseKey(p) { return String(p || '').toLowerCase().replace(/[\s.?!]+$/, '').trim(); }
+let _conPhraseVotes = new Map();   // phraseKey → { colour: count }
+let _conPhraseLoaded = false;
+const CON_PHRASE_FILE = path.join(__dirname, 'logsync.con-phrases.json');
+function _conPhrasesLoad() {
+  if (_conPhraseLoaded) return;
+  _conPhraseLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(CON_PHRASE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(j || {})) if (v && typeof v === 'object') _conPhraseVotes.set(k, v);
+  } catch { /* first run — nothing learned yet */ }
+}
+function _conPhrasesSave() {
+  try { fs.writeFileSync(CON_PHRASE_FILE, JSON.stringify(Object.fromEntries(_conPhraseVotes))); } catch { /* best effort */ }
+}
+// A phrase's colour: the documented three, else a learned label that is
+// unanimous (or at least 80% of three or more sightings).
+function _conColourOf(key) {
+  if (_CON_PHRASE_SEED.has(key)) return _CON_PHRASE_SEED.get(key);
+  const v = _conPhraseVotes.get(key);
+  if (!v) return null;
+  let best = null, n = 0, total = 0;
+  for (const [c, k] of Object.entries(v)) { total += k; if (k > n) { n = k; best = c; } }
+  if (n === total) return best;
+  return (total >= 3 && n / total >= 0.8) ? best : null;
+}
+// A target whose level we know without the consider: an NPC with ONE catalog
+// level, or a player /who showed us (not anonymous).
+function _knownLevelOf(name) {
+  const mob = (typeof _npcMobInfoFor === 'function') ? _npcMobInfoFor(name) : null;
+  if (mob && Number(mob.level) > 0 && !mob.maxlevel) return Number(mob.level);
+  const w = whoData.get(String(name).toLowerCase());
+  if (w && !w.anonymous && Number(w.level) > 0) return Number(w.level);
+  return null;
+}
+const _conLevelByTarget = new Map();   // charLower|targetLower → { colour, phrase, my, min, max, exact, at }
+function noteConsiderLevel(line, character) {
+  if (!line || !character || line.indexOf(' -- ') === -1) return null;
+  const m = line.match(_CON_LEVEL_RX);
+  if (!m) return null;
+  const target = m[1].trim();
+  if (!target || target.length > 64 || /['"‘’]/.test(target)) return null;
+  const my = _levelOf(character);
+  if (!my) return null;
+  _conPhrasesLoad();
+  const key = _conPhraseKey(m[2]);
+  const known = _knownLevelOf(target);
+  if (known != null && !_CON_PHRASE_SEED.has(key)) {
+    const colour = _levelCon(my, known);
+    const v = _conPhraseVotes.get(key) || {};
+    v[colour] = (v[colour] || 0) + 1;
+    _conPhraseVotes.set(key, v);
+    _conPhrasesSave();
+  }
+  const colour = _conColourOf(key);
+  if (!colour) return null;
+  const r = _conLevelRange(my, colour);
+  const rec = { colour, phrase: m[2].trim(), my, min: r ? r.min : null, max: r ? r.max : null,
+                exact: colour === 'white' ? my : null, at: Date.now() };
+  _conLevelByTarget.set(String(character).toLowerCase() + '|' + target.toLowerCase(), rec);
+  if (_conLevelByTarget.size > 500) _conLevelByTarget.delete(_conLevelByTarget.keys().next().value);
+  return rec;
+}
+// A consider stays useful for six hours — levels move slowly, and a stale
+// range is still a range.
+function conLevelFor(character, target) {
+  const rec = _conLevelByTarget.get(String(character || '').toLowerCase() + '|' + String(target || '').toLowerCase());
+  return (rec && Date.now() - rec.at <= 6 * 3_600_000) ? rec : null;
 }
 
 // PoP flag grant — "You have received a character flag!" The line never
@@ -35825,6 +36113,47 @@ function _zealBuffsForName(nameLower) {
   }
   return null;
 }
+// A PLAYER target's identity for Target Info (the guild lead, 2026-09-24:
+// "add in class and level from /who data for target overlay for players").
+// Level, best source first: a live /who that is not anonymous (exact) → your
+// own /consider (a white con is exact, any other colour a range — see
+// noteConsiderLevel) → /who history from the bot (the last level anyone saw).
+// Class from live /who, the raid roster, or history. Null for an NPC.
+function _targetPlayerInfo(st, selfChar, cached) {
+  const name = String(st.target_name || '').trim();
+  if (!name || /\s/.test(name) || name.startsWith('#')) return null;
+  if (cached && cached.mob) return null;                       // the catalog knows it: an NPC
+  const k = name.toLowerCase();
+  const who = whoData.get(k) || null;
+  const raidCls = _raidClassByName.get(k) || null;
+  try { fetchWhoLookup([name]); } catch { /* cached / offline */ }
+  const hist = (_whoLookupCache.get(k) || {}).data || null;
+  const con = conLevelFor(selfChar, name);
+  // Nothing says it is a player yet: wait for the catalog lookup to come back empty.
+  if (!who && !raidCls && !hist && !con && !(cached && !cached.mob)) return null;
+  const liveWho = who && !who.anonymous ? who : null;
+  let level = null, level_min = null, level_max = null, level_src = null;
+  if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
+  else if (con && con.exact != null) { level = con.exact; level_src = 'con'; }
+  else if (con && (con.min != null || con.max != null)) { level_min = con.min; level_max = con.max; level_src = 'con'; }
+  else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
+  const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
+  const cls = clsRaw ? normalizeClass(String(clsRaw)) : null;
+  const class_src = (liveWho && liveWho.class) ? 'who' : raidCls ? 'raid' : (hist && hist.class) ? 'history' : null;
+  return {
+    name,
+    class: cls, class_src,
+    level, level_min, level_max, level_src,
+    con_colour: con ? con.colour : null,
+    history_level: hist && Number(hist.level) > 0 ? Number(hist.level) : null,
+    anonymous: !!(who && who.anonymous),
+    guild: (liveWho && liveWho.guild) || (hist && hist.guild) || null,
+    // PvP: whether there is mana to take, and what YOUR drains took.
+    drain_immune: cls === 'Bard',
+    no_mana: cls ? _NO_MANA_CLASSES.test(cls) : null,
+    drained: pvpDrainState(selfChar, name),
+  };
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -35964,6 +36293,9 @@ function buildMobInfo() {
     // "last cast" — which is exactly what shipped and was wrong.
     target_mana:    npcManaState(st.target_name, _curIdForRelay),
     target_lastcast: lastNpcCast(st.target_name, _curIdForRelay),
+    // A player target: class, level (exact or a /consider range), and the PvP
+    // drain tally. Null for NPCs.
+    target_player:  _targetPlayerInfo(st, selfChar, cached),
   };
 }
 
@@ -40005,11 +40337,18 @@ async function main() {
             noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
               sts ? sts.toISOString() : new Date().toISOString());
           }
+          // A mob's mana estimate dies with it, whoever killed it.
+          if (line.indexOf('slain') !== -1) {
+            const dm = sm || line.match(_SLAIN_BY_RX);
+            if (dm && dm[1]) { try { _npcManaOnSlain(dm[1].trim().replace(/!$/, '')); } catch (e) { void e; } }
+          }
         }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
         if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
+        // …and its level phrase (Target Info's player level / range).
+        try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
 
@@ -40082,6 +40421,9 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+          // A drain (ToT, Mana Sieve, Torment …) takes mana off the mob's
+          // estimate, or counts toward the PvP tally on a player.
+          try { _noteManaDrainLanding(bcEvt, b.character); } catch (e) { void e; }
           // #105 — a slow landing on the current fight target → slow_on timeline
           // tick. Self-cast path: the caster is this log's character.
           try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
@@ -40116,6 +40458,8 @@ async function main() {
             // path does, and that breaks on instanced mob names like
             // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
             recordTargetBuffLanding(dbEvt);
+            // Someone else's TIMED drain on a mob (Torment of Argli …).
+            try { _noteManaDrainLanding(dbEvt, null); } catch (e) { void e; }
             // #105 — bystander-observed slow on the fight target → slow_on tick
             // (the caster is unknown from a landing line, so it's unattributed).
             try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
