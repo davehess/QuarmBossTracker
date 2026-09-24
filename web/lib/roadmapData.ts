@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pqdi-links-2026-09-24',
+    title: 'Web 1.8.2',
+    version: 'Web 1.8.2',
+    date: '2026-09-24',
+    headline: 'PQDI links from your inventory open again.',
+    features: [],
+    fixes: [
+      'Item names on the inventory pages, and the PQDI link in the item hover card, pointed at an address PQDI does not answer on, so they never loaded. They now open the item on PQDI.',
+      'An item we have no details for used to offer a PQDI search link that led nowhere. It now searches our own database by name.',
+    ],
+  },
+  {
     key: 'deathrolls-2026-09-24',
     title: 'Bot 3.1.143 · Web 1.8.1',
     version: 'Bot 3.1.143 · Web 1.8.1 · Mimic 2.7.1-beta',
@@ -45,7 +57,7 @@ export const releases: Release[] = [
     features: [
       {
         name: 'Deathrolls',
-        blurb: 'Roll /random N, the next player rolls /random whatever you got, and the first to hit 0 loses. The bot now spots a finished game on its own and posts it: “Menttok lost a deathroll to Fargan — 32,000 → 0 in 11 rolls.” Anyone running Mimic nearby is enough.',
+        blurb: 'Roll /random N, the next player rolls /random whatever you got, and the first to hit 0 loses. The bot now spots a finished game on its own and posts it: “Aldenmar lost a deathroll to Brackwyn — 32,000 → 0 in 11 rolls.” Anyone running Mimic nearby is enough.',
       },
       {
         name: 'A Deathrolls card on the Fun page',

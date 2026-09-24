@@ -104,7 +104,7 @@ function SpellTable({ rows, highlightNeeders }: { rows: HeldSpell[]; highlightNe
           <tr key={r.spell_name}>
             <td className="py-1.5 pr-3 text-text">
               {r.scroll_item_id
-                ? <a href={`https://pqdi.cc/item/${r.scroll_item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{r.spell_name}</a>
+                ? <a href={`https://www.pqdi.cc/item/${r.scroll_item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{r.spell_name}</a>
                 : r.spell_name}
               {r.scroll_item_id ? <WpDbLink kind="item" id={r.scroll_item_id} /> : null}
             </td>
