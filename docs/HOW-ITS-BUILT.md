@@ -2880,6 +2880,29 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   sum or the total. Target: name at R+5 (`htn`), level/class `htl` and
   resists + slow `htr` curved inside; `_meTargetExtras.resists` from the bot
   row's nested `resists`. Cooldowns: ready is always "<label> ✓".
+  **Agent 3.7.15:** layouts are Box (`renderA`, key `a`) and the HUD (default,
+  `_firstRun` opens the centred square); C removed. HUD ✥/✕ positioned in CSS
+  at fractions of `--ring-w`; `body.hud.wp-backdrop` → drop-shadow on
+  `#hudsvg`/`#hudlanes` instead of the #wrap square.
+- **Overlay themes incl. colour-blind (agent 3.7.15, beta)** — preload
+  `_WP_THEME_CSS` + `_WP_CVD_MATRICES` (SVG feColorMatrix injected by
+  `_wpCvdDefs`), main `_WP_THEMES`, dashboard Theme picker. Test:
+  `test/overlay-themes-cvd.test.js` (scores against Machado 2009).
+- **Overlay opacity: whole overlay vs background (agent 3.7.15, beta)** — main
+  `_opacityMaps` (one-time migration, `opacitySplit`), `applyOverlayOpacity`
+  sends `bg-alpha` + `content-alpha`; preload `_WP_OPACITY_CSS`
+  (`--wp-content-alpha`, chrome excluded); IPC `wp-opacity-all` /
+  `wp-bg-alpha-all` / `set-overlay-opacity`. Test:
+  `test/overlay-opacity-and-mini-dashboard.test.js`.
+- **Hotkey capture that names a clash (agent 3.7.15, beta)** — dashboard
+  `_wpCaptureAccel` (+ `_wpAccelNorm`, `_wpHotkeyUseLabel`), main
+  `hotkey-capture` IPC → `_setHotkeysSuspended` / `_mimicHotkeyUses`,
+  `status.hotkeysBlocked`. Test: `test/overlay-hotkeys.test.js`.
+- **Mini mode on the dashboard (agent 3.7.15, beta)** — Overlays table Mini
+  column (`WP_MINI_KEY_OF`, `.wp-ov-mini` / `.wp-ov-pin`), Minimize ALL row
+  (`wpMiniHotkey*`, `data-act="miniall"`); main `wp-mini-pin-set`, status
+  `overlayMini` / `overlayMiniPinned` / `miniAllActive`. The per-overlay
+  renditions (`body.wp-mini` rules in each overlay) are not built yet.
 - **NPC Harm Touch on Target Info (agent 3.7.13, beta)** — `_npcHtLanded` from
   "writhe(s) in the grip of agony" (pinned on an SK target on the victim, else
   `_npcHtPending` with the attackers), `_npcHtFor` (pins a pending one on

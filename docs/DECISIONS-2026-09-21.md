@@ -119,7 +119,9 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.14 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8).** Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17); then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder, and Box (was A); C retired** | **On beta, agent 3.7.15 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8, §18).** §18: C removed, A renamed Box, the HUD the default; HUD ✥/✕ under the tick and swing bars, its background a shadow; Box without a card, thin endurance. Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17). Optional: the one-line Zeal PR makes the swing timer exact |
+| **Mimic mini mode — the nine renditions** | **Found unbuilt 2026-09-24 (§18)**: the framework shipped 2026-09-17 but no overlay had its rendition, so ▭ did nothing. Dashboard controls landed in agent 3.7.15 (Mini column, Minimize ALL row). Vote: tank A · target B · CH chain B · charm A · ext A · pet B · dps B · pop A · buff B | build them, in the recorded cost order (pop, charm, ext, tank, target, dps, pet, buff, then CH chain B) |
+| **Colour-blind themes, opacity split, "key in use"** | **On beta, agent 3.7.15 (§18).** Three fitted colour matrices; Opacity = the whole overlay, Background its own slider (old values migrate once); a taken hotkey is named, another program's is detected | the guild lead tries the three themes with someone who has that colour vision, if anyone in the guild does — the fit is measured, not yet seen by a colour-blind eye |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
 | **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
@@ -1262,5 +1264,107 @@ behind, and a dashboard window that was already open shows through. Asked
 whether a NEW window opens or an existing one is revealed; the fix differs.
 
 One build, no variants: explicit refinements of the established HUD.
+
+## 18. Colour-blind themes, hotkeys that say "in use", opacity split, mini mode found unbuilt (2026-09-24, agent 3.7.15)
+
+The guild lead, in one evening: *"Put the Move icon and X at the bottom underneath
+the tick timer and the swing timer. We can remove version C, default the HUD
+to version, rename A into Box."* · *"Endurance can be small"* · *"Remove the
+background from the Box version. Give the numbers on health some drop
+shadow."* · *"Add the colorblind color schemes to themes as well."* · *"When
+setting hotkeys it should tell you when you're trying to use one that's
+currently in use rather than doing nothing."* · *"I don't see any of the
+Mini-mode overlays in here. Those need to go in"* · *"Currently mini mode
+doesn't do anything on 2.7.1 beta 14"* · *"Currently opacity only works on
+backgrounds, not on the actual content. The Opacity slider at the top of the
+Setup this overlay doesn't work at all. The HUD mode shouldn't include the
+background as a square, rather as a shadow behind the content."* · *"Make the
+top section of the overlays dashboard into two columns and put the opacity
+slider with the background button. Put the actual overlays in alphabetical
+order, keeping the dock and TTS up top."*
+
+**Mini mode did nothing because it was never built — found, not regressed.**
+The 2026-09-17 framework commit (`4cb14cff`) says so itself: *"this lands the
+framework they all hang off, and nothing else."* The toggle, the 📌, the
+Ctrl+Shift+M hotkey and the `body.wp-mini` class all worked; no overlay had a
+single `wp-mini` rule, so the only visible change was the corner buttons
+fading. The vote result (`DECISIONS-2026-09-18.md`, open table) is what gets
+built: tank A · target B · CH chain B · charm A · ext A · pet B · dps B ·
+pop A · buff B. ⚠ The main.js comment claimed the dashboard had a mini
+button; it did not (the preload bridge `setOverlayMini` had no caller). Both
+are now there: a **Mini** column (▭ + 📌) on the Overlays table and a
+**Minimize ALL** key row — the tray-parity rule. And `miniHotkey` was missing
+from the save path's re-register list, so a changed key would have waited for
+a restart.
+
+**Colour-blind themes — fitted, not the textbook daltonize.** Each is one
+colour matrix over every overlay (preload `_WP_CVD_MATRICES`, an SVG
+`feColorMatrix` the body filter points at), the same one-filter-per-theme idea
+as the existing five.
+- **Scored against an independent simulation** (Machado, Oliveira & Fernandes
+  2009, severity 1.0), not the model used to fit them, on the platform's own
+  tokens and the pairs that sit side by side with different meanings:
+  danger/healthy (red/green), warning/OK (orange/green), danger/warning, a
+  proc/a plain hit (purple/white), mana/health (blue/green), and gold/green
+  (orange/gold for tritan).
+- **The textbook daltonize (Fidaner 2005) was measured and rejected:** it
+  lifted deutan red/green from 12.7 to 49 ΔE but dropped gold/green to 5.7,
+  and its tritan matrix put red and orange at 0.4 ΔE — identical.
+- **An unconstrained fit was rejected too:** it separated everything by
+  pushing red to near-black (#500000), invisible on a dark overlay.
+- **What shipped:** every row sums to 1, so greys and text stay grey; every
+  token stays at L\* ≥ 45 as that eye sees it; every key pair is ≥ 30 ΔE.
+  Deutan: key pairs from 12.7–17.3 up to ≥ 33.7, drift 14 — red reads
+  vermillion, green light green, orange amber (Okabe-Ito-like). Protan: from
+  7.8 up to ≥ 53, drift 31. Tritan: from 8.5 up to ≥ 42, drift 22.
+  `test/overlay-themes-cvd.test.js` holds all three to it.
+
+**Hotkeys that say "in use" — why it looked like nothing happened.** A key
+held as a GLOBAL shortcut never reaches the focused window; Windows hands it
+to its owner. So pressing Ctrl+Shift+H in the capture fired hide-all and the
+dashboard saw nothing at all. Now:
+- while the dashboard captures, Mimic lets go of every key it holds
+  (`hotkey-capture` IPC; `_setHotkeysSuspended`, resumes on its own after
+  30 s) and returns them (`_mimicHotkeyUses`), so its own keys arrive and the
+  clash is named — *"Ctrl+Shift+H is already the Show / hide ALL key"* — while
+  the capture keeps listening;
+- a key another PROGRAM holds still never arrives; its signature is the
+  modifiers going down and up with no key between, and that is now said;
+- after a save, a key the OS refused says so instead of "Saved", for the
+  per-overlay keys and now the four all-overlay keys too (`hotkeysBlocked`).
+
+**Opacity split in two (main `_opacityMaps`).** Mimic 1.2 had made the one
+slider drive only the card background (`--bg-alpha`) so text stayed bright —
+which is why an overlay with no card, the HUD ring above all, showed no change
+at all ("doesn't work at all").
+- `cfg.overlayOpacity[k]` — **Opacity**, the whole overlay, faded in the
+  renderer (preload `--wp-content-alpha`) — never its setup bar, menu, corner
+  buttons or banners, or at 15% the slider would vanish under the cursor. The
+  setup-bar slider and "Opacity — all overlays" set it.
+- `cfg.overlayBgAlpha[k]` — **Background**, the 1.2 meaning (100% = solid
+  card). Its own slider, beside the backgrounds button.
+- Every value saved before the split was a background value, so it moves
+  across once (`opacitySplit`) and Opacity starts at 100%: nobody's overlays
+  change on update.
+
+**The Me overlay:** C is gone; A is **Box** (its stored key stays `a`, so a
+pick survives the rename); the **HUD is the default**, and a first run opens
+in the centred square the HUD button gives. HUD: ✥ under the tick bar and ✕
+under the swing bar (206° and 154° at r 199); the name and picker moved to the
+top corners they left, which the ring never reaches. The backgrounds toggle
+draws a drop shadow round the arcs and text, strength from the Background
+slider, instead of a square. Box: no card, a thin endurance bar, a dark halo
+on the numbers inside the bars, and no mana row for warriors, rogues and
+monks (the screenshot showed an empty 0% bar for a monk; the HUD already had
+that rule).
+
+**The Overlays page:** two columns — how overlays look (theme, opacity and
+background with the backgrounds key, size) and the all-overlay keys with
+placement (show/hide ALL + lock, setup, arrange, rescue; minimize ALL; the
+damage alert; per-character layouts) — folding to one on a narrow window.
+The table: the Dock and trigger alerts first, the rest alphabetical.
+
+One build, no variants: explicit instructions plus fixes inside established
+surfaces. The mini renditions follow as their own change.
 
 
