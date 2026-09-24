@@ -81,12 +81,26 @@
      not over the overlay"): the window grows by --panel-w toward whichever
      side has room, the ring keeps its exact width and place (--ring-w), and
      closing puts the window back. */
-  :root{ --panel-w:240px; --ring-w:100%; }
+  /* Round seven (the guild lead: "Config for hud should be able to scroll easily,
+     and have a top level slider for all of the text as well as reset to
+     defaults for each line"): wider, so rows stop wrapping to three lines;
+     the header — name, close, the All-text slider — stays put while the
+     list scrolls under it; a scrollbar you can see and grab. */
+  :root{ --panel-w:300px; --ring-w:100%; }
   #build-btn{display:none}
   body.hud #build-btn{display:inline-block}
-  #builder{position:fixed;right:0;top:0;bottom:0;width:calc(var(--panel-w) - 8px);box-sizing:border-box;z-index:80;overflow:auto;
-    background:rgba(13,17,23,0.95);border:1px solid var(--border);border-radius:8px;padding:8px 12px;
+  #builder{position:fixed;right:0;top:0;bottom:0;width:calc(var(--panel-w) - 8px);box-sizing:border-box;z-index:80;overflow-y:auto;overflow-x:hidden;
+    overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#484f58 transparent;
+    background:rgba(13,17,23,0.95);border:1px solid var(--border);border-radius:8px;padding:0 12px 8px;
     font-size:11px;box-shadow:0 4px 18px rgba(0,0,0,.55)}
+  #builder::-webkit-scrollbar{width:10px}
+  #builder::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
+  #builder::-webkit-scrollbar-thumb:hover{background:#6e7681}
+  #builder .bsticky{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.98);padding:8px 0 6px;border-bottom:1px solid var(--border)}
+  #builder .ball{display:flex;align-items:center;gap:7px;margin-top:6px;font-size:10.5px}
+  #builder .ball .bl{flex:1}
+  #builder .brs{flex:none;width:20px;padding:0 !important;line-height:16px;color:var(--dim) !important}
+  #builder .brs:hover{color:var(--text) !important;border-color:var(--blue) !important}
   body.build-left #builder{right:auto;left:0}
   body.building #wrap{width:var(--ring-w)}
   body.building.build-left #wrap{margin-left:auto}
@@ -170,7 +184,10 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="builder" hidden>
-    <div class="bhead"><b>Build your HUD</b><span id="builder-for" class="dim"></span><span class="sp"></span><button id="builder-close" title="Close">✕</button></div>
+    <div class="bsticky">
+      <div class="bhead"><b>Build your HUD</b><span id="builder-for" class="dim"></span><span class="sp"></span><button id="builder-close" title="Close">✕</button></div>
+      <div class="ball"><span class="bl">All text</span><input type="range" class="bsz" id="builder-all" data-size="all" min="0.7" max="1.6" step="0.1" value="1" title="Every label's size"><button type="button" class="brs" data-reset="all" title="Back to normal size">↺</button></div>
+    </div>
     <div id="builder-list"></div>
     <div class="bfoot"><span class="dim">Saved for this character, on this computer. Sliders set text size.</span><button id="builder-reset">Reset to default</button></div>
   </div>
@@ -447,20 +464,32 @@
     return '<path d="M' + f1(x) + ' ' + f1(y) + ' L' + f1(x) + ' ' + f1(y - r) + ' A' + r + ' ' + r + ' 0 ' + (f > 0.5 ? 1 : 0) + ' 1 '
       + f1(x + r * Math.cos(a)) + ' ' + f1(y + r * Math.sin(a)) + ' Z" fill="rgba(201,209,217,0.3)"/>';
   }
-  // A letter inside a fist outline, seen from the side: four knuckles along
-  // the top, a thumb across the front. Red and faint for "can", solid red for
-  // "just did". k scales it with the builder's size slider.
+  // A letter inside a fist outline, drawn from the fist the guild lead supplied
+  // (round seven: "Replace the fist you made with this fist shape"): a front
+  // view — four knuckles along the top, three finger lines, the thumb tucked
+  // under the fingers. Red and faint for "can", solid red for "just did".
+  // k scales it with the builder's size slider.
   function fist(x, y, letter, lit, W, k){
-    var c = lit ? 'var(--red)' : 'rgba(248,81,73,0.7)', s = 1.25 * (k || 1);
+    var c = lit ? 'var(--red)' : 'rgba(248,81,73,0.75)', s = 1.1 * (k || 1);
     var q = function(px, py){ return f1(x + px * s) + ' ' + f1(y + py * s); };
-    var d = 'M' + q(-6, 7) + ' L' + q(-6, -3)
-      + ' A' + f1(1.5 * s) + ' ' + f1(1.5 * s) + ' 0 0 1 ' + q(-3, -3)
-      + ' A' + f1(1.5 * s) + ' ' + f1(1.5 * s) + ' 0 0 1 ' + q(0, -3)
-      + ' A' + f1(1.5 * s) + ' ' + f1(1.5 * s) + ' 0 0 1 ' + q(3, -3)
-      + ' A' + f1(1.5 * s) + ' ' + f1(1.5 * s) + ' 0 0 1 ' + q(6, -3)
-      + ' L' + q(6, 5) + ' Q' + q(6, 7) + ' ' + q(4, 7) + ' Z M' + q(-6, 1) + ' L' + q(1, 1);
-    return '<path d="' + d + '" fill="' + (lit ? 'rgba(248,81,73,0.25)' : 'rgba(13,17,23,0.55)') + '" stroke="' + c + '" stroke-width="' + f1(0.9 * W + 0.5) + '" stroke-linejoin="round"/>'
-      + T(x, y + 5.6 * s, letter, 6.5 * s, c, 'middle', 700);
+    var outline = 'M' + q(-8, -4.1)
+      + ' Q' + q(-6.7, -5) + ' ' + q(-4.6, -5.1)            // knuckles, left to right
+      + ' Q' + q(-2.3, -7.1) + ' ' + q(0, -6.1)
+      + ' Q' + q(2.3, -7.1) + ' ' + q(4.4, -5.9)
+      + ' Q' + q(7, -6.3) + ' ' + q(8, -4.2)
+      + ' Q' + q(8.1, 1.8) + ' ' + q(7.1, 3.8)              // down the right side
+      + ' Q' + q(5.3, 5.1) + ' ' + q(3.4, 4.3)              // the fingers' ends, right to left
+      + ' Q' + q(1.4, 5.1) + ' ' + q(-0.7, 4.35)
+      + ' Q' + q(-2.7, 5.1) + ' ' + q(-4.7, 4.3)
+      + ' Q' + q(-5.9, 4.9) + ' ' + q(-6.7, 3.6)
+      + ' Q' + q(-7.7, -0.2) + ' ' + q(-8, -4.1) + ' Z';
+    var thumb = 'M' + q(-3.1, 4.7) + ' L' + q(-3.1, 6) + ' L' + q(5.3, 5.9) + ' Q' + q(6.3, 5.9) + ' ' + q(6.3, 4.5);
+    var fingers = 'M' + q(-4.7, -1.5) + ' L' + q(-4.7, 4.2) + ' M' + q(-0.7, -2.1) + ' L' + q(-0.7, 4.3) + ' M' + q(3.4, -2.4) + ' L' + q(3.4, 4.2);
+    var sw = 0.9 * W + 0.5;
+    return '<path d="' + outline + '" fill="' + (lit ? 'rgba(248,81,73,0.28)' : 'rgba(13,17,23,0.6)') + '" stroke="' + c + '" stroke-width="' + f1(sw) + '" stroke-linejoin="round"/>'
+      + '<path d="' + thumb + '" fill="none" stroke="' + c + '" stroke-width="' + f1(sw) + '" stroke-linejoin="round" stroke-linecap="round"/>'
+      + '<path d="' + fingers + '" fill="none" stroke="' + c + '" stroke-width="' + f1(sw * 0.7) + '" stroke-linecap="round" opacity="0.7"/>'
+      + T(x - 0.4 * s, y + 3.4 * s, letter, 7.5 * s, lit ? '#ffd7d4' : c, 'middle', 700);
   }
   function tfmt(ms){
     if (ms == null) return '';
@@ -474,8 +503,10 @@
   function cdShort(c){ return c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()); }
   // A class cooldown not used yet this session is UNKNOWN — dim, never green:
   // we cannot tell ready from used-before-Mimic-started.
-  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9')); }
-  function cdValue(c){ return !c.seen ? '—' : (c.left > 0 ? tfmt(c.left) : 'ready'); }
+  // A failed Feign Death is red with a ✗ (round seven: "FD cooldown in the Hud
+  // should show an X on it"); the agent keeps `failed` until 5 s after it is back.
+  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.failed ? 'var(--red)' : (c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'))); }
+  function cdValue(c){ return !c.seen ? '—' : (c.failed ? '✗' + (c.left > 0 ? ' ' + tfmt(c.left) : '') : (c.left > 0 ? tfmt(c.left) : 'ready')); }
   // Round six (the guild lead, 2026-09-24): "Corpses shouldn't ever say 'not
   // slowed'" · "If a mob is unslowable it should say that in its place, but
   // also smaller text."
@@ -504,7 +535,9 @@
       var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
       var f0 = s.casting.pct != null ? (100 - s.casting.pct) / 100 : null;
       var tot = (left != null && f0 && s.casting.remaining_ms) ? s.casting.remaining_ms / f0 : null;
-      d.cast = { spell: s.casting.spell, left: left, frac: tot ? left / tot : f0 };
+      // est: the agent had no gauge rate yet and used the spell's catalog time
+      // (a clicky's real time is the item's — round seven).
+      d.cast = { spell: s.casting.spell, left: left, frac: tot ? left / tot : f0, est: s.casting.est === true };
     }
     if (s.tick && s.tick.ms_left != null) { var tl = (((s.tick.ms_left - dt) % 6000) + 6000) % 6000; d.tick = { left: tl, frac: tl / 6000 }; }
     var sw = s.swing;
@@ -516,7 +549,7 @@
     d.cds = (s.cooldowns || []).map(function(c){
       var seen = c.seen !== false && c.ms_left != null;
       var l = seen ? Math.max(0, c.ms_left - dt) : null;
-      return { key: c.key, label: c.label, left: l, frac: seen && c.total_ms ? l / c.total_ms : 0, est: c.est, seen: seen };
+      return { key: c.key, label: c.label, left: l, frac: seen && c.total_ms ? l / c.total_ms : 0, est: c.est, seen: seen, failed: c.failed === true };
     });
     var t = s.target;
     if (t) {
@@ -569,11 +602,25 @@
   // the letters' tops pointing out, like the target's name; the bottom reads
   // upright (below = true).
   function ringLabel(id, r, a0, a1, inner, size, below){ return curved(id, r, a0, a1, inner, size, below); }
+  // The largest size (up to `size`) at which `chars` monospace characters fit
+  // an arc of `spanDeg` at radius r — a label cut off by its arc reads as a
+  // different word ("ND rea" for "MEND ready"). Never below 70% of `size`.
+  function fitSize(size, chars, spanDeg, r){
+    var room = spanDeg * Math.PI / 180 * r * 0.96;
+    return Math.max(size * 0.7, Math.min(size, room / (Math.max(1, chars) * 0.6)));
+  }
+  // The target's name runs along the inside of its bar (-44°..44°): its
+  // baseline sits so the letters' tops clear the bar.
+  var NAME_SPAN = 88;
+  function NAME_R(size){ return 172 - 5 - 0.72 * size; }
   function lbl(name, value, color){ return '<tspan fill="#8b949e">' + name + ' </tspan><tspan fill="' + color + '" font-weight="700">' + value + '</tspan>'; }
-  function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : ''); }
+  // Damage IN sits with your health, OUT on the right with your hits (the guild
+  // lead, round seven: "IN and Out should be side-swapped. Damage in should be
+  // next to health and out should be on the right").
+  function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
   function rightLabel(d, withDps, withFocus){
     return lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color)
-      + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : '')
+      + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
   // The two running timers, each its own bar under the cooldowns: the server
@@ -583,12 +630,12 @@
     return p.tick && d.tick ? { label: 'TICK', value: String(Math.ceil(d.tick.left / 1000)), frac: d.tick.frac, color: '#8b949e' } : null;
   }
   function swingItem(d, p){
-    if (p.cast && d.cast) return { label: '✦ CAST', value: d.cast.left != null ? tfmt(d.cast.left) : '', frac: d.cast.frac, color: 'var(--blue)' };
+    if (p.cast && d.cast) return { label: '✦ CAST', value: d.cast.left != null ? (d.cast.est ? '~' : '') + tfmt(d.cast.left) : '', frac: d.cast.frac, color: 'var(--blue)' };
     if (p.swing && d.swing && !d.swing.idle) return { label: (d.swing.est ? '~' : '') + 'SWING', value: d.swing.left != null ? tfmt(d.swing.left) : '', frac: d.swing.frac, color: 'var(--melee)' };
     return null;
   }
   function cdItems(d, p){
-    return p.cooldowns ? d.cds.map(function(c){ return { label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), ready: c.seen && c.left <= 0 }; }) : [];
+    return p.cooldowns ? d.cds.map(function(c){ return { label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), ready: c.seen && c.left <= 0 && !c.failed }; }) : [];
   }
 
   // ── The builder: which parts the HUD draws ─────────────────────────────────
@@ -604,10 +651,10 @@
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
-    ['Target', [['target', 'Target name + health, level and class'], ['tot', 'Who it is hitting, with their health'], ['status', 'Slowed · F/R flurry and rampage · summons (mark at 97%) · enrage zone (last 8%) · ENRAGED']]],
-    ['You', [['hp', 'Health'], ['right', 'Mana, or endurance'], ['dps', 'Damage per second (out · in)'], ['focus', 'Class number (CHs left…)']]],
-    ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick (bar under them)'], ['swing', 'Swing timer (bar under them)'], ['cast', 'Cast bar (takes the swing bar while you cast)']]],
-    ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield (button + its own column)'], ['rounds', 'Rounds of separate hits', [2, 3, 4, 5]]]],
+    ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['status', 'Slow · F/R · summon · enrage']]],
+    ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
+    ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'], ['rounds', 'Rounds of separate hits', [2, 3, 4, 5]]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
   // Line weight (the guild lead, round four: "Everything feels very bold, we
@@ -622,9 +669,11 @@
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
   var HUD_SIZED = ['target', 'tot', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'resists'];
+  // A part's size times the builder's "All text" slider (round seven: "a top
+  // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
-    var v = hudParts.sizes && +hudParts.sizes[k];
-    return v >= 0.7 && v <= 1.6 ? v : 1;
+    var one = function(v){ v = +v; return v >= 0.7 && v <= 1.6 ? v : 1; };
+    return one(hudParts.sizes && hudParts.sizes[k]) * one(hudParts.sizes && hudParts.sizes.all);
   }
   // Saved per CHARACTER (the guild lead, round six: "Huds should be configurable
   // per character as well"), under wpHudParts:<name>. The plain wpHudParts key
@@ -674,12 +723,18 @@
   // seconds (the agent keeps it 8 s), then drops out. The lines live in their
   // own layer (#hudlanes, painted by paintLanes) so they can move.
   // The columns stay outside r ≈ 100 — the middle is the character's.
+  // Round seven moved the two hit columns down from y 126 to 146: a round is
+  // one line of hits side by side now, and at 126 the circle leaves the
+  // right-hand column only 39 units — three hits wrapped. From 146 the
+  // narrowest row has about 48.
   var HIT_LANES = {
-    hin:  { x: 94,  y: 126, anchor: 'end',   rows: 14, field: 'in',  color: 'var(--red)' },      // hits on you, left of the middle
-    hout: { x: 306, y: 126, anchor: 'start', rows: 11, field: 'out', color: '#e6edf3' },         // your hits, right of the middle
+    hin:  { x: 94,  y: 146, anchor: 'end',   rows: 11, field: 'in',  color: 'var(--red)' },      // hits on you, left of the middle
+    hout: { x: 306, y: 146, anchor: 'start', rows: 11, field: 'out', color: '#e6edf3' },         // your hits, right of the middle
     hds:  { x: 306, y: 262, anchor: 'start', rows: 4,  field: 'ds',  color: 'var(--orange)' },   // your damage shield, under them
   };
-  var HIT_STEP = 10.5, HIT_SIZE = 9, ROUND_GAP = 3;
+  // Rounds read as groups: a clear gap between rounds, and a round that wraps
+  // keeps its lines closer together than the gap (WRAP_STEP of a row).
+  var HIT_STEP = 10.5, HIT_SIZE = 9, ROUND_GAP = 4.5, WRAP_STEP = 0.85;
   var LANE_PART = { hin: 'hitsIn', hout: 'hitsOut', hds: 'ds' };
   // "a Temple Patroller" → "Patroller": enough to tell two totals apart.
   function shortMob(n){
@@ -698,14 +753,46 @@
     }
     return null;
   }
+  // Round seven (the guild lead, 2026-09-24): "It's hard to tell when the different
+  // rounds are there. The concurrent hits in a round should show up side by
+  // side before merging into a single line. Then after the fight a ghost of
+  // those shows up." So a round is ONE line, its hits side by side; a round
+  // too wide for the room between the open middle and the ring shrinks (to
+  // 75%) and then wraps.
+  // The room a line has at height y: from the column's edge out to just inside the ring.
+  function laneRoom(L, y, size){
+    var dy = Math.max(Math.abs(y - 200), Math.abs(y - size - 200));
+    var edge = Math.sqrt(Math.max(0, 163 * 163 - dy * dy));
+    return L.anchor === 'start' ? (200 + edge) - L.x : L.x - (200 - edge);
+  }
+  function hitW(h, size){ return String(n0(h.f.amount)).length * 0.6 * size + (h.f.hand === 'OH' ? 3 * 0.6 * 6 : 0); }
+  function layRound(L, hits, y, size, step){
+    var lineW = function(fs){ return hits.reduce(function(a, h){ return a + hitW(h, fs); }, 0) + 0.6 * fs * (hits.length - 1); };
+    // Shrink in 5% steps (the OH tag does not scale, so no single ratio is
+    // exact) until the round fits its line, or 75% — then it wraps.
+    var fs = size;
+    while (fs > size * 0.75 + 1e-9 && lineW(fs) > laneRoom(L, y, fs)) fs = Math.max(size * 0.75, fs - size * 0.05);
+    var lines = [], cur = [], curW = 0, ly = y;
+    hits.forEach(function(h){
+      var w = hitW(h, fs), add = (cur.length ? 0.6 * fs : 0) + w;
+      if (cur.length && curW + add > laneRoom(L, ly, fs)) { lines.push({ y: ly, hits: cur, w: curW }); cur = []; curW = 0; ly += step * WRAP_STEP; add = w; }
+      cur.push({ h: h, w: w }); curW += add;
+    });
+    if (cur.length) lines.push({ y: ly, hits: cur, w: curW });
+    return { lines: lines, size: fs };
+  }
   // One column, placed in the ring's 400×400 space. `ghosts` are the hits that
   // left the column, each pointed at its mob's total — where it slides to.
   function laneColumn(id, feed, pick, tallies, rounds){
     var L = HIT_LANES[id], s = sz(LANE_PART[id]), step = HIT_STEP * s;
     var yMax = L.y + (L.rows - 1) * HIT_STEP;
     var items = [], ghosts = [];
-    // Totals: the mobs with damage in this column, most recent first, two at most.
-    var tots = tallies.filter(function(t){ return (+t[L.field] || 0) > 0; }).slice(0, 2);
+    // Totals: the mobs with damage in this column, most recent first, two at
+    // most. While any is still alive only live ones show; once none is, the
+    // finished fight's totals stay, dim — its ghost — until the next one.
+    var withDmg = tallies.filter(function(t){ return (+t[L.field] || 0) > 0; });
+    var alive = withDmg.filter(function(t){ return t.dead_at == null; });
+    var tots = (alive.length ? alive : withDmg).slice(0, 2);
     var totY = {};
     tots.forEach(function(t, i){
       var y = L.y + i * step;
@@ -724,31 +811,41 @@
         return { f: f, key: base + '|' + n[base], t: tallyOf(tallies, f) };
       }) };
     });
-    // Separate hits: the newest rounds that fit, on mobs still alive.
+    // Separate rounds: the newest (up to the setting) on mobs still alive, laid
+    // out oldest first under the totals — as many as fit above the last row.
     var y0 = L.y + tots.length * step + (tots.length ? ROUND_GAP : 0);
-    var shown = [], lines = 0;
-    for (var r = 0; r < all.length && shown.length < rounds; r++) {
+    var cand = [];
+    for (var r = 0; r < all.length && cand.length < rounds; r++) {
       var live = all[r].hits.filter(function(h){ return !(h.t && h.t.dead_at != null); });
-      if (!live.length) continue;
-      // The last line of this round, gaps included, must sit on or above the column's last row.
-      if (y0 + (lines + live.length - 1) * step + shown.length * ROUND_GAP > yMax + 0.01) break;
-      lines += live.length;
-      shown.push({ op: all[r].op, hits: live });
+      if (live.length) cand.push({ op: all[r].op, hits: live });
+    }
+    var laid = [];
+    for (var k = cand.length; k >= 1; k--) {
+      var y = y0, try_ = [];
+      cand.slice(0, k).reverse().forEach(function(rd){   // oldest round first, newest at the bottom
+        var lr = layRound(L, rd.hits, y, HIT_SIZE * s, step);
+        try_.push({ rd: rd, lr: lr });
+        y = lr.lines[lr.lines.length - 1].y + step + ROUND_GAP;
+      });
+      var last = try_[try_.length - 1].lr.lines;
+      if (last[last.length - 1].y <= yMax + 0.01) { laid = try_; break; }
     }
     var onScreen = {};
-    var y = y0;
-    shown.slice().reverse().forEach(function(rd){   // oldest round first, newest at the bottom
-      rd.hits.forEach(function(h){
-        onScreen[h.key] = 1;
-        items.push({ key: h.key, x: L.x, y: y, anchor: L.anchor, lane: id, text: n0(h.f.amount), color: h.f.color, op: rd.op, hand: h.f.hand || null, size: HIT_SIZE * s });
-        y += step;
+    laid.forEach(function(e){
+      e.lr.lines.forEach(function(ln){
+        var x = L.anchor === 'start' ? L.x : L.x - ln.w;   // the right-hand column hugs its left edge, the left one its right
+        ln.hits.forEach(function(t){
+          onScreen[t.h.key] = 1;
+          items.push({ key: t.h.key, x: x, y: ln.y, anchor: 'start', lane: id, text: n0(t.h.f.amount), color: t.h.f.color, op: e.rd.op, hand: t.h.f.hand || null, size: e.lr.size });
+          x += t.w + 0.6 * e.lr.size;
+        });
       });
-      y += ROUND_GAP;
     });
     // Everything else in this column's feed rolls into its mob's total.
     all.forEach(function(rd){
       rd.hits.forEach(function(h){
-        if (!onScreen[h.key] && h.t && totY[h.t.key] != null) ghosts.push({ key: h.key, x: L.x, y: totY[h.t.key], lane: id });
+        if (onScreen[h.key] || !h.t || totY[h.t.key] == null) return;
+        ghosts.push({ key: h.key, x: L.anchor === 'start' ? L.x : L.x - hitW(h, HIT_SIZE * s), y: totY[h.t.key], lane: id });
       });
     });
     return { items: items, ghosts: ghosts };
@@ -807,32 +904,48 @@
         h += '<path d="M' + f1(s0[0]) + ' ' + f1(s0[1]) + ' L' + f1(s1[0]) + ' ' + f1(s1[1]) + '" stroke="var(--orange)" stroke-width="' + f1(1.2 * W + 0.6) + '" stroke-linecap="round"/>'
           + '<path d="M' + f1(sp[0]) + ' ' + f1(sp[1]) + ' L' + f1(sl[0]) + ' ' + f1(sl[1]) + ' L' + f1(sr[0]) + ' ' + f1(sr[1]) + ' Z" fill="var(--orange)"/>';
       }
-      var nameSize = 13 * sz('target');
-      h += ringLabel('htn', R + 10, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : (d.t.corpse ? '#8b949e' : '#e6edf3')) + '">' + esc(d.t.name) + '</tspan>'
+      // Round seven (the guild lead, 2026-09-24): "Target name should curve with
+      // the HP bar" · "Move target of target's healthbar and name to the top of
+      // the circle above the current". So the name runs along the INSIDE of its
+      // bar, fitted to the bar's own span (a long name gets smaller, never
+      // longer than the bar), and who it is hitting takes the outside.
+      var tname = String(d.t.name), label = tname + '  ' + pctTxt(d.t.hp);
+      var nameSize = fitSize(13 * sz('target'), label.length, NAME_SPAN, NAME_R(13 * sz('target')));
+      var nameR = NAME_R(nameSize);
+      // Still longer than the bar at 70%: the name gives way, never the health.
+      var fitChars = Math.floor(NAME_SPAN * Math.PI / 180 * nameR * 0.96 / (0.6 * nameSize));
+      if (label.length > fitChars) { tname = tname.slice(0, Math.max(3, fitChars - (label.length - tname.length) - 1)) + '…'; label = tname + '  ' + pctTxt(d.t.hp); }
+      h += ringLabel('htn', nameR, -NAME_SPAN / 2, NAME_SPAN / 2, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : (d.t.corpse ? '#8b949e' : '#e6edf3')) + '">' + esc(tname) + '</tspan>'
         + '<tspan fill="' + hpColor(d.t.hp) + '" font-weight="700">  ' + pctTxt(d.t.hp) + '</tspan>', nameSize);
-      // F / R in a fist, left of the name, for a mob that flurries or rampages
-      // (the guild lead, round six); bright for a few seconds after it just did.
-      // The name is monospace (0.6 em a character), centred on 12 o'clock.
+      // F / R in a fist, just left of the name (round six), bright for a few
+      // seconds after it just did. The name is monospace (0.6 em a character),
+      // centred on 12 o'clock.
       if (p.status && (d.t.flurry || d.t.rampage)) {
-        var half = (String(d.t.name).length + 2 + pctTxt(d.t.hp).length) * nameSize * 0.6 / 2 / (R + 10) * 180 / Math.PI;
-        var ba = Math.max(-54, -(half + 5));
+        var half = label.length * nameSize * 0.6 / 2 / nameR * 180 / Math.PI;
+        var fr = nameR + nameSize * 0.3;
+        var ba = Math.max(-58, -(half + 6));
         [['F', d.t.flurry, d.t.flurryLit], ['R', d.t.rampage, d.t.rampageLit]].forEach(function(b){
           if (!b[1]) return;
-          var bp2 = P(R + 17, ba);
+          var bp2 = P(fr, ba);
           h += fist(bp2[0], bp2[1], b[0], b[2], W, sz('status'));
-          ba = Math.max(-54, ba - 18 * sz('status') / (R + 17) * 180 / Math.PI);
+          ba = Math.max(-58, ba - 20 * sz('status') / fr * 180 / Math.PI);
         });
       }
-      // Under the bar: level (or range) and class, then who it is hitting,
-      // then its slow state (the guild lead, round six: "display level or level
-      // range and class under the target's bar, above the target of target").
-      var y = 58;
+      // Its target, on top of the circle above it: a thin bar just outside the
+      // target's, and the name + health written along the outside of that.
+      if (p.tot && d.t.tot) {
+        var totLabel = '→ ' + String(d.t.tot.name) + ' ' + pctTxt(d.t.tot.hp);
+        var totSize = fitSize(10 * sz('tot'), totLabel.length, 60, R + 15);
+        var totSpan = Math.min(60, totLabel.length * totSize * 0.6 / (R + 15) * 180 / Math.PI + 6);
+        h += gauge(R + 10, -totSpan / 2, totSpan / 2, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 2.5 * W);
+        h += ringLabel('htt', R + 15, -30, 30, '<tspan fill="#c9d1d9">→ ' + esc(d.t.tot.name) + ' </tspan><tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', totSize);
+      }
+      // Under the name: level (or range) and class, then the slow state (round
+      // six: "display level or level range and class under the target's bar").
+      // Just under the name's baseline at 12 o'clock, however big the name is.
+      var y = Math.max(54, 200 - nameR + 3 + 9 * sz('target'));
       var lvl = levelText(d.t);
       if (lvl && !d.t.corpse) { h += T(CX, y, esc(lvl), 9 * sz('target'), '#8b949e'); y += 11 * sz('target'); }
-      if (p.tot && d.t.tot) {
-        h += gauge(R - 10, -30, 30, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 2.5 * W);
-        h += T(CX, y + 1, '→ ' + esc(d.t.tot.name) + ' <tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', 10.5 * sz('tot'), '#c9d1d9'); y += 12 * sz('tot');
-      }
       if (p.status && d.t.slow) { h += T(CX, y, d.t.slow.s, d.t.slow.size * sz('status'), d.t.slow.c); y += 12 * sz('status'); }
       if (p.status && d.t.enraged) h += T(CX, y, 'ENRAGED', 11 * sz('status'), 'var(--red)', 'middle', 700);
     }
@@ -854,7 +967,13 @@
       cds.forEach(function(it, i){
         var c0 = c1 - seg;
         h += it.ready ? stroke(arcD(150, c0, c1), 'var(--green)', 4 * W) : gauge(150, c0, c1, it.frac, it.color, 4 * W);
-        h += ringLabel('hcd' + i, 165, c0, c1, '<tspan fill="' + it.color + '">' + it.label + ' ' + it.value + '</tspan>', 8.5 * sz('cooldowns'), true);
+        // Round seven (the guild lead: "on Large size for abilities we should just
+        // show the name of the ability and a checkmark instead of ready"): when
+        // "ready" would not fit the arc, a ✓; anything still too long shrinks
+        // to fit instead of being cut off ("ND rea").
+        var cs = 8.5 * sz('cooldowns'), txt = it.label + ' ' + it.value;
+        if (it.ready && txt.length * 0.6 * cs > (c1 - c0) * Math.PI / 180 * 165 * 0.96) txt = it.label + ' ✓';
+        h += ringLabel('hcd' + i, 165, c0, c1, '<tspan fill="' + it.color + '">' + txt + '</tspan>', fitSize(cs, txt.length, c1 - c0, 165), true);
         c1 = c0 - gap;
       });
     }
@@ -863,7 +982,8 @@
     [[tk, 'htk', 184, 228, 'tick'], [sw, 'hsw', 132, 176, 'swing']].forEach(function(b){
       if (!b[0]) return;
       h += gauge(R, b[2], b[3], b[0].frac, b[0].color, 4 * W);
-      h += ringLabel(b[1], R + 15, b[2], b[3], '<tspan fill="' + b[0].color + '">' + b[0].label + ' ' + b[0].value + '</tspan>', 8.5 * sz(b[4]), true);
+      var bt = b[0].label + ' ' + b[0].value;
+      h += ringLabel(b[1], R + 15, b[2], b[3], '<tspan fill="' + b[0].color + '">' + bt + '</tspan>', fitSize(8.5 * sz(b[4]), bt.length, b[3] - b[2], R + 15), true);
     });
     // Hits are their own layer (hudLanes / paintLanes), so they can move; the
     // ring only carries the damage shield's per-hit button, left of its column.
@@ -974,14 +1094,17 @@
       h += '<div class="grp">' + esc(g[0]) + '</div>';
       g[1].forEach(function(it){
         if (it[2]) {
-          h += '<label>' + esc(it[1]) + ' <select data-part="' + it[0] + '">'
+          h += '<label><span class="bl">' + esc(it[1]) + '</span><select data-part="' + it[0] + '">'
             + it[2].map(function(v){ return '<option value="' + v + '"' + (String(hudParts[it[0]]) === String(v) ? ' selected' : '') + '>' + v + '</option>'; }).join('')
-            + '</select></label>';
+            + '</select><button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button></label>';
         } else {
-          // A part with text gets its own size slider beside it.
+          // A part with text gets its own size slider beside it, and every row a
+          // ↺ that puts that one line back to its default (round seven).
           var sized = HUD_SIZED.indexOf(it[0]) !== -1;
+          var own = (hudParts.sizes && +hudParts.sizes[it[0]]) || 1;
           h += '<label><input type="checkbox" data-part="' + it[0] + '"' + (hudParts[it[0]] ? ' checked' : '') + '> <span class="bl">' + esc(it[1]) + '</span>'
-            + (sized ? '<input type="range" class="bsz" data-size="' + it[0] + '" min="0.7" max="1.6" step="0.1" value="' + sz(it[0]) + '" title="Text size">' : '')
+            + (sized ? '<input type="range" class="bsz" data-size="' + it[0] + '" min="0.7" max="1.6" step="0.1" value="' + own + '" title="Text size">' : '')
+            + '<button type="button" class="brs" data-reset="' + it[0] + '" title="Back to default">↺</button>'
             + '</label>';
         }
       });
@@ -989,6 +1112,8 @@
     builderList.innerHTML = h;
     var who = document.getElementById('builder-for');
     if (who) who.textContent = _hudPartsFor ? '· ' + _hudPartsFor : '';
+    var all = document.getElementById('builder-all');
+    if (all) all.value = String((hudParts.sizes && +hudParts.sizes.all) || 1);
   }
   // Saved for this character, and as the starting point for any character
   // that has none of its own yet.
@@ -1016,21 +1141,34 @@
     hudParts[k] = e.target.type === 'checkbox' ? (e.target.checked ? 1 : 0) : (/^\d+$/.test(v) ? parseInt(v, 10) : v);
     saveParts();
   });
-  // Size sliders repaint as they move and save when let go.
-  builderList.addEventListener('input', function(e){
+  // Size sliders — each part's, and "All text" in the header — repaint as they
+  // move and save when let go.
+  builderEl.addEventListener('input', function(e){
     var k = e.target && e.target.getAttribute('data-size');
     if (!k) return;
     hudParts.sizes = Object.assign({}, hudParts.sizes, (function(o){ o[k] = Math.round(parseFloat(e.target.value) * 10) / 10; return o; })({}));
     _lastHtml = null; render(_last);
   });
-  builderList.addEventListener('change', function(e){ if (e.target && e.target.getAttribute('data-size')) saveParts(); });
+  builderEl.addEventListener('change', function(e){ if (e.target && e.target.getAttribute('data-size')) saveParts(); });
+  // ↺ puts one line back: on or off as it ships, and its own text size.
+  builderEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-reset]') : null;
+    if (!b) return;
+    e.preventDefault();   // inside a <label>: do not toggle its checkbox
+    var k = b.getAttribute('data-reset');
+    var sizes = Object.assign({}, hudParts.sizes);
+    delete sizes[k];
+    hudParts.sizes = sizes;
+    if (k in HUD_DEFAULTS && k !== 'sizes') hudParts[k] = HUD_DEFAULTS[k];
+    renderBuilder(); saveParts();
+  });
   builderEl.addEventListener('mouseenter', hoverOn);
   builderEl.addEventListener('mouseleave', hoverOff);
   // Open beside the ring: grow the window by the panel's width to the right,
   // or to the left when the right edge of the screen is too close. The
   // bounds from before are kept on this computer until the panel closes, so
   // quitting with it open does not leave the ring off-centre next time.
-  var PANEL_W = 240, BUILD_KEY = 'wpHudPreBuild';
+  var PANEL_W = 300, BUILD_KEY = 'wpHudPreBuild';   // matches --panel-w
   function openBuilder(){
     var x = window.screenX, y = window.screenY, w = window.outerWidth, hgt = window.outerHeight;
     var sl = screen.availLeft || 0;

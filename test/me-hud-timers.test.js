@@ -31,7 +31,7 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
-  '_meNoteHit', '_meMobTallies'];
+  '_meNoteHit', '_meMobTallies', '_npcHtFor'];
 
 function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
   const pre = `
@@ -535,13 +535,15 @@ describe('per-mob totals', () => {
     const t = h._meMobTallies('aldenmar', clock);
     expect(t.map(x => [x.out, x.dead_at])).toEqual([[30, null], [100, deadAt]]);
   });
-  it('a dead mob\'s total stays 8 s, then drops out; a quiet one after 30 s', () => {
+  // Round seven: "Then after the fight a ghost of those shows up" — a dead
+  // mob's total stays 90 s (the HUD shows it dim until the next fight).
+  it('a quiet mob\'s total drops after 30 s; a dead one stays 90 s as the fight\'s ghost', () => {
     const h = load();
     hitOut(h, 'a gnoll', 100); hitOut(h, 'a bat', 5);
     say(h, 'Aldenmar', 'a gnoll has been slain by Brackwyn!');
-    clock += 8001;
-    expect(h._meMobTallies('aldenmar', clock).map(x => x.name)).toEqual(['a bat']);
-    clock += 22_000;
+    clock += 30_001;
+    expect(h._meMobTallies('aldenmar', clock).map(x => x.name)).toEqual(['a gnoll']);
+    clock += 60_000;
     expect(h._meMobTallies('aldenmar', clock)).toEqual([]);
   });
   it('ride along on the HUD snapshot', () => {
@@ -549,6 +551,108 @@ describe('per-mob totals', () => {
     const h = load({ zeal });
     hitOut(h, 'a gnoll', 100);
     expect(h._serializeMeState().combat.tallies[0]).toMatchObject({ name: 'a gnoll', out: 100 });
+  });
+});
+
+// Round seven (the guild lead, 2026-09-24): "I did not get an 'FD Failure' message
+// when this happened - FD cooldown in the Hud should show an X on it" — the log
+// said "Hitya has fallen to the ground.", third person, with the character's name.
+describe('a failed Feign Death', () => {
+  const fd = (h) => h._meCooldowns('aldenmar', clock, 'Monk').find(c => c.key === 'fd');
+  it('the third-person line with your own name marks it failed, and starts the timer', () => {
+    const h = load();
+    say(h, 'Aldenmar', 'Aldenmar has fallen to the ground.');
+    expect(fd(h)).toMatchObject({ seen: true, failed: true });
+    expect(fd(h).ms_left).toBeGreaterThan(0);
+  });
+  it('someone else falling to the ground is not yours', () => {
+    const h = load();
+    say(h, 'Aldenmar', 'Brackwyn has fallen to the ground.');
+    expect(fd(h).seen).toBe(false);
+  });
+  it('the ✗ outlasts the timer by 5 s, then clears', () => {
+    const h = load();
+    say(h, 'Aldenmar', 'You have fallen to the ground.');
+    clock += 10_000 + 4000;
+    expect(fd(h).failed).toBe(true);
+    clock += 2000;
+    expect(fd(h).failed).toBe(false);
+  });
+});
+
+// "Cast time is definitely wrong, especially for clickies" — a clicky casts at
+// the item's time, not the spell's, so the time left comes from how fast
+// Zeal's cast gauge moves.
+describe('cast time from the cast gauge', () => {
+  it('measures the rate from the gauge, with no catalog time at all', () => {
+    const zeal = { Aldenmar: { charInfo: [], casting: 'Illusion: Fire Elemental', gauges: [{ slot: 7, hp_pct: 20 }], updatedAt: clock } };
+    const h = load({ zeal });
+    expect(h._serializeMeState().casting.remaining_ms).toBeNull();          // no rate yet, no catalog row
+    clock += 1000;
+    h._zealState.Aldenmar.gauges = [{ slot: 7, hp_pct: 40 }];
+    h._zealState.Aldenmar.updatedAt = clock;
+    const c = h._serializeMeState().casting;
+    expect(c.remaining_ms).toBe(3000);                                      // 20% a second, 60% to go
+    expect(c.est).toBe(false);
+  });
+  it('a new cast of the same spell restarts the measurement', () => {
+    const zeal = { Aldenmar: { charInfo: [], casting: 'Complete Healing', gauges: [{ slot: 7, hp_pct: 90 }], updatedAt: clock } };
+    const h = load({ zeal });
+    h._serializeMeState();
+    clock += 500;
+    Object.assign(h._zealState.Aldenmar, { gauges: [{ slot: 7, hp_pct: 5 }], updatedAt: clock });
+    expect(h._serializeMeState().casting.remaining_ms).toBeNull();          // just restarted: no rate yet
+  });
+});
+
+// "Add Harmtouch tracking to Shadowknight mobs in Target Info … if we tab target
+// to a shadowknight that's attacking us, there's a good chance we can assign
+// that HT to it."
+describe('an NPC Shadow Knight\'s Harm Touch', () => {
+  const iso = (ms) => new Date(ms).toISOString();
+  const knight = { at: 0, mob: { class: 'Shadow Knight', specials: [] } };
+  const setup = (target, extra = {}) => {
+    const h = load(Object.assign({ zeal: { Aldenmar: { charInfo: [], gauges: [], target_name: target, zone: 12, updatedAt: clock } } }, extra));
+    h._mobInfoByName.set('a dark knight|12', Object.assign({}, knight, { at: clock }));
+    h._mobInfoByName.set('a gnoll|12', { at: clock, mob: { class: 'Warrior', specials: [] } });
+    return h;
+  };
+  const ht = (h, name) => h._npcHtFor('Aldenmar', { target_name: name, zone: 12 }, h._mobInfoByName.get(name.toLowerCase() + '|12'), null);
+  it('a Shadow Knight mob with none seen has it: HT ✓', () => {
+    expect(ht(setup('a dark knight'), 'a dark knight')).toMatchObject({ ready: true });
+  });
+  it('lands on you while you target the knight that is hitting you: pinned at once, 40 minutes', () => {
+    const h = setup('a dark knight');
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a dark knight', defender: 'You', ability: 'slash', amount: 80 });
+    say(h, 'Aldenmar', 'You writhe in the grip of agony.');
+    clock += 60_000;
+    expect(ht(h, 'a dark knight')).toMatchObject({ ready: false, ready_in_ms: 39 * 60_000, assigned_later: false });
+  });
+  it('lands while you target something else: pinned when you target the knight that was hitting you', () => {
+    const h = setup('a gnoll');
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a dark knight', defender: 'You', ability: 'slash', amount: 80 });
+    say(h, 'Aldenmar', 'You writhe in the grip of agony.');
+    expect(ht(h, 'a gnoll')).toBeNull();                                    // not a Shadow Knight
+    clock += 5000;
+    expect(ht(h, 'a dark knight')).toMatchObject({ ready: false, assigned_later: true });
+  });
+  it('a knight that was NOT hitting you when it landed is not blamed', () => {
+    const h = setup('a gnoll');
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'bite', amount: 10 });
+    say(h, 'Aldenmar', 'You writhe in the grip of agony.');
+    expect(ht(h, 'a dark knight')).toMatchObject({ ready: true });
+  });
+  it('lands on the knight\'s own target — someone else — while you target the knight', () => {
+    const h = setup('a dark knight', { victim: 'Brackwyn' });
+    say(h, 'Aldenmar', 'Brackwyn writhes in the grip of agony.');
+    expect(ht(h, 'a dark knight')).toMatchObject({ ready: false });
+  });
+  it('comes back after 40 minutes', () => {
+    const h = setup('a dark knight');
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a dark knight', defender: 'You', ability: 'slash', amount: 80 });
+    say(h, 'Aldenmar', 'You writhe in the grip of agony.');
+    clock += 40 * 60_000;
+    expect(ht(h, 'a dark knight')).toMatchObject({ ready: true });
   });
 });
 

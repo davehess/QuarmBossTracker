@@ -263,8 +263,18 @@ const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.i
 // eslint-disable-next-line no-new-func
 const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE };')();
 // The hit columns are their own layer now (round five); a lane's lines, top to bottom.
-const laneOf = (snap, id) => R.hudLanes(R.hudData(snap), R.hudParts).items.filter(it => it.lane === id)
-  .sort((a, b) => a.y - b.y).map(it => it.text + (it.hand === 'OH' ? ' OH' : ''));
+// Round seven made a round ONE line of hits side by side, so a lane reads as
+// its lines, top to bottom, each line's items left to right.
+const laneOf = (snap, id) => {
+  const its = R.hudLanes(R.hudData(snap), R.hudParts).items.filter(it => it.lane === id).sort((a, b) => a.y - b.y || a.x - b.x);
+  const lines = [];
+  for (const it of its) {
+    const t = it.text + (it.hand === 'OH' ? ' OH' : '');
+    const last = lines[lines.length - 1];
+    if (last && Math.abs(last.y - it.y) < 0.01) last.t += ' ' + t; else lines.push({ y: it.y, t });
+  }
+  return lines.map(l => l.t);
+};
 const HUDS = { HUD: R.renderHud };
 
 describe('the three layouts', () => {
@@ -399,14 +409,30 @@ describe('the three HUDs', () => {
 
     // Round six, the guild lead: "Please display level or level range and class
     // under the target's bar, above the target of target".
-    it(name + ' writes level (or range) and class under the target\'s bar, above who it is hitting', () => {
+    it(name + ' writes level (or range) and class under the target\'s name', () => {
       const t = (x) => fn(Object.assign({}, base, { target: Object.assign({}, base.target, x) }));
-      const yOf = (h, re) => { const m = h.match(new RegExp('<text x="[\\d.]+" y="([\\d.]+)"[^>]*>' + re)); return m ? +m[1] : null; };
       const h = t({ level: 52, level_max: 55, class: 'Warrior' });
       expect(h).toContain('>L52–55 Warrior<');
-      expect(yOf(h, 'L52')).toBeLessThan(yOf(h, '→ Corvale'));
       expect(t({ level: 60, class: 'Enchanter', level_src: 'history' })).toContain('>L60 Enchanter (last seen)<');
       expect(fn(base)).not.toMatch(/>L\d/);                                  // nothing known, nothing drawn
+    });
+
+    // Round seven, the guild lead: "Target name should curve with the HP bar" ·
+    // "Move target of target's healthbar and name to the top of the circle above
+    // the current".
+    it(name + ' runs the name along the inside of its bar, and puts who it is hitting on top, outside it', () => {
+      const h = fn(base);
+      const radius = (id) => { const m = h.match(new RegExp('<path id="' + id + '" d="M[\\d.]+ [\\d.]+ A([\\d.]+) ')); return m ? +m[1] : null; };
+      expect(radius('htn')).toBeLessThan(172 - 3);                          // inside the target's bar
+      expect(radius('htt')).toBeGreaterThan(172 + 3);                       // outside it
+      expect(h).toMatch(/<textPath href="#htt"[^>]*>[\s\S]*?Corvale[\s\S]*?38%/);
+      // the name keeps to the bar's own span, however long it is: smaller, then cut short — never the health
+      const long = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { name: 'an exceedingly long named bodyguard of the Tribunal' }) }));
+      const size = +(long.match(/<path id="htn"[^>]*\/><text font-size="([\d.]+)"/) || [])[1];
+      const r = +(long.match(/<path id="htn" d="M[\d.]+ [\d.]+ A([\d.]+) /) || [])[1];
+      const drawn = (long.match(/<textPath href="#htn"[^>]*>([\s\S]*?)<\/textPath>/) || [])[1].replace(/<[^>]+>/g, '');
+      expect(drawn).toMatch(/…\s+63%$/);
+      expect(drawn.length * 0.6 * size).toBeLessThanOrEqual(88 * Math.PI / 180 * r + 1);
     });
 
     it(name + ' says nothing about slow, enrage or summon on a corpse', () => {
@@ -435,7 +461,8 @@ describe('the three HUDs', () => {
       for (const b of can) expect(b.x).toBeLessThan(200);                   // left of 12 o'clock, where the name is centred
       expect(can[1].x).toBeLessThan(can[0].x);                              // R further out than F
       expect(can[0].c).not.toBe('var(--red)');
-      expect(letters(t({ flurry: true, flurry_lit: true }))[0].c).toBe('var(--red)');
+      expect(letters(t({ flurry: true, flurry_lit: true }))[0].c).toBe('#ffd7d4');   // lit: a solid red fist, light letter
+      expect(t({ flurry: true, flurry_lit: true })).toContain('fill="rgba(248,81,73,0.28)" stroke="var(--red)"');
     });
   }
 
@@ -514,10 +541,25 @@ describe('the HUD — rounds, damage shield, builder', () => {
 
   // Round five, the guild lead: "each round of damage can come out as individual
   // hits but get merged into a single line item after the next round shows up".
-  it('the newest round is one line per hit, in the order they landed', () => {
+  // Round seven, the guild lead: "The concurrent hits in a round should show up
+  // side by side before merging into a single line."
+  it('a round\'s hits sit side by side on one line, in the order they landed', () => {
     reset();
-    const feed = [85, 33, 49, 45, 33, 49].reverse().map(a => hit('out', a, 0));   // newest first, as the agent sends
-    expect(lane(s(feed), 'hout')).toEqual(['85', '33', '49', '45', '33', '49']);
+    const three = [10, 20, 30].reverse().map(a => hit('out', a, 0));   // newest first, as the agent sends
+    expect(lane(s(three), 'hout')).toEqual(['10 20 30']);
+  });
+  it('a round too wide for its column shrinks, then wraps — and never runs past the ring', () => {
+    reset();
+    const six = [85, 33, 49, 45, 33, 49].reverse().map(a => hit('out', a, 0));
+    const lines = lane(s(six), 'hout');
+    expect(lines.join(' ')).toBe('85 33 49 45 33 49');                 // every hit, in order
+    expect(lines.length).toBeLessThanOrEqual(2);
+    const its = R.hudLanes(R.hudData(s(six)), R.hudParts).items.filter(it => it.lane === 'hout');
+    for (const it of its) {
+      expect(it.size).toBeGreaterThanOrEqual(R.HIT_SIZE * 0.75 - 1e-9);
+      const right = it.x + it.text.length * 0.6 * it.size, top = it.y - it.size;
+      expect(Math.hypot(right - 200, Math.max(Math.abs(top - 200), Math.abs(it.y - 200))), it.text).toBeLessThan(165);
+    }
   });
 
   // Round six, the guild lead: "The combining of rounds of combat is happening
@@ -533,7 +575,7 @@ describe('the HUD — rounds, damage shield, builder', () => {
   it('the mob\'s total on top, then the last rounds as separate hits — oldest first, newest at the bottom', () => {
     reset();
     const feed = [[0, [10, 20]], [3, [30]], [6, [40, 50]]].flatMap(([sec, a]) => a.slice().reverse().map(n => hit('out', n, sec)));
-    expect(lane(withTallies(feed, [gnoll({ out: 1234 })]), 'hout')).toEqual(['Σ 1,234', '40', '50', '30', '10', '20']);
+    expect(lane(withTallies(feed, [gnoll({ out: 1234 })]), 'hout')).toEqual(['Σ 1,234', '40 50', '30', '10 20']);
   });
 
   it('a round past the "rounds" setting slides up into the total — the same keys it had as separate hits', () => {
@@ -542,7 +584,7 @@ describe('the HUD — rounds, damage shield, builder', () => {
     const round = (sec, a) => a.slice().reverse().map(n => hit('out', n, sec));
     const before = withTallies(round(3, [30, 40]).concat(round(6, [50])), [gnoll({ out: 120 })]);
     const after = withTallies(round(0, [10]).concat(round(3, [30, 40]), round(6, [50])), [gnoll({ out: 130 })]);
-    expect(lane(after, 'hout')).toEqual(['Σ 130', '30', '40', '10']);
+    expect(lane(after, 'hout')).toEqual(['Σ 130', '30 40', '10']);
     const L = R.hudLanes(R.hudData(after), R.hudParts);
     const total = L.items.find(it => it.total);
     const g = L.ghosts.filter(x => x.lane === 'hout');
@@ -578,24 +620,28 @@ describe('the HUD — rounds, damage shield, builder', () => {
   it('a full column stops at its last row — rounds that do not fit roll into the total', () => {
     reset();
     R.hudParts.rounds = 5;
-    const feed = [0, 3, 6, 9].flatMap(sec => [1, 2, 3, 4, 5, 6].map(n => hit('out', sec * 10 + n, sec)));
+    const feed = [0, 3, 6, 9, 12].flatMap(sec => [1, 2, 3, 4, 5, 6].map(n => hit('out', 100 + sec * 10 + n, sec)));
     const L = R.hudLanes(R.hudData(withTallies(feed, [gnoll({ out: 9999 })])), R.hudParts).items.filter(it => it.lane === 'hout');
     const yMax = R.HIT_LANES.hout.y + (R.HIT_LANES.hout.rows - 1) * 10.5;
     expect(Math.max(...L.map(it => it.y))).toBeLessThanOrEqual(yMax + 0.01);
-    expect(L.filter(it => !it.total).length % 6).toBe(0);              // whole rounds only
-    // 4 + 4 + 3 lines fill the 11 rows exactly — but the gaps between rounds
-    // push the last one past the end, so only two rounds fit.
-    const tight = [[0, 3], [3, 4], [6, 4]].flatMap(([sec, n]) => Array.from({ length: n }, (_, i) => hit('out', sec * 10 + i + 1, sec)));
-    const T = R.hudLanes(R.hudData(s(tight)), R.hudParts).items.filter(it => it.lane === 'hout');
-    expect(Math.max(...T.map(it => it.y))).toBeLessThanOrEqual(yMax + 0.01);
-    expect(T).toHaveLength(7);
+    const hits = L.filter(it => !it.total);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.length % 6).toBe(0);                                    // whole rounds only
+    // The damage shield column has four rows. Single-hit rounds take a row
+    // plus the gap between rounds each, so three fit — four would, without
+    // the gaps counted.
+    const ds = [0, 3, 6, 9, 12].map(sec => hit('out', 14, sec, { kind: 'ds' }));
+    const snap = s(ds, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: ds,
+      ds: { hits: 5, total: 70, per_hit: 14, from_buffs: true } } });
+    const D = R.hudLanes(R.hudData(snap), R.hudParts).items.filter(it => it.lane === 'hds');
+    expect(D).toHaveLength(3);
     reset();
   });
 
   it('an off-hand hit carries a small OH when the hands swing different verbs', () => {
     reset();
     const feed = [hit('out', 40, 0, { hand: 'OH' }), hit('out', 90, 0, { hand: 'MH' }), hit('out', 88, 0, { hand: 'MH' })];
-    expect(lane(s(feed), 'hout')).toEqual(['88', '90', '40 OH']);
+    expect(lane(s(feed), 'hout')).toEqual(['88 90 40 OH']);
   });
 
   it('hits on you and your hits are separate lanes', () => {
@@ -646,7 +692,7 @@ describe('the HUD — rounds, damage shield, builder', () => {
   // the hud's elements for font size on the config page."
   it('a part\'s size slider scales its text, and only its text', () => {
     reset();
-    const snap = s([], { target: { name: 'a gnoll warlord', hp_pct: 63, enrage: false }, tick: { ms_left: 3000 } });
+    const snap = s([], { target: { name: 'a bat', hp_pct: 63, enrage: false }, tick: { ms_left: 3000 } });   // short: fits its bar at 1.5×
     const size = (h, id) => +((h.match(new RegExp('<path id="' + id + '"[^>]*/><text font-size="([\\d.]+)"')) || [])[1]);
     const plain = R.renderHud(snap);
     R.hudParts.sizes = { target: 1.5 };
@@ -656,6 +702,70 @@ describe('the HUD — rounds, damage shield, builder', () => {
     R.hudParts.sizes = { target: 9 };                                  // out of range: ignored
     expect(size(R.renderHud(snap), 'htn')).toBe(size(plain, 'htn'));
     reset();
+  });
+
+  // Round seven, the guild lead: "a top level slider for all of the text".
+  it('the All-text slider scales every part, on top of each part\'s own', () => {
+    reset();
+    const snap = s([], { target: { name: 'a bat', hp_pct: 63, enrage: false }, tick: { ms_left: 3000 } });
+    const size = (h, id) => +((h.match(new RegExp('<path id="' + id + '"[^>]*/><text font-size="([\\d.]+)"')) || [])[1]);
+    const plain = R.renderHud(snap);
+    R.hudParts.sizes = { all: 1.2 };
+    const all = R.renderHud(snap);
+    expect(size(all, 'htn')).toBeCloseTo(size(plain, 'htn') * 1.2, 5);
+    expect(size(all, 'htk')).toBeCloseTo(size(plain, 'htk') * 1.2, 5);
+    R.hudParts.sizes = { all: 1.2, target: 1.25 };
+    expect(size(R.renderHud(snap), 'htn')).toBeCloseTo(size(plain, 'htn') * 1.5, 5);
+    reset();
+  });
+
+  // Round seven, the guild lead: "IN and Out should be side-swapped. Damage in
+  // should be next to health and out should be on the right".
+  it('damage in sits with your health; damage out on the right', () => {
+    reset();
+    const h = R.renderHud(s([], { combat: { live: true, secs: 30, out: { dps: 126, by: {} }, in: { dps: 60, by: {} }, feed: [] } }));
+    const label = (id) => (h.match(new RegExp('<textPath href="#' + id + '"[^>]*>([\\s\\S]*?)</textPath>')) || [])[1].replace(/<[^>]+>/g, '');
+    expect(label('hhp')).toMatch(/HP .* · in 60/);
+    expect(label('hrt')).toMatch(/END .* · out 126/);
+  });
+
+  // "I did not get an 'FD Failure' message when this happened - FD cooldown in
+  // the Hud should show an X on it"
+  it('a failed Feign Death shows ✗, in red', () => {
+    reset();
+    const h = R.renderHud(s([], { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: 2000, total_ms: 5000, seen: true, failed: true }] }));
+    expect(h).toMatch(/<tspan fill="var\(--red\)">FD ✗[^<]*<\/tspan>/);   // (the HUD ages the time left, so no fixed number)
+    const ok = R.renderHud(s([], { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: 0, total_ms: 5000, seen: true }] }));
+    expect(ok).not.toContain('✗');
+  });
+
+  // "on Large size for abilities we should just show the name of the ability and
+  // a checkmark instead of ready"
+  it('"ready" becomes ✓ when it would not fit its arc — and nothing is cut off', () => {
+    reset();
+    const four = ['Kick', 'Mend', 'Feign Death', 'Hundred Fists'].map((label, i) => ({ key: ['ability', 'mend', 'fd', 'disc'][i], label, ms_left: 0, total_ms: 5000, seen: true }));
+    const snap = s([], { cooldowns: four });
+    expect(R.renderHud(snap)).toContain('>MEND ready<');
+    R.hudParts.sizes = { cooldowns: 1.6 };
+    const big = R.renderHud(snap);
+    expect(big).toContain('>MEND ✓<');
+    expect(big).not.toContain('ready');
+    // every label's text fits its own arc at the size it is drawn
+    for (const m of big.matchAll(/<path id="hcd\d" d="M([\d.]+) ([\d.]+) A165 165 0 0 0 ([\d.]+) ([\d.]+)"[^>]*\/><text font-size="([\d.]+)"><textPath[^>]*><tspan[^>]*>([^<]*)</g)) {
+      const a = Math.atan2(+m[1] - 200, 200 - +m[2]), b = Math.atan2(+m[3] - 200, 200 - +m[4]);
+      const arc = Math.abs(((a - b + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * 165;
+      expect(m[6].length * 0.6 * +m[5], m[6]).toBeLessThanOrEqual(arc + 0.5);
+    }
+    reset();
+  });
+
+  // "Cast time is definitely wrong, especially for clickies" — until the agent
+  // has timed the gauge, the catalog's time is marked as a guess.
+  it('a cast time the agent could not measure yet is marked ~', () => {
+    reset();
+    const cast = (est) => R.renderHud(s([], { casting: { spell: 'Illusion: Fire Elemental', pct: 40, remaining_ms: 1400, est } }));
+    expect(cast(true)).toMatch(/✦ CAST ~\d/);
+    expect(cast(false)).toMatch(/✦ CAST \d/);
   });
 
   // Round four, the guild lead: "Everything feels very bold, we need to be able
@@ -688,6 +798,22 @@ describe('the in-game picker', () => {
   });
   it('someone who had picked B, H1, H2 or H3 lands on the HUD', () => {
     expect(body).toContain("if (saved === 'b' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';");
+  });
+  // Round seven, the guild lead: "Config for hud should be able to scroll easily,
+  // and have a top level slider for all of the text as well as reset to
+  // defaults for each line."
+  it('the builder: a header that stays while the list scrolls, with All text; a ↺ on every line', () => {
+    const css = stripCss(meHtml);
+    expect(css).toContain('#builder .bsticky{position:sticky;top:0;');
+    expect(css).toMatch(/#builder\{[^}]*overflow-y:auto;/);
+    expect(meHtml).toMatch(/<div class="bsticky">[\s\S]*?id="builder-all" data-size="all"[\s\S]*?data-reset="all"[\s\S]*?<\/div>\s*<\/div>\s*<div id="builder-list">/);
+    // every row renders a reset, checkbox rows and select rows alike
+    expect((body.match(/<button type="button" class="brs" data-reset="' \+ it\[0\] \+ '"/g) || []).length).toBe(2);
+    // ↺ restores the line's shipped on/off and drops its own size
+    expect(body).toMatch(/delete sizes\[k\];\s*hudParts\.sizes = sizes;\s*if \(k in HUD_DEFAULTS && k !== 'sizes'\) hudParts\[k\] = HUD_DEFAULTS\[k\];/);
+    // the panel the window grows by is the panel CSS draws
+    expect(css).toContain('--panel-w:300px');
+    expect(body).toContain('var PANEL_W = 300,');
   });
   it('the builder is clickable on a locked overlay, and saves to this computer', () => {
     expect(body).toContain("builderEl.addEventListener('mouseenter', hoverOn)");

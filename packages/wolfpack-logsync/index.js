@@ -12540,10 +12540,11 @@ function _meCombatSince(cl, sinceMs, now) {
 // well, then drop out after each mob" · "Have the damage shield hits roll into
 // a total"). Same-named mobs are told apart by death: a hit belongs to the
 // life that ends at the first death of that name at or after it. A live total
-// stays while the mob was hit in the last 30 s; a dead one for 8 s, so its
-// final number is readable, then it drops out.
+// stays while the mob was hit in the last 30 s. A dead one stays 90 s — the
+// HUD shows it as a dim "ghost" of the fight until the next fight starts in
+// that column (round seven: "Then after the fight a ghost of those shows up").
 const _meMobDeaths = new Map();   // mobLower → [death times, oldest first]
-const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 8000;
+const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 90_000;
 function _meNoteMobDeath(name, t) {
   const k = String(name || '').trim().toLowerCase();
   if (!k) return;
@@ -12699,7 +12700,7 @@ const _ME_ABILITY_RX = /^You (?:try to )?(flying kick|round kick|dragon punch|ea
 const _ME_SKILL_LINES = [
   { key: 'mend',  label: 'Mend',         secs: 289,  est: false, rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
   { key: 'taunt', label: 'Taunt',        secs: 5,    est: false, rx: /^You taunt .+ to ignore others and attack you!/ },
-  { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You (?:have fallen to the ground|feign death)\./ },
+  { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You feign death\./ },   // failures: _meFdFailed
   { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
   { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
 ];
@@ -12736,6 +12737,20 @@ function _meStartSkill(cl, key, atMs) {
   mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
   _meTimersSave();
 }
+// A Feign Death that FAILED (the guild lead, 2026-09-24: "I did not get an 'FD
+// Failure' message when this happened - FD cooldown in the Hud should show an
+// X on it"). The failure prints in the THIRD person with your own name —
+// "Aldenmar has fallen to the ground." — which the "You have fallen" pattern
+// never matched. The press already started the timer if a /pipe fd line came
+// with it; otherwise the failure is the press. Either way the timer is marked.
+function _meFdFailed(cl, atMs) {
+  const mp = _meSkillCds.get(cl);
+  const cur = mp && mp.get('fd');
+  if (!cur || atMs - cur.at > 3000 || atMs < cur.at) _meStartSkill(cl, 'fd', atMs);
+  _meSkillCds.get(cl).get('fd').failed = atMs;
+  _meTimersSave();
+}
+const _ME_FD_FAIL_SHOW_MS = 5000;   // the ✗ stays this long after the timer runs out
 // `/pipe <word>` from a hotkey: the exact press, for the timers the log cannot
 // see (a successful Feign Death above all — the guild lead offered the /pipe line
 // for it, 2026-09-24). Zeal forwards /pipe text; Mimic keeps the last eight per
@@ -12783,7 +12798,9 @@ function _meCooldowns(cl, now, cls) {
   const m = _meSkillCds.get(cl);
   if (m) {
     for (const [k, c] of m) {
-      out.push({ key: k, label: c.label, ms_left: Math.max(0, c.at + c.secs * 1000 - now), total_ms: c.secs * 1000, est: c.est, seen: true });
+      const endAt = c.at + c.secs * 1000;
+      out.push({ key: k, label: c.label, ms_left: Math.max(0, endAt - now), total_ms: c.secs * 1000, est: c.est, seen: true,
+        failed: !!(c.failed && c.failed >= c.at && now - endAt <= _ME_FD_FAIL_SHOW_MS) });
     }
   }
   const disc = _meDisc(cl, now);
@@ -12949,6 +12966,12 @@ function _meNoteRawLine(line, character) {
       _meNoteMobDeath(dm[1].trim().replace(/!$/, ''), ts ? ts.getTime() : now);
     }
   }
+  // A failed Feign Death — your own, in either person (see _meFdFailed).
+  if (msg === 'You have fallen to the ground.'
+      || (msg.endsWith(' has fallen to the ground.') && msg.slice(0, -' has fallen to the ground.'.length).toLowerCase() === cl)) {
+    _meFdFailed(cl, now);
+    return;
+  }
   if (msg.startsWith('You')) {
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
@@ -12968,6 +12991,9 @@ function _meNoteRawLine(line, character) {
   // "begin casting" line; the landing text does print, but a bystander sees the
   // same text. Credit it to you only when you are the class that has it and it
   // landed on your own target (or on you, with no target).
+  // A Harm Touch landing — on you, or on someone your Shadow Knight target is on.
+  if (msg === 'You writhe in the grip of agony.') _npcHtLanded(cl, null, now);
+  else if (msg.endsWith(' writhes in the grip of agony.')) _npcHtLanded(cl, msg.slice(0, -' writhes in the grip of agony.'.length), now);
   const loh = msg.endsWith(' feels a healing touch.') || msg === 'You feel a healing touch.';
   if (loh || msg.endsWith(' writhes in the grip of agony.')) {
     const zst = _meZealFor(cl);
@@ -13004,6 +13030,77 @@ const _ME_FLURRY_RX = /^(.+?) executes a FLURRY of attacks on .+!$/;
 const _ME_RAMPAGE_RX = /^(.+?) goes on a (?:WILD )?RAMPAGE\b/;
 const _meMobBursts = new Map();   // mobLower → { flurryAt, rampageAt }
 const _ME_BURST_LIT_MS = 6000;    // how long a badge stays lit after the line
+
+// ── An NPC Shadow Knight's Harm Touch, on Target Info (the guild lead, 2026-09-24)
+// "Next to name (Shadow Knight) it should say HT with a checkmark or HT with a
+// red X and a timer. We won't always know the mob that harmtouched us if
+// multiple hit us at once or we're targetting something else, but if we tab
+// target to a shadowknight that's attacking us, there's a good chance we can
+// assign that HT to it."
+// Server: an NPC Shadow Knight casts Harm Touch off its knight-attack timer
+// and restarts it at HarmTouchReuseTimeNPC = 2400 s (zone/special_attacks.cpp;
+// features.h: "NPCs have 40 minute timers according to logs"). The timer is
+// not running at spawn, so a fresh one has it ready. It lands on you as "You
+// writhe in the grip of agony." and on anyone else as "<name> writhes in the
+// grip of agony." (Harm Touch, Harm Touch NPC — spells 88, 929, 2821).
+// Who cast it is never in the log, so it is assigned:
+//   · at once, when your target is a Shadow Knight mob on the victim (hitting
+//     YOU in the last 20 s, or with the victim as its target's target);
+//   · later, when you target a Shadow Knight mob that was hitting you when it
+//     landed and has no Harm Touch recorded inside the last 40 minutes.
+const _NPC_HT_REUSE_MS = 2400 * 1000;
+const _npcHtUsed = new Map();      // "name#spawnid" (or "name") → when it landed
+const _npcHtPending = new Map();   // charLower → { at, attackers: Set(nameLower) }
+function _npcHtKey(name, id) { return String(name).toLowerCase() + (Number.isFinite(id) ? '#' + id : ''); }
+function _isShadowKnightMob(mob) {
+  if (!mob) return false;
+  if (String(mob.class || '') === 'Shadow Knight') return true;
+  return Array.isArray(mob.class_variants) && mob.class_variants.some(v => v && v.class === 'Shadow Knight');
+}
+function _meAttackersOf(cl, now, ms) {
+  const out = new Set();
+  for (const h of _meHits.get(cl) || []) if (h.dir === 'in' && h.other && now - h.t <= ms) out.add(String(h.other).toLowerCase());
+  return out;
+}
+function _npcHtLanded(cl, victim, now) {
+  const st = _meZealFor(cl) || {};
+  const attackers = victim ? null : _meAttackersOf(cl, now, 20_000);
+  const tgt = st.target_name ? String(st.target_name) : null;
+  if (tgt) {
+    const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+    const cached = _mobInfoByName.get(_mobInfoCacheKey(tgt, zoneId));
+    if (cached && _isShadowKnightMob(cached.mob)) {
+      const tl = tgt.toLowerCase();
+      let onVictim;
+      if (!victim) onVictim = attackers.has(tl);
+      else {
+        const pipeTot = _pipeCandidateOf(st, 'target_of_target');
+        const tot = pipeTot ? pipeTot.name : _victimForMob(tl, now);
+        onVictim = !!tot && String(tot).toLowerCase() === String(victim).toLowerCase();
+      }
+      if (onVictim) { _npcHtUsed.set(_npcHtKey(tgt, Number.isFinite(st.target_id) ? st.target_id : null), { at: now, later: false }); return; }
+    }
+  }
+  if (!victim && attackers.size) _npcHtPending.set(cl, { at: now, attackers });
+  if (_npcHtUsed.size > 300) _npcHtUsed.delete(_npcHtUsed.keys().next().value);
+}
+// The Harm Touch read-out for the mob you are targeting: null unless it is a
+// Shadow Knight. `ready` with no timer means none seen in the last 40 minutes.
+function _npcHtFor(cl, st, cached, id) {
+  if (!st || !st.target_name || !cached || !_isShadowKnightMob(cached.mob)) return null;
+  const now = Date.now();
+  const k = _npcHtKey(st.target_name, Number.isFinite(id) ? id : null);
+  let rec = _npcHtUsed.get(k) || null;
+  if (rec && now - rec.at >= _NPC_HT_REUSE_MS) { _npcHtUsed.delete(k); rec = null; }
+  const p = _npcHtPending.get(String(cl || '').toLowerCase());
+  if (!rec && p && now - p.at < _NPC_HT_REUSE_MS && p.attackers.has(String(st.target_name).toLowerCase())) {
+    rec = { at: p.at, later: true };
+    _npcHtUsed.set(k, rec);
+    _npcHtPending.delete(String(cl).toLowerCase());
+  }
+  if (!rec) return { ready: true, ready_in_ms: 0, used_at: null };
+  return { ready: false, ready_in_ms: rec.at + _NPC_HT_REUSE_MS - now, used_at: rec.at, assigned_later: rec.later };
+}
 
 // HP % for a name the HUD needs (the target's target): self, a groupmate's
 // gauge, then the cross-client resolver the Tank overlay uses.
@@ -13073,6 +13170,28 @@ function _meTargetExtras(st, active, now) {
   };
 }
 
+// Time left on the cast, from how fast Zeal's own cast gauge is moving (the
+// guild lead, 2026-09-24: "Cast time is definitely wrong, especially for
+// clickies"). The catalog's cast time is the SPELL's; a clicky casts at the
+// ITEM's time, and haste or a focus moves it too, so the gauge's rate is the
+// truth. The first readings of a cast have no rate yet — until the gauge has
+// moved 5% over a quarter second, the catalog time stands in (est).
+const _meCastTrack = new Map();   // charLower → { spell, t0, p0, lastP }
+function _meCastRemaining(cl, st, castG, castE) {
+  if (!st.casting || !castG || castG.pct == null) { _meCastTrack.delete(cl); return null; }
+  const t = st.updatedAt || Date.now(), p = Number(castG.pct);
+  let tr = _meCastTrack.get(cl);
+  if (!tr || tr.spell !== st.casting || p < tr.lastP - 1) {   // a new cast (a repeat restarts low)
+    tr = { spell: st.casting, t0: t, p0: p, lastP: p };
+    _meCastTrack.set(cl, tr);
+  }
+  tr.lastP = p;
+  const dp = p - tr.p0, dt = t - tr.t0;
+  if (dp >= 5 && dt >= 250) return { ms: Math.max(0, Math.round(dt * (100 - p) / dp)), measured: true };
+  if (castE && castE.cast_ms) return { ms: Math.max(0, Math.round(castE.cast_ms * (1 - p / 100))), measured: false };
+  return null;
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -13101,10 +13220,12 @@ function _serializeMeState() {
   // Casting: the spell name (label 134) and Zeal's cast-progress gauge (7).
   const castG = _meGauge(st, 7);
   const castE = st.casting ? _meSpell(st.casting) : null;
+  const castLeft = _meCastRemaining(cl, st, castG, castE);
   const casting = st.casting ? {
     spell: st.casting,
     pct: castG ? castG.pct : null,
-    remaining_ms: (castG && castE && castE.cast_ms) ? Math.max(0, Math.round(castE.cast_ms * (1 - castG.pct / 100))) : null,
+    remaining_ms: castLeft ? castLeft.ms : null,
+    est: castLeft ? !castLeft.measured : true,
   } : null;
 
   // The spell bar: gems 1-8 (labels 60-67) with each one's recast gauge
@@ -18754,7 +18875,7 @@ var WP_OVERLAY_ROWS = [
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
-  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
@@ -18765,7 +18886,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with its level, class and who it is hitting, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, your hits and theirs in two columns under each mob\\'s running total (older hits slide into it; it drops out when the mob dies), your damage shield the same way with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with its level and class, who it is hitting on top of the ring, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, each round of hits on one line under the mob\\'s running total (older rounds slide into it; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {
@@ -36983,6 +37104,9 @@ function buildMobInfo() {
     // A player target: class, level (exact or a /consider range), and the PvP
     // drain tally. Null for NPCs.
     target_player:  _targetPlayerInfo(st, selfChar, cached),
+    // A Shadow Knight mob's Harm Touch: ready, or used with the time until it is
+    // back. Null for anything else (_npcHtFor).
+    target_npc_ht:  _npcHtFor(selfChar, st, cached, _curIdForRelay),
   };
 }
 

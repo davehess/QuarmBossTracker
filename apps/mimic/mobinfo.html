@@ -30,6 +30,10 @@
     border-radius:4px;vertical-align:middle;white-space:nowrap;letter-spacing:.3px}
   .mob .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
+  /* A Shadow Knight mob's Harm Touch: green while it has it, red once used. */
+  .mob .ht{font-size:10px;margin-left:5px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .mob .ht.ok{color:#56d364}
+  .mob .ht.used{color:#f85149}
   .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
   .hpbar{height:6px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:4px}
@@ -618,7 +622,7 @@
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
     // Two bodies share this name and differ in CLASS; only the sex tells them
-    // apart in game (Hitya 2026-09-15, Plane of Hate's forsaken revenants:
+    // apart in game (the guild lead, 2026-09-15, Plane of Hate's forsaken revenants:
     // male Magician, female Enchanter). Until Zeal puts the target's sex on
     // the pipe, show the pair rather than one class as fact.
     var cls = '';
@@ -629,6 +633,15 @@
           + ')</span>';
     } else if (mob && mob.class) {
       cls = ' <span class="cls">(' + esc(mob.class) + ')</span>';
+    }
+    // A Shadow Knight mob's Harm Touch (the guild lead, 2026-09-24: "HT with a
+    // checkmark or HT with a red X and a timer"). The agent (_npcHtFor) pins
+    // the landing on this mob when it can; NPC reuse is 40 minutes.
+    var nht = mi.target_npc_ht;
+    if (nht) {
+      cls += nht.ready
+        ? ' <span class="ht ok" title="No Harm Touch from this mob seen in the last 40 minutes">HT ✓</span>'
+        : ' <span class="ht used" title="Harm Touch used' + (nht.assigned_later ? ' — landed on you while it was hitting you; pinned on it when you targeted it' : '') + '. NPCs get it back after 40 minutes.">HT ✗ ' + fmtSecs(nht.ready_in_ms / 1000) + '</span>';
     }
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
