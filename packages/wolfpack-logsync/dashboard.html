@@ -90,6 +90,11 @@ tr:hover td { background:#1f242c }
 .wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
 .wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
+.wp-ov-hk { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap; }
+.wp-ov-hk:hover { border-color:var(--blue); color:var(--text); }
+.wp-ov-hk.set { color:var(--blue); }
+.wp-ov-hk.blocked { color:var(--red); border-color:var(--red); }
+.wp-ov-hk.capturing { color:#f0b429; border-color:#f0b429; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -3350,7 +3355,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting and whether it can enrage, your hits and theirs a round per line, your damage shield with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting, a mark at 97% if it summons and at the last 8% if it enrages, your hits and theirs in two columns (a finished round slides into its total), your damage shield with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows and how thick the lines are. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {
@@ -3482,7 +3487,7 @@ function renderOverlays(s) {
   // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
   // so the section stays byte-stable across polls (see the morphInto note).
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Description</th></tr>';
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Hotkey</th><th>Description</th></tr>';
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
     var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
     // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
@@ -3491,12 +3496,17 @@ function renderOverlays(s) {
     var dockCell = (key === 'trigger' || key === 'dock')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
+    // ⌨ Its own show/hide hotkey (the guild lead, 2026-09-24: "Each overlay
+    // should get its own hotkey config as well"). Label painted post-render
+    // by wpRefreshOverlayHotkeys, like the toggles, for byte-stability.
     h += '<tr><td style="color:var(--text)">' + label + '</td>'
       +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
       +  dockCell
+      +  '<td><button type="button" class="wp-ov-hk" data-ov="' + key + '">…</button></td>'
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
+  h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Hotkey: click a row&rsquo;s button, then press the keys (Ctrl, Alt or Shift + a key). Backspace clears it, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
   h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
@@ -3535,6 +3545,7 @@ function renderOverlays(s) {
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
+  wpRefreshOverlayHotkeys();
   wpWireHideHotkey();
   wpWireExtPref();
   wpWireBqPref();
@@ -3733,37 +3744,101 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
     }).catch(function(){});
   });
   _bindOnce(btn, 'click', function(){
-    if (_wpHotkeyCapturing) return;
-    _wpHotkeyCapturing = true;
-    if (hint) hint.textContent = 'Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…';
-    function done(msg) {
-      _wpHotkeyCapturing = false;
-      document.removeEventListener('keydown', onKey, true);
-      if (hint) hint.textContent = msg || '';
-      if (msg) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
+    function say(msg, fade) {
+      if (!hint) return;
+      hint.textContent = msg || '';
+      if (fade) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
     }
-    function onKey(e) {
-      e.preventDefault(); e.stopPropagation();
-      if (e.key === 'Escape') { done('Cancelled.'); return; }
-      var k = e.key;
-      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
-      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { if (hint) hint.textContent = 'Add Ctrl, Alt or Shift — a bare key would eat normal typing.'; return; }
-      var key = k.length === 1 ? k.toUpperCase() : k;                // letters → upper; F1-F12 etc. pass through
-      if (key === ' ') key = 'Space';
-      var parts = [];
-      if (e.ctrlKey)  parts.push('CommandOrControl');
-      if (e.altKey)   parts.push('Alt');
-      if (e.shiftKey) parts.push('Shift');
-      parts.push(key);
-      var accel = parts.join('+');
+    var started = _wpCaptureAccel(say, function(accel){
       var patch2 = {}; patch2[cfgKey] = accel;
       window.mimic.saveConfig(patch2).then(function(){
         cur.textContent = _wpFmtAccel(accel);
-        done('Saved — active immediately.');
-      }).catch(function(){ done('Save failed.'); });
-    }
-    document.addEventListener('keydown', onKey, true);
+        say('Saved — active immediately.', true);
+      }).catch(function(){ say('Save failed.', true); });
+    });
+    if (started) say('Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…');
   });
+}
+// Key capture, shared by every hotkey control on this page: waits for a real
+// key with Ctrl, Alt or Shift held and hands back an Electron accelerator.
+// Esc cancels; Backspace/Delete run onClear when the caller offers one.
+// Letters and digits are read from the physical key (e.code), so Shift+1 is
+// "Shift+1", not "Shift+!". Returns false when a capture is already running.
+function _wpCaptureAccel(say, onAccel, onClear) {
+  if (_wpHotkeyCapturing) return false;
+  _wpHotkeyCapturing = true;
+  function stop() { _wpHotkeyCapturing = false; document.removeEventListener('keydown', onKey, true); }
+  function onKey(e) {
+    e.preventDefault(); e.stopPropagation();
+    var k = e.key, code = e.code || '';
+    if (k === 'Escape') { stop(); say('Cancelled.', true); if (onClear) onClear(null); return; }
+    if (onClear && (k === 'Backspace' || k === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey) { stop(); onClear(true); return; }
+    if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
+    if (!e.ctrlKey && !e.altKey && !e.shiftKey) { say('Add Ctrl, Alt or Shift — a bare key would eat normal typing.'); return; }
+    var key = /^Key[A-Z]$/.test(code) ? code.slice(3)
+      : /^Digit[0-9]$/.test(code) ? code.slice(5)
+      : /^Numpad[0-9]$/.test(code) ? 'num' + code.slice(6)
+      : (k.length === 1 ? k.toUpperCase() : k);                     // F1-F12 etc. pass through
+    if (key === ' ') key = 'Space';
+    var parts = [];
+    if (e.ctrlKey)  parts.push('CommandOrControl');
+    if (e.altKey)   parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+    parts.push(key);
+    stop();
+    onAccel(parts.join('+'));
+  }
+  document.addEventListener('keydown', onKey, true);
+  return true;
+}
+// ⌨ The Overlays table's Hotkey column: each overlay's own show/hide key,
+// saved in Mimic's cfg.overlayHotkeys and bound there as a global shortcut
+// that runs the same toggle as the row's ON/OFF button. A key another app
+// already holds is shown in red: the OS refused it, so it does nothing.
+function wpRefreshOverlayHotkeys() {
+  if (!(window.mimic && window.mimic.getConfig && window.mimic.getStatus)) return;
+  Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
+    var map = (r[0] && r[0].overlayHotkeys) || {}, blocked = (r[1] && r[1].overlayHotkeysBlocked) || {};
+    var bs = document.querySelectorAll('.wp-ov-hk');
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i], k = b.getAttribute('data-ov');
+      if (b.classList.contains('capturing')) continue;
+      var a = typeof map[k] === 'string' ? map[k] : '';
+      b.textContent = a ? _wpFmtAccel(a) : 'set…';
+      b.className = 'wp-ov-hk' + (a ? (blocked[k] ? ' blocked' : ' set') : '');
+      b.title = a ? (blocked[k] ? 'Another app already uses this key — pick a different one.' : 'Press it anywhere to show or hide this overlay. Click to change.')
+                  : 'Give this overlay its own show/hide key.';
+    }
+  }).catch(function(){});
+}
+function wpCaptureOverlayHotkey(btn) {
+  var k = btn.getAttribute('data-ov');
+  var hint = document.getElementById('wpOvHkHint');
+  var keep = hint ? hint.textContent : '';
+  function say(msg, fade) {
+    if (!hint) return;
+    hint.textContent = msg || keep;
+    if (fade) setTimeout(function(){ if (hint) hint.textContent = keep; }, 4000);
+  }
+  function save(accel) {
+    window.mimic.getConfig().then(function(cfg){
+      var map = Object.assign({}, (cfg && cfg.overlayHotkeys) || {});
+      if (accel) map[k] = accel; else delete map[k];
+      return window.mimic.saveConfig({ overlayHotkeys: map });
+    }).then(function(){
+      btn.classList.remove('capturing');
+      // Registration runs inside the save; read back whether the OS took it.
+      setTimeout(wpRefreshOverlayHotkeys, 150);
+      say(accel ? 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide it.' : 'Hotkey removed.', true);
+    }).catch(function(){ btn.classList.remove('capturing'); say('Save failed.', true); });
+  }
+  var started = _wpCaptureAccel(say, save, function(clear){
+    if (clear) save(null); else { btn.classList.remove('capturing'); wpRefreshOverlayHotkeys(); }
+  });
+  if (!started) return;
+  btn.classList.add('capturing');
+  btn.textContent = 'press keys…';
+  say('Press the keys for this overlay now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
 }
 
 // Dock / undock an overlay from the Overlays page. Docking moves it out of its
@@ -3878,6 +3953,8 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
     var d = (t && t.closest) ? t.closest('.wp-ov-dock') : null;
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
+    var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
+    if (hk && window.mimic && window.mimic.saveConfig) { wpCaptureOverlayHotkey(hk); return; }
     var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');

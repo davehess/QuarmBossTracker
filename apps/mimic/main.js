@@ -5758,6 +5758,34 @@ let _registeredDamageAccel = null;
 // (H hide, B backdrop, D damage alert, M mini). Override with cfg.miniHotkey.
 const _DEFAULT_MINI_HOTKEY = 'CommandOrControl+Shift+M';
 let _registeredMiniAccel = null;
+// ⌨ Per-overlay hotkeys (the guild lead, 2026-09-24: "Each overlay should get its
+// own hotkey config as well. so if i want to pull one up i can do it without
+// much effort"). cfg.overlayHotkeys = { <toggle-overlay key>: accelerator },
+// set from the dashboard's Overlays tab. A press runs the SAME _toggleOverlay
+// the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
+// key away from EverQuest, so nobody gets one they did not ask for.
+const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
+let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
+let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
+function _registerOverlayHotkeys(globalShortcut, cfg) {
+  for (const a of Object.values(_registeredOverlayAccels)) { try { globalShortcut.unregister(a); } catch {} }
+  _registeredOverlayAccels = {};
+  _blockedOverlayAccels = {};
+  const map = (cfg && cfg.overlayHotkeys && typeof cfg.overlayHotkeys === 'object') ? cfg.overlayHotkeys : {};
+  for (const key of _OVERLAY_HOTKEY_KEYS) {
+    const accel = typeof map[key] === 'string' ? map[key].trim() : '';
+    if (!accel) continue;
+    let ok = false;
+    try { ok = globalShortcut.register(accel, () => { try { _toggleOverlay(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
+    catch { ok = false; }   // a malformed accelerator throws rather than returning false
+    if (ok) _registeredOverlayAccels[key] = accel;
+    else {
+      _blockedOverlayAccels[key] = accel;
+      appendAgentLog(`[mimic] failed to register the ${key} overlay hotkey "${accel}" (in use by another app or another Mimic hotkey?)\n`);
+    }
+  }
+}
 function _damageAlertAccelerator() {
   const cfg = loadConfig();
   return (cfg && typeof cfg.damageAlertHotkey === 'string' && cfg.damageAlertHotkey.trim())
@@ -5856,6 +5884,8 @@ function registerHideAllHotkey() {
       if (ok4) _registeredMiniAccel = mAccel;
       else appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`);
     }
+    // ⌨ One per overlay, registered last so the four above keep their keys.
+    _registerOverlayHotkeys(globalShortcut, cfg);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -5942,6 +5972,9 @@ function currentStatus() {
   _healMootHideAll(cfg);
   return {
     agentPort,
+    // Overlay hotkeys the OS refused (key → accelerator), so the dashboard can
+    // say "taken by another app" instead of showing a key that does nothing.
+    overlayHotkeysBlocked: Object.assign({}, _blockedOverlayAccels),
     agentRunning: !!agentProc,
     localOnly,
     quietMode: !!cfg.quietMode,
@@ -7170,7 +7203,10 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const widths = { xs: 200, sm: 260, md: 320, lg: 400, xl: 500 };
+    // L is 420, not 400: at 400 the DPS HUD's title row (−/+, DPS, Tank,
+    // History) ran under the ✕ (a member, 2026-09-24: "the large 400px preset
+    // cuts off a bit on the dps window. and the xl is just a bit too wide").
+    const widths = { xs: 200, sm: 260, md: 320, lg: 420, xl: 500 };
     const w = widths[String(preset || '').toLowerCase()];
     if (!w) return false;
     const b = win.getBounds();
@@ -7266,7 +7302,10 @@ ipcMain.handle('dock-overlay', (_e, name) => {
   return { ok: true, docked: !docked };
 });
 
-ipcMain.handle('toggle-overlay', (_e, name) => {
+ipcMain.handle('toggle-overlay', (_e, name) => _toggleOverlay(name));
+// Every way to flip one overlay by name lands here: the dashboard's ON/OFF
+// button and that overlay's own hotkey (cfg.overlayHotkeys).
+function _toggleOverlay(name) {
   const cfg = loadConfig();
   switch (name) {
     case 'hud':
@@ -7354,7 +7393,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
   setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break the toggle */ } });
   pushStatus();
   return currentStatus();
-});
+}
 
 // ── Overlay chrome-menu IPC (auto-arrange / backdrop / menu state) ───────────
 ipcMain.handle('auto-arrange-overlays', () => {
@@ -8234,7 +8273,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
   const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
-    'damageAlertHotkey', 'damageAlertHotkeyEnabled'];
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }

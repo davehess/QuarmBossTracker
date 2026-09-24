@@ -369,7 +369,7 @@ function _buildOverlayMenu(onClose, state) {
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
   menu.appendChild(sep);
   [['xs','XS · 200px wide'], ['sm','S · 260px'], ['md','M · 320px'],
-   ['lg','L · 400px'],       ['xl','XL · 500px']].forEach(([key, label]) => {
+   ['lg','L · 420px'],       ['xl','XL · 500px']].forEach(([key, label]) => {
     menu.appendChild(mkItem(label, '#1f6feb', () => ipcRenderer.invoke('overlay-resize-preset', key)));
   });
   document.body.appendChild(menu);
