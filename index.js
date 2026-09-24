@@ -12203,6 +12203,63 @@ function _extBindInstances(hpClusters, posInstances) {
 // ids are untouched (returned as the same array — Object.is), so a fleet that
 // sends no ids behaves exactly as before, and a raider with no id stays wherever
 // the guesses put them.
+// #194 — put each Zeal /tag on the row it belongs to; return the rest as the
+// name's pool. Sets `_tag` on matched rows. Pure, so it is tested directly.
+//
+// A tag matches a row, in order:
+//   1. by SPAWN ID — the row's raiders (or the row itself) report exactly one
+//      id, and it is the tag's. Zeal 1.4.6+ sends the id, and an id is the
+//      mob, whatever the tag says. Before 2026-09-23 this step did not exist,
+//      so a row whose id was proven still dumped its own tag into the pool.
+//   2. by TANK — the tag text names the row's tank ("Drayvon-Tanking").
+//   3. a single leftover tag on a single row — nothing else it could be.
+// The pool shows each DISTINCT tag once (the guild lead, 2026-09-23, on six
+// "▲ KILL" chips: "why are there so many tags here"). A trash clear marks
+// every mob "KILL", and nothing clears a tag when its mob dies, so the pool
+// stacked one chip per corpse for ten minutes. Newest wins, and a tag already
+// shown on a row of this name is not repeated.
+function _extPlaceTags(rows, nameTags, spawnOfRaider) {
+  if (!nameTags || !nameTags.size) return [];
+  const rowIds = rows.map(c => {
+    const ids = new Set();
+    if (c.spawn_id != null) ids.add(c.spawn_id);
+    for (const r of (c.raiders || [])) {
+      const s = spawnOfRaider && spawnOfRaider.get(String(r).toLowerCase());
+      if (s != null) ids.add(s);
+    }
+    return ids;
+  });
+  const unwelded = [];
+  const sorted = [...nameTags.values()].sort((a, b) => a.spawn_id - b.spawn_id);
+  for (const tg of sorted) {
+    let target = rows.find((c, i) => !c._tag && rowIds[i].size === 1 && rowIds[i].has(tg.spawn_id));
+    if (!target) {
+      const textLower = String(tg.text || '').toLowerCase();
+      target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
+        textLower.includes(String(t2).toLowerCase())));
+    }
+    if (target) target._tag = tg;
+    else unwelded.push(tg);
+  }
+  if (unwelded.length === 1 && rows.length === 1 && !rows[0]._tag) {
+    rows[0]._tag = unwelded.pop();
+  }
+  // A tag with neither text nor shape is only its id — keep those apart.
+  const keyOf = tg => (tg.text || tg.shape)
+    ? `${tg.shape || ''}|${String(tg.text || '').toLowerCase()}` : `#${tg.spawn_id}`;
+  const shown = new Set(rows.filter(c => c._tag).map(c => keyOf(c._tag)));
+  const newest = new Map();
+  for (const tg of unwelded) {
+    const k = keyOf(tg);
+    if (shown.has(k)) continue;
+    const prev = newest.get(k);
+    if (!prev || (tg.sinceMs || 0) > (prev.sinceMs || 0)) newest.set(k, tg);
+  }
+  return [...newest.values()]
+    .sort((a, b) => (b.sinceMs || 0) - (a.sinceMs || 0))
+    .map(tg => ({ spawn_id: tg.spawn_id, text: tg.text, shape: tg.shape }));
+}
+
 function _extMergeByAgreedId(rows, idOf, hpOf) {
   if (!rows || rows.length < 2 || !idOf || idOf.size === 0) return rows;
   const parent = rows.map((_, i) => i);
@@ -12979,25 +13036,9 @@ async function _handleAgentExtendedTarget(req, res) {
       // that would be fabulous"): a tagged SINGLE-instance mob does show its
       // tag — the assist-arrow-on-the-boss case is mostly a K=1 case. Additive
       // fields only; with no tags present the K=1 payload is byte-identical.
-      const nameTags = tagsByName.get(g.key);
-      let tagPool = [];
-      if (nameTags && nameTags.size) {
-        const unwelded = [];
-        const sorted = [...nameTags.values()].sort((a, b) => a.spawn_id - b.spawn_id);
-        for (const tg of sorted) {
-          const textLower = String(tg.text || '').toLowerCase();
-          const target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
-            textLower.includes(String(t2).toLowerCase())));
-          if (target) target._tag = tg;
-          else unwelded.push(tg);
-        }
-        // A single tag on a single row is unambiguous — weld it even with no
-        // text match (there is nothing else it could be).
-        if (unwelded.length === 1 && rows.length === 1 && !rows[0]._tag) {
-          rows[0]._tag = unwelded.pop();
-        }
-        tagPool = unwelded.map(tg => ({ spawn_id: tg.spawn_id, text: tg.text, shape: tg.shape }));
-      }
+      const spawnOfRaider = new Map(g.obs.filter(o => o.spawn_id != null)
+        .map(o => [String(o.raider).toLowerCase(), o.spawn_id]));
+      const tagPool = _extPlaceTags(rows, tagsByName.get(g.key), spawnOfRaider);
       rows.forEach((c, idx) => {
         targets.push({
           name: g.name, kind: cls.kind,

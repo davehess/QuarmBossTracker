@@ -21,6 +21,14 @@ files are the source of truth.)
 Other fixed facts: Node 20, discord.js v14, Supabase project
 `zhtoekwakucbckvatfky`, guild `DISCORD_GUILD_ID=1168893924329402420`.
 
+### Working rule — reply shape: TLDR, details, numbered to-do (guild lead, 2026-09-24)
+*"make these responses more pointed. TLDR up top, details in the middle, todo
+at the end, marked with steps."* Every end-of-task reply to the guild lead:
+1. **TLDR** — one or two lines: what changed, where it is live.
+2. **Details** — short bullets; only what they need to judge or act on it.
+3. **To-do** — numbered steps, each one an action with who does it. Omit the
+   section only when nothing is left.
+
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The

@@ -386,8 +386,10 @@ describe('Zeal /tag integration (spawn ids through chat)', () => {
     expect(src).toMatch(/if \(!prev \|\| sinceMs > prev\.sinceMs\)/);
   });
 
-  it('a tag welds ONLY when its text names the row tank — no guessed pinning', () => {
-    expect(src).toMatch(/const target = rows\.find\(c => !c\._tag && \(c\.tanks \|\| \[\]\)\.some\(t2 =>/);
+  // Since 2026-09-24 a tag also welds by SPAWN ID — proven, not guessed — and
+  // that path is exercised by running _extPlaceTags in ext-target-tags.test.js.
+  it('a tag welds by spawn id or when its text names the row tank — no guessed pinning', () => {
+    expect(src).toMatch(/target = rows\.find\(c => !c\._tag && \(c\.tanks \|\| \[\]\)\.some\(t2 =>/);
     expect(src).toMatch(/textLower\.includes\(String\(t2\)\.toLowerCase\(\)\)/);
   });
 
