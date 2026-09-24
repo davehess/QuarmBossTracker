@@ -9759,7 +9759,7 @@ async function _handleAgentSpellCatalog(req, res) {
       // that ARE a damage shield carry the derived `ds` field onward, so the
       // ~3.9k-spell catalog payload barely grows (undefined fields don't
       // serialize).
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,' +
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,resist_type,' +
         'effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3,raw';
       // Damage-shield magnitude for a spell: SPA 59 with a NEGATIVE base value
       // is the real "deal bonus damage to attackers" effect real DS spells use
@@ -9930,6 +9930,11 @@ async function _handleAgentSpellCatalog(req, res) {
             // of a hand-kept list that knew one spell). Flag only when set.
             mez:   _hasSpa(r, 31) ? 1 : undefined,
             blind: _hasSpa(r, 20) ? 1 : undefined,
+            // Resist type = the spell's element (1 magic · 2 fire · 3 cold ·
+            // 4 poison · 5 disease) — the Me HUD colours damage in/out by it
+            // (the guild lead, 2026-09-24: "cast damage too with elements").
+            // 0 (unresistable) is omitted like every other zero here.
+            rt:    Number(r.resist_type) > 0 ? Number(r.resist_type) : undefined,
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),

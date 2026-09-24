@@ -34,6 +34,12 @@ describe('spell catalog', () => {
     expect(src).toContain('mez:   _hasSpa(r, 31) ? 1 : undefined,');
     expect(src).toContain('blind: _hasSpa(r, 20) ? 1 : undefined,');
   });
+
+  it('carries the element (resist type) for the HUD\'s damage colours', () => {
+    const m = src.match(/const SELECT = 'select=([^']+)'/);
+    expect(m[1].split(',')).toContain('resist_type');
+    expect(src).toContain('rt:    Number(r.resist_type) > 0 ? Number(r.resist_type) : undefined,');
+  });
 });
 
 describe('_hasSpa', () => {
