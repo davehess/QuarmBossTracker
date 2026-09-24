@@ -2776,6 +2776,18 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   game's sets into one `kind:'deathroll'` entry in `rollSetsSnapshot`, drawn by
   `_wpDeathrollHtml` (dashboard Rolls card) and the Command Center roll list.
   /fun card: the `☠️ Deathrolls` SECTION in `web/app/fun/page.tsx` (beta).
+- **Me overlay (agent 3.7.2, beta, 2026-09-24)** — `GET /api/me` =
+  `_serializeMeState` (active character: vitals, XP/AA with `_meRate`-measured
+  per-hour, casting via gauge 7, gems 60-67 + recast gauges 26-33 with casts
+  left from catalog `mana`, class focus: CH / Mez (catalog `mez`) / Charm
+  (`CHARM_SPELLS`) left + long-recast timers from `_meNoteSelfCast`, group
+  gauges 11-15, DPS this fight + tonight via `_meNoteFight`).
+  `apps/mimic/me.html` draws it as A Classic / B Glance / C Role, picked in
+  its title bar. Forced open by Blind Mode. Tests: `test/me-overlay.test.js`.
+- **Blind Mode, catalog-driven (agent 3.7.2)** — `_blindCatalogTexts` reads
+  SPA-20 landing/fade text from the catalog (`blind` flag, bot 3.1.145),
+  excluding texts a non-blind spell shares; `/api/state.blind.active` looked
+  up lowercase. Tests: `test/blind-catalog.test.js`.
 - **Damage-taken audio alert (3.4.39)** — `_maybeAnnounceDamageTaken` rides the
   `defender:'YOU'` combat paths (the "you have taken" line family is dropped by
   the byte filter — don't move detection there); `_setDamageAlert` +

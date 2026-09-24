@@ -947,7 +947,8 @@ nothing else changed.
 Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
 tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal
-health (diagnostic), plus Settings, UI Studio, loading.
+health (diagnostic), Me (`me.html`, the player's own panel, reads `/api/me`;
+three layouts on beta until one is picked), plus Settings, UI Studio, loading.
 
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the
