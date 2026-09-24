@@ -739,6 +739,62 @@ SECTIONS.push(async (sb, counters) => {
   } catch (err) { void err; }
 });
 
+// ── ☠️ Deathrolls (the guild lead, 2026-09-23) ──────────────────────────────
+// "First one to roll a zero loses - we should track these for fun." The bot
+// finds each game in roll_sets and writes one `deathroll` fun_event (caster =
+// loser, detail = start / rolls / players / winners — index.js
+// _checkDeathrollsNow). Here: games played, the latest result, everyone's
+// wins–losses, and the two records. A game involving a character who opted out
+// of stats is left out whole — excluded characters never contribute or display.
+type DeathrollRow = {
+  event_ts: string;
+  raw_text: string | null;
+  detail: { start?: number; rolls?: number; players?: string[]; winners?: string[]; loser?: string } | null;
+};
+SECTIONS.push(async (sb, counters) => {
+  try {
+    const [{ data }, { data: optedOut }] = await Promise.all([
+      sb.from('fun_events')
+        .select('event_ts, raw_text, detail')
+        .eq('event_type', 'deathroll')
+        .order('event_ts', { ascending: false })
+        .limit(1000),
+      sb.from('characters').select('name').eq('guild_id', 'wolfpack').eq('exclude_from_stats', true),
+    ]);
+    const excluded = new Set((optedOut ?? []).map((r: { name: string | null }) => (r.name || '').toLowerCase()));
+    const games = ((data ?? []) as DeathrollRow[]).filter(g =>
+      g.detail && (g.detail.players ?? []).every(p => !excluded.has(p.toLowerCase())));
+    const record = new Map<string, { name: string; w: number; l: number }>();
+    const bump = (name: string, k: 'w' | 'l') => {
+      const e = record.get(name.toLowerCase()) ?? { name, w: 0, l: 0 };
+      e[k]++;
+      record.set(name.toLowerCase(), e);
+    };
+    for (const g of games) {
+      if (g.detail?.loser) bump(g.detail.loser, 'l');
+      for (const w of g.detail?.winners ?? []) bump(w, 'w');
+    }
+    const standings = [...record.values()].sort((a, b) => b.w - a.w || a.l - b.l || a.name.localeCompare(b.name));
+    const biggest = Math.max(0, ...games.map(g => Number(g.detail?.start) || 0));
+    const longest = Math.max(0, ...games.map(g => Number(g.detail?.rolls) || 0));
+    counters.push({
+      label: 'Deathrolls — first to roll 0 loses',
+      emoji: '☠️',
+      value: games.length,
+      sub: games.length ? (
+        <>
+          <span className="text-text">{games[0].raw_text}</span>
+          <br />
+          {standings.slice(0, 5).map(s => `${s.name} ${s.w}–${s.l}`).join(' · ')}
+          {standings.length > 5 && <span className="text-dim/70">{` · +${standings.length - 5} more`}</span>}
+          <br />
+          <span className="text-dim/70">Biggest start {biggest.toLocaleString('en-US')} · longest game {longest} rolls</span>
+        </>
+      ) : 'nobody has lost one yet — /random N, the next player rolls /random what you got, first to hit 0 loses',
+    });
+  } catch (err) { void err; }
+});
+
 async function loadCounters() {
   const sb = supabaseAdmin();
   const kyinenP = loadKyinen(sb);

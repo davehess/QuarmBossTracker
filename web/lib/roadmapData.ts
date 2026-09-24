@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'deathrolls-2026-09-24',
+    title: 'Bot 3.1.143 · Web 1.8.1',
+    version: 'Bot 3.1.143 · Web 1.8.1 · Mimic 2.7.1-beta',
+    date: '2026-09-24',
+    headline: 'Deathrolls are tracked: who lost, who won, and a post in #wlfpck-general when someone hits 0.',
+    features: [
+      {
+        name: 'Deathrolls',
+        blurb: 'Roll /random N, the next player rolls /random whatever you got, and the first to hit 0 loses. The bot now spots a finished game on its own and posts it: “Menttok lost a deathroll to Fargan — 32,000 → 0 in 11 rolls.” Anyone running Mimic nearby is enough.',
+      },
+      {
+        name: 'A Deathrolls card on the Fun page',
+        blurb: 'Games played, the latest result, everyone’s wins and losses, and the records: the biggest starting range and the longest game.',
+      },
+      {
+        name: 'One line per game in Mimic (beta)',
+        blurb: 'The Rolls card and the Command Center show a deathroll as a single line instead of a dozen separate rolls — with whose turn it is while it’s going. Click it to see every roll.',
+      },
+    ],
+    fixes: [
+      'Extended Target no longer stacks a tag for every mob you already killed. During a trash clear it showed six “▲ KILL” chips for one live mob; each different tag now shows once.',
+      'When your Zeal knows which mob you are targeting, that mob’s tag now sits on its own row in Extended Target instead of in the list underneath.',
+    ],
+  },
+  {
     key: 'mimic-2-7-0-stable-2026-09-23',
     title: 'Mimic 2.7.0',
     version: 'Mimic 2.7.0 · Agent 3.7.0 · Web 1.8.0',
