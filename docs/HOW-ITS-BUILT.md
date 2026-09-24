@@ -2818,6 +2818,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   target), all fed by one live-tail hook, `_meNoteRawLine`. `no_mana` for
   WAR/ROG/MNK. Tests: `test/me-hud-timers.test.js`. Swing-timer upstream ask:
   `docs/zeal-attack-timer-pipe-request.md`. `DECISIONS-2026-09-21.md` §13.
+  **Round two (agent 3.7.6):** shown as "HUD" everywhere (key still `me`).
+  `_ME_CLASS_CDS` lists each class's cooldowns up front (`seen: false` until
+  used); `_ME_SKILL_LINES` adds Feign Death (failure line only) and Lay on
+  Hands; `_meNotePipeCooldowns` reads `/pipe fd|mend|taunt|loh|ht|<verb>` from
+  Zeal's custom messages (`st.custom_recent`), each once. Overlay: `ringLabel`
+  / `ringHits` write labels and hits along the ring; `OPEN_R` keeps the middle
+  clear (tested by measuring each line's width).
 - **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
   (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
   `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`

@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **Me overlay: A, H1, H2, H3 or C** | **On beta, agent 3.7.5 (§11, §13).** B became three circle HUDs sized to their ring — H1 Rings · H2 Dial · H3 Reticle — with server tick (exact, Zeal), swing timer (learned, "~"), combat-ability / Mend / Taunt / discipline cooldowns, the target's target + HP, slow, and a red outline for a mob that can enrage. No mana bar for warriors, rogues, monks. Picker in the window's bottom-right corner | the guild lead plays with the three HUDs and picks one (or A/C); then graduate it and delete the rest. Optional: open the one-line Zeal PR (`docs/zeal-attack-timer-pipe-request.md`) to make the swing timer exact |
+| **HUD (was "Me"): A, H1, H2, H3 or C** | **On beta, agent 3.7.6 (§11, §13).** Round two after a night in game: thinner rings, every arc labelled along the ring, the middle kept clear, per-class cooldowns always shown (monk Kick/Mend/FD, warrior Kick/Taunt, paladin LoH, SK HT), `/pipe fd` for the silent successful feign. Renamed "HUD" | the guild lead adds `/pipe fd` to the FD hotkey, plays, and picks one; then graduate it and delete the rest. Optional: the one-line Zeal PR (`docs/zeal-attack-timer-pipe-request.md`) makes the swing timer exact |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
@@ -762,3 +762,34 @@ milliseconds to the Date that `parseEqTimestamp` returns, which in JS is string
 concatenation, so every read was NaN and `toISOString` threw. Its test passed
 because its stand-in parser returned a number; the stand-in now returns a Date,
 and fails 9 of 17 against the old code.
+
+**Round two, same day (agent 3.7.6).** After playing all three: *"Bars are a
+little too thick"* · *"I would need feign death and Mend on here as a monk /
+warriors would use taunt and kick / paladins and shadowknights would have their
+lay on hands and harmtouch"* · *"The way the text wraps on H1 for the name up
+top is the format I want to see for the other pieces. Ticks, swing, HP and
+Endurance."* · *"There needs to me more open space in the middle"* · *"I can
+add in /pipeoutput for FD too"* · *"Lets also change the name to HUD"*.
+- Arcs roughly halved in width. HP, mana/endurance, tick and swing are now
+  written along the ring like the target's name; hits are written along the
+  inside of the ring (H2, H3) or in the bottom band (H1). A test measures every
+  straight line's full width and keeps it ≥ 95 units from the centre — the old
+  side columns reached ~75.
+- **Class cooldowns always shown**, as *unknown* (a dash, never green) until
+  first used this session — we cannot tell "ready" from "used before Mimic
+  started". Monk Kick · Mend · Feign Death; warrior Kick · Taunt; paladin Lay
+  on Hands; shadow knight Harm Touch.
+- **Feign Death** (`Handle_OP_FeignDeath`): the server prints only the
+  FAILURE (*"You have fallen to the ground."*); a feign that works is silent.
+  So `/pipe <word>` on a hotkey starts a timer at the press — `fd`, `mend`,
+  `taunt`, `loh`, `ht`, or an ability verb — read from Zeal's custom messages
+  at Mimic's receive time, each line once. 9 − 1 s; Rapid Feign shortens it,
+  so marked `~`.
+- **Lay on Hands / Harm Touch** are spells with a 72-minute recast, less 12
+  minutes per rank of Fervent Blessing / Touch of the Wicked (`zone/spells.cpp`)
+  — hence `~`. Started by the cast line, *"You harm touch …"*, or the landing
+  text on YOUR target when you are the class that has it (a bystander sees the
+  same landing text, so an off-target one is not credited).
+- Renamed "HUD" in every label a raider sees; the internal key stays `me` so
+  saved positions and settings carry over. ⚠ Sits next to the existing "DPS
+  HUD" and "Tank HUD" overlays in the tray list.
