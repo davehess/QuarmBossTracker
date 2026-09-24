@@ -42,6 +42,24 @@ describe('spell catalog', () => {
   });
 });
 
+describe('_manaDrain', () => {
+  const fn = sliceBlock(readSource(BOT_INDEX), '      function _manaDrain(r) {', '\n      }');
+  const drain = evalBlock(fn, ['_manaDrain'])._manaDrain;
+  const raw = (base, formula, max) => ({ eff: [15, 254], base: [base, 0], formula: [formula, 100], max: [max, 0] });
+  it('reads a detrimental SPA-15 drain: Theft of Thought -40, formula 6, max 400', () => {
+    expect(drain({ good_effect: 0, raw: raw(-40, 6, 400) })).toEqual({ b: 40, f: 6, m: 400 });
+  });
+  it('the same SPA on a beneficial spell is the caster\'s cost, not a drain (Succor)', () => {
+    expect(drain({ good_effect: 1, raw: raw(-150, 100, 0) })).toBeNull();
+  });
+  it('a mana GAIN is not a drain', () => {
+    expect(drain({ good_effect: 0, raw: raw(25, 100, 0) })).toBeNull();
+  });
+  it('ships on the catalog entry', () => {
+    expect(src).toContain('drain: _manaDrain(r) || undefined,');
+  });
+});
+
 describe('_hasSpa', () => {
   const fn = sliceBlock(readSource(BOT_INDEX), '      function _hasSpa(r, spa) {', '\n      }');
   const hasSpa = evalBlock(fn, ['_hasSpa'])._hasSpa;
