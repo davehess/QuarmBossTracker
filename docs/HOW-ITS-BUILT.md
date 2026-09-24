@@ -2832,6 +2832,37 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   DS below OUT) with a per-hit DS button. Agent: `_meNoteHit` gives the damage
   shield its own `kind: 'ds'`; `combat.feed` entries carry `at`; `combat.ds`
   carries `per_hit` (worn shield via `_knownDsPerHitFor`, else the last hit).
+  **Round four (agent 3.7.9):** cooldowns on an inner arc (`cdItems`), tick
+  and swing their own arcs under them (`tickItem` / `swingItem`); `weight`
+  part (`HUD_WEIGHTS`, svg class `w-<weight>`); builder is a side panel
+  (`openBuilder` / `closeBuilder` grow and restore the window, bounds kept in
+  `localStorage` `wpHudPreBuild` until closed); enrage outline over the last
+  `ENRAGE_PCT` (8) of the target arc. Agent: `disc` in every disc class's
+  `_ME_CLASS_CDS`, ready discs kept, and discs / refusal / skill cooldowns
+  persisted in `logsync.hud-timers.json` (`_meTimersLoad` / `_meTimersSave`);
+  a mob's melee hit re-reads the non-melee lines just before it as its shield.
+  **Round five (agent 3.7.10):** hits moved to a kept layer, `<svg
+  id="hudlanes">`: `hudLanes` (pure — the newest round per hit, older rounds
+  one total each, `ghosts` pointing a finished round's hit keys at its total)
+  and `paintLanes` (keyed `<text>`s moved by CSS transitions, off under
+  reduced motion). Summon mark at `SUMMON_PCT` (97); agent
+  `_meTargetExtras` adds `summon` from the mob-info specials. Tests:
+  `test/me-overlay.test.js`, `test/me-hud-timers.test.js`.
+- **A hotkey per overlay (agent 3.7.11, beta)** — `cfg.overlayHotkeys` bound by
+  `_registerOverlayHotkeys` (called from `registerHideAllHotkey`, re-run on
+  save via `HOTKEY_KEYS`) to `_toggleOverlay`, the same function the
+  `toggle-overlay` IPC runs; refusals in `_blockedOverlayAccels` →
+  `currentStatus().overlayHotkeysBlocked`. Dashboard: Hotkey column on the
+  Overlays table, `wpRefreshOverlayHotkeys` / `wpCaptureOverlayHotkey`, key
+  capture shared with the Change… rows as `_wpCaptureAccel`. Not in the tray
+  menu yet. Tests: `test/overlay-hotkeys.test.js`.
+- **DPS meter History: fight list (agent 3.7.11, beta)** — `apps/mimic/overlay.html`
+  `#histList` (`histItemHtml`, delegated click → `HIST_IDX`) right of the
+  scoreboard in `.histwrap`; the ◀ ▶ pager is gone; the 7-column layout is a
+  container query on `.board`. Tests: `test/dps-history-list.test.js`.
+- **Overlay size presets** — `overlay-resize-preset` in `main.js` (XS 200 · S 260
+  · M 320 · L 420 · XL 500), labels in `preload.js`'s chrome menu. Tests:
+  `test/overlay-resize-presets.test.js`.
 - **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
   (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
   `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`
