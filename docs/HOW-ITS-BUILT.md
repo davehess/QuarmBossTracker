@@ -2823,8 +2823,15 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   used); `_ME_SKILL_LINES` adds Feign Death (failure line only) and Lay on
   Hands; `_meNotePipeCooldowns` reads `/pipe fd|mend|taunt|loh|ht|<verb>` from
   Zeal's custom messages (`st.custom_recent`), each once. Overlay: `ringLabel`
-  / `ringHits` write labels and hits along the ring; `OPEN_R` keeps the middle
-  clear (tested by measuring each line's width).
+  writes labels along the ring; the middle is kept clear (tested by measuring
+  each line's width).
+  **Round three (agent 3.7.8): one HUD from parts.** `renderHud` replaces
+  H1/H2/H3; `HUD_PARTS` / `HUD_DEFAULTS` list every part, the ⚙ builder
+  (`#builder`, `renderBuilder`) toggles them into `localStorage` `wpHudParts`.
+  Hits: `hitRounds` (one log second per line) → `hitLane` (IN left, OUT right,
+  DS below OUT) with a per-hit DS button. Agent: `_meNoteHit` gives the damage
+  shield its own `kind: 'ds'`; `combat.feed` entries carry `at`; `combat.ds`
+  carries `per_hit` (worn shield via `_knownDsPerHitFor`, else the last hit).
 - **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
   (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
   `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`
