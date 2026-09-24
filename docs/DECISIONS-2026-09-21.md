@@ -118,6 +118,8 @@ is ephemeral. It is a desktop-session job.
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
+| **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A picked | the one-line Rolls-card display (agent, beta) and the /fun card (`b.wolfpack.quest/fun`, then graduate on the guild lead's word) |
+| **Extended Target: a `tags:` row piles up tags on mobs already dead** | 2026-09-23, asked, not yet picked. Tags live 10 min and nothing clears one on death, so a trash clear stacks every killed mob's "KILL". Options given: (1) show each distinct tag once (recommended), (2) also expire tags that can't be matched to a row after ~2 min. Separately a real gap: a tag is never matched to a row by spawn id, only by the tank's name in its text | the guild lead picks 1 or 1+2; the spawn-id matching is a bug fix either way. Bot change |
 | **Cloud sessions → Tower over Tailscale** | **WORKING 2026-09-23 (§9).** Database verified end to end as `claude_ro`; Coolify reachable. ⚠ `COOLIFY_TOKEN` in the environment holds the setup brief's placeholder text, not a token, so Coolify answers 401 | the guild lead pastes the real read-only token into `COOLIFY_TOKEN`. Rotate `TS_AUTHKEY` before it expires (90 days from 2026-09-23). Coolify's web UI returns 500 at `/` (the API is fine) — look when next in Coolify |
 | **Trigger disables never reached the fleet** | **FIXED 2026-09-23 (§7)** — bot 3.1.139, on `main` since the 467b0fc push. Worked around in data meanwhile | nothing |
 | **UI calls made on the guild lead's behalf today** | 2026-09-23, on `beta`. Extended Target's toggles drop to icons below 380px wide (alternative: a two-row header that keeps the labels). Settings columns via a load-time section wrap (alternative: pure CSS columns — cheaper, but splits a section's controls across two columns). Roadmap entry titled with the plain version string. **All of it went stable as Mimic 2.7.0 / agent 3.7.0 on 2026-09-23, at the guild lead's word, unnamed** | the guild lead can still swap either UI alternative in a 2.7.x beta; a release name can be added to the roadmap entry any time |
@@ -498,3 +500,28 @@ UDP is blocked.
 `TOWER_PGPASSWORD`, `COOLIFY_HOST`, `COOLIFY_TOKEN`). Anyone who can use that
 environment can read them, which is why each is scoped as above. The repo carries
 names only, never values.
+
+## 10. Deathrolls (2026-09-23)
+
+The guild lead, on a Rolls card showing one game as eleven "1 roller · open"
+sets: *"These are called Deathrolls. First one to roll a zero loses - we should
+track these for fun."*
+
+**The calls.** Display option **A** (one expandable line per game in the Rolls
+card and the Command Center), not B (a separate Deathrolls card). And *"yes post
+it to Wlfpck-general"* — `DEATHROLL_CHANNEL_ID`, set on Railway.
+
+**Where it landed.** Detection is BOT-side over `roll_sets`, which every Mimic
+already uploads, so recording needed no fleet update (bot 3.1.142,
+`utils/deathroll.js`). Each game: one `deathroll` fun_event, one post. The
+shape that identifies a game — each range is the last result, a different
+player each step, ≤2 min apart, ≥3 rolls, ends on 0 — is one loot rolls never
+have. The first captured game was seen by seven uploaders whose clocks
+disagreed by up to 9 s, which is why detection runs per uploader and merges
+after. `fun_events.detail` (migration `20260924050246`) carries start, rolls,
+players and steps so /fun can rank without parsing a sentence.
+
+**Still to land:** the one-line display (agent, beta) and the /fun card (web,
+beta first at `b.wolfpack.quest/fun`). Not changed, and worth knowing: the
+event-night rolled-loot card, the Hot Dice night award and `/rolls` still see a
+deathroll's steps as ordinary one-roller sets.

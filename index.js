@@ -16523,6 +16523,77 @@ function _scheduleEventRollCard() {
   if (typeof _rollCardTimer.unref === 'function') _rollCardTimer.unref();
 }
 
+// ── Deathrolls (the guild lead, 2026-09-23) ─────────────────────────────────
+// "First one to roll a zero loses - we should track these for fun." Found in
+// roll_sets by utils/deathroll.js (per uploader, then merged — uploaders'
+// clocks disagree by seconds). Each game is recorded once as a `deathroll`
+// fun_event and announced once in DEATHROLL_CHANNEL_ID.
+//
+// Settle before looking: every raider's Mimic uploads the ending within ~15s
+// of each other, and one pass after the burst sees the fullest copy and posts
+// once. Dedup is against fun_events itself, so a restart mid-game cannot
+// announce a game twice.
+const _DEATHROLL_SETTLE_MS  = 20_000;
+const _DEATHROLL_LOOKBACK_MS = 30 * 60_000;   // a 15-roll game at the 2-min step cap
+const _DEATHROLL_POST_MAX_AGE_MS = 10 * 60_000; // older than this: record, don't announce
+let _deathrollTimer = null;
+
+async function _checkDeathrollsNow() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const { deathrollsFromRows, describeGame } = require('./utils/deathroll');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const sinceIso = new Date(Date.now() - _DEATHROLL_LOOKBACK_MS).toISOString();
+  // Paged: eleven uploaders on a busy loot night can pass PostgREST's silent
+  // 1000-row cap inside the lookback, and a truncated read drops the newest rows
+  // — exactly where the game that just ended lives.
+  const [rows, recorded] = await Promise.all([
+    supabase.selectAllPaged('roll_sets',
+      `guild_id=eq.${encodeURIComponent(guildId)}&roll_from=eq.0&started_at=gte.${encodeURIComponent(sinceIso)}`
+      + '&select=uploaded_by_discord_id,roll_from,roll_to,started_at,rolls', 'id'),
+    supabase.select('fun_events',
+      `guild_id=eq.${encodeURIComponent(guildId)}&event_type=eq.deathroll&event_ts=gte.${encodeURIComponent(sinceIso)}`
+      + '&select=caster,event_ts&limit=200'),
+  ]);
+  const games = deathrollsFromRows(rows || []);
+  for (const g of games) {
+    const already = (recorded || []).some(e => String(e.caster).toLowerCase() === g.loser.toLowerCase()
+      && Math.abs(Date.parse(e.event_ts) - g.endMs) <= 60_000);
+    if (already) continue;
+    await supabase.upsert('fun_events', [{
+      guild_id:   guildId,
+      event_type: 'deathroll',
+      caster:     g.loser,
+      target:     g.winners.join(', ').slice(0, 120) || null,
+      reagent_qty: Math.min(g.rolls, 32767),
+      event_ts:   new Date(g.endMs).toISOString(),
+      raw_text:   describeGame(g),
+      detail:     { start: g.start, rolls: g.rolls, players: g.players, winners: g.winners,
+                    loser: g.loser, started_at: new Date(g.startMs).toISOString(),
+                    steps: g.steps.map(s => ({ name: s.name, to: s.to, value: s.value })) },
+    }], 'guild_id,event_type,caster,event_ts');
+    (recorded || []).push({ caster: g.loser, event_ts: new Date(g.endMs).toISOString() });
+    console.log(`[deathroll] ${describeGame(g)}`);
+    const chId = process.env.DEATHROLL_CHANNEL_ID;
+    if (!chId || Date.now() - g.endMs > _DEATHROLL_POST_MAX_AGE_MS) continue;
+    const ch = await client.channels.fetch(chId).catch(() => null);
+    if (ch && typeof ch.send === 'function') {
+      await ch.send({ content: `☠️ ${describeGame(g, { bold: true })}`, allowedMentions: { parse: [] } })
+        .catch(err => console.warn('[deathroll] post failed:', err?.message));
+    }
+  }
+}
+
+/** Debounced, never-throwing trigger. Called from the rolls ingest. */
+function _scheduleDeathrollCheck() {
+  if (_deathrollTimer) return;
+  _deathrollTimer = setTimeout(() => {
+    _deathrollTimer = null;
+    _checkDeathrollsNow().catch(err => console.warn('[deathroll] check failed:', err?.message));
+  }, _DEATHROLL_SETTLE_MS);
+  if (typeof _deathrollTimer.unref === 'function') _deathrollTimer.unref();
+}
+
 // POST /api/agent/rolls  (#91 off-night NBG roll capture)
 // Store the agent's grouped /random SETS. Upsert per (uploader, range, start)
 // so a growing set updates in place as more rolls arrive; the site merges
@@ -16580,6 +16651,11 @@ async function _handleAgentRolls(req, res) {
     res.writeHead(200);
     res.end(JSON.stringify({ ok: true, stored: rows.length }));
     try { _scheduleEventRollCard(); } catch { /* presentation only */ }
+    // A 0 on a 0-N roll may have ended a deathroll. Loot rolls land here too
+    // and simply find no chain.
+    if (rows.some(r => r.roll_from === 0 && r.rolls.some(x => x.value === 0))) {
+      try { _scheduleDeathrollCheck(); } catch { /* fun only */ }
+    }
     return;
   } catch (err) {
     res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));

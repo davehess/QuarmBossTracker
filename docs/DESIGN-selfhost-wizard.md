@@ -408,6 +408,11 @@ and the same never-refetch guarantee.
 - **Coolify's `Ports Exposes` is metadata; `Ports Mappings` publishes.**
 - **`next build` needs ~8 GB**; 4 GB is OOM-killed during type-checking with no
   error in the log.
+- **2026-09-23 — deathroll announcements are an optional channel**
+  (`DEATHROLL_CHANNEL_ID`, bot 3.1.142). Unset, games are still recorded for
+  /fun and nothing posts. Ours points at the general chat channel; the wizard
+  should ask, not assume, since "which channel gets fun chatter" is a
+  per-guild taste.
 
 ### Assistant (Lord Mobsincamp, 2026-09-12)
 - **The assistant's name is a per-deployment value.** `ASSISTANT_NAME`

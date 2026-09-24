@@ -2766,6 +2766,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Ext-target same-zone filter (#113)** — `/api/ext-pref` per-user toggle.
 - **Roll capture (#91)** — `trackLootedLine`/`uploadLooted`, `uploadRollSets`,
   Hot Dice perfect-roll fun events.
+- **Deathrolls (bot 3.1.142, 2026-09-23)** — found BOT-side in the uploaded
+  `roll_sets` by `utils/deathroll.js` (per uploader, then merged across clock
+  skew); `_checkDeathrollsNow` in `index.js` runs 20s after a 0 lands, writes a
+  `deathroll` fun_event (`caster` = loser, `target` = winners, `detail` jsonb)
+  and posts once to `DEATHROLL_CHANNEL_ID`. No agent change needed to record —
+  any Mimic that uploads rolls counts. Tests: `test/deathroll*.test.js`.
 - **Damage-taken audio alert (3.4.39)** — `_maybeAnnounceDamageTaken` rides the
   `defender:'YOU'` combat paths (the "you have taken" line family is dropped by
   the byte filter — don't move detection there); `_setDamageAlert` +
