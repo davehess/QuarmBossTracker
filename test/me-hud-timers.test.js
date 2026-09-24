@@ -27,12 +27,13 @@ const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
 const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
 
 const dsSlack = agent.match(/const DS_UNLISTED_SLACK = [^\n]+/)[0];
+const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.match(/const _SLAIN_YOU_RX = [^\n]+/)[0];
 
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
-  '_meNoteHit'];
+  '_meNoteHit', '_meMobTallies'];
 
-function load({ zeal = {}, victim = null, dsKnown = 0 } = {}) {
+function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
   const pre = `
     const _spellByNameLower = new Map();
     const _zealState = ${JSON.stringify(zeal)};
@@ -55,7 +56,9 @@ function load({ zeal = {}, victim = null, dsKnown = 0 } = {}) {
     function _bestSlowForTarget() { return null; }
     function _resolveHpValuesForName() { return null; }
     ${dsSlack}
+    ${slainRx}
     function _knownDsPerHitFor() { return ${Number(dsKnown) || 0}; }
+    function _targetPlayerInfo() { return ${JSON.stringify(player)}; }
     // A fake disk shared across load() calls — a second load() is an agent
     // restart reading what the first one saved.
     const __dirname = '/agent';
@@ -463,6 +466,89 @@ describe('damage shield — its own kind, and its per-hit value', () => {
     const h = load({ zeal: Z.zeal });
     h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'punch', amount: 45 });
     expect(h._serializeMeState().combat.feed[0].at).toBe(clock);
+  });
+});
+
+// Round six (the guild lead, 2026-09-24): "display level or level range and
+// class under the target's bar" · "Corpses shouldn't ever say 'not slowed'" ·
+// "When a mob flurries or Rampages denote that with an F in a fist outline or
+// an R in a fist outline next to the boss's name".
+describe('target: level, class, corpse, flurry and rampage', () => {
+  const st = (name = 'a gnoll warlord') => ({ target_name: name, zone: 12, gauges: [] });
+  it('an NPC\'s level (or range) and class come from its catalog row', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, maxlevel: 55, class: 'Warrior', specials: [] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock)).toMatchObject({ level: 52, level_max: 55, class: 'Warrior', level_src: 'catalog' });
+  });
+  it('a player\'s come from /who — the same answer Target Info gives', () => {
+    const h = load({ player: { class: 'Enchanter', level: 60, level_src: 'who' } });
+    h._mobInfoByName.set('tovrin|12', { at: clock, mob: null });
+    expect(h._meTargetExtras(st('Tovrin'), 'Aldenmar', clock)).toMatchObject({ level: 60, class: 'Enchanter', level_src: 'who' });
+  });
+  it('a corpse is only a corpse — no slow, enrage or level to report', () => {
+    const h = load();
+    expect(h._meTargetExtras(st("A Temple Patroller's corpse"), 'Aldenmar', clock)).toEqual({ corpse: true });
+    expect(h._meTargetExtras(st('a gnoll`s corpse2'), 'Aldenmar', clock)).toEqual({ corpse: true });
+  });
+  it('flurry and rampage: can it, from the catalog; did it just, from the log — lit for 6 s', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, specials: ['Flurry', 'Area Rampage'] } });
+    let t = h._meTargetExtras(st(), 'Aldenmar', clock);
+    expect(t).toMatchObject({ flurry: true, rampage: true, flurry_lit: false, rampage_lit: false });
+    say(h, 'Aldenmar', 'a gnoll warlord executes a FLURRY of attacks on Brackwyn!');
+    say(h, 'Aldenmar', 'a gnoll warlord goes on a WILD RAMPAGE!');
+    t = h._meTargetExtras(st(), 'Aldenmar', clock);
+    expect(t).toMatchObject({ flurry_lit: true, rampage_lit: true });
+    clock += 6001;
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock)).toMatchObject({ flurry_lit: false, rampage_lit: false });
+  });
+  it('Quarm\'s "goes on a RAMPAGE against <target>" lights the R too', () => {
+    const h = load();
+    say(h, 'Aldenmar', 'a gnoll warlord goes on a RAMPAGE against Brackwyn!');
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock)).toMatchObject({ rampage_lit: true, flurry_lit: false });
+  });
+});
+
+// "Have the damage done and taken per mob roll off into a total as well, then
+// drop out after each mob" · "Have the damage shield hits roll into a total".
+describe('per-mob totals', () => {
+  const iso = (ms) => new Date(ms).toISOString();
+  const hitOut = (h, mob, n) => h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: mob, ability: 'punch', amount: n });
+  const hitIn = (h, mob, n) => h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: mob, defender: 'You', ability: 'hits', amount: n });
+  const ds = (h, mob, n) => h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: mob, ability: 'thorns', amount: n, ds: true });
+  it('adds up damage done, taken and shield per mob', () => {
+    const h = load();
+    hitOut(h, 'a gnoll', 100); hitIn(h, 'a gnoll', 40); ds(h, 'a gnoll', 14);
+    clock += 3000; hitOut(h, 'a gnoll', 50);
+    clock += 1000; hitOut(h, 'a bat', 7);
+    const t = h._meMobTallies('aldenmar', clock);
+    expect(t.find(x => x.name === 'a gnoll')).toMatchObject({ out: 150, in: 40, ds: 14, dead_at: null });
+    expect(t.find(x => x.name === 'a bat')).toMatchObject({ out: 7 });
+    expect(t[0].name).toBe('a bat');   // most recent first
+  });
+  it('a death closes the total; the next mob of the same name starts a new one', () => {
+    const h = load();
+    hitOut(h, 'a gnoll', 100);
+    say(h, 'Aldenmar', 'You have slain a gnoll!');
+    const deadAt = clock;
+    clock += 2000; hitOut(h, 'a gnoll', 30);
+    const t = h._meMobTallies('aldenmar', clock);
+    expect(t.map(x => [x.out, x.dead_at])).toEqual([[30, null], [100, deadAt]]);
+  });
+  it('a dead mob\'s total stays 8 s, then drops out; a quiet one after 30 s', () => {
+    const h = load();
+    hitOut(h, 'a gnoll', 100); hitOut(h, 'a bat', 5);
+    say(h, 'Aldenmar', 'a gnoll has been slain by Brackwyn!');
+    clock += 8001;
+    expect(h._meMobTallies('aldenmar', clock).map(x => x.name)).toEqual(['a bat']);
+    clock += 22_000;
+    expect(h._meMobTallies('aldenmar', clock)).toEqual([]);
+  });
+  it('ride along on the HUD snapshot', () => {
+    const zeal = { Aldenmar: { charInfo: [], gauges: [], updatedAt: clock } };
+    const h = load({ zeal });
+    hitOut(h, 'a gnoll', 100);
+    expect(h._serializeMeState().combat.tallies[0]).toMatchObject({ name: 'a gnoll', out: 100 });
   });
 });
 

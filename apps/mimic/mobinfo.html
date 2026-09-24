@@ -418,7 +418,9 @@
     var con = pl.con_colour ? ' <span style="color:' + (CON_COLOURS[pl.con_colour] || '#8b949e') + ';border:1px solid currentColor;border-radius:3px;padding:0 4px;font-size:9px">' + esc(CON_NAMES[pl.con_colour] || pl.con_colour) + ' con</span>' : '';
     var who = (pl.class ? '<b>' + esc(pl.class) + '</b>' + (pl.class_src === 'history' ? ' <span style="color:#8b949e">(from /who history)</span>' : '') : (pl.anonymous ? 'anonymous' : 'class unknown'))
             + (lvl ? ' · ' + lvl : '') + con;
-    if (!lvl && !pl.con_colour) who += ' <span style="color:#8b949e">— /consider them for a level range</span>';
+    // A player's level comes from /who only — their consider does not follow
+    // the level table (the agent's _targetPlayerInfo says why).
+    if (!lvl && !pl.con_colour) who += ' <span style="color:#8b949e">— level unknown until a /who sees them' + (pl.anonymous ? ' out of anonymous' : '') + '</span>';
     var h = '<div class="sub" style="color:#e6edf3">' + who + '</div>';
     if (pl.guild) h += '<div class="sub">&lt;' + esc(pl.guild) + '&gt;</div>';
     // PvP: your drains. Full strength on a player, and an upper bound — the

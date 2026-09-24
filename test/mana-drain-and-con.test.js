@@ -171,6 +171,15 @@ describe('/consider → a level', () => {
     m.noteConsiderLevel(L('Corvale regards you indifferently -- test phrase for blue.'), 'Nyssara');
     expect(m.conLevelFor('Nyssara', 'Corvale')).toMatchObject({ colour: 'blue', min: 45, max: 59 });
   });
+  // The guild lead, 2026-09-24: level-60 players conned by a level 60 read "looks
+  // like quite a gamble" — a yellow by the table. A player's consider does not
+  // follow it, so a /who level must never teach a phrase its colour.
+  it('never learns a phrase from a PLAYER, even one /who has shown', () => {
+    const m = load({ zeal: me('Nyssara', 60), who: { brackwyn: { name: 'Brackwyn', class: 'Enchanter', level: 52, anonymous: false } } });
+    m.noteConsiderLevel(L('Brackwyn regards you indifferently -- test phrase for blue.'), 'Nyssara');
+    m.noteConsiderLevel(L('Corvale regards you indifferently -- test phrase for blue.'), 'Nyssara');
+    expect(m.conLevelFor('Nyssara', 'Corvale')).toBeNull();
+  });
   it('an unknown phrase with nothing to learn from gives nothing', () => {
     const m = load({ zeal: me('Nyssara', 60) });
     m.noteConsiderLevel(L('Corvale regards you indifferently -- a phrase never seen.'), 'Nyssara');
@@ -184,11 +193,19 @@ describe('a player on Target Info', () => {
     const m = load({ who: { brackwyn: { name: 'Brackwyn', class: 'Enchanter', level: 60, anonymous: false } } });
     expect(m._targetPlayerInfo(st('Brackwyn'), 'Nyssara', { mob: null })).toMatchObject({ class: 'Enchanter', level: 60, level_src: 'who' });
   });
-  it('anonymous: the consider\'s range, with the last level /who history saw', () => {
-    const m = load({ zeal: me('Nyssara', 60), who: { corvale: { name: 'Corvale', anonymous: true } }, hist: { corvale: { class: 'Wizard', level: 58 } } });
+  // The guild lead, 2026-09-24: "INcorrectly characterizing 'looks like quite a
+  // gamble' as a yellow con. these folks are level 60".
+  it('anonymous: the last level /who history saw — a consider never overrides it, and names no colour', () => {
+    const m = load({ zeal: me('Nyssara', 60), who: { corvale: { name: 'Corvale', anonymous: true } }, hist: { corvale: { class: 'Wizard', level: 60 } } });
     m.noteConsiderLevel(L('Corvale regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
     const p = m._targetPlayerInfo(st('Corvale'), 'Nyssara', { mob: null });
-    expect(p).toMatchObject({ anonymous: true, class: 'Wizard', class_src: 'history', level: null, level_min: 61, level_max: 62, history_level: 58 });
+    expect(p).toMatchObject({ anonymous: true, class: 'Wizard', class_src: 'history', level: 60, level_src: 'history',
+      level_min: null, level_max: null, con_colour: null });
+  });
+  it('a consider alone gives a player no level', () => {
+    const m = load({ zeal: me('Nyssara', 60) });
+    m.noteConsiderLevel(L('Tovrin regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+    expect(m._targetPlayerInfo(st('Tovrin'), 'Nyssara', { mob: null })).toMatchObject({ level: null, level_min: null, con_colour: null });
   });
   it('says when there is nothing to drain', () => {
     const m = load({ who: { rethlan: { class: 'Bard', level: 60 }, zarrin: { class: 'Warrior', level: 60 } } });
@@ -219,7 +236,8 @@ describe('the Target Info card', () => {
     expect(h).toContain('last seen 58');
     expect(h).toContain('drained up to <b style="color:#58a6ff">770</b> mana · 2 casts');
   });
-  it('asks for a consider when there is no level at all', () => {
-    expect(card({ anonymous: true })).toContain('/consider them for a level range');
+  it('with no level at all, says /who is where it comes from — never a consider', () => {
+    expect(card({ anonymous: true })).toContain('level unknown until a /who sees them out of anonymous');
+    expect(card({ anonymous: true })).not.toContain('/consider');
   });
 });

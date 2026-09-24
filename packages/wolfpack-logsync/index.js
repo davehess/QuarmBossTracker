@@ -4809,12 +4809,13 @@ function _conColourOf(key) {
   return (total >= 3 && n / total >= 0.8) ? best : null;
 }
 // A target whose level we know without the consider: an NPC with ONE catalog
-// level, or a player /who showed us (not anonymous).
+// level. NOT a player, even one /who has shown: the client's consider of a
+// PLAYER does not follow the level table (the guild lead, 2026-09-24: level-60
+// players conned by a level 60 read "looks like quite a gamble", a yellow by
+// the table), so a player's consider would teach the wrong colour.
 function _knownLevelOf(name) {
   const mob = (typeof _npcMobInfoFor === 'function') ? _npcMobInfoFor(name) : null;
   if (mob && Number(mob.level) > 0 && !mob.maxlevel) return Number(mob.level);
-  const w = whoData.get(String(name).toLowerCase());
-  if (w && !w.anonymous && Number(w.level) > 0) return Number(w.level);
   return null;
 }
 const _conLevelByTarget = new Map();   // charLower|targetLower → { colour, phrase, my, min, max, exact, at }
@@ -12531,7 +12532,43 @@ function _meCombatSince(cl, sinceMs, now) {
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
   const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
-  return { secs, out, in: inn, feed, ds };
+  return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
+}
+// Damage per MOB — done, taken and your damage shield — so the HUD can roll
+// old hits into a running total and drop it when the mob dies (the guild lead,
+// 2026-09-24: "Have the damage done and taken per mob roll off into a total as
+// well, then drop out after each mob" · "Have the damage shield hits roll into
+// a total"). Same-named mobs are told apart by death: a hit belongs to the
+// life that ends at the first death of that name at or after it. A live total
+// stays while the mob was hit in the last 30 s; a dead one for 8 s, so its
+// final number is readable, then it drops out.
+const _meMobDeaths = new Map();   // mobLower → [death times, oldest first]
+const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 8000;
+function _meNoteMobDeath(name, t) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return;
+  const list = _meMobDeaths.get(k) || [];
+  list.push(t);
+  if (list.length > 8) list.shift();
+  _meMobDeaths.delete(k);
+  _meMobDeaths.set(k, list);
+  if (_meMobDeaths.size > 200) _meMobDeaths.delete(_meMobDeaths.keys().next().value);
+}
+function _meMobTallies(cl, now) {
+  const by = new Map();
+  for (const h of _meHits.get(cl) || []) {
+    if (!h.other) continue;
+    const k = String(h.other).toLowerCase();
+    const died = (_meMobDeaths.get(k) || []).find(d => d >= h.t);
+    const key = k + '|' + (died == null ? 'alive' : died);
+    let v = by.get(key);
+    if (!v) { v = { key, name: h.other, out: 0, in: 0, ds: 0, first: h.t, last: h.t, dead_at: died == null ? null : died }; by.set(key, v); }
+    if (h.kind === 'ds') v.ds += h.amount; else if (h.dir === 'in') v.in += h.amount; else v.out += h.amount;
+    if (h.t > v.last) v.last = h.t;
+  }
+  return [...by.values()]
+    .filter(v => v.dead_at != null ? now - v.dead_at <= _ME_TALLY_DEAD_MS : now - v.last <= _ME_TALLY_IDLE_MS)
+    .sort((a, b) => b.last - a.last).slice(0, 4);
 }
 
 // ── HUD timers and target read-outs (the guild lead, 2026-09-24) ─────────────
@@ -12904,6 +12941,14 @@ function _meNoteRawLine(line, character) {
   const now = Date.now();
   const cl = String(character).toLowerCase();
   _meTimersLoad();   // before any write, so a restored timer is not overwritten by a stale file
+  // A death closes that mob's damage total on the HUD (_meMobTallies).
+  if (msg.indexOf(' slain') !== -1 || msg.endsWith(' died.')) {
+    const dm = line.match(_SLAIN_YOU_RX) || line.match(_SLAIN_BY_RX) || /^(.+?) died\.$/.exec(msg);
+    if (dm && dm[1]) {
+      const ts = parseEqTimestamp(line);
+      _meNoteMobDeath(dm[1].trim().replace(/!$/, ''), ts ? ts.getTime() : now);
+    }
+  }
   if (msg.startsWith('You')) {
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
@@ -12938,8 +12983,27 @@ function _meNoteRawLine(line, character) {
     _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
   } else if (msg.endsWith(' is no longer enraged.')) {
     _meEnraged.delete(msg.slice(0, -' is no longer enraged.'.length).toLowerCase());
+  } else {
+    // A flurry or a rampage as it happens, so the HUD's F / R badge can light
+    // up (the guild lead, 2026-09-24). Server strings NPC_FLURRY "%1 executes a
+    // FLURRY of attacks on %2!", NPC_RAMPAGE "%1 goes on a RAMPAGE!" (Quarm
+    // adds "against <target>"), AE_RAMPAGE "%1 goes on a WILD RAMPAGE!".
+    const f = _ME_FLURRY_RX.exec(msg);
+    const r = f ? null : _ME_RAMPAGE_RX.exec(msg);
+    if (f || r) {
+      const k = (f || r)[1].toLowerCase();
+      const e = _meMobBursts.get(k) || {};
+      if (f) e.flurryAt = now; else e.rampageAt = now;
+      _meMobBursts.delete(k);
+      _meMobBursts.set(k, e);
+      if (_meMobBursts.size > 50) _meMobBursts.delete(_meMobBursts.keys().next().value);
+    }
   }
 }
+const _ME_FLURRY_RX = /^(.+?) executes a FLURRY of attacks on .+!$/;
+const _ME_RAMPAGE_RX = /^(.+?) goes on a (?:WILD )?RAMPAGE\b/;
+const _meMobBursts = new Map();   // mobLower → { flurryAt, rampageAt }
+const _ME_BURST_LIT_MS = 6000;    // how long a badge stays lit after the line
 
 // HP % for a name the HUD needs (the target's target): self, a groupmate's
 // gauge, then the cross-client resolver the Tank overlay uses.
@@ -12958,13 +13022,31 @@ function _meHpPctFor(nameLower, active, st) {
 function _meTargetExtras(st, active, now) {
   if (!st.target_name) return null;
   const tl = String(st.target_name).toLowerCase();
+  // A corpse has no slow, enrage or level to show (the guild lead, 2026-09-24:
+  // "Corpses shouldn't ever say 'not slowed'"), and no catalog row to fetch.
+  if (/['`’]s corpse\d*$/i.test(String(st.target_name))) return { corpse: true };
   const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
-  let specials = null;
+  let specials = null, cached = null;
   try {
-    const cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId));
+    cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId)) || null;
     if (!cached || (now - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, active, zoneId);
     if (cached && cached.mob && Array.isArray(cached.mob.specials)) specials = cached.mob.specials;
   } catch { void 0; }
+  // Level and class, for the line under the target's bar (the guild lead,
+  // 2026-09-24: "display level or level range and class under the target's
+  // bar"): an NPC's from its catalog row, a player's from /who.
+  let level = null, level_max = null, klass = null, level_src = null;
+  const mob = cached && cached.mob ? cached.mob : null;
+  if (mob) {
+    if (Number(mob.level) > 0) { level = Number(mob.level); level_src = 'catalog'; }
+    if (Number(mob.maxlevel) > level) level_max = Number(mob.maxlevel);
+    klass = (mob.class_ambiguous && Array.isArray(mob.class_variants) && mob.class_variants.length > 1)
+      ? mob.class_variants.map(v => v.class).join(' / ') : (mob.class || null);
+  } else {
+    const pl = _targetPlayerInfo(st, active, cached);
+    if (pl) { level = pl.level; level_src = pl.level_src; klass = pl.class; }
+  }
+  const burst = _meMobBursts.get(tl) || {};
   let tot = null;
   const pipeTot = _pipeCandidateOf(st, 'target_of_target');
   const totName = pipeTot ? pipeTot.name : _victimForMob(tl, now);
@@ -12981,6 +13063,13 @@ function _meTargetExtras(st, active, now) {
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
     enraged: !!(until && until > now),
+    level, level_max, level_src, class: klass,
+    // Flurry / rampage: whether it can, and whether it just did (the HUD's
+    // F and R badges light up for a few seconds after the line).
+    flurry: specials ? specials.includes('Flurry') : null,
+    rampage: specials ? (specials.includes('Rampage') || specials.includes('Area Rampage')) : null,
+    flurry_lit: !!(burst.flurryAt && now - burst.flurryAt <= _ME_BURST_LIT_MS),
+    rampage_lit: !!(burst.rampageAt && now - burst.rampageAt <= _ME_BURST_LIT_MS),
   };
 }
 
@@ -18676,7 +18765,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting, a mark at 97% if it summons and at the last 8% if it enrages, your hits and theirs in two columns (a finished round slides into its total), your damage shield with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows and how thick the lines are. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with its level, class and who it is hitting, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, your hits and theirs in two columns under each mob\\'s running total (older hits slide into it; it drops out when the mob dies), your damage shield the same way with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {
@@ -36728,10 +36817,12 @@ function _targetPlayerInfo(st, selfChar, cached) {
   // Nothing says it is a player yet: wait for the catalog lookup to come back empty.
   if (!who && !raidCls && !hist && !con && !(cached && !cached.mob)) return null;
   const liveWho = who && !who.anonymous ? who : null;
+  // A player's level comes from /who only — live, else the last one history
+  // saw. Their consider is not a level: the client's consider of a player does
+  // not follow the table (level-60 players read "quite a gamble", a yellow, to
+  // a level 60 — the guild lead, 2026-09-24), so a con range here was wrong.
   let level = null, level_min = null, level_max = null, level_src = null;
   if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
-  else if (con && con.exact != null) { level = con.exact; level_src = 'con'; }
-  else if (con && (con.min != null || con.max != null)) { level_min = con.min; level_max = con.max; level_src = 'con'; }
   else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
   const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
   const cls = clsRaw ? normalizeClass(String(clsRaw)) : null;
@@ -36740,7 +36831,7 @@ function _targetPlayerInfo(st, selfChar, cached) {
     name,
     class: cls, class_src,
     level, level_min, level_max, level_src,
-    con_colour: con ? con.colour : null,
+    con_colour: null,   // see the level note above: a player's consider colour is not trusted
     history_level: hist && Number(hist.level) > 0 ? Number(hist.level) : null,
     anonymous: !!(who && who.anonymous),
     guild: (liveWho && liveWho.guild) || (hist && hist.guild) || null,
