@@ -9811,6 +9811,28 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return maxAbs > 0 ? Math.min(v, maxAbs) : v;
       }
+      // Mana DRAIN on the target (SPA 15, negative base, detrimental only):
+      // { b: magnitude, f: formula, m: cap (0 = none) }. good_effect gates it —
+      // the same SPA on a beneficial spell is the CASTER's cost (Succor,
+      // Evacuate, paladin self-buffs), never a drain (checked 2026-09-24: 23
+      // detrimental player drains, 6 beneficial caster costs). The agent
+      // resolves the formula (1–99 = base + level × f, the Quarm server's rule)
+      // and applies the high-level-NPC cut.
+      function _manaDrain(r) {
+        if (Number(r.good_effect) !== 0) return null;
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        if (!eff || !base) return null;
+        for (let i = 0; i < eff.length; i++) {
+          if (eff[i] === 15 && Number(base[i]) < 0) {
+            return { b: Math.abs(Number(base[i])), f: form ? (Number(form[i]) || 100) : 100,
+                     m: maxA && maxA[i] != null ? Math.abs(Number(maxA[i])) : 0 };
+          }
+        }
+        return null;
+      }
       // Does the spell carry effect `spa` in any slot? raw.eff has all twelve;
       // the indexed columns only the first three.
       function _hasSpa(r, spa) {
@@ -9935,6 +9957,9 @@ async function _handleAgentSpellCatalog(req, res) {
             // (the guild lead, 2026-09-24: "cast damage too with elements").
             // 0 (unresistable) is omitted like every other zero here.
             rt:    Number(r.resist_type) > 0 ? Number(r.resist_type) : undefined,
+            // Mana drained from the target — Target Info's mob mana bar and
+            // the PvP "drained from them" tally (the guild lead, 2026-09-24).
+            drain: _manaDrain(r) || undefined,
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
