@@ -119,9 +119,9 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder, and Box (was A); C retired** | **On beta, agent 3.7.15 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8, §18).** §18: C removed, A renamed Box, the HUD the default; HUD ✥/✕ under the tick and swing bars, its background a shadow; Box without a card, thin endurance. Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17). Optional: the one-line Zeal PR makes the swing timer exact |
-| **Mimic mini mode — the nine renditions** | **Found unbuilt 2026-09-24 (§18)**: the framework shipped 2026-09-17 but no overlay had its rendition, so ▭ did nothing. Dashboard controls landed in agent 3.7.15 (Mini column, Minimize ALL row). Vote: tank A · target B · CH chain B · charm A · ext A · pet B · dps B · pop A · buff B | build them, in the recorded cost order (pop, charm, ext, tank, target, dps, pet, buff, then CH chain B) |
-| **Colour-blind themes, opacity split, "key in use"** | **On beta, agent 3.7.15 (§18).** Three fitted colour matrices; Opacity = the whole overlay, Background its own slider (old values migrate once); a taken hotkey is named, another program's is detected | the guild lead tries the three themes with someone who has that colour vision, if anyone in the guild does — the fit is measured, not yet seen by a colour-blind eye |
+| **HUD (was "Me"): one HUD + a ⚙ builder, and Box (was A); C retired** | **On STABLE, Mimic 2.7.1 / agent 3.7.16 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8, §18, §19).** §19: not dockable; ✥ [Box\|HUD\|⚙] ✕ centred under the ring, no name. §18: C removed, A renamed Box, the HUD the default; HUD ✥/✕ under the tick and swing bars, its background a shadow; Box without a card, thin endurance. Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17). Optional: the one-line Zeal PR makes the swing timer exact |
+| **Mimic mini mode — the nine renditions** | **Built and on stable, Mimic 2.7.1 / agent 3.7.16 (§19).** Three data gaps: Target Info has no ROOT row (the agent does not flag roots), Charm shows no MR (no resists in its data), Pet shows the haste buff's name, not its % | the guild lead tries them in raid; then, if wanted: the agent flags roots (SPA 99) like pacify; a name → haste % table for pets; resists into the charm data |
+| **Colour-blind themes, opacity split, "key in use"** | **On STABLE, Mimic 2.7.1 / agent 3.7.16 (§18, §19).** Three fitted colour matrices; Opacity = the whole overlay, Background its own slider (old values migrate once); a taken hotkey is named, another program's is detected | the guild lead tries the three themes with someone who has that colour vision, if anyone in the guild does — the fit is measured, not yet seen by a colour-blind eye |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
 | **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
@@ -1366,5 +1366,77 @@ The table: the Dock and trigger alerts first, the rest alphabetical.
 
 One build, no variants: explicit instructions plus fixes inside established
 surfaces. The mini renditions follow as their own change.
+
+## 19. The nine mini renditions, and Mimic 2.7.1 to stable for raid night (2026-09-24, agent 3.7.16)
+
+The guild lead: *"These are the mini modes to build to start from"* (the ballot:
+tank A · target info B · CH chain B · charm A · extended target A · pet B ·
+DPS/tank meter B · PoP raids A · buff queue B) · *"HUD doesn't make sense to
+dock, remove that"* · *"after these mini modes are built and included, I want
+to push all of this to main so we have them available for tonight"* · *"For
+the Hud, the character name doesn't need to be at the top left. The
+selection for Box/Hud should be in the middle horizontally, vertically below
+the bottom tick/swing timers, directly next to the movement and X buttons"* ·
+*"When this is over make sure to post to raid-chat in discord so that people
+know to get the new version … Looking for feedback on skills that people want
+to track."*
+
+**The nine minis**, each behind `body.wp-mini` in its own overlay; full mode
+is byte-identical to before (each was run through the same harness before and
+after). What each shows, and the calls made where the data or the mock left
+room:
+- **Tank A** — one strip: the tank's bar, "tank ← mob", the damage-shield box
+  showing the SUM of the tank's DS buffs per hit (grey "no DS" when none); a
+  rampage row only while rampage has a target, with the DA countdown and CH!.
+  The DA is labelled "DA" as voted even when full mode would say "INV".
+- **Target Info B** — the mob's bar and name (Shadow Knight HT chip beside it),
+  a draining amber SLOW row. ⚠ **No ROOT row:** nothing the overlay receives
+  marks a debuff as a root. The fix is agent-side — flag root (SPA 99) on
+  `target_buffs` as pacify is flagged — then one more row. Open item.
+- **CH chain B** — timeline lanes (see the CH agent's notes in HOW-ITS-BUILT).
+- **Charm A** — the pet's bar → its target, then a draining purple timer (red
+  "recharm" on the overlay's own imminent flag — 12 s bard, 30 s others — so
+  the bar turns red when the overlay speaks). ⚠ **No MR:** the charm data
+  carries no resists. Open item.
+- **Extended Target A** — one row per mob: bar, name → its target, S / M
+  pills, and every OTHER debuff folded into a "·N" whose hover lists them
+  (slow and mez are not double-counted in N — the guild lead to confirm).
+- **Pet B** — the pet's bar → target, then a haste bar. ⚠ **No haste %:** the
+  pet data carries the buff's name, not its haste value, so the short name
+  stands in. A dim "⚡ no haste" line keeps the slot when none is up (reads as
+  "rebuff", not "not tracked").
+- **DPS B** — the player above me, me, the player below, from whichever tab
+  was last picked (me first → me and the two below; last → the two above; no
+  row → the top three). The title row stays, because it carries the /rs copy
+  button the vote said to leave alone.
+- **PoP A** — the shared checklist and the ↗ guide link only; a row click still
+  checks it raid-wide.
+- **Buff queue B** — buffs left, cures right, a chip per category with its
+  character count; click one to list who needs it with their group; the open
+  chip survives repaints.
+Every mini hides its overlay's connection dot (it lives in the title bar) —
+worth knowing when an overlay "freezes" in mini. Found in passing, not fixed:
+the full Buff queue's category headers and the full Pet list's dismiss ✕ have
+no hover handshake, so on a locked overlay those clicks likely fall through
+to EverQuest.
+
+**The HUD:** no longer dockable (out of main's `_DOCK_CATALOG`, no DOCK button;
+a HUD that was docked gets its own window back in `loadConfig`, as undocking
+would have). Its chrome is one row centred under the ring: ✥ [Box | HUD | ⚙] ✕,
+below the tick and swing labels, and no character name (the Box keeps it).
+
+**Graduated to stable the same evening, before the raid freeze.** Mimic
+**2.7.1**, agent **3.7.16**, bot **3.1.148**, web **1.8.3** (the roadmap entry).
+A file-level promotion as always: `apps/mimic/`, `packages/wolfpack-logsync/`
+and their tests. ⚠ **Left on beta deliberately:** the item page's quests and
+tradeskills layouts (`?v=b` / `?v=c`) — two variants not yet picked, and a
+variant never goes to main unpicked. Beta re-parked at **2.7.2**.
+
+**The raid-chat post** is a one-shot in the bot (`_announceMimic271Once`),
+latched in `bot_kv` so it posts once ever, and gated on the stable v2.7.1
+release carrying its installer — the bot deploys minutes after the push, the
+installer builds after that, and a post that beat it would send the raid to
+an update that did not exist yet. It checks every 5 minutes for up to 12 hours.
+An unreadable latch (Supabase down) holds and retries rather than posting.
 
 

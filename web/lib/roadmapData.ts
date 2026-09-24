@@ -37,6 +37,49 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2.7.1-2026-09-24',
+    title: 'Mimic 2.7.1 · Agent 3.7.16',
+    version: 'Mimic 2.7.1 · Agent 3.7.16 · Web 1.8.3',
+    date: '2026-09-24',
+    headline: 'The HUD: your own character in a ring round the middle of your screen — plus mini mode, colour-blind themes and a hotkey for every overlay.',
+    features: [
+      {
+        name: 'The HUD',
+        blurb: 'A ring round your character: health, mana or endurance, the server tick and your swing timer, your cooldowns, and your target — its name on its health bar, who it is hitting, its level, class, resists and whether it is slowed. Your hits and the hits on you run up either side, a round at a time, older rounds folding into the fight total; procs show in purple. Pick what it shows with ⚙, saved per character. Prefer a panel? Pick Box. It also pops up by itself when you are blinded.',
+      },
+      {
+        name: 'Mini mode',
+        blurb: 'Nine overlays now have the small version the guild voted for — Tank, Target Info, CH chain, Charm, Extended Target, Pet, the DPS meter, PoP raids and the Buff queue. Right-click an overlay, use the Mini column on the Overlays page, or press Ctrl+Shift+M for all of them; 📌 keeps one small when the rest come back.',
+      },
+      {
+        name: 'Colour-blind themes',
+        blurb: 'Deuteranopia, Protanopia and Tritanopia, on the Overlays page under Theme. Each keeps danger, healthy and warning colours easy to tell apart for that kind of colour vision.',
+      },
+      {
+        name: 'A hotkey for every overlay',
+        blurb: 'Give any overlay its own show/hide key on the Overlays page. If the key is already taken — by Mimic or by another program — it now says so.',
+      },
+      {
+        name: 'Target Info knows more',
+        blurb: 'A Shadow Knight mob shows whether it still has its Harm Touch, and how long until it is back. A player target shows their class and level from /who. Mob mana counts the drains that land on it, and a PvP target keeps a tally of what you drained.',
+      },
+      {
+        name: 'Opacity that fades the whole overlay',
+        blurb: 'The opacity slider now fades everything an overlay shows; its background has its own slider beside the backgrounds button. The Overlays page is in two columns with the list in A–Z order.',
+      },
+      {
+        name: 'Also',
+        blurb: 'DPS History lists your recent fights to pick from; a finished deathroll is one line in Rolls and the Command Center.',
+      },
+    ],
+    fixes: [
+      'Setting a hotkey that another program or Mimic already used did nothing at all.',
+      'The opacity slider in an overlay’s setup bar only changed the background, so on some overlays it seemed to do nothing.',
+      'Mini mode did nothing — the small versions had never been built.',
+      'The L size cut off the edge of the DPS window; it is now 420 px wide.',
+    ],
+  },
+  {
     key: 'pqdi-links-2026-09-24',
     title: 'Web 1.8.2',
     version: 'Web 1.8.2',
