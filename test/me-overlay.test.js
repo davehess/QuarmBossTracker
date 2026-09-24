@@ -261,7 +261,10 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE };')();
+// The hit columns are their own layer now (round five); a lane's lines, top to bottom.
+const laneOf = (snap, id) => R.hudLanes(R.hudData(snap), R.hudParts).items.filter(it => it.lane === id)
+  .sort((a, b) => a.row - b.row).map(it => it.text + (it.hand === 'OH' ? ' OH' : ''));
 const HUDS = { HUD: R.renderHud };
 
 describe('the three layouts', () => {
@@ -377,9 +380,21 @@ describe('the three HUDs', () => {
     });
 
     it(name + ' puts hits inside the ring: on you, yours', () => {
-      const h = fn(base);
-      expect(h).toMatch(/<textPath href="#hout0"[^>]*>[\s\S]*?>110</);
-      expect(h).toMatch(/<textPath href="#hin0"[^>]*>[\s\S]*?>300</);
+      expect(laneOf(base, 'hout')).toEqual(['110']);
+      expect(laneOf(base, 'hin')).toEqual(['300']);
+    });
+
+    // Round five, the guild lead: "if a mob summons we should get a marker next to the 97%".
+    it(name + ' marks 97% on the target\'s bar for a mob that summons, and not otherwise', () => {
+      const MARK = /<path d="M([\d.]+) ([\d.]+) L([\d.]+) ([\d.]+)" stroke="var\(--orange\)"/;
+      const sum = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { summon: true }) }));
+      const m = sum.match(MARK);
+      expect(m).not.toBeNull();
+      expect(fn(base)).not.toMatch(MARK);
+      const deg = (x, y) => Math.atan2(x - 200, 200 - y) * 180 / Math.PI;
+      expect(deg(+m[1], +m[2])).toBeCloseTo(-44 + 88 * 0.97, 0);   // the bar runs -44..44
+      expect(Math.hypot(+m[1] - 200, +m[2] - 200)).toBeLessThan(172);   // it crosses the bar
+      expect(Math.hypot(+m[3] - 200, +m[4] - 200)).toBeGreaterThan(172);
     });
   }
 
@@ -405,6 +420,27 @@ describe('the three HUDs', () => {
       }
     });
   }
+
+  // The hit columns are upright now (round five: "Text should be vertically
+  // aligned"), so every line is a box, measured at the longest text a lane
+  // carries in practice — "1,240" (a big spell on you, a round's total), the
+  // off-hand tag (6 units) on your own hits, four characters of damage shield —
+  // in every row, kept off the middle and inside the ring's stroke (r 169).
+  it('the hit columns stay between the open middle and the ring, in every row', () => {
+    const widest = { hin: 5 * R.HIT_SIZE * 0.6, hout: 5 * R.HIT_SIZE * 0.6 + 3 * 6 * 0.6, hds: 4 * R.HIT_SIZE * 0.6 };
+    for (const [id, L] of Object.entries(R.HIT_LANES)) {
+      const w = widest[id];
+      for (let row = 0; row < L.rows; row++) {
+        const y = L.y + row * 10.5;
+        const x0 = L.anchor === 'end' ? L.x - w : L.x, x1 = x0 + w;
+        const nx = Math.max(x0, Math.min(200, x1)), ny = Math.max(y - R.HIT_SIZE, Math.min(200, y));
+        expect(Math.hypot(nx - 200, ny - 200), id + ' row ' + row).toBeGreaterThan(95);
+        for (const [cx, cy] of [[x0, y - R.HIT_SIZE], [x1, y - R.HIT_SIZE], [x0, y], [x1, y]]) {
+          expect(Math.hypot(cx - 200, cy - 200), id + ' row ' + row + ' inside the ring').toBeLessThan(169);
+        }
+      }
+    }
+  });
 
   it('a class cooldown never used this session is unknown ("—"), never "ready"', () => {
     const s2 = Object.assign({}, base, { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: null, total_ms: null, est: true, seen: false }] });
@@ -432,45 +468,64 @@ describe('the HUD — rounds, damage shield, builder', () => {
     hp: { pct: 80 }, mana: {}, end: { pct: 50 }, cooldowns: [], target: null,
     combat: { live: true, secs: 30, out: { dmg: 0, dps: 0, by: {} }, in: { dmg: 0, dps: 0, by: {} }, feed },
   }, extra);
-  const lane = (h, id) => [...h.matchAll(new RegExp('<textPath href="#' + id + '(\\d)"[^>]*>([\\s\\S]*?)</textPath>', 'g'))]
-    .map(m => m[2].replace(/<[^>]+>/g, '').trim());
+  const lane = laneOf;
   const reset = () => Object.assign(R.hudParts, R.HUD_DEFAULTS);
 
-  it('six hits in one round are ONE line of six numbers, oldest first', () => {
+  // Round five, the guild lead: "each round of damage can come out as individual
+  // hits but get merged into a single line item after the next round shows up".
+  it('the newest round is one line per hit, in the order they landed', () => {
     reset();
     const feed = [85, 33, 49, 45, 33, 49].reverse().map(a => hit('out', a, 0));   // newest first, as the agent sends
-    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['85 33 49 45 33 49']);
+    expect(lane(s(feed), 'hout')).toEqual(['85', '33', '49', '45', '33', '49']);
   });
 
-  it('one line per round, newest outermost, capped by the "rounds" setting', () => {
+  it('when the next round lands, the last one becomes ONE line — its total — and its hits slide onto it', () => {
+    reset();
+    const older = [30, 40, 50].reverse().map(a => hit('out', a, 2));
+    const newer = [10, 20].reverse().map(a => hit('out', a, 0));
+    const L = R.hudLanes(R.hudData(s(newer.concat(older))), R.hudParts);
+    expect(lane(s(newer.concat(older)), 'hout')).toEqual(['10', '20', '120']);
+    const total = L.items.find(it => it.text === '120');
+    expect(total.merged).toBe(true);
+    // Each of the finished round's three hits is pointed at the total's row: that is the slide.
+    const g = L.ghosts.filter(x => x.lane === 'hout');
+    expect(g).toHaveLength(3);
+    for (const x of g) expect([x.x, x.y]).toEqual([total.x, total.y]);
+    // …and they are the SAME keys the hits had while they were the newest round.
+    const before = R.hudLanes(R.hudData(s(older)), R.hudParts).items.map(it => it.key).sort();
+    expect(g.map(x => x.key).sort()).toEqual(before);
+  });
+
+  it('one round per line below the newest, capped by the "rounds" setting', () => {
     reset();
     const feed = [0, 3, 6, 9, 12].map((sec, i) => hit('out', 100 + i, sec));
-    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['100', '101', '102', '103']);   // default 4
+    expect(lane(s(feed), 'hout')).toEqual(['100', '101', '102', '103']);   // default 4
     R.hudParts.rounds = 2;
-    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['100', '101']);
+    expect(lane(s(feed), 'hout')).toEqual(['100', '101']);
     reset();
   });
 
-  it('main hand | off hand when the hands swing different verbs', () => {
+  it('an off-hand hit carries a small OH when the hands swing different verbs', () => {
     reset();
     const feed = [hit('out', 40, 0, { hand: 'OH' }), hit('out', 90, 0, { hand: 'MH' }), hit('out', 88, 0, { hand: 'MH' })];
-    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['88 90 | 40']);
+    expect(lane(s(feed), 'hout')).toEqual(['88', '90', '40 OH']);
   });
 
   it('hits on you and your hits are separate lanes', () => {
     reset();
-    const h = R.renderHud(s([hit('in', 169, 0), hit('out', 45, 0)]));
-    expect(lane(h, 'hin')).toEqual(['169']);
-    expect(lane(h, 'hout')).toEqual(['45']);
+    const one = s([hit('in', 169, 0), hit('out', 45, 0)]);
+    expect(lane(one, 'hin')).toEqual(['169']);
+    expect(lane(one, 'hout')).toEqual(['45']);
   });
 
   it('damage-shield hits leave your lane for their own, with a per-hit button', () => {
     reset();
     const feed = [hit('out', 38, 0, { kind: 'ds' }), hit('out', 45, 0), hit('out', 38, 2, { kind: 'ds' })];
-    const h = R.renderHud(s(feed, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed,
-      ds: { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true } } }));
-    expect(lane(h, 'hout')).toEqual(['45']);
-    expect(lane(h, 'hds')).toEqual(['38', '38']);
+    const snap = s(feed, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed,
+      ds: { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true } } });
+    const h = R.renderHud(snap);
+    expect(lane(snap, 'hout')).toEqual(['45']);
+    expect(lane(snap, 'hds')).toEqual(['38', '38']);
     expect(h).toMatch(/<circle[^>]*stroke="var\(--orange\)"/);
     expect(h).toMatch(/font-weight="700">38<\/text>/);
     expect(h).toContain('>DS<');
@@ -480,14 +535,17 @@ describe('the HUD — rounds, damage shield, builder', () => {
     reset();
     const one = s([hit('in', 169, 0), hit('out', 45, 0)], { tick: { ms_left: 3000 }, resists: { mr: 183, fr: 234, cr: 170, pr: 200, dr: 220 } });
     const all = R.renderHud(one);
+    const allOut = R.hudLanes(R.hudData(one), R.hudParts).items.filter(it => it.lane === 'hout');
     expect(all).toContain('TICK');
     expect(all).toContain('MR<tspan');
+    expect(lane(one, 'hin')).toEqual(['169']);
     R.hudParts.tick = 0; R.hudParts.resists = 0; R.hudParts.hitsIn = 0;
     const trimmed = R.renderHud(one);
     expect(trimmed).not.toContain('TICK');
     expect(trimmed).not.toContain('MR<tspan');
-    expect(lane(trimmed, 'hin')).toEqual([]);
-    expect(lane(trimmed, 'hout')).toEqual(lane(all, 'hout'));
+    expect(lane(one, 'hin')).toEqual([]);
+    // your hits keep their exact place
+    expect(R.hudLanes(R.hudData(one), R.hudParts).items.filter(it => it.lane === 'hout')).toEqual(allOut);
     reset();
   });
 
@@ -541,6 +599,16 @@ describe('the in-game picker', () => {
     expect(body).toMatch(/function closeBuilder\(restore\)\{[\s\S]*?if \(restore !== false && pre && pre\.width\) setBounds\(pre\);/);
     // quitting with it open must not leave the ring off-centre next launch
     expect(body).toMatch(/if \(pre\) closeBuilder\(isHud\(style\)\);/);
+  });
+  // Round five: "It should be animated and smooth, not just jump." The hit
+  // lines are kept between repaints (paintLanes), so CSS can move them — and
+  // a player who asked the OS for less motion gets them still.
+  it('the hit lines slide (a kept layer + a CSS transition), and hold still for reduced motion', () => {
+    const css = stripCss(meHtml);
+    expect(css).toContain('#hudlanes text{transition:transform .3s ease-out,opacity .3s ease-out}');
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)\{[^}]*#hudlanes text\{transition:none\}/);
+    expect(body).toContain('paintLanes(isHud(style) && s && s.character ? hudLanes(hudData(s), hudParts) : null, hudParts.weight)');
+    expect(meHtml).toContain('<svg id="hudlanes"');
   });
   it('a HUD makes the window a centred square — the ring is the bounds', () => {
     expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);

@@ -12976,6 +12976,9 @@ function _meTargetExtras(st, active, now) {
     tot,
     slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
     enrage: specials ? specials.includes('Enrage') : null,
+    // A summoner starts pulling its target to it below 97% HP (the server's
+    // default; a mob's own setting can move it, which the catalog row doesn't carry).
+    summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
     enraged: !!(until && until > now),
   };

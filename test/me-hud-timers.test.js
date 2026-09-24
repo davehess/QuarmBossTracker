@@ -251,6 +251,16 @@ describe('target read-outs', () => {
 
   it('an uncached mob says "unknown" (null), not "cannot enrage"', () => {
     expect(load()._meTargetExtras(st(), 'Aldenmar', clock).enrage).toBeNull();
+    expect(load()._meTargetExtras(st(), 'Aldenmar', clock).summon).toBeNull();
+  });
+
+  // The guild lead, round five: "if a mob summons we should get a marker next to the 97%".
+  it('a summoner is flagged from the mob-info row, and a non-summoner is not', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Summon', 'Enrage'] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).summon).toBe(true);
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).summon).toBe(false);
   });
 
   it('the target\'s target, with their HP from the group gauges', () => {

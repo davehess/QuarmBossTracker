@@ -102,14 +102,20 @@
   #builder select,#builder button{background:rgba(22,27,34,.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
-  #hudsvg text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
+  #hudsvg text,#hudlanes text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
   /* Line weight (⚙ → Line weight): the dark edge round the text, and the
      numbers' boldness. Arcs are scaled in the script. Consolas has only
      regular and bold, so 500 reads as regular there. */
-  #hudsvg.w-thin text{stroke-width:1.6px;stroke:rgba(0,0,0,.8)}
+  #hudsvg.w-thin text,#hudlanes.w-thin text{stroke-width:1.6px;stroke:rgba(0,0,0,.8)}
   #hudsvg.w-thin [font-weight="700"]{font-weight:500}
-  #hudsvg.w-normal text{stroke-width:2.3px}
+  #hudsvg.w-normal text,#hudlanes.w-normal text{stroke-width:2.3px}
   #hudsvg.w-normal [font-weight="700"]{font-weight:600}
+  /* The hit columns: their own layer over the ring, so a line can slide
+     (a new hit in from above; a finished round's hits onto its total). */
+  #hudlanes{display:none;position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+  body.hud #hudlanes{display:block}
+  #hudlanes text{transition:transform .3s ease-out,opacity .3s ease-out}
+  @media (prefers-reduced-motion: reduce){ #hudlanes text{transition:none} }
 
   /* C — role card */
   .focus{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:4px;margin-top:2px}
@@ -177,6 +183,7 @@
         </span>
       </div>
       <div id="body"></div>
+      <svg id="hudlanes" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
       <div id="empty" style="display:none">Log a character in with Zeal running and this fills in.</div>
     </div>
   </div>
@@ -488,7 +495,7 @@
     var t = s.target;
     if (t) {
       d.t = { name: t.name, hp: t.hp_pct, tot: t.tot && t.tot.name ? { name: t.tot.name, hp: t.tot.hp_pct } : null,
-              slow: slowText(t), enrage: t.enrage === true, enraged: t.enraged === true };
+              slow: slowText(t), enrage: t.enrage === true, enraged: t.enraged === true, summon: t.summon === true };
     }
     var c = s.combat || null;
     d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
@@ -564,7 +571,7 @@
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
-    ['Target', [['target', 'Target name + health'], ['tot', 'Who it is hitting, with their health'], ['status', 'Slowed · enrage zone (last 8%) · ENRAGED']]],
+    ['Target', [['target', 'Target name + health'], ['tot', 'Who it is hitting, with their health'], ['status', 'Slowed · summons (mark at 97%) · enrage zone (last 8%) · ENRAGED']]],
     ['You', [['hp', 'Health'], ['right', 'Mana, or endurance'], ['dps', 'Damage per second (out · in)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick (bar under them)'], ['swing', 'Swing timer (bar under them)'], ['cast', 'Cast bar (takes the swing bar while you cast)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield (button + its own lane)'], ['rounds', 'Rounds shown per lane', [2, 3, 4, 5]]]],
@@ -604,28 +611,71 @@
     });
     return lines;
   }
-  function roundText(items){
-    items = items.slice().reverse();   // oldest first, the order they landed
-    var nums = function(xs){ return xs.map(function(f){ return '<tspan fill="' + f.color + '">' + n0(f.amount) + '</tspan>'; }).join(' '); };
-    var mh = items.filter(function(f){ return f.hand === 'MH'; }), oh = items.filter(function(f){ return f.hand === 'OH'; });
-    if (!mh.length && !oh.length) return nums(items);
-    return [mh, items.filter(function(f){ return !f.hand; }), oh].filter(function(g){ return g.length; }).map(nums)
-      .join('<tspan fill="#6e7681"> | </tspan>');
+  // ── Hits: upright columns whose lines MOVE ─────────────────────────────────
+  // Round five (the guild lead, 2026-09-24): "Text should be vertically aligned,
+  // and each round of damage can come out as individual hits but get merged
+  // into a single line item after the next round shows up. It should be
+  // animated and smooth, not just jump. Have them slide and smoosh together
+  // into the new number."
+  // So each lane is a column of upright numbers lined up on one edge. The
+  // newest round sits at the top, one line per hit in the order they landed;
+  // every older round is ONE line, its total. The lines live in their own
+  // layer (#hudlanes, painted by paintLanes) so they can move: when the next
+  // round lands, the last round's hits slide onto their total and fade into it.
+  // The columns stay outside r ≈ 100 — the middle is the character's.
+  var HIT_LANES = {
+    hin:  { x: 94,  y: 126, anchor: 'end',   rows: 14 },   // hits on you, left of the middle
+    hout: { x: 306, y: 126, anchor: 'start', rows: 11 },   // your hits, right of the middle
+    hds:  { x: 306, y: 262, anchor: 'start', rows: 4 },    // your damage shield, under them
+  };
+  var HIT_STEP = 10.5, HIT_SIZE = 9;
+  // One lane's lines. `ghosts` are the hits of every merged round, each
+  // pointed at its round's total — where they slide to as they fade.
+  function laneItems(id, lines, lane){
+    var items = [], ghosts = [], row = 0;
+    lines.forEach(function(ln, li){
+      var hits = ln.items.slice().reverse();   // oldest first, the order they landed
+      if (li === 0) {
+        hits.forEach(function(f, i){
+          items.push({ key: id + '|' + ln.at + '|' + i, row: row++, text: n0(f.amount), color: f.color, op: ln.op, hand: f.hand || null });
+        });
+        return;
+      }
+      var sum = 0, top = hits[0];
+      hits.forEach(function(f){ sum += +f.amount || 0; if ((+f.amount || 0) > (+top.amount || 0)) top = f; });
+      items.push({ key: id + '|' + ln.at, row: row, text: n0(sum), color: top.color, op: ln.op, merged: true, n: hits.length });
+      hits.forEach(function(f, i){ ghosts.push({ key: id + '|' + ln.at + '|' + i, row: row }); });
+      row++;
+    });
+    return { items: items.filter(function(it){ return it.row < lane.rows; }), ghosts: ghosts.filter(function(g){ return g.row < lane.rows; }) };
   }
-  // One lane: its lines written along the inside of the ring, 10 units apart.
-  function hitLane(id, lines, r0, a0, a1){
-    return lines.map(function(ln, i){
-      return ringLabel(id + i, r0 - i * 10, a0, a1, '<tspan fill-opacity="' + ln.op + '">' + roundText(ln.items) + '</tspan>', 8.5);
-    }).join('');
+  // Every lane the builder has on, placed in the ring's 400×400 space.
+  function hudLanes(d, p){
+    var n = Math.max(2, Math.min(5, parseInt(p.rounds, 10) || 4));
+    var out = { items: [], ghosts: [] };
+    function add(id, pick, rounds){
+      var L = HIT_LANES[id], r = laneItems(id, hitRounds(d.feed, pick, rounds), L);
+      r.items.forEach(function(it){ it.lane = id; it.x = L.x; it.y = L.y + it.row * HIT_STEP; it.anchor = L.anchor; out.items.push(it); });
+      r.ghosts.forEach(function(g){ g.lane = id; g.x = L.x; g.y = L.y + g.row * HIT_STEP; out.ghosts.push(g); });
+    }
+    if (p.hitsIn) add('hin', function(f){ return f.dir === 'in'; }, n);
+    if (p.hitsOut) add('hout', function(f){ return f.dir === 'out' && f.kind !== 'ds'; }, n);
+    if (p.ds && d.ds) add('hds', function(f){ return f.kind === 'ds'; }, 3);
+    return out;
+  }
+  // A line's text: the number, and a small "OH" when your off hand swung it
+  // (only known when the two hands swing different verbs).
+  function laneInner(it){
+    return esc(it.text) + (it.hand === 'OH' ? '<tspan font-size="6" fill="#6e7681"> OH</tspan>' : '');
   }
 
   // ── HUD ────────────────────────────────────────────────────────────────────
   // One ring (r 172), fixed places:
   //   top      target arc, its name written along the ring; who it is hitting
-  //            and its slow state just inside
-  //   left     health · hits ON YOU along the inside
-  //   right    mana or endurance · YOUR hits along the inside, and below them
-  //            the damage-shield lane with its per-hit button
+  //            and its slow state just inside; the summon mark at 97%
+  //   left     health · a column of hits ON YOU inside it (its own layer)
+  //   right    mana or endurance · a column of YOUR hits inside it, and below
+  //            it the damage-shield column with its per-hit button
   //   bottom   cooldowns on an inner arc, each labelled beneath it; under
   //            them, on the ring, the tick bar (left) and the swing bar
   //            (right — your cast takes it while you cast), each labelled
@@ -636,6 +686,7 @@
   // ENRAGES section should just make a red outline for the last 8% of the
   // healthbar".
   var ENRAGE_PCT = 8;   // Quarm bosses enrage at ~8% HP (same as the Tank overlay)
+  var SUMMON_PCT = 97;  // the server's default: a summoner starts pulling below 97%
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
     var W = HUD_WEIGHTS[p.weight] || HUD_WEIGHTS.thin;
@@ -645,6 +696,14 @@
       // enraged. The outline goes under the bar so the bar stays readable.
       if (p.status && d.t.enrage) h += stroke(arcD(R, -44, -44 + 88 * ENRAGE_PCT / 100), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', 6 * W + 5);
       h += gauge(R, -44, 44, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6 * W);
+      // A summoner: a marker across the bar at 97%, where it starts pulling
+      // its target in (the guild lead, round five: "if a mob summons we should
+      // get a marker next to the 97%"), with a pointer outside the ring.
+      if (p.status && d.t.summon) {
+        var sa = -44 + 88 * SUMMON_PCT / 100, s0 = P(R - 6, sa), s1 = P(R + 6, sa), sp = P(R + 9, sa), sl = P(R + 14, sa - 2.2), sr = P(R + 14, sa + 2.2);
+        h += '<path d="M' + f1(s0[0]) + ' ' + f1(s0[1]) + ' L' + f1(s1[0]) + ' ' + f1(s1[1]) + '" stroke="var(--orange)" stroke-width="' + f1(1.2 * W + 0.6) + '" stroke-linecap="round"/>'
+          + '<path d="M' + f1(sp[0]) + ' ' + f1(sp[1]) + ' L' + f1(sl[0]) + ' ' + f1(sl[1]) + ' L' + f1(sr[0]) + ' ' + f1(sr[1]) + ' Z" fill="var(--orange)"/>';
+      }
       h += ringLabel('htn', R + 10, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : '#e6edf3') + '">' + esc(d.t.name) + '</tspan>'
         + '<tspan fill="' + hpColor(d.t.hp) + '" font-weight="700">  ' + pctTxt(d.t.hp) + '</tspan>', 13);
       var y = 58;
@@ -684,13 +743,10 @@
       h += gauge(R, b[2], b[3], b[0].frac, b[0].color, 4 * W);
       h += ringLabel(b[1], R + 15, b[2], b[3], '<tspan fill="' + b[0].color + '">' + b[0].label + ' ' + b[0].value + '</tspan>', 8.5, true);
     });
-    // Hits: on you down the left, yours down the right, damage shield below them.
-    var n = Math.max(2, Math.min(5, parseInt(p.rounds, 10) || 4));
-    if (p.hitsIn) h += hitLane('hin', hitRounds(d.feed, function(f){ return f.dir === 'in'; }, n), 152, 238, 302);
-    if (p.hitsOut) h += hitLane('hout', hitRounds(d.feed, function(f){ return f.dir === 'out' && f.kind !== 'ds'; }, n), 152, 50, 110);
+    // Hits are their own layer (hudLanes / paintLanes), so they can move; the
+    // ring only carries the damage shield's per-hit button, left of its column.
     if (p.ds && d.ds) {
-      h += hitLane('hds', hitRounds(d.feed, function(f){ return f.kind === 'ds'; }, 3), 152, 114, 137);
-      var bp = P(114, 125);
+      var bp = [286, 272];
       h += '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="rgba(13,17,23,0.72)" stroke="var(--orange)" stroke-width="' + f1(1.2 * W + 0.3) + '"/>'
         + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, 'var(--orange)')
         + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5, 'var(--orange)', 'middle', 700);
@@ -731,6 +787,56 @@
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
   var _last = null, _lastHtml = null;
+
+  // ── the hit columns' layer ─────────────────────────────────────────────────
+  // Unlike the ring, these <text> lines are kept between repaints, keyed by
+  // hit, so CSS can animate them: a line moves by changing its transform, and
+  // a line that is going away fades where it is — or, for a finished round's
+  // hits, slides onto the round's total first ("slide and smoosh together into
+  // the new number"). Only what changed is written, so a still frame costs
+  // nothing and a running transition is never restarted.
+  var lanesEl = document.getElementById('hudlanes');
+  var _laneEls = {};
+  function lanePos(el, x, y, op){
+    var tf = 'translate(' + f1(x) + 'px,' + f1(y) + 'px)', o = String(op);
+    if (el._tf !== tf) { el.style.transform = tf; el._tf = tf; el._x = x; el._y = y; }
+    if (el._op !== o) { el.style.opacity = o; el._op = o; }
+  }
+  function laneRetire(key, el, x, y){
+    delete _laneEls[key];
+    lanePos(el, x != null ? x : el._x, y != null ? y : el._y, 0);
+    setTimeout(function(){ if (el.parentNode) el.parentNode.removeChild(el); }, 350);
+  }
+  function paintLanes(L, weight){
+    if (!lanesEl) return;
+    var cls = 'w-' + (HUD_WEIGHTS[weight] ? weight : 'thin');
+    if (lanesEl.getAttribute('class') !== cls) lanesEl.setAttribute('class', cls);
+    var keep = {};
+    (L ? L.items : []).forEach(function(it){
+      keep[it.key] = 1;
+      var el = _laneEls[it.key];
+      if (!el) {
+        el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        el.setAttribute('font-size', String(HIT_SIZE));
+        el.setAttribute('text-anchor', it.anchor);
+        lanesEl.appendChild(el);
+        _laneEls[it.key] = el;
+        // A new hit drops in from just above; a new total appears in place,
+        // under the hits that are about to slide onto it.
+        lanePos(el, it.x, it.merged ? it.y : it.y - 8, 0);
+        el.getBoundingClientRect();   // commit the start so the move animates
+      }
+      var html = laneInner(it);
+      if (el._html !== html) { el.innerHTML = html; el._html = html; }
+      if (el._fill !== it.color) { el.setAttribute('fill', it.color); el._fill = it.color; }
+      lanePos(el, it.x, it.y, it.op);
+    });
+    (L ? L.ghosts : []).forEach(function(g){
+      var el = _laneEls[g.key];
+      if (el && !keep[g.key]) { keep[g.key] = 1; laneRetire(g.key, el, g.x, g.y); }
+    });
+    Object.keys(_laneEls).forEach(function(k){ if (!keep[k]) laneRetire(k, _laneEls[k]); });
+  }
 
   // ── the builder panel (⚙, HUD only) ───────────────────────────────────────
   // A checklist of the parts in HUD_PARTS, saved on this computer. Clickable on
@@ -818,6 +924,8 @@
       html += isHud(style) ? renderHud(s) : (style === 'c' ? renderC(s) : renderA(s));
     }
     document.body.classList.toggle('hud', isHud(style));
+    // The hit columns repaint every frame; paintLanes writes only what moved.
+    paintLanes(isHud(style) && s && s.character ? hudLanes(hudData(s), hudParts) : null, hudParts.weight);
     emptyEl.style.display = (s && s.character) ? 'none' : 'block';
     if (html !== _lastHtml) {   // byte-stability guard: no rewrite when nothing changed
       bodyEl.innerHTML = html;
