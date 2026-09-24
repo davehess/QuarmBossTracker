@@ -589,6 +589,29 @@ a `drain` catalog field with formula decoding (formulas 1–99 are unmodelled;
 ToT reads 40 + 360 = 400 at L60, its max — verify before trusting). Also found:
 the mana ledger's reset/evict functions are never called in production.
 
+**Verified against the Quarm server source (2026-09-24, EQMacEmu
+`zone/spell_effects.cpp`, `SE_CurrentMana` + `CalcSpellEffectValue_formula`):**
+- Formulas 1–99 are `base + level × formula` — ToT 40 + 60×6 = 400 at L60 is
+  right, not a guess.
+- ⚠ **Instant drains are CUT on NPCs above level 52** ("from client decompile"):
+  ÷2 at levels 53–54, ÷3 and capped at **105** at 55+. Nearly every raid mob is
+  55+, so a ToT takes at most 105 from a raid boss, not 400; Mind Wrack ~100.
+  **Timed drains are not cut** — Torment of Argli's 35 × 20 ticks = 700 beats
+  six ToTs on a raid mob. The design must apply this or the bar lies downward.
+- Bards — NPC or player — are immune to mana effects, good or bad.
+- A mana TAP on a class with no mana does nothing at all.
+- A timed drain does nothing on landing; it works per tick.
+- **Players take instant drains at FULL strength** (the NPC cut is `IsNPC()`),
+  and no PvP-specific reduction exists in that code.
+
+**PvP (the guild lead asked, 2026-09-24): the bar cannot work on a player.**
+The bar needs a max, which for an NPC comes from the NPC catalog; a player is
+not in it, and Zeal sends a target's HP only — never mana (groupmate mana is
+not on the pipe either). What CAN work: a "you drained N from them this fight"
+tally for your OWN drains (the cast names the spell; full strength on players),
+shown as an upper bound because the server only takes what they have. /who
+class says whether there is anything to take (no-mana classes and bards: none).
+
 **The next five** (from the roadmap review — 13 roadmap votes from 3 voters,
 so votes break ties, they don't set order; 20 of 30 active players now send
 spawn ids):
