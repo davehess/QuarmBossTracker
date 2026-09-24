@@ -2772,6 +2772,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `deathroll` fun_event (`caster` = loser, `target` = winners, `detail` jsonb)
   and posts once to `DEATHROLL_CHANNEL_ID`. No agent change needed to record —
   any Mimic that uploads rolls counts. Tests: `test/deathroll*.test.js`.
+  Display (agent 3.7.1, beta): `_deathrollChains`/`_deathrollEntry` fold a
+  game's sets into one `kind:'deathroll'` entry in `rollSetsSnapshot`, drawn by
+  `_wpDeathrollHtml` (dashboard Rolls card) and the Command Center roll list.
+  /fun card: the `☠️ Deathrolls` SECTION in `web/app/fun/page.tsx` (beta).
 - **Damage-taken audio alert (3.4.39)** — `_maybeAnnounceDamageTaken` rides the
   `defender:'YOU'` combat paths (the "you have taken" line family is dropped by
   the byte filter — don't move detection there); `_setDamageAlert` +
