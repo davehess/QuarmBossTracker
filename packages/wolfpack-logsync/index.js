@@ -12609,13 +12609,62 @@ const _ME_ABILITIES = {
 const _ME_ABILITY_RX = /^You (?:try to )?(flying kick|round kick|dragon punch|eagle strike|tiger claw|backstab|kick|bash)\b/;
 // Skills with a timer of their own, and the server line that starts each
 // (zone/string_ids.h; reuse from common/features.h, started at reuse − 1).
+// `est` where an AA shortens the real timer and we cannot see the AA: Rapid
+// Feign (FD 8 s → 7/6/3), Fervent Blessing / Touch of the Wicked (LoH / HT
+// 72 min, −12 min a rank; zone/spells.cpp).
+// ⚠ A SUCCESSFUL Feign Death prints nothing for you — only the failure line
+// does ("You have fallen to the ground."). The exact moment comes from a
+// `/pipe fd` line on the Feign Death hotkey (see _meNotePipeCooldowns).
 const _ME_SKILL_LINES = [
-  { key: 'mend',  label: 'Mend',       secs: 289,  rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
-  { key: 'taunt', label: 'Taunt',      secs: 5,    rx: /^You taunt .+ to ignore others and attack you!/ },
-  { key: 'ht',    label: 'Harm Touch', secs: 4320, rx: /^You harm touch\b/ },
+  { key: 'mend',  label: 'Mend',         secs: 289,  est: false, rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
+  { key: 'taunt', label: 'Taunt',        secs: 5,    est: false, rx: /^You taunt .+ to ignore others and attack you!/ },
+  { key: 'fd',    label: 'Feign Death',  secs: 8,    est: true,  rx: /^You (?:have fallen to the ground|feign death)\./ },
+  { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
+  { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
 ];
+const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
+// The cooldowns each class always sees, even before the first use this
+// session (the guild lead, 2026-09-24: "I would need feign death and Mend on here
+// as a monk / warriors would use taunt and kick / paladins and shadowknights
+// would have their lay on hands and harmtouch"). Anything else appears once used.
+const _ME_CLASS_CDS = {
+  Monk: ['ability', 'mend', 'fd'],
+  Warrior: ['ability', 'taunt'],
+  Paladin: ['loh'],
+  'Shadow Knight': ['ht'],
+};
 const _meAbility = new Map();    // charLower → { name, base, at, gaps }
-const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs })
+const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs, est })
+function _meStartSkill(cl, key, atMs) {
+  const s = _ME_SKILL_BY_KEY.get(key);
+  if (!s) return;
+  let mp = _meSkillCds.get(cl);
+  if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
+  mp.set(key, { label: s.label, at: atMs, secs: s.secs, est: s.est });
+}
+// `/pipe <word>` from a hotkey: the exact press, for the timers the log cannot
+// see (a successful Feign Death above all — the guild lead offered the /pipe line
+// for it, 2026-09-24). Zeal forwards /pipe text; Mimic keeps the last eight per
+// character with its own receive time, which is the press to within the
+// pipe delay. Each entry is read once.
+const _ME_PIPE_WORDS = {
+  'fd': 'fd', 'feign': 'fd', 'feign death': 'fd', 'mend': 'mend', 'taunt': 'taunt',
+  'loh': 'loh', 'lay on hands': 'loh', 'ht': 'ht', 'harm touch': 'ht',
+};
+const _mePipeSeen = new Map();   // charLower → newest custom_recent `at` already read
+function _meNotePipeCooldowns(cl, st) {
+  const rec = Array.isArray(st.custom_recent) ? st.custom_recent : [];
+  const seen = _mePipeSeen.get(cl) || 0;
+  let newest = seen;
+  for (const e of rec) {
+    if (!e || !(e.at > seen)) continue;
+    newest = Math.max(newest, e.at);
+    const w = String(e.text || '').trim().toLowerCase().replace(/^cd\s+/, '');
+    if (_ME_PIPE_WORDS[w]) _meStartSkill(cl, _ME_PIPE_WORDS[w], e.at);
+    else if (_ME_ABILITIES[w]) _meNoteAbility(cl, w, e.at);
+  }
+  _mePipeSeen.set(cl, newest);
+}
 function _meNoteAbility(cl, verb, atMs) {
   const def = _ME_ABILITIES[verb];
   if (!def) return;
@@ -12624,7 +12673,7 @@ function _meNoteAbility(cl, verb, atMs) {
   if (a.at && atMs - a.at >= 1000 && atMs - a.at < def[1] * 1000) { a.gaps.push(atMs - a.at); if (a.gaps.length > 20) a.gaps.shift(); }
   a.name = def[0]; a.base = def[1]; a.at = atMs;
 }
-function _meCooldowns(cl, now) {
+function _meCooldowns(cl, now, cls) {
   const out = [];
   const a = _meAbility.get(cl);
   if (a && a.at) {
@@ -12634,17 +12683,23 @@ function _meCooldowns(cl, now) {
     const g = a.gaps.slice().sort((x, y) => x - y);
     const seen = g.length >= 3 ? g[1] : null;
     const total = seen ? Math.max(floor, Math.min(ceil, seen)) : ceil;
-    out.push({ key: 'ability', label: a.name, ms_left: Math.max(0, a.at + total - now), total_ms: total, est: true });
+    out.push({ key: 'ability', label: a.name, ms_left: Math.max(0, a.at + total - now), total_ms: total, est: true, seen: true });
   }
   const m = _meSkillCds.get(cl);
   if (m) {
     for (const [k, c] of m) {
-      const left = c.at + c.secs * 1000 - now;
-      if (left <= -60_000) { m.delete(k); continue; }
-      out.push({ key: k, label: c.label, ms_left: Math.max(0, left), total_ms: c.secs * 1000, est: k === 'ht' });
+      out.push({ key: k, label: c.label, ms_left: Math.max(0, c.at + c.secs * 1000 - now), total_ms: c.secs * 1000, est: c.est, seen: true });
     }
   }
-  return out;
+  // The class's own set first, in its order; one never used this session is
+  // shown as unknown (seen: false) — not as ready, which we cannot know.
+  const want = _ME_CLASS_CDS[cls] || [];
+  const byKey = new Map(out.map(c => [c.key, c]));
+  const lead = want.map(k => byKey.get(k) || {
+    key: k, label: k === 'ability' ? 'Kick' : _ME_SKILL_BY_KEY.get(k).label,
+    ms_left: null, total_ms: null, est: true, seen: false,
+  });
+  return lead.concat(out.filter(c => !want.includes(c.key)));
 }
 
 // DISCIPLINES — the activation line (the disc spell's own landing text,
@@ -12699,9 +12754,12 @@ function _meDiscReuseSecs(base, unlockLvl, level) {
   return Math.max(234, Math.min(4320, base - (lvl - unlockLvl) * 54));
 }
 const _meDiscs = new Map();   // charLower → { name, at, total_ms }
+function _meZealFor(cl) {
+  const hit = _zealState && Object.entries(_zealState).find(([ch]) => String(ch).toLowerCase() === cl);
+  return hit ? hit[1] : null;
+}
 function _meNoteDisc(cl, def, atMs) {
-  const st = _zealState && Object.entries(_zealState).find(([ch]) => String(ch).toLowerCase() === cl);
-  const zst = st ? st[1] : null;
+  const zst = _meZealFor(cl);
   const who = whoData.get(cl);
   const cls = normalizeClass((zst && _meLabel(zst, 3)) || (who && who.class) || _raidClassByName.get(cl) || '') || null;
   const level = (zst && _meNum(_meLabel(zst, 2))) || (who && who.level) || null;
@@ -12743,14 +12801,27 @@ function _meNoteRawLine(line, character) {
     if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
     for (const s of _ME_SKILL_LINES) {
       if (!s.rx.test(msg)) continue;
-      let mp = _meSkillCds.get(cl);
-      if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
-      mp.set(s.key, { label: s.label, at: now, secs: s.secs });
+      _meStartSkill(cl, s.key, now);
       return;
     }
   }
   const disc = _ME_DISCS.get(msg);
   if (disc) { _meNoteDisc(cl, disc, now); return; }
+  // Lay on Hands / Harm Touch are instant (cast_time 0) and may print no
+  // "begin casting" line; the landing text does print, but a bystander sees the
+  // same text. Credit it to you only when you are the class that has it and it
+  // landed on your own target (or on you, with no target).
+  const loh = msg.endsWith(' feels a healing touch.') || msg === 'You feel a healing touch.';
+  if (loh || msg.endsWith(' writhes in the grip of agony.')) {
+    const zst = _meZealFor(cl);
+    const cls = zst ? normalizeClass(_meLabel(zst, 3) || '') : null;
+    if (cls === (loh ? 'Paladin' : 'Shadow Knight')) {
+      const who = msg.startsWith('You feel') ? cl : msg.slice(0, msg.lastIndexOf(loh ? ' feels ' : ' writhes ')).toLowerCase();
+      const tgt = zst.target_name ? String(zst.target_name).toLowerCase() : null;
+      if (tgt === who || (!tgt && who === cl)) _meStartSkill(cl, loh ? 'loh' : 'ht', now);
+    }
+    return;
+  }
   if (msg.endsWith(' has become ENRAGED.')) {
     _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
   } else if (msg.endsWith(' is no longer enraged.')) {
@@ -12921,7 +12992,8 @@ function _serializeMeState() {
       f.hand = v === swing.hands.mh ? 'MH' : (v === swing.hands.oh ? 'OH' : null);
     }
   }
-  const cooldowns = _meCooldowns(cl, now);
+  _meNotePipeCooldowns(cl, st);
+  const cooldowns = _meCooldowns(cl, now, cls);
   const disc = _meDisc(cl, now);
   if (disc) cooldowns.push(disc);
   const tx = _meTargetExtras(st, active, now);
@@ -18480,7 +18552,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'Me',                  'Your own character: HP, mana, endurance, XP and AA with per-hour rates, what you are casting, your target, your group, your DPS this fight and tonight, and your class numbers (CHs left, mezzes left, Theft of Thought / Harvest timers). Three layouts to test — pick A, B or C in its title bar. Comes up by itself when you are blinded.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting and whether it can enrage, your hits, and your class numbers. Five layouts to try — A, three rings around your character (H1, H2, H3) and C — picked in its corner. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {

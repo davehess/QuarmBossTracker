@@ -253,6 +253,87 @@ describe('target read-outs', () => {
   });
 });
 
+// Round two, the guild lead: "I would need feign death and Mend on here as a monk /
+// warriors would use taunt and kick / paladins and shadowknights would have
+// their lay on hands and harmtouch" — and, on a successful feign printing
+// nothing: "I can add in /pipeoutput for FD too".
+describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () => {
+  const zeal = (cls, extra = {}) => ({ Aldenmar: { charInfo: [{ id: 3, value: cls }], gauges: [], updatedAt: clock, ...extra } });
+  const cd = (h, key) => h._serializeMeState().cooldowns.find(c => c.key === key);
+
+  it('each class always sees its own set — unknown (seen: false) until first used', () => {
+    const keys = (cls) => load({ zeal: zeal(cls) })._serializeMeState().cooldowns.map(c => [c.key, c.seen]);
+    expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false]]);
+    expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false]]);
+    expect(keys('Paladin')).toEqual([['loh', false]]);
+    expect(keys('Shadow Knight')).toEqual([['ht', false]]);
+    expect(keys('Cleric')).toEqual([]);
+  });
+
+  it('keeps the class order once used, and adds what else was used after it', () => {
+    const h = load({ zeal: zeal('Monk') });
+    say(h, 'Aldenmar', 'You mend your wounds and heal some damage.');
+    say(h, 'Aldenmar', 'You taunt a gnoll to ignore others and attack you!');
+    expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'taunt']);
+  });
+
+  it('a failed feign starts Feign Death at 8 s (9 − 1; Rapid Feign would cut it, so est)', () => {
+    const h = load({ zeal: zeal('Monk') });
+    say(h, 'Aldenmar', 'You have fallen to the ground.');
+    const fd = cd(h, 'fd');
+    expect(fd.seen).toBe(true);
+    expect(fd.total_ms).toBe(8000);
+    expect(fd.ms_left).toBe(8000);
+    expect(fd.est).toBe(true);
+  });
+
+  it('`/pipe fd` on the hotkey starts it at the press — Mimic\'s receive time', () => {
+    const h = load({ zeal: zeal('Monk', { custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
+    expect(cd(h, 'fd').ms_left).toBe(5000);
+  });
+
+  it('reads each /pipe line once — an old line still in the ring never drags a newer start back', () => {
+    const h = load({ zeal: zeal('Monk', { custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
+    expect(cd(h, 'fd').ms_left).toBe(5000);
+    clock += 9000;
+    say(h, 'Aldenmar', 'You have fallen to the ground.');   // a newer feign
+    expect(cd(h, 'fd').ms_left).toBe(8000);
+  });
+
+  it('/pipe words for the others too, and unrelated /pipe text is ignored', () => {
+    const h = load({ zeal: zeal('Monk', { custom_recent: [
+      { at: clock - 1000, text: 'mend' }, { at: clock - 1000, text: 'hello raid' }, { at: clock - 1000, text: 'cd kick' },
+    ] }) });
+    const s = h._serializeMeState();
+    expect(s.cooldowns.find(c => c.key === 'mend').ms_left).toBe(288_000);
+    expect(s.cooldowns.find(c => c.key === 'ability').seen).toBe(true);
+  });
+
+  it('Lay on Hands is credited to a paladin when it lands on their own target', () => {
+    const h = load({ zeal: zeal('Paladin', { target_name: 'Brackwyn' }) });
+    say(h, 'Aldenmar', 'Brackwyn feels a healing touch.');
+    expect(cd(h, 'loh')).toMatchObject({ seen: true, total_ms: 4320_000, est: true });
+  });
+
+  it('…not when it lands on someone else, and never for another class', () => {
+    let h = load({ zeal: zeal('Paladin', { target_name: 'Corvale' }) });
+    say(h, 'Aldenmar', 'Brackwyn feels a healing touch.');
+    expect(cd(h, 'loh').seen).toBe(false);
+    h = load({ zeal: zeal('Cleric', { target_name: 'Brackwyn' }) });
+    say(h, 'Aldenmar', 'Brackwyn feels a healing touch.');
+    expect(cd(h, 'loh')).toBeUndefined();
+  });
+
+  it('Harm Touch: the damage line, or the landing on a shadow knight\'s own target', () => {
+    let h = load({ zeal: zeal('Shadow Knight') });
+    say(h, 'Aldenmar', 'You harm touch a gnoll warlord for 3200 points of damage.');
+    expect(cd(h, 'ht').seen).toBe(true);
+    h = load({ zeal: zeal('Shadow Knight', { target_name: 'a gnoll warlord' }) });
+    say(h, 'Aldenmar', 'a gnoll warlord writhes in the grip of agony.');
+    expect(cd(h, 'ht').seen).toBe(true);
+  });
+});
+
 describe('no mana for warriors, rogues and monks', () => {
   const zeal = (cls) => ({ Aldenmar: { charInfo: [{ id: 3, value: cls }], gauges: [], updatedAt: clock } });
   it('flags the three classes, and only them', () => {

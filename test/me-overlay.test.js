@@ -355,11 +355,35 @@ describe('the three HUDs', () => {
     });
   }
 
-  it('H1 keeps the centre clear — no text within 55 units of the middle', () => {
-    const h = R.renderH1(base);
-    const spots = [...h.matchAll(/<text x="([\d.]+)" y="([\d.]+)"/g)].map(m => [+m[1], +m[2]]);
-    expect(spots.length).toBeGreaterThan(8);
-    for (const [x, y] of spots) expect(Math.hypot(x - 200, y - 200)).toBeGreaterThan(55);
+  // Round two, the guild lead: "There needs to be more open space in the middle."
+  // Every straight line of text is measured as a box (monospace: ~0.6 em per
+  // character), not just its anchor — a line anchored at the ring can still
+  // reach the middle, which is exactly what the first side-hit columns did.
+  // Curved labels sit on the ring by construction.
+  for (const [name, fn] of Object.entries(HUDS)) {
+    it(name + ' keeps the middle open — no straight text within 95 units of the centre', () => {
+      const h = fn(Object.assign({}, cleric, { casting: { spell: 'Complete Healing', pct: 40, remaining_ms: 6000 } }))
+        + fn(base);
+      const boxes = [...h.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="([\d.]+)"[^>]*?text-anchor="(\w+)"[^>]*>([\s\S]*?)<\/text>/g)];
+      expect(boxes.length).toBeGreaterThan(3);
+      for (const m of boxes) {
+        const x = +m[1], y = +m[2], size = +m[3], anchor = m[4];
+        const w = m[5].replace(/<[^>]+>/g, '').replace(/&[a-z]+;/g, '_').length * size * 0.6;
+        const x0 = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+        const nx = Math.max(x0, Math.min(200, x0 + w)), ny = Math.max(y - size, Math.min(200, y));
+        expect(Math.hypot(nx - 200, ny - 200), m[5]).toBeGreaterThan(95);
+      }
+    });
+  }
+
+  it('a class cooldown never used this session is unknown ("—"), never "ready"', () => {
+    const s2 = Object.assign({}, base, { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: null, total_ms: null, est: true, seen: false }] });
+    for (const fn of Object.values(HUDS)) {
+      const h = fn(s2);
+      expect(h).toContain('FD');
+      expect(h).toMatch(/FD[^<]*—|—[^<]*FD|>—</);
+      expect(h).not.toMatch(/FD ready/);
+    }
   });
 });
 

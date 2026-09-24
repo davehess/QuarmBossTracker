@@ -118,13 +118,13 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
-  <button id="hide-btn" title="Hide the Me overlay (turn back on from the tray → Overlays)">✕</button>
+  <button id="hide-btn" title="Hide the HUD (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
-    <span>🛠 Me</span>
+    <span>🛠 HUD</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
     <button id="exitSetupBtn">Done</button>
   </div>
@@ -132,7 +132,7 @@
     <div class="card">
       <div class="title">
         <span id="conn" class="conn bad">○</span>
-        <span id="tname" class="nm">Me</span><span id="tclass" class="cl"></span>
+        <span id="tname" class="nm">HUD</span><span id="tclass" class="cl"></span>
         <span class="sp"></span>
         <span id="picker" title="Pick a layout — this is a beta test of three designs">
           <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="h1" title="HUD 1 · Rings — everything is an arc around your character; the fewest words">H1</button><button data-v="h2" title="HUD 2 · Dial — numbers first; cooldowns as round buttons that wipe like the game's">H2</button><button data-v="h3" title="HUD 3 · Reticle — a thin sight with straight bars inside; only what is changing">H3</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button>
@@ -405,9 +405,13 @@
     return mmss(ms);
   }
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
-    'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT' };
+    'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH' };
   function cdShort(c){ return c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()); }
-  function cdColor(c){ return c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'); }
+  // A class cooldown not used yet this session is UNKNOWN — dim, never green:
+  // we cannot tell ready from used-before-Mimic-started.
+  function cdColor(c){ return !c.seen ? 'var(--dim)' : (c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9')); }
+  function cdValue(c){ return !c.seen ? '—' : (c.left > 0 ? tfmt(c.left) : 'ready'); }
   function slowText(t){
     if (!t) return null;
     if (t.slow) return { s: 'slowed' + (t.slow.pct ? ' ' + t.slow.pct + '%' : '') + (t.slow.remaining_secs != null ? ' · ' + mmss(t.slow.remaining_secs * 1000) : ''), c: 'var(--green)' };
@@ -437,8 +441,9 @@
       else if (sw.idle) d.swing = { idle: true, est: true };
     }
     d.cds = (s.cooldowns || []).map(function(c){
-      var l = Math.max(0, (c.ms_left || 0) - dt);
-      return { key: c.key, label: c.label, left: l, frac: c.total_ms ? l / c.total_ms : 0, est: c.est };
+      var seen = c.seen !== false && c.ms_left != null;
+      var l = seen ? Math.max(0, c.ms_left - dt) : null;
+      return { key: c.key, label: c.label, left: l, frac: seen && c.total_ms ? l / c.total_ms : 0, est: c.est, seen: seen };
     });
     var t = s.target;
     if (t) {
@@ -449,7 +454,10 @@
     d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
     d.feed = (c && c.feed ? c.feed : []).map(function(f){
       var col = f.dir === 'in' ? (f.kind === 'melee' ? 'var(--red)' : (EL_COLOR[f.el] || 'var(--red)')) : (f.kind === 'melee' ? 'var(--melee)' : (EL_COLOR[f.el] || '#8b949e'));
-      return { dir: f.dir, text: (f.dir === 'in' ? '▼ ' : '▲ ') + n0(f.amount) + ' ' + esc(f.name || (f.kind === 'melee' ? 'melee' : 'spell')) + (f.hand ? ' ' + f.hand : ''),
+      // Names are cut to 12 characters so a hit line never reaches the middle.
+      var nm = String(f.name || (f.kind === 'melee' ? 'melee' : 'spell'));
+      if (nm.length > 12) nm = nm.slice(0, 11) + '…';
+      return { dir: f.dir, text: (f.dir === 'in' ? '▼ ' : '▲ ') + n0(f.amount) + ' ' + esc(nm) + (f.hand ? ' ' + f.hand : ''),
                color: col, op: Math.max(0.35, 1 - (f.age_ms || 0) / 15000).toFixed(2) };
     });
     d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null; }).slice(0, 1)
@@ -466,62 +474,92 @@
     return s.blind ? '<circle cx="200" cy="200" r="194" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="10 6"/>' + T(CX, 128, '👁 BLINDED', 11, 'var(--red)', 'middle', 700) : '';
   }
   function svgWrap(inner){ return '<svg id="hudsvg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">' + inner + '</svg>'; }
+  // Round two (the guild lead, 2026-09-24, after playing all three): "Bars are a
+  // little too thick" · "The way the text wraps on H1 for the name up top is
+  // the format I want to see for the other pieces. Ticks, swing, HP and
+  // Endurance." · "There needs to be more open space in the middle." So:
+  // thinner arcs everywhere, every arc's label written ALONG the ring the way
+  // the target's name is, and nothing drawn inside r ≈ 110 of the centre —
+  // the middle of the screen is the character's.
+  var OPEN_R = 110;   // the clear disc in the middle (viewBox units)
+  // A label written along the ring OUTSIDE an arc. Sides and top read with
+  // the letters' tops pointing out, like the target's name; the bottom reads
+  // upright (below = true).
+  function ringLabel(id, r, a0, a1, inner, size, below){ return curved(id, r, a0, a1, inner, size, below); }
+  function lbl(name, value, color){ return '<tspan fill="#8b949e">' + name + ' </tspan><tspan fill="' + color + '" font-weight="700">' + value + '</tspan>'; }
+  function hpLabel(d){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : ''); }
+  function rightLabel(d){ return lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color) + (d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
+  // Tick, swing and every cooldown as one list of "timers": label, value,
+  // how much is left, colour.
+  function timerItems(d){
+    var items = [];
+    if (d.tick) items.push({ id: 'tick', label: 'TICK', value: String(Math.ceil(d.tick.left / 1000)), frac: d.tick.frac, color: '#8b949e', seen: true });
+    if (d.swing && !d.swing.idle) items.push({ id: 'swing', label: (d.swing.est ? '~' : '') + 'SWING', value: d.swing.left != null ? tfmt(d.swing.left) : '', frac: d.swing.frac, color: 'var(--melee)', seen: true });
+    d.cds.forEach(function(c){ items.push({ id: c.key, label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), seen: c.seen, ready: c.seen && c.left <= 0 }); });
+    return items;
+  }
+  // Hits written ALONG the inside of the ring — incoming down the left,
+  // outgoing down the right, newest outermost — so they never cross the
+  // middle. (Straight lines of text at the sides reached ~75 units from the
+  // centre; along the ring they stay past r0 − 22.)
+  function ringHits(d, r0, prefix){
+    var h = '';
+    [['in', 238, 302], ['out', 58, 122]].forEach(function(side){
+      d.feed.filter(function(f){ return f.dir === side[0]; }).slice(0, 3).forEach(function(f, i){
+        h += ringLabel(prefix + side[0] + i, r0 - i * 11, side[1], side[2], '<tspan fill="' + f.color + '" fill-opacity="' + f.op + '">' + f.text + '</tspan>', 9);
+      });
+    });
+    return h;
+  }
+
   // ── H1 · Rings ─────────────────────────────────────────────────────────────
-  // Radii, outside in: 174 the four main arcs (target on top, HP left,
-  // mana/endurance right, resists written along the bottom) · 160 thin
-  // companions (target's target, endurance, cast) · 146 the cooldown ring
-  // across the bottom · 106 swing (lower left) and tick (lower right). The
-  // hits run down the middle below centre; the centre itself is left clear.
+  // One ring (r 172) cut into sectors: target on top, HP left, mana/endurance
+  // right, and the bottom sector shared by the tick, the swing and every
+  // cooldown — each a short arc with its label written along the ring beneath
+  // it. Thin companions just inside (target's target, endurance, cast).
   function renderH1(s){
-    var d = hudData(s), h = '', R = 174;
+    var d = hudData(s), h = '', R = 172;
     if (d.t) {
       // Red outline = this mob can enrage; solid and named while it IS enraged.
-      if (d.t.enrage) h += stroke(arcD(R, -46, 46), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', d.t.enraged ? 19 : 16);
-      h += gauge(R, -46, 46, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 10);
-      h += curved('h1tn', R + 14, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : '#e6edf3') + '">' + esc(d.t.name) + '</tspan>'
+      if (d.t.enrage) h += stroke(arcD(R, -44, 44), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', d.t.enraged ? 13 : 11);
+      h += gauge(R, -44, 44, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6);
+      h += ringLabel('h1tn', R + 10, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : '#e6edf3') + '">' + esc(d.t.name) + '</tspan>'
         + '<tspan fill="' + hpColor(d.t.hp) + '" font-weight="700">  ' + pctTxt(d.t.hp) + '</tspan>', 13);
-      var y = 60;
+      var y = 58;
       if (d.t.tot) {
-        h += gauge(R - 14, -34, 34, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 4);
-        h += T(CX, y, '→ ' + esc(d.t.tot.name) + ' <tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', 11, '#c9d1d9'); y += 13;
+        h += gauge(R - 10, -30, 30, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 2.5);
+        h += T(CX, y, '→ ' + esc(d.t.tot.name) + ' <tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', 10.5, '#c9d1d9'); y += 12;
       }
-      if (d.t.slow) { h += T(CX, y, d.t.slow.s, 10, d.t.slow.c); y += 13; }
-      if (d.t.enrage) h += T(CX, y, d.t.enraged ? 'ENRAGED' : 'enrages', d.t.enraged ? 12 : 10, 'var(--red)', 'middle', 700);
+      if (d.t.slow) { h += T(CX, y, d.t.slow.s, 9.5, d.t.slow.c); y += 12; }
+      if (d.t.enrage) h += T(CX, y, d.t.enraged ? 'ENRAGED' : 'enrages', d.t.enraged ? 11 : 9.5, 'var(--red)', 'middle', 700);
     }
-    h += gauge(R, 206, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 10);
-    if (d.right.pct != null) h += gauge(R, 56, 154, d.right.pct / 100, d.right.color, 10, true);
-    if (!d.noMana && d.end != null) h += gauge(R - 14, 212, 298, d.end / 100, 'var(--orange)', 3);
-    if (d.cast) h += gauge(R - 14, 62, 148, d.cast.frac, 'var(--blue)', 3, true);
-    // Numbers just inside the arcs.
-    h += T(64, 196, pctTxt(d.hp), 20, hpColor(d.hp), 'start', 700) + T(64, 210, 'hp', 9, 'var(--dim)', 'start');
-    if (d.out != null) h += T(64, 226, 'out ' + big(d.out), 10, 'var(--melee)', 'start');
-    if (d.right.pct != null) h += T(336, 196, pctTxt(d.right.pct), 20, d.right.color, 'end', 700) + T(336, 210, d.right.label, 9, 'var(--dim)', 'end');
-    if (d.inn != null) h += T(336, 226, 'in ' + big(d.inn), 10, 'var(--red)', 'end');
-    if (d.focus) h += T(336, 240, d.focus, 10, '#e6edf3', 'end');
-    if (d.cast) h += T(CX, 104, '✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : ''), 10, 'var(--blue)');
-    // Cooldowns: one short arc each across the bottom, centred on 180°.
-    var cds = d.cds.slice(0, 6);
-    if (cds.length) {
-      var gap = 4, seg = Math.min(30, (124 - gap * (cds.length - 1)) / cds.length);
-      var a = 180 - (seg * cds.length + gap * (cds.length - 1)) / 2;
-      cds.forEach(function(c){
-        var col = cdColor(c), mid = a + seg / 2, lp = P(128, mid);
-        h += c.left <= 0 ? stroke(arcD(146, a, a + seg), 'var(--green)', 5) : gauge(146, a, a + seg, c.frac, col, 5);
-        h += T(lp[0], lp[1] + 3, cdShort(c) + (c.left > 0 ? ' ' + tfmt(c.left) : ''), 9, col);
-        a += seg + gap;
+    h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6);
+    h += ringLabel('h1hp', R + 10, 236, 304, hpLabel(d), 11);
+    if (d.right.pct != null) {
+      h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6, true);
+      h += ringLabel('h1rt', R + 10, 56, 124, rightLabel(d), 11);
+    }
+    if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2);
+    if (d.cast) {
+      h += gauge(R - 10, 60, 120, d.cast.frac, 'var(--blue)', 2, true);
+      h += ringLabel('h1cs', R - 22, 60, 120, '<tspan fill="var(--blue)">✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : '') + '</tspan>', 9);
+    }
+    if (d.focus) h += ringLabel('h1fo', R - 22, 240, 300, '<tspan fill="#e6edf3">' + d.focus + '</tspan>', 9);
+    // The bottom sector (128°–232°): tick, swing, cooldowns — left to right.
+    var items = timerItems(d).slice(0, 6);
+    if (items.length) {
+      var gap = 2, seg = Math.min(22, (104 - gap * (items.length - 1)) / items.length);
+      var a1 = 180 + (seg * items.length + gap * (items.length - 1)) / 2;
+      items.forEach(function(it, i){
+        var a0 = a1 - seg;
+        h += it.ready ? stroke(arcD(R, a0, a1), 'var(--green)', 4) : gauge(R, a0, a1, it.frac, it.color, 4);
+        h += ringLabel('h1b' + i, R + 15, a0, a1, '<tspan fill="' + it.color + '">' + it.label + ' ' + it.value + '</tspan>', 8.5, true);
+        a1 = a0 - gap;
       });
     }
-    // Swing (lower left) and server tick (lower right), both counting down.
-    if (d.swing && !d.swing.idle) {
-      h += gauge(106, 214, 250, d.swing.frac, 'var(--melee)', 4);
-      var sp = P(90, 232); h += T(sp[0], sp[1] + 3, (d.swing.est ? '~' : '') + 'swing ' + (d.swing.left != null ? tfmt(d.swing.left) : ''), 9, 'var(--melee)');
-    }
-    if (d.tick) {
-      h += gauge(106, 110, 146, d.tick.frac, '#8b949e', 4, true);
-      var tp = P(90, 128); h += T(tp[0], tp[1] + 3, 'tick ' + Math.ceil(d.tick.left / 1000), 9, '#8b949e');
-    }
-    d.feed.slice(0, 4).forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(CX, 262 + i * 12, f.text, 10, f.color) + '</g>'; });
-    if (d.res) h += curved('h1rs', R + 13, 150, 210, resTspans(d.res), 9, true);
+    // Hits: a short column just above the bottom sector.
+    d.feed.slice(0, 3).forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(CX, 308 + i * 11, f.text, 9.5, f.color) + '</g>'; });
+    if (d.res) h += ringLabel('h1rs', R - 14, 146, 214, resTspans(d.res), 8.5, true);
     return svgWrap(h + blindRing(s));
   }
 
@@ -531,57 +569,59 @@
   // panel that reads like a nameplate; big numbers; cooldowns as a row of
   // round buttons that wipe clockwise like the game's.
   function renderH2(s){
-    var d = hudData(s), h = '', R = 172;
-    h += '<circle cx="200" cy="200" r="188" fill="none" stroke="rgba(139,148,158,0.35)" stroke-width="1"/>';
-    if (d.t) h += gauge(R, -40, 40, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 12);
-    h += gauge(R, 220, 320, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 12);
-    if (d.right.pct != null) h += gauge(R, 40, 140, d.right.pct / 100, d.right.color, 12, true);
-    if (d.swing && !d.swing.idle) h += gauge(R, 145, 177, d.swing.frac, 'var(--melee)', 6);
-    if (d.tick) h += gauge(R, 183, 215, d.tick.frac, '#8b949e', 6, true);
-    // Target panel.
-    if (d.t) {
-      var ph = 44 + (d.t.tot ? 14 : 0);
-      h += '<rect x="108" y="36" width="184" height="' + ph + '" rx="6" fill="rgba(13,17,23,0.6)"'
-        + (d.t.enrage ? ' stroke="var(--red)" stroke-width="' + (d.t.enraged ? 3 : 1.5) + '"' : '') + '/>';
-      h += T(118, 52, esc(d.t.name), 11, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start') + T(282, 53, pctTxt(d.t.hp), 15, hpColor(d.t.hp), 'end', 700);
-      var ty = 66;
-      if (d.t.tot) { h += T(118, ty, '→ ' + esc(d.t.tot.name), 10, '#c9d1d9', 'start') + T(282, ty, pctTxt(d.t.tot.hp), 10, hpColor(d.t.tot.hp), 'end', 700); ty += 14; }
-      if (d.t.slow) h += T(118, ty, d.t.slow.s, 9.5, d.t.slow.c, 'start');
-      if (d.t.enrage) h += T(282, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9.5, 'var(--red)', 'end', 700);
-    }
-    if (d.cast) {
-      var cw = 160 * Math.max(0, Math.min(1, d.cast.frac || 0));
-      h += T(CX, 106, '✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : ''), 10, 'var(--blue)')
-        + '<rect x="120" y="110" width="160" height="3" fill="' + TRACK + '"/><rect x="' + f1(120 + 160 - cw) + '" y="110" width="' + f1(cw) + '" height="3" fill="var(--blue)"/>';
-    }
-    // Big numbers, left and right.
-    h += T(40, 196, pctTxt(d.hp), 22, hpColor(d.hp), 'start', 700)
-      + T(40, 210, (s.hp && s.hp.cur != null ? n0(s.hp.cur) + ' / ' + n0(s.hp.max) : 'hp'), 9, 'var(--dim)', 'start');
-    if (d.out != null) h += T(40, 226, 'OUT ' + big(d.out), 10, 'var(--melee)', 'start');
+    var d = hudData(s), h = '', R = 166;
+    h += '<circle cx="200" cy="200" r="190" fill="none" stroke="rgba(139,148,158,0.35)" stroke-width="1"/>';
+    if (d.t) h += gauge(R, -40, 40, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6);
+    h += gauge(R, 224, 316, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6);
+    // Numbers first: the percentage, then the exact pool, then damage and the
+    // class number — all written along the ring.
+    var dim = function(t){ return '<tspan fill="#8b949e">' + t + '</tspan>'; };
+    h += ringLabel('h2hp', R + 10, 224, 316, lbl('HP', pctTxt(d.hp), hpColor(d.hp))
+      + (s.hp && s.hp.cur != null ? dim('  ' + n0(s.hp.cur) + ' / ' + n0(s.hp.max)) : '')
+      + (d.out != null ? dim('  · out ' + big(d.out)) : ''), 10.5);
     if (d.right.pct != null) {
-      var rc = d.noMana ? 'endurance' : ((s.mana && s.mana.cur != null) ? n0(s.mana.cur) + ' / ' + n0(s.mana.max) : 'mana');
-      h += T(360, 196, pctTxt(d.right.pct), 22, d.right.color, 'end', 700) + T(360, 210, rc, 9, 'var(--dim)', 'end');
+      h += gauge(R, 44, 136, d.right.pct / 100, d.right.color, 6, true);
+      h += ringLabel('h2rt', R + 10, 44, 136, lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color)
+        + (!d.noMana && s.mana && s.mana.cur != null ? dim('  ' + n0(s.mana.cur) + ' / ' + n0(s.mana.max)) : '')
+        + (d.inn != null ? dim('  · in ' + big(d.inn)) : '')
+        + (d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : ''), 10.5);
     }
-    if (d.inn != null) h += T(360, 226, 'IN ' + big(d.inn), 10, 'var(--red)', 'end');
-    if (d.focus) h += T(360, 240, d.focus, 10, '#e6edf3', 'end');
-    if (d.res) h += '<text x="200" y="128" font-size="9" text-anchor="middle">' + resTspans(d.res) + '</text>';
-    // Hits: IN to the left of the centre line, OUT to the right.
-    var ins = d.feed.filter(function(f){ return f.dir === 'in'; }).slice(0, 3);
-    var outs = d.feed.filter(function(f){ return f.dir === 'out'; }).slice(0, 3);
-    ins.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(192, 238 + i * 12, f.text, 10, f.color, 'end') + '</g>'; });
-    outs.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(208, 238 + i * 12, f.text, 10, f.color, 'start') + '</g>'; });
-    // Cooldown buttons, one row below the hits.
+    // Swing | tick share the bottom, each labelled along the ring below it. A
+    // cast takes the swing's place while it lasts — the game pauses your melee
+    // while you cast.
+    if (d.cast) {
+      h += gauge(R, 184, 214, d.cast.frac, 'var(--blue)', 4);
+      h += ringLabel('h2cs', R + 15, 176, 222, '<tspan fill="var(--blue)">✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : '') + '</tspan>', 9.5, true);
+    } else if (d.swing && !d.swing.idle) {
+      h += gauge(R, 184, 214, d.swing.frac, 'var(--melee)', 4);
+      h += ringLabel('h2sw', R + 15, 184, 214, lbl((d.swing.est ? '~' : '') + 'SWING', d.swing.left != null ? tfmt(d.swing.left) : '', 'var(--melee)'), 9.5, true);
+    }
+    if (d.tick) {
+      h += gauge(R, 146, 176, d.tick.frac, '#8b949e', 4, true);
+      h += ringLabel('h2tk', R + 15, 146, 176, lbl('TICK', String(Math.ceil(d.tick.left / 1000)), '#c9d1d9'), 9.5, true);
+    }
+    if (d.res) h += ringLabel('h2rs', R + 10, -46, 46, resTspans(d.res), 9);
+    // Target nameplate, just inside the top of the ring.
+    if (d.t) {
+      var rows = 1 + (d.t.tot ? 1 : 0) + ((d.t.slow || d.t.enrage) ? 1 : 0);
+      h += '<rect x="118" y="42" width="164" height="' + (10 + rows * 13) + '" rx="5" fill="rgba(13,17,23,0.6)"'
+        + (d.t.enrage ? ' stroke="var(--red)" stroke-width="' + (d.t.enraged ? 2.5 : 1.2) + '"' : '') + '/>';
+      h += T(126, 56, esc(d.t.name), 10.5, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start') + T(274, 57, pctTxt(d.t.hp), 13, hpColor(d.t.hp), 'end', 700);
+      var ty = 69;
+      if (d.t.tot) { h += T(126, ty, '→ ' + esc(d.t.tot.name), 9.5, '#c9d1d9', 'start') + T(274, ty, pctTxt(d.t.tot.hp), 9.5, hpColor(d.t.tot.hp), 'end', 700); ty += 13; }
+      if (d.t.slow) h += T(126, ty, d.t.slow.s, 9, d.t.slow.c, 'start');
+      if (d.t.enrage) h += T(274, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9, 'var(--red)', 'end', 700);
+    }
+    h += ringHits(d, R - 16, 'h2h');
+    // Cooldowns as round buttons on an arc across the bottom, left to right.
     var cds = d.cds.slice(0, 6);
     cds.forEach(function(c, i){
-      var x = 200 + (i - (cds.length - 1) / 2) * 44, y = 296, col = cdColor(c);
-      h += '<circle cx="' + f1(x) + '" cy="' + y + '" r="17" fill="rgba(13,17,23,0.72)" stroke="' + col + '" stroke-width="' + (c.left <= 0 ? 2 : 1.2) + '"/>';
-      if (c.left > 0) h += pie(x, y, 16, c.frac);
-      h += T(x, y + 4, c.left > 0 ? tfmt(c.left) : '✓', c.left > 0 ? 10 : 12, col, 'middle', 700);
-      h += T(x, y + 28, cdShort(c), 8.5, col);
+      var p = P(136, 180 + ((cds.length - 1) / 2 - i) * 21), col = cdColor(c);
+      h += '<circle cx="' + f1(p[0]) + '" cy="' + f1(p[1]) + '" r="12" fill="rgba(13,17,23,0.72)" stroke="' + col + '" stroke-width="' + (c.seen && c.left <= 0 ? 1.8 : 1) + '"/>';
+      if (c.seen && c.left > 0) h += pie(p[0], p[1], 11, c.frac);
+      h += T(p[0], p[1] + 3.5, !c.seen ? '—' : (c.left > 0 ? tfmt(c.left) : '✓'), c.seen && c.left > 0 ? 8.5 : 10, col, 'middle', 700);
+      h += T(p[0], p[1] + 22, cdShort(c), 7.5, col);
     });
-    // Swing / tick read-outs just above their arcs.
-    if (d.swing && !d.swing.idle) { var s1 = P(150, 161); h += T(s1[0], s1[1], (d.swing.est ? '~' : '') + 'SWING ' + (d.swing.left != null ? tfmt(d.swing.left) : ''), 9, 'var(--melee)'); }
-    if (d.tick) { var t1 = P(150, 199); h += T(t1[0], t1[1], 'TICK ' + Math.ceil(d.tick.left / 1000), 9, '#8b949e'); }
     return svgWrap(h + blindRing(s));
   }
 
@@ -591,49 +631,56 @@
   // the top chord, a timer strip across the bottom. Only what is changing is
   // drawn: a cooldown that is ready collapses to one green word.
   function renderH3(s){
-    var d = hudData(s), h = '';
-    h += '<circle cx="200" cy="200" r="184" fill="none" stroke="rgba(201,209,217,0.3)" stroke-width="1"/>';
-    [0, 90, 180, 270].forEach(function(a){ var p0 = P(176, a), p1 = P(194, a); h += '<line x1="' + f1(p0[0]) + '" y1="' + f1(p0[1]) + '" x2="' + f1(p1[0]) + '" y2="' + f1(p1[1]) + '" stroke="rgba(201,209,217,0.55)" stroke-width="1.5"/>'; });
-    h += gauge(184, 214, 326, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 5);
-    if (d.right.pct != null) h += gauge(184, 34, 146, d.right.pct / 100, d.right.color, 5, true);
-    h += T(30, 204, pctTxt(d.hp), 16, hpColor(d.hp), 'start', 700);
-    if (d.right.pct != null) h += T(370, 204, pctTxt(d.right.pct), 16, d.right.color, 'end', 700);
-    if (d.focus) h += T(370, 218, d.focus, 9.5, '#e6edf3', 'end');
-    // Target across the top chord.
+    var d = hudData(s), h = '', R = 176;
+    h += '<circle cx="200" cy="200" r="' + R + '" fill="none" stroke="rgba(201,209,217,0.3)" stroke-width="1"/>';
+    [0, 90, 180, 270].forEach(function(a){ var p0 = P(R - 12, a), p1 = P(R, a); h += '<line x1="' + f1(p0[0]) + '" y1="' + f1(p0[1]) + '" x2="' + f1(p1[0]) + '" y2="' + f1(p1[1]) + '" stroke="rgba(201,209,217,0.55)" stroke-width="1.5"/>'; });
+    h += gauge(R, 216, 324, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 3);
+    h += ringLabel('h3hp', R + 9, 216, 324, lbl('HP', pctTxt(d.hp), hpColor(d.hp)), 10.5);
+    if (d.right.pct != null) {
+      h += gauge(R, 36, 144, d.right.pct / 100, d.right.color, 3, true);
+      h += ringLabel('h3rt', R + 9, 36, 144, lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color)
+        + (d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : ''), 10.5);
+    }
+    if (d.swing && !d.swing.idle) {
+      h += gauge(R, 184, 208, d.swing.frac, 'var(--melee)', 3);
+      h += ringLabel('h3sw', R + 14, 184, 208, lbl((d.swing.est ? '~' : '') + 'SWING', d.swing.left != null ? tfmt(d.swing.left) : '', 'var(--melee)'), 9, true);
+    }
+    if (d.tick) {
+      h += gauge(R, 152, 176, d.tick.frac, '#8b949e', 3, true);
+      h += ringLabel('h3tk', R + 14, 152, 176, lbl('TICK', String(Math.ceil(d.tick.left / 1000)), '#c9d1d9'), 9, true);
+    }
+    if (d.res) h += ringLabel('h3rs', R + 9, -44, 44, resTspans(d.res), 8.5);
+    // Target as a straight bar across the top chord.
     if (d.t) {
       var status = !!(d.t.slow || d.t.enrage);
-      var bh = 40 + (d.t.tot ? 12 : 0) + (status ? 12 : 0);
-      if (d.t.enrage) h += '<rect x="108" y="42" width="184" height="' + bh + '" rx="4" fill="none" stroke="var(--red)" stroke-width="' + (d.t.enraged ? 3 : 1.5) + '"/>';
-      h += T(116, 58, esc(d.t.name), 10.5, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start')
-        + T(284, 58, pctTxt(d.t.hp), 10.5, hpColor(d.t.hp), 'end', 700);
-      var tw = 168 * Math.max(0, Math.min(1, (d.t.hp || 0) / 100));
-      h += '<rect x="116" y="62" width="168" height="5" fill="' + TRACK + '"/><rect x="116" y="62" width="' + f1(tw) + '" height="5" fill="' + hpColor(d.t.hp) + '"/>';
-      var ty = 80;
-      if (d.t.tot) { h += T(116, ty, '→ ' + esc(d.t.tot.name), 9.5, '#c9d1d9', 'start') + T(284, ty, pctTxt(d.t.tot.hp), 9.5, hpColor(d.t.tot.hp), 'end', 700); ty += 12; }
-      if (d.t.slow) h += T(116, ty, d.t.slow.s, 9.5, d.t.slow.c, 'start');
-      if (d.t.enrage) h += T(284, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9.5, 'var(--red)', 'end', 700);
+      var bh = 30 + (d.t.tot ? 11 : 0) + (status ? 11 : 0);
+      if (d.t.enrage) h += '<rect x="118" y="44" width="164" height="' + bh + '" rx="4" fill="none" stroke="var(--red)" stroke-width="' + (d.t.enraged ? 2.5 : 1.2) + '"/>';
+      h += T(126, 57, esc(d.t.name), 10, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start') + T(274, 57, pctTxt(d.t.hp), 10, hpColor(d.t.hp), 'end', 700);
+      var tw = 148 * Math.max(0, Math.min(1, (d.t.hp || 0) / 100));
+      h += '<rect x="126" y="61" width="148" height="3" fill="' + TRACK + '"/><rect x="126" y="61" width="' + f1(tw) + '" height="3" fill="' + hpColor(d.t.hp) + '"/>';
+      var ty = 75;
+      if (d.t.tot) { h += T(126, ty, '→ ' + esc(d.t.tot.name), 9, '#c9d1d9', 'start') + T(274, ty, pctTxt(d.t.tot.hp), 9, hpColor(d.t.tot.hp), 'end', 700); ty += 11; }
+      if (d.t.slow) h += T(126, ty, d.t.slow.s, 9, d.t.slow.c, 'start');
+      if (d.t.enrage) h += T(274, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9, 'var(--red)', 'end', 700);
     }
-    // Timer strip across the bottom chord: tick, swing, cast, then whatever
-    // is cooling down; ready cooldowns share one line.
+    // Cooldown strip across the bottom chord: only what is counting down gets
+    // a bar; ready ones share one green line, unknown ones one dim line.
     var rows = [];
-    if (d.tick) rows.push({ label: 'TICK', frac: d.tick.frac, text: String(Math.ceil(d.tick.left / 1000)), color: '#8b949e' });
-    if (d.swing && !d.swing.idle) rows.push({ label: (d.swing.est ? '~' : '') + 'SWING', frac: d.swing.frac, text: d.swing.left != null ? tfmt(d.swing.left) : '', color: 'var(--melee)' });
     if (d.cast) rows.push({ label: 'CAST', frac: d.cast.frac, text: d.cast.left != null ? tfmt(d.cast.left) : '', color: 'var(--blue)' });
-    d.cds.filter(function(c){ return c.left > 0; }).forEach(function(c){ rows.push({ label: cdShort(c), frac: c.frac, text: tfmt(c.left), color: cdColor(c) }); });
-    var ready = d.cds.filter(function(c){ return c.left <= 0; }).map(cdShort);
-    rows.slice(0, 5).forEach(function(r, i){
-      var y = 284 + i * 13, w = 88 * Math.max(0, Math.min(1, r.frac || 0));
-      h += T(150, y + 3, r.label, 9, 'var(--dim)', 'end')
-        + '<rect x="156" y="' + (y - 3) + '" width="88" height="5" fill="' + TRACK + '"/><rect x="156" y="' + (y - 3) + '" width="' + f1(w) + '" height="5" fill="' + r.color + '"/>'
-        + T(250, y + 3, r.text, 9, r.color, 'start');
+    d.cds.filter(function(c){ return c.seen && c.left > 0; }).forEach(function(c){ rows.push({ label: cdShort(c), frac: c.frac, text: tfmt(c.left), color: cdColor(c) }); });
+    var ready = d.cds.filter(function(c){ return c.seen && c.left <= 0; }).map(cdShort);
+    var unknown = d.cds.filter(function(c){ return !c.seen; }).map(cdShort);
+    rows = rows.slice(0, 3);
+    rows.forEach(function(r, i){
+      var y = 322 + i * 11, w = 80 * Math.max(0, Math.min(1, r.frac || 0));
+      h += T(150, y + 3, r.label, 8.5, 'var(--dim)', 'end')
+        + '<rect x="156" y="' + (y - 2) + '" width="80" height="3" fill="' + TRACK + '"/><rect x="156" y="' + (y - 2) + '" width="' + f1(w) + '" height="3" fill="' + r.color + '"/>'
+        + T(242, y + 3, r.text, 8.5, r.color, 'start');
     });
-    if (ready.length) h += T(CX, 284 + Math.min(rows.length, 5) * 13 + 3, 'ready ' + ready.join(' · '), 9, 'var(--green)');
-    // Hits pop near the edge they belong to: yours upper right, theirs lower left.
-    var outs = d.feed.filter(function(f){ return f.dir === 'out'; }).slice(0, 3);
-    var ins = d.feed.filter(function(f){ return f.dir === 'in'; }).slice(0, 3);
-    outs.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(250, 124 + i * 12, f.text, 10, f.color, 'start') + '</g>'; });
-    ins.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(150, 236 + i * 12, f.text, 10, f.color, 'end') + '</g>'; });
-    if (d.res) h += '<text x="200" y="366" font-size="8.5" text-anchor="middle">' + resTspans(d.res) + '</text>';
+    var tail = (ready.length ? '<tspan fill="var(--green)">ready ' + ready.join(' · ') + '</tspan>' : '')
+             + (unknown.length ? '<tspan fill="var(--dim)">' + (ready.length ? '   ' : '') + unknown.join(' · ') + ' —</tspan>' : '');
+    if (tail) h += '<text x="200" y="' + (325 + rows.length * 11) + '" font-size="8.5" text-anchor="middle">' + tail + '</text>';
+    h += ringHits(d, R - 14, 'h3h');
     return svgWrap(h + blindRing(s));
   }
 

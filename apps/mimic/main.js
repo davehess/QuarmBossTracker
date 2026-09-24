@@ -4923,7 +4923,7 @@ function applyPopRaidVisibility() {
 function createMeOverlay() {
   const b = _resolveBounds('meBounds', 'meBoundsSig', { x: 40, y: 620, width: 330, height: 300 });
   meWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Me overlay',
+    title: 'Wolf Pack miMIC — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 90,
     frame: false, transparent: true, resizable: true,
@@ -5447,7 +5447,7 @@ const _DOCK_CATALOG = [
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
   { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
-  { key: 'me',        label: 'Me',             file: 'me.html',           flag: 'showMe' },
+  { key: 'me',        label: 'HUD',            file: 'me.html',           flag: 'showMe' },
   // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
   // file is only the offline fallback. `agentPath` makes the PANE resolve the
   // same way the window does, so a docked Command Center is never a stale copy.
@@ -6260,7 +6260,7 @@ function buildTrayMenu() {
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Me (your HP, mana, XP, casting, class focus)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays && !_dockedNow.includes('me'), click: (mi) => {
+    { label: 'HUD (your HP, mana, timers, cooldowns, target)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays && !_dockedNow.includes('me'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -9380,7 +9380,7 @@ function _windowLabelsByPid() {
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
     who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-    command: 'Command center', popraid: 'PoP raids', me: 'Me',
+    command: 'Command center', popraid: 'PoP raids', me: 'HUD',
   };
   for (const e of _OVERLAY_WINDOWS) {
     // Flag the ones that are alive despite being switched off — that pairing is
