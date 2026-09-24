@@ -129,6 +129,7 @@ let tankWindow    = null;
 let extTargetWindow = null;
 let commandWindow = null;
 let popRaidWindow = null;
+let meWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -1162,6 +1163,7 @@ function _boundsKeyForWindow(win) {
   if (win === extTargetWindow) return 'extTargetBounds';
   if (win === commandWindow) return 'commandBounds';
   if (win === popRaidWindow) return 'popRaidBounds';
+  if (win === meWindow) return 'meBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -2253,7 +2255,9 @@ function startZealCapture() {
 let _blindActive   = false;
 let _blindSource   = null;
 let _blindStartMs  = 0;
-const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
+// 'me' (2026-09-24): blind removes the game UI — HP, mana, target, casting
+// all go dark — and the Me overlay is exactly that UI, so it comes up too.
+const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers', 'me'];
 function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
 function _pollBlindState() {
   // Idle gate (2026-07-07 review): blind auto-pop only matters in game — no
@@ -2285,19 +2289,22 @@ function _pollBlindState() {
         if (!charmWindow)   createCharmOverlay();
         if (!petsWindow)    createPetsOverlay();
         if (!triggerWindow) createTriggerOverlay();
+        if (!meWindow)      createMeOverlay();
         applyMobInfoVisibility();
         applyCharmVisibility();
         applyPetsVisibility();
         applyTriggerVisibility();
+        applyMeVisibility();
       } else if (!nowOn && _blindActive) {
         _blindActive = false;
         appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
         _blindSource = null;
-        // Restore the user's normal visibility prefs for the four overlays.
+        // Restore the user's normal visibility prefs for the forced overlays.
         applyMobInfoVisibility();
         applyCharmVisibility();
         applyPetsVisibility();
         applyTriggerVisibility();
+        applyMeVisibility();
       }
     });
   });
@@ -2423,6 +2430,7 @@ const _CLASS_SET_WINDOWS = [
   ['showExtTarget',    () => extTargetWindow, createExtTargetOverlay],
   ['showCommand',      () => commandWindow,   createCommandOverlay],
   ['showPopRaid',      () => popRaidWindow,   createPopRaidOverlay],
+  ['showMe',           () => meWindow,        createMeOverlay],
 ];
 // toggle-overlay key (what /admin/overlays stores) → cfg flag.
 const _CLASS_SET_FLAG_BY_KEY = {
@@ -2430,6 +2438,7 @@ const _CLASS_SET_FLAG_BY_KEY = {
   mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
   zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
   exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
+  me: 'showMe',
 };
 function _maybeSeedClassSet(s) {
   const sets = s && s.classOverlaySets;
@@ -3045,7 +3054,7 @@ function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid'];
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
   const missing = KNOWN.filter(k => !present.has(k));
   // Re-evaluate every show/hide gate BEFORE arranging so anything that should
   // be visible on the home display participates in the packing.
@@ -3115,6 +3124,7 @@ function _overlayEntries() {
   if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
+  if (meWindow && !meWindow.isDestroyed()) out.push(['me', meWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -4906,6 +4916,40 @@ function applyPopRaidVisibility() {
   if (shouldShow) popRaidWindow.showInactive(); else popRaidWindow.hide();
 }
 
+// Me — the active character's own panel: vitals, XP, casting, target, class
+// focus (CHs / mezzes left, ToT / Harvest timers), group, DPS (the guild lead,
+// 2026-09-24). Three layouts in one file, picked in the overlay. Reads
+// /api/me. Opt-in, and forced open while blind (_BLIND_FORCED_KEYS).
+function createMeOverlay() {
+  const b = _resolveBounds('meBounds', 'meBoundsSig', { x: 40, y: 620, width: 330, height: 300 });
+  meWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Me overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Me'),
+  });
+  meWindow.setAlwaysOnTop(true, 'screen-saver');
+  meWindow.setVisibleOnAllWorkspaces(true);
+  meWindow.loadFile('me.html');
+  meWindow.on('moved',  () => _persistBounds('meBounds', meWindow));
+  meWindow.on('resize', () => _persistBounds('meBounds', meWindow));
+  meWindow.once('ready-to-show', () => {
+    meWindow.webContents.send('agent-port', agentPort);
+    applyMeVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(meWindow, 'me');
+  });
+}
+function applyMeVisibility() {
+  if (!meWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || _blindForceOpen('me') || (cfg.showMe && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) meWindow.showInactive(); else meWindow.hide();
+}
+
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
@@ -5370,6 +5414,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'exttarget', flag: 'showExtTarget',    get: () => extTargetWindow, create: createExtTargetOverlay,    drop: () => { extTargetWindow = null; } },
   { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
+  { key: 'me',        flag: 'showMe',           get: () => meWindow,        create: createMeOverlay,           drop: () => { meWindow = null; } },
 ];
 
 // ── The Dock ────────────────────────────────────────────────────────────────
@@ -5402,6 +5447,7 @@ const _DOCK_CATALOG = [
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
   { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
+  { key: 'me',        label: 'Me',             file: 'me.html',           flag: 'showMe' },
   // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
   // file is only the offline fallback. `agentPath` makes the PANE resolve the
   // same way the window does, so a docked Command Center is never a stale copy.
@@ -5575,6 +5621,7 @@ function applyAllVisibility() {
   applyExtTargetVisibility();
   applyCommandVisibility();
   applyPopRaidVisibility();
+  applyMeVisibility();
   _reapDisabledOverlays();
 }
 
@@ -5629,6 +5676,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
+  'showMe',
 ];
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
@@ -5919,6 +5967,7 @@ function currentStatus() {
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
+    showMe: !!cfg.showMe,
     // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
     // to any renderer that wants to show the state). Default off.
     damageAlert: !!cfg.damageAlert,
@@ -6209,6 +6258,11 @@ function buildTrayMenu() {
     { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.hideOverlays && !_dockedNow.includes('popraid'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { label: 'Me (your HP, mana, XP, casting, class focus)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays && !_dockedNow.includes('me'), click: (mi) => {
+        const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
+        if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { type: 'separator' },
@@ -7250,6 +7304,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showPopRaid = !cfg.showPopRaid; saveConfig(cfg);
       if (cfg.showPopRaid && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
       break;
+    case 'me':
+      cfg.showMe = !cfg.showMe; saveConfig(cfg);
+      if (cfg.showMe && !meWindow) createMeOverlay(); else applyMeVisibility();
+      break;
     case 'dock':
       // The Dock itself (the guild lead, 2026-08-19: "Dock isn't available from the
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
@@ -7316,7 +7374,7 @@ const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid'];
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me'];
 ipcMain.handle('wp-opacity-all', (_e, v) => {
   const val = Math.max(0.15, Math.min(1, +v || 1));
   const cfg = loadConfig();
@@ -7720,6 +7778,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === popRaidWindow) {
       cfg.showPopRaid = false; saveConfig(cfg);
       try { popRaidWindow.hide(); } catch {}
+    } else if (win === meWindow) {
+      cfg.showMe = false; saveConfig(cfg);
+      try { meWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -8180,8 +8241,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
     if (merged.showCommand      && !commandWindow)   createCommandOverlay();
     if (merged.showPopRaid      && !popRaidWindow)   createPopRaidOverlay();
+    if (merged.showMe           && !meWindow)        createMeOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -9291,7 +9353,7 @@ function _windowLabelsByPid() {
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
     who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-    command: 'Command center', popraid: 'PoP raids',
+    command: 'Command center', popraid: 'PoP raids', me: 'Me',
   };
   for (const e of _OVERLAY_WINDOWS) {
     // Flag the ones that are alive despite being switched off — that pairing is

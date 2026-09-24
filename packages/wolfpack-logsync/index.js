@@ -3542,6 +3542,8 @@ function noteSelfCast(line, character) {
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
+  // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
+  if (typeof _meNoteSelfCast === 'function') _meNoteSelfCast(cl, m[1].trim(), atMs);
   // Silent pacifies (Harmony et al.) have no landing line — this cast is the
   // only evidence they will ever produce. typeof-guarded like the rez hook
   // below so source-slice tests that lift noteSelfCast alone still run.
@@ -4122,7 +4124,67 @@ function _pushBlindEvent(kind, text, tts, atMs) {
   _blindEvents.push({ ts: atMs || Date.now(), kind, text, tts: tts || text });
   if (_blindEvents.length > 40) _blindEvents.splice(0, _blindEvents.length - 40);
 }
+// Every blinding spell's own landing and fade text, from the catalog (bot
+// 3.1.145 flags SPA 20). The hand list above knew one spell; the catalog has
+// thirty landing texts ("You are blinded by a flash of light.", "You have mud
+// in your eyes.") and the commonest fade ("Your sight returns.", 11 spells) was
+// unmatched. A text any NON-blind spell also prints is left out, so a shared
+// line ("You feel confused.") can never open Blind Mode or close it.
+let _blindTextsFor = null, _blindTexts = null;
+function _blindCatalogTexts() {
+  if (_blindTexts && _blindTextsFor === _spellByNameLower) return _blindTexts;
+  const youBlind = new Map(), youOther = new Set(), fadeBlind = new Set(), fadeOther = new Set();
+  for (const e of _spellByNameLower.values()) {
+    if (!e) continue;
+    const you = e.you ? String(e.you).trim() : '';
+    const fade = e.fades ? String(e.fades).trim() : '';
+    if (e.blind) {
+      if (you && !youBlind.has(you)) youBlind.set(you, _catalogDurationSec(e.name));
+      if (fade) fadeBlind.add(fade);
+    } else {
+      if (you) youOther.add(you);
+      if (fade) fadeOther.add(fade);
+    }
+  }
+  const start = new Map([...youBlind].filter(([t]) => !youOther.has(t)));
+  const fade = new Set([...fadeBlind].filter(t => !fadeOther.has(t)));
+  _blindTexts = { start, fade };
+  _blindTextsFor = _spellByNameLower;
+  return _blindTexts;
+}
 function noteBlindLine(line, character) {
+  if (line && character) {
+    const at = line.indexOf('] ');
+    const msg = at >= 0 ? line.slice(at + 2).trim() : '';
+    const bt = msg ? _blindCatalogTexts() : null;
+    // The hand patterns above keep their own source/callout (the Pitted Iron
+    // Ring prints "Flames of mana…" AND the catalog's manaflare line), and an
+    // already-active blind is not announced twice.
+    if (bt && bt.start.has(msg) && !_BLIND_RX.some(b => b.rx.test(line))
+        && !(_blindState[String(character).toLowerCase()] || {}).active) {
+      const cl = String(character).toLowerCase();
+      const ts = parseEqTimestamp(line);
+      const atMs = ts ? ts.getTime() : Date.now();
+      const secs = bt.start.get(msg);
+      _blindState[cl] = {
+        active: true, source: 'npc_blind', since: atMs,
+        expiresAt: atMs + (secs ? secs * 1000 : _BLIND_DUR_GENERIC_MS),
+        target: _zealTargetForChar(cl) || null, selfHits: 0,
+      };
+      _pushBlindEvent('blind_start', '👁 Blinded' + (secs ? ' — ' + secs + 's' : ''), 'Blinded', atMs);
+      return;
+    }
+    if (bt && bt.fade.has(msg)) {
+      const s = _blindState[String(character).toLowerCase()];
+      if (s && s.active) {
+        const ts = parseEqTimestamp(line);
+        s.active = false;
+        s.endedAt = ts ? ts.getTime() : Date.now();
+        _pushBlindEvent('blind_end', '👁 Vision restored', 'Vision restored', s.endedAt);
+      }
+      return;
+    }
+  }
   // Cheap gate covering every land/fade/self-hit pattern below: blind lines,
   // the manaflare pair, the fade texts, and the ALL-CAPS YOURSELF self-hit.
   if (line.indexOf('lind') === -1 && line.indexOf('manaflare') === -1
@@ -11947,6 +12009,243 @@ function _resolveMainTarget(activeCharacter) {
   }
   return best ? { name: best.name, hp_pct: best.hp_pct != null ? best.hp_pct : null, raider_count: best.raider_count || 0 } : null;
 }
+// ── Me overlay (the guild lead, 2026-09-24) ─────────────────────────────────
+// "a 'me' overlay. my target, my casting, my health, mana, XP detail. avg DPS
+// per fight, total per day/night during raids, then the things that are
+// important to classes with mana. clerics focus on how many CHs are left,
+// enchanters, charms or mezzes left, theft of thought or harvest timers, party
+// health data." One snapshot of the ACTIVE character; apps/mimic/me.html draws
+// it three ways (A/B/C, picked in game) for the guild lead to choose from.
+//
+// Everything here is what Zeal already sends (docs/zeal-pipe-protocol.md) plus
+// the spell catalog's mana / recast / mez fields (bot 3.1.144-145). A value the
+// client does not send is null, never a guess — the overlay hides it.
+function _meSpell(name) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return null;
+  return _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'")) || null;
+}
+function _meLabel(st, id) {
+  const ci = Array.isArray(st.charInfo) ? st.charInfo : [];
+  const hit = ci.find(x => x && x.id === id);
+  return hit && String(hit.value).trim() !== '' ? String(hit.value).trim() : null;
+}
+// "1,469" / "2.5%" / "12" → number; anything without a digit → null.
+function _meNum(v) {
+  if (v == null) return null;
+  const m = String(v).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+function _meGauge(st, slot) {
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === slot) : null;
+  return g && g.hp_pct != null ? { pct: g.hp_pct, text: g.text || '' } : null;
+}
+
+// XP / AA per hour, measured here: a sliding hour of (time, level*100 + %)
+// samples, so the rate is in "% of a level (or an AA) per hour" — the unit the
+// in-game XP/HR readouts use. A drop (spent AA, death, de-level) restarts the
+// window rather than reading as negative progress. Under five minutes of
+// samples it is not a rate yet and stays null.
+const _meRateSamples = new Map();   // charLower|kind → [{ t, v }]
+function _meRate(key, value, now) {
+  if (value == null) return null;
+  let arr = _meRateSamples.get(key);
+  if (!arr) { arr = []; _meRateSamples.set(key, arr); }
+  const last = arr[arr.length - 1];
+  if (last && value < last.v) arr.length = 0;
+  if (!arr.length || value !== arr[arr.length - 1].v || now - arr[arr.length - 1].t >= 60_000) arr.push({ t: now, v: value });
+  while (arr.length > 2 && now - arr[0].t > 60 * 60_000) arr.shift();
+  if (arr.length < 2) return null;
+  const span = arr[arr.length - 1].t - arr[0].t;
+  if (span < 5 * 60_000) return null;
+  return Math.round(((arr[arr.length - 1].v - arr[0].v) * 3_600_000 / span) * 10) / 10;
+}
+
+// Tonight's damage, per character, from every finished fight this agent saw
+// (trash included — "avg DPS per fight, total per day/night"). The night rolls
+// over at 6am local, the same boundary the rest of the platform uses. A pet's
+// damage counts for its owner. In memory: a restart starts the night over.
+const _meNight = { key: null, byChar: new Map() };
+function _meNightKey(ms) {
+  const d = new Date(ms - 6 * 3_600_000);
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+function _meNoteFight(entry) {
+  if (!entry) return;
+  const key = _meNightKey(entry.endedMs || Date.now());
+  if (_meNight.key !== key) { _meNight.key = key; _meNight.byChar = new Map(); }
+  const seen = new Set();
+  for (const p of (entry.local || [])) {
+    const k = String(p.pet_owner || p.character || '').toLowerCase();
+    if (!k) continue;
+    const e = _meNight.byChar.get(k) || { dmg: 0, secs: 0, fights: 0 };
+    e.dmg += Number(p.dmg) || 0;
+    if (!seen.has(k)) { e.secs += entry.durationSec || 0; e.fights += 1; seen.add(k); }
+    _meNight.byChar.set(k, e);
+  }
+}
+
+// Recast timers for long-recast spells the player casts ("theft of thought or
+// harvest timers"). Stamped at "You begin casting X" — ready at begin + cast
+// time + recast — and taken back if that cast fizzles or is interrupted, which
+// never starts the recast. Spells under 20s recast are not worth a timer.
+const _meRecasts = new Map();   // charLower → Map(spellLower → { name, startedAt, castMs, readyAt })
+function _meNoteSelfCast(cl, name, atMs) {
+  const e = _meSpell(name);
+  if (!e || !(Number(e.recast) >= 20_000)) return;
+  let m = _meRecasts.get(cl);
+  if (!m) { m = new Map(); _meRecasts.set(cl, m); }
+  const castMs = Number(e.cast_ms) || 0;
+  m.set(String(name).toLowerCase(), { name, startedAt: atMs, castMs, readyAt: atMs + castMs + Number(e.recast) });
+}
+function _meNoteCastFailed(line, character) {
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+      && line.indexOf('miss the gem') === -1) return;   // cheap gate
+  if (!_CAST_FAIL_RX.test(line)) return;
+  const m = _meRecasts.get(String(character).toLowerCase());
+  if (!m) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  let hit = null;
+  for (const [k, r] of m) {
+    if (atMs >= r.startedAt && atMs - r.startedAt <= r.castMs + 1500
+        && (!hit || r.startedAt > hit[1].startedAt)) hit = [k, r];
+  }
+  if (hit) m.delete(hit[0]);
+}
+
+function _serializeMeState() {
+  const now = Date.now();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const s = _zealState[ch];
+    const ts = (s && s.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  if (!active) return { ok: true, character: null, generated_at: now };
+  const st = _zealState[active] || {};
+  const cl = String(active).toLowerCase();
+
+  const level = _meNum(_meLabel(st, 2));
+  const who = whoData.get(cl);
+  const cls = normalizeClass(_meLabel(st, 3) || (who && who.class) || _raidClassByName.get(cl) || '') || null;
+
+  const manaG = _meGauge(st, 2);
+  const manaCur = st.self_mana_cur != null ? st.self_mana_cur : null;
+  const manaMax = st.self_mana_max != null ? st.self_mana_max : null;
+  const manaPct = manaG ? manaG.pct : _meNum(_meLabel(st, 20));
+  const endG = _meGauge(st, 3);
+  const xpPct = _meNum(_meLabel(st, 26)) ?? (_meGauge(st, 4) ? _meGauge(st, 4).pct : null);
+  const aaPct = _meNum(_meLabel(st, 27)) ?? (_meGauge(st, 5) ? _meGauge(st, 5).pct : null);
+  const aaBanked = _meNum(_meLabel(st, 71));
+
+  // Casting: the spell name (label 134) and Zeal's cast-progress gauge (7).
+  const castG = _meGauge(st, 7);
+  const castE = st.casting ? _meSpell(st.casting) : null;
+  const casting = st.casting ? {
+    spell: st.casting,
+    pct: castG ? castG.pct : null,
+    remaining_ms: (castG && castE && castE.cast_ms) ? Math.max(0, Math.round(castE.cast_ms * (1 - castG.pct / 100))) : null,
+  } : null;
+
+  // The spell bar: gems 1-8 (labels 60-67) with each one's recast gauge
+  // (26-33, drawn as the client draws it) and "casts left" at current mana.
+  const gems = [];
+  for (let i = 0; i < 8; i++) {
+    const name = _meLabel(st, 60 + i);
+    if (!name || /^(empty|none)$/i.test(name)) continue;
+    const e = _meSpell(name);
+    const g = _meGauge(st, 26 + i);
+    const mana = e && e.mana ? Number(e.mana) : null;
+    gems.push({
+      slot: i + 1, name, mana,
+      casts_left: (mana && manaCur != null) ? Math.floor(manaCur / mana) : null,
+      recast_pct: g ? g.pct : null,
+      mez: !!(e && e.mez),
+      charm: CHARM_SPELLS.has(String(name).toLowerCase()) || CHARM_SPELLS.has(String(name).toLowerCase().replace(/'/g, '`')),
+    });
+  }
+
+  // Long-recast timers the player started (ToT, Harvest, …).
+  const timers = [];
+  const rm = _meRecasts.get(cl);
+  if (rm) {
+    for (const [k, r] of rm) {
+      const left = r.readyAt - now;
+      if (left <= -60_000) { rm.delete(k); continue; }
+      const e = _meSpell(r.name);
+      timers.push({ name: r.name, ready_in_ms: Math.max(0, left), recast_ms: e && e.recast ? Number(e.recast) : null });
+    }
+    timers.sort((a, b) => a.ready_in_ms - b.ready_in_ms);
+  }
+
+  // Class focus — the few numbers a class plays by.
+  const focus = [];
+  const castsOf = (spell) => (spell && spell.mana && manaCur != null) ? Math.floor(manaCur / Number(spell.mana)) : null;
+  if (cls === 'Cleric') {
+    const ch = _meSpell('Complete Healing');
+    if (ch) focus.push({ key: 'ch', label: 'CH left', value: castsOf(ch), sub: (ch.mana || '?') + ' mana each' });
+  }
+  const mezGem = gems.filter(g => g.mez && g.mana).sort((a, b) => b.mana - a.mana)[0];
+  if (mezGem) focus.push({ key: 'mez', label: 'Mez left', value: mezGem.casts_left, sub: mezGem.name });
+  const charmGem = gems.filter(g => g.charm && g.mana).sort((a, b) => b.mana - a.mana)[0];
+  if (charmGem) focus.push({ key: 'charm', label: 'Charm left', value: charmGem.casts_left, sub: charmGem.name });
+  for (const t of timers) {
+    focus.push({ key: 'timer:' + t.name.toLowerCase(), label: t.name, timer_ms: t.ready_in_ms, recast_ms: t.recast_ms });
+  }
+
+  // Group: Zeal's group gauges 11-15 (name + HP%), class from /pipeverbose.
+  const group = [];
+  const gm = Array.isArray(st.group_members) ? st.group_members : [];
+  for (let slot = 11; slot <= 15; slot++) {
+    const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === slot && x.text) : null;
+    if (!g) continue;
+    const v = gm.find(m => m && m.name && String(m.name).toLowerCase() === String(g.text).toLowerCase());
+    group.push({ name: g.text, hp_pct: g.hp_pct != null ? g.hp_pct : null, class: v && v.class ? normalizeClass(v.class) : null });
+  }
+
+  // DPS: this fight (live), and tonight (every finished fight).
+  let fight = null;
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt && et.startedAt) {
+    let dmg = 0;
+    for (const [name, p] of Object.entries(et.perPlayer || {})) {
+      const owner = String(p.pet_owner || name).toLowerCase();
+      if (owner === cl) dmg += (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
+    }
+    const secs = Math.max(1, Math.round((now - Date.parse(et.startedAt)) / 1000));
+    fight = { target: et.bossName || et.targetName || null, dmg, secs, dps: Math.round(dmg / secs) };
+  }
+  const nightKey = _meNightKey(now);
+  const n = (_meNight.key === nightKey && _meNight.byChar.get(cl)) || null;
+  const night = n ? { dmg: n.dmg, secs: n.secs, fights: n.fights, avg_dps: n.secs ? Math.round(n.dmg / n.secs) : null } : null;
+
+  const tgtG = _meGauge(st, 6);
+  const petG = _meGauge(st, 16);
+  const blind = _blindState[cl];
+  return {
+    ok: true,
+    character: active,
+    generated_at: now,
+    level, class: cls,
+    hp: { cur: st.self_hp_cur ?? null, max: st.self_hp_max ?? null, pct: st.self_hp_pct ?? null },
+    mana: { cur: manaCur, max: manaMax, pct: manaPct },
+    end: { pct: endG ? endG.pct : _meNum(_meLabel(st, 21)) },
+    xp: { pct: xpPct, per_hr: _meRate(cl + '|xp', (level != null && xpPct != null) ? level * 100 + xpPct : null, now) },
+    aa: { pct: aaPct, banked: aaBanked, per_hr: _meRate(cl + '|aa', (aaPct != null) ? (aaBanked || 0) * 100 + aaPct : null, now) },
+    weight: { cur: _meNum(_meLabel(st, 24)), max: _meNum(_meLabel(st, 25)) },
+    target: st.target_name ? { name: st.target_name, hp_pct: st.target_hp_pct ?? (tgtG ? tgtG.pct : null), id: st.target_id ?? null } : null,
+    pet: petG && petG.text ? { name: petG.text, hp_pct: petG.pct } : null,
+    casting,
+    gems,
+    timers,
+    focus,
+    group,
+    dps: { fight, night },
+    blind: !!(blind && blind.active),
+  };
+}
+
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -12954,6 +13253,7 @@ let _stateJsonCache = { at: 0, body: null };
 // a 500 reads as an empty-but-successful state and BLANKS the whole overlay.
 // Serve the last good body on a serialize throw instead of ever 500-ing.
 let _tankStateLastGood = null;
+let _meStateLastGood = null;
 let _commandCenterLastGood = null;
 // How long a finished fight's threat snapshot stays visible as a read-back.
 // Mirrors the window applied inside EncounterBuilder._publishLiveThreat().
@@ -13027,7 +13327,10 @@ function _serializeForDashboard() {
       target:    s.target  || null,
     };
   }
-  const _blindActive = _activeCharacter ? (_blindOut[_activeCharacter] || null) : null;
+  // ⚠ _blindState is keyed LOWERCASE and _activeCharacter is display case.
+  // Looked up as-is (until 2026-09-24) this was always null for a capitalised
+  // name, so Blind Mode's auto-show never fired — the callouts still did.
+  const _blindActive = _activeCharacter ? (_blindOut[String(_activeCharacter).toLowerCase()] || null) : null;
 
   return {
     version:            AGENT_VERSION,
@@ -17461,6 +17764,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
+  ['me',      'Me',                  'Your own character: HP, mana, endurance, XP and AA with per-hour rates, what you are casting, your target, your group, your DPS this fight and tonight, and your class numbers (CHs left, mezzes left, Theft of Thought / Harvest timers). Three layouts to test — pick A, B or C in its title bar. Comes up by itself when you are blinded.'],
 ];
 
 function renderOverlays(s) {
@@ -17905,11 +18209,11 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
@@ -24636,6 +24940,14 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // Me overlay (me.html) — the active character's own panel.
+      if (req.url === '/api/me') {
+        let _b;
+        try { _b = JSON.stringify(_serializeMeState()); _meStateLastGood = _b; }
+        catch (e) { console.error('[api/me] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _meStateLastGood; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(_b || 'null');
+      }
       // Command Center overlay (command.html) — the "one window" board.
       if (req.url === '/api/command-center') {
         let _b;
@@ -30454,6 +30766,9 @@ function _recordFightHistory(et) {
   };
   stats.fightHistory.unshift(entry);
   if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
+  // Me overlay: tonight's damage per character (the dupe guard above keeps a
+  // multi-log flush from counting one fight twice).
+  if (typeof _meNoteFight === 'function') _meNoteFight(entry);
 
   if (!_uploadOpts || _uploadOpts.dryRun || !_uploadOpts.botUrl || !_uploadOpts.token) return;
   for (const delay of FIGHT_HISTORY_SETTLE_MS) {
@@ -39623,6 +39938,8 @@ async function main() {
           // the relay above just registered, so the bot doesn't retire a
           // debuff the raider is still carrying.
           noteCureCastFailed(line, b.character);
+          // ...and a long-recast spell that failed never started its recast.
+          _meNoteCastFailed(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,

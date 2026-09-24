@@ -53,6 +53,7 @@ const PAIRS = [
   ['extTargetWindow', 'createExtTargetOverlay'],
   ['commandWindow',   'createCommandOverlay'],
   ['popRaidWindow',   'createPopRaidOverlay'],
+  ['meWindow',        'createMeOverlay'],
 ];
 
 // Stand up the sliced code over fake windows. `alive` seeds windows that

@@ -1,0 +1,237 @@
+// test/me-overlay.test.js — the Me overlay's data (/api/me) and its three layouts.
+//
+// The guild lead, 2026-09-24: "a 'me' overlay. my target, my casting, my
+// health, mana, XP detail. avg DPS per fight, total per day/night during
+// raids, then the things that are important to classes with mana. clerics
+// focus on how many CHs are left, enchanters, charms or mezzes left, theft of
+// thought or harvest timers, party health data" — and "generate me those me
+// overlays as versions a/b/c … give me a picker in game."
+//
+// Runs the agent's REAL _serializeMeState over a fake Zeal state, and the
+// overlay's REAL render functions over its output. Names are invented.
+//
+// Run: npx vitest run test/me-overlay.test.js
+
+import { describe, it, expect } from 'vitest';
+import path from 'node:path';
+import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
+
+const agent = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+const meHtml = readSource(path.join(ROOT, 'apps', 'mimic', 'me.html'));
+const mainJs = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
+
+const meBlock = sliceBlock(agent, '// ── Me overlay (the guild lead, 2026-09-24)', '\nfunction _serializeTankState() {')
+  .replace(/\nfunction _serializeTankState\(\) \{$/, '');
+const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
+  + sliceBlock(agent, 'function parseEqTimestamp(line) {', '\n}');
+const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
+
+// Catalog: the real costs/recasts from eqemu_spells.
+const CATALOG = [
+  { name: 'Complete Healing', mana: 400, cast_ms: 10000 },
+  { name: 'Mesmerize', mana: 20, cast_ms: 2500, mez: 1 },
+  { name: 'Glamour of Kintaz', mana: 125, cast_ms: 1500, mez: 1 },
+  { name: 'Allure', mana: 245, cast_ms: 6000 },
+  { name: 'Theft of Thought', mana: 100, cast_ms: 3000, recast: 120000 },
+  { name: 'Harvest', mana: 0, cast_ms: 5000, recast: 600000 },
+];
+
+function load({ zeal = {}, et = null, blind = {} } = {}) {
+  const pre = `
+    const _spellByNameLower = new Map(${JSON.stringify(CATALOG.map(e => [e.name.toLowerCase(), e]))});
+    const _zealState = ${JSON.stringify(zeal)};
+    const whoData = new Map();
+    const _raidClassByName = new Map();
+    const CHARM_SPELLS = new Map([['allure', {}], ['charm', {}]]);
+    const stats = { currentEncounterThreat: ${JSON.stringify(et)} };
+    const _blindState = ${JSON.stringify(blind)};
+    function normalizeClass(s) { return s ? String(s).trim() : s; }
+    ${failRx}
+    ${parseTs}
+  `;
+  // eslint-disable-next-line no-new-func
+  return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey };')();
+}
+
+const labels = (o) => Object.entries(o).map(([id, value]) => ({ id: Number(id), value: String(value) }));
+function zealFor(name, { cls, level = 60, mana = [1686, 3015], gems = [], group = [], extra = {} } = {}) {
+  const gemLabels = {};
+  gems.forEach((g, i) => { gemLabels[60 + i] = g; });
+  return {
+    [name]: {
+      updatedAt: Date.now(),
+      self_hp_cur: 1469, self_hp_max: 3214, self_hp_pct: 45.7,
+      self_mana_cur: mana[0], self_mana_max: mana[1],
+      charInfo: labels({ 2: level, 3: cls, 26: 48, 27: 1, 71: 3, 24: 55, 25: 255, ...gemLabels }),
+      gauges: [
+        { slot: 2, hp_pct: 55.9, text: '' },
+        { slot: 3, hp_pct: 91, text: '' },
+        ...group.map((g, i) => ({ slot: 11 + i, hp_pct: g[1], text: g[0] })),
+      ],
+      ...extra,
+    },
+  };
+}
+
+describe('class focus', () => {
+  it('a cleric sees how many Complete Heals the mana left buys', () => {
+    const m = load({ zeal: zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015] }) });
+    const s = m._serializeMeState();
+    expect(s.character).toBe('Aldenmar');
+    expect(s.focus.find(f => f.key === 'ch')).toMatchObject({ label: 'CH left', value: 4 });   // 1686 / 400
+  });
+
+  it('an enchanter sees mezzes and charms left for what is memorized', () => {
+    const m = load({ zeal: zealFor('Nyssara', { cls: 'Enchanter', mana: [1000, 3000], gems: ['Mesmerize', 'Glamour of Kintaz', 'Allure'] }) });
+    const s = m._serializeMeState();
+    // The strongest memorized mez — the one an enchanter actually leans on.
+    expect(s.focus.find(f => f.key === 'mez')).toMatchObject({ value: 8, sub: 'Glamour of Kintaz' });   // 1000 / 125
+    expect(s.focus.find(f => f.key === 'charm')).toMatchObject({ value: 4, sub: 'Allure' });           // 1000 / 245
+    expect(s.gems.map(g => g.casts_left)).toEqual([50, 8, 4]);
+  });
+
+  it('no mana classes get no mana numbers', () => {
+    const m = load({ zeal: zealFor('Brackwyn', { cls: 'Warrior', mana: [null, null] }) });
+    const s = m._serializeMeState();
+    expect(s.focus).toEqual([]);
+    expect(s.mana.cur).toBeNull();
+  });
+});
+
+describe('Theft of Thought / Harvest timers', () => {
+  it('a cast starts the recast; the timer counts down from it', () => {
+    const m = load({ zeal: zealFor('Nyssara', { cls: 'Enchanter' }) });
+    m._meNoteSelfCast('nyssara', 'Theft of Thought', Date.now() - 10_000);
+    const t = m._serializeMeState().focus.find(f => f.key === 'timer:theft of thought');
+    expect(t).toBeTruthy();
+    // begin 10s ago + 3s cast + 120s recast → ~113s left.
+    expect(Math.round(t.timer_ms / 1000)).toBe(113);
+  });
+
+  it('a fizzle inside the cast takes the timer back — the recast never started', () => {
+    const m = load({ zeal: zealFor('Nyssara', { cls: 'Enchanter' }) });
+    const at = Date.parse('2026-09-24T02:00:00');
+    m._meNoteSelfCast('nyssara', 'Theft of Thought', at);
+    m._meNoteCastFailed('[Thu Sep 24 02:00:02 2026] Your spell fizzles!', 'Nyssara');
+    expect(m._serializeMeState().timers).toEqual([]);
+  });
+
+  it('short recasts get no timer', () => {
+    const m = load({ zeal: zealFor('Nyssara', { cls: 'Enchanter' }) });
+    m._meNoteSelfCast('nyssara', 'Mesmerize', Date.now());
+    expect(m._serializeMeState().timers).toEqual([]);
+  });
+});
+
+describe('XP and AA per hour', () => {
+  it('is not a rate until five minutes of samples', () => {
+    const m = load();
+    const t0 = Date.parse('2026-09-24T01:00:00Z');
+    expect(m._meRate('x|xp', 6000, t0)).toBeNull();
+    expect(m._meRate('x|xp', 6010, t0 + 4 * 60_000)).toBeNull();
+  });
+  it('then reads in % of a level per hour', () => {
+    const m = load();
+    const t0 = Date.parse('2026-09-24T01:00:00Z');
+    m._meRate('x|xp', 6000, t0);
+    expect(m._meRate('x|xp', 6010, t0 + 30 * 60_000)).toBe(20);   // 10% in half an hour
+  });
+  it('a drop (spent AA, death) restarts instead of going negative', () => {
+    const m = load();
+    const t0 = Date.parse('2026-09-24T01:00:00Z');
+    m._meRate('x|aa', 350, t0);
+    expect(m._meRate('x|aa', 50, t0 + 10 * 60_000)).toBeNull();
+  });
+});
+
+describe('damage', () => {
+  it('tonight adds every finished fight, and a pet counts for its owner', () => {
+    const m = load({ zeal: zealFor('Aldenmar', { cls: 'Magician' }) });
+    const now = Date.now();
+    m._meNoteFight({ endedMs: now, durationSec: 100, local: [
+      { character: 'Aldenmar', dmg: 20000 }, { character: 'Gobeker', dmg: 10000, pet_owner: 'Aldenmar' },
+      { character: 'Brackwyn', dmg: 50000 },
+    ] });
+    m._meNoteFight({ endedMs: now, durationSec: 50, local: [{ character: 'Aldenmar', dmg: 15000 }] });
+    const n = m._serializeMeState().dps.night;
+    expect(n).toEqual({ dmg: 45000, secs: 150, fights: 2, avg_dps: 300 });
+  });
+
+  it('this fight: live damage over elapsed time', () => {
+    const et = { startedAt: new Date(Date.now() - 20_000).toISOString(), targetName: 'a Kromrif warrior',
+      perPlayer: { Aldenmar: { swing: 3000, spell: 1000 }, Brackwyn: { swing: 9000 } } };
+    const s = load({ zeal: zealFor('Aldenmar', { cls: 'Ranger' }), et })._serializeMeState();
+    expect(s.dps.fight.dmg).toBe(4000);
+    expect(s.dps.fight.dps).toBe(200);
+  });
+});
+
+describe('group, blind, and nothing to show', () => {
+  it('lists the group from Zeal\'s group gauges', () => {
+    const s = load({ zeal: zealFor('Aldenmar', { cls: 'Cleric', group: [['Brackwyn', 34], ['Corvale', 100]] }) })._serializeMeState();
+    expect(s.group.map(g => [g.name, g.hp_pct])).toEqual([['Brackwyn', 34], ['Corvale', 100]]);
+  });
+  it('says when the character is blind', () => {
+    const s = load({ zeal: zealFor('Aldenmar', { cls: 'Cleric' }), blind: { aldenmar: { active: true } } })._serializeMeState();
+    expect(s.blind).toBe(true);
+  });
+  it('no live character → no character, not an error', () => {
+    expect(load()._serializeMeState()).toMatchObject({ ok: true, character: null });
+  });
+});
+
+// ── the overlay ─────────────────────────────────────────────────────────────
+const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
+const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
+// eslint-disable-next-line no-new-func
+const R = new Function(renderBlock + '\nreturn { renderA, renderB, renderC };')();
+
+describe('the three layouts', () => {
+  const zeal = zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015], gems: ['Complete Healing'], group: [['Brackwyn', 34]] });
+  const s = load({ zeal })._serializeMeState();
+
+  it('A · Classic prints cur/max inside the bars, Nillipuss-style', () => {
+    const h = R.renderA(s);
+    expect(h).toContain('1,469 / 3,214');
+    expect(h).toContain('1,686 / 3,015');
+    expect(h).toContain('CH left <b>4</b>');
+    expect(h).toContain('Brackwyn');
+  });
+
+  it('B · Glance shows only what needs you — the lowest groupmate, not the group', () => {
+    const h = R.renderB(s);
+    expect(h).toContain('CH left <b>4</b>');
+    expect(h).toContain('Brackwyn <b>34%</b>');
+    expect(h).not.toContain('1,469 / 3,214');
+  });
+
+  it('C · Role leads with the class number, large', () => {
+    const h = R.renderC(s);
+    expect(h.indexOf('class="fv">4<')).toBeGreaterThan(-1);
+    expect(h.indexOf('class="fv">4<')).toBeLessThan(h.indexOf('class="vit"'));
+  });
+});
+
+describe('the in-game picker', () => {
+  const body = stripJs(meHtml);
+  it('offers A, B and C, and remembers the pick', () => {
+    for (const v of ['a', 'b', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
+    expect(body).toContain("localStorage.setItem(STYLE_KEY, style)");
+  });
+  it('is clickable on a locked (click-through) overlay — the hover handshake', () => {
+    expect(body).toContain("picker.addEventListener('mouseenter', hoverOn)");
+    expect(body).toContain("picker.addEventListener('mouseleave', hoverOff)");
+  });
+});
+
+describe('Mimic wiring', () => {
+  const main = stripJs(mainJs);
+  it('comes up while blind — blind removes the game UI this overlay replaces', () => {
+    expect(main).toMatch(/const _BLIND_FORCED_KEYS = \[[^\]]*'me'/);
+    expect(main).toContain("_blindForceOpen('me')");
+  });
+  it('is in the hide-all set and has a ✕ branch', () => {
+    expect(main).toMatch(/'showPopRaid',\s*\n\s*'showMe',\s*\n\];/);
+    expect(main).toContain('} else if (win === meWindow) {');
+  });
+});
