@@ -119,7 +119,9 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.8 (§11, §13 rounds 2–3).** The guild lead picked across the three: H1's wrapped labels, H2's in/out separation, H3's hits-on-you lane — merged into ONE HUD built from parts, each switchable in a ⚙ checklist. Hits one round per line; damage shield in its own lane with a per-hit button. FD 5 s at 59+ | the guild lead plays with the builder; then decide whether A and C stay, and whether the builder moves to the dashboard (the alternative in §13 round 3). Optional: the one-line Zeal PR makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.10 (§11, §13 rounds 2–5).** One HUD built from parts in a ⚙ checklist that opens BESIDE the ring; thin lines by default (Line weight: thin/normal/bold). Tick and swing are their own bars under the cooldowns; enrage is a red outline on the last 8% of the target bar; summon is a mark at 97%. Hits are upright columns: the newest round one line per hit, and it slides into its total when the next round lands. The discipline timer survives an agent restart | the guild lead plays with rounds four and five; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
+| **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
+| **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
@@ -832,3 +834,121 @@ should have a button with current DS amount per hit in it"*.
     slot geometry per part) · maintenance M (every new part needs a slot rule) ·
     runtime nil · change M. Worth it only if people want to MOVE parts, not just
     hide them; the checklist answers "what do you want displayed".
+
+**Round four, same day (agent 3.7.9).** The guild lead: *"Tick and swing timer
+should be their own bars underneath abilities"* · *"Everything feels very bold,
+we need to be able to make it thinner."* · *"The configuration section needs to
+pop up on the side and not over the overlay."* · *"I lost my discipline timer"* ·
+*"The ENRAGES section should just make a red outline for the last 8% of the
+healthbar"* · *"Each overlay should get its own hotkey config as well. so if i
+want to pull one up i can do it without much effort"*. A seventh line, *"The
+numerical text should be"*, was cut off; round five's *"Text should be
+vertically aligned"* reads as its end, and was built as that.
+- **Bottom of the ring:** cooldowns on an inner arc (r 150, up to five, each
+  labelled beneath); under them, on the ring itself, the tick bar (left) and
+  the swing bar (right; the cast takes it while casting), each labelled
+  beneath. Resists move inside the cooldowns.
+- **Line weight** is a builder part — thin (the new default), normal, bold (the
+  round-three look). It scales every arc and the text's dark edge, and takes the
+  numbers off bold. Thin reads as regular on Consolas, which has no 500 weight.
+- **Builder opens beside the ring.** The window grows by 240 px toward whichever
+  side of the screen has room; the ring keeps its exact size and place; closing
+  puts the window back. The pre-open bounds stay on the computer until the panel
+  closes, because the HUD window saves its size on every resize — quitting with
+  the panel open would otherwise leave the ring off-centre at the next launch.
+  One design, no variant: it is a placement fix inside an established design.
+- **Enrage** is a red outline around the last 8% of the target's health bar only,
+  the low end the bar empties toward, solid while ENRAGED. 8% is the Tank
+  overlay's existing threshold (`threshold_pct: 8`). The "enrages" word is gone.
+  "ENRAGED" stays while the mob is enraged: that is the moment melee acts on it.
+- **The lost discipline timer had two causes.** Timers were memory-only, so a
+  Mimic update (which restarts the agent) wiped them. A ready discipline was
+  also dropped 60 s after it came up. Now every disc class has a Discipline slot
+  from the start (dim "—" until one is seen). Ready stays ready. Discs, the
+  refusal line and skill cooldowns save to `logsync.hud-timers.json` next to the
+  agent and are kept 12 h past ready.
+- **Damage shield leak fixed:** the shield line can print BEFORE the mob's hit,
+  so the mob's hit now re-reads the unnamed non-melee lines of the last 1.5 s on
+  that mob. With no visible shield, non-melee stays a spell.
+- **Per-overlay hotkeys: built (agent 3.7.11), in the Overlays table.** Mimic
+  already had four global hotkeys (hide-all, backdrops, damage alert,
+  minimize-all), a key-capture "Change…" row on the dashboard, and one toggle
+  path per overlay (the `toggle-overlay` IPC). A per-overlay hotkey is that
+  toggle bound to a key: `cfg.overlayHotkeys`, bound by `_registerOverlayHotkeys`,
+  running `_toggleOverlay` — the same function as the row's ON/OFF button.
+  No default keys: a global shortcut takes its key away from EverQuest, so
+  nobody gets one they did not ask for. A key the OS refuses (another app,
+  another overlay, malformed) is shown in red.
+  - *Shipped — a Hotkey column on the Overlays table:* click, press the keys,
+    saved; Backspace clears. Build S–M · maintenance S (a new overlay row
+    gets the button for free, and a test fails if a row has no toggle case) ·
+    runtime nil (OS-level shortcuts) · change S.
+  - *Alternative — one "Overlay hotkeys" card* using the existing "Change…"
+    rows. Build S · maintenance S · runtime nil · change S. All the keys in
+    one place for spotting clashes, but away from the toggle each one drives.
+  The key capture is now one function (`_wpCaptureAccel`) shared with the old
+  rows. It reads letters and digits from the physical key, so Ctrl+Shift+1
+  saves as `Shift+1`. The old rows used to save it as `Shift+!`, and that
+  bug is fixed too.
+  The tray does NOT show the keys yet: the parity rule runs tray → dashboard,
+  and putting a key on each tray item means touching all seventeen of them.
+  That is a cheap follow-up if wanted.
+
+**Round five, same day (agent 3.7.10).** The guild lead: *"if a mob summons we
+should get a marker next to the 97%"* · *"Text should be vertically aligned,
+and each round of damage can come out as individual hits but get merged into a
+single line item after the next round shows up. It should be animated and
+smooth, not just jump. Have them slide and smoosh together into the new
+number"*.
+- **Hits are upright columns** (on you left, yours right, damage shield under
+  yours). The newest round is one line per hit. When the next round lands, the
+  last round's hits slide onto a single line with the round's total and fade
+  into it. Older rounds are one line each.
+- **Why a separate layer:** the ring is rebuilt as a string every repaint (10×
+  a second), so nothing inside it can animate. The columns are kept `<text>`
+  elements keyed per hit (`#hudlanes`), moved by CSS transitions — the one
+  deliberate motion on the HUD, 0.3 s, off under the OS "reduce motion" setting.
+  Motion is a cost on an overlay read mid-fight (the design skill's rule); this
+  is spent because the guild lead asked for it, and it runs only when a round lands.
+- **Summon mark at 97%:** an orange tick across the target bar plus a pointer
+  outside the ring when the mob can summon. 97% is the server's default
+  threshold (eqmac `Mob` summon code: `hp_ratio` falls back to 97). A mob's own
+  override is in the special ability's parameter, which our catalog row does
+  not carry.
+
+**Same day, two more asks on the DPS meter (agent 3.7.11):**
+- **History lists its fights on the right** (the guild lead: *"History should give
+  us a list of the fights to choose from on the right side"*). The last six
+  fights, newest first, with each one's duration and how long ago it ended;
+  the one on screen is marked; "…" while the guild numbers settle. It replaced
+  the ◀ 1/6 ▶ pager. The 7-column layout now keys off the scoreboard's own
+  width (a container query) instead of the window's, so History uses the
+  compact columns until the window is wide enough for both. The requested
+  design is the one built; the alternative (grow the window by the list's
+  width, like the HUD builder) costs more to keep right and was not built.
+- **The L size is 420 px, not 400** (a member: *"the large 400px preset cuts off a
+  bit on the dps window. and the xl is just a bit too wide"*). It applies to
+  every overlay's right-click L size.
+
+**Answered, not built — keeping the mouse cursor on screen with the UI hidden
+(the guild lead: "is there a way to keep EQ from hiding the mouse when using
+hide UI mode?").** No setting does it, in the client or in Zeal. The cursor is
+a UI-skin sprite (`A_DefaultCursor`) drawn by the game's own window manager,
+and F10 (UI state 3 at `0x0063B918`) stops that drawing. Sources:
+`EQMacEmu/eqgame_dll_takp` `eqmac_functions.h`/`eqmac.h`;
+`CoastalRedwood/Zeal` `game_functions.cpp` `is_gui_visible()`,
+`camera_mods.cpp`. The new eqw.dll also blanks the Windows cursor over the
+game window (`CoastalRedwood/eqw_takp` `eq_game.cpp`, `WM_SETCURSOR` →
+`SetCursor(NULL)`). So another program cannot bring the real cursor back,
+only draw one of its own. Practical options:
+1. Close the windows you don't want instead of pressing F10 (the game keeps
+   drawing its cursor).
+2. Use a stand-in cursor such as PowerToys' Mouse Pointer Crosshairs with
+   "hide when the pointer is hidden" turned off. It lines up with the game
+   cursor on the new eqw. Not tested in game.
+3. Ask upstream: either eqw_takp skips `SetCursor(NULL)` while the UI is
+   hidden, or Zeal draws the cursor when the UI is hidden.
+4. A Mimic-drawn cursor is possible but only worth building if Zeal adds the
+   UI state to its pipe — without it Mimic cannot tell F10 is on.
+Unverified: that the game's own cursor-draw call sits behind the same UI-state
+check. That needs a disassembly from a local session.
