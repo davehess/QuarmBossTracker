@@ -2789,6 +2789,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   text just before it (`_meNoteSelfLanding`); `_meCombatSince` → `combat`;
   resists from labels 12-16. The HUD sizes its own window through the new
   `overlay-set-bounds` IPC (`window.mimic.overlaySetBounds`).
+- **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
+  (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
+  `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`
+  reports `drained`; ledger dies with its mob (`_npcManaOnSlain`) and evicts
+  idle entries; PvP `_pvpDrains` / `pvpDrainState`. Tests:
+  `test/mana-drain-and-con.test.js`.
+- **Player targets on Target Info (agent 3.7.4, beta)** — `_targetPlayerInfo`
+  (class/level from /who → raid roster → who-lookup history; `target_player`
+  on `mobInfo`); `/consider` level via `noteConsiderLevel` + `_levelCon`
+  (mirror of EQMacEmu `Mob::GetLevelCon`) + learned phrases in
+  `logsync.con-phrases.json`; `playerCard` in `apps/mimic/mobinfo.html`.
 - **Blind Mode, catalog-driven (agent 3.7.2)** — `_blindCatalogTexts` reads
   SPA-20 landing/fade text from the catalog (`blind` flag, bot 3.1.145),
   excluding texts a non-blind spell shares; `/api/state.blind.active` looked
