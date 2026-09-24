@@ -12396,6 +12396,7 @@ function _meNoteCastFailed(line, character) {
   if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
       && line.indexOf('miss the gem') === -1) return;   // cheap gate
   if (!_CAST_FAIL_RX.test(line)) return;
+  _meLastCast.delete(String(character).toLowerCase());   // nothing will land from it
   const m = _meRecasts.get(String(character).toLowerCase());
   if (!m) return;
   const ts = parseEqTimestamp(line);
@@ -12421,7 +12422,8 @@ function _meNoteCastFailed(line, character) {
 // text has the same element; otherwise it stays "spell", unnamed. Never a
 // guess.
 const _ME_ELEMENTS = { 1: 'magic', 2: 'fire', 3: 'cold', 4: 'poison', 5: 'disease' };
-const _meHits = new Map();          // charLower → [{ t, dir, amount, kind, name, el, other }]
+const _meHits = new Map();          // charLower → [{ t, dir, amount, kind, name, el, other, proc }]
+const _meLastCast = new Map();      // charLower → { name (lower), t } — "You begin casting X." (tells a proc from a cast)
 const _meLastLanding = new Map();   // charLower → { el, name, t }
 let _meYouTextsFor = null, _meYouTexts = null;
 function _meYouElementTexts() {
@@ -12496,14 +12498,36 @@ function _meNoteHit(character, ev) {
       if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
     } else { kind = 'melee'; name = label || null; }
   }
+  // A weapon PROC (the guild lead, 2026-09-24: "Procs should be purple"): your
+  // spell damage in the same moment as your own swing, when it is not a spell
+  // you just began casting. The proc can print on either side of its swing, so
+  // a swing also re-reads the spell hits just before it.
+  // ⚠ Your own nuke usually prints ANONYMOUSLY too ("<mob> was hit by non-melee
+  // for N"), so a spell hit with no name claims the cast you began in the last
+  // 12 s — once: the cast lands one hit, and a proc after it is still a proc.
+  // A fizzle or an interruption drops the cast (_meNoteCastFailed).
+  const lastCast = _meLastCast.get(cl);
+  let fromCast = false;
+  if (dir === 'out' && kind === 'spell' && lastCast && t - lastCast.t >= 0 && t - lastCast.t <= 12_000) {
+    if (name && lastCast.name === String(name).toLowerCase()) fromCast = true;
+    else if (!name && !lastCast.claimed) { fromCast = true; lastCast.claimed = true; }
+  }
+  const nearSwing = arr.some(x => x.dir === 'out' && x.kind === 'melee' && Math.abs(t - x.t) <= 1500);
   arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
-    anon: dir === 'out' && kind === 'spell' && nonMelee });
+    anon: dir === 'out' && kind === 'spell' && nonMelee, cast: fromCast,
+    proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast });
+  if (dir === 'out' && kind === 'melee') {
+    for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
+      const x = arr[i];
+      if (x.dir === 'out' && x.kind === 'spell' && !x.proc && !x.cast) x.proc = true;
+    }
+  }
   if (dir === 'in' && kind === 'melee' && ev.attacker) {
     const mob = String(ev.attacker).toLowerCase();
     for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
       const x = arr[i];
       if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
-      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false;
+      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false;
     }
   }
   const cutoff = t - 10 * 60_000;
@@ -12528,7 +12552,7 @@ function _meCombatSince(cl, sinceMs, now) {
   // HUD can put one ROUND per line — "i sometimes hit 6 times in one round"
   // (the guild lead, 2026-09-24) filled the old ten-line feed in two rounds.
   const feed = arr.filter(h => now - h.t <= 15_000).slice(-60).reverse()
-    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, at: h.t, age_ms: Math.max(0, now - h.t) }));
+    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, proc: !!h.proc, at: h.t, age_ms: Math.max(0, now - h.t) }));
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
   const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
@@ -12613,12 +12637,13 @@ function _meTick(st, now) {
 const _ME_SWING_RX = /^You (?:try to )?(hit|slash|crush|pierce|punch)\b/;
 const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }], votes }
 const _meSawAttackGauge = new Set();  // characters whose Zeal has sent gauge 34
-function _meNoteSwing(cl, verb, atMs, sec) {
+function _meNoteSwing(cl, verb, atMs, sec, secMs) {
   let s = _meSwings.get(cl);
   if (!s) { s = { rounds: [], votes: new Map() }; _meSwings.set(cl, s); }
   const last = s.rounds[s.rounds.length - 1];
   if (last && last.sec === sec && atMs - last.lastAt <= 600) {
     last.verbs.push(verb); last.lastAt = atMs;
+    if (atMs < last.t) last.t = atMs;
     return;
   }
   if (last) {
@@ -12628,8 +12653,62 @@ function _meNoteSwing(cl, verb, atMs, sec) {
       s.votes.set(k, (s.votes.get(k) || 0) + 1);
     }
   }
-  s.rounds.push({ t: atMs, lastAt: atMs, sec, verbs: [verb] });
+  s.rounds.push({ t: atMs, lastAt: atMs, sec, secMs: Number.isFinite(secMs) ? secMs : null, verbs: [verb] });
   if (s.rounds.length > 40) s.rounds.shift();
+}
+// Where each round could have happened, and the delay and last swing that fit
+// them all (the guild lead, 2026-09-24: "swing timer is completely wrong").
+// The old reading took each round's ARRIVAL time as the swing: arrivals come
+// in 500 ms polls against 1-second log stamps, so the phase could be off by
+// most of a second — on a hasted two-hander (~1.8 s) that is half the bar.
+// Each round is pinned by two facts: it happened inside its log second, and
+// before we read it but no more than _ME_SWING_LAG before. At the right delay,
+// those windows, carried forward to the last round, all overlap — and many
+// rounds overlap in a much narrower slot than any one of them (a vernier).
+// The delay is searched ±20% around the median gap; the middle of the delays
+// that fit, and the middle of the slot they leave, are the answer.
+const _ME_SWING_LAG = 1000;
+function _meSwingFit(rs) {
+  const gaps = [];
+  for (let i = 1; i < rs.length; i++) {
+    const d = rs[i].t - rs[i - 1].t;
+    if (d >= 900 && d <= 8000) gaps.push(d);
+  }
+  if (gaps.length < 4) return null;
+  const sorted = gaps.slice(-15).sort((x, y) => x - y);
+  const p0 = sorted[Math.floor(sorted.length / 2)];
+  // The run of newest rounds whose gaps are whole numbers of swings — a
+  // skipped swing (out of range, stunned) is a double gap, not a new delay.
+  const n = rs.length;
+  const run = [n - 1], pos = [0];
+  for (let i = n - 1; i > 0 && run.length < 12; i--) {
+    const d = rs[i].t - rs[i - 1].t, k = Math.round(d / p0);
+    if (k < 1 || k > 3 || Math.abs(d - k * p0) > 0.35 * p0) break;
+    run.unshift(i - 1); pos.unshift(pos[0] - k);
+  }
+  const win = run.map((i) => {
+    const r = rs[i];
+    let lo = r.t - _ME_SWING_LAG, hi = r.t;
+    if (r.secMs != null) { lo = Math.max(lo, r.secMs); hi = Math.min(hi, r.secMs + 1000); }
+    if (lo > hi) { lo = r.t - _ME_SWING_LAG; hi = r.t; }   // a clock that disagrees: trust the arrival
+    return { lo, hi };
+  });
+  for (let drop = 0; run.length - drop >= 4; drop++) {
+    const fits = [];
+    for (let p = Math.round(p0 * 0.8); p <= p0 * 1.2; p += 5) {
+      let L = -Infinity, H = Infinity;
+      for (let j = drop; j < run.length; j++) {
+        const back = -pos[j] * p;   // swings from this round to the last, in ms
+        L = Math.max(L, win[j].lo + back); H = Math.min(H, win[j].hi + back);
+      }
+      if (L <= H) fits.push({ p, L, H });
+    }
+    if (fits.length) {
+      const f = fits[Math.floor(fits.length / 2)];
+      return { period: f.p, lastAt: (f.L + f.H) / 2, spread: f.H - f.L };
+    }
+  }
+  return { period: p0, lastAt: rs[n - 1].t - 250, spread: _ME_SWING_LAG };
 }
 // The hand pairing seen in at least three rounds, and in most of them.
 function _meHands(s) {
@@ -12644,13 +12723,8 @@ function _meSwingState(cl, st, now) {
   const s = _meSwings.get(cl) || null;
   const hands = _meHands(s);
   const rs = s ? s.rounds.filter(r => !hands || r.verbs.includes(hands.mh)) : [];
-  const gaps = [];
-  for (let i = 1; i < rs.length; i++) {
-    const d = rs[i].t - rs[i - 1].t;
-    if (d >= 900 && d <= 8000) gaps.push(d);
-  }
-  let period = null;
-  if (gaps.length >= 4) { const a = gaps.slice(-15).sort((x, y) => x - y); period = a[Math.floor(a.length / 2)]; }
+  const fit = rs.length >= 5 ? _meSwingFit(rs) : null;
+  const period = fit ? fit.period : null;
   const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 34) : null;
   if (g && g.hp_pct != null) _meSawAttackGauge.add(cl);
   if (_meSawAttackGauge.has(cl)) {
@@ -12660,11 +12734,10 @@ function _meSwingState(cl, st, now) {
     return { frac_left: frac, ms_left: period ? Math.round(period * frac) : null, period_ms: period, source: 'zeal', est: false, hands };
   }
   if (!period) return null;
-  const last = rs[rs.length - 1];
-  // A line arrives up to one 500 ms poll after it was written: split the difference.
-  const since = now - (last.t - 250);
+  const since = now - fit.lastAt;
   if (!st.autoattack || since > period * 3) return { ms_left: null, period_ms: period, source: 'log', est: true, hands, idle: true };
-  return { ms_left: Math.round(period - (since % period)), period_ms: period, source: 'log', est: true, hands };
+  return { ms_left: Math.round(period - (((since % period) + period) % period)), period_ms: period, source: 'log', est: true, hands,
+    spread_ms: Math.round(fit.spread) };
 }
 function _meVerbBase(v) {
   return String(v || '').toLowerCase().trim().replace(/(ch|sh|ss)es$/, '$1').replace(/([^s])s$/, '$1');
@@ -12975,8 +13048,13 @@ function _meNoteRawLine(line, character) {
   if (msg.startsWith('You')) {
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
+    // What you are casting, so its damage is not taken for a proc (_meNoteHit).
+    if (msg.startsWith('You begin casting ')) {
+      const d = parseEqTimestamp(line);
+      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now });
+    }
     let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
-    if (m) { _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at)); return; }
+    if (m) { const d = parseEqTimestamp(line); _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at), d ? d.getTime() : null); return; }
     m = _ME_ABILITY_RX.exec(msg);
     if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
     for (const s of _ME_SKILL_LINES) {
@@ -13161,6 +13239,11 @@ function _meTargetExtras(st, active, now) {
     unslowable: specials ? specials.includes('Unslowable') : null,
     enraged: !!(until && until > now),
     level, level_max, level_src, class: klass,
+    // The mob's own resists, for the line under its name (the guild lead,
+    // round eight: "Put their resists below their name").
+    // The bot's mob-info row carries them as `resists: { mr, fr, cr, pr, dr }`.
+    resists: mob && mob.resists && ['mr', 'fr', 'cr', 'pr', 'dr'].some(k => mob.resists[k] != null)
+      ? { mr: mob.resists.mr ?? null, fr: mob.resists.fr ?? null, cr: mob.resists.cr ?? null, pr: mob.resists.pr ?? null, dr: mob.resists.dr ?? null } : null,
     // Flurry / rampage: whether it can, and whether it just did (the HUD's
     // F and R badges light up for a few seconds after the line).
     flurry: specials ? specials.includes('Flurry') : null,
@@ -18886,7 +18969,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with its level and class, who it is hitting on top of the ring, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, each round of hits on one line under the mob\\'s running total (older rounds slide into it; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {

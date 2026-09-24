@@ -31,7 +31,7 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
-  '_meNoteHit', '_meMobTallies', '_npcHtFor'];
+  '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed'];
 
 function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
   const pre = `
@@ -113,18 +113,46 @@ describe('swing timer — measured from your own rounds', () => {
     clock += gapMs;
   }
 
-  it('learns the delay from round-to-round and predicts the next round', () => {
+  it('learns the delay from round-to-round', () => {
     const h = load();
     for (let i = 0; i < 7; i++) swing(h, 'Aldenmar', ['punch', 'punch'], 2600);
-    clock -= 2600;                         // stand just after the last round
-    clock += 1000;
-    const s = h._meSwingState('aldenmar', { autoattack: true, gauges: [] }, clock);
-    expect(s.period_ms).toBe(2600);
+    const s = h._meSwingState('aldenmar', { autoattack: true, gauges: [] }, clock - 1600);
+    expect(s.period_ms).toBeGreaterThanOrEqual(2600 - 150);
+    expect(s.period_ms).toBeLessThanOrEqual(2600 + 150);
     expect(s.source).toBe('log');
     expect(s.est).toBe(true);
-    // Last round arrived 1000 ms ago; lines arrive up to a poll late, so the
-    // round is dated 250 ms earlier: 2600 − 1250.
-    expect(s.ms_left).toBe(1350);
+  });
+
+  // "swing timer is completely wrong" (the guild lead, 2026-09-24, a monk on a
+  // 3.0-delay two-hander, hasted to ~1.8 s). The real case: each round is
+  // stamped to the SECOND in the log, and read on a 500 ms poll — so its
+  // arrival is up to half a second late and its stamp up to a second early.
+  // Many rounds together still pin the swing: the next one is predicted to
+  // within a tenth of a second, where the arrival time alone was ~0.5 s off.
+  it('predicts the next swing from log seconds + arrival, to within 0.12 s', () => {
+    const eq = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0');
+      return '[' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()] + ' ' + ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]
+        + ' ' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + ' ' + d.getFullYear() + '] '; };
+    // A delay of exactly 3.0 s lands at the same point of every second and
+    // every poll, so rounds cannot narrow each other — there the estimate is
+    // only as good as one round, and it says so (spread_ms).
+    for (const [period, phase, tol] of [[1760, 330, 120], [1760, 910, 120], [2210, 470, 120], [1830, 700, 120], [3000, 60, 260]]) {
+      const h = load();
+      const start = clock + phase;
+      const poll = (T) => Math.ceil((T - 137) / 500) * 500 + 137;   // the agent reads the log every 500 ms
+      let T = start;
+      for (let i = 0; i < 12; i++) {
+        clock = poll(T);
+        h._meNoteRawLine(eq(T) + 'You crush a gnoll for 88 points of damage.', 'Aldenmar');
+        h._meNoteRawLine(eq(T) + 'You crush a gnoll for 45 points of damage.', 'Aldenmar');
+        T += period;
+      }
+      const now = T - period + period * 0.4;                        // 40% of the way to the next swing
+      const s = h._meSwingState('aldenmar', { autoattack: true, gauges: [] }, now);
+      expect(Math.abs(s.period_ms - period), 'period ' + period).toBeLessThanOrEqual(30);
+      expect(Math.abs(s.ms_left - period * 0.6), 'phase ' + period + '/' + phase).toBeLessThanOrEqual(tol);
+      if (tol > 120) expect(s.spread_ms).toBeGreaterThanOrEqual(200);
+    }
   });
 
   it('a miss is a swing too', () => {
@@ -469,6 +497,44 @@ describe('damage shield — its own kind, and its per-hit value', () => {
   });
 });
 
+// Round eight (the guild lead, 2026-09-24): "Remember that several classes can
+// have up to 6 melee hits at once, on TOP of procs. Procs should be purple."
+// A proc prints as an anonymous spell hit in the same moment as your swing —
+// but so does your own nuke, which is why a cast you just began claims one.
+describe('weapon procs', () => {
+  const Z = { get zeal() { return { Aldenmar: { charInfo: [{ id: 3, value: 'Paladin' }], gauges: [], updatedAt: clock } }; } };
+  const iso = (ms) => new Date(ms).toISOString();
+  const swing = (h, n, dt = 0) => h._meNoteHit('Aldenmar', { ts: iso(clock + dt), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'slash', amount: n });
+  const anon = (h, n, dt = 0) => h._meNoteHit('Aldenmar', { ts: iso(clock + dt), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: n });
+  const procs = (h) => h._serializeMeState().combat.feed.filter(f => f.kind === 'spell').map(f => [f.amount, f.proc]);
+
+  it('a spell hit in the same moment as your swing is a proc — whichever prints first', () => {
+    const h = load({ zeal: Z.zeal });
+    swing(h, 88); anon(h, 70, 200);                  // after the swing
+    anon(h, 71, 9000); swing(h, 90, 9300);           // before it
+    expect(procs(h)).toEqual([[71, true], [70, true]]);
+  });
+  it('a spell hit with no swing near it is not', () => {
+    const h = load({ zeal: Z.zeal });
+    swing(h, 88); anon(h, 70, 4000);
+    expect(procs(h)).toEqual([[70, false]]);
+  });
+  it('your own nuke — "You begin casting", then its anonymous hit — is not a proc, even mid-swing; the next one is', () => {
+    const h = load({ zeal: Z.zeal });
+    say(h, 'Aldenmar', 'You begin casting Holy Might.');
+    swing(h, 88, 2000); anon(h, 180, 2100);          // the cast lands beside a swing
+    anon(h, 70, 2300);                               // the cast is spent: this one is a proc
+    expect(procs(h)).toEqual([[70, true], [180, false]]);
+  });
+  it('a fizzle drops the cast: the next spell hit beside a swing is a proc again', () => {
+    const h = load({ zeal: Z.zeal });
+    say(h, 'Aldenmar', 'You begin casting Holy Might.');
+    h._meNoteCastFailed(ts(clock) + 'Your spell fizzles!', 'Aldenmar');   // the tail calls it beside _meNoteRawLine
+    swing(h, 88, 1000); anon(h, 70, 1100);
+    expect(procs(h)).toEqual([[70, true]]);
+  });
+});
+
 // Round six (the guild lead, 2026-09-24): "display level or level range and
 // class under the target's bar" · "Corpses shouldn't ever say 'not slowed'" ·
 // "When a mob flurries or Rampages denote that with an F in a fist outline or
@@ -479,6 +545,17 @@ describe('target: level, class, corpse, flurry and rampage', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, maxlevel: 55, class: 'Warrior', specials: [] } });
     expect(h._meTargetExtras(st(), 'Aldenmar', clock)).toMatchObject({ level: 52, level_max: 55, class: 'Warrior', level_src: 'catalog' });
+  });
+  // Round eight: "Put their resists below their name". The row's shape is the
+  // bot's mob-info response — `resists: { mr, fr, cr, pr, dr }`, not flat.
+  it('its resists come from the same row, in the bot\'s shape; none known, none sent', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, specials: [], resists: { mr: 50, fr: 30, cr: 30, pr: 50, dr: 75 } } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).resists).toEqual({ mr: 50, fr: 30, cr: 30, pr: 50, dr: 75 });
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, specials: [], resists: { mr: null, fr: null, cr: null, pr: null, dr: null } } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).resists).toBeNull();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { level: 52, specials: [] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).resists).toBeNull();
   });
   it('a player\'s come from /who — the same answer Target Info gives', () => {
     const h = load({ player: { class: 'Enchanter', level: 60, level_src: 'who' } });

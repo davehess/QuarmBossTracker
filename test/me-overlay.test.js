@@ -261,7 +261,7 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE, HIT_STEP, laneSpan, LANE_EDGE_R, LANE_MID_R };')();
 // The hit columns are their own layer now (round five); a lane's lines, top to bottom.
 // Round seven made a round ONE line of hits side by side, so a lane reads as
 // its lines, top to bottom, each line's items left to right.
@@ -419,13 +419,23 @@ describe('the three HUDs', () => {
 
     // Round seven, the guild lead: "Target name should curve with the HP bar" ·
     // "Move target of target's healthbar and name to the top of the circle above
-    // the current".
-    it(name + ' runs the name along the inside of its bar, and puts who it is hitting on top, outside it', () => {
-      const h = fn(base);
+    // the current". Round eight: "Put the name of the mob on the top of their
+    // healthbar. Put their resists below their name. and the slowed/not
+    // slowed/unslowable next to that" · "L40-43 Necromancer should also be
+    // curved to fit the top bar".
+    it(name + ' puts the name on top of its bar, who it is hitting above that, and level, resists and slow curved inside', () => {
+      const t = (x) => fn(Object.assign({}, base, { target: Object.assign({}, base.target, x) }));
+      const h = t({ level: 40, level_max: 43, class: 'Necromancer', resists: { mr: 50, fr: 30, cr: 30, pr: 50, dr: 75 } });
       const radius = (id) => { const m = h.match(new RegExp('<path id="' + id + '" d="M[\\d.]+ [\\d.]+ A([\\d.]+) ')); return m ? +m[1] : null; };
-      expect(radius('htn')).toBeLessThan(172 - 3);                          // inside the target's bar
-      expect(radius('htt')).toBeGreaterThan(172 + 3);                       // outside it
+      const text = (id) => ((h.match(new RegExp('<textPath href="#' + id + '"[^>]*>([\\s\\S]*?)</textPath>')) || [])[1] || '').replace(/<[^>]+>/g, '');
+      expect(radius('htn')).toBeGreaterThan(172);                           // on top of (outside) the target's bar
+      expect(radius('htt')).toBeGreaterThan(radius('htn') + 3);             // who it is hitting, above the name
       expect(h).toMatch(/<textPath href="#htt"[^>]*>[\s\S]*?Corvale[\s\S]*?38%/);
+      expect(text('htl')).toBe('L40–43 Necromancer');                      // curved, not a straight line
+      expect(radius('htl')).toBeLessThan(172 - 3);                          // inside the bar
+      expect(text('htr')).toBe('MR50 FR30 CR30 PR50 DR75 · not slowed');    // resists, the slow state beside them
+      expect(radius('htr')).toBeLessThan(radius('htl'));                    // below the level
+      expect(h).not.toMatch(/<text x="[\d.]+" y="[\d.]+"[^>]*>L40/);        // no straight copy left behind
       // the name keeps to the bar's own span, however long it is: smaller, then cut short — never the health
       const long = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { name: 'an exceedingly long named bodyguard of the Tribunal' }) }));
       const size = +(long.match(/<path id="htn"[^>]*\/><text font-size="([\d.]+)"/) || [])[1];
@@ -473,12 +483,15 @@ describe('the three HUDs', () => {
   // Curved labels sit on the ring by construction.
   for (const [name, fn] of Object.entries(HUDS)) {
     it(name + ' keeps the middle open — no straight text within 95 units of the centre', () => {
+      // Round eight curved the level and slow lines, so the straight text left is
+      // ENRAGED and the damage-shield button — both measured here.
+      const deep = { level: 40, level_max: 43, class: 'Necromancer', resists: { mr: 50, fr: 30, cr: 30, pr: 50, dr: 75 } };
       const h = fn(Object.assign({}, cleric, { casting: { spell: 'Complete Healing', pct: 40, remaining_ms: 6000 } }))
-        + fn(base)
+        + fn(Object.assign({}, base, { target: Object.assign({}, base.target, deep, { enraged: true }) }))
         + fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 138, from_buffs: false } }) }));
       expect(h).toContain('>DS~<');                                  // the button's own text is measured too
       const boxes = [...h.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="([\d.]+)"[^>]*?text-anchor="(\w+)"[^>]*>([\s\S]*?)<\/text>/g)];
-      expect(boxes.length).toBeGreaterThan(3);
+      expect(boxes.map(m => m[5].replace(/<[^>]+>/g, ''))).toEqual(expect.arrayContaining(['ENRAGED', 'DS~', '138']));
       for (const m of boxes) {
         const x = +m[1], y = +m[2], size = +m[3], anchor = m[4];
         const w = m[5].replace(/<[^>]+>/g, '').replace(/&[a-z]+;/g, '_').length * size * 0.6;
@@ -489,25 +502,66 @@ describe('the three HUDs', () => {
     });
   }
 
-  // The hit columns are upright now (round five: "Text should be vertically
-  // aligned"), so every line is a box, measured at the longest text a lane
-  // carries in practice — "1,240" (a big spell on you, a round's total), the
-  // off-hand tag (6 units) on your own hits, four characters of damage shield —
-  // in every row, kept off the middle and inside the ring's stroke (r 169).
-  it('the hit columns stay between the open middle and the ring, in every row', () => {
-    const widest = { hin: 5 * R.HIT_SIZE * 0.6, hout: 5 * R.HIT_SIZE * 0.6 + 3 * 6 * 0.6, hds: 4 * R.HIT_SIZE * 0.6 };
-    for (const [id, L] of Object.entries(R.HIT_LANES)) {
-      const w = widest[id];
-      for (let row = 0; row < L.rows; row++) {
-        const y = L.y + row * 10.5;
-        const x0 = L.anchor === 'end' ? L.x - w : L.x, x1 = x0 + w;
-        const nx = Math.max(x0, Math.min(200, x1)), ny = Math.max(y - R.HIT_SIZE, Math.min(200, y));
-        expect(Math.hypot(nx - 200, ny - 200), id + ' row ' + row).toBeGreaterThan(95);
-        for (const [cx, cy] of [[x0, y - R.HIT_SIZE], [x1, y - R.HIT_SIZE], [x0, y], [x1, y]]) {
-          expect(Math.hypot(cx - 200, cy - 200), id + ' row ' + row + ' inside the ring').toBeLessThan(169);
+  // The hit columns are upright (round five: "Text should be vertically
+  // aligned"), so every piece is a box. Round eight hugs them to the ring
+  // ("Summations of hits should not overlap with the outside rings"), so the
+  // check runs over what is actually DRAWN at the worst a column carries in
+  // practice: six four-digit hits a round plus the off-hand tag, eight rounds
+  // listed and all of them hit by hit, two mobs' long totals — every box off
+  // the middle and inside the ring's stroke (r 169), at the largest text too.
+  it('the hit columns stay between the open middle and the ring — every piece drawn, at the worst case', () => {
+    const at = 1_790_000_000_000;
+    const big = [0, 3, 6, 9, 12, 15, 18, 21].flatMap(sec => [1240, 1180, 1320, 1111, 1402, 1255].map((n, i) => ({
+      dir: 'out', amount: n, kind: 'melee', name: 'slash', hand: i % 2 ? 'OH' : 'MH', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })));
+    const feed = big.concat(big.map(f => Object.assign({}, f, { dir: 'in' })), big.map(f => Object.assign({}, f, { kind: 'ds', hand: null })))
+      .sort((a, b) => b.at - a.at);
+    const tallies = [
+      { key: 'a gnoll|alive', name: 'a gnoll', out: 1234567, in: 1234567, ds: 123456, first: at - 60_000, last: at, dead_at: null },
+      { key: 'an elder thought horror|alive', name: 'an elder thought horror', out: 987654, in: 987654, ds: 98765, first: at - 60_000, last: at, dead_at: null },
+    ];
+    const snap = Object.assign({}, base, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed, tallies,
+      ds: { hits: 8, total: 112, per_hit: 14, from_buffs: true } } });
+    for (const scale of [1, 1.6]) {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { rounds: 8, split: 8, sizes: { hitsIn: scale, hitsOut: scale, ds: scale } });
+      const its = R.hudLanes(R.hudData(snap), R.hudParts).items;
+      for (const id of Object.keys(R.HIT_LANES)) expect(its.some(it => it.lane === id), id).toBe(true);
+      for (const it of its) {
+        const w = it.text.length * 0.6 * it.size + (it.hand === 'OH' ? 3 * 6 * 0.6 : 0);
+        const x0 = it.x, x1 = x0 + w, top = it.y - it.size;
+        const nx = Math.max(x0, Math.min(200, x1)), ny = Math.max(top, Math.min(200, it.y));
+        expect(Math.hypot(nx - 200, ny - 200), it.lane + ' ' + it.text + ' off the middle').toBeGreaterThan(95);
+        for (const [cx, cy] of [[x0, top], [x1, top], [x0, it.y], [x1, it.y]]) {
+          expect(Math.hypot(cx - 200, cy - 200), it.lane + ' ' + it.text + ' inside the ring').toBeLessThan(169);
         }
       }
     }
+    Object.assign(R.hudParts, R.HUD_DEFAULTS);
+  });
+
+  // "Right justify outbound hits and left justify inbound hits. These should
+  // travel up the outside arc, but still be oriented correctly." Each line's
+  // outer end sits on the same arc just inside the ring — so the column's edge
+  // curves with the ring while every number stays upright.
+  it('your hits end flush against the ring on the right; hits on you start flush against it on the left', () => {
+    const at = 1_790_000_000_000;
+    const feed = [0, 3, 6, 9, 12].flatMap(sec => [45, 51, 88].map(n => ({ dir: 'out', amount: n, kind: 'melee', name: 'punch', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })))
+      .concat([0, 3, 6].map(sec => ({ dir: 'in', amount: 169, kind: 'melee', name: 'hits', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })));
+    Object.assign(R.hudParts, R.HUD_DEFAULTS);
+    const its = R.hudLanes(R.hudData(Object.assign({}, base, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed } })), R.hudParts).items;
+    const lines = (id) => {
+      const by = {};
+      for (const it of its.filter(x => x.lane === id)) (by[it.y] = by[it.y] || []).push(it);
+      return Object.values(by).map(row => ({ y: row[0].y, size: row[0].size, x0: Math.min(...row.map(i => i.x)), x1: Math.max(...row.map(i => i.x + i.text.length * 0.6 * i.size)) }));
+    };
+    const outs = lines('hout'), ins = lines('hin');
+    expect(outs.length).toBeGreaterThan(2);
+    expect(ins.length).toBeGreaterThan(1);
+    for (const l of outs) expect(l.x1).toBeCloseTo(R.laneSpan(R.HIT_LANES.hout, l.y, l.size).outer, 3);
+    for (const l of ins) expect(l.x0).toBeCloseTo(R.laneSpan(R.HIT_LANES.hin, l.y, l.size).outer, 3);
+    // …which is an arc: the lines further from the middle of the ring start further in.
+    const byY = outs.slice().sort((a, b) => a.y - b.y);
+    expect(byY[0].x1).toBeLessThan(byY[byY.length - 1].x1);
+    for (const it of its) expect(it.anchor).toBe('start');           // upright text, placed by its measured width
   });
 
   it('a class cooldown never used this session is unknown ("—"), never "ready"', () => {
@@ -572,26 +626,63 @@ describe('the HUD — rounds, damage shield, builder', () => {
   const withTallies = (feed, tallies, extra = {}) => s(feed.map(f => Object.assign({ other: 'a gnoll' }, f)),
     Object.assign({ combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: feed.map(f => Object.assign({ other: 'a gnoll' }, f)), tallies } }, extra));
 
-  it('the mob\'s total on top, then the last rounds as separate hits — oldest first, newest at the bottom', () => {
+  // Round eight, the guild lead: "In the last screenshot the 62 69 110 line should
+  // have been combined into [one number] for that round of combat on the third
+  // line up." So a column reads: the mob's total, older rounds ONE number each
+  // (that round's sum), and only the newest rounds hit by hit.
+  const rounds = (list) => list.flatMap(([sec, a]) => a.slice().reverse().map(n => hit('out', n, sec)));   // newest first, as the agent sends
+  it('the mob\'s total on top, older rounds as their sum, the newest hit by hit — newest at the bottom', () => {
     reset();
-    const feed = [[0, [10, 20]], [3, [30]], [6, [40, 50]]].flatMap(([sec, a]) => a.slice().reverse().map(n => hit('out', n, sec)));
+    const feed = rounds([[0, [10, 20]], [3, [30]], [6, [40, 50]]]);
+    expect(lane(withTallies(feed, [gnoll({ out: 1234 })]), 'hout')).toEqual(['Σ 1,234', '90', '30', '10 20']);
+    R.hudParts.split = 3;                                              // the builder: three rounds hit by hit
     expect(lane(withTallies(feed, [gnoll({ out: 1234 })]), 'hout')).toEqual(['Σ 1,234', '40 50', '30', '10 20']);
+    reset();
   });
 
-  it('a round past the "rounds" setting slides up into the total — the same keys it had as separate hits', () => {
+  it('the in-game case: four rounds of three — the older two read as one number each', () => {
     reset();
-    R.hudParts.rounds = 2;
-    const round = (sec, a) => a.slice().reverse().map(n => hit('out', n, sec));
-    const before = withTallies(round(3, [30, 40]).concat(round(6, [50])), [gnoll({ out: 120 })]);
-    const after = withTallies(round(0, [10]).concat(round(3, [30, 40]), round(6, [50])), [gnoll({ out: 130 })]);
-    expect(lane(after, 'hout')).toEqual(['Σ 130', '30 40', '10']);
+    const feed = rounds([[0, [89, 45, 43]], [3, [45, 51, 88]], [6, [69, 62, 110]], [9, [17, 30, 37]]]);
+    expect(lane(withTallies(feed, [gnoll({ out: 3052 })]), 'hout')).toEqual(['Σ 3,052', '84', '241', '45 51 88', '89 45 43']);
+  });
+
+  // "It should be animated and smooth, not just jump. Have them slide and
+  // smoosh together into the new number" (round five) — each hit that leaves
+  // is sent to where its round's sum now stands, keyed as it was on screen.
+  it('when the next round lands, the oldest split round\'s hits slide onto its sum', () => {
+    reset();
+    const before = withTallies(rounds([[3, [45, 51, 88]], [6, [69, 62, 110]]]), [gnoll({ out: 425 })]);
+    const after = withTallies(rounds([[0, [89, 45, 43]], [3, [45, 51, 88]], [6, [69, 62, 110]]]), [gnoll({ out: 602 })]);
+    expect(lane(before, 'hout')).toEqual(['Σ 425', '69 62 110', '45 51 88']);
+    expect(lane(after, 'hout')).toEqual(['Σ 602', '241', '45 51 88', '89 45 43']);
+    const was = R.hudLanes(R.hudData(before), R.hudParts).items.filter(it => ['69', '62', '110'].includes(it.text));
+    const L = R.hudLanes(R.hudData(after), R.hudParts);
+    const sum = L.items.find(it => it.text === '241');
+    const g = L.ghosts.filter(x => x.lane === 'hout');
+    expect(g.map(x => x.key).sort()).toEqual(was.map(it => it.key).sort());   // the three elements that were on screen
+    for (const x of g) expect(x.y).toBe(sum.y);                                // …all onto the sum's line
+    reset();
+  });
+
+  it('a round past the "rounds" setting slides up into the total — its hits and its sum, whichever was showing', () => {
+    reset();
+    R.hudParts.rounds = 2; R.hudParts.split = 1;
+    const before = withTallies(rounds([[3, [30, 40]], [6, [50]]]), [gnoll({ out: 120 })]);
+    const after = withTallies(rounds([[0, [10]], [3, [30, 40]], [6, [50]]]), [gnoll({ out: 130 })]);
+    expect(lane(before, 'hout')).toEqual(['Σ 120', '50', '30 40']);
+    expect(lane(after, 'hout')).toEqual(['Σ 130', '70', '10']);
     const L = R.hudLanes(R.hudData(after), R.hudParts);
     const total = L.items.find(it => it.total);
     const g = L.ghosts.filter(x => x.lane === 'hout');
-    expect(g).toHaveLength(1);                                         // the 50, oldest round
-    expect([g[0].x, g[0].y]).toEqual([total.x, total.y]);              // slides onto the total
-    const was = R.hudLanes(R.hudData(before), R.hudParts).items.find(it => it.text === '50');
-    expect(g[0].key).toBe(was.key);                                    // the element that was on screen
+    const sumWas = R.hudLanes(R.hudData(before), R.hudParts).items.find(it => it.text === '50');
+    const toTotal = g.filter(x => x.y === total.y);
+    expect(toTotal.map(x => x.key)).toContain(sumWas.key);                    // the element that was on screen
+    // …landing right-aligned on the total (your hits sit flush right)
+    const it50 = toTotal.find(x => x.key === sumWas.key);
+    expect(it50.x + 2 * 0.6 * sumWas.size).toBeCloseTo(total.x + total.text.length * 0.6 * total.size, 5);
+    // No ghost for a round still listed: nothing on screen leaves by mistake.
+    const listed = L.items.map(it => it.key);
+    for (const x of g) expect(listed).not.toContain(x.key);
     reset();
   });
 
@@ -601,9 +692,39 @@ describe('the HUD — rounds, damage shield, builder', () => {
     const dead = withTallies(feed, [gnoll({ out: 900, dead_at: at })]);
     expect(lane(dead, 'hout')).toEqual(['Σ 900']);
     const L = R.hudLanes(R.hudData(dead), R.hudParts);
-    expect(L.ghosts.filter(x => x.lane === 'hout')).toHaveLength(2);
-    expect(L.items.find(it => it.total).op).toBe('0.55');              // dimmed: finished
+    const total = L.items.find(it => it.total);
+    const g = L.ghosts.filter(x => x.lane === 'hout');
+    // both hits, and both rounds' sums, head for the total
+    expect(g.map(x => x.key).filter(k => !k.includes('|R|'))).toHaveLength(2);
+    for (const x of g) expect(x.y).toBe(total.y);
+    expect(total.op).toBe('0.55');                                      // dimmed: finished
     expect(lane(withTallies(feed, []), 'hout')).toEqual(['88', '45']); // dropped: no total left
+  });
+
+  // "Summations of hits should not overlap with the outside rings" — a long
+  // total gets smaller, then loses its mob name, but never crosses the ring.
+  it('a total too long for its row shrinks, then drops the mob\'s name — never past the ring', () => {
+    reset();
+    const two = [gnoll({ out: 1234567 }), gnoll({ key: 'an elder thought horror|alive', name: 'an elder thought horror', out: 987654 })];
+    const L = R.hudLanes(R.hudData(withTallies([], two)), R.hudParts).items.filter(it => it.total && it.lane === 'hout');
+    expect(L).toHaveLength(2);
+    for (const it of L) {
+      const x1 = it.x + it.text.length * 0.6 * it.size, top = it.y - it.size;
+      expect(Math.hypot(x1 - 200, top - 200), it.text).toBeLessThan(R.LANE_EDGE_R + 0.01);
+      expect(it.size).toBeGreaterThanOrEqual(R.HIT_SIZE * 0.7 - 1e-9);
+    }
+  });
+
+  // "Remember that several classes can have up to 6 melee hits at once, on TOP
+  // of procs. Procs should be purple."
+  it('a proc is purple, among up to six hits and the procs on top of them', () => {
+    reset();
+    const feed = [85, 33, 49, 45, 33, 49].map(n => hit('out', n, 0)).concat([hit('out', 70, 0, { kind: 'spell', proc: true }), hit('out', 71, 0, { kind: 'spell', proc: true })]).reverse();
+    const its = R.hudLanes(R.hudData(s(feed)), R.hudParts).items.filter(it => it.lane === 'hout');
+    expect(its).toHaveLength(8);                                        // every hit and both procs
+    expect(its.filter(it => it.color === 'var(--purple)').map(it => it.text).sort()).toEqual(['70', '71']);
+    const nuke = R.hudLanes(R.hudData(s([hit('out', 203, 0, { kind: 'spell', proc: false })])), R.hudParts).items.find(it => it.lane === 'hout');
+    expect(nuke.color).not.toBe('var(--purple)');
   });
 
   it('two mobs, two totals — each named; hits on you and your damage shield keep their own', () => {
@@ -621,12 +742,14 @@ describe('the HUD — rounds, damage shield, builder', () => {
     reset();
     R.hudParts.rounds = 5;
     const feed = [0, 3, 6, 9, 12].flatMap(sec => [1, 2, 3, 4, 5, 6].map(n => hit('out', 100 + sec * 10 + n, sec)));
+    R.hudParts.split = 5;                                               // every listed round hit by hit: the tallest a column gets
     const L = R.hudLanes(R.hudData(withTallies(feed, [gnoll({ out: 9999 })])), R.hudParts).items.filter(it => it.lane === 'hout');
     const yMax = R.HIT_LANES.hout.y + (R.HIT_LANES.hout.rows - 1) * 10.5;
     expect(Math.max(...L.map(it => it.y))).toBeLessThanOrEqual(yMax + 0.01);
     const hits = L.filter(it => !it.total);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.length % 6).toBe(0);                                    // whole rounds only
+    expect(hits.length).toBeLessThan(30);                               // …and not all five: they did not fit
     // The damage shield column has four rows. Single-hit rounds take a row
     // plus the gap between rounds each, so three fit — four would, without
     // the gaps counted.
@@ -740,15 +863,19 @@ describe('the HUD — rounds, damage shield, builder', () => {
   });
 
   // "on Large size for abilities we should just show the name of the ability and
-  // a checkmark instead of ready"
-  it('"ready" becomes ✓ when it would not fit its arc — and nothing is cut off', () => {
+  // a checkmark instead of ready" — and round eight: "FD still shows ready
+  // instead of a checkmark" (it fit its arc, so it had kept the word while its
+  // neighbours showed ✓). Ready is a ✓ on every cooldown, at every size.
+  it('a ready cooldown is its name and ✓ — every one, at every size, and nothing is cut off', () => {
     reset();
     const four = ['Kick', 'Mend', 'Feign Death', 'Hundred Fists'].map((label, i) => ({ key: ['ability', 'mend', 'fd', 'disc'][i], label, ms_left: 0, total_ms: 5000, seen: true }));
     const snap = s([], { cooldowns: four });
-    expect(R.renderHud(snap)).toContain('>MEND ready<');
+    const plain = R.renderHud(snap);
+    for (const l of ['MEND', 'FD']) expect(plain).toContain('>' + l + ' ✓<');
+    expect(plain).not.toContain('ready');
     R.hudParts.sizes = { cooldowns: 1.6 };
     const big = R.renderHud(snap);
-    expect(big).toContain('>MEND ✓<');
+    for (const l of ['MEND', 'FD']) expect(big).toContain('>' + l + ' ✓<');
     expect(big).not.toContain('ready');
     // every label's text fits its own arc at the size it is drawn
     for (const m of big.matchAll(/<path id="hcd\d" d="M([\d.]+) ([\d.]+) A165 165 0 0 0 ([\d.]+) ([\d.]+)"[^>]*\/><text font-size="([\d.]+)"><textPath[^>]*><tspan[^>]*>([^<]*)</g)) {
