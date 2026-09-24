@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **Me overlay: A, B or C** | **On beta, agent 3.7.3 (§11).** A Classic · B HUD around the screen centre (damage in/out by element, resists) · C Role, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
+| **Me overlay: A, H1, H2, H3 or C** | **On beta, agent 3.7.5 (§11, §13).** B became three circle HUDs sized to their ring — H1 Rings · H2 Dial · H3 Reticle — with server tick (exact, Zeal), swing timer (learned, "~"), combat-ability / Mend / Taunt / discipline cooldowns, the target's target + HP, slow, and a red outline for a mob that can enrage. No mana bar for warriors, rogues, monks. Picker in the window's bottom-right corner | the guild lead plays with the three HUDs and picks one (or A/C); then graduate it and delete the rest. Optional: open the one-line Zeal PR (`docs/zeal-attack-timer-pipe-request.md`) to make the swing timer exact |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
@@ -693,3 +693,72 @@ only in Tradeskills:
   change S. Ingredients are one click away on `/db/recipe`.
 Migrations landed on `main` and are applied (both functions only read the
 mirrors). The recipe page is beta-only until a layout is picked.
+
+## 13. The HUD, round two: three circle HUDs (2026-09-24)
+
+**The asks** (the guild lead, after a night with layout B): *"The circle looks
+nice, but managing it is rough right now resizing is rough. It's so spread out
+on mode B The Circle should be the bounds for the resizing with some light info
+on the inside of the circle"* · *"Monks, rogues, and warriors have no mana so
+don't expose that for them"* · *"Melee cooldowns and discipline cooldowns need
+to be in here"* · the target *"should have their target's health as well. If
+it's slowed, does it enrage? If it enrages make it a red outline on that
+section"* · *"Nillipuss is able to provide server tick counters and melee delay
+timers"* · hits inside the circle, MH/OH *"would be a nice addition"* ·
+*"Give me 3 versions of the circle hud to work on in beta release."*
+
+**What landed (beta, agent 3.7.5).** B is gone (a saved B opens H1); the picker
+reads A · H1 · H2 · H3 · C and sits in the window's bottom-right corner. Every
+HUD is ONE square SVG (viewBox 400×400) filling the window: resize the window
+and the ring resizes, nothing is placed in screen pixels, and picking a HUD
+makes the window a centred square. Four costs each:
+- **H1 · Rings** — everything is an arc: target on top (name written along the
+  ring), HP left, mana/endurance right, resists written along the bottom, a
+  cooldown ring across the bottom, swing and tick as short inner arcs; the
+  centre stays clear (a test pins it). Build M · maintenance M (angular layout —
+  a seventh cooldown needs room found) · runtime: one ~60-node SVG repainted
+  10×/s · change M.
+- **H2 · Dial** — an instrument cluster: a nameplate-style target panel, big
+  numbers, cooldowns as a row of round buttons that wipe clockwise like the
+  game's. Most text of the three. Build M · maintenance S · runtime same · change S.
+- **H3 · Reticle** — a hairline sight: slim HP/mana arcs, the target as a
+  straight bar across the top, a timer strip across the bottom that shows only
+  what is cooling down (ready ones collapse to one green word). Least clutter.
+  Build S · maintenance S · runtime lowest · change S.
+
+**Where each number comes from — and how sure it is:**
+- **Server tick — exact.** Zeal gauge 24, which the pipe already sent and
+  nothing read. Zeal's reverse option is detected from the gauge's own text.
+- **Swing timer — learned, marked "~".** Zeal computes an attack-recovery gauge
+  (34, `labels.cpp`) — that is what Nillipuss draws — but the pipe's
+  `GaugeNames` map stops at 33, so it never reaches us. Until it does, the
+  agent learns the delay from your own swing rounds (the log is read every
+  500 ms and stamped to the second: ±0.5 s). The one-line Zeal PR is drafted in
+  `docs/zeal-attack-timer-pipe-request.md`; the agent switches to 34 on sight.
+- **Combat abilities — the server's rule, haste estimated.** Kick, Bash,
+  Backstab and the monk specials share ONE timer (`special_attacks.cpp`):
+  base × 100 / haste − 1 s, bases from `common/features.h` (kick/bash/FK/RK 8,
+  backstab 10, TC 7, DP/ES 6). Haste is not on the pipe, so the timer starts at
+  the unhasted ceiling and tightens to your quickest repeats, never below the
+  100%-haste floor. Mend 289 s and Taunt 5 s from their server messages.
+- **Disciplines — the server's rule.** The disc's own landing text starts it,
+  with `CastDiscipline`'s reuse: base − 54 s per level above where it unlocks,
+  clamped 3:54–72:00. The refusal line (*"You can use a new discipline in …"*)
+  is exact and wins. ⚠ Kept OUT of the Command Center's refusal-only timer: if
+  Quarm runs the server's disc timer groups, a disc from another group is
+  usable while this counts down.
+- **Enrage** — "can it" from the mob-info row (`Enrage` special); "is it now"
+  from the server's own `has become ENRAGED.` / `is no longer enraged.` (10 s
+  default, `EnragedDurationTimer`).
+- **Target's target** — Zeal's own when a build sends it, else who the mob is
+  meleeing in the log; their HP from you, your group's gauges, or the relay.
+- **MH/OH** — only when your hands swing different verbs (the server swings the
+  primary first). A monk's punch and punch cannot be told apart, so no hand is
+  claimed — exactly the case the guild lead expected.
+
+**Bug found on the way (fixed, same commit).** The Command Center's discipline
+countdown has never worked in the live agent: `trackDisciplineTimerLine` added
+milliseconds to the Date that `parseEqTimestamp` returns, which in JS is string
+concatenation, so every read was NaN and `toISOString` threw. Its test passed
+because its stand-in parser returned a number; the stand-in now returns a Date,
+and fails 9 of 17 against the old code.
