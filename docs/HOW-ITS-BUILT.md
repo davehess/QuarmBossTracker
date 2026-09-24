@@ -2848,6 +2848,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   reduced motion). Summon mark at `SUMMON_PCT` (97); agent
   `_meTargetExtras` adds `summon` from the mob-info specials. Tests:
   `test/me-overlay.test.js`, `test/me-hud-timers.test.js`.
+  **Round six (agent 3.7.12):** hit columns are ledgers — `laneColumn` puts
+  the agent's per-mob totals on top (`combat.tallies` from `_meMobTallies`:
+  per mob and per life, split at slain / died lines via `_meNoteMobDeath`,
+  live 30 s / dead 8 s), the newest rounds of hits on live mobs below
+  (oldest first, gap-aware capacity), and ghosts every other hit onto its
+  mob's total (`tallyOf`). Target: `_meTargetExtras` adds `level` /
+  `level_max` / `class` (NPC catalog row, else `_targetPlayerInfo`), `corpse`,
+  and `flurry` / `rampage` with `*_lit` for 6 s after the log line
+  (`_meMobBursts`); HUD `levelText`, `fist()`. Builder: per-character storage
+  (`wpHudParts:<name>`, `useCharacterParts`) and per-part text-size sliders
+  (`HUD_SIZED`, `hudParts.sizes`, `sz()`).
 - **A hotkey per overlay (agent 3.7.11, beta)** — `cfg.overlayHotkeys` bound by
   `_registerOverlayHotkeys` (called from `registerHideAllHotkey`, re-run on
   save via `HOTKEY_KEYS`) to `_toggleOverlay`, the same function the
@@ -2874,6 +2885,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   on `mobInfo`); `/consider` level via `noteConsiderLevel` + `_levelCon`
   (mirror of EQMacEmu `Mob::GetLevelCon`) + learned phrases in
   `logsync.con-phrases.json`; `playerCard` in `apps/mimic/mobinfo.html`.
+  ⚠ **Since agent 3.7.12 a player's consider sets no level and no con chip**, and
+  phrases learn from NPCs only (`_knownLevelOf`): the client's consider of a
+  player does not follow the level table (DECISIONS-2026-09-21 §15). NPC
+  considers still give a level or range.
 - **Blind Mode, catalog-driven (agent 3.7.2)** — `_blindCatalogTexts` reads
   SPA-20 landing/fade text from the catalog (`blind` flag, bot 3.1.145),
   excluding texts a non-blind spell shares; `/api/state.blind.active` looked

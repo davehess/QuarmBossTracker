@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.10 (§11, §13 rounds 2–5).** One HUD built from parts in a ⚙ checklist that opens BESIDE the ring; thin lines by default (Line weight: thin/normal/bold). Tick and swing are their own bars under the cooldowns; enrage is a red outline on the last 8% of the target bar; summon is a mark at 97%. Hits are upright columns: the newest round one line per hit, and it slides into its total when the next round lands. The discipline timer survives an agent restart | the guild lead plays with rounds four and five; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.12 (§11, §13 rounds 2–5, §15 round 6).** One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round six; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
 | **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
@@ -1029,3 +1029,77 @@ keep/drop decisions, served with a real context length, would answer §6's
 privacy objection properly. The fastest honest test is a desktop session
 running `laya-serve` with `max_len=8192` against about 20 compactions we label
 by hand. Clones for re-reading: the session scratchpad (not committed).
+
+## 15. HUD round six, and a player's /consider is not a level (2026-09-24, agent 3.7.12)
+
+The guild lead, with four screenshots: *"INcorrectly characterizing 'looks like
+quite a gamble' as a yellow con. these folks are level 60"* · *"Please display
+level or level range and class under the target's bar, above the target of
+target"* · *"Corpses shouldn't ever say 'not slowed'"* · *"If a mob is
+unslowable it should say that in its place., but also smaller text."* · *"The
+combining of rounds of combat is happening strangely. I liked seeing the
+separate hits, but it wasn't clear how that was operating."* · *"Huds should be
+configurable per character as well."* · *"Have the damage shield hits roll into
+a total instead of roll off."* · *"Have the damage done and taken per mob roll
+off into a total as well, then drop out after each mob."* · *"When a mob flurries
+or Rampages denote that with an F in a fist outline or an R in a fist outline
+next to the boss's name."* · *"Lets try adding in small sliders next to each of
+the hud's elements for font size on the config page."*
+
+**A player's consider does not give a level — decided, from the evidence.**
+- **What the server does:** it sends only a colour. `Handle_OP_Consider` →
+  `GetLevelCon`, the same table Zeal copies from the client, and by that table
+  60-vs-60 is white.
+- **What the client printed:** level-60 players read *"looks like quite a
+  gamble"* to a level 60, which is yellow (ZAM agrees with our phrase map). It
+  also printed *"regards you indifferently"* where the server sends players
+  faction 1.
+- **So** the client handles a player's consider its own way. The exact rule is
+  unknown, and could only be pinned in game.
+- **Two changes:**
+  - Target Info takes a player's level from `/who` only, live or the last one
+    history saw. It shows no con chip for players.
+  - The phrase learner only learns from NPCs, whose catalog level is fixed. A
+    player could otherwise have taught a phrase the wrong colour.
+- NPC considers are unchanged.
+- If the character that did those considers was actually level 58–59, yellow was
+  correct. The change is still right: the phrase gave a 61–62 range for someone
+  `/who` had seen at 60, and `/who` is the better source.
+
+**HUD, round six:**
+- **Under the target's bar:** its level (or range) and class, above who it is
+  hitting. An NPC's come from the catalog, a player's from `/who` (marked "last
+  seen" when that is all there is).
+- **Corpse:** a corpse shows only its name and 0%. No slow line, enrage outline,
+  summon mark or badges.
+- **Unslowable:** says "unslowable" where the slow state goes, one size smaller.
+- **F / R badges in a fist outline, left of the name:** the mob can flurry or
+  rampage. The ability comes from the catalog's special abilities (Rampage or
+  Area Rampage count as R). A badge turns solid red for 6 s after the log
+  shows it happen. The server strings are NPC_FLURRY *"%1 executes a FLURRY of
+  attacks on %2!"*, NPC_RAMPAGE (Quarm adds *"against <target>"*) and
+  AE_RAMPAGE *"%1 goes on a WILD RAMPAGE!"*.
+- **Hit columns are ledgers now**, replacing round five's merge-the-last-round
+  rule that read as strange:
+  - On top, each mob's running total, "Σ 3,340". The mob is named when two are
+    in the column.
+  - Under it, the last few rounds as separate hits: oldest first, newest at
+    the bottom, a small gap between rounds.
+  - Rounds that fall out of the window slide up into their mob's total.
+  - When the mob dies, all its hits roll in, the total dims, and after 8 s it
+    drops out.
+  - The damage shield column works the same way.
+  - The totals come from the agent (`combat.tallies`, per mob and per life,
+    split at the slain / died lines). They are not summed from the hits on
+    screen, so they cover the whole fight.
+- **Per character:** the builder's settings save per character. A character with
+  none of its own starts from the last settings saved by any character.
+- **Size sliders:** a small slider beside each part with text, 0.7×–1.6×,
+  scaling only that part.
+
+Design notes: one build, no variants. It is the established HUD, refined to
+explicit instructions. The ledger is the one real design change. Its
+alternative is to keep round five's per-round totals but label them (a "Σ" and
+a hit count per merged line). Costs: build S · maintenance S · runtime nil ·
+change S. It was not built, because per-mob totals are what was asked for.
+
