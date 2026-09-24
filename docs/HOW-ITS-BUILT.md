@@ -2859,6 +2859,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`_meMobBursts`); HUD `levelText`, `fist()`. Builder: per-character storage
   (`wpHudParts:<name>`, `useCharacterParts`) and per-part text-size sliders
   (`HUD_SIZED`, `hudParts.sizes`, `sz()`).
+  **Round seven (agent 3.7.13):** a round is one line (`layRound`, `laneRoom`,
+  `hitW`); columns from y 146; dead totals kept 90 s and shown dim when no mob
+  in the column is alive. Name inside its bar (`NAME_R`, `fitSize`, "…"),
+  target of target at R+10/R+15 (`htt`); in/out swapped on the HP / right
+  labels; cooldown "✓" + fitted labels; new `fist()`. Builder: sticky header
+  with `builder-all` (`sizes.all`, multiplied in `sz`), `data-reset` ↺ per row,
+  300 px. Agent: `_meFdFailed` (own-name "has fallen to the ground"),
+  `_meCastRemaining` (cast gauge rate → `casting.remaining_ms` / `est`).
+- **NPC Harm Touch on Target Info (agent 3.7.13, beta)** — `_npcHtLanded` from
+  "writhe(s) in the grip of agony" (pinned on an SK target on the victim, else
+  `_npcHtPending` with the attackers), `_npcHtFor` (pins a pending one on
+  targeting; 40-min `_NPC_HT_REUSE_MS`) → `mobInfo.target_npc_ht`; chip beside
+  the class in `apps/mimic/mobinfo.html`. Tests: `test/me-hud-timers.test.js`,
+  `test/mobinfo-class-variants-overlay.test.js`.
 - **A hotkey per overlay (agent 3.7.11, beta)** — `cfg.overlayHotkeys` bound by
   `_registerOverlayHotkeys` (called from `registerHideAllHotkey`, re-run on
   save via `HOTKEY_KEYS`) to `_toggleOverlay`, the same function the

@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.12 (§11, §13 rounds 2–5, §15 round 6).** One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round six; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.13 (§11, §13 rounds 2–5, §15 round 6, §16 round 7).** Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round six; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
 | **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
@@ -1102,4 +1102,83 @@ explicit instructions. The ledger is the one real design change. Its
 alternative is to keep round five's per-round totals but label them (a "Σ" and
 a hit count per merged line). Costs: build S · maintenance S · runtime nil ·
 change S. It was not built, because per-mob totals are what was asked for.
+
+## 16. HUD round seven, Feign Death failures, clicky cast times, NPC Harm Touch (2026-09-24, agent 3.7.13)
+
+The guild lead: *"on Large size for abilities we should just show the name of the
+ability and a checkmark instead of ready"* · *"IN and Out should be
+side-swapped. Damage in should be next to health and out should be on the
+right"* · *"Target name should curve with the HP bar"* · *"Move target of
+target's healthbar and name to the top of the circle above the current"* ·
+*"It's hard to tell when the different rounds are there. The concurrent hits in
+a round should show up sidebyside before merging into a single line. Then
+after the fight a ghost of those shows up."* · *"Replace the fist you made with
+this fist shape i've uploaded"* · *"Add Harmtouch tracking to Shadowknight mobs
+in Target Info"* · *"Config for hud should be able to scroll easily, and have a
+top level slider for all of the text as well as reset to defaults for each
+line."* · *"I did not get an 'FD Failure' message when this happened - FD
+cooldown in the Hud should show an X on it"* · *"Cast time is definitely wrong,
+especially for clickies"*.
+
+**Three were bugs, and the causes are worth keeping:**
+- **Feign Death failure** prints in the THIRD person with your own name —
+  *"<name> has fallen to the ground."* The agent only knew *"You have fallen to
+  the ground."*, so a failure never registered. Now either form marks the FD
+  timer failed. The HUD shows "FD ✗" in red until 5 s after the timer ends.
+- **Cast time** came from the spell's catalog cast time. A clicky casts at the
+  ITEM's time, and haste or a focus changes it too. It is now timed from
+  Zeal's own cast gauge (how fast its percentage moves). The catalog time is
+  only used, marked "~", for the first quarter-second of a cast.
+- **Cooldown labels cut off at large sizes** ("ND rea" for "MEND ready"): a
+  label longer than its arc is clipped. Now "ready" becomes "✓" when it would
+  not fit, and every ring label is fitted to its arc (it shrinks, never clips).
+
+**NPC Harm Touch on Target Info — how it is decided:**
+- **The timer:** an NPC Shadow Knight casts Harm Touch off its knight-attack
+  timer and waits **40 minutes** (`HarmTouchReuseTimeNPC = 2400`, eqmac
+  `zone/special_attacks.cpp`; its own comment reads "NPCs have 40 minute
+  timers according to logs"). The timer is not running at spawn, so a fresh
+  knight has it.
+- **The log line:** it lands as *"You writhe in the grip of agony."* (Harm
+  Touch, Harm Touch NPC — spells 88, 929, 2821), or *"<name> writhes …"* on
+  anyone else. The log never names the caster.
+- **Pinned at once** when your target is a Shadow Knight mob on the victim:
+  it hit YOU in the last 20 s, or the victim is its target's target.
+- **Pinned later**, as the guild lead proposed ("if we tab target to a
+  shadowknight that's attacking us, there's a good chance we can assign that HT
+  to it"): the landing is held with the list of mobs that were hitting you,
+  and pinned on the first Shadow Knight among them you target that has none
+  on record.
+- **Keyed by name + spawn id**, so same-named knights are told apart on Zeal
+  1.4.6+.
+- **What it cannot see:** a knight that used its Harm Touch on someone else
+  before you targeted it still shows "HT ✓". The log gives no way to know.
+
+**HUD layout:**
+- **Damage in** now sits on the health label, **out** on the mana/endurance
+  label.
+- **The target's name** runs along the INSIDE of its bar and keeps to the bar's
+  span: it gets smaller (to 70%), then is cut with "…". The health is never cut.
+- **Who the target is hitting** sits on top of the circle: a thin bar just
+  outside the target's, with its name along the outside of that.
+- **Hits:** a round is ONE line of hits side by side. If it is too wide, it
+  shrinks (to 75%) and then wraps, with its wrapped lines closer together
+  than the 4.5-unit gap between rounds.
+  - The columns now start at y 146 instead of 126, because the circle is
+    narrowest at the top. The right-hand column had 39 units there; now its
+    narrowest row has about 48.
+  - Older rounds still slide up into the mob's total.
+  - After a fight, a dead mob's total stays, dim, as the fight's ghost until a
+    live mob takes the column. The agent now keeps a dead mob's total 90 s
+    (was 8 s).
+- **The fist** is now drawn from the image the guild lead supplied.
+- **Builder:**
+  - 300 px wide, so the rows stop wrapping.
+  - The header — name, close, and a new **All text** slider that multiplies
+    every part's own size — stays put while the list scrolls under it, with
+    a visible scrollbar.
+  - A **↺** on every line puts that line's on/off and size back to default.
+
+One build, no variants: these are explicit refinements of the established HUD.
+
 
