@@ -26,10 +26,13 @@ const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
 const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
 const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
 
-const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
-  '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState'];
+const dsSlack = agent.match(/const DS_UNLISTED_SLACK = [^\n]+/)[0];
 
-function load({ zeal = {}, victim = null } = {}) {
+const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
+  '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
+  '_meNoteHit'];
+
+function load({ zeal = {}, victim = null, dsKnown = 0 } = {}) {
   const pre = `
     const _spellByNameLower = new Map();
     const _zealState = ${JSON.stringify(zeal)};
@@ -51,6 +54,8 @@ function load({ zeal = {}, victim = null } = {}) {
     function _victimForMob() { return ${JSON.stringify(victim)}; }
     function _bestSlowForTarget() { return null; }
     function _resolveHpValuesForName() { return null; }
+    ${dsSlack}
+    function _knownDsPerHitFor() { return ${Number(dsKnown) || 0}; }
   `;
   // eslint-disable-next-line no-new-func
   return new Function(pre + meBlock + '\nreturn { ' + EXPORTS.join(', ') + ' };')();
@@ -344,6 +349,56 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     h = load({ zeal: zeal('Shadow Knight', { target_name: 'a gnoll warlord' }) });
     say(h, 'Aldenmar', 'a gnoll warlord writhes in the grip of agony.');
     expect(cd(h, 'ht').seen).toBe(true);
+  });
+});
+
+// The guild lead, 2026-09-24: "Damage shield hits are also mixed in there - those
+// should be separate, and should have a button with current DS amount per hit".
+describe('damage shield — its own kind, and its per-hit value', () => {
+  // A getter, so the fixture is stamped with the clock the TEST sets.
+  const Z = { get zeal() { return { Aldenmar: { charInfo: [{ id: 3, value: 'Monk' }], gauges: [], updatedAt: clock } }; } };
+  const iso = (ms) => new Date(ms).toISOString();
+  const feedKinds = (h) => h._serializeMeState().combat.feed.map(f => [f.dir, f.kind, f.amount]);
+
+  it('a named shield line ("… by YOUR thorns …") is damage shield', () => {
+    const h = load({ zeal: Z.zeal });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+    expect(feedKinds(h)).toEqual([['out', 'ds', 38]]);
+  });
+
+  it('"<mob> was hit by non-melee" right after that mob meleed you, sized like your shield, is damage shield', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 40 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'hits', amount: 82 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 38 });
+    expect(feedKinds(h)).toEqual([['out', 'ds', 38], ['in', 'melee', 82]]);
+  });
+
+  it('…but not when that mob had not hit you (a weapon proc lands on YOUR swing)', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 40 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 38 });
+    expect(feedKinds(h)).toEqual([['out', 'spell', 38]]);
+  });
+
+  it('…and not when it is far bigger than the shield you wear', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 40 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'hits', amount: 82 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 250 });
+    expect(feedKinds(h)[0]).toEqual(['out', 'spell', 250]);
+  });
+
+  it('the button reads the shield you wear, else the last one that landed', () => {
+    let h = load({ zeal: Z.zeal, dsKnown: 40 });
+    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 40, from_buffs: true, hits: 0 });
+    h = load({ zeal: Z.zeal });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 38, from_buffs: false, hits: 1, total: 38 });
+    expect(load({ zeal: Z.zeal })._serializeMeState().combat.ds).toBeFalsy();   // no shield, no button
+  });
+
+  it('every hit carries its log second, so the HUD can draw one round per line', () => {
+    const h = load({ zeal: Z.zeal });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'punch', amount: 45 });
+    expect(h._serializeMeState().combat.feed[0].at).toBe(clock);
   });
 });
 

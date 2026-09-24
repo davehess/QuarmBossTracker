@@ -12464,15 +12464,31 @@ function _meNoteHit(character, ev) {
   const t = ev.ts ? Date.parse(ev.ts) : Date.now();
   const label = String(ev.spellName || ev.ability || '').trim();
   const spell = label && label.toLowerCase() !== 'non-melee' ? _meSpell(label) : null;
-  let kind, name = null, el = null;
-  if (spell) { kind = 'spell'; name = spell.name; el = _ME_ELEMENTS[spell.rt] || null; }
-  else if (ev.spellName || /^non-melee$/i.test(label)) {
-    kind = 'spell';
-    const last = dir === 'in' ? _meLastLanding.get(cl) : null;
-    if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
-  } else { kind = 'melee'; name = label || null; }
   let arr = _meHits.get(cl);
   if (!arr) { arr = []; _meHits.set(cl, arr); }
+  let kind, name = null, el = null;
+  // Your DAMAGE SHIELD is its own kind (the guild lead, 2026-09-24: "Damage shield
+  // hits are also mixed in there - those should be separate"). A named shield
+  // line ("… is pierced by YOUR thorns …") says so outright. The anonymous
+  // "<mob> was hit by non-melee for N" is a shield only when that mob has
+  // just meleed YOU and the amount fits the shield you visibly wear — the
+  // same test the fight parser's _settleDsPending applies, which runs too late
+  // for this hook to read. A weapon proc lands on YOUR swing, never on theirs.
+  if (ev.ds) { kind = 'ds'; name = String(ev.ability || 'damage shield'); }
+  else if (dir === 'out' && /^non-melee$/i.test(label) && ev.defender) {
+    const mob = String(ev.defender).toLowerCase();
+    const hitMe = arr.some(x => x.dir === 'in' && x.kind === 'melee' && x.other && String(x.other).toLowerCase() === mob && t - x.t <= 1500 && t >= x.t);
+    const known = hitMe ? _knownDsPerHitFor(character) : 0;
+    if (hitMe && (!known || ev.amount <= known + DS_UNLISTED_SLACK)) { kind = 'ds'; name = 'damage shield'; }
+  }
+  if (!kind) {
+    if (spell) { kind = 'spell'; name = spell.name; el = _ME_ELEMENTS[spell.rt] || null; }
+    else if (ev.spellName || /^non-melee$/i.test(label)) {
+      kind = 'spell';
+      const last = dir === 'in' ? _meLastLanding.get(cl) : null;
+      if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
+    } else { kind = 'melee'; name = label || null; }
+  }
   arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null) });
   const cutoff = t - 10 * 60_000;
   while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
@@ -12492,9 +12508,15 @@ function _meCombatSince(cl, sinceMs, now) {
   }
   const secs = Math.max(1, Math.round((now - sinceMs) / 1000));
   out.dps = Math.round(out.dmg / secs); inn.dps = Math.round(inn.dmg / secs);
-  const feed = arr.filter(h => now - h.t <= 15_000).slice(-10).reverse()
-    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, age_ms: Math.max(0, now - h.t) }));
-  return { secs, out, in: inn, feed };
+  // Up to 60 of the last 15 s, each stamped with its log second (`at`) so the
+  // HUD can put one ROUND per line — "i sometimes hit 6 times in one round"
+  // (the guild lead, 2026-09-24) filled the old ten-line feed in two rounds.
+  const feed = arr.filter(h => now - h.t <= 15_000).slice(-60).reverse()
+    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, at: h.t, age_ms: Math.max(0, now - h.t) }));
+  // The damage shield in this window, and what it does per hit.
+  const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
+  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
+  return { secs, out, in: inn, feed, ds };
 }
 
 // ── HUD timers and target read-outs (the guild lead, 2026-09-24) ─────────────
@@ -12997,6 +13019,12 @@ function _serializeMeState() {
   const combatSince = (fight && et && et.startedAt) ? Date.parse(et.startedAt) : now - 30_000;
   const combat = _meCombatSince(cl, combatSince, now);
   combat.live = !!fight;
+  // Your damage shield per hit — the HUD's DS button ("a button with current DS
+  // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
+  // right now, else the last one that landed.
+  const dsKnown = _knownDsPerHitFor(active);
+  if (!combat.ds && dsKnown) combat.ds = { hits: 0, total: 0, last: null };
+  if (combat.ds) { combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown; }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.
   const swing = _meSwingState(cl, st, now);
@@ -18567,7 +18595,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting and whether it can enrage, your hits, and your class numbers. Five layouts to try — A, three rings around your character (H1, H2, H3) and C — picked in its corner. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target with who it is hitting and whether it can enrage, your hits and theirs a round per line, your damage shield with its per-hit button, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 function renderOverlays(s) {

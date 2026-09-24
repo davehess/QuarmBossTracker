@@ -67,6 +67,8 @@ function load({ zeal = {}, et = null, blind = {} } = {}) {
     function _victimForMob() { return null; }
     function _bestSlowForTarget() { return null; }
     function _resolveHpValuesForName() { return null; }
+    const DS_UNLISTED_SLACK = 30;
+    function _knownDsPerHitFor() { return 0; }
   `;
   // eslint-disable-next-line no-new-func
   return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey, _meNoteHit, _meNoteSelfLanding };')();
@@ -259,8 +261,8 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderH1, renderH2, renderH3, renderC };')();
-const HUDS = { H1: R.renderH1, H2: R.renderH2, H3: R.renderH3 };
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS };')();
+const HUDS = { HUD: R.renderHud };
 
 describe('the three layouts', () => {
   const zeal = zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015], gems: ['Complete Healing'], group: [['Brackwyn', 34]] });
@@ -348,10 +350,10 @@ describe('the three HUDs', () => {
       expect(h).toContain('MEND');
     });
 
-    it(name + ' puts hits inside the ring, with the hand when known', () => {
+    it(name + ' puts hits inside the ring: on you, yours', () => {
       const h = fn(base);
-      expect(h).toContain('▲ 110 slash MH');
-      expect(h).toContain('▼ 300 Lava Breath');
+      expect(h).toMatch(/<textPath href="#hout0"[^>]*>[\s\S]*?>110</);
+      expect(h).toMatch(/<textPath href="#hin0"[^>]*>[\s\S]*?>300</);
     });
   }
 
@@ -387,15 +389,100 @@ describe('the three HUDs', () => {
   });
 });
 
+// ── the HUD, round three: one HUD built from parts ───────────────────────────
+// The guild lead, 2026-09-24: "I think we need an overlay builder for this one in
+// mimic" · "The wrap mode on H1 is the way i want things to be" · "H2's
+// separation of hits against me vs hits out" · "they should be smaller and
+// more - i sometimes hit 6 times in one round" · "Damage shield hits are also
+// mixed in there - those should be separate, and should have a button with
+// current DS amount per hit in it".
+describe('the HUD — rounds, damage shield, builder', () => {
+  const at = 1_790_000_000_000;
+  const hit = (dir, amount, sec, extra = {}) => ({ dir, amount, kind: 'melee', name: 'punch', at: at - sec * 1000, age_ms: sec * 1000, ...extra });
+  const s = (feed, extra = {}) => Object.assign({
+    ok: true, character: 'Aldenmar', class: 'Monk', no_mana: true,
+    hp: { pct: 80 }, mana: {}, end: { pct: 50 }, cooldowns: [], target: null,
+    combat: { live: true, secs: 30, out: { dmg: 0, dps: 0, by: {} }, in: { dmg: 0, dps: 0, by: {} }, feed },
+  }, extra);
+  const lane = (h, id) => [...h.matchAll(new RegExp('<textPath href="#' + id + '(\\d)"[^>]*>([\\s\\S]*?)</textPath>', 'g'))]
+    .map(m => m[2].replace(/<[^>]+>/g, '').trim());
+  const reset = () => Object.assign(R.hudParts, R.HUD_DEFAULTS);
+
+  it('six hits in one round are ONE line of six numbers, oldest first', () => {
+    reset();
+    const feed = [85, 33, 49, 45, 33, 49].reverse().map(a => hit('out', a, 0));   // newest first, as the agent sends
+    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['85 33 49 45 33 49']);
+  });
+
+  it('one line per round, newest outermost, capped by the "rounds" setting', () => {
+    reset();
+    const feed = [0, 3, 6, 9, 12].map((sec, i) => hit('out', 100 + i, sec));
+    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['100', '101', '102', '103']);   // default 4
+    R.hudParts.rounds = 2;
+    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['100', '101']);
+    reset();
+  });
+
+  it('main hand | off hand when the hands swing different verbs', () => {
+    reset();
+    const feed = [hit('out', 40, 0, { hand: 'OH' }), hit('out', 90, 0, { hand: 'MH' }), hit('out', 88, 0, { hand: 'MH' })];
+    expect(lane(R.renderHud(s(feed)), 'hout')).toEqual(['88 90 | 40']);
+  });
+
+  it('hits on you and your hits are separate lanes', () => {
+    reset();
+    const h = R.renderHud(s([hit('in', 169, 0), hit('out', 45, 0)]));
+    expect(lane(h, 'hin')).toEqual(['169']);
+    expect(lane(h, 'hout')).toEqual(['45']);
+  });
+
+  it('damage-shield hits leave your lane for their own, with a per-hit button', () => {
+    reset();
+    const feed = [hit('out', 38, 0, { kind: 'ds' }), hit('out', 45, 0), hit('out', 38, 2, { kind: 'ds' })];
+    const h = R.renderHud(s(feed, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed,
+      ds: { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true } } }));
+    expect(lane(h, 'hout')).toEqual(['45']);
+    expect(lane(h, 'hds')).toEqual(['38', '38']);
+    expect(h).toMatch(/<circle[^>]*stroke="var\(--orange\)"/);
+    expect(h).toMatch(/font-weight="700">38<\/text>/);
+    expect(h).toContain('>DS<');
+  });
+
+  it('the builder switches parts off — and nothing else moves', () => {
+    reset();
+    const one = s([hit('in', 169, 0), hit('out', 45, 0)], { tick: { ms_left: 3000 }, resists: { mr: 183, fr: 234, cr: 170, pr: 200, dr: 220 } });
+    const all = R.renderHud(one);
+    expect(all).toContain('TICK');
+    expect(all).toContain('MR<tspan');
+    R.hudParts.tick = 0; R.hudParts.resists = 0; R.hudParts.hitsIn = 0;
+    const trimmed = R.renderHud(one);
+    expect(trimmed).not.toContain('TICK');
+    expect(trimmed).not.toContain('MR<tspan');
+    expect(lane(trimmed, 'hin')).toEqual([]);
+    expect(lane(trimmed, 'hout')).toEqual(lane(all, 'hout'));
+    reset();
+  });
+
+  it('every part in the builder has a default, and every default is in the builder', () => {
+    const listed = R.HUD_PARTS.flatMap(g => g[1].map(it => it[0])).sort();
+    expect(listed).toEqual(Object.keys(R.HUD_DEFAULTS).sort());
+  });
+});
+
 describe('the in-game picker', () => {
   const body = stripJs(meHtml);
-  it('offers A, the three HUDs and C, and remembers the pick', () => {
-    for (const v of ['a', 'h1', 'h2', 'h3', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
-    expect(meHtml).not.toContain('data-v="b"');
+  it('offers A, the HUD and C, and remembers the pick', () => {
+    for (const v of ['a', 'hud', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
+    for (const v of ['b', 'h1', 'h2', 'h3']) expect(meHtml).not.toContain('data-v="' + v + '"');
     expect(body).toContain("localStorage.setItem(STYLE_KEY, style)");
   });
-  it('someone who had picked the old B lands on HUD 1', () => {
-    expect(body).toContain("if (saved === 'b') saved = 'h1';");
+  it('someone who had picked B, H1, H2 or H3 lands on the HUD', () => {
+    expect(body).toContain("if (saved === 'b' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';");
+  });
+  it('the builder is clickable on a locked overlay, and saves to this computer', () => {
+    expect(body).toContain("builderEl.addEventListener('mouseenter', hoverOn)");
+    expect(body).toContain("builderEl.addEventListener('mouseleave', hoverOff)");
+    expect(body).toContain('localStorage.setItem(HUD_PARTS_KEY, JSON.stringify(hudParts))');
   });
   it('a HUD makes the window a centred square — the ring is the bounds', () => {
     expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);
