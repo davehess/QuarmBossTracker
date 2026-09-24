@@ -8,7 +8,12 @@
      the A/B/C switch in the title bar, so the guild lead can choose one:
        A  Classic — a Nillipuss-style player window: every number, cur/max
           inside the bars, the % column on the right edge.
-       B  Glance  — a thin strip for peripheral vision: only what matters now.
+       B  HUD     — wraps the CENTRE of the screen (the guild lead, same day:
+          "one of those me overlays should be a HUD style that goes around the
+          players center of their screen … damage in/out shown clearly.
+          resists and cast damage too with elements"). The window grows to a
+          centred rectangle; the middle stays EMPTY so the character and the
+          fight are never covered — everything sits on arcs and edges around it.
        C  Role    — the class's own numbers first (CHs left, mezzes left,
           Theft of Thought / Harvest timers), then group health.
      Colour is semantic, never decoration: green/orange/red = HP health,
@@ -58,16 +63,25 @@
   .grp{display:grid;grid-template-columns:78px 1fr 30px;gap:3px;align-items:center;font-size:10px;margin-top:2px}
   .grp .gname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-  /* B — glance strip */
-  .glance{display:flex;flex-direction:column;gap:3px}
-  .gl-row{display:grid;grid-template-columns:auto 1fr auto;gap:6px;align-items:center;font-size:12px}
-  .gl-row .k{color:var(--dim);font-size:10px;width:22px}
-  .gl-row .v{font-variant-numeric:tabular-nums;font-weight:700;min-width:40px;text-align:right}
-  .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
-  .chip{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--border);background:rgba(22,27,34,0.7);white-space:nowrap}
-  .chip b{color:#fff}
-  .chip.warn{border-color:var(--red);color:var(--red)}
-  .chip.ready{border-color:var(--green);color:var(--green)}
+  /* B — HUD around the screen centre. Elements are EverQuest's own resist
+     colours (the subject's world), used only to label an element. */
+  :root{ --fire:#ff7b45; --cold:#79c0ff; --magic:#d2a8ff; --poison:#7ee787; --disease:#e3b341; --melee:#e6edf3; }
+  body.hud .card{background:transparent;border-color:transparent;padding:0}
+  body.hud .blind{position:absolute;top:28px;left:50%;transform:translateX(-50%);z-index:5;
+    background:rgba(13,17,23,0.8);padding:3px 14px}
+  body.hud .title{justify-content:center;padding-left:26px;padding-right:26px}
+  #hud{position:relative;overflow:hidden}
+  #hud .ab{position:absolute;text-shadow:0 0 3px #000,0 1px 2px #000,0 0 6px #000;white-space:nowrap}
+  #hud .ctr{transform:translateX(-50%);text-align:center}
+  #hud .big{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+  #hud .sm{font-size:11px;font-variant-numeric:tabular-nums}
+  #hud .xs{font-size:10px;color:#9aa4ad}
+  #hud .panel{background:rgb(13 17 23 / calc(var(--bg-alpha) * 0.7));border-radius:5px;padding:3px 7px}
+  #hud .el{display:inline-block;margin:1px 2px;padding:0 5px;border-radius:3px;font-size:10px;
+    border:1px solid currentColor;background:rgba(13,17,23,0.55);font-variant-numeric:tabular-nums}
+  #hud .feed{font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums}
+  #hud .res{display:grid;grid-template-columns:auto auto;gap:0 8px;font-size:11px;font-variant-numeric:tabular-nums}
+  #hud .res b{font-weight:700}
 
   /* C — role card */
   .focus{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:4px;margin-top:2px}
@@ -126,7 +140,7 @@
         <span id="tname" class="nm">Me</span><span id="tclass" class="cl"></span>
         <span class="sp"></span>
         <span id="picker" title="Pick a layout — this is a beta test of three designs">
-          <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="b" title="B · Glance — only what matters right now">B</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button>
+          <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="b" title="B · HUD — wraps the centre of your screen: health and mana arcs, damage in/out by element, resists">B</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button>
         </span>
       </div>
       <div id="body"></div>
@@ -201,13 +215,28 @@
   }
   picker.addEventListener('mouseenter', hoverOn);
   picker.addEventListener('mouseleave', hoverOff);
+  // B wraps the screen centre, so switching to it grows the window into a
+  // centred rectangle; switching back puts the card where it was.
+  var CARD_KEY = 'wpMeCardBounds';
+  function setBounds(b){ try { if (window.mimic && window.mimic.overlaySetBounds) window.mimic.overlaySetBounds(b); } catch (e) {} }
   picker.addEventListener('click', function(e){
     var b = e.target && e.target.closest ? e.target.closest('button[data-v]') : null;
     if (!b) return;
-    style = b.getAttribute('data-v');
+    var next = b.getAttribute('data-v');
+    if (next === style) return;
+    if (next === 'b') {
+      try { localStorage.setItem(CARD_KEY, JSON.stringify({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight })); } catch (err) {}
+      setBounds({ width: Math.round(screen.availWidth * 0.58), height: Math.round(screen.availHeight * 0.66), center: true });
+    } else if (style === 'b') {
+      var card = null;
+      try { card = JSON.parse(localStorage.getItem(CARD_KEY) || 'null'); } catch (err) {}
+      setBounds(card && card.width ? card : { width: 330, height: 320, center: true });
+    }
+    style = next;
     try { localStorage.setItem(STYLE_KEY, style); } catch (err) {}
     paintPicker(); _lastHtml = null; render(_last);
   });
+  window.addEventListener('resize', function(){ if (style === 'b') { _lastHtml = null; render(_last); } });
   paintPicker();
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -309,26 +338,100 @@
     return h;
   }
 
-  // ── B · Glance ────────────────────────────────────────────────────────────
-  function renderB(s){
-    var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
-    var h = '<div class="glance">';
-    h += '<div class="gl-row"><span class="k">HP</span>' + bar(hpP, hpColor(hpP), '', 'thin') + '<span class="v" style="color:' + hpColor(hpP) + '">' + (hpP == null ? '—' : Math.round(hpP) + '%') + '</span></div>';
-    if (mnP != null) h += '<div class="gl-row"><span class="k">MA</span>' + bar(mnP, 'var(--blue)', '', 'thin') + '<span class="v" style="color:var(--blue)">' + Math.round(mnP) + '%</span></div>';
-    h += '</div>';
-    h += castHtml(s.casting);
-    h += targetHtml(s.target);
-    var chips = [];
-    (s.focus || []).forEach(function(f){
+  // ── B · HUD ───────────────────────────────────────────────────────────────
+  // Arcs and edges AROUND the centre; nothing is drawn inside the ring. Angles
+  // run clockwise from 12 o'clock. HP fills the left arc from the bottom up,
+  // mana the right arc; endurance and the cast sit on thin inner arcs.
+  var EL_COLOR = { fire: 'var(--fire)', cold: 'var(--cold)', magic: 'var(--magic)', poison: 'var(--poison)', disease: 'var(--disease)', melee: 'var(--melee)', spell: '#8b949e' };
+  var EL_LABEL = { fire: 'fire', cold: 'cold', magic: 'magic', poison: 'poison', disease: 'disease', melee: 'melee', spell: 'spell' };
+  function polar(cx, cy, r, deg){ var a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
+  function arcPath(cx, cy, r, a0, a1){
+    if (a1 - a0 <= 0.01) return '';
+    var p0 = polar(cx, cy, r, a0), p1 = polar(cx, cy, r, a1);
+    return 'M' + p0[0].toFixed(1) + ' ' + p0[1].toFixed(1) + ' A' + r.toFixed(1) + ' ' + r.toFixed(1) + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' 1 ' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1);
+  }
+  function arcPair(cx, cy, r, from, span, frac, color, width, fromEnd){
+    // Track, then the fill. fromEnd: the fill grows from the END of the span
+    // (the right arc fills bottom-up by running backwards from 150°).
+    var f = Math.max(0, Math.min(1, frac == null ? 0 : frac));
+    var track = '<path d="' + arcPath(cx, cy, r, from, from + span) + '" stroke="rgba(255,255,255,0.12)" stroke-width="' + width + '" fill="none" stroke-linecap="round"/>';
+    var d = fromEnd ? arcPath(cx, cy, r, from + span * (1 - f), from + span) : arcPath(cx, cy, r, from, from + span * f);
+    return track + (d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + width + '" fill="none" stroke-linecap="round"/>' : '');
+  }
+  function elChips(by){
+    var keys = Object.keys(by || {}).sort(function(a, b){ return by[b] - by[a]; });
+    return keys.map(function(k){ return '<span class="el" style="color:' + (EL_COLOR[k] || '#8b949e') + '">' + EL_LABEL[k] + ' ' + big(by[k]) + '</span>'; }).join('');
+  }
+  function renderHud(s){
+    var W = Math.max(320, window.innerWidth), H = Math.max(260, window.innerHeight - 30);
+    var cx = W / 2, cy = H / 2 - 10, R = Math.max(90, Math.min(W, H) * 0.25);
+    var hpP = pctOf(s.hp), mnP = pctOf(s.mana), enP = s.end ? s.end.pct : null;
+    var castLeft = (s.casting && s.casting.pct != null) ? (100 - s.casting.pct) / 100 : null;
+    var svg = '<svg width="' + W + '" height="' + H + '" style="position:absolute;left:0;top:0">'
+      + arcPair(cx, cy, R, 210, 120, hpP == null ? 0 : hpP / 100, hpColor(hpP), 7, false)
+      + (enP != null ? arcPair(cx, cy, R - 11, 215, 110, enP / 100, 'var(--orange)', 3, false) : '')
+      + (mnP != null ? arcPair(cx, cy, R, 30, 120, mnP / 100, 'var(--blue)', 7, true) : '')
+      + (castLeft != null ? arcPair(cx, cy, R - 11, 35, 110, castLeft, 'var(--blue)', 3, true) : '')
+      + '</svg>';
+    var h = '<div id="hud" style="width:' + W + 'px;height:' + H + 'px">' + svg;
+    function at(x, y, cls, inner, extra){ return '<div class="ab ' + (cls || '') + '" style="left:' + Math.round(x) + 'px;top:' + Math.round(y) + 'px;' + (extra || '') + '">' + inner + '</div>'; }
+    // Left / right of the ring: HP and mana, big.
+    h += at(cx - R - 18, cy - 18, '', '<div class="big" style="color:' + hpColor(hpP) + '">' + (hpP == null ? '—' : Math.round(hpP) + '%') + '</div>'
+        + '<div class="sm">' + (s.hp && s.hp.cur != null ? n0(s.hp.cur) + ' / ' + n0(s.hp.max) : '') + '</div>'
+        + (enP != null ? '<div class="xs">end ' + Math.round(enP) + '%</div>' : ''), 'transform:translateX(-100%);text-align:right');
+    if (mnP != null) h += at(cx + R + 18, cy - 18, '', '<div class="big" style="color:var(--blue)">' + Math.round(mnP) + '%</div>'
+        + '<div class="sm">' + (s.mana && s.mana.cur != null ? n0(s.mana.cur) + ' / ' + n0(s.mana.max) : '') + '</div>');
+    // Above: target, then the cast.
+    var top = cy - R - 14;
+    if (s.casting) {
+      h += at(cx, top - 16, 'ctr', '<span class="sm" style="color:var(--blue)">✦ ' + esc(s.casting.spell) + (s.casting.remaining_ms != null ? ' · ' + (s.casting.remaining_ms / 1000).toFixed(1) + 's' : '') + '</span>');
+      top -= 18;
+    }
+    if (s.target) {
+      h += at(cx, top - 36, 'ctr panel', '<div class="sm">' + esc(s.target.name) + (s.target.id ? ' <span class="xs">#' + s.target.id + '</span>' : '') + ' <b style="color:' + hpColor(s.target.hp_pct) + '">' + (s.target.hp_pct != null ? Math.round(s.target.hp_pct) + '%' : '') + '</b></div>'
+        + '<div style="width:220px;margin-top:2px">' + bar(s.target.hp_pct, hpColor(s.target.hp_pct), '', 'thin') + '</div>');
+    }
+    // Below: damage OUT and IN, by element, then the last hits.
+    var c = s.combat || null;
+    var base = cy + R + 14;
+    if (c) {
+      var span = c.live ? 'this fight' : 'last 30s';
+      h += at(cx - 16, base, '', '<div class="xs" style="text-align:right">OUT · ' + span + '</div><div class="big" style="text-align:right;color:var(--melee)">' + big(c.out.dps) + '<span class="xs"> dps</span></div>'
+          + '<div class="xs" style="text-align:right">' + big(c.out.dmg) + ' dealt</div><div style="text-align:right;max-width:260px;white-space:normal">' + elChips(c.out.by) + '</div>', 'transform:translateX(-100%)');
+      h += at(cx + 16, base, '', '<div class="xs">IN · ' + span + '</div><div class="big" style="color:var(--red)">' + big(c['in'].dps) + '<span class="xs"> dps</span></div>'
+          + '<div class="xs">' + big(c['in'].dmg) + ' taken' + (c['in'].max ? ' · biggest ' + big(c['in'].max) : '') + '</div><div style="max-width:260px;white-space:normal">' + elChips(c['in'].by) + '</div>');
+      if (c.feed && c.feed.length) {
+        var fl = c.feed.slice(0, 5).map(function(f){
+          var col = f.dir === 'in' ? (f.kind === 'melee' ? 'var(--red)' : (EL_COLOR[f.el] || 'var(--red)')) : (f.kind === 'melee' ? 'var(--melee)' : (EL_COLOR[f.el] || '#8b949e'));
+          var op = Math.max(0.35, 1 - f.age_ms / 15000).toFixed(2);
+          return '<div style="color:' + col + ';opacity:' + op + '">' + (f.dir === 'in' ? '▼ ' : '▲ ') + '<b>' + n0(f.amount) + '</b> ' + esc(f.name || (f.kind === 'melee' ? 'melee' : 'spell'))
+            + (f.el ? ' <span class="xs">' + f.el + '</span>' : '') + (f.dir === 'in' && f.other ? ' <span class="xs">← ' + esc(f.other) + '</span>' : '') + '</div>';
+        }).join('');
+        h += at(cx, base + 80, 'ctr feed', fl);
+      }
+    }
+    // Lower left: resists, in their element's colour.
+    var r = s.resists || {};
+    if (r.mr != null || r.fr != null) {
+      var rows = [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']]
+        .map(function(x){ return '<span style="color:' + EL_COLOR[x[2]] + '">' + x[0] + '</span><b style="color:' + EL_COLOR[x[2]] + '">' + (x[1] == null ? '—' : x[1]) + '</b>'; }).join('');
+      h += at(cx - R - 18, cy + 34, 'panel', '<div class="res">' + rows + '</div>', 'transform:translateX(-100%)');
+    }
+    // Lower right: the class's numbers, then the groupmate who needs you.
+    var fr = (s.focus || []).map(function(f){
       var tone = focusTone(f);
-      chips.push('<span class="chip' + (tone === 'out' ? ' warn' : (tone === 'ready' ? ' ready' : '')) + '">' + esc(f.label) + ' <b>' + focusValue(f) + '</b></span>');
-    });
-    // Group: only the one who needs you — the lowest member under 60%.
+      var col = tone === 'out' ? 'var(--red)' : (tone === 'low' ? 'var(--orange)' : (tone === 'ready' ? 'var(--green)' : '#fff'));
+      return '<div><span class="xs">' + esc(f.label) + '</span> <b class="big" style="font-size:16px;color:' + col + '">' + focusValue(f) + '</b></div>';
+    }).join('');
     var low = (s.group || []).filter(function(m){ return m.hp_pct != null && m.hp_pct < 60; }).sort(function(a, b){ return a.hp_pct - b.hp_pct; })[0];
-    if (low) chips.push('<span class="chip warn">' + esc(low.name) + ' <b>' + Math.round(low.hp_pct) + '%</b></span>');
-    if (s.dps && s.dps.fight) chips.push('<span class="chip">DPS <b>' + big(s.dps.fight.dps) + '</b></span>');
-    if (chips.length) h += '<div class="chips">' + chips.join('') + '</div>';
-    return h;
+    if (low) fr += '<div style="color:var(--red)"><span class="xs">group</span> <b>' + esc(low.name) + ' ' + Math.round(low.hp_pct) + '%</b></div>';
+    if (fr) h += at(cx + R + 18, cy + 34, 'panel', fr);
+    // Top-left corner, out of the way: XP / AA rate.
+    if (s.xp && s.xp.pct != null) {
+      h += at(8, 4, 'xs', 'XP ' + s.xp.pct.toFixed(1) + '% ' + (s.xp.per_hr == null ? '' : '(' + s.xp.per_hr.toFixed(1) + '%/hr)')
+          + (s.aa && s.aa.pct != null ? ' · AA ' + s.aa.pct.toFixed(1) + '% ' + (s.aa.per_hr == null ? '' : '(' + s.aa.per_hr.toFixed(1) + '%/hr)') : ''));
+    }
+    return h + '</div>';
   }
 
   // ── C · Role ──────────────────────────────────────────────────────────────
@@ -368,13 +471,15 @@
       document.getElementById('tname').textContent = s.character;
       document.getElementById('tclass').textContent = (s.level != null ? s.level + ' ' : '') + (s.class || '');
       if (s.blind) html += '<div class="blind">👁 BLINDED — this panel still works</div>';
-      html += style === 'b' ? renderB(s) : (style === 'c' ? renderC(s) : renderA(s));
+      html += style === 'b' ? renderHud(s) : (style === 'c' ? renderC(s) : renderA(s));
     }
+    document.body.classList.toggle('hud', style === 'b');
     emptyEl.style.display = (s && s.character) ? 'none' : 'block';
     if (html !== _lastHtml) {   // byte-stability guard: no rewrite when nothing changed
       bodyEl.innerHTML = html;
       _lastHtml = html;
-      _requestAutoHeight();
+      // The HUD is sized to its window, not the other way round.
+      if (style !== 'b') _requestAutoHeight();
     }
   }
   function _requestAutoHeight(){

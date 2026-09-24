@@ -6906,6 +6906,33 @@ ipcMain.handle('overlay-drag-start', (e) => {
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
 
+// An overlay sizes and places its OWN window (2026-09-24): the Me overlay's
+// HUD layout wraps the centre of the screen, so it needs a large window
+// centred on its display, and switching back to a card restores the card's
+// bounds. Always clamped inside the window's display work area.
+ipcMain.handle('overlay-set-bounds', (e, b) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed() || !b) return false;
+    const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+    const width  = Math.max(200, Math.min(wa.width,  Math.round(+b.width  || 0)));
+    const height = Math.max(90,  Math.min(wa.height, Math.round(+b.height || 0)));
+    let x, y;
+    if (b.center) {
+      x = wa.x + Math.round((wa.width - width) / 2);
+      y = wa.y + Math.round((wa.height - height) / 2);
+    } else {
+      const cur = win.getBounds();
+      x = Number.isFinite(+b.x) ? Math.round(+b.x) : cur.x;
+      y = Number.isFinite(+b.y) ? Math.round(+b.y) : cur.y;
+    }
+    x = Math.max(wa.x, Math.min(x, wa.x + wa.width - width));
+    y = Math.max(wa.y, Math.min(y, wa.y + wa.height - height));
+    win.setBounds({ x, y, width, height });
+    return true;
+  } catch { return false; }
+});
+
 // Auto-fit the overlay window to its rendered content height. The renderer
 // passes the natural content height (scrollHeight of #wrap) — we add a small
 // chrome margin, clamp to the work-area height, and apply only when the

@@ -34,6 +34,11 @@ const CATALOG = [
   { name: 'Allure', mana: 245, cast_ms: 6000 },
   { name: 'Theft of Thought', mana: 100, cast_ms: 3000, recast: 120000 },
   { name: 'Harvest', mana: 0, cast_ms: 5000, recast: 600000 },
+  // Elements (resist type) for the HUD: 2 fire · 3 cold.
+  { name: 'Ice Comet', mana: 203, good: 0, rt: 3, you: 'You are struck by a comet of ice.' },
+  { name: 'Lava Breath', good: 0, rt: 2, you: 'You are engulfed in flames.' },
+  { name: 'Frost Breath', good: 0, rt: 3, you: 'You feel a chill.' },
+  { name: 'Burning Aura', good: 0, rt: 2, you: 'You feel a chill.' },   // shares a text across elements
 ];
 
 function load({ zeal = {}, et = null, blind = {} } = {}) {
@@ -50,7 +55,7 @@ function load({ zeal = {}, et = null, blind = {} } = {}) {
     ${parseTs}
   `;
   // eslint-disable-next-line no-new-func
-  return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey };')();
+  return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey, _meNoteHit, _meNoteSelfLanding };')();
 }
 
 const labels = (o) => Object.entries(o).map(([id, value]) => ({ id: Number(id), value: String(value) }));
@@ -166,6 +171,62 @@ describe('damage', () => {
   });
 });
 
+describe('damage in / out, by element (the HUD)', () => {
+  const ts = (s) => new Date(Date.now() - s * 1000).toISOString();
+  function withHits(fn) {
+    const m = load({ zeal: zealFor('Aldenmar', { cls: 'Wizard' }) });
+    fn(m);
+    return m._serializeMeState().combat;
+  }
+
+  it('your melee and your named nuke count OUT, the nuke in its element', () => {
+    const c = withHits(m => {
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(3), attacker: null, defender: 'a Kromrif warrior', ability: 'slash', amount: 190 });
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(2), attacker: null, defender: 'a Kromrif warrior', ability: 'Ice Comet', amount: 812 });
+    });
+    expect(c.out.dmg).toBe(1002);
+    expect(c.out.by).toEqual({ melee: 190, cold: 812 });
+    expect(c.feed[0]).toMatchObject({ dir: 'out', name: 'Ice Comet', el: 'cold' });
+  });
+
+  it('a mob hitting YOU counts IN', () => {
+    const c = withHits(m => {
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(2), attacker: 'a Kromrif warrior', defender: 'YOU', ability: 'slash', amount: 322 });
+    });
+    expect(c.in).toMatchObject({ dmg: 322, max: 322, by: { melee: 322 } });
+  });
+
+  it('an unnamed spell on you takes its element from the landing just before it', () => {
+    const c = withHits(m => {
+      m._meNoteSelfLanding('[' + new Date(Date.now() - 2000).toString().slice(0, 24) + '] You are engulfed in flames.', 'Aldenmar');
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(2), attacker: null, defender: null, ability: 'non-melee', spellName: 'non-melee', amount: 1240 });
+    });
+    expect(c.in.by).toEqual({ fire: 1240 });
+    expect(c.feed[0]).toMatchObject({ dir: 'in', name: 'Lava Breath', el: 'fire' });
+  });
+
+  it('…but not when spells of two elements share that landing text — no guess', () => {
+    const c = withHits(m => {
+      m._meNoteSelfLanding('[' + new Date(Date.now() - 2000).toString().slice(0, 24) + '] You feel a chill.', 'Aldenmar');
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(2), attacker: null, defender: null, ability: 'non-melee', spellName: 'non-melee', amount: 400 });
+    });
+    expect(c.in.by).toEqual({ spell: 400 });
+  });
+
+  it('someone else hitting someone else is neither', () => {
+    const c = withHits(m => {
+      m._meNoteHit('Aldenmar', { type: 'damage', ts: ts(2), attacker: 'Brackwyn', defender: 'a Kromrif warrior', ability: 'slash', amount: 500 });
+    });
+    expect(c.out.dmg + c.in.dmg).toBe(0);
+  });
+
+  it('carries the resists from Zeal\'s char-info labels', () => {
+    const z = zealFor('Aldenmar', { cls: 'Wizard' });
+    z.Aldenmar.charInfo.push(...labels({ 12: 124, 13: 142, 14: 166, 15: 158, 16: 181 }));
+    expect(load({ zeal: z })._serializeMeState().resists).toEqual({ mr: 181, fr: 166, cr: 158, pr: 124, dr: 142 });
+  });
+});
+
 describe('group, blind, and nothing to show', () => {
   it('lists the group from Zeal\'s group gauges', () => {
     const s = load({ zeal: zealFor('Aldenmar', { cls: 'Cleric', group: [['Brackwyn', 34], ['Corvale', 100]] }) })._serializeMeState();
@@ -184,7 +245,7 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function(renderBlock + '\nreturn { renderA, renderB, renderC };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC };')();
 
 describe('the three layouts', () => {
   const zeal = zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015], gems: ['Complete Healing'], group: [['Brackwyn', 34]] });
@@ -198,11 +259,37 @@ describe('the three layouts', () => {
     expect(h).toContain('Brackwyn');
   });
 
-  it('B · Glance shows only what needs you — the lowest groupmate, not the group', () => {
-    const h = R.renderB(s);
-    expect(h).toContain('CH left <b>4</b>');
-    expect(h).toContain('Brackwyn <b>34%</b>');
-    expect(h).not.toContain('1,469 / 3,214');
+  // The guild lead: "one of those me overlays should be a HUD style that goes
+  // around the players center of their screen … damage in/out shown clearly.
+  // resists and cast damage too with elements associated with it".
+  it('B · HUD draws the arcs, damage in/out by element, and resists', () => {
+    const hs = Object.assign({}, s, {
+      resists: { mr: 181, fr: 166, cr: 158, pr: 124, dr: 142 },
+      combat: { live: true, secs: 21, out: { dmg: 4200, dps: 200, max: 812, by: { melee: 2100, cold: 1400 } },
+        in: { dmg: 6100, dps: 290, max: 1240, by: { fire: 1800 } }, feed: [] },
+    });
+    const h = R.renderHud(hs);
+    expect(h).toContain('<svg');
+    expect(h).toContain('stroke="var(--blue)"');                        // the mana arc
+    expect(h).toMatch(/OUT · this fight[\s\S]*200/);
+    expect(h).toMatch(/IN · this fight[\s\S]*290/);
+    expect(h).toContain('color:var(--cold)">cold 1,400');
+    expect(h).toContain('color:var(--fire)">fire 1,800');
+    expect(h).toContain('>FR</span><b style="color:var(--fire)">166');
+    expect(h).toContain('Brackwyn 34%');                                 // the groupmate who needs you
+  });
+
+  it('B · HUD keeps the middle of the screen empty — nothing is placed inside the ring', () => {
+    const h = R.renderHud(s);
+    // Ring: centre (557, 331.5), R = 0.25 * min(1114, 683) = 170.75.
+    const cx = 557, cy = 683 / 2 - 10, rr = 0.25 * 683;
+    const spots = [...h.matchAll(/class="ab[^"]*" style="left:(\d+)px;top:(\d+)px/g)].map(m => [+m[1], +m[2]]);
+    expect(spots.length).toBeGreaterThan(3);
+    for (const [x, y] of spots) {
+      // Anchors sit outside the inner ring (a centred label's anchor is its
+      // centre-top, so it may sit on the vertical axis only above or below).
+      expect(Math.hypot(x - cx, y - cy)).toBeGreaterThan(rr * 0.7);
+    }
   });
 
   it('C · Role leads with the class number, large', () => {

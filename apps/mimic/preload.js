@@ -622,6 +622,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
   overlayAutoHeight: (h) => _overlayAutoHeightRaw(h),
+  // Size/place this overlay's own window ({ width, height, x?, y?, center? }),
+  // clamped to its display. The Me overlay's HUD layout uses it; a docked pane
+  // has no window of its own to move.
+  overlaySetBounds: (b) => (WP_IS_DOCKED ? Promise.resolve(false) : ipcRenderer.invoke('overlay-set-bounds', b)),
   // (overlayResizePreset / overlayEnsureMinHeight bridge wrappers deleted
   // 2026-07-09 — no overlay ever called them; the shared chrome below invokes
   // the 'overlay-resize-preset' / 'overlay-ensure-min-height' IPC directly.)

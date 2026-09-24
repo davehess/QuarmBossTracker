@@ -12114,6 +12114,96 @@ function _meNoteCastFailed(line, character) {
   if (hit) m.delete(hit[0]);
 }
 
+// ── Damage in/out, by element (the HUD layout) ──────────────────────────────
+// "damage in/out shown clearly. resists and cast damage too with elements
+// associated with it" (the guild lead, 2026-09-24). Every damage event this
+// character deals or takes, tagged melee or spell and — for a spell — its
+// element, from the catalog's resist type (bot 3.1.146: 1 magic · 2 fire ·
+// 3 cold · 4 poison · 5 disease).
+//
+// ⚠ A spell that hits YOU is logged "You were hit by non-melee for N" — no
+// spell name. Its element comes from the landing text printed just before it
+// ("You are engulfed in flames."), and only when every spell sharing that
+// text has the same element; otherwise it stays "spell", unnamed. Never a
+// guess.
+const _ME_ELEMENTS = { 1: 'magic', 2: 'fire', 3: 'cold', 4: 'poison', 5: 'disease' };
+const _meHits = new Map();          // charLower → [{ t, dir, amount, kind, name, el, other }]
+const _meLastLanding = new Map();   // charLower → { el, name, t }
+let _meYouTextsFor = null, _meYouTexts = null;
+function _meYouElementTexts() {
+  if (_meYouTexts && _meYouTextsFor === _spellByNameLower) return _meYouTexts;
+  const by = new Map();   // text → { els:Set, names:Set }
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.you || e.good === 1) continue;
+    const k = String(e.you).trim();
+    let v = by.get(k);
+    if (!v) { v = { els: new Set(), names: new Set() }; by.set(k, v); }
+    v.els.add(_ME_ELEMENTS[e.rt] || null);
+    v.names.add(e.name);
+  }
+  const out = new Map();
+  for (const [k, v] of by) {
+    if (v.els.size !== 1) continue;
+    const el = [...v.els][0];
+    if (!el) continue;
+    out.set(k, { el, name: v.names.size === 1 ? [...v.names][0] : null });
+  }
+  _meYouTexts = out; _meYouTextsFor = _spellByNameLower;
+  return out;
+}
+function _meNoteSelfLanding(line, character) {
+  if (!line || !character) return;
+  const at = line.indexOf('] ');
+  if (at < 0) return;
+  const hit = _meYouElementTexts().get(line.slice(at + 2).trim());
+  if (!hit) return;
+  const ts = parseEqTimestamp(line);
+  _meLastLanding.set(String(character).toLowerCase(), { el: hit.el, name: hit.name, t: ts ? ts.getTime() : Date.now() });
+}
+function _meNoteHit(character, ev) {
+  if (!character || !ev || ev.type !== 'damage' || !(ev.amount > 0)) return;
+  const cl = String(character).toLowerCase();
+  const isYou = (s) => s != null && (/^you$/i.test(s) || String(s).toLowerCase() === cl);
+  let dir = null;
+  if ((ev.attacker == null && ev.defender == null) || isYou(ev.defender)) dir = 'in';
+  else if ((ev.attacker == null || isYou(ev.attacker)) && ev.defender) dir = 'out';
+  if (!dir) return;
+  const t = ev.ts ? Date.parse(ev.ts) : Date.now();
+  const label = String(ev.spellName || ev.ability || '').trim();
+  const spell = label && label.toLowerCase() !== 'non-melee' ? _meSpell(label) : null;
+  let kind, name = null, el = null;
+  if (spell) { kind = 'spell'; name = spell.name; el = _ME_ELEMENTS[spell.rt] || null; }
+  else if (ev.spellName || /^non-melee$/i.test(label)) {
+    kind = 'spell';
+    const last = dir === 'in' ? _meLastLanding.get(cl) : null;
+    if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
+  } else { kind = 'melee'; name = label || null; }
+  let arr = _meHits.get(cl);
+  if (!arr) { arr = []; _meHits.set(cl, arr); }
+  arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null) });
+  const cutoff = t - 10 * 60_000;
+  while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
+}
+// In/out totals and per-element split since `sinceMs`, plus the newest hits.
+function _meCombatSince(cl, sinceMs, now) {
+  const arr = _meHits.get(cl) || [];
+  const side = () => ({ dmg: 0, max: 0, by: {} });
+  const out = side(), inn = side();
+  for (const h of arr) {
+    if (h.t < sinceMs) continue;
+    const s = h.dir === 'in' ? inn : out;
+    s.dmg += h.amount;
+    if (h.amount > s.max) s.max = h.amount;
+    const k = h.kind === 'melee' ? 'melee' : (h.el || 'spell');
+    s.by[k] = (s.by[k] || 0) + h.amount;
+  }
+  const secs = Math.max(1, Math.round((now - sinceMs) / 1000));
+  out.dps = Math.round(out.dmg / secs); inn.dps = Math.round(inn.dmg / secs);
+  const feed = arr.filter(h => now - h.t <= 15_000).slice(-10).reverse()
+    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, age_ms: Math.max(0, now - h.t) }));
+  return { secs, out, in: inn, feed };
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -12223,6 +12313,10 @@ function _serializeMeState() {
   const tgtG = _meGauge(st, 6);
   const petG = _meGauge(st, 16);
   const blind = _blindState[cl];
+  // Damage in/out: this fight while one is live, else the last 30 seconds.
+  const combatSince = (fight && et && et.startedAt) ? Date.parse(et.startedAt) : now - 30_000;
+  const combat = _meCombatSince(cl, combatSince, now);
+  combat.live = !!fight;
   return {
     ok: true,
     character: active,
@@ -12242,6 +12336,12 @@ function _serializeMeState() {
     focus,
     group,
     dps: { fight, night },
+    combat,
+    // Char-info labels 12-16 (docs/zeal-pipe-protocol.md).
+    resists: {
+      mr: _meNum(_meLabel(st, 16)), fr: _meNum(_meLabel(st, 14)), cr: _meNum(_meLabel(st, 15)),
+      pr: _meNum(_meLabel(st, 12)), dr: _meNum(_meLabel(st, 13)),
+    },
     blind: !!(blind && blind.active),
   };
 }
@@ -40192,11 +40292,17 @@ async function main() {
         // dropped before parseEvent ever sees them. Same watch-tail hook as
         // _checkTankBuster, same try/catch isolation; gated on the active boss.
         try { _checkAoeDance(line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
+        // Me HUD: remember the element of a spell that just landed on us, so
+        // the "You were hit by non-melee" line after it can be coloured. RAW
+        // line, for the same reason as above — landing texts match no keep.
+        try { _meNoteSelfLanding(line, b.character); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
+          // Me HUD: damage in/out feed for this character.
+          try { _meNoteHit(b.character, ev); } catch { void 0; }
           // #142 — tank-buster detection off the ~4000 non-melee damage line
           // (Rage of Ssraeshza, spell 2310). Fires "TANK BUSTER" + (re)arms the
           // 60s cadence countdown. Local-only, live tail; keyed off the boss +
