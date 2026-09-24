@@ -2901,8 +2901,20 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Mini mode on the dashboard (agent 3.7.15, beta)** — Overlays table Mini
   column (`WP_MINI_KEY_OF`, `.wp-ov-mini` / `.wp-ov-pin`), Minimize ALL row
   (`wpMiniHotkey*`, `data-act="miniall"`); main `wp-mini-pin-set`, status
-  `overlayMini` / `overlayMiniPinned` / `miniAllActive`. The per-overlay
-  renditions (`body.wp-mini` rules in each overlay) are not built yet.
+  `overlayMini` / `overlayMiniPinned` / `miniAllActive`.
+- **The nine mini renditions (Mimic 2.7.1 / agent 3.7.16, stable)** — each
+  overlay renders its voted mini when `body.wp-mini` is on and re-renders +
+  refits on the preload's `wp-mini-change` event. `tank.html` (`miniTankHtml`,
+  `dsPerHit`, `miniBarRow`), `mobinfo.html` (`miniTargetHtml`, `_miniTimerRow`,
+  `_fitHeight`), `chchain.html` (timeline lanes, 100 ms ticker only while
+  mini), `charm.html` (`charmMiniHtml`, `charmPetTarget`), `extarget.html`
+  (`miniRowHtml`, `miniTier`), `pets.html` (`petMiniHtml`, `petHasteBuff`,
+  `PET_HASTE`), `overlay.html` (`miniWindow`, `miniRowsHtml`), `popraid.html`
+  (`popMiniHtml`), `buffqueue.html` (`miniLedger`, `buildMiniHtml`,
+  `_miniOpen`). Tests: `test/mini-*.test.js`.
+- **Mimic 2.7.1 raid-chat announcement (bot 3.1.148)** — `_announceMimic271Once`
+  in `index.js`: one-shot, `bot_kv` latch, gated on the v2.7.1 installer. Test:
+  `test/announce-mimic-271.test.js`.
 - **NPC Harm Touch on Target Info (agent 3.7.13, beta)** — `_npcHtLanded` from
   "writhe(s) in the grip of agony" (pinned on an SK target on the victim, else
   `_npcHtPending` with the attackers), `_npcHtFor` (pins a pending one on

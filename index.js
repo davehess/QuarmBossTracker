@@ -11256,6 +11256,84 @@ async function _announceHarmonicHowlOnce() {
 }
 setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
 
+// ── Mimic 2.7.1 one-shot raid-chat announcement (2026-09-24) ─────────────────
+// The guild lead: "When this is over make sure to post to raid-chat in discord so
+// that people know to get the new version. Include the mini modes, Hud
+// overlay, colorblind modes, mana bits. Looking for feedback on skills that
+// people want to track." Same one-post-ever latch as the 2.0 card above. It
+// waits for the STABLE v2.7.1 release to carry its installer: the bot deploys
+// minutes after the push, the installer takes longer to build, and a post
+// that beats it sends people to an update that is not there yet.
+const _MIMIC271_KV_KEY = 'announce_mimic_2_7_1_raid_chat';
+const _MIMIC271_TAG = 'v2.7.1';
+function _mimic271Ready(rel) {
+  return !!(rel && rel.tag_name === _MIMIC271_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+}
+function _mimic271Embed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x58a6ff)
+    .setTitle('🐺 Mimic 2.7.1 is out — update before raid')
+    .setDescription([
+      'Accept the Mimic update prompt, or restart Mimic, to get it.',
+      '',
+      '- **The HUD** — your own character in a ring round the middle of your screen: health, mana or endurance, the server tick and your swing timer, your cooldowns, and your target with its health, level, resists and slow. Turn it on from the dashboard → Overlays → HUD; ⚙ picks what it shows.',
+      '- **Mini mode** — nine overlays now have the small version the guild voted for. Right-click an overlay → Mini, use the Mini column on the Overlays page, or press Ctrl+Shift+M for all of them.',
+      '- **Colour-blind themes** — Deuteranopia, Protanopia and Tritanopia, under Theme on the Overlays page.',
+      '- **Mana** — Target Info\'s mob mana now counts the drains that land on it, a PvP target keeps a tally of what you drained, and the HUD shows how many heals, mezzes or casts your mana has left.',
+      '',
+      '**Which skills do you want tracked?** Cooldowns, discs, clickies, procs — reply here or post in #feedback.',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.1 stable · agent 3.7.16 · one-time announcement' });
+}
+async function _announceMimic271Once() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC271_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[mimic271-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC271_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  if (!_mimic271Ready(rel)) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[mimic271-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_mimic271Embed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[mimic271-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _MIMIC271_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[mimic271-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const t = setInterval(() => {
+    if (++tries > 144) { clearInterval(t); return; }
+    _announceMimic271Once().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[mimic271-announce]', err?.message));
+  }, 5 * 60_000);
+}
+
 // One-shot: rename the ALREADY-POSTED v2.0.0 stable release card (it went out
 // reading "Full Cry" before the rename; the stable announcer stores no message
 // id, so find-and-edit). Latches in bot_kv once the card is edited — or once a
