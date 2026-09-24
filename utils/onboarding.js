@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.143': [
+    '**Extended Target stops stacking old tags.** During a trash clear every mob gets tagged “KILL”, and the tags of mobs you had already killed piled up under the row — six “▲ KILL” chips for one live mob. Each different tag now shows once. And when your Zeal knows which mob you are targeting, its tag now sits on that mob’s own row.',
+  ],
   '3.1.142': [
     '**Deathrolls are tracked.** When a deathroll finishes — each player rolling 0 to whatever the last player got, until someone hits 0 — the bot records who lost and who won, and posts it in #wlfpck-general. Anyone running Mimic nearby is enough; there is nothing to set up.',
   ],
