@@ -118,6 +118,9 @@ is ephemeral. It is a desktop-session job.
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
+| **Me overlay: A, B or C** | **On beta, agent 3.7.2 (§11).** Three layouts of one overlay, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
+| **Mob mana: drains and taps** | **Scoped 2026-09-24 (§11), not built.** Own drains exact; others' timed drains via the bystander index; instant drains/procs only where the text is unique | say go; needs a `drain` catalog field + formula check first |
+| **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
 | **Extended Target: a `tags:` row piled up tags on mobs already dead** | **FIXED bot 3.1.143 (2026-09-24).** The guild lead picked option 1 (each distinct tag once; option 2, a 2-min expiry for unmatched tags, not taken) plus the spawn-id matching: `_extPlaceTags` now puts a tag on the row whose raiders' Zeal reports its spawn id | nothing. Tags still live 10 min after death; if one stale chip still bothers anyone, option 2 is the next step |
 | **Reply shape** | 2026-09-24, the guild lead: *"TLDR up top, details in the middle, todo at the end, marked with steps."* Now a working rule at the top of `CLAUDE.md` | nothing |
@@ -526,3 +529,68 @@ players and steps so /fun can rank without parsing a sentence.
 beta first at `b.wolfpack.quest/fun`). Not changed, and worth knowing: the
 event-night rolled-loot card, the Hot Dice night award and `/rolls` still see a
 deathroll's steps as ordinary one-roller sets.
+
+## 11. The Me overlay, Blind Mode, and the next five (2026-09-24)
+
+**The asks.** *"we need another overlay for the player. essentially a 'me'
+overlay. my target, my casting, my health, mana, XP detail. avg DPS per fight,
+total per day/night during raids, then the things that are important to
+classes with mana — clerics focus on how many CHs are left, enchanters, charms
+or mezzes left, theft of thought or harvest timers, party health data"*; *"a
+concept … to automatically show the overlays that make sense if the character
+is blinded"*; then *"generate me those me overlays as versions a/b/c to deploy
+live into beta … give me a picker in game. nillipuss has some good display
+bits we could learn from."*
+
+**What landed (beta, agent 3.7.2; catalog fields in bot 3.1.144–145).** One
+overlay, `apps/mimic/me.html`, three layouts of the same `/api/me` data, picked
+with the A/B/C switch in its title bar (remembered per machine):
+- **A · Classic** — the Nillipuss player window: cur/max inside the bars, the %
+  column on the right, XP/hr and AA/hr, spell bar with casts left, group, DPS.
+  Build S · maintenance M (the most fields to keep true) · runtime: the largest
+  DOM of the three, still a 500ms local poll · change M.
+- **B · Glance** — a thin strip: HP/mana, cast, target, and chips only for what
+  needs you (class number, the lowest groupmate under 60%, fight DPS). Build S ·
+  maintenance S · runtime smallest · change S — but it hides things by design,
+  so what it drops is a judgement call.
+- **C · Role** — the class's numbers first, large (CH left, Mez/Charm left,
+  ToT/Harvest countdowns), then vitals, group, DPS. Build S · maintenance M (a
+  new class focus means agent + overlay) · runtime small · change M.
+All three read one serializer, so graduating one is deleting two render
+functions. The catalog now carries `mana`, `recast`, `mez` (SPA 31) and `blind`
+(SPA 20); the agent measures XP/AA per hour itself and keeps tonight's damage
+in memory (a restart starts the night over).
+
+**Blind Mode.** It never auto-showed for a capitalised name (state stored
+lowercase, looked up in display case) — fixed. It also knew one spell's text;
+it now reads every SPA-20 spell's landing and fade from the catalog, skipping
+any text a non-blind spell shares. Me joins the four overlays it forces open.
+Not changed: the old hand list matches both the Pitted Iron Ring's "Flames of
+mana…" line and its manaflare line, so a ring that prints both is announced
+twice — as before.
+
+**Mob mana drains (a member's request) — scoped, not built.** Drains exist in
+the catalog as SPA 15 with a negative base: Theft of Thought, Mana Sieve, Mind
+Wrack, the Torments, bard songs (Cassindra's, Denon's, Ervaj's) and eight proc
+spells on ~20 items. What the agent can see: its OWN drains exactly (the cast
+names the landing); others' TIMED drains through the bystander index (per-tick
+drain must be synthesized — no log line per tick); others' INSTANT drains and
+all procs only where the landing text is unique (most share "staggers."). Needs
+a `drain` catalog field with formula decoding (formulas 1–99 are unmodelled;
+ToT reads 40 + 360 = 400 at L60, its max — verify before trusting). Also found:
+the mana ledger's reset/evict functions are never called in production.
+
+**The next five** (from the roadmap review — 13 roadmap votes from 3 voters,
+so votes break ties, they don't set order; 20 of 30 active players now send
+spawn ids):
+1. Extended Target places each debuff on its mob by spawn id — `buff_casts.target_id`
+   is stored and unused there (S, bot, #194 vote).
+2. Mez owner + timer chip on Extended Target — design already in
+   `DESIGN-extended-target-v2.md` (M, bot + overlay).
+3. Mimic's same-name mob tracking uses spawn ids — a death clears only that
+   mob's debuffs (M, agent, #194 vote).
+4. Charm-pet damage credited by `pet_id` — the bot still credits by name and
+   time, the class of bug behind the open Blood-phantom report (M, bot).
+5. One archive entry per fight, #191 (S, bot, 1 vote).
+Housekeeping alongside: the roadmap vote queue is stale (it still lists the
+Zeal spawn-id request, golden-log CI, `/guide`, `/raid/review` as open).
