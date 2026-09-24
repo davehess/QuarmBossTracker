@@ -9759,7 +9759,7 @@ async function _handleAgentSpellCatalog(req, res) {
       // that ARE a damage shield carry the derived `ds` field onward, so the
       // ~3.9k-spell catalog payload barely grows (undefined fields don't
       // serialize).
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,' +
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,' +
         'effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3,raw';
       // Damage-shield magnitude for a spell: SPA 59 with a NEGATIVE base value
       // is the real "deal bonus damage to attackers" effect real DS spells use
@@ -9913,6 +9913,11 @@ async function _handleAgentSpellCatalog(req, res) {
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
             cast_ms: r.cast_time,
+            // Mana cost and recast (ms) — the Me overlay's "CHs left", "mezzes
+            // left" and Theft of Thought / Harvest timers (the guild lead,
+            // 2026-09-24). Omitted when zero, which most spells' recast is.
+            mana:   Number(r.mana) > 0 ? Number(r.mana) : undefined,
+            recast: Number(r.recast_time) > 0 ? Number(r.recast_time) : undefined,
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
