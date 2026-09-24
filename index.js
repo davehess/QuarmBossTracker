@@ -9811,6 +9811,13 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return maxAbs > 0 ? Math.min(v, maxAbs) : v;
       }
+      // Does the spell carry effect `spa` in any slot? raw.eff has all twelve;
+      // the indexed columns only the first three.
+      function _hasSpa(r, spa) {
+        const eff = r.raw && Array.isArray(r.raw.eff) ? r.raw.eff : null;
+        if (eff) return eff.includes(spa);
+        return [r.effect_id_1, r.effect_id_2, r.effect_id_3].includes(spa);
+      }
       function _dsMagnitude(r) {
         // Prefer raw — it carries the per-slot formula the indexed columns lack,
         // which is what makes level-scaled DS (Illusion line) come out right.
@@ -9918,6 +9925,11 @@ async function _handleAgentSpellCatalog(req, res) {
             // 2026-09-24). Omitted when zero, which most spells' recast is.
             mana:   Number(r.mana) > 0 ? Number(r.mana) : undefined,
             recast: Number(r.recast_time) > 0 ? Number(r.recast_time) : undefined,
+            // SPA 31 = mesmerize ("mezzes left"); SPA 20 = blindness (Blind
+            // Mode reads its landing and fade text from the catalog instead
+            // of a hand-kept list that knew one spell). Flag only when set.
+            mez:   _hasSpa(r, 31) ? 1 : undefined,
+            blind: _hasSpa(r, 20) ? 1 : undefined,
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
