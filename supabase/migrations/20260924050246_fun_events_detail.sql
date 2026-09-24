@@ -1,0 +1,12 @@
+-- fun_events.detail — a structured payload for events whose one-line raw_text
+-- is not enough to rank on.
+--
+-- First user: `deathroll` (the guild lead, 2026-09-23 — "First one to roll a
+-- zero loses - we should track these for fun"). /fun ranks the biggest
+-- starting range and the longest game, and parsing those out of raw_text would
+-- couple the page to a sentence. Shape (written by the bot, index.js
+-- _checkDeathrollsNow): { start, rolls, players[], winners[], loser,
+-- started_at, steps[{ name, to, value }] }.
+--
+-- Nullable, and every existing event type leaves it null.
+alter table public.fun_events add column if not exists detail jsonb;

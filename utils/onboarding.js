@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.142': [
+    '**Deathrolls are tracked.** When a deathroll finishes — each player rolling 0 to whatever the last player got, until someone hits 0 — the bot records who lost and who won, and posts it in #wlfpck-general. Anyone running Mimic nearby is enough; there is nothing to set up.',
+  ],
   '3.1.127': [
     '**Mob Info stops guessing between two bodies with one name.** Plane of Hate\u2019s forsaken revenants are a male Magician and a female Enchanter with nothing else different. When a name is two classes, Mob Info now shows both (\u201cMagician \u2642 / Enchanter \u2640\u201d) instead of picking one; the exact body comes once Zeal sends the target\u2019s sex.',
   ],
