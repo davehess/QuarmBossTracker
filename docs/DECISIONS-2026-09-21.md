@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.13 (§11, §13 rounds 2–5, §15 round 6, §16 round 7).** Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round six; then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.14 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8).** Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17); then decide whether A and C stay. Optional: the one-line Zeal PR makes the swing timer exact |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
 | **Cursor with the UI hidden (F10)** | **Answered 2026-09-24 (§13).** No client or Zeal setting keeps it; the game draws the cursor as part of the UI, and eqw.dll hides the Windows cursor over the game | the guild lead passes on options 1–2 (close windows instead of F10; a PowerToys crosshair). Decide whether to ask the eqw_takp or Zeal maintainer for the real fix |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
@@ -1180,5 +1180,87 @@ especially for clickies"*.
   - A **↺** on every line puts that line's on/off and size back to default.
 
 One build, no variants: these are explicit refinements of the established HUD.
+
+## 17. HUD round eight: the swing timer fitted, columns along the ring, procs (2026-09-24, agent 3.7.14)
+
+The guild lead: *"swing timer is completely wrong."* · *"Summations of hits should
+not overlap with the outside rings."* · *"Right justify outbound hits and left
+justify inbound hits. These should travel up the outside arc, but still be
+oriented correctly."* · *"In the last screenshot the 62 69 110 line should have
+been combined into [one number] for that round of combat on the third line
+up."* · *"Remember that several classes can have up to 6 melee hits at once, on
+TOP of procs. Procs should be purple."* · *"L40-43 Necromancer should also be
+curved to fit the top bar."* · *"Put the name of the mob on the top of their
+healthbar."* · *"Put their resists below their name. and the slowed/not
+slowed/unslowable next to that"* · *"Clicking on the config button brings [up]
+the mimic main dashboard."* — and, mid-round, *"FD still shows ready instead of
+a checkmark"*.
+
+**The swing timer — why it was wrong, and what replaced it.**
+- **The old reading** took each round's ARRIVAL time (when the agent read the
+  line) as the swing. Arrivals come in 500 ms polls against 1-second log
+  stamps, so the phase could be off by most of a second, and the period
+  (median gap) wandered with it — about 240 ms off in simulation. On a hasted
+  two-hander (~1.8 s) that is a large part of the bar.
+- **The fit (`_meSwingFit`):** each round is pinned by two facts — it happened
+  inside its log second, and before we read it but no more than
+  `_ME_SWING_LAG` (1 s) before. At the right delay those windows, carried
+  forward to the newest round, all overlap, and many rounds overlap in a far
+  narrower slot than any one of them (a vernier). The delay is searched at
+  5 ms steps within ±20% of the median gap; the middle of the delays that fit,
+  and the middle of the slot they leave, are the answer. A skipped swing (out
+  of range, stunned) counts as a double gap, not a new delay; if nothing fits,
+  the oldest rounds are dropped until it does. `swing.spread_ms` says how wide
+  the slot is.
+- **Measured:** it predicts the next swing within 0.12 s over realistic
+  simulated logs (four delay/phase cases); with lag spread over the whole
+  second it degrades to ~0.26 s and says so in `spread_ms`. The one-line Zeal
+  change (attack timer on the pipe) would still make it exact.
+
+**Procs.** A spell hit of yours in the same moment as your own swing (within
+1.5 s, printed either side of it) is a proc and is drawn purple. ⚠ **Your own
+nuke usually prints anonymously too** (*"<mob> was hit by non-melee for N"*),
+so a spell hit with no name claims the cast you began in the last 12 s — once
+(the cast lands one hit; a proc after it is still a proc). A fizzle or an
+interruption drops the cast. Up to six swings plus their procs sit on one line,
+shrinking and then wrapping as before.
+
+**Hit columns.**
+- **Along the ring:** out is flush right and in is flush left. Each line's
+  outer end sits on an arc just inside the ring (r 158), so the column's edge
+  curves with the ring while every number stays upright. Nothing reaches
+  inside r 100.
+- **Rounds:** the mob's Σ total on top, then older rounds as ONE number each
+  (the round's sum), and only the newest rounds hit by hit — two by default,
+  set in the builder ("Newest rounds hit by hit", 1–3), under "Rounds listed"
+  (3–8). When the next round lands, the oldest split round's hits slide
+  together onto their sum; a sum past the rounds listed slides into the total.
+  (The example line 62 + 69 + 110 reads **241**.)
+- **Totals** are fitted to their row: smaller (to 70%), then without the mob's
+  name — never past the ring.
+- **Checked by rendering what is drawn**, not by the lane constants: six
+  four-digit hits a round with off-hand tags, eight rounds all split, two
+  long totals, at 1× and 1.6× text — every box inside r 169 and outside r 95.
+
+**Target block, from the outside in:** who it is hitting (its own thin bar) ·
+the name + health **on top of its bar**, fitted then cut with "…" · level and
+class **curved** inside the bar · its resists with the slow state beside them,
+curved under that ("unslowable" smaller). ENRAGED stays the one straight line.
+⚠ The resists come from the bot's mob-info row, which carries them nested as
+`resists: { mr, fr, cr, pr, dr }` — the first draft read them flat and would
+never have shown them; a test now pins the shape.
+
+**Ready is always ✓.** Round seven only swapped "ready" for ✓ when the word did
+not fit its arc, so FD (short enough) kept "ready" beside KICK ✓ and DISC ✓.
+Every ready cooldown is now "<name> ✓", at every size.
+
+**The ⚙ opening the dashboard — not reproduced, question out.** The HUD's ⚙ is
+wired only to the builder panel inside `me.html` (a local file, so preload's
+injected dashboard gear never runs there), and no IPC from it opens the
+dashboard. Leading guess: the click takes focus from EQ, the game drops
+behind, and a dashboard window that was already open shows through. Asked
+whether a NEW window opens or an existing one is revealed; the fix differs.
+
+One build, no variants: explicit refinements of the established HUD.
 
 
