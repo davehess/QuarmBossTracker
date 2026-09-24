@@ -783,8 +783,13 @@ add in /pipeoutput for FD too"* · *"Lets also change the name to HUD"*.
   FAILURE (*"You have fallen to the ground."*); a feign that works is silent.
   So `/pipe <word>` on a hotkey starts a timer at the press — `fd`, `mend`,
   `taunt`, `loh`, `ht`, or an ability verb — read from Zeal's custom messages
-  at Mimic's receive time, each line once. 9 − 1 s; Rapid Feign shortens it,
-  so marked `~`.
+  at Mimic's receive time, each line once. **Length (corrected in agent 3.7.7):**
+  the CLIENT's button timer, not the server's — the guild lead, Rapid Feign 3/3:
+  *"my feign death is only 5 seconds because of my AAs"*; the AA text says it
+  cuts reuse by 10/25/50%, so a 10 s base. The server's own 9 − 1 s (3 s at
+  3/3) is shorter than the button and never the limit. The pipe carries no AA
+  ranks and Rapid Feign unlocks at 59, so a monk of 59+ is taken as 3/3 (5 s),
+  anyone else 10 s — marked `~`.
 - **Lay on Hands / Harm Touch** are spells with a 72-minute recast, less 12
   minutes per rank of Fervent Blessing / Touch of the Wicked (`zone/spells.cpp`)
   — hence `~`. Started by the cast line, *"You harm touch …"*, or the landing
