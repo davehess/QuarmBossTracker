@@ -8,12 +8,14 @@
      the A/B/C switch in the title bar, so the guild lead can choose one:
        A  Classic — a Nillipuss-style player window: every number, cur/max
           inside the bars, the % column on the right edge.
-       B  HUD     — wraps the CENTRE of the screen (the guild lead, same day:
+       HUD 1/2/3 — a ring around the CENTRE of the screen (the guild lead, same day:
           "one of those me overlays should be a HUD style that goes around the
           players center of their screen … damage in/out shown clearly.
-          resists and cast damage too with elements"). The window grows to a
-          centred rectangle; the middle stays EMPTY so the character and the
-          fight are never covered — everything sits on arcs and edges around it.
+          resists and cast damage too with elements"). It was layout B; after a
+          first night with it: "The Circle should be the bounds for the
+          resizing with some light info on the inside of the circle" — so the
+          window IS the ring's square and everything scales with it. Three
+          takes on it to pick from (see the HUD section of the script).
        C  Role    — the class's own numbers first (CHs left, mezzes left,
           Theft of Thought / Harvest timers), then group health.
      Colour is semantic, never decoration: green/orange/red = HP health,
@@ -63,25 +65,18 @@
   .grp{display:grid;grid-template-columns:78px 1fr 30px;gap:3px;align-items:center;font-size:10px;margin-top:2px}
   .grp .gname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-  /* B — HUD around the screen centre. Elements are EverQuest's own resist
+  /* HUD 1/2/3 — one square SVG (viewBox 400×400) that fills the window, so
+     resizing the window resizes the ring. Elements are EverQuest's own resist
      colours (the subject's world), used only to label an element. */
   :root{ --fire:#ff7b45; --cold:#79c0ff; --magic:#d2a8ff; --poison:#7ee787; --disease:#e3b341; --melee:#e6edf3; }
-  body.hud .card{background:transparent;border-color:transparent;padding:0}
-  body.hud .blind{position:absolute;top:28px;left:50%;transform:translateX(-50%);z-index:5;
-    background:rgba(13,17,23,0.8);padding:3px 14px}
-  body.hud .title{justify-content:center;padding-left:26px;padding-right:26px}
-  #hud{position:relative;overflow:hidden}
-  #hud .ab{position:absolute;text-shadow:0 0 3px #000,0 1px 2px #000,0 0 6px #000;white-space:nowrap}
-  #hud .ctr{transform:translateX(-50%);text-align:center}
-  #hud .big{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
-  #hud .sm{font-size:11px;font-variant-numeric:tabular-nums}
-  #hud .xs{font-size:10px;color:#9aa4ad}
-  #hud .panel{background:rgb(13 17 23 / calc(var(--bg-alpha) * 0.7));border-radius:5px;padding:3px 7px}
-  #hud .el{display:inline-block;margin:1px 2px;padding:0 5px;border-radius:3px;font-size:10px;
-    border:1px solid currentColor;background:rgba(13,17,23,0.55);font-variant-numeric:tabular-nums}
-  #hud .feed{font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums}
-  #hud .res{display:grid;grid-template-columns:auto auto;gap:0 8px;font-size:11px;font-variant-numeric:tabular-nums}
-  #hud .res b{font-weight:700}
+  body.hud #wrap{padding:0;height:100%}
+  body.hud .card{background:transparent;border-color:transparent;padding:0;height:100%;position:relative}
+  body.hud #body{position:absolute;inset:0}
+  /* The name + picker drop into the square's bottom corners — outside the ring. */
+  body.hud .title{position:fixed;left:4px;right:4px;bottom:3px;min-height:0;padding:0;font-size:10px;opacity:.4;z-index:30;transition:opacity .12s}
+  body.hud .title:hover{opacity:1}
+  #hudsvg{display:block;width:100%;height:100%;overflow:visible}
+  #hudsvg text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
 
   /* C — role card */
   .focus{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:4px;margin-top:2px}
@@ -140,7 +135,7 @@
         <span id="tname" class="nm">Me</span><span id="tclass" class="cl"></span>
         <span class="sp"></span>
         <span id="picker" title="Pick a layout — this is a beta test of three designs">
-          <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="b" title="B · HUD — wraps the centre of your screen: health and mana arcs, damage in/out by element, resists">B</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button>
+          <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="h1" title="HUD 1 · Rings — everything is an arc around your character; the fewest words">H1</button><button data-v="h2" title="HUD 2 · Dial — numbers first; cooldowns as round buttons that wipe like the game's">H2</button><button data-v="h3" title="HUD 3 · Reticle — a thin sight with straight bars inside; only what is changing">H3</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button>
         </span>
       </div>
       <div id="body"></div>
@@ -207,7 +202,12 @@
   // ── the A/B/C picker (remembered on this machine) ────────────────────────
   var STYLE_KEY = 'wpMeStyle';
   var style = 'a';
-  try { var saved = localStorage.getItem(STYLE_KEY); if (saved === 'a' || saved === 'b' || saved === 'c') style = saved; } catch (e) {}
+  function isHud(v){ return v === 'h1' || v === 'h2' || v === 'h3'; }
+  try {
+    var saved = localStorage.getItem(STYLE_KEY);
+    if (saved === 'b') saved = 'h1';   // the first HUD was layout B
+    if (saved === 'a' || saved === 'c' || isHud(saved)) style = saved;
+  } catch (e) {}
   var picker = document.getElementById('picker');
   function paintPicker(){
     var bs = picker.querySelectorAll('button');
@@ -215,8 +215,10 @@
   }
   picker.addEventListener('mouseenter', hoverOn);
   picker.addEventListener('mouseleave', hoverOff);
-  // B wraps the screen centre, so switching to it grows the window into a
-  // centred rectangle; switching back puts the card where it was.
+  // A HUD wraps the screen centre, so switching to one makes the window a
+  // centred SQUARE — the ring's own bounds; resize it like any overlay and
+  // the ring scales with it. Switching between HUDs keeps that square;
+  // switching back to a card puts the card where it was.
   var CARD_KEY = 'wpMeCardBounds';
   function setBounds(b){ try { if (window.mimic && window.mimic.overlaySetBounds) window.mimic.overlaySetBounds(b); } catch (e) {} }
   picker.addEventListener('click', function(e){
@@ -224,10 +226,11 @@
     if (!b) return;
     var next = b.getAttribute('data-v');
     if (next === style) return;
-    if (next === 'b') {
+    if (isHud(next) && !isHud(style)) {
       try { localStorage.setItem(CARD_KEY, JSON.stringify({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight })); } catch (err) {}
-      setBounds({ width: Math.round(screen.availWidth * 0.58), height: Math.round(screen.availHeight * 0.66), center: true });
-    } else if (style === 'b') {
+      var side = Math.round(Math.min(screen.availWidth, screen.availHeight) * 0.5);
+      setBounds({ width: side, height: side, center: true });
+    } else if (!isHud(next) && isHud(style)) {
       var card = null;
       try { card = JSON.parse(localStorage.getItem(CARD_KEY) || 'null'); } catch (err) {}
       setBounds(card && card.width ? card : { width: 330, height: 320, center: true });
@@ -236,7 +239,6 @@
     try { localStorage.setItem(STYLE_KEY, style); } catch (err) {}
     paintPicker(); _lastHtml = null; render(_last);
   });
-  window.addEventListener('resize', function(){ if (style === 'b') { _lastHtml = null; render(_last); } });
   paintPicker();
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -338,100 +340,301 @@
     return h;
   }
 
-  // ── B · HUD ───────────────────────────────────────────────────────────────
-  // Arcs and edges AROUND the centre; nothing is drawn inside the ring. Angles
-  // run clockwise from 12 o'clock. HP fills the left arc from the bottom up,
-  // mana the right arc; endurance and the cast sit on thin inner arcs.
+  // ── HUD 1 · 2 · 3 — the ring IS the window ────────────────────────────────
+  // The guild lead, 2026-09-24, after a night with the first HUD: "The circle looks
+  // nice, but managing it is rough right now resizing is rough … It's so
+  // spread out … The Circle should be the bounds for the resizing with some
+  // light info on the inside of the circle." So every HUD draws into ONE
+  // square SVG, viewBox 400×400, that fills the window: resize the window and
+  // the ring resizes; nothing is placed in screen pixels. Three genuinely
+  // different takes on the same data, to pick from in game:
+  //   H1 Rings   — everything is an arc; the fewest words.
+  //   H2 Dial    — an instrument cluster: numbers first, cooldowns as round
+  //                buttons that wipe the way the game's own buttons do.
+  //   H3 Reticle — a thin sight with straight bars inside it; only what is
+  //                changing is drawn (a ready cooldown is one word).
+  // All three: mana hidden for warriors, rogues and monks ("don't expose that
+  // for them") — the right arc carries endurance instead; the target on top
+  // with its target's HP, slow state, and a RED outline when it can enrage
+  // (solid, with the word, while it IS enraged); server tick + swing timer;
+  // combat-ability, Mend/Taunt and discipline cooldowns; hits inside the ring,
+  // with MH/OH when the hands swing different verbs.
+  // Timers are drawn from the snapshot's "time left" minus the time since it
+  // arrived, repainted 10× a second, so they run smoothly between polls.
+  // Angles run clockwise from 12 o'clock.
   var EL_COLOR = { fire: 'var(--fire)', cold: 'var(--cold)', magic: 'var(--magic)', poison: 'var(--poison)', disease: 'var(--disease)', melee: 'var(--melee)', spell: '#8b949e' };
-  var EL_LABEL = { fire: 'fire', cold: 'cold', magic: 'magic', poison: 'poison', disease: 'disease', melee: 'melee', spell: 'spell' };
-  function polar(cx, cy, r, deg){ var a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
-  function arcPath(cx, cy, r, a0, a1){
-    if (a1 - a0 <= 0.01) return '';
-    var p0 = polar(cx, cy, r, a0), p1 = polar(cx, cy, r, a1);
-    return 'M' + p0[0].toFixed(1) + ' ' + p0[1].toFixed(1) + ' A' + r.toFixed(1) + ' ' + r.toFixed(1) + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' 1 ' + p1[0].toFixed(1) + ' ' + p1[1].toFixed(1);
+  var CX = 200, CY = 200;
+  var TRACK = 'rgba(255,255,255,0.12)';
+  var _lastAt = Date.now();
+  function f1(n){ return (Math.round(n * 10) / 10).toString(); }
+  function P(r, deg){ var a = (deg - 90) * Math.PI / 180; return [CX + r * Math.cos(a), CY + r * Math.sin(a)]; }
+  // Arc from a0 to a1 (degrees, a0 < a1). ccw draws it the other way round —
+  // the direction a textPath needs to read left-to-right along the bottom.
+  function arcD(r, a0, a1, ccw){
+    if (a1 - a0 < 0.05) return '';
+    var p0 = P(r, ccw ? a1 : a0), p1 = P(r, ccw ? a0 : a1);
+    return 'M' + f1(p0[0]) + ' ' + f1(p0[1]) + ' A' + r + ' ' + r + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' ' + (ccw ? 0 : 1) + ' ' + f1(p1[0]) + ' ' + f1(p1[1]);
   }
-  function arcPair(cx, cy, r, from, span, frac, color, width, fromEnd){
-    // Track, then the fill. fromEnd: the fill grows from the END of the span
-    // (the right arc fills bottom-up by running backwards from 150°).
-    var f = Math.max(0, Math.min(1, frac == null ? 0 : frac));
-    var track = '<path d="' + arcPath(cx, cy, r, from, from + span) + '" stroke="rgba(255,255,255,0.12)" stroke-width="' + width + '" fill="none" stroke-linecap="round"/>';
-    var d = fromEnd ? arcPath(cx, cy, r, from + span * (1 - f), from + span) : arcPath(cx, cy, r, from, from + span * f);
-    return track + (d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + width + '" fill="none" stroke-linecap="round"/>' : '');
+  function stroke(d, color, w){ return d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + w + '" fill="none" stroke-linecap="round"/>' : ''; }
+  // Track + fill. fromEnd: the fill grows from a1 back toward a0 (the right
+  // arc fills from the bottom up by running backwards).
+  function gauge(r, a0, a1, frac, color, w, fromEnd){
+    var f = Math.max(0, Math.min(1, frac == null ? 0 : frac)), span = a1 - a0;
+    return stroke(arcD(r, a0, a1), TRACK, w)
+      + stroke(fromEnd ? arcD(r, a1 - span * f, a1) : arcD(r, a0, a0 + span * f), color, w);
   }
-  function elChips(by){
-    var keys = Object.keys(by || {}).sort(function(a, b){ return by[b] - by[a]; });
-    return keys.map(function(k){ return '<span class="el" style="color:' + (EL_COLOR[k] || '#8b949e') + '">' + EL_LABEL[k] + ' ' + big(by[k]) + '</span>'; }).join('');
+  function T(x, y, s, size, color, anchor, weight){
+    return '<text x="' + f1(x) + '" y="' + f1(y) + '" font-size="' + size + '" fill="' + color + '" text-anchor="' + (anchor || 'middle') + '"'
+      + (weight ? ' font-weight="' + weight + '"' : '') + '>' + s + '</text>';
   }
-  function renderHud(s){
-    var W = Math.max(320, window.innerWidth), H = Math.max(260, window.innerHeight - 30);
-    var cx = W / 2, cy = H / 2 - 10, R = Math.max(90, Math.min(W, H) * 0.25);
-    var hpP = pctOf(s.hp), mnP = pctOf(s.mana), enP = s.end ? s.end.pct : null;
-    var castLeft = (s.casting && s.casting.pct != null) ? (100 - s.casting.pct) / 100 : null;
-    var svg = '<svg width="' + W + '" height="' + H + '" style="position:absolute;left:0;top:0">'
-      + arcPair(cx, cy, R, 210, 120, hpP == null ? 0 : hpP / 100, hpColor(hpP), 7, false)
-      + (enP != null ? arcPair(cx, cy, R - 11, 215, 110, enP / 100, 'var(--orange)', 3, false) : '')
-      + (mnP != null ? arcPair(cx, cy, R, 30, 120, mnP / 100, 'var(--blue)', 7, true) : '')
-      + (castLeft != null ? arcPair(cx, cy, R - 11, 35, 110, castLeft, 'var(--blue)', 3, true) : '')
-      + '</svg>';
-    var h = '<div id="hud" style="width:' + W + 'px;height:' + H + 'px">' + svg;
-    function at(x, y, cls, inner, extra){ return '<div class="ab ' + (cls || '') + '" style="left:' + Math.round(x) + 'px;top:' + Math.round(y) + 'px;' + (extra || '') + '">' + inner + '</div>'; }
-    // Left / right of the ring: HP and mana, big.
-    h += at(cx - R - 18, cy - 18, '', '<div class="big" style="color:' + hpColor(hpP) + '">' + (hpP == null ? '—' : Math.round(hpP) + '%') + '</div>'
-        + '<div class="sm">' + (s.hp && s.hp.cur != null ? n0(s.hp.cur) + ' / ' + n0(s.hp.max) : '') + '</div>'
-        + (enP != null ? '<div class="xs">end ' + Math.round(enP) + '%</div>' : ''), 'transform:translateX(-100%);text-align:right');
-    if (mnP != null) h += at(cx + R + 18, cy - 18, '', '<div class="big" style="color:var(--blue)">' + Math.round(mnP) + '%</div>'
-        + '<div class="sm">' + (s.mana && s.mana.cur != null ? n0(s.mana.cur) + ' / ' + n0(s.mana.max) : '') + '</div>');
-    // Above: target, then the cast.
-    var top = cy - R - 14;
+  function curved(id, r, a0, a1, inner, size, below){
+    return '<path id="' + id + '" d="' + arcD(r, a0, a1, !!below) + '" fill="none" stroke="none"/>'
+      + '<text font-size="' + size + '"><textPath href="#' + id + '" startOffset="50%" text-anchor="middle">' + inner + '</textPath></text>';
+  }
+  function pie(x, y, r, frac){   // clockwise wedge from 12 o'clock, frac of a full turn
+    var f = Math.max(0, Math.min(0.9999, frac));
+    if (f <= 0) return '';
+    var a = (f * 360 - 90) * Math.PI / 180;
+    return '<path d="M' + f1(x) + ' ' + f1(y) + ' L' + f1(x) + ' ' + f1(y - r) + ' A' + r + ' ' + r + ' 0 ' + (f > 0.5 ? 1 : 0) + ' 1 '
+      + f1(x + r * Math.cos(a)) + ' ' + f1(y + r * Math.sin(a)) + ' Z" fill="rgba(201,209,217,0.3)"/>';
+  }
+  function tfmt(ms){
+    if (ms == null) return '';
+    if (ms < 10000) return (ms / 1000).toFixed(1);
+    if (ms < 60000) return Math.ceil(ms / 1000) + 's';
+    return mmss(ms);
+  }
+  var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
+    'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT' };
+  function cdShort(c){ return c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()); }
+  function cdColor(c){ return c.left <= 0 ? 'var(--green)' : (c.key === 'disc' ? 'var(--purple)' : '#c9d1d9'); }
+  function slowText(t){
+    if (!t) return null;
+    if (t.slow) return { s: 'slowed' + (t.slow.pct ? ' ' + t.slow.pct + '%' : '') + (t.slow.remaining_secs != null ? ' · ' + mmss(t.slow.remaining_secs * 1000) : ''), c: 'var(--green)' };
+    if (t.unslowable) return { s: 'unslowable', c: 'var(--dim)' };
+    if (t.enrage != null) return { s: 'not slowed', c: 'var(--orange)' };   // a mob we have the catalog row for
+    return null;
+  }
+  // Everything the three HUDs draw, with every timer aged to "now".
+  function hudData(s){
+    var dt = Math.max(0, Date.now() - _lastAt);
+    var noMana = s.no_mana === true || !!(s.mana && s.mana.max === 0);
+    var enP = s.end && s.end.pct != null ? s.end.pct : null;
+    var d = { s: s, hp: pctOf(s.hp), mana: noMana ? null : pctOf(s.mana), end: enP, noMana: noMana };
+    // The right arc: mana, or endurance for a class with none.
+    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana' };
     if (s.casting) {
-      h += at(cx, top - 16, 'ctr', '<span class="sm" style="color:var(--blue)">✦ ' + esc(s.casting.spell) + (s.casting.remaining_ms != null ? ' · ' + (s.casting.remaining_ms / 1000).toFixed(1) + 's' : '') + '</span>');
-      top -= 18;
+      var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
+      var f0 = s.casting.pct != null ? (100 - s.casting.pct) / 100 : null;
+      var tot = (left != null && f0 && s.casting.remaining_ms) ? s.casting.remaining_ms / f0 : null;
+      d.cast = { spell: s.casting.spell, left: left, frac: tot ? left / tot : f0 };
     }
-    if (s.target) {
-      h += at(cx, top - 36, 'ctr panel', '<div class="sm">' + esc(s.target.name) + (s.target.id ? ' <span class="xs">#' + s.target.id + '</span>' : '') + ' <b style="color:' + hpColor(s.target.hp_pct) + '">' + (s.target.hp_pct != null ? Math.round(s.target.hp_pct) + '%' : '') + '</b></div>'
-        + '<div style="width:220px;margin-top:2px">' + bar(s.target.hp_pct, hpColor(s.target.hp_pct), '', 'thin') + '</div>');
+    if (s.tick && s.tick.ms_left != null) { var tl = (((s.tick.ms_left - dt) % 6000) + 6000) % 6000; d.tick = { left: tl, frac: tl / 6000 }; }
+    var sw = s.swing;
+    if (sw) {
+      if (sw.period_ms && sw.ms_left != null) { var sl = (((sw.ms_left - dt) % sw.period_ms) + sw.period_ms) % sw.period_ms; d.swing = { left: sl, frac: sl / sw.period_ms, est: sw.est }; }
+      else if (sw.frac_left != null) d.swing = { left: null, frac: sw.frac_left, est: false };
+      else if (sw.idle) d.swing = { idle: true, est: true };
     }
-    // Below: damage OUT and IN, by element, then the last hits.
+    d.cds = (s.cooldowns || []).map(function(c){
+      var l = Math.max(0, (c.ms_left || 0) - dt);
+      return { key: c.key, label: c.label, left: l, frac: c.total_ms ? l / c.total_ms : 0, est: c.est };
+    });
+    var t = s.target;
+    if (t) {
+      d.t = { name: t.name, hp: t.hp_pct, tot: t.tot && t.tot.name ? { name: t.tot.name, hp: t.tot.hp_pct } : null,
+              slow: slowText(t), enrage: t.enrage === true, enraged: t.enraged === true };
+    }
     var c = s.combat || null;
-    var base = cy + R + 14;
-    if (c) {
-      var span = c.live ? 'this fight' : 'last 30s';
-      h += at(cx - 16, base, '', '<div class="xs" style="text-align:right">OUT · ' + span + '</div><div class="big" style="text-align:right;color:var(--melee)">' + big(c.out.dps) + '<span class="xs"> dps</span></div>'
-          + '<div class="xs" style="text-align:right">' + big(c.out.dmg) + ' dealt</div><div style="text-align:right;max-width:260px;white-space:normal">' + elChips(c.out.by) + '</div>', 'transform:translateX(-100%)');
-      h += at(cx + 16, base, '', '<div class="xs">IN · ' + span + '</div><div class="big" style="color:var(--red)">' + big(c['in'].dps) + '<span class="xs"> dps</span></div>'
-          + '<div class="xs">' + big(c['in'].dmg) + ' taken' + (c['in'].max ? ' · biggest ' + big(c['in'].max) : '') + '</div><div style="max-width:260px;white-space:normal">' + elChips(c['in'].by) + '</div>');
-      if (c.feed && c.feed.length) {
-        var fl = c.feed.slice(0, 5).map(function(f){
-          var col = f.dir === 'in' ? (f.kind === 'melee' ? 'var(--red)' : (EL_COLOR[f.el] || 'var(--red)')) : (f.kind === 'melee' ? 'var(--melee)' : (EL_COLOR[f.el] || '#8b949e'));
-          var op = Math.max(0.35, 1 - f.age_ms / 15000).toFixed(2);
-          return '<div style="color:' + col + ';opacity:' + op + '">' + (f.dir === 'in' ? '▼ ' : '▲ ') + '<b>' + n0(f.amount) + '</b> ' + esc(f.name || (f.kind === 'melee' ? 'melee' : 'spell'))
-            + (f.el ? ' <span class="xs">' + f.el + '</span>' : '') + (f.dir === 'in' && f.other ? ' <span class="xs">← ' + esc(f.other) + '</span>' : '') + '</div>';
-        }).join('');
-        h += at(cx, base + 80, 'ctr feed', fl);
-      }
-    }
-    // Lower left: resists, in their element's colour.
+    d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
+    d.feed = (c && c.feed ? c.feed : []).map(function(f){
+      var col = f.dir === 'in' ? (f.kind === 'melee' ? 'var(--red)' : (EL_COLOR[f.el] || 'var(--red)')) : (f.kind === 'melee' ? 'var(--melee)' : (EL_COLOR[f.el] || '#8b949e'));
+      return { dir: f.dir, text: (f.dir === 'in' ? '▼ ' : '▲ ') + n0(f.amount) + ' ' + esc(f.name || (f.kind === 'melee' ? 'melee' : 'spell')) + (f.hand ? ' ' + f.hand : ''),
+               color: col, op: Math.max(0.35, 1 - (f.age_ms || 0) / 15000).toFixed(2) };
+    });
+    d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null; }).slice(0, 1)
+      .map(function(f){ return esc(f.label) + ' ' + focusValue(f); })[0] || null;
     var r = s.resists || {};
-    if (r.mr != null || r.fr != null) {
-      var rows = [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']]
-        .map(function(x){ return '<span style="color:' + EL_COLOR[x[2]] + '">' + x[0] + '</span><b style="color:' + EL_COLOR[x[2]] + '">' + (x[1] == null ? '—' : x[1]) + '</b>'; }).join('');
-      h += at(cx - R - 18, cy + 34, 'panel', '<div class="res">' + rows + '</div>', 'transform:translateX(-100%)');
+    d.res = (r.mr != null || r.fr != null) ? [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']] : null;
+    return d;
+  }
+  function resTspans(res){
+    return res.map(function(x, i){ return (i ? '<tspan fill="#6e7681">  </tspan>' : '') + '<tspan fill="' + EL_COLOR[x[2]] + '">' + x[0] + ' ' + (x[1] == null ? '—' : x[1]) + '</tspan>'; }).join('');
+  }
+  function pctTxt(p){ return p == null ? '—' : Math.round(p) + '%'; }
+  function blindRing(s){
+    return s.blind ? '<circle cx="200" cy="200" r="194" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="10 6"/>' + T(CX, 128, '👁 BLINDED', 11, 'var(--red)', 'middle', 700) : '';
+  }
+  function svgWrap(inner){ return '<svg id="hudsvg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">' + inner + '</svg>'; }
+  // ── H1 · Rings ─────────────────────────────────────────────────────────────
+  // Radii, outside in: 174 the four main arcs (target on top, HP left,
+  // mana/endurance right, resists written along the bottom) · 160 thin
+  // companions (target's target, endurance, cast) · 146 the cooldown ring
+  // across the bottom · 106 swing (lower left) and tick (lower right). The
+  // hits run down the middle below centre; the centre itself is left clear.
+  function renderH1(s){
+    var d = hudData(s), h = '', R = 174;
+    if (d.t) {
+      // Red outline = this mob can enrage; solid and named while it IS enraged.
+      if (d.t.enrage) h += stroke(arcD(R, -46, 46), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', d.t.enraged ? 19 : 16);
+      h += gauge(R, -46, 46, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 10);
+      h += curved('h1tn', R + 14, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : '#e6edf3') + '">' + esc(d.t.name) + '</tspan>'
+        + '<tspan fill="' + hpColor(d.t.hp) + '" font-weight="700">  ' + pctTxt(d.t.hp) + '</tspan>', 13);
+      var y = 60;
+      if (d.t.tot) {
+        h += gauge(R - 14, -34, 34, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 4);
+        h += T(CX, y, '→ ' + esc(d.t.tot.name) + ' <tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', 11, '#c9d1d9'); y += 13;
+      }
+      if (d.t.slow) { h += T(CX, y, d.t.slow.s, 10, d.t.slow.c); y += 13; }
+      if (d.t.enrage) h += T(CX, y, d.t.enraged ? 'ENRAGED' : 'enrages', d.t.enraged ? 12 : 10, 'var(--red)', 'middle', 700);
     }
-    // Lower right: the class's numbers, then the groupmate who needs you.
-    var fr = (s.focus || []).map(function(f){
-      var tone = focusTone(f);
-      var col = tone === 'out' ? 'var(--red)' : (tone === 'low' ? 'var(--orange)' : (tone === 'ready' ? 'var(--green)' : '#fff'));
-      return '<div><span class="xs">' + esc(f.label) + '</span> <b class="big" style="font-size:16px;color:' + col + '">' + focusValue(f) + '</b></div>';
-    }).join('');
-    var low = (s.group || []).filter(function(m){ return m.hp_pct != null && m.hp_pct < 60; }).sort(function(a, b){ return a.hp_pct - b.hp_pct; })[0];
-    if (low) fr += '<div style="color:var(--red)"><span class="xs">group</span> <b>' + esc(low.name) + ' ' + Math.round(low.hp_pct) + '%</b></div>';
-    if (fr) h += at(cx + R + 18, cy + 34, 'panel', fr);
-    // Top-left corner, out of the way: XP / AA rate.
-    if (s.xp && s.xp.pct != null) {
-      h += at(8, 4, 'xs', 'XP ' + s.xp.pct.toFixed(1) + '% ' + (s.xp.per_hr == null ? '' : '(' + s.xp.per_hr.toFixed(1) + '%/hr)')
-          + (s.aa && s.aa.pct != null ? ' · AA ' + s.aa.pct.toFixed(1) + '% ' + (s.aa.per_hr == null ? '' : '(' + s.aa.per_hr.toFixed(1) + '%/hr)') : ''));
+    h += gauge(R, 206, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 10);
+    if (d.right.pct != null) h += gauge(R, 56, 154, d.right.pct / 100, d.right.color, 10, true);
+    if (!d.noMana && d.end != null) h += gauge(R - 14, 212, 298, d.end / 100, 'var(--orange)', 3);
+    if (d.cast) h += gauge(R - 14, 62, 148, d.cast.frac, 'var(--blue)', 3, true);
+    // Numbers just inside the arcs.
+    h += T(64, 196, pctTxt(d.hp), 20, hpColor(d.hp), 'start', 700) + T(64, 210, 'hp', 9, 'var(--dim)', 'start');
+    if (d.out != null) h += T(64, 226, 'out ' + big(d.out), 10, 'var(--melee)', 'start');
+    if (d.right.pct != null) h += T(336, 196, pctTxt(d.right.pct), 20, d.right.color, 'end', 700) + T(336, 210, d.right.label, 9, 'var(--dim)', 'end');
+    if (d.inn != null) h += T(336, 226, 'in ' + big(d.inn), 10, 'var(--red)', 'end');
+    if (d.focus) h += T(336, 240, d.focus, 10, '#e6edf3', 'end');
+    if (d.cast) h += T(CX, 104, '✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : ''), 10, 'var(--blue)');
+    // Cooldowns: one short arc each across the bottom, centred on 180°.
+    var cds = d.cds.slice(0, 6);
+    if (cds.length) {
+      var gap = 4, seg = Math.min(30, (124 - gap * (cds.length - 1)) / cds.length);
+      var a = 180 - (seg * cds.length + gap * (cds.length - 1)) / 2;
+      cds.forEach(function(c){
+        var col = cdColor(c), mid = a + seg / 2, lp = P(128, mid);
+        h += c.left <= 0 ? stroke(arcD(146, a, a + seg), 'var(--green)', 5) : gauge(146, a, a + seg, c.frac, col, 5);
+        h += T(lp[0], lp[1] + 3, cdShort(c) + (c.left > 0 ? ' ' + tfmt(c.left) : ''), 9, col);
+        a += seg + gap;
+      });
     }
-    return h + '</div>';
+    // Swing (lower left) and server tick (lower right), both counting down.
+    if (d.swing && !d.swing.idle) {
+      h += gauge(106, 214, 250, d.swing.frac, 'var(--melee)', 4);
+      var sp = P(90, 232); h += T(sp[0], sp[1] + 3, (d.swing.est ? '~' : '') + 'swing ' + (d.swing.left != null ? tfmt(d.swing.left) : ''), 9, 'var(--melee)');
+    }
+    if (d.tick) {
+      h += gauge(106, 110, 146, d.tick.frac, '#8b949e', 4, true);
+      var tp = P(90, 128); h += T(tp[0], tp[1] + 3, 'tick ' + Math.ceil(d.tick.left / 1000), 9, '#8b949e');
+    }
+    d.feed.slice(0, 4).forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(CX, 262 + i * 12, f.text, 10, f.color) + '</g>'; });
+    if (d.res) h += curved('h1rs', R + 13, 150, 210, resTspans(d.res), 9, true);
+    return svgWrap(h + blindRing(s));
+  }
+
+  // ── H2 · Dial ──────────────────────────────────────────────────────────────
+  // An instrument cluster: a hairline frame; four quarter arcs (target N, HP
+  // W, mana/endurance E, and the bottom split into swing | tick); a target
+  // panel that reads like a nameplate; big numbers; cooldowns as a row of
+  // round buttons that wipe clockwise like the game's.
+  function renderH2(s){
+    var d = hudData(s), h = '', R = 172;
+    h += '<circle cx="200" cy="200" r="188" fill="none" stroke="rgba(139,148,158,0.35)" stroke-width="1"/>';
+    if (d.t) h += gauge(R, -40, 40, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 12);
+    h += gauge(R, 220, 320, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 12);
+    if (d.right.pct != null) h += gauge(R, 40, 140, d.right.pct / 100, d.right.color, 12, true);
+    if (d.swing && !d.swing.idle) h += gauge(R, 145, 177, d.swing.frac, 'var(--melee)', 6);
+    if (d.tick) h += gauge(R, 183, 215, d.tick.frac, '#8b949e', 6, true);
+    // Target panel.
+    if (d.t) {
+      var ph = 44 + (d.t.tot ? 14 : 0);
+      h += '<rect x="108" y="36" width="184" height="' + ph + '" rx="6" fill="rgba(13,17,23,0.6)"'
+        + (d.t.enrage ? ' stroke="var(--red)" stroke-width="' + (d.t.enraged ? 3 : 1.5) + '"' : '') + '/>';
+      h += T(118, 52, esc(d.t.name), 11, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start') + T(282, 53, pctTxt(d.t.hp), 15, hpColor(d.t.hp), 'end', 700);
+      var ty = 66;
+      if (d.t.tot) { h += T(118, ty, '→ ' + esc(d.t.tot.name), 10, '#c9d1d9', 'start') + T(282, ty, pctTxt(d.t.tot.hp), 10, hpColor(d.t.tot.hp), 'end', 700); ty += 14; }
+      if (d.t.slow) h += T(118, ty, d.t.slow.s, 9.5, d.t.slow.c, 'start');
+      if (d.t.enrage) h += T(282, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9.5, 'var(--red)', 'end', 700);
+    }
+    if (d.cast) {
+      var cw = 160 * Math.max(0, Math.min(1, d.cast.frac || 0));
+      h += T(CX, 106, '✦ ' + esc(d.cast.spell) + (d.cast.left != null ? ' ' + tfmt(d.cast.left) : ''), 10, 'var(--blue)')
+        + '<rect x="120" y="110" width="160" height="3" fill="' + TRACK + '"/><rect x="' + f1(120 + 160 - cw) + '" y="110" width="' + f1(cw) + '" height="3" fill="var(--blue)"/>';
+    }
+    // Big numbers, left and right.
+    h += T(40, 196, pctTxt(d.hp), 22, hpColor(d.hp), 'start', 700)
+      + T(40, 210, (s.hp && s.hp.cur != null ? n0(s.hp.cur) + ' / ' + n0(s.hp.max) : 'hp'), 9, 'var(--dim)', 'start');
+    if (d.out != null) h += T(40, 226, 'OUT ' + big(d.out), 10, 'var(--melee)', 'start');
+    if (d.right.pct != null) {
+      var rc = d.noMana ? 'endurance' : ((s.mana && s.mana.cur != null) ? n0(s.mana.cur) + ' / ' + n0(s.mana.max) : 'mana');
+      h += T(360, 196, pctTxt(d.right.pct), 22, d.right.color, 'end', 700) + T(360, 210, rc, 9, 'var(--dim)', 'end');
+    }
+    if (d.inn != null) h += T(360, 226, 'IN ' + big(d.inn), 10, 'var(--red)', 'end');
+    if (d.focus) h += T(360, 240, d.focus, 10, '#e6edf3', 'end');
+    if (d.res) h += '<text x="200" y="128" font-size="9" text-anchor="middle">' + resTspans(d.res) + '</text>';
+    // Hits: IN to the left of the centre line, OUT to the right.
+    var ins = d.feed.filter(function(f){ return f.dir === 'in'; }).slice(0, 3);
+    var outs = d.feed.filter(function(f){ return f.dir === 'out'; }).slice(0, 3);
+    ins.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(192, 238 + i * 12, f.text, 10, f.color, 'end') + '</g>'; });
+    outs.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(208, 238 + i * 12, f.text, 10, f.color, 'start') + '</g>'; });
+    // Cooldown buttons, one row below the hits.
+    var cds = d.cds.slice(0, 6);
+    cds.forEach(function(c, i){
+      var x = 200 + (i - (cds.length - 1) / 2) * 44, y = 296, col = cdColor(c);
+      h += '<circle cx="' + f1(x) + '" cy="' + y + '" r="17" fill="rgba(13,17,23,0.72)" stroke="' + col + '" stroke-width="' + (c.left <= 0 ? 2 : 1.2) + '"/>';
+      if (c.left > 0) h += pie(x, y, 16, c.frac);
+      h += T(x, y + 4, c.left > 0 ? tfmt(c.left) : '✓', c.left > 0 ? 10 : 12, col, 'middle', 700);
+      h += T(x, y + 28, cdShort(c), 8.5, col);
+    });
+    // Swing / tick read-outs just above their arcs.
+    if (d.swing && !d.swing.idle) { var s1 = P(150, 161); h += T(s1[0], s1[1], (d.swing.est ? '~' : '') + 'SWING ' + (d.swing.left != null ? tfmt(d.swing.left) : ''), 9, 'var(--melee)'); }
+    if (d.tick) { var t1 = P(150, 199); h += T(t1[0], t1[1], 'TICK ' + Math.ceil(d.tick.left / 1000), 9, '#8b949e'); }
+    return svgWrap(h + blindRing(s));
+  }
+
+  // ── H3 · Reticle ───────────────────────────────────────────────────────────
+  // A thin sight: one hairline circle with four ticks, HP and mana/endurance
+  // as slim arcs, and everything else as STRAIGHT bars — the target across
+  // the top chord, a timer strip across the bottom. Only what is changing is
+  // drawn: a cooldown that is ready collapses to one green word.
+  function renderH3(s){
+    var d = hudData(s), h = '';
+    h += '<circle cx="200" cy="200" r="184" fill="none" stroke="rgba(201,209,217,0.3)" stroke-width="1"/>';
+    [0, 90, 180, 270].forEach(function(a){ var p0 = P(176, a), p1 = P(194, a); h += '<line x1="' + f1(p0[0]) + '" y1="' + f1(p0[1]) + '" x2="' + f1(p1[0]) + '" y2="' + f1(p1[1]) + '" stroke="rgba(201,209,217,0.55)" stroke-width="1.5"/>'; });
+    h += gauge(184, 214, 326, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 5);
+    if (d.right.pct != null) h += gauge(184, 34, 146, d.right.pct / 100, d.right.color, 5, true);
+    h += T(30, 204, pctTxt(d.hp), 16, hpColor(d.hp), 'start', 700);
+    if (d.right.pct != null) h += T(370, 204, pctTxt(d.right.pct), 16, d.right.color, 'end', 700);
+    if (d.focus) h += T(370, 218, d.focus, 9.5, '#e6edf3', 'end');
+    // Target across the top chord.
+    if (d.t) {
+      var status = !!(d.t.slow || d.t.enrage);
+      var bh = 40 + (d.t.tot ? 12 : 0) + (status ? 12 : 0);
+      if (d.t.enrage) h += '<rect x="108" y="42" width="184" height="' + bh + '" rx="4" fill="none" stroke="var(--red)" stroke-width="' + (d.t.enraged ? 3 : 1.5) + '"/>';
+      h += T(116, 58, esc(d.t.name), 10.5, d.t.enraged ? 'var(--red)' : '#e6edf3', 'start')
+        + T(284, 58, pctTxt(d.t.hp), 10.5, hpColor(d.t.hp), 'end', 700);
+      var tw = 168 * Math.max(0, Math.min(1, (d.t.hp || 0) / 100));
+      h += '<rect x="116" y="62" width="168" height="5" fill="' + TRACK + '"/><rect x="116" y="62" width="' + f1(tw) + '" height="5" fill="' + hpColor(d.t.hp) + '"/>';
+      var ty = 80;
+      if (d.t.tot) { h += T(116, ty, '→ ' + esc(d.t.tot.name), 9.5, '#c9d1d9', 'start') + T(284, ty, pctTxt(d.t.tot.hp), 9.5, hpColor(d.t.tot.hp), 'end', 700); ty += 12; }
+      if (d.t.slow) h += T(116, ty, d.t.slow.s, 9.5, d.t.slow.c, 'start');
+      if (d.t.enrage) h += T(284, ty, d.t.enraged ? 'ENRAGED' : 'enrages', 9.5, 'var(--red)', 'end', 700);
+    }
+    // Timer strip across the bottom chord: tick, swing, cast, then whatever
+    // is cooling down; ready cooldowns share one line.
+    var rows = [];
+    if (d.tick) rows.push({ label: 'TICK', frac: d.tick.frac, text: String(Math.ceil(d.tick.left / 1000)), color: '#8b949e' });
+    if (d.swing && !d.swing.idle) rows.push({ label: (d.swing.est ? '~' : '') + 'SWING', frac: d.swing.frac, text: d.swing.left != null ? tfmt(d.swing.left) : '', color: 'var(--melee)' });
+    if (d.cast) rows.push({ label: 'CAST', frac: d.cast.frac, text: d.cast.left != null ? tfmt(d.cast.left) : '', color: 'var(--blue)' });
+    d.cds.filter(function(c){ return c.left > 0; }).forEach(function(c){ rows.push({ label: cdShort(c), frac: c.frac, text: tfmt(c.left), color: cdColor(c) }); });
+    var ready = d.cds.filter(function(c){ return c.left <= 0; }).map(cdShort);
+    rows.slice(0, 5).forEach(function(r, i){
+      var y = 284 + i * 13, w = 88 * Math.max(0, Math.min(1, r.frac || 0));
+      h += T(150, y + 3, r.label, 9, 'var(--dim)', 'end')
+        + '<rect x="156" y="' + (y - 3) + '" width="88" height="5" fill="' + TRACK + '"/><rect x="156" y="' + (y - 3) + '" width="' + f1(w) + '" height="5" fill="' + r.color + '"/>'
+        + T(250, y + 3, r.text, 9, r.color, 'start');
+    });
+    if (ready.length) h += T(CX, 284 + Math.min(rows.length, 5) * 13 + 3, 'ready ' + ready.join(' · '), 9, 'var(--green)');
+    // Hits pop near the edge they belong to: yours upper right, theirs lower left.
+    var outs = d.feed.filter(function(f){ return f.dir === 'out'; }).slice(0, 3);
+    var ins = d.feed.filter(function(f){ return f.dir === 'in'; }).slice(0, 3);
+    outs.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(250, 124 + i * 12, f.text, 10, f.color, 'start') + '</g>'; });
+    ins.forEach(function(f, i){ h += '<g opacity="' + f.op + '">' + T(150, 236 + i * 12, f.text, 10, f.color, 'end') + '</g>'; });
+    if (d.res) h += '<text x="200" y="366" font-size="8.5" text-anchor="middle">' + resTspans(d.res) + '</text>';
+    return svgWrap(h + blindRing(s));
   }
 
   // ── C · Role ──────────────────────────────────────────────────────────────
@@ -470,16 +673,18 @@
     if (s && s.character) {
       document.getElementById('tname').textContent = s.character;
       document.getElementById('tclass').textContent = (s.level != null ? s.level + ' ' : '') + (s.class || '');
-      if (s.blind) html += '<div class="blind">👁 BLINDED — this panel still works</div>';
-      html += style === 'b' ? renderHud(s) : (style === 'c' ? renderC(s) : renderA(s));
+      // The HUDs draw their own blind ring inside the SVG.
+      if (s.blind && !isHud(style)) html += '<div class="blind">👁 BLINDED — this panel still works</div>';
+      html += style === 'h1' ? renderH1(s) : style === 'h2' ? renderH2(s) : style === 'h3' ? renderH3(s)
+            : (style === 'c' ? renderC(s) : renderA(s));
     }
-    document.body.classList.toggle('hud', style === 'b');
+    document.body.classList.toggle('hud', isHud(style));
     emptyEl.style.display = (s && s.character) ? 'none' : 'block';
     if (html !== _lastHtml) {   // byte-stability guard: no rewrite when nothing changed
       bodyEl.innerHTML = html;
       _lastHtml = html;
-      // The HUD is sized to its window, not the other way round.
-      if (style !== 'b') _requestAutoHeight();
+      // A HUD is sized to its window, not the other way round.
+      if (!isHud(style)) _requestAutoHeight();
     }
   }
   function _requestAutoHeight(){
@@ -493,11 +698,15 @@
       const r = await fetch('http://127.0.0.1:' + PORT + '/api/me', { cache: 'no-store' });
       const s = await r.json();
       c.className = 'conn ok'; c.textContent = '●';
-      _last = s; render(s);
+      _last = s; _lastAt = Date.now(); render(s);
     } catch (e) {
       c.className = 'conn bad'; c.textContent = '○';
     }
   }
   tick(); setInterval(tick, 500);
+  // HUD timers (tick, swing, cooldowns, cast) run between polls: repaint from
+  // the last snapshot, aged to now. The byte guard in render() skips the DOM
+  // write when nothing visible moved.
+  setInterval(function(){ if (isHud(style) && _last && _last.character) render(_last); }, 100);
 </script>
 </body></html>

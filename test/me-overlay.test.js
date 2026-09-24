@@ -25,6 +25,8 @@ const meBlock = sliceBlock(agent, '// ── Me overlay (the guild lead, 2026-09
 const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
   + sliceBlock(agent, 'function parseEqTimestamp(line) {', '\n}');
 const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
+const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
+const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
 
 // Catalog: the real costs/recasts from eqemu_spells.
 const CATALOG = [
@@ -53,6 +55,18 @@ function load({ zeal = {}, et = null, blind = {} } = {}) {
     function normalizeClass(s) { return s ? String(s).trim() : s; }
     ${failRx}
     ${parseTs}
+    // HUD read-outs (2026-09-24): the helpers the serializer now reaches for,
+    // real where they are pure, inert where they would touch the network.
+    ${noManaRx}
+    ${pipeCandidate}
+    const _discReadyAt = new Map();
+    const _mobInfoByName = new Map();
+    const MOB_INFO_TTL_MS = 60000;
+    function _mobInfoCacheKey(n, z) { return String(n).toLowerCase() + '|' + (z == null ? '' : z); }
+    function fetchMobInfo() {}
+    function _victimForMob() { return null; }
+    function _bestSlowForTarget() { return null; }
+    function _resolveHpValuesForName() { return null; }
   `;
   // eslint-disable-next-line no-new-func
   return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey, _meNoteHit, _meNoteSelfLanding };')();
@@ -245,7 +259,8 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderH1, renderH2, renderH3, renderC };')();
+const HUDS = { H1: R.renderH1, H2: R.renderH2, H3: R.renderH3 };
 
 describe('the three layouts', () => {
   const zeal = zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015], gems: ['Complete Healing'], group: [['Brackwyn', 34]] });
@@ -259,39 +274,6 @@ describe('the three layouts', () => {
     expect(h).toContain('Brackwyn');
   });
 
-  // The guild lead: "one of those me overlays should be a HUD style that goes
-  // around the players center of their screen … damage in/out shown clearly.
-  // resists and cast damage too with elements associated with it".
-  it('B · HUD draws the arcs, damage in/out by element, and resists', () => {
-    const hs = Object.assign({}, s, {
-      resists: { mr: 181, fr: 166, cr: 158, pr: 124, dr: 142 },
-      combat: { live: true, secs: 21, out: { dmg: 4200, dps: 200, max: 812, by: { melee: 2100, cold: 1400 } },
-        in: { dmg: 6100, dps: 290, max: 1240, by: { fire: 1800 } }, feed: [] },
-    });
-    const h = R.renderHud(hs);
-    expect(h).toContain('<svg');
-    expect(h).toContain('stroke="var(--blue)"');                        // the mana arc
-    expect(h).toMatch(/OUT · this fight[\s\S]*200/);
-    expect(h).toMatch(/IN · this fight[\s\S]*290/);
-    expect(h).toContain('color:var(--cold)">cold 1,400');
-    expect(h).toContain('color:var(--fire)">fire 1,800');
-    expect(h).toContain('>FR</span><b style="color:var(--fire)">166');
-    expect(h).toContain('Brackwyn 34%');                                 // the groupmate who needs you
-  });
-
-  it('B · HUD keeps the middle of the screen empty — nothing is placed inside the ring', () => {
-    const h = R.renderHud(s);
-    // Ring: centre (557, 331.5), R = 0.25 * min(1114, 683) = 170.75.
-    const cx = 557, cy = 683 / 2 - 10, rr = 0.25 * 683;
-    const spots = [...h.matchAll(/class="ab[^"]*" style="left:(\d+)px;top:(\d+)px/g)].map(m => [+m[1], +m[2]]);
-    expect(spots.length).toBeGreaterThan(3);
-    for (const [x, y] of spots) {
-      // Anchors sit outside the inner ring (a centred label's anchor is its
-      // centre-top, so it may sit on the vertical axis only above or below).
-      expect(Math.hypot(x - cx, y - cy)).toBeGreaterThan(rr * 0.7);
-    }
-  });
-
   it('C · Role leads with the class number, large', () => {
     const h = R.renderC(s);
     expect(h.indexOf('class="fv">4<')).toBeGreaterThan(-1);
@@ -299,11 +281,100 @@ describe('the three layouts', () => {
   });
 });
 
+// ── the three HUDs ──────────────────────────────────────────────────────────
+// The guild lead, 2026-09-24, after a night with the first HUD (layout B): "The
+// Circle should be the bounds for the resizing with some light info on the
+// inside of the circle" · "Monks, rogues, and warriors have no mana so don't
+// expose that for them" · "Melee cooldowns and discipline cooldowns need to be
+// in here" · the target "should have their target's health as well. If it's
+// slowed, does it enrage? If it enrages make it a red outline" · "server tick
+// counters and melee delay timers" · "Hits can be on the inside of the
+// circle" · "Give me 3 versions of the circle hud".
+describe('the three HUDs', () => {
+  const base = {
+    ok: true, character: 'Aldenmar', level: 60, class: 'Monk', no_mana: true,
+    hp: { cur: 5311, max: 6417, pct: 82.8 }, mana: { cur: null, max: null, pct: null }, end: { pct: 41 },
+    tick: { ms_left: 3400, period_ms: 6000, source: 'zeal' },
+    swing: { ms_left: 1300, period_ms: 2600, source: 'log', est: true, hands: { mh: 'slash', oh: 'pierce' } },
+    cooldowns: [
+      { key: 'ability', label: 'Flying Kick', ms_left: 3200, total_ms: 7000, est: true },
+      { key: 'disc', label: 'Hundred Fists', ms_left: 1203000, total_ms: 1638000, est: true },
+      { key: 'mend', label: 'Mend', ms_left: 0, total_ms: 289000 },
+    ],
+    target: { name: 'a gnoll warlord', hp_pct: 63, tot: { name: 'Corvale', hp_pct: 38 }, slow: null, enrage: true, unslowable: false, enraged: false },
+    combat: { live: true, secs: 30, out: { dmg: 1462, dps: 49, by: {} }, in: { dmg: 600, dps: 20, by: {} },
+      feed: [{ dir: 'out', amount: 110, kind: 'melee', name: 'slash', hand: 'MH', age_ms: 200 },
+             { dir: 'in', amount: 300, kind: 'spell', name: 'Lava Breath', el: 'fire', age_ms: 900 }] },
+    resists: { mr: 178, fr: 194, cr: 165, pr: 195, dr: 215 },
+  };
+  const cleric = Object.assign({}, base, { class: 'Cleric', no_mana: false, mana: { cur: 1686, max: 3015, pct: 55.9 },
+    target: Object.assign({}, base.target, { enrage: false, slow: { label: "Turgur's Insects", pct: 75, remaining_secs: 131 } }) });
+
+  for (const [name, fn] of Object.entries(HUDS)) {
+    it(name + ' is one square SVG that scales with its window — nothing placed in pixels', () => {
+      const h = fn(base);
+      expect(h.startsWith('<svg id="hudsvg" viewBox="0 0 400 400"')).toBe(true);
+      expect(h).not.toMatch(/\d+px/);
+    });
+
+    it(name + ' shows endurance, never mana, for a monk — and mana for a cleric', () => {
+      const monk = fn(base), cl = fn(cleric);
+      expect(monk).not.toContain('var(--blue)');
+      expect(monk).toContain('var(--orange)');
+      expect(cl).toContain('var(--blue)');
+    });
+
+    it(name + ' outlines a mob that can enrage in red, and names it while ENRAGED', () => {
+      const can = fn(base), not = fn(cleric);
+      expect(can).toMatch(/stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/);
+      expect(not).not.toMatch(/stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/);
+      const on = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enraged: true }) }));
+      expect(on).toContain('ENRAGED');
+    });
+
+    it(name + ' carries the target\'s target with their HP, and the slow state', () => {
+      expect(fn(base)).toContain('Corvale');
+      expect(fn(base)).toContain('38%');
+      expect(fn(base)).toContain('not slowed');                  // a mob we have the row for
+      expect(fn(cleric)).toContain('slowed 75% · 2:11');
+    });
+
+    it(name + ' draws the tick, the swing, and each cooldown by name', () => {
+      const h = fn(base);
+      expect(h).toMatch(/tick|TICK/);
+      expect(h).toMatch(/~swing|~SWING/);                           // measured, so marked "~"
+      expect(h).toContain('FK');
+      expect(h).toContain('DISC');
+      expect(h).toContain('MEND');
+    });
+
+    it(name + ' puts hits inside the ring, with the hand when known', () => {
+      const h = fn(base);
+      expect(h).toContain('▲ 110 slash MH');
+      expect(h).toContain('▼ 300 Lava Breath');
+    });
+  }
+
+  it('H1 keeps the centre clear — no text within 55 units of the middle', () => {
+    const h = R.renderH1(base);
+    const spots = [...h.matchAll(/<text x="([\d.]+)" y="([\d.]+)"/g)].map(m => [+m[1], +m[2]]);
+    expect(spots.length).toBeGreaterThan(8);
+    for (const [x, y] of spots) expect(Math.hypot(x - 200, y - 200)).toBeGreaterThan(55);
+  });
+});
+
 describe('the in-game picker', () => {
   const body = stripJs(meHtml);
-  it('offers A, B and C, and remembers the pick', () => {
-    for (const v of ['a', 'b', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
+  it('offers A, the three HUDs and C, and remembers the pick', () => {
+    for (const v of ['a', 'h1', 'h2', 'h3', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
+    expect(meHtml).not.toContain('data-v="b"');
     expect(body).toContain("localStorage.setItem(STYLE_KEY, style)");
+  });
+  it('someone who had picked the old B lands on HUD 1', () => {
+    expect(body).toContain("if (saved === 'b') saved = 'h1';");
+  });
+  it('a HUD makes the window a centred square — the ring is the bounds', () => {
+    expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);
   });
   it('is clickable on a locked (click-through) overlay — the hover handshake', () => {
     expect(body).toContain("picker.addEventListener('mouseenter', hoverOn)");

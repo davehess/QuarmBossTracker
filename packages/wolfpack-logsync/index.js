@@ -6715,7 +6715,12 @@ function trackDisciplineTimerLine(line, character) {
   if (!total) return;                                           // "in ." — nothing to count
   const name = String(character || '').trim();
   if (!name) return;
-  const at = parseEqTimestamp(line) || Date.now();
+  // parseEqTimestamp returns a Date, and `Date + number` is STRING
+  // concatenation — this used to store "Sat Aug 30 … GMT…634000", so every
+  // read came back NaN and toISOString threw (found 2026-09-24 building the
+  // HUD). The test's stand-in parser returned a number, which hid it.
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : Date.now();
   _discReadyAt.set(name.toLowerCase(), { at: at + total * 1000, name });
 }
 
@@ -12492,6 +12497,307 @@ function _meCombatSince(cl, sinceMs, now) {
   return { secs, out, in: inn, feed };
 }
 
+// ── HUD timers and target read-outs (the guild lead, 2026-09-24) ─────────────
+// "Nillipuss is able to provide server tick counters and melee delay timers,
+// and I would like to see those as well." · "Melee cooldowns and discipline
+// cooldowns need to be in here." · the target "should have their target's
+// health as well. If it's slowed, does it enrage?"
+// Each value says where it came from (`source`) and whether it is an estimate
+// (`est`). One we cannot stand behind is null, and the HUD draws nothing.
+
+// SERVER TICK — exact. Zeal gauge 24 ("ServerTick"), timed by Zeal off the
+// server's own stamina packet: value = per-mille of the 6 s tick still to go,
+// text = the whole seconds it shows (1-6). Zeal's reverse option flips the
+// value but not the text, so the direction is whichever reading agrees with
+// the text. Mimic stores value/10 as hp_pct, so ms = hp_pct × 60.
+const _ME_TICK_MS = 6000;
+function _meTick(st, now) {
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 24) : null;
+  if (!g || g.hp_pct == null) return null;
+  const shows = (ms) => Math.min(6, Math.floor(ms / 1000) + 1);
+  const fwd = g.hp_pct * 60, rev = (100 - g.hp_pct) * 60;
+  const secs = parseInt(g.text, 10);
+  const ms = (Number.isFinite(secs) && shows(fwd) !== secs && shows(rev) === secs) ? rev : fwd;
+  const age = Math.max(0, now - (st.updatedAt || now));
+  return { ms_left: Math.round((((ms - age) % _ME_TICK_MS) + _ME_TICK_MS) % _ME_TICK_MS), period_ms: _ME_TICK_MS, source: 'zeal' };
+}
+
+// SWING TIMER — measured, not read. Zeal draws an attack-recovery gauge (34)
+// for UI skins like Nillipuss, but its named pipe never sends that id: the
+// pipe's GaugeNames map stops at 33 (docs/zeal-attack-timer-pipe-request.md
+// is the one-line ask). If a Zeal build ever sends 34, it wins. Until then
+// the delay is learned from your own weapon swings — lines that land
+// together are one round, round-to-round is the delay, and the next round is
+// predicted from the last. The log is read every 500 ms and stamped to the
+// second, so this is about ±0.5 s and says `source: 'log', est: true`.
+//
+// Main hand vs off hand: when both land in one round the server swings the
+// primary first (Client::Process), so a round with two DIFFERENT verbs names
+// both hands. When both hands share a verb (a monk's punch and punch) nothing
+// can tell them apart, and no hand is claimed.
+const _ME_SWING_RX = /^You (?:try to )?(hit|slash|crush|pierce|punch)\b/;
+const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }], votes }
+const _meSawAttackGauge = new Set();  // characters whose Zeal has sent gauge 34
+function _meNoteSwing(cl, verb, atMs, sec) {
+  let s = _meSwings.get(cl);
+  if (!s) { s = { rounds: [], votes: new Map() }; _meSwings.set(cl, s); }
+  const last = s.rounds[s.rounds.length - 1];
+  if (last && last.sec === sec && atMs - last.lastAt <= 600) {
+    last.verbs.push(verb); last.lastAt = atMs;
+    return;
+  }
+  if (last) {
+    const distinct = [...new Set(last.verbs)];
+    if (distinct.length === 2) {
+      const k = distinct[0] + '|' + distinct[1];
+      s.votes.set(k, (s.votes.get(k) || 0) + 1);
+    }
+  }
+  s.rounds.push({ t: atMs, lastAt: atMs, sec, verbs: [verb] });
+  if (s.rounds.length > 40) s.rounds.shift();
+}
+// The hand pairing seen in at least three rounds, and in most of them.
+function _meHands(s) {
+  if (!s) return null;
+  let best = null, total = 0;
+  for (const [k, n] of s.votes) { total += n; if (!best || n > best[1]) best = [k, n]; }
+  if (!best || best[1] < 3 || best[1] * 2 <= total) return null;
+  const [mh, oh] = best[0].split('|');
+  return { mh, oh };
+}
+function _meSwingState(cl, st, now) {
+  const s = _meSwings.get(cl) || null;
+  const hands = _meHands(s);
+  const rs = s ? s.rounds.filter(r => !hands || r.verbs.includes(hands.mh)) : [];
+  const gaps = [];
+  for (let i = 1; i < rs.length; i++) {
+    const d = rs[i].t - rs[i - 1].t;
+    if (d >= 900 && d <= 8000) gaps.push(d);
+  }
+  let period = null;
+  if (gaps.length >= 4) { const a = gaps.slice(-15).sort((x, y) => x - y); period = a[Math.floor(a.length / 2)]; }
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 34) : null;
+  if (g && g.hp_pct != null) _meSawAttackGauge.add(cl);
+  if (_meSawAttackGauge.has(cl)) {
+    // Mimic drops a gauge that reads 0 with no text, so a missing 34 from a
+    // client that has sent it before means "ready".
+    const frac = g && g.hp_pct != null ? g.hp_pct / 100 : 0;
+    return { frac_left: frac, ms_left: period ? Math.round(period * frac) : null, period_ms: period, source: 'zeal', est: false, hands };
+  }
+  if (!period) return null;
+  const last = rs[rs.length - 1];
+  // A line arrives up to one 500 ms poll after it was written: split the difference.
+  const since = now - (last.t - 250);
+  if (!st.autoattack || since > period * 3) return { ms_left: null, period_ms: period, source: 'log', est: true, hands, idle: true };
+  return { ms_left: Math.round(period - (since % period)), period_ms: period, source: 'log', est: true, hands };
+}
+function _meVerbBase(v) {
+  return String(v || '').toLowerCase().trim().replace(/(ch|sh|ss)es$/, '$1').replace(/([^s])s$/, '$1');
+}
+
+// COMBAT ABILITIES — one shared server timer (pTimerCombatAbility,
+// zone/special_attacks.cpp): reuse = base × 100 / haste − 1 seconds, base from
+// common/features.h. Haste is not on the pipe, so the unhasted value is the
+// ceiling, and the timer tightens to the quickest repeat you have actually
+// managed (you cannot beat the real timer, so the fastest repeats are the best
+// reading of it) — never below the 100%-haste floor.
+const _ME_ABILITIES = {
+  'kick': ['Kick', 8], 'bash': ['Bash', 8], 'backstab': ['Backstab', 10],
+  'flying kick': ['Flying Kick', 8], 'round kick': ['Round Kick', 8],
+  'dragon punch': ['Dragon Punch', 6], 'eagle strike': ['Eagle Strike', 6], 'tiger claw': ['Tiger Claw', 7],
+};
+const _ME_ABILITY_RX = /^You (?:try to )?(flying kick|round kick|dragon punch|eagle strike|tiger claw|backstab|kick|bash)\b/;
+// Skills with a timer of their own, and the server line that starts each
+// (zone/string_ids.h; reuse from common/features.h, started at reuse − 1).
+const _ME_SKILL_LINES = [
+  { key: 'mend',  label: 'Mend',       secs: 289,  rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
+  { key: 'taunt', label: 'Taunt',      secs: 5,    rx: /^You taunt .+ to ignore others and attack you!/ },
+  { key: 'ht',    label: 'Harm Touch', secs: 4320, rx: /^You harm touch\b/ },
+];
+const _meAbility = new Map();    // charLower → { name, base, at, gaps }
+const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs })
+function _meNoteAbility(cl, verb, atMs) {
+  const def = _ME_ABILITIES[verb];
+  if (!def) return;
+  let a = _meAbility.get(cl);
+  if (!a) { a = { gaps: [] }; _meAbility.set(cl, a); }
+  if (a.at && atMs - a.at >= 1000 && atMs - a.at < def[1] * 1000) { a.gaps.push(atMs - a.at); if (a.gaps.length > 20) a.gaps.shift(); }
+  a.name = def[0]; a.base = def[1]; a.at = atMs;
+}
+function _meCooldowns(cl, now) {
+  const out = [];
+  const a = _meAbility.get(cl);
+  if (a && a.at) {
+    const ceil = (a.base - 1) * 1000;
+    const floor = (a.base / 2 - 1) * 1000;
+    // Second-quickest repeat: the quickest can be a poll-timing artefact.
+    const g = a.gaps.slice().sort((x, y) => x - y);
+    const seen = g.length >= 3 ? g[1] : null;
+    const total = seen ? Math.max(floor, Math.min(ceil, seen)) : ceil;
+    out.push({ key: 'ability', label: a.name, ms_left: Math.max(0, a.at + total - now), total_ms: total, est: true });
+  }
+  const m = _meSkillCds.get(cl);
+  if (m) {
+    for (const [k, c] of m) {
+      const left = c.at + c.secs * 1000 - now;
+      if (left <= -60_000) { m.delete(k); continue; }
+      out.push({ key: k, label: c.label, ms_left: Math.max(0, left), total_ms: c.secs * 1000, est: k === 'ht' });
+    }
+  }
+  return out;
+}
+
+// DISCIPLINES — the activation line (the disc spell's own landing text,
+// eqemu_spells.cast_on_you) starts the timer with the server's reuse for that
+// disc: zone/effects.cpp CastDiscipline takes 54 s off per level above the
+// level it unlocks at, clamped to 3:54–72:00. The refusal line ("You can use
+// a new discipline in …", trackDisciplineTimerLine) is exact and wins.
+// ⚠ Estimate, and kept out of the Command Center's refusal-only timer on
+// purpose: if Quarm runs the server's disc timer GROUPS, a disc from another
+// group is usable while this one counts down.
+// text → [name, base reuse s, { class: level it unlocks at }]
+const _ME_DISCS = new Map([
+  ['You assume an aggressive fighting style.',  ['Aggressive', 1620, { Warrior: 60 }]],
+  ['You assume a precise fighting style.',      ['Precision', 1800, { Warrior: 57 }]],
+  ['You assume a defensive fighting style.',    ['Defensive', 900, { Warrior: 55 }]],
+  ['You assume an evasive fighting style.',     ['Evasive', 900, { Warrior: 52 }]],
+  ['Your hands clench with fatal fervor.',      ['Ashenhand', 4320, { Monk: 60 }]],
+  ['A consuming rage takes over your weapons.', ['Furious', 3600, { Warrior: 56 }]],
+  ['Your instincts take over as you turn aside every attack.', ['Whirlwind', 3600, { Monk: 53 }]],
+  ['Your weapons move with uncanny grace.',     ['Counterattack', 3600, { Rogue: 53 }]],
+  ['Your body becomes one with the earth.',     ['Stonestance', 720, { Monk: 51 }]],
+  ['A protective spirit guards you.',           ['Protective Spirit', 720, { Beastlord: 55 }]],
+  ['Your feet glow with mystic power.',         ['Thunderkick', 540, { Monk: 52 }]],
+  ['You instincts take over as you avoid every attack.', ['Fortitude', 3600, { Warrior: 59 }]],
+  ['You become untouchable.',                   ['Voiddance', 3600, { Monk: 54 }]],
+  ['Your weapons strike true.',                 ['Fellstrike', 1800, { Warrior: 58 }]],
+  ['Your muscles bulge with the force of will.', ['Innerflame', 1800, { Monk: 56 }]],
+  ['Your muscles quiver with power.',           ['Duelist', 1800, { Rogue: 59 }]],
+  ['A bestial fury consumes you.',              ['Bestial Rage', 1800, { Beastlord: 60 }]],
+  ['Your fists begin to blur.',                 ['Hundred Fists', 1800, { Monk: 57 }]],
+  ['Your hands speeds up.',                     ['Blinding Speed', 1800, { Rogue: 58 }]],
+  ['Your focus becomes perfect.',               ['Charge', 1800, { Warrior: 53 }]],
+  ['You feel unstoppable.',                     ['Deadeye', 1800, { Rogue: 54 }]],
+  ['You feel like a killing machine.',          ['Mighty Strike', 3600, { Warrior: 54 }]],
+  ['You bounce about nimbly.',                  ['Nimble', 1800, { Rogue: 55 }]],
+  ['Your body is filled with silent fury.',     ['Silentfist', 594, { Monk: 59 }]],
+  ['Your arms feel alive with mystic energy.',  ['Kinesthetics', 1800, { Rogue: 57 }]],
+  ['Your weapon is bathed in a holy light.',    ['Holyforge', 4320, { Paladin: 55 }]],
+  ['Your body is surrounded in an aura of sanctification.', ['Sanctification', 4320, { Paladin: 60 }]],
+  ['Your bow crackles with natural energy.',    ['Trueshot', 4320, { Ranger: 55 }]],
+  ['Your weapons begin to spin.',               ['Weapon Shield', 4320, { Ranger: 60 }]],
+  ['An unholy aura envelopes your body.',       ['Unholy Aura', 4320, { 'Shadow Knight': 55 }]],
+  ['Your skin glows with dark energy.',         ['Leechcurse', 4320, { 'Shadow Knight': 60 }]],
+  ['You dance about nimbly.',                   ['Deftdance', 4320, { Bard: 55 }]],
+  ['Your voice becomes perfectly melodious.',   ['Puretone', 4320, { Bard: 60 }]],
+  ['You channel your will into magical resistance.', ['Resistant', 3600, { Warrior: 30, Monk: 30, Rogue: 30, Paladin: 51, Ranger: 51, 'Shadow Knight': 51, Bard: 51, Beastlord: 51 }]],
+  ['Your will drives fear from your mind.',     ['Fearless', 3600, { Warrior: 40, Monk: 40, Rogue: 40, Paladin: 54, Ranger: 54, 'Shadow Knight': 54, Bard: 54, Beastlord: 54 }]],
+]);
+function _meDiscReuseSecs(base, unlockLvl, level) {
+  let lvl = Number(level) || unlockLvl;
+  if (base < 1620 && lvl > 60) lvl = 60;
+  return Math.max(234, Math.min(4320, base - (lvl - unlockLvl) * 54));
+}
+const _meDiscs = new Map();   // charLower → { name, at, total_ms }
+function _meNoteDisc(cl, def, atMs) {
+  const st = _zealState && Object.entries(_zealState).find(([ch]) => String(ch).toLowerCase() === cl);
+  const zst = st ? st[1] : null;
+  const who = whoData.get(cl);
+  const cls = normalizeClass((zst && _meLabel(zst, 3)) || (who && who.class) || _raidClassByName.get(cl) || '') || null;
+  const level = (zst && _meNum(_meLabel(zst, 2))) || (who && who.level) || null;
+  const unlocks = def[2];
+  const unlock = (cls && unlocks[cls]) || Math.min(...Object.values(unlocks));
+  _meDiscs.set(cl, { name: def[0], at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000 });
+}
+function _meDisc(cl, now) {
+  const act = _meDiscs.get(cl) || null;
+  const ref = _discReadyAt.get(cl) || null;
+  if (ref && ref.at > now) {
+    const left = ref.at - now;
+    return { key: 'disc', label: act ? act.name : 'Discipline', ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false };
+  }
+  if (!act) return null;
+  const left = act.at + act.total_ms - now;
+  if (left <= -60_000) { _meDiscs.delete(cl); return null; }
+  return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true };
+}
+
+// ENRAGE — the server's own lines (zone/string_ids.h NPC_ENRAGE_START/END):
+// "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
+// (EnragedDurationTimer), so an entry with no end line expires after 12 s.
+const _meEnraged = new Map();   // mobLower → until
+// One raw-line hook for all of the above. Live tail only; every branch is a
+// prefix or exact-text test, so a line that is none of these costs almost
+// nothing.
+function _meNoteRawLine(line, character) {
+  if (!line || !character) return;
+  const at = line.indexOf('] ');
+  if (at < 0) return;
+  const msg = line.slice(at + 2).trimEnd();
+  const now = Date.now();
+  const cl = String(character).toLowerCase();
+  if (msg.startsWith('You')) {
+    let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
+    if (m) { _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at)); return; }
+    m = _ME_ABILITY_RX.exec(msg);
+    if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
+    for (const s of _ME_SKILL_LINES) {
+      if (!s.rx.test(msg)) continue;
+      let mp = _meSkillCds.get(cl);
+      if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
+      mp.set(s.key, { label: s.label, at: now, secs: s.secs });
+      return;
+    }
+  }
+  const disc = _ME_DISCS.get(msg);
+  if (disc) { _meNoteDisc(cl, disc, now); return; }
+  if (msg.endsWith(' has become ENRAGED.')) {
+    _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
+  } else if (msg.endsWith(' is no longer enraged.')) {
+    _meEnraged.delete(msg.slice(0, -' is no longer enraged.'.length).toLowerCase());
+  }
+}
+
+// HP % for a name the HUD needs (the target's target): self, a groupmate's
+// gauge, then the cross-client resolver the Tank overlay uses.
+function _meHpPctFor(nameLower, active, st) {
+  if (!nameLower) return null;
+  if (nameLower === String(active).toLowerCase()) return st.self_hp_pct ?? null;
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot >= 11 && x.slot <= 15 && x.text && String(x.text).toLowerCase() === nameLower) : null;
+  if (g && g.hp_pct != null) return g.hp_pct;
+  const v = _resolveHpValuesForName(nameLower, active, st);
+  return v && v.max ? Math.max(0, Math.min(100, v.cur * 100 / v.max)) : null;
+}
+// What the HUD shows about the target beyond its HP: who it is hitting (and
+// their HP), is it slowed, can it enrage, is it enraged now. Special
+// abilities come from the same cached mob-info row Target Info uses — looked
+// up here too, so the HUD works with Target Info closed.
+function _meTargetExtras(st, active, now) {
+  if (!st.target_name) return null;
+  const tl = String(st.target_name).toLowerCase();
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  let specials = null;
+  try {
+    const cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId));
+    if (!cached || (now - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, active, zoneId);
+    if (cached && cached.mob && Array.isArray(cached.mob.specials)) specials = cached.mob.specials;
+  } catch { void 0; }
+  let tot = null;
+  const pipeTot = _pipeCandidateOf(st, 'target_of_target');
+  const totName = pipeTot ? pipeTot.name : _victimForMob(tl, now);
+  if (totName) tot = { name: totName, hp_pct: _meHpPctFor(String(totName).toLowerCase(), active, st), source: pipeTot ? 'zeal' : 'log' };
+  const slow = _bestSlowForTarget(tl, now);
+  const until = _meEnraged.get(tl);
+  if (until && until <= now) _meEnraged.delete(tl);
+  return {
+    tot,
+    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
+    enrage: specials ? specials.includes('Enrage') : null,
+    unslowable: specials ? specials.includes('Unslowable') : null,
+    enraged: !!(until && until > now),
+  };
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -12605,18 +12911,40 @@ function _serializeMeState() {
   const combatSince = (fight && et && et.startedAt) ? Date.parse(et.startedAt) : now - 30_000;
   const combat = _meCombatSince(cl, combatSince, now);
   combat.live = !!fight;
+  // HUD: swing timer, and which hand each of your melee hits came from when
+  // the two hands swing with different verbs.
+  const swing = _meSwingState(cl, st, now);
+  if (swing && swing.hands) {
+    for (const f of combat.feed) {
+      if (f.dir !== 'out' || f.kind !== 'melee' || !f.name) continue;
+      const v = _meVerbBase(f.name);
+      f.hand = v === swing.hands.mh ? 'MH' : (v === swing.hands.oh ? 'OH' : null);
+    }
+  }
+  const cooldowns = _meCooldowns(cl, now);
+  const disc = _meDisc(cl, now);
+  if (disc) cooldowns.push(disc);
+  const tx = _meTargetExtras(st, active, now);
   return {
     ok: true,
     character: active,
     generated_at: now,
     level, class: cls,
+    // Warriors, rogues and monks have no mana at all (the guild lead, 2026-09-24:
+    // "don't expose that for them"); a class we cannot read falls back to an
+    // empty pool.
+    no_mana: cls ? _NO_MANA_CLASSES.test(cls) : (manaMax === 0),
     hp: { cur: st.self_hp_cur ?? null, max: st.self_hp_max ?? null, pct: st.self_hp_pct ?? null },
     mana: { cur: manaCur, max: manaMax, pct: manaPct },
+    tick: _meTick(st, now),
+    swing,
+    autoattack: !!st.autoattack,
+    cooldowns,
     end: { pct: endG ? endG.pct : _meNum(_meLabel(st, 21)) },
     xp: { pct: xpPct, per_hr: _meRate(cl + '|xp', (level != null && xpPct != null) ? level * 100 + xpPct : null, now) },
     aa: { pct: aaPct, banked: aaBanked, per_hr: _meRate(cl + '|aa', (aaPct != null) ? (aaBanked || 0) * 100 + aaPct : null, now) },
     weight: { cur: _meNum(_meLabel(st, 24)), max: _meNum(_meLabel(st, 25)) },
-    target: st.target_name ? { name: st.target_name, hp_pct: st.target_hp_pct ?? (tgtG ? tgtG.pct : null), id: st.target_id ?? null } : null,
+    target: st.target_name ? { name: st.target_name, hp_pct: st.target_hp_pct ?? (tgtG ? tgtG.pct : null), id: st.target_id ?? null, ...(tx || {}) } : null,
     pet: petG && petG.text ? { name: petG.text, hp_pct: petG.pct } : null,
     casting,
     gems,
@@ -40640,6 +40968,10 @@ async function main() {
         // the "You were hit by non-melee" line after it can be coloured. RAW
         // line, for the same reason as above — landing texts match no keep.
         try { _meNoteSelfLanding(line, b.character); } catch { void 0; }
+        // Me HUD timers: your swings (swing timer), combat abilities, Mend,
+        // Taunt, discipline activations, and enrage start/end. Raw line for
+        // the same reason — misses and disc texts match no keep pattern.
+        try { _meNoteRawLine(line, b.character); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
