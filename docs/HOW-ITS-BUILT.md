@@ -2782,8 +2782,13 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   left from catalog `mana`, class focus: CH / Mez (catalog `mez`) / Charm
   (`CHARM_SPELLS`) left + long-recast timers from `_meNoteSelfCast`, group
   gauges 11-15, DPS this fight + tonight via `_meNoteFight`).
-  `apps/mimic/me.html` draws it as A Classic / B Glance / C Role, picked in
+  `apps/mimic/me.html` draws it as A Classic / B HUD / C Role, picked in
   its title bar. Forced open by Blind Mode. Tests: `test/me-overlay.test.js`.
+  B's damage in/out (agent 3.7.3): `_meNoteHit` on the live tail, element
+  from catalog `rt` (bot 3.1.146) or, for an unnamed hit on you, the landing
+  text just before it (`_meNoteSelfLanding`); `_meCombatSince` → `combat`;
+  resists from labels 12-16. The HUD sizes its own window through the new
+  `overlay-set-bounds` IPC (`window.mimic.overlaySetBounds`).
 - **Blind Mode, catalog-driven (agent 3.7.2)** — `_blindCatalogTexts` reads
   SPA-20 landing/fade text from the catalog (`blind` flag, bot 3.1.145),
   excluding texts a non-blind spell shares; `/api/state.blind.active` looked

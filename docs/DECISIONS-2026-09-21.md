@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
-| **Me overlay: A, B or C** | **On beta, agent 3.7.2 (§11).** Three layouts of one overlay, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
+| **Me overlay: A, B or C** | **On beta, agent 3.7.3 (§11).** A Classic · B HUD around the screen centre (damage in/out by element, resists) · C Role, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
 | **Mob mana: drains and taps** | **Scoped 2026-09-24 (§11), not built.** Own drains exact; others' timed drains via the bystander index; instant drains/procs only where the text is unique | say go; needs a `drain` catalog field + formula check first |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
@@ -549,10 +549,19 @@ with the A/B/C switch in its title bar (remembered per machine):
   column on the right, XP/hr and AA/hr, spell bar with casts left, group, DPS.
   Build S · maintenance M (the most fields to keep true) · runtime: the largest
   DOM of the three, still a 500ms local poll · change M.
-- **B · Glance** — a thin strip: HP/mana, cast, target, and chips only for what
-  needs you (class number, the lowest groupmate under 60%, fight DPS). Build S ·
-  maintenance S · runtime smallest · change S — but it hides things by design,
-  so what it drops is a judgement call.
+- **B · HUD** (replaced "Glance" the same night — the guild lead: *"one of those
+  me overlays should be a HUD style that goes around the players center of
+  their screen … as well as damage in/out shown clearly. resists and cast
+  damage too with elements associated with it"*; agent 3.7.3, element = catalog
+  resist type, bot 3.1.146). HP/endurance and mana/cast as arcs either side of
+  the character, target + cast above, damage OUT | IN below with per-element
+  chips and a hit feed, resists left, class numbers right. The window grows to
+  a centred rectangle when B is picked. ⚠ Screen centre is sacred in the
+  overlay rules, so the ring is HOLLOW (a test pins it) — that is the
+  compromise with the ask, and the thing to judge in game. Build M ·
+  maintenance M (geometry is JS, so it moves when content changes) · runtime:
+  one SVG repainted per poll · change M. An incoming unnamed spell's element
+  comes from the landing text just before it, only when unambiguous.
 - **C · Role** — the class's numbers first, large (CH left, Mez/Charm left,
   ToT/Harvest countdowns), then vitals, group, DPS. Build S · maintenance M (a
   new class focus means agent + overlay) · runtime small · change M.
