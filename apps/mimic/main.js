@@ -129,6 +129,7 @@ let tankWindow    = null;
 let extTargetWindow = null;
 let commandWindow = null;
 let popRaidWindow = null;
+let meWindow = null;
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -298,6 +299,15 @@ function loadConfig() {
     }
     if (!Array.isArray(raw.eqPathsExcluded)) {
       raw.eqPathsExcluded = [];
+    }
+    // The HUD ring left the dock (the guild lead, 2026-09-24: "HUD doesn't make
+    // sense to dock"). Docking had switched its own window off, so a HUD
+    // that was docked gets its window back, as undocking it would have.
+    if (Array.isArray(raw.dockedOverlays) && raw.dockedOverlays.some(k => /^me(\.html)?$/i.test(String(k)))) {
+      raw.dockedOverlays = raw.dockedOverlays.filter(k => !/^me(\.html)?$/i.test(String(k)));
+      const prev = raw.dockedPrev && typeof raw.dockedPrev === 'object' ? raw.dockedPrev : {};
+      raw.showMe = prev.me !== undefined ? !!prev.me : true;
+      delete prev.me;
     }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
@@ -1162,6 +1172,7 @@ function _boundsKeyForWindow(win) {
   if (win === extTargetWindow) return 'extTargetBounds';
   if (win === commandWindow) return 'commandBounds';
   if (win === popRaidWindow) return 'popRaidBounds';
+  if (win === meWindow) return 'meBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -2253,7 +2264,9 @@ function startZealCapture() {
 let _blindActive   = false;
 let _blindSource   = null;
 let _blindStartMs  = 0;
-const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers'];
+// 'me' (2026-09-24): blind removes the game UI — HP, mana, target, casting
+// all go dark — and the Me overlay is exactly that UI, so it comes up too.
+const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers', 'me'];
 function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
 function _pollBlindState() {
   // Idle gate (2026-07-07 review): blind auto-pop only matters in game — no
@@ -2285,19 +2298,22 @@ function _pollBlindState() {
         if (!charmWindow)   createCharmOverlay();
         if (!petsWindow)    createPetsOverlay();
         if (!triggerWindow) createTriggerOverlay();
+        if (!meWindow)      createMeOverlay();
         applyMobInfoVisibility();
         applyCharmVisibility();
         applyPetsVisibility();
         applyTriggerVisibility();
+        applyMeVisibility();
       } else if (!nowOn && _blindActive) {
         _blindActive = false;
         appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
         _blindSource = null;
-        // Restore the user's normal visibility prefs for the four overlays.
+        // Restore the user's normal visibility prefs for the forced overlays.
         applyMobInfoVisibility();
         applyCharmVisibility();
         applyPetsVisibility();
         applyTriggerVisibility();
+        applyMeVisibility();
       }
     });
   });
@@ -2423,6 +2439,7 @@ const _CLASS_SET_WINDOWS = [
   ['showExtTarget',    () => extTargetWindow, createExtTargetOverlay],
   ['showCommand',      () => commandWindow,   createCommandOverlay],
   ['showPopRaid',      () => popRaidWindow,   createPopRaidOverlay],
+  ['showMe',           () => meWindow,        createMeOverlay],
 ];
 // toggle-overlay key (what /admin/overlays stores) → cfg flag.
 const _CLASS_SET_FLAG_BY_KEY = {
@@ -2430,6 +2447,7 @@ const _CLASS_SET_FLAG_BY_KEY = {
   mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody',
   zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank',
   exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid',
+  me: 'showMe',
 };
 function _maybeSeedClassSet(s) {
   const sets = s && s.classOverlaySets;
@@ -3045,7 +3063,7 @@ function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid'];
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
   const missing = KNOWN.filter(k => !present.has(k));
   // Re-evaluate every show/hide gate BEFORE arranging so anything that should
   // be visible on the home display participates in the packing.
@@ -3115,6 +3133,7 @@ function _overlayEntries() {
   if (extTargetWindow && !extTargetWindow.isDestroyed()) out.push(['exttarget', extTargetWindow]);
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
+  if (meWindow && !meWindow.isDestroyed()) out.push(['me', meWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -3132,13 +3151,39 @@ function _overlayEntries() {
 // card surface that hides EQ behind it; text stays at full brightness at
 // every slider position so even very transparent cards stay readable.
 // setOpacity is held at 1.0 always (no compound dim).
+//
+// 2.7.1 split it in two (the guild lead, 2026-09-24: "Currently opacity only
+// works on backgrounds, not on the actual content" · "The Opacity slider at
+// the top of the Setup this overlay doesn't work at all" — on an overlay with
+// no card behind it, like the HUD ring, a background-only slider has nothing
+// to change):
+//   cfg.overlayOpacity[k] — OPACITY: the whole overlay, content and
+//     background, faded in the renderer (preload's --wp-content-alpha), never
+//     its setup bar, menu or corner buttons. The setup-bar slider and the
+//     dashboard's "Opacity — all overlays" set it.
+//   cfg.overlayBgAlpha[k] — BACKGROUND opacity, the 1.2 meaning above (the
+//     card surface, 100% = opaque). Its slider sits with the backgrounds button.
+// Every value saved before the split was a background value, so it moves
+// across once and opacity starts at 100% — nobody's overlays change on update.
+function _opacityMaps(cfg) {
+  if (!cfg.opacitySplit) {
+    cfg.overlayBgAlpha = Object.assign({}, cfg.overlayBgAlpha || {}, cfg.overlayOpacity || {});
+    cfg.overlayOpacity = {};
+    cfg.opacitySplit = 1;
+    saveConfig(cfg);
+  }
+  const ok = (v) => typeof v === 'number' && v >= 0.15 && v <= 1.0;
+  return {
+    content: (k) => { const v = (cfg.overlayOpacity || {})[k]; return ok(v) ? v : 1.0; },
+    bg:      (k) => { const v = (cfg.overlayBgAlpha || {})[k]; return ok(v) ? v : 1.0; },
+  };
+}
 function applyOverlayOpacity(win, key) {
   if (!win || win.isDestroyed()) return;
-  const cfg = loadConfig();
-  const o = (cfg.overlayOpacity || {})[key];
-  const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
+  const m = _opacityMaps(loadConfig());
   try { win.setOpacity(1.0); } catch {}
-  try { win.webContents.send('bg-alpha', val); } catch {}
+  try { win.webContents.send('bg-alpha', m.bg(key)); } catch {}
+  try { win.webContents.send('content-alpha', m.content(key)); } catch {}
   // Scale rides the same lifecycle (every window's ready-to-show + every
   // change broadcast), so ONE hook covers all overlays incl. future ones.
   applyOverlayScale(win, key);
@@ -4906,6 +4951,40 @@ function applyPopRaidVisibility() {
   if (shouldShow) popRaidWindow.showInactive(); else popRaidWindow.hide();
 }
 
+// Me — the active character's own panel: vitals, XP, casting, target, class
+// focus (CHs / mezzes left, ToT / Harvest timers), group, DPS (the guild lead,
+// 2026-09-24). Three layouts in one file, picked in the overlay. Reads
+// /api/me. Opt-in, and forced open while blind (_BLIND_FORCED_KEYS).
+function createMeOverlay() {
+  const b = _resolveBounds('meBounds', 'meBoundsSig', { x: 40, y: 620, width: 330, height: 300 });
+  meWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — HUD overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: 220, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Me'),
+  });
+  meWindow.setAlwaysOnTop(true, 'screen-saver');
+  meWindow.setVisibleOnAllWorkspaces(true);
+  meWindow.loadFile('me.html');
+  meWindow.on('moved',  () => _persistBounds('meBounds', meWindow));
+  meWindow.on('resize', () => _persistBounds('meBounds', meWindow));
+  meWindow.once('ready-to-show', () => {
+    meWindow.webContents.send('agent-port', agentPort);
+    applyMeVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(meWindow, 'me');
+  });
+}
+function applyMeVisibility() {
+  if (!meWindow) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || _blindForceOpen('me') || (cfg.showMe && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) meWindow.showInactive(); else meWindow.hide();
+}
+
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
@@ -5370,6 +5449,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'exttarget', flag: 'showExtTarget',    get: () => extTargetWindow, create: createExtTargetOverlay,    drop: () => { extTargetWindow = null; } },
   { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
+  { key: 'me',        flag: 'showMe',           get: () => meWindow,        create: createMeOverlay,           drop: () => { meWindow = null; } },
 ];
 
 // ── The Dock ────────────────────────────────────────────────────────────────
@@ -5408,6 +5488,9 @@ const _DOCK_CATALOG = [
   { key: 'command',   label: 'Command Center', file: 'command.html',      flag: 'showCommand',
     agentPath: '/overlay/command' },
 ];
+// ⚠ The HUD ring (me.html) is absent too (the guild lead, 2026-09-24: "HUD doesn't
+// make sense to dock"): it is a square centred on the character, sized to the
+// ring — a grid cell can hold neither. loadConfig gives a docked one its window back.
 // ⚠ The TRIGGER overlay is deliberately absent. #97 has it fire TTS from a
 // HIDDEN window, and its flag (enableTriggerTts) means "make sound", not "be
 // visible" — docking it would tie the callouts to a pane's existence. It is
@@ -5575,6 +5658,7 @@ function applyAllVisibility() {
   applyExtTargetVisibility();
   applyCommandVisibility();
   applyPopRaidVisibility();
+  applyMeVisibility();
   _reapDisabledOverlays();
 }
 
@@ -5629,6 +5713,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
+  'showMe',
 ];
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
@@ -5710,6 +5795,76 @@ let _registeredDamageAccel = null;
 // (H hide, B backdrop, D damage alert, M mini). Override with cfg.miniHotkey.
 const _DEFAULT_MINI_HOTKEY = 'CommandOrControl+Shift+M';
 let _registeredMiniAccel = null;
+// ⌨ Per-overlay hotkeys (the guild lead, 2026-09-24: "Each overlay should get its
+// own hotkey config as well. so if i want to pull one up i can do it without
+// much effort"). cfg.overlayHotkeys = { <toggle-overlay key>: accelerator },
+// set from the dashboard's Overlays tab. A press runs the SAME _toggleOverlay
+// the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
+// key away from EverQuest, so nobody gets one they did not ask for.
+const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
+let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
+let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
+function _registerOverlayHotkeys(globalShortcut, cfg) {
+  for (const a of Object.values(_registeredOverlayAccels)) { try { globalShortcut.unregister(a); } catch {} }
+  _registeredOverlayAccels = {};
+  _blockedOverlayAccels = {};
+  const map = (cfg && cfg.overlayHotkeys && typeof cfg.overlayHotkeys === 'object') ? cfg.overlayHotkeys : {};
+  for (const key of _OVERLAY_HOTKEY_KEYS) {
+    const accel = typeof map[key] === 'string' ? map[key].trim() : '';
+    if (!accel) continue;
+    let ok = false;
+    try { ok = globalShortcut.register(accel, () => { try { _toggleOverlay(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
+    catch { ok = false; }   // a malformed accelerator throws rather than returning false
+    if (ok) _registeredOverlayAccels[key] = accel;
+    else {
+      _blockedOverlayAccels[key] = accel;
+      appendAgentLog(`[mimic] failed to register the ${key} overlay hotkey "${accel}" (in use by another app or another Mimic hotkey?)\n`);
+    }
+  }
+}
+// ⌨ Setting a key that is already in use (the guild lead, 2026-09-24: "When
+// setting hotkeys it should tell you when you're trying to use one that's
+// currently in use rather than doing nothing"). A key held as a GLOBAL shortcut
+// never reaches the focused window — Windows hands it to its owner — so
+// pressing Ctrl+Shift+H in the dashboard to reuse it fired hide-all and the
+// capture saw nothing at all. While the dashboard captures, Mimic lets go of
+// every key it holds, so its own keys arrive and the dashboard can name the
+// clash (_mimicHotkeyUses). A key another PROGRAM holds still never arrives;
+// the dashboard says so when the modifiers come and go with no key between.
+// Resumes on its own after 30 s, so a dashboard closed mid-capture cannot
+// leave every hotkey off.
+let _hotkeysSuspended = false, _hotkeysResumeTimer = null;
+let _blockedHotkeys = {};            // family cfg key → accelerator the OS refused
+function _mimicHotkeyUses(cfg) {
+  const c = cfg || {};
+  const own = (k, def) => (typeof c[k] === 'string' && c[k].trim()) ? c[k].trim() : def;
+  const uses = [];
+  if (c.hideAllHotkeyEnabled !== false)     uses.push({ id: 'hideAllHotkey', accel: own('hideAllHotkey', _DEFAULT_HIDE_HOTKEY) });
+  if (c.backdropHotkeyEnabled !== false)    uses.push({ id: 'backdropHotkey', accel: own('backdropHotkey', _DEFAULT_BACKDROP_HOTKEY) });
+  if (c.damageAlertHotkeyEnabled !== false) uses.push({ id: 'damageAlertHotkey', accel: own('damageAlertHotkey', _DEFAULT_DAMAGE_HOTKEY) });
+  if (c.miniHotkeyEnabled !== false)        uses.push({ id: 'miniHotkey', accel: own('miniHotkey', _DEFAULT_MINI_HOTKEY) });
+  const map = (c.overlayHotkeys && typeof c.overlayHotkeys === 'object') ? c.overlayHotkeys : {};
+  for (const key of _OVERLAY_HOTKEY_KEYS) {
+    if (typeof map[key] === 'string' && map[key].trim()) uses.push({ id: 'overlay:' + key, accel: map[key].trim() });
+  }
+  return uses;
+}
+function _setHotkeysSuspended(on) {
+  if (_hotkeysResumeTimer) { clearTimeout(_hotkeysResumeTimer); _hotkeysResumeTimer = null; }
+  if (on) {
+    _hotkeysSuspended = true;
+    try { require('electron').globalShortcut.unregisterAll(); } catch {}
+    _hotkeysResumeTimer = setTimeout(() => _setHotkeysSuspended(false), 30_000);
+  } else if (_hotkeysSuspended) {
+    _hotkeysSuspended = false;
+    registerHideAllHotkey();
+  }
+}
+ipcMain.handle('hotkey-capture', (_e, on) => {
+  _setHotkeysSuspended(!!on);
+  return on ? _mimicHotkeyUses(loadConfig()) : true;
+});
 function _damageAlertAccelerator() {
   const cfg = loadConfig();
   return (cfg && typeof cfg.damageAlertHotkey === 'string' && cfg.damageAlertHotkey.trim())
@@ -5761,6 +5916,10 @@ function _applyDamageAlert(next, announce) {
 function toggleDamageAlert() { _applyDamageAlert(!loadConfig().damageAlert, true); }
 
 function registerHideAllHotkey() {
+  // The dashboard is capturing a key: hold nothing until it is done
+  // (_setHotkeysSuspended re-runs this on resume).
+  if (_hotkeysSuspended) return;
+  _blockedHotkeys = {};
   try {
     const { globalShortcut } = require('electron');
     // Restore persisted hide state so the toggle is correct across restarts.
@@ -5774,7 +5933,7 @@ function registerHideAllHotkey() {
     if (accel && cfg.hideAllHotkeyEnabled !== false) {
       const ok = globalShortcut.register(accel, toggleHideAllOverlays);
       if (ok) _registeredHideAccel = accel;
-      else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.hideAllHotkey = accel; appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`); }
     }
     // Backdrop hotkey — flips the solid background on/off for ALL overlays at
     // once (per-overlay control lives in the right-click chrome menu).
@@ -5784,7 +5943,7 @@ function registerHideAllHotkey() {
     if (bAccel && cfg.backdropHotkeyEnabled !== false) {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
-      else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.backdropHotkey = bAccel; appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`); }
     }
     // 💥 Damage-taken alert hotkey — same shape as the two above: configurable
     // accelerator (cfg.damageAlertHotkey), per-hotkey kill switch, and a log
@@ -5794,7 +5953,7 @@ function registerHideAllHotkey() {
     if (dAccel && cfg.damageAlertHotkeyEnabled !== false) {
       const ok3 = globalShortcut.register(dAccel, toggleDamageAlert);
       if (ok3) _registeredDamageAccel = dAccel;
-      else appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.damageAlertHotkey = dAccel; appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`); }
     }
     // ▭ Minimize-all hotkey. Same shape again; the persisted latch is restored
     // first so a restart taken while everything was mini still knows which way
@@ -5806,8 +5965,10 @@ function registerHideAllHotkey() {
     if (mAccel && cfg.miniHotkeyEnabled !== false) {
       const ok4 = globalShortcut.register(mAccel, toggleMinimizeAllOverlays);
       if (ok4) _registeredMiniAccel = mAccel;
-      else appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.miniHotkey = mAccel; appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`); }
     }
+    // ⌨ One per overlay, registered last so the four above keep their keys.
+    _registerOverlayHotkeys(globalShortcut, cfg);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -5894,6 +6055,18 @@ function currentStatus() {
   _healMootHideAll(cfg);
   return {
     agentPort,
+    // Overlay hotkeys the OS refused (key → accelerator), so the dashboard can
+    // say "taken by another app" instead of showing a key that does nothing.
+    overlayHotkeysBlocked: Object.assign({}, _blockedOverlayAccels),
+    // …and the same for the four all-overlay keys (hide-all, backgrounds,
+    // damage alert, minimize-all), by their cfg key.
+    hotkeysBlocked: Object.assign({}, _blockedHotkeys),
+    // ▭ Mini mode for the dashboard's Overlays table: which overlays have a
+    // mini, which are mini now, which are pinned mini (📌), and the Ctrl+Shift+M latch.
+    miniCapable: _MINI_KEYS.slice(),
+    overlayMini: Object.assign({}, (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {}),
+    overlayMiniPinned: Object.assign({}, (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {}),
+    miniAllActive: !!_miniAllActive,
     agentRunning: !!agentProc,
     localOnly,
     quietMode: !!cfg.quietMode,
@@ -5919,6 +6092,7 @@ function currentStatus() {
     showExtTarget: !!cfg.showExtTarget,
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
+    showMe: !!cfg.showMe,
     // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
     // to any renderer that wants to show the state). Default off.
     damageAlert: !!cfg.damageAlert,
@@ -6209,6 +6383,11 @@ function buildTrayMenu() {
     { label: 'PoP raids (encounter slideshow)', type: 'checkbox', checked: s.showPopRaid, enabled: !s.hideOverlays && !_dockedNow.includes('popraid'), click: (mi) => {
         const cfg = loadConfig(); cfg.showPopRaid = mi.checked; saveConfig(cfg);
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { label: 'HUD (your HP, mana, timers, cooldowns, target)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
+        if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { type: 'separator' },
@@ -6852,6 +7031,33 @@ ipcMain.handle('overlay-drag-start', (e) => {
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
 
+// An overlay sizes and places its OWN window (2026-09-24): the Me overlay's
+// HUD layout wraps the centre of the screen, so it needs a large window
+// centred on its display, and switching back to a card restores the card's
+// bounds. Always clamped inside the window's display work area.
+ipcMain.handle('overlay-set-bounds', (e, b) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed() || !b) return false;
+    const wa = screen.getDisplayMatching(win.getBounds()).workArea;
+    const width  = Math.max(200, Math.min(wa.width,  Math.round(+b.width  || 0)));
+    const height = Math.max(90,  Math.min(wa.height, Math.round(+b.height || 0)));
+    let x, y;
+    if (b.center) {
+      x = wa.x + Math.round((wa.width - width) / 2);
+      y = wa.y + Math.round((wa.height - height) / 2);
+    } else {
+      const cur = win.getBounds();
+      x = Number.isFinite(+b.x) ? Math.round(+b.x) : cur.x;
+      y = Number.isFinite(+b.y) ? Math.round(+b.y) : cur.y;
+    }
+    x = Math.max(wa.x, Math.min(x, wa.x + wa.width - width));
+    y = Math.max(wa.y, Math.min(y, wa.y + wa.height - height));
+    win.setBounds({ x, y, width, height });
+    return true;
+  } catch { return false; }
+});
+
 // Auto-fit the overlay window to its rendered content height. The renderer
 // passes the natural content height (scrollHeight of #wrap) — we add a small
 // chrome margin, clamp to the work-area height, and apply only when the
@@ -7089,7 +7295,10 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const widths = { xs: 200, sm: 260, md: 320, lg: 400, xl: 500 };
+    // L is 420, not 400: at 400 the DPS HUD's title row (−/+, DPS, Tank,
+    // History) ran under the ✕ (a member, 2026-09-24: "the large 400px preset
+    // cuts off a bit on the dps window. and the xl is just a bit too wide").
+    const widths = { xs: 200, sm: 260, md: 320, lg: 420, xl: 500 };
     const w = widths[String(preset || '').toLowerCase()];
     if (!w) return false;
     const b = win.getBounds();
@@ -7185,7 +7394,10 @@ ipcMain.handle('dock-overlay', (_e, name) => {
   return { ok: true, docked: !docked };
 });
 
-ipcMain.handle('toggle-overlay', (_e, name) => {
+ipcMain.handle('toggle-overlay', (_e, name) => _toggleOverlay(name));
+// Every way to flip one overlay by name lands here: the dashboard's ON/OFF
+// button and that overlay's own hotkey (cfg.overlayHotkeys).
+function _toggleOverlay(name) {
   const cfg = loadConfig();
   switch (name) {
     case 'hud':
@@ -7250,6 +7462,10 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
       cfg.showPopRaid = !cfg.showPopRaid; saveConfig(cfg);
       if (cfg.showPopRaid && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility();
       break;
+    case 'me':
+      cfg.showMe = !cfg.showMe; saveConfig(cfg);
+      if (cfg.showMe && !meWindow) createMeOverlay(); else applyMeVisibility();
+      break;
     case 'dock':
       // The Dock itself (the guild lead, 2026-08-19: "Dock isn't available from the
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
@@ -7269,7 +7485,7 @@ ipcMain.handle('toggle-overlay', (_e, name) => {
   setImmediate(() => { try { _reapDisabledOverlays(); } catch { /* never break the toggle */ } });
   pushStatus();
   return currentStatus();
-});
+}
 
 // ── Overlay chrome-menu IPC (auto-arrange / backdrop / menu state) ───────────
 ipcMain.handle('auto-arrange-overlays', () => {
@@ -7312,22 +7528,28 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // renderer-side as a body-level CSS filter (see preload _WP_THEME_CSS). The
 // chrome-menu item cycles through the list; new windows pick the theme up
 // from their wp-overlay-menu-state pull at load.
-const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+// The last three are the colour-blind themes (colour matrices, not shorthands).
+const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 'protan', 'tritan'];
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid'];
-ipcMain.handle('wp-opacity-all', (_e, v) => {
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me'];
+// `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
+// background) — see applyOverlayOpacity for the split.
+function _setOpacityAll(field, v) {
   const val = Math.max(0.15, Math.min(1, +v || 1));
   const cfg = loadConfig();
-  const map = (cfg.overlayOpacity && typeof cfg.overlayOpacity === 'object') ? cfg.overlayOpacity : {};
+  _opacityMaps(cfg);
+  const map = (cfg[field] && typeof cfg[field] === 'object') ? cfg[field] : {};
   for (const k of _ALL_OVERLAY_KEYS) map[k] = val;
   for (const [k] of _overlayEntries()) map[k] = val;   // panels + anything new
-  cfg.overlayOpacity = map;
+  cfg[field] = map;
   saveConfig(cfg);
   applyAllOverlayOpacities();
   return val;
-});
+}
+ipcMain.handle('wp-opacity-all', (_e, v) => _setOpacityAll('overlayOpacity', v));
+ipcMain.handle('wp-bg-alpha-all', (_e, v) => _setOpacityAll('overlayBgAlpha', v));
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
 // All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
 ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
@@ -7440,6 +7662,18 @@ ipcMain.handle('wp-mini-state', (e) => {
 ipcMain.handle('wp-mini-set', (_e, name, on) => {
   if (!_MINI_KEYS.includes(name)) return null;
   return _setOverlayMini(name, !!on);
+});
+// …and its 📌, named for the same reason (the right-click menu's pin toggle
+// is sender-derived). One writer for the pin map either way.
+ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
+  if (!_MINI_KEYS.includes(name)) return null;
+  const cfg = loadConfig();
+  const map = (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {};
+  map[name] = !!on;
+  cfg.overlayMiniPinned = map;
+  saveConfig(cfg);
+  pushStatus();
+  return !!map[name];
 });
 ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return true; } catch { return false; } });
 
@@ -7720,6 +7954,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === popRaidWindow) {
       cfg.showPopRaid = false; saveConfig(cfg);
       try { popRaidWindow.hide(); } catch {}
+    } else if (win === meWindow) {
+      cfg.showMe = false; saveConfig(cfg);
+      try { meWindow.hide(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -8146,7 +8383,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
   const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
-    'damageAlertHotkey', 'damageAlertHotkeyEnabled'];
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
@@ -8180,8 +8417,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showExtTarget    && !extTargetWindow) createExtTargetOverlay();
     if (merged.showCommand      && !commandWindow)   createCommandOverlay();
     if (merged.showPopRaid      && !popRaidWindow)   createPopRaidOverlay();
+    if (merged.showMe           && !meWindow)        createMeOverlay();
   } catch (e) { void e; }
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -8379,6 +8617,7 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
   if (typeof key !== 'string' || typeof value !== 'number') return false;
   value = Math.max(0.15, Math.min(1.0, value));
   const cfg = loadConfig();
+  _opacityMaps(cfg);   // a first save must not be mistaken for a pre-split background value
   cfg.overlayOpacity = cfg.overlayOpacity || {};
   cfg.overlayOpacity[key] = value;
   saveConfig(cfg);
@@ -9291,7 +9530,7 @@ function _windowLabelsByPid() {
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
     who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-    command: 'Command center', popraid: 'PoP raids',
+    command: 'Command center', popraid: 'PoP raids', me: 'HUD',
   };
   for (const e of _OVERLAY_WINDOWS) {
     // Flag the ones that are alive despite being switched off — that pairing is

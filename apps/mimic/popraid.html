@@ -78,6 +78,15 @@
   .lnk:hover{background:rgba(88,166,255,0.22)}
   .lnk.vid{border-color:rgba(248,113,113,0.4);background:rgba(248,113,113,0.10);color:#fca5a5}
   .lnk.vid:hover{background:rgba(248,113,113,0.2)}
+  /* ▭ Mini — "Checklist rows", the guild vote (closed 2026-09-17): one title
+     line and the shared objective rows, nothing else. Only mini emits
+     .mini-ttl. Gutters left and right so the fixed ✥/✕ never sit on the text
+     or on ↗ (the ✕-on-a-link hazard the 30px .navbtns gutter exists for). */
+  .mini-ttl{display:flex;align-items:baseline;gap:5px;padding:0 24px 2px 22px;font-size:9px;color:#c4b5fd;
+    letter-spacing:0.06em;text-transform:uppercase;text-shadow:0 1px 2px #000}
+  .mini-ttl .mini-go{margin-left:auto;border-color:transparent;background:transparent;padding:0 4px;
+    font-size:11px;letter-spacing:0;line-height:1.2}
+  .mini-ttl .mini-go:hover{background:rgba(88,166,255,0.22)}
   .diagrams{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
   .dg{cursor:pointer;border:1px solid rgba(163,113,247,0.35);border-radius:4px;
     max-width:100%;overflow:hidden;background:rgba(0,0,0,0.35)}
@@ -149,7 +158,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title">
+    <div class="title wp-mini-hide">
       <span id="conn" class="conn bad" title="agent connection">○</span>
       <span>⚔ PoP raids</span>
       <div class="navbtns">
@@ -460,6 +469,28 @@
     }
   }
 
+  // ── ▭ Mini — "Checklist rows" (the guild vote, closed 2026-09-17) ─────────
+  // The raid-wide checkboxes and nothing else: no slide, notes, loot or picker.
+  // It draws the slide the full overlay is on (idx), so the encounter follows
+  // full mode both ways. The rows are renderTracker's own, inside the same
+  // #content, so a click takes the same delegated path that checks it for the
+  // whole raid; ↗ is a .lnk carrying the same URL the full slide's guide link
+  // does, so it opens through the same handler. Both classes are already in
+  // _IA_SEL, which gives them the hover-interact handshake.
+  function popMiniHtml(slide){
+    var sec = slide.sec, enc = slide.enc;
+    // "Rallos Zek the Warlord (event, 4 phases)" → "Rallos Zek the Warlord":
+    // the parenthetical is slide detail, and the line ellipsizes past that.
+    var short = String(enc ? enc.name : sec.title).replace(/\s*\([^)]*\)\s*$/, '');
+    var url = (enc && enc.guide) || sec.guide || '';
+    return '<div class="mini-ttl"><span class="wp-mini-name">PoP · ' + esc(short) + '</span>'
+      +   (url ? '<span class="lnk mini-go" data-url="' + esc(url) + '" title="Open the guide page">↗</span>' : '')
+      + '</div>'
+      + ((enc && enc.tracker && enc.tracker.length)
+          ? '<div id="trackerBody"></div>'
+          : '<div class="empty">no shared checklist on this slide</div>');
+  }
+
   // ── Slide renderer ──────────────────────────────────────────────────────────
   function renderSlide(){
     var s = SLIDES[idx]; if (!s) return;
@@ -467,6 +498,14 @@
     _lootLoadedFor = null;
     try { if (enc) localStorage.setItem('wp:pop:enc', enc.id); } catch (e) {}
     encPick.value = enc ? enc.id : ('sec:' + sec.id);
+
+    if (document.body.classList.contains('wp-mini')) {
+      document.getElementById('content').innerHTML = popMiniHtml(s);
+      renderTracker();
+      pollObjectives();
+      _fit();
+      return;
+    }
 
     var html = '';
     // Header
@@ -596,6 +635,9 @@
 
   applyFramed();
   renderSlide();
+  // Mini flipped: redraw the same slide in the other rendition; renderSlide
+  // ends in _fit(), so the window re-measures after the new content is in.
+  window.addEventListener('wp-mini-change', renderSlide);
   setInterval(pollObjectives, 3000);
 </script>
 </body>

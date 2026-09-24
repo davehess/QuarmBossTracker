@@ -66,6 +66,34 @@
     cursor:pointer;padding:0;opacity:0.35;transition:opacity .12s;font-family:inherit}
   .pet .dismiss:hover{opacity:1;color:#f87171;border-color:#f87171;background:rgba(40,10,10,0.7)}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
+  /* ▭ Mini — the guild vote (closed 2026-09-17) picked option B, "Haste as a
+     second bar". Built by petMiniHtml(): line one HP%, the 4px bar, name →
+     target; line two the haste buff draining. Its colour is the state — green
+     running, amber in the last 10s, purple once it fell off (the full view's
+     rebuff colour), grey when present but untimed, dim when no haste is seen.
+     Full mode never emits .pmini. */
+  body.wp-mini .pet.pmini{padding:2px 5px;margin-bottom:3px}
+  .pmini .mrow{display:grid;grid-template-columns:4ch minmax(25%,1fr) minmax(0,max-content);
+    align-items:center;gap:5px;font-size:11px;line-height:1.35}
+  .pmini .mrow.mh{grid-template-columns:minmax(0,max-content) minmax(25%,1fr) auto;font-size:10px}
+  /* The first pet's top line sits under the fixed ✕ — keep its target clear. */
+  body.wp-mini #list>.pmini:first-child .mrow:first-child{padding-right:16px}
+  .pmini .pct{text-align:right;font-weight:700}
+  .pmini .mbar{height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
+  .pmini .mbar>div{height:100%;transition:width 250ms linear}
+  .pmini .tail{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+  .pmini .arr{color:#6e7681}
+  .pmini .tgt{color:#f0883e;font-weight:600}
+  .pmini .tgt.none{color:#6e7681;font-weight:400}
+  .pmini .hi .pct{color:#56d364}  .pmini .hi .mbar>div{background:#56d364}
+  .pmini .mid .pct{color:#f0b429} .pmini .mid .mbar>div{background:#f0b429}
+  .pmini .lo .pct{color:#f85149}  .pmini .lo .mbar>div{background:#f85149}
+  .pmini .unk .pct{color:#6e7681}
+  .pmini .mh.run{color:#56d364} .pmini .mh.run .mbar>div{background:#56d364}
+  .pmini .mh.low{color:#f0b429} .pmini .mh.low .mbar>div{background:#f0b429}
+  .pmini .mh.off{color:#a371f7} .pmini .mh.off .mbar>div{background:#a371f7}
+  .pmini .mh.unk{color:#8b949e} .pmini .mh.unk .mbar>div{background:#6e7681}
+  .pmini .mh.none{color:#6e7681}
   /* drag/lock/setup — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -106,7 +134,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>🐾 Pet tracker</span></div>
+    <div class="title wp-mini-hide"><span id="conn" class="conn bad">○</span><span>🐾 Pet tracker</span></div>
     <div id="list"></div>
     <div id="empty">no pet — run <b>/pet health</b> in game</div>
   </div>
@@ -290,6 +318,83 @@
          + '</div>';
   }
 
+  // ▭ Mini — the guild vote (closed 2026-09-17) picked option B, "Haste as a
+  // second bar", after the guild lead reported mini mode did nothing
+  // (2026-09-24). Per pet: HP%, bar, name → target; then the haste buff as a
+  // draining bar with its time left.
+  // ⚠ The vote's mock reads "⚡ 66%", but a pet buff here carries only a name
+  // and a timer — the haste PERCENT is not in /api/state — so the label shows
+  // the buff's short name instead. The % is a catalog lookup away, not a
+  // render change.
+  // Which buffs are haste: the beneficial, timed attack-speed (SPA 11 > 100)
+  // spells in eqemu_spells that can sit on a pet — the pet-only lines plus the
+  // single-target and group hastes an enchanter or shaman lands on one (queried
+  // 2026-09-24). Bard songs are left out on purpose: a 3-tick song would flash
+  // the line amber every pulse. EQ writes possessives with a backtick.
+  var PET_HASTE = new Set([
+    'burnout', 'burnout ii', 'burnout iii', 'burnout iv', 'burnout v', 'ancient: burnout blaze', 'elemental empathy',
+    'intensify death', 'augment death', 'augmentation of death', 'focus death', 'strengthen death', 'rune of death', 'soul empathy',
+    "yekan's quickening", "sha's ferocity", 'spirit quickening', 'feral spirit', 'savage spirit', 'bond of the wild',
+    "arag's celerity", "omakin's alacrity",
+    'quickness', 'alacrity', 'celerity', 'swift like the wind', 'augment', 'augmentation', "aanya's quickening",
+    'wonderous rapidity', 'visions of grandeur', 'speed of the shissar', 'talisman of alacrity',
+    'speed of the brood', "vallon's quickening",
+  ]);
+  function _isMini(){ try { return document.body.classList.contains('wp-mini'); } catch (e) { return false; } }
+  // The haste the line tracks: one still running beats one that fell off, and
+  // between two running the one with more time left (untimed ranks below timed).
+  function petHasteBuff(buffs){
+    var best = null, bestScore = -Infinity;
+    var list = Array.isArray(buffs) ? buffs : [];
+    for (var i = 0; i < list.length; i++){
+      var b = list[i];
+      if (!b || !b.name || !PET_HASTE.has(String(b.name).toLowerCase().replace(/`/g, "'").trim())) continue;
+      var score = b.fell_off ? -2 : (b.remaining_secs == null ? -1 : b.remaining_secs);
+      if (score > bestScore) { best = b; bestScore = score; }
+    }
+    return best;
+  }
+  function petMiniHtml(p){
+    var obs = p.observed_at || null;
+    var stale = obs != null && (Date.now() - obs) > 5*60*1000;
+    var hp = (p.hp_pct != null) ? Math.max(0, Math.min(100, p.hp_pct)) : null;
+    // 50/25 steps like the tank overlay — the rule every mini shares.
+    var tier = hp == null ? 'unk' : (hp <= 25 ? 'lo' : (hp <= 50 ? 'mid' : 'hi'));
+    var tgt = p.target ? '<span class="tgt wp-mini-name">' + esc(p.target) + '</span>' : '<span class="tgt none">—</span>';
+    var line1 = '<div class="mrow ' + tier + '">'
+      + '<span class="pct wp-mini-num">' + (hp != null ? Math.round(hp) + '%' : '—') + '</span>'
+      + '<div class="mbar wp-mini-bar"><div style="width:' + (hp != null ? hp.toFixed(0) : '0') + '%"></div></div>'
+      + '<span class="tail"><span class="nm wp-mini-name">' + esc(p.pet || 'pet') + '</span><span class="arr">→</span>' + tgt + '</span>'
+      + '</div>';
+    // No haste seen keeps a dim line rather than vanishing: the height holds
+    // still, and an empty slot reads as "rebuff", not as "not tracked".
+    var h = petHasteBuff(p.buffs);
+    var line2;
+    if (!h) {
+      line2 = '<div class="mrow mh none" title="No haste buff seen on this pet (run /pet health to refresh)">'
+            + '<span class="lab wp-mini-name">⚡ no haste</span><div class="mbar wp-mini-bar"></div><span class="tl"></span></div>';
+    } else {
+      var bo = h.observed_at_ms || obs;
+      var timed = h.remaining_secs != null;
+      var left = timed ? Math.max(0, h.remaining_secs - (bo ? Math.max(0, (Date.now() - bo) / 1000) : 0)) : null;
+      var st, pct, tl, title;
+      if (h.fell_off)  { st = 'off'; pct = 100; tl = 'rebuff'; title = h.name + ' · fell off (rebuff)'; }
+      else if (!timed) { st = 'unk'; pct = 100; tl = '?';      title = h.name + ' · present (duration unknown)'; }
+      else {
+        st = left <= 10 ? 'low' : 'run';
+        pct = h.total_secs ? Math.max(0, Math.min(100, left / h.total_secs * 100)) : 100;
+        tl = fmtRem(h.remaining_secs, bo);
+        title = h.name + ' · ' + tl + ' left';
+      }
+      line2 = '<div class="mrow mh ' + st + '" title="' + esc(title) + '">'
+            + '<span class="lab wp-mini-name">⚡ ' + esc(shortBuffName(h.name)) + '</span>'
+            + '<div class="mbar wp-mini-bar"><div style="width:' + pct.toFixed(0) + '%"></div></div>'
+            + '<span class="tl wp-mini-num">' + esc(tl) + '</span></div>';
+    }
+    return '<div class="pet pmini' + (stale ? ' stale' : '') + '" data-owner="' + esc(p.owner || '') + '"'
+      + ' title="' + esc((p.pet || 'pet') + (p.owner ? ' (' + p.owner + ')' : '')) + '">' + line1 + line2 + '</div>';
+  }
+
   var listEl = document.getElementById('list');
   var emptyEl = document.getElementById('empty');
 
@@ -308,7 +413,9 @@
         ? allPets.filter(function(p){ return p && p.owner && String(p.owner).toLowerCase() === active; })
         : allPets;
       var html = '';
+      var mini = _isMini();
       for (const p of pets) {
+        if (mini) { html += petMiniHtml(p); continue; }
         var obs = p.observed_at || null;
         var ageMs = obs ? (Date.now() - obs) : null;
         var stale = ageMs != null && ageMs > 5*60*1000;
@@ -359,6 +466,11 @@
       body: JSON.stringify({ owner: owner })
     }).catch(function(){}).then(function(){ tick(); });
   });
+  // ▭ Mini flipped (preload's _wpApplyMini): forget the byte-stability memo and
+  // re-tick now, so the list is rewritten in the new rendition and
+  // _requestAutoHeight refits AFTER it lands — even when the list HTML is the
+  // same both ways (no pet: only the hidden title moved the height).
+  window.addEventListener('wp-mini-change', function(){ listEl.__wpHtml = null; tick(); });
   tick(); setInterval(tick, 500);
 </script>
 </body></html>

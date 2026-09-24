@@ -133,6 +133,29 @@
   #lag-btn:hover{opacity:1;color:#fde68a;border-color:#fde68a}
   #lag-btn.active{opacity:1;color:#86efac;border-color:#86efac;
     background:rgba(34,197,94,0.12)}
+  /* ▭ Mini — option B "Two-column ledger" (the guild vote, 2026-09-17). These
+     classes only exist in the mini markup, so full mode is untouched. ✨ buffs
+     hold the left column and 🩸 cures the right, fixed, so a category is
+     always in the same place. The label row is as tall as the ✥/✕ corner
+     buttons, so no chip ever sits under one. The title row (class picker,
+     lag?) hides in mini: the picked class still filters, and changing it is
+     a full-mode job. */
+  .mledger{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 8px}
+  .mcol{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+  .mlab{height:22px;line-height:22px;font-size:9px;color:#6e7681;letter-spacing:0.06em;text-transform:uppercase}
+  .mcol.mb .mlab{padding-left:22px}
+  .mchip{display:inline-flex;align-items:center;gap:4px;max-width:100%;box-sizing:border-box;padding:0 6px;
+    border:1px solid #30363d;border-radius:3px;background:rgba(255,255,255,0.04);color:#c9d1d9;
+    font-family:inherit;font-size:10px;line-height:16px;white-space:nowrap;cursor:pointer;text-shadow:0 1px 2px #000}
+  .mchip b{color:#fff}
+  .mchip.cure{border-color:rgba(248,81,73,0.5)}
+  .mchip.cure b{color:#fca5a5}
+  .mchip.on{border-color:#a371f7;background:#2a1d3d;color:#d2a8ff}
+  .mnone{color:#6e7681;font-size:10px}
+  .mexp{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:4px;padding:2px 0 2px 6px;
+    border-left:1px solid #a371f7;font-size:10px;text-shadow:0 1px 2px #000}
+  .mexp .grp{color:#6e7681;font-variant-numeric:tabular-nums}
+  body.wp-mini #empty{padding:4px 24px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
@@ -147,7 +170,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title">
+    <div class="title wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
       <select id="clsPick" class="clsPick" title="The class you're buffing as. Auto follows whichever character you're logged in as; pick a class to override.">
@@ -629,6 +652,73 @@
     }
     return html;
   }
+  // ▭ Mini — option B "Two-column ledger" (the guild vote, 2026-09-17: "Too
+  // much information to minimize. Instead show how many characters need each
+  // buff type or cure; click a category to expand who needs it and which
+  // group they are in"). Same payload as buildHtml, after the same #67
+  // dismissals and section filters. Counts are CHARACTERS: two poisons on one
+  // raider is one Poison; a raider missing Haste and HP counts once in each.
+  // Buff categories keep the queue's own order (first appearance, as the full
+  // view's sections do) and an empty `missing` is Other, as it is there. Cures
+  // take the bot's priority, curse → blind → poison → disease; a cure the bot
+  // did not name (older bots send none) is Other, last.
+  var _miniOpen = null;      // 'b:<category>' | 'c:<cure>' — one open at a time
+  var MINI_CURES = ['curse', 'blind', 'poison', 'disease'];
+  function miniToggle(key){ _miniOpen = (_miniOpen === key) ? null : key; }
+  function miniLedger(payload){
+    var bq = (payload && payload.buff_queue) || [];
+    var dq = (payload && payload.debuff_queue) || [];
+    var sec = (payload && payload.sections) || {};
+    var buffs = [], cures = [], byKey = {};
+    function add(list, key, label, r){
+      var c = byKey[key];
+      if (!c) { c = byKey[key] = { key: key, label: label, who: [], seen: {} }; list.push(c); }
+      var id = String(r.name).toLowerCase();
+      if (!c.seen[id]) { c.seen[id] = true; c.who.push(r); }
+    }
+    if (sec.buffs !== false) {
+      for (var i = 0; i < bq.length; i++) {
+        var labels = (bq[i].missing && bq[i].missing.length) ? bq[i].missing : ['Other'];
+        for (var j = 0; j < labels.length; j++) add(buffs, 'b:' + labels[j], labels[j], bq[i]);
+      }
+    }
+    if (sec.debuffs !== false) {
+      for (var k = 0; k < dq.length; k++) {
+        var rv = _rowVisibleCurses(dq[k]);
+        var cs = rv.curses || [];
+        for (var m = 0; m < cs.length; m++) {
+          var fam = MINI_CURES.indexOf(cs[m].cure) >= 0 ? cs[m].cure : 'other';
+          add(cures, 'c:' + fam, fam.charAt(0).toUpperCase() + fam.slice(1), rv);
+        }
+      }
+      var cureRank = function(c){ var n = MINI_CURES.indexOf(c.key.slice(2)); return n < 0 ? 99 : n; };
+      cures.sort(function(a, b){ return cureRank(a) - cureRank(b); });
+    }
+    return { buffs: buffs, cures: cures };
+  }
+  function buildMiniHtml(payload){
+    var L = miniLedger(payload);
+    if (!L.buffs.length && !L.cures.length) return '';
+    var open = null;
+    function col(cls, lab, list, cure){
+      var h = '<div class="mcol ' + cls + '"><div class="mlab">' + lab + '</div>';
+      if (!list.length) h += '<span class="mnone">—</span>';
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i], on = c.key === _miniOpen;
+        if (on) open = c;
+        h += '<button type="button" class="mchip' + (cure ? ' cure' : '') + (on ? ' on' : '') + '" data-mcat="' + esc(c.key) + '">'
+           +   '<span class="wp-mini-name">' + esc(c.label) + '</span> <b class="wp-mini-num">' + c.who.length + '</b></button>';
+      }
+      return h + '</div>';
+    }
+    var html = '<div class="mledger">' + col('mb', '✨ buff', L.buffs, false) + col('mc', '🩸 cure', L.cures, true) + '</div>';
+    if (open) {
+      html += '<div class="mexp">' + open.who.map(function(r){
+        return '<span>' + esc(r.name) + (r.group != null ? ' <span class="grp">G' + esc(r.group) + '</span>' : '') + '</span>';
+      }).join('') + '</div>';
+    }
+    return html;
+  }
   function _autoFit(){
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
@@ -642,7 +732,7 @@
     // Forget dismissed chips the server no longer reports (so a re-land re-shows)
     // before deciding what's visible.
     reconcileDismissed(dq);
-    var html = buildHtml(payload);
+    var html = document.body.classList.contains('wp-mini') ? buildMiniHtml(payload) : buildHtml(payload);
     if (!html) {
       // Nothing to show — either no roster or everything is covered/dismissed.
       if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
@@ -679,6 +769,31 @@
     _saveCollapsed();
     if (_lastPayload) render(_lastPayload);
   });
+  // ▭ Mini chips: a click opens that category's names, or closes it if it is
+  // the one open. The open key lives in _miniOpen, not the DOM, so each
+  // repaint rebuilds it. Chips are rebuilt as counts move, so the hover
+  // handshake is delegated, as the ✓ cured button's is.
+  (function(){
+    var bodyEl = document.getElementById('body');
+    bodyEl.addEventListener('click', function(ev){
+      var chip = ev.target && ev.target.closest ? ev.target.closest('.mchip') : null;
+      if (!chip) return;
+      miniToggle(chip.getAttribute('data-mcat'));
+      if (_lastPayload) render(_lastPayload);
+    });
+    function hover(e, on){
+      var chip = e.target && e.target.closest ? e.target.closest('.mchip') : null;
+      // Crossing between a chip and its own label or count is not leaving it.
+      if (!chip || (e.relatedTarget && chip.contains(e.relatedTarget))) return;
+      try { window.mimic.overlayHoverInteractive(on); } catch (er) {}
+    }
+    bodyEl.addEventListener('mouseover', function(e){ hover(e, true); });
+    bodyEl.addEventListener('mouseout', function(e){ hover(e, false); });
+  })();
+  // A mini flip repaints from the last payload now, not on the next poll.
+  // render() fits when the HTML changes; the explicit fit covers a flip that
+  // changes only the hidden title (an empty queue).
+  window.addEventListener('wp-mini-change', function(){ if (_lastPayload) render(_lastPayload); _autoFit(); });
 
   async function tick(){
     try {

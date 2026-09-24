@@ -394,6 +394,64 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#7ee787;border-color:#7ee787}
   body.setup #move-btn{top:30px}
+  /* ── ▭ Mini — variant B "Timeline lanes" (the guild vote, 2026-09-17) ───────
+     The per-overlay half of mini mode; preload owns the shared half (the
+     corner ✥ / ✕ fade, the wp-mini-* helpers). Full mode is untouched: every
+     rule here is scoped under body.wp-mini or to #chmini, which only shows
+     under it.
+     KEPT in mini, on purpose: the ORDER CONFLICT banner, the chain-integrity
+     banner (red = GO MANUAL) and the pivot banner. Each is display:none while
+     the chain is healthy, so they cost no height until they matter, and hiding
+     one would let a mini overlay look fine while the chain is not.
+     Everything else gives way to the lanes: the header (the tank moves to the
+     MT row), the slot rows and NEXT footer (the lanes carry both), the gap row
+     (an orange block reaching the centre line IS that warning, and its TTS
+     still speaks), the spot-heal / off-heal / DI cards, and the four title-bar
+     toggles, which would otherwise sit on top of the MT row. */
+  body.wp-mini .head, body.wp-mini #cfg-panel, body.wp-mini #gaprow, body.wp-mini #dicall,
+  body.wp-mini #rows, body.wp-mini #spotrow, body.wp-mini #nextrow, body.wp-mini #offheal,
+  body.wp-mini #diready, body.wp-mini #ddr-btn, body.wp-mini #go-btn, body.wp-mini #cfg-btn,
+  body.wp-mini #mute-btn{display:none !important}
+  .chmini{display:none;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:2px 4px;
+    text-shadow:0 1px 2px #000}
+  body.wp-mini .chmini.on{display:block}
+  /* MT row — the side padding clears the corner ✥ / ✕, as .head's does. */
+  .chmini .mt{display:flex;align-items:center;gap:6px;min-height:18px;padding:0 20px;font-size:11px}
+  .chmini .mt-pct{flex:0 0 4ch;text-align:right;font-weight:700}
+  .chmini .mt-bar{flex:1 1 auto;min-width:24px;height:4px;background:rgba(255,255,255,0.09);
+    border-radius:2px;overflow:hidden}
+  .chmini .mt-bar i{display:block;height:100%;transition:width 120ms linear}
+  .chmini .mt-nm{flex:0 1 auto;color:#e6edf3;font-weight:600}
+  .chmini .mt-tag{flex:0 0 auto;color:#6e7681;font-size:9px}
+  .mt-pct.hi{color:#56d364} .mt-pct.mid{color:#f0b429} .mt-pct.lo{color:#f85149} .mt-pct.unk{color:#6e7681}
+  .mt-bar i.hi{background:#56d364} .mt-bar i.mid{background:#f0b429} .mt-bar i.lo{background:#f85149}
+  /* Axis and lanes share one grid at 10px, so the 9ch name column lines up
+     (ch resolves against each element's own font size, and the axis text is
+     smaller). */
+  .chmini .axis,.chmini .lane{display:grid;grid-template-columns:9ch minmax(0,1fr);gap:6px;
+    align-items:center;font-size:10px}
+  .chmini .axis{height:11px}
+  .chmini .ax{display:flex;font-size:8px;color:#6e7681;letter-spacing:0.06em;
+    text-transform:uppercase;white-space:nowrap}
+  .chmini .ax > span{flex:1 1 0;min-width:0}
+  .chmini .ax-r{display:flex;justify-content:space-between}
+  .chmini .ax-c{margin-left:-0.5ch}
+  .chmini .lane{height:15px}
+  .chmini .lnm{font-weight:600}
+  .chmini .cQ{color:#ffa657} .chmini .cC{color:#79c0ff} .chmini .cX{color:#fca5a5}
+  .chmini .cL{color:#7ee787} .chmini .cI{color:#6e7681}
+  .chmini .trk{position:relative;height:8px;background:rgba(255,255,255,0.06);border-radius:2px}
+  .chmini .trk::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;
+    background:rgba(255,255,255,0.55)}
+  .chmini .blk{position:absolute;top:0;height:100%;border-radius:2px;
+    transition:left 100ms linear,width 100ms linear}
+  .chmini .bQ{background:#ffa657} .chmini .bC{background:#58a6ff}
+  .chmini .bX{background:#f85149;transition:none}
+  .chmini .bL{background:#56d364;box-shadow:0 0 6px rgba(86,211,100,0.8)}
+  .chmini.stale #miniLanes{opacity:0.5}
+  @media (prefers-reduced-motion: reduce){
+    .chmini .blk,.chmini .mt-bar i{transition:none}
+  }
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
@@ -465,6 +523,16 @@
       <div id="dicallNote" class="dicall-note" style="display:none"></div>
     </div>
     <div id="rows" class="rows"></div>
+    <!-- ▭ Mini, variant B "Timeline lanes" (the guild vote, 2026-09-17). Shown
+         only under body.wp-mini while a chain exists; filled by renderMini().
+         MT row on top, then the axis, then one lane per healer in rotation
+         order. Sits where #rows sits, so the conflict / integrity banners stay
+         above it and the pivot banner below, as in full mode. -->
+    <div id="chmini" class="chmini">
+      <div id="miniMt" class="mt"></div>
+      <div class="axis"><span></span><span class="ax"><span>◀ lands</span><span class="ax-r"><span class="ax-c">│ starts</span><span>next ▶</span></span></span></div>
+      <div id="miniLanes"></div>
+    </div>
     <!-- Pivot banner — v1.1.5 (a member, 2026-06-26). Flashes red when the
          chain has slipped (next caller didn't shout within 1.5× the beat).
          Hidden when chain is healthy. Display name + suggest who's next. -->
@@ -1064,6 +1132,237 @@
     });
   })();
 
+  // ── ▭ Mini — variant B "Timeline lanes" (the guild vote, 2026-09-17) ───────
+  // The guild lead's ask: "a per-healer timeline scrolling right to left:
+  // middle is cast start, left edge is the land. Orange getting ready, blue
+  // casting, red interrupted, green when it lands. Main tank health stays."
+  // One lane per healer, in rotation order. The track's centre line is "cast
+  // starts". The LEFT half is the cast: a blue block grows from the centre
+  // toward the left edge (the land), the same right-to-left direction as the
+  // full overlay's cast bar. The RIGHT half is the queue: orange blocks slide
+  // in toward the centre as each turn comes.
+  //
+  // Everything is derived from the snapshot the full rows already read: no new
+  // poll, no agent change. Two states are INFERRED, not observed:
+  //   • "landed" = the cast clock ran out with no interrupt seen. The agent's
+  //     own note on interrupts: their ABSENCE is never proof the cast completed
+  //     (the message is range-limited and filterable). Green means "should
+  //     have landed", not a confirmed heal.
+  //   • the queue past NEXT is extrapolated: next's due time + k beats, which
+  //     assumes the chain holds its measured beat.
+  //
+  // Motion: render() (every 150ms) rebuilds the lane skeleton only when the
+  // lane LIST changes. A 100ms local ticker moves the blocks by writing their
+  // left / width and class, never HTML. It runs only while mini is on and a
+  // live (not stale) chain has lanes, and is cleared otherwise.
+  var CH_MINI_TICK_MS     = 100;    // the vote: "smooth needs a 100ms local tick"
+  var CH_MINI_QUEUE_SECS  = 9;      // a turn this far out sits at the right edge
+  var CH_MINI_Q_W         = 6;      // % width of a queued block
+  var CH_MINI_LAND_W      = 6;      // % width of the green land flash
+  var CH_MINI_LAND_MS     = 1000;   // how long the land flash holds
+  var CH_MINI_HP_FRESH_MS = 10000;  // older raid-pipe HP reads as unknown, never as current
+  var _raidPipe   = null;   // /api/state.raidPipe (Zeal type 5, this machine only)
+  var _miniModel  = null;   // { castMs, lingerMs, lanes } — what the ticker animates
+  var _miniEls    = null;   // { blks, nms } of the current skeleton
+  var _miniHtml   = null;   // byte-stability guards, as #rows has
+  var _miniMtHtml = null;
+  var _miniTimer  = null;
+
+  function chMiniOn(){
+    return !!(document.body && document.body.classList.contains('wp-mini'));
+  }
+
+  // Which state is a lane in at `now`? Same rules as the full rows (interrupt
+  // mark must be for THIS cast; cast window = the agent's ch_cast_ms), with one
+  // deliberate difference: an interrupted cast never goes back to blue or on
+  // to green once its red has lingered — it died, so it neither casts nor lands.
+  function chLaneState(l, now, castMs, lingerMs){
+    var el = l.lastAtMs ? now - l.lastAtMs : Number.POSITIVE_INFINITY;
+    var intAt = (l.interruptedAt && l.lastAtMs && l.interruptedAt >= l.lastAtMs) ? l.interruptedAt : 0;
+    if (intAt) {
+      if (now - intAt < lingerMs) return { state: 'interrupted', secs: (intAt - l.lastAtMs) / 1000 };
+    } else if (el < castMs) {
+      return { state: 'casting', secs: Math.max(0, el) / 1000 };
+    } else if (el < castMs + CH_MINI_LAND_MS) {
+      return { state: 'landed', secs: el / 1000 };
+    }
+    // A called GO outranks the predicted queue position: it means now.
+    if (l.go) return { state: 'queued', secs: 0 };
+    if (l.dueAtMs) return { state: 'queued', secs: Math.max(0, (l.dueAtMs - now) / 1000) };
+    // NEXT with no measured beat yet: orange name, but no block — we cannot
+    // say where on the track they are.
+    if (l.next) return { state: 'queued', secs: null };
+    return { state: 'idle', secs: 0 };
+  }
+
+  // Lane geometry — pure: (state, seconds) → where the block sits on the track
+  // (left / width in %, centre line at 50) and its colour classes. `secs` is
+  // seconds INTO the cast (casting / interrupted) or seconds UNTIL the turn
+  // (queued). blk null = no block on the track.
+  function chLaneGeom(state, secs, castSecs){
+    var cast = castSecs > 0 ? castSecs : CH_CAST_SECS;
+    if (state === 'casting' || state === 'interrupted') {
+      // Grows leftward from the centre; an interrupt freezes it where it died.
+      // 1% floor so a cast that has just started is visible at all.
+      var w = Math.max(1, Math.min(1, Math.max(0, secs || 0) / cast) * 50);
+      return { left: 50 - w, width: w,
+               blk: state === 'casting' ? 'bC' : 'bX', name: state === 'casting' ? 'cC' : 'cX' };
+    }
+    if (state === 'landed') return { left: 0, width: CH_MINI_LAND_W, blk: 'bL', name: 'cL' };
+    if (state === 'queued') {
+      if (secs == null) return { left: null, width: null, blk: null, name: 'cQ' };
+      if (secs > CH_MINI_QUEUE_SECS) return { left: null, width: null, blk: null, name: 'cI' };
+      // 0s → touching the centre line; CH_MINI_QUEUE_SECS → flush with the right edge.
+      return { left: 50 + (Math.max(0, secs) / CH_MINI_QUEUE_SECS) * (50 - CH_MINI_Q_W),
+               width: CH_MINI_Q_W, blk: 'bQ', name: 'cQ' };
+    }
+    return { left: null, width: null, blk: null, name: 'cI' };
+  }
+
+  // Lanes in rotation order (slot number), from the same snapshot fields the
+  // full rows use. A contested slot gets one lane per live claimant, as it
+  // gets one row each in full mode. A stale chain predicts nothing: every lane
+  // idles rather than piling overdue queue blocks on the centre line.
+  function chMiniModel(c, now, stale){
+    var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
+    var N = nums.length;
+    var beatMs = c.beat_ms > 0 ? c.beat_ms : 0;
+    // The due time the NEXT row and the footer count down to, so a lane can
+    // never disagree with them.
+    var dueMs = (!stale && c.next_num != null && c.last_ch && beatMs)
+      ? ((c.next_expected_at > 0) ? c.next_expected_at : (c.last_ch.atMs + beatMs)) : 0;
+    var ni = nums.indexOf(c.next_num);
+    var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
+    var lanes = [];
+    for (var i = 0; i < N; i++) {
+      var n = nums[i], s = c.slots[n] || {};
+      var k = (ni >= 0) ? (i - ni + N) % N : -1;
+      var dueAt = (dueMs && k >= 0) ? dueMs + k * beatMs : 0;
+      var live = (s.claimants || []).filter(function (cl) {
+        return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
+      });
+      var who = (live.length > 1) ? live : [{ name: s.name, lastAtMs: s.lastAtMs }];
+      for (var j = 0; j < who.length; j++) {
+        lanes.push({
+          name: who[j].name || '?',
+          lastAtMs: who[j].lastAtMs || 0,
+          // The agent marks the interrupt on the slot, for the caster it
+          // matched by name — so only that claimant's lane freezes red.
+          interruptedAt: (who[j].name === s.name) ? (s.interruptedAt || 0) : 0,
+          dueAtMs: dueAt,
+          next: !stale && c.next_num === n,
+          go: !stale && !!(c.last_go && c.last_go.num === n),
+        });
+      }
+    }
+    return {
+      castMs:   (c.ch_cast_ms > 0 ? c.ch_cast_ms : CH_CAST_SECS * 1000),
+      lingerMs: (c.ch_interrupt_linger_ms > 0 ? c.ch_interrupt_linger_ms : CH_INTERRUPT_LINGER_MS),
+      lanes: lanes,
+    };
+  }
+
+  // The MT row. Full mode names the tank in its header ("CH → <target>") but
+  // has no HP; the HP here is the raid-pipe entry the same /api/state fetch
+  // already carries, so it only exists when THIS machine's Zeal can see the
+  // tank (in your group, or /pipeverbose on). Otherwise it reads "—".
+  function chMiniMt(c, pipe, now){
+    var name = (c && c.target) ? String(c.target) : '';
+    var hp = null;
+    if (name && pipe && Array.isArray(pipe.members) && (now - (pipe.at || 0)) <= CH_MINI_HP_FRESH_MS) {
+      var lc = name.toLowerCase();
+      for (var i = 0; i < pipe.members.length; i++) {
+        var m = pipe.members[i];
+        if (m && m.name && String(m.name).toLowerCase() === lc && m.hp_pct != null) {
+          hp = Math.max(0, Math.min(100, Math.round(m.hp_pct)));
+          break;
+        }
+      }
+    }
+    return { name: name, hp: hp };
+  }
+  function chMiniMtHtml(mt){
+    var hp = mt.hp;
+    // The tank overlay's 50 / 25 steps, which every mini HP bar keeps.
+    var cls = (hp == null) ? 'unk' : (hp <= 25 ? 'lo' : (hp <= 50 ? 'mid' : 'hi'));
+    return '<span class="mt-pct wp-mini-num ' + cls + '">' + (hp == null ? '—' : hp + '%') + '</span>'
+      + '<span class="mt-bar wp-mini-bar"><i class="' + cls + '" style="width:' + (hp == null ? 0 : hp) + '%"></i></span>'
+      + '<span class="mt-nm wp-mini-name">' + esc(mt.name || 'CH chain') + '</span>'
+      + (mt.name ? '<span class="mt-tag">MT</span>' : '');
+  }
+  // Skeleton only: names and empty blocks. State colours and positions are
+  // the ticker's job, so this string changes only when the lane list does.
+  function chMiniLanesHtml(lanes){
+    var h = '';
+    for (var i = 0; i < lanes.length; i++) {
+      h += '<div class="lane"><span class="lnm wp-mini-name cI">' + esc(lanes[i].name) + '</span>'
+        +  '<span class="trk"><span class="blk" style="display:none"></span></span></div>';
+    }
+    return h;
+  }
+
+  function chMiniTick(){
+    var m = _miniModel, els = _miniEls;
+    if (!m || !els) return;
+    var now = Date.now();
+    for (var i = 0; i < m.lanes.length; i++) {
+      var b = els.blks[i], nm = els.nms[i];
+      if (!b || !nm) continue;
+      var st = chLaneState(m.lanes[i], now, m.castMs, m.lingerMs);
+      var g = chLaneGeom(st.state, st.secs, m.castMs / 1000);
+      var nc = 'lnm wp-mini-name ' + g.name;
+      if (nm.className !== nc) nm.className = nc;
+      // Diffed against what we last WROTE: the browser normalises style
+      // strings, so reading them back would always look changed. A hidden
+      // block is display:none, not width 0 — a block appearing from
+      // display:none does not transition, so it never slides in from wherever
+      // it last was.
+      var D = g.blk ? '' : 'none';
+      if (b.__d !== D) { b.style.display = D; b.__d = D; }
+      if (!g.blk) continue;
+      var bc = 'blk ' + g.blk;
+      if (b.className !== bc) b.className = bc;
+      var L = g.left.toFixed(2) + '%', W = g.width.toFixed(2) + '%';
+      if (b.__l !== L) { b.style.left = L; b.__l = L; }
+      if (b.__w !== W) { b.style.width = W; b.__w = W; }
+    }
+  }
+  function chMiniTicker(run){
+    if (run && !_miniTimer) _miniTimer = setInterval(chMiniTick, CH_MINI_TICK_MS);
+    else if (!run && _miniTimer) { clearInterval(_miniTimer); _miniTimer = null; }
+  }
+
+  // Called from render() on both of its paths, BEFORE its autoFitOverlay call,
+  // so the refit measures the rendition that is actually showing.
+  function renderMini(c, now, stale){
+    var box = document.getElementById('chmini');
+    if (!box) return;
+    var on = chMiniOn() && !!(c && c.slots && Object.keys(c.slots).length);
+    _miniModel = on ? chMiniModel(c, now, stale) : null;
+    box.classList.toggle('on', on);
+    box.classList.toggle('stale', on && !!stale);
+    if (!on) {
+      // Drop the guards too, so coming back into mini always rebuilds.
+      _miniEls = null; _miniHtml = null; _miniMtHtml = null;
+      chMiniTicker(false);
+      return;
+    }
+    var mtHtml = chMiniMtHtml(chMiniMt(c, _raidPipe, now));
+    if (mtHtml !== _miniMtHtml) {
+      document.getElementById('miniMt').innerHTML = mtHtml;
+      _miniMtHtml = mtHtml;
+    }
+    var lanesEl = document.getElementById('miniLanes');
+    var html = chMiniLanesHtml(_miniModel.lanes);
+    if (html !== _miniHtml || !_miniEls) {
+      lanesEl.innerHTML = html;
+      _miniHtml = html;
+      _miniEls = { blks: lanesEl.getElementsByClassName('blk'), nms: lanesEl.getElementsByClassName('lnm') };
+    }
+    chMiniTick();   // place the blocks now, not up to 100ms from now
+    chMiniTicker(!stale && _miniModel.lanes.length > 0);
+  }
+
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
   // Spot-heal announcement state (only speak once per event — keyed on its
@@ -1145,6 +1444,7 @@
       beatEl.textContent = '';
       emptyEl.style.display = 'block';
       _gapKey = null; _spokeSoon = false; _spokeLate = false;
+      renderMini(null, 0, false);
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
       return;
     }
@@ -1367,6 +1667,7 @@
       if (gapState === 'soon' && !_spokeSoon) { _spokeSoon = true; speakGap('CH gap soon on ' + gapTank); }
       if (gapState === 'late' && !_spokeLate) { _spokeLate = true; speakGap('CH gap on ' + gapTank); }
     }
+    renderMini(c, now, stale);
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
 
@@ -1386,6 +1687,7 @@
       _lastOffHeal = (s && s.offHealCandidates) || [];
       _lastDi = (s && s.diStatus) || null;
       _lastDiCall = (s && s.diCallout) || null;
+      _raidPipe = (s && s.raidPipe) || null;   // mini's MT HP (renderMini)
       // Integrity signals — every link in the chain-data path (see the
       // heartbeat state block above for why each one matters).
       _lastFetchOkAt = Date.now();
@@ -1407,5 +1709,8 @@
   // between fetches (timestamps come from the same machine's log, so local
   // Date.now() math is exact).
   render(); setInterval(render, 150);
+  // A mini flip re-renders at once rather than on the next 150ms beat, so the
+  // refit at the end of render() measures the rendition that is now showing.
+  window.addEventListener('wp-mini-change', function(){ render(); });
 </script>
 </body></html>

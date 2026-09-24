@@ -163,6 +163,28 @@
     text-shadow:0 1px 2px #000}
   .row .who .arrow{color:#6e7681;margin-right:2px}
   .foot .unhide{color:#5fd0c9;cursor:pointer;text-decoration:underline;margin-left:6px}
+  /* ▭ Mini — the guild vote (closed 2026-09-17) picked option A, "CC letters +
+     count". One line per row, built by miniRowHtml(): HP%, the 4px bar, then
+     name → who it is hitting, SLOW / MEZ as one-letter pills and every other
+     debuff folded into ·N. Bars stay per-row (each tail is its own width), so
+     nothing here tries to line them up. Full mode never emits .mrow. */
+  body.wp-mini .rows{gap:2px;padding:3px 4px}
+  body.wp-mini .row.mrow{grid-template-columns:4ch minmax(25%,1fr) minmax(0,max-content);
+    gap:5px;padding:1px 4px}
+  /* The first row sits under the fixed ✕; keep its pills out from under it so
+     a hover for their tooltip never lands on "hide overlay". */
+  body.wp-mini .rows>.row.mrow:first-child{padding-right:18px}
+  body.wp-mini .row.mrow .bar{grid-column:auto;margin-top:0}
+  body.wp-mini .row.mrow .mtail{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+  body.wp-mini .row.mrow .amb,body.wp-mini .row.mrow .dup{flex-shrink:0;margin-left:0}
+  body.wp-mini .row.mrow .vic{color:#c9b389;font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+  body.wp-mini .row.mrow .vic.auth{color:#7ee787}
+  body.wp-mini .row.mrow .vic.none{color:#6e7681;font-weight:400}
+  body.wp-mini .row.mrow .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  body.wp-mini .row.mrow .cc-badge{margin-left:0}
+  body.wp-mini .row.mrow .cc-badge.more{background:rgba(255,255,255,0.08);color:#9aa4ad;
+    border:1px solid rgba(255,255,255,0.16);font-weight:600;cursor:help}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   .foot{margin-top:4px;font-size:8px;color:#6e7681;padding:0 4px;line-height:1.3}
   .foot b{color:#f0b429;font-weight:700}
@@ -206,7 +228,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="head">
+    <div class="head wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span class="icon">🎯</span>
       <span class="ttl">Extended Target</span>
@@ -541,6 +563,60 @@
       +  '</div>';
   }
 
+  // ▭ Mini — the guild vote (closed 2026-09-17) picked option A, "CC letters +
+  // count", after the guild lead reported mini mode did nothing (2026-09-24).
+  // Still every row, in today's order and with today's same-name split, but one
+  // line each: HP%, bar, name (+ the * caveat / #n split), → who the mob is
+  // hitting or —, then SLOW and MEZ as the one-letter pills S / M — they change
+  // what a raider does next — and every OTHER debuff folded into one ·N whose
+  // tooltip lists them. The row's own tooltip carries the full list; nothing
+  // expands. The per-row ✕ and the header toggles stay a full-mode affair.
+  function _isMini(){ try { return document.body.classList.contains('wp-mini'); } catch (e) { return false; } }
+  // Mini bars step at 50/25 like the tank overlay — the rule every mini shares
+  // (preload.js _WP_MINI_CSS), so a colour means the same thing on each one.
+  // Full mode keeps its own 60/30.
+  function miniTier(h){ if (h == null) return 'unk'; if (h <= 25) return 'lo'; if (h <= 50) return 'mid'; return 'hi'; }
+  function _debuffLabel(d){
+    return String((d && d.name) || '?') + (d && d.attributed === false ? '?' : '')
+      + (d && d.remaining_secs != null ? ' ' + fmtDur(d.remaining_secs) : '');
+  }
+  function miniRowHtml(t){
+    var kind = t.kind || 'npc';
+    var tier = miniTier(t.hp_pct);
+    var rowCls = 'row mrow ' + kind + ((kind === 'npc' && t.is_named) ? ' named' : '') + (t.hurt ? ' hurt' : '')
+      + (t.off_tank ? ' offtank' : '') + (t.stale ? ' stale' : '');
+    var tail = '<span class="nm wp-mini-name">' + esc(t.name) + '</span>';
+    if (!t.id_proven && t.ambiguous) {
+      tail += '<span class="amb" title="Non-unique name — another mob with this name may be alive too, so the debuffs counted here could belong to either.">*</span>';
+    }
+    if (t.dup_index) tail += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
+    if (kind === 'npc') {
+      if (t.mob_victim) {
+        var auth = (t.mob_victim_source === 'zeal_assist');
+        tail += '<span class="vic' + (auth ? ' auth' : '') + '" title="This mob is on ' + esc(t.mob_victim) + '">'
+              +   '<span class="arrow">→</span>' + esc(t.mob_victim) + '</span>';
+      } else {
+        tail += '<span class="vic none" title="Not seen hitting anyone yet"><span class="arrow">→</span>—</span>';
+      }
+    }
+    var ds = Array.isArray(t.debuffs) ? t.debuffs : [];
+    // Same classifier and tooltips as the full pills — only the label shrinks.
+    tail += ccBadges(ds).replace('>MEZ</span>', '>M</span>').replace('>SLOW</span>', '>S</span>');
+    var rest = ds.filter(function(d){ var k = _normDebuff(d && d.name); return !MEZ_DEBUFFS.has(k) && !SLOW_DEBUFFS.has(k); });
+    if (rest.length) tail += '<span class="cc-badge more" title="' + esc(rest.map(_debuffLabel).join(', ')) + '">·' + rest.length + '</span>';
+    var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
+    var ct = (t.raider_count != null ? t.raider_count : 0);
+    var title = (t.off_tank && !t.raider_count) ? 'held by an off-tank, not targeted'
+      : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting' + (raiders.length ? ': ' + raiders.join(', ') : ''));
+    if (ds.length) title += ' — debuffs: ' + ds.map(_debuffLabel).join(', ');
+    var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
+    return '<div class="' + rowCls + '" data-k="' + esc(rowKey(t)) + '" title="' + esc(title) + '">'
+      +    '<span class="hp ' + tier + ' wp-mini-num">' + (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—') + '</span>'
+      +    '<div class="bar wp-mini-bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    '<span class="mtail">' + tail + '</span>'
+      +  '</div>';
+  }
+
   // "Show off-tanks" toggle — pure off-tank rows (a mob held by an
   // off-tank, zero direct targeters — Emperor-style adds) are hidden by
   // default since it's a niche need; the quiet "N off-tanked" hint next to
@@ -655,6 +731,7 @@
       }
     }
     var renderedGroup = {};
+    var mini = _isMini();
     for (var i = 0; i < targets.length; i++) {
       var t = targets[i];
       // An id-proven row shows no asterisk, so it must not summon the footnote
@@ -665,6 +742,9 @@
       if (grp && grp.length > 1) {
         if (renderedGroup[t.name]) continue;   // group already emitted
         renderedGroup[t.name] = true;
+        // Mini keeps the group's ORDER but not its pooled chip block: one line
+        // per mob, and each line's * already says its debuffs may be shared.
+        if (mini) { for (var jm = 0; jm < grp.length; jm++) html += miniRowHtml(grp[jm]); continue; }
         // #194 — when the bot's position clustering labeled the instances
         // (any row carries tanks), debuffs arrive PER INSTANCE and render on
         // their own rows; unplaceable ones come pre-dimmed (attributed:false).
@@ -679,7 +759,7 @@
           if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':').replace('<div class="debuffs">', '<div class="debuffs" data-k="pool:' + esc(t.name) + '">');
         }
       } else {
-        html += rowHtml(t, false);
+        html += mini ? miniRowHtml(t) : rowHtml(t, false);
       }
     }
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
@@ -731,6 +811,13 @@
       _hidden.clear(); _saveHidden(); render(_lastPayload);
     });
   }
+
+  // ▭ Mini flipped (preload's _wpApplyMini): rebuild from the last payload now
+  // rather than on the next 2s poll. With rows up, the two renditions never
+  // emit the same HTML, so render()'s byte-stability guard lets the rewrite
+  // through and its autoFitOverlay refits the height after the new rows are in;
+  // with none, the empty branch refits unconditionally.
+  window.addEventListener('wp-mini-change', function(){ render(_lastPayload); });
 
   async function tick(){
     try {

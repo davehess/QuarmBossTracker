@@ -68,8 +68,13 @@
      wins. It originally sat ABOVE .colhdr and the 6-column base silently
      overrode the 7-column one: the rows widened, the header did not, SEC wrapped
      to a second line and every header label sat one column right of its data
-     (the guild lead, live 2026-08-13). */
-  @media (min-width: 400px){
+     (the guild lead, live 2026-08-13).
+     It asks how wide the SCOREBOARD is, not the window: 370px of board is a
+     400px window with nothing beside it, and History's fight list takes room
+     beside it — so History drops to the compact columns until the window is
+     wide enough for both. */
+  .board{container:board / inline-size}
+  @container board (min-width: 370px){
     li{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
     .colhdr{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
     li .obs, .colhdr .obs{display:block;text-align:right}
@@ -77,6 +82,20 @@
     li.total .obs{color:#8b949e;font-weight:600}
     .obs-inline{display:none}   /* lives in its own column up here */
   }
+  /* History's fight list, right of the scoreboard: newest on top, the one on
+     screen marked the way the selected tab is. Only in History mode. */
+  .histlist{display:none}
+  body.hist .histwrap{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:8px;align-items:start}
+  body.hist .histlist{display:block;border-left:1px solid rgba(110,118,129,0.25);padding-left:6px}
+  body.hist .histwrap:has(> .histlist:empty){display:block}   /* no fights yet: no empty column */
+  body.hist .histlist:empty{display:none}
+  .histlist > li{display:block;padding:0;margin:0 0 2px}
+  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:#c9d1d9;
+    border:1px solid rgba(255,255,255,0.08);border-radius:3px;padding:2px 5px;cursor:pointer;font-family:inherit}
+  .hitem:hover{border-color:#a371f7}
+  .hitem.on{background:#2a1d3d;border-color:#a371f7}
+  .hitem .hb{display:block;font-size:10px;color:#f6c365;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hitem .hm{display:block;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
@@ -134,6 +153,25 @@
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  /* ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17).
+     Three rows: the player I am chasing, me, the player chasing me. Every
+     rule is scoped to body.wp-mini, so full mode is exactly what it was. */
+  body.wp-mini .hud{padding:3px 6px}
+  /* ✥ and ✕ keep their corners in mini; the title row sits between them so
+     the /rs copy can never slide under ✕. */
+  body.wp-mini .title{padding:0 16px}
+  /* History's fight list is a picker, and mini has no room to pick in. */
+  body.wp-mini .histwrap{display:block}
+  body.wp-mini .histlist{display:none}
+  body.wp-mini #deeps li.mrow{grid-template-columns:3ch minmax(0,1fr) auto;gap:1px 6px;align-items:center;padding:1px 0}
+  body.wp-mini #deeps li.mrow .r{font-size:10px}
+  body.wp-mini #deeps li.mrow .v{text-align:right;white-space:nowrap}
+  body.wp-mini #deeps li.mrow .v .dps{font-size:10px}
+  .mbar{grid-column:2 / -1;background:rgba(255,255,255,0.08);overflow:hidden}
+  .mbar i{display:block;height:100%;background:#a371f7}
+  /* The tab strip is hidden in mini, so the bar says which tab this is:
+     red on Tank, where the number is damage TAKEN. */
+  li.mrow.tk .mbar i{background:#f85149}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -165,31 +203,32 @@
            perPlayer[].dmg from the active encounter; Tank reads incoming damage
            (perPlayer[].took) so you can see who's eating the boss melee in
            real time. -->
-      <span class="rowcfg">
+      <span class="rowcfg wp-mini-hide">
         <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
         <span id="rowsN" class="rowsn">10</span>
         <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
       </span>
-      <span class="tabs">
+      <span class="tabs wp-mini-hide">
         <button id="tabDps"  class="tab on" type="button">DPS</button>
         <button id="tabTank" class="tab"    type="button">Tank</button>
         <button id="tabHist" class="tab"    type="button"
                 title="The guild's numbers for the last few mobs, once every client has reported">History</button>
       </span>
-      <!-- History pager — which of the last few fights is on screen. Hidden
-           outside History mode; the buttons are separate from the tab strip
-           because they change WHAT you're looking at, not HOW. -->
-      <span class="tabs" id="histNav" style="display:none">
-        <button id="histPrev" class="tab" type="button" title="Older fight">◀</button>
-        <span id="histWhich" class="rowsn">1/1</span>
-        <button id="histNext" class="tab" type="button" title="Newer fight">▶</button>
-      </span>
     </div>
-    <div id="colhdr" class="colhdr" style="display:none">
-      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
+    <!-- History: the scoreboard on the left, the fights to pick from on the
+         right (the guild lead, 2026-09-24: "History should give us a list of the
+         fights to choose from on the right side"). It replaced a ◀ 1/6 ▶ pager
+         in the title row, which also gave that crowded row its width back. -->
+    <div class="histwrap">
+      <div class="board">
+        <div id="colhdr" class="colhdr wp-mini-hide" style="display:none">
+          <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
+        </div>
+        <ul id="deeps"></ul>
+        <div class="dim" id="empty">waiting for combat…</div>
+      </div>
+      <ul id="histList" class="histlist"></ul>
     </div>
-    <ul id="deeps"></ul>
-    <div class="dim" id="empty">waiting for combat…</div>
   </div>
 <script>
   // Poll the agent's /api/state and render the top damage + current boss. The
@@ -348,8 +387,7 @@
     if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
     if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
     if (tabHistBtn) tabHistBtn.classList.toggle('on', mode === 'history');
-    var nav = document.getElementById('histNav');
-    if (nav) nav.style.display = (mode === 'history') ? '' : 'none';
+    document.body.classList.toggle('hist', mode === 'history');   // shows the fight list
     var hdr = document.getElementById('boss-name');
     // The title prefix gets a Tank flag so it's obvious you're not on DPS.
     if (hdr && hdr.dataset) hdr.dataset.tabMode = mode;
@@ -362,17 +400,17 @@
     if (TAB_MODE === 'tank' && tabTankBtn) tabTankBtn.classList.add('on');
     if (TAB_MODE === 'history') {
       if (tabHistBtn) tabHistBtn.classList.add('on');
-      var _nav0 = document.getElementById('histNav');
-      if (_nav0) _nav0.style.display = '';
+      document.body.classList.add('hist');
     }
   }
   // Hover-interact handshake — when the overlay is LOCKED (click-through),
   // mouse events pass through to EQ. Flip the window interactive while the
   // cursor is over a tab so the click lands. Same fix the Mob Info tabs
   // needed ("Tank button doesn't do anything" = this exact failure mode).
-  var histPrevBtn = document.getElementById('histPrev');
-  var histNextBtn = document.getElementById('histNext');
-  [tabDpsBtn, tabTankBtn, tabHistBtn, histPrevBtn, histNextBtn].forEach(function(btn){
+  // The fight list is one element with a delegated click, so the handshake
+  // covers every row it will ever hold — rows are rebuilt as fights end.
+  var histListEl = document.getElementById('histList');
+  [tabDpsBtn, tabTankBtn, tabHistBtn, histListEl].forEach(function(btn){
     if (!btn) return;
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -380,9 +418,56 @@
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
   if (tabHistBtn) tabHistBtn.addEventListener('click', function(){ _setTab('history'); });
-  // ◀ is OLDER, so it walks the index UP — the ring is newest-first.
-  if (histPrevBtn) histPrevBtn.addEventListener('click', function(){ HIST_IDX++; tick().catch(function(){}); });
-  if (histNextBtn) histNextBtn.addEventListener('click', function(){ HIST_IDX = Math.max(0, HIST_IDX - 1); tick().catch(function(){}); });
+  // A row's index is its place in the ring, newest first (0 = the last kill).
+  if (histListEl) histListEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.hitem') : null;
+    if (!b) return;
+    HIST_IDX = parseInt(b.getAttribute('data-i'), 10) || 0;
+    tick().catch(function(){});
+  });
+  // One row of the fight list: the mob, then how long it took and how long
+  // ago it ended; "…" while the guild's numbers are still settling.
+  function histItemHtml(h, i, on, nowMs) {
+    var d = h.durationSec || 0;
+    var dur = d ? Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0') : '—';
+    var ago = h.endedMs ? Math.max(0, Math.round((nowMs - h.endedMs) / 60000)) : null;
+    var agoTxt = ago == null ? '' : (ago < 1 ? ' · now' : (ago < 60 ? ' · ' + ago + 'm ago' : ' · ' + Math.floor(ago / 60) + 'h ago'));
+    return '<li><button type="button" class="hitem' + (on ? ' on' : '') + '" data-i="' + i + '"'
+      + ' title="' + esc(h.boss) + (h.settled ? '' : ' — guild numbers still settling') + '">'
+      + '<span class="hb">' + esc(h.boss) + (h.settled ? '' : ' …') + '</span>'
+      + '<span class="hm">' + dur + agoTxt + '</span></button></li>';
+  }
+
+  // ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17:
+  // "Mini focuses on the user directly"). The player just above me, me, and
+  // the player just below, from whichever tab was last picked: the race is
+  // the point of a meter. At the top of the board that is me and the two
+  // below; at the bottom, the two above and me. With no row of my own (no
+  // damage dealt or taken yet) it is the top three, so a mini is never blank
+  // while a fight is on.
+  function miniWindow(allRows, me) {
+    var lc = me ? String(me).toLowerCase() : null;
+    var i = lc ? allRows.findIndex(function(r){ return String(r[0]).toLowerCase() === lc; }) : -1;
+    var start = i < 0 ? 0 : Math.max(0, Math.min(i - 1, allRows.length - 3));
+    return allRows.slice(start, start + 3);
+  }
+  // One mini row: rank, name, total, @rate, then a share-of-raid bar under
+  // the name. "me" reuses the full board's li.me highlight.
+  function miniRowsHtml(rows, me, totalDmg, secs, tank) {
+    var lc = me ? String(me).toLowerCase() : null;
+    return rows.map(function(row){
+      var d = row[1];
+      var pct = totalDmg > 0 ? Math.min(100, (d / totalDmg) * 100) : 0;
+      var isMe = !!lc && String(row[0]).toLowerCase() === lc;
+      return '<li class="mrow' + (isMe ? ' me' : '') + (tank ? ' tk' : '') + '">'
+        + '<span class="r">#' + row[4] + '</span>'
+        + '<span class="n wp-mini-name" title="' + esc(row[0]) + '">' + esc(row[0]) + '</span>'
+        + '<span class="v wp-mini-num"><span class="d">' + fmt(d) + '</span> <span class="dps">@'
+        +   fmt(secs > 0 ? Math.round(d / secs) : 0) + '</span></span>'
+        + '<span class="mbar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>'
+        + '</li>';
+    }).join('');
+  }
 
   // Visible-row count — how many names the scoreboard shows (you're always
   // shown on top of this; see the render). Persisted so a restart keeps it.
@@ -530,10 +615,11 @@
         if (HIST_IDX > HISTLIST.length - 1) HIST_IDX = Math.max(0, HISTLIST.length - 1);
         HIST = HISTLIST[HIST_IDX] || null;
         if (HIST) boss = HIST.boss;
-        var whichEl = document.getElementById('histWhich');
-        if (whichEl) whichEl.textContent = HISTLIST.length ? (HIST_IDX + 1) + '/' + HISTLIST.length : '—';
-        if (histPrevBtn) histPrevBtn.disabled = (HIST_IDX >= HISTLIST.length - 1);
-        if (histNextBtn) histNextBtn.disabled = (HIST_IDX <= 0);
+        if (histListEl) {
+          var _hNow = Date.now();
+          var listHtml = HISTLIST.map(function(h, i){ return histItemHtml(h, i, i === HIST_IDX, _hNow); }).join('');
+          if (histListEl.__wpHtml !== listHtml) { histListEl.innerHTML = listHtml; histListEl.__wpHtml = listHtml; }
+        }
       }
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
@@ -775,6 +861,11 @@
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
       }
+      // ▭ Mini swaps only the rows; the byte-stability guard and the fit
+      // below then run exactly as they do in full mode.
+      if (document.body.classList.contains('wp-mini')) {
+        bodyHtml = miniRowsHtml(miniWindow(allRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
+      }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.
       if (ul.__wpHtml !== bodyHtml) {
@@ -810,6 +901,9 @@
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }
   }
+  // ▭ A mini flip repaints now, not on the next poll; tick() ends in the
+  // auto-fit, so the window height follows the new rows.
+  window.addEventListener('wp-mini-change', function(){ tick().catch(function(){}); });
   tick(); setInterval(tick, 1000);
 </script>
 </body></html>

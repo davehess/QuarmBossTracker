@@ -111,6 +111,8 @@
   .roll-detail .d{display:flex;gap:6px;font-size:9px;color:#9aa4ad;line-height:1.5}
   .roll-detail .d .v{color:#e6edf3;font-variant-numeric:tabular-nums;margin-left:auto}
   .roll-detail .d.win .v{color:#f0c419;font-weight:700}
+  .roll-detail .d.lose .v{color:#f85149;font-weight:700}
+  .roll-detail .d .rng{opacity:.6;flex-shrink:0;font-variant-numeric:tabular-nums}
   /* A re-roll never wins, so it has to be legible at a glance or the list looks
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
@@ -504,6 +506,32 @@
             var rs  = visRolls[ri];
             var rid = _rollId(rs);
             var expanded = !!(rid && _openRolls.has(rid));
+            if (rs.kind === 'deathroll') {
+              // ☠️ A deathroll is ONE row (the guild lead, 2026-09-23, option A), not
+              // a dozen "1 roll" sets. Expand shows each step in order.
+              var dg = rs.deathroll || {};
+              var dn = (dg.players || []).map(esc);
+              var dState = dg.done ? '<span style="color:#f85149">' + esc(dg.loser) + ' hit 0</span>'
+                : (rs.open && dg.next ? '<span style="color:#f0c419">' + (dg.next.name ? esc(dg.next.name) + ' to roll' : 'next') + ' 0–' + dg.next.to + '</span>'
+                : '<span style="opacity:.6">stopped</span>');
+              html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
+                   +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
+                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
+                   +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
+                   +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
+                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+              if (expanded) {
+                html += '<div class="roll-detail">';
+                for (var dk = 0; dk < (dg.steps || []).length; dk++) {
+                  var ds = dg.steps[dk];
+                  html += '<div class="d' + (ds.value === 0 ? ' lose' : '') + '"><span>' + esc(ds.name) + '</span>'
+                       +    '<span class="rng">0–' + ds.to + '</span><span class="v">' + ds.value + '</span></div>';
+                }
+                html += '</div>';
+              }
+              continue;
+            }
             var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
             html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')

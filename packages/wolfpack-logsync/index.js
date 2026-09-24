@@ -3542,6 +3542,8 @@ function noteSelfCast(line, character) {
   arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
+  // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
+  if (typeof _meNoteSelfCast === 'function') _meNoteSelfCast(cl, m[1].trim(), atMs);
   // Silent pacifies (Harmony et al.) have no landing line — this cast is the
   // only evidence they will ever produce. typeof-guarded like the rez hook
   // below so source-slice tests that lift noteSelfCast alone still run.
@@ -4014,6 +4016,8 @@ function npcManaNote(mobName, mobId, manaMax, spentDelta, atMs) {
   let rec = _npcManaByMob.get(key);
   if (!rec) { rec = { max: Number(manaMax), spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
   rec.max = Number(manaMax);
+  rec.touchedMs = Date.now();
+  if (typeof _npcManaEvict === 'function') _npcManaEvict();
   if (Number.isFinite(spentDelta) && spentDelta > 0) {
     rec.spent = Math.min(rec.max, rec.spent + spentDelta);
     rec.lastCastMs = atMs || Date.now();
@@ -4035,15 +4039,176 @@ function npcManaDisengage(mobName, mobId) {
 function npcManaState(mobName, mobId) {
   const rec = _npcManaByMob.get(_npcManaKey(mobName, mobId));
   if (!rec || !(rec.max > 0)) return null;
-  const cur = Math.max(0, rec.max - rec.spent);
+  // typeof-guarded: source-slice tests lift the ledger without its neighbours.
+  const drained = typeof _drainTotal === 'function' ? _drainTotal(rec, Date.now()) : 0;
+  const used = Math.min(rec.max, rec.spent + drained);
+  const cur = Math.max(0, rec.max - used);
   return {
     cur, max: rec.max,
     pct: Math.max(0, Math.min(100, Math.round(cur / rec.max * 100))),
     spent: rec.spent,
+    drained,
     engaged: !!rec.engaged,
     // The overlay renders this as "≥ spent" / "estimate", never as a gauge.
     estimated: true,
   };
+}
+
+// ── Mana drains (a member's request + the guild lead, 2026-09-24) ───────────
+// Theft of Thought, Mana Sieve, the Torments, drain songs and procs take mana
+// from the target. The rules are the Quarm SERVER's (EQMacEmu
+// zone/spell_effects.cpp, SE_CurrentMana; CalcSpellEffectValue_formula), read
+// from source rather than remembered:
+//   · the amount at the caster's level: formula 1–99 = base + level × f,
+//     100 = base, 101 = base + level/2, 102 = +level, 103 = +2·level,
+//     104 = +3·level, 105 = +4·level; never past the spell's cap;
+//   · an INSTANT drain (duration formula 0) on an NPC above level 52 is CUT —
+//     ÷2 at 53–54, ÷3 and at most 105 at 55+. So a Theft of Thought takes 105
+//     from a raid boss, not 400. Timed drains are not cut;
+//   · a timed drain does nothing on landing; it works every 6-second tick;
+//   · bards — NPC or player — take nothing, good or bad.
+// Which landings we see: our OWN drains exactly (the cast names the spell),
+// and other players' TIMED drains through the bystander path (their landing
+// texts are unique). Others' instant drains land as "<mob> staggers.", which
+// 96 spells print, so they cannot be counted and are not.
+function _drainAmount(drain, casterLevel) {
+  if (!drain || !(Number(drain.b) > 0)) return 0;
+  const L = Number(casterLevel) || _assumedCasterLevel();
+  const f = Number(drain.f) || 100;
+  const b = Number(drain.b);
+  let v;
+  if (f >= 1 && f <= 99) v = b + L * f;
+  else if (f === 101) v = b + Math.floor(L / 2);
+  else if (f === 102) v = b + L;
+  else if (f === 103) v = b + L * 2;
+  else if (f === 104) v = b + L * 3;
+  else if (f === 105) v = b + L * 4;
+  else v = b;          // 100, and any formula we do not model: the base
+  if (Number(drain.m) > 0) v = Math.min(v, Number(drain.m));
+  return v;
+}
+function _npcInstantDrainCut(amount, npcLevel) {
+  const L = Number(npcLevel) || 0;
+  if (L > 54) return Math.min(105, Math.trunc(amount / 3));
+  if (L > 52) return Math.trunc(amount / 2);
+  return amount;
+}
+// Ticks a timed effect has done `elapsedMs` after landing. The server ticks
+// every 6 seconds at a phase we cannot see, so the first tick comes anywhere
+// in the first 6s — the nearest whole tick is the unbiased count.
+function _ticksDone(elapsedMs, maxTicks) {
+  return Math.max(0, Math.min(maxTicks, Math.round(elapsedMs / 6000)));
+}
+// Instant drains so far plus every timed drain's ticks elapsed.
+function _drainTotal(rec, now) {
+  let total = Number(rec.drained) || 0;
+  if (rec.timed) {
+    for (const t of rec.timed.values()) total += _ticksDone(now - t.startMs, t.ticks) * t.perTick;
+  }
+  return total;
+}
+// Put a drain on a ledger record (mob or PvP). A timed drain re-landing
+// replaces its own earlier copy (same spell does not stack) — the ticks it
+// already did are banked first.
+function _addDrain(rec, e, casterLevel, atMs) {
+  const amt = _drainAmount(e.drain, casterLevel);
+  if (!(amt > 0)) return false;
+  if (Number(e.durf) > 0) {
+    const ticks = _durTicksForLevel(e.durf, e.dur, Number(casterLevel) || _assumedCasterLevel());
+    if (!(ticks > 0)) return false;
+    if (!rec.timed) rec.timed = new Map();
+    const k = String(e.name).toLowerCase();
+    const prev = rec.timed.get(k);
+    if (prev) rec.drained = (Number(rec.drained) || 0) + _ticksDone(atMs - prev.startMs, prev.ticks) * prev.perTick;
+    rec.timed.set(k, { perTick: amt, ticks, startMs: atMs });
+  } else {
+    rec.drained = (Number(rec.drained) || 0) + amt;
+  }
+  return true;
+}
+const _NO_MANA_CLASSES = /^(warrior|rogue|monk)$/i;
+function _levelOf(character) {
+  const cl = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() !== cl) continue;
+    const ci = Array.isArray(_zealState[ch].charInfo) ? _zealState[ch].charInfo : [];
+    const hit = ci.find(x => x && x.id === 2);
+    const n = hit ? parseInt(hit.value, 10) : NaN;
+    if (n > 0) return n;
+  }
+  const w = whoData.get(cl);
+  return (w && Number(w.level) > 0) ? Number(w.level) : null;
+}
+// PvP: what YOUR drains took from a player this fight. Full strength (the NPC
+// cut is NPC-only) and an UPPER bound — the server only takes what they have,
+// which nobody can see. Resets after five quiet minutes.
+const _pvpDrains = new Map();   // selfLower|targetLower → { drained, timed, casts, firstMs, lastMs }
+const PVP_DRAIN_IDLE_MS = 5 * 60_000;
+function _pvpNoteDrain(selfChar, target, e, casterLevel, atMs) {
+  const k = String(selfChar).toLowerCase() + '|' + String(target).toLowerCase();
+  let rec = _pvpDrains.get(k);
+  if (!rec || atMs - rec.lastMs > PVP_DRAIN_IDLE_MS) { rec = { drained: 0, timed: null, casts: 0, firstMs: atMs, lastMs: atMs }; _pvpDrains.set(k, rec); }
+  if (!_addDrain(rec, e, casterLevel, atMs)) return;
+  rec.casts++;
+  rec.lastMs = atMs;
+  if (_pvpDrains.size > 200) _pvpDrains.delete(_pvpDrains.keys().next().value);
+}
+function pvpDrainState(selfChar, target) {
+  const rec = _pvpDrains.get(String(selfChar).toLowerCase() + '|' + String(target).toLowerCase());
+  if (!rec || Date.now() - rec.lastMs > PVP_DRAIN_IDLE_MS) return null;
+  return { mana: _drainTotal(rec, Date.now()), casts: rec.casts, since_ms: rec.firstMs };
+}
+// A landing we resolved to a spell — does it drain, and whose ledger gets it?
+function _noteManaDrainLanding(evt, selfChar) {
+  if (!evt || !evt.spell_name || !evt.target) return;
+  const k = String(evt.spell_name).toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'"));
+  if (!e || !e.drain) return;
+  const own = !!(evt._selfCast && selfChar);
+  const timed = Number(e.durf) > 0;
+  if (!own && !timed) return;   // someone else's instant drain: not identifiable (see above)
+  const atMs = evt.cast_at ? Date.parse(evt.cast_at) : Date.now();
+  const casterLevel = own ? _levelOf(selfChar) : null;
+  const mob = _npcMobInfoFor(evt.target);
+  if (mob) {
+    if (Number(mob.class) === 8) return;              // a bard NPC: immune
+    const max = Number(mob.mana);
+    if (!(max > 0)) return;                           // nothing to drain
+    const key = _npcManaKey(evt.target, Number.isFinite(evt.target_id) ? evt.target_id : null);
+    let rec = _npcManaByMob.get(key);
+    if (!rec) { rec = { max, spent: 0, lastCastMs: 0, engaged: true }; _npcManaByMob.set(key, rec); }
+    rec.max = max;
+    // The high-level cut applies to instant drains only; bake it into a copy
+    // of the drain so _addDrain stays one rule.
+    const ee = timed ? e : Object.assign({}, e, { drain: { b: _npcInstantDrainCut(_drainAmount(e.drain, casterLevel), mob.level), f: 100, m: 0 } });
+    if (_addDrain(rec, ee, casterLevel, atMs)) { rec.engaged = true; rec.touchedMs = Date.now(); }
+    _npcManaEvict();
+    return;
+  }
+  // No NPC by that name and a one-word name: a player.
+  if (own && !/\s/.test(String(evt.target).trim())) _pvpNoteDrain(selfChar, evt.target, e, casterLevel, atMs);
+}
+// A slain mob's ledger goes with it. Name-keyed entries (no spawn id) are
+// dropped by name; an id-keyed one only when an observer was targeting that
+// exact spawn — a same-name sibling still alive keeps its own.
+function _npcManaOnSlain(name) {
+  const base = String(name || '').trim().toLowerCase();
+  if (!base) return;
+  _npcManaByMob.delete(base);
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (st && Number.isFinite(st.target_id) && String(st.target_name || '').trim().toLowerCase() === base) {
+      _npcManaByMob.delete(base + '#' + st.target_id);
+    }
+  }
+}
+// Entries nobody touched for 30 minutes are spawns long gone.
+function _npcManaEvict() {
+  if (_npcManaByMob.size < 100) return;
+  const cutoff = Date.now() - 30 * 60_000;
+  for (const [k, r] of _npcManaByMob) {
+    if (Math.max(r.touchedMs || 0, r.lastCastMs || 0) < cutoff) _npcManaByMob.delete(k);
+  }
 }
 // Bystander-visible heal LANDINGS — the spell's cast_on_other message with the
 // target's name (the guild lead, 2026-07-14: heal AMOUNTS are private to the healed,
@@ -4122,7 +4287,67 @@ function _pushBlindEvent(kind, text, tts, atMs) {
   _blindEvents.push({ ts: atMs || Date.now(), kind, text, tts: tts || text });
   if (_blindEvents.length > 40) _blindEvents.splice(0, _blindEvents.length - 40);
 }
+// Every blinding spell's own landing and fade text, from the catalog (bot
+// 3.1.145 flags SPA 20). The hand list above knew one spell; the catalog has
+// thirty landing texts ("You are blinded by a flash of light.", "You have mud
+// in your eyes.") and the commonest fade ("Your sight returns.", 11 spells) was
+// unmatched. A text any NON-blind spell also prints is left out, so a shared
+// line ("You feel confused.") can never open Blind Mode or close it.
+let _blindTextsFor = null, _blindTexts = null;
+function _blindCatalogTexts() {
+  if (_blindTexts && _blindTextsFor === _spellByNameLower) return _blindTexts;
+  const youBlind = new Map(), youOther = new Set(), fadeBlind = new Set(), fadeOther = new Set();
+  for (const e of _spellByNameLower.values()) {
+    if (!e) continue;
+    const you = e.you ? String(e.you).trim() : '';
+    const fade = e.fades ? String(e.fades).trim() : '';
+    if (e.blind) {
+      if (you && !youBlind.has(you)) youBlind.set(you, _catalogDurationSec(e.name));
+      if (fade) fadeBlind.add(fade);
+    } else {
+      if (you) youOther.add(you);
+      if (fade) fadeOther.add(fade);
+    }
+  }
+  const start = new Map([...youBlind].filter(([t]) => !youOther.has(t)));
+  const fade = new Set([...fadeBlind].filter(t => !fadeOther.has(t)));
+  _blindTexts = { start, fade };
+  _blindTextsFor = _spellByNameLower;
+  return _blindTexts;
+}
 function noteBlindLine(line, character) {
+  if (line && character) {
+    const at = line.indexOf('] ');
+    const msg = at >= 0 ? line.slice(at + 2).trim() : '';
+    const bt = msg ? _blindCatalogTexts() : null;
+    // The hand patterns above keep their own source/callout (the Pitted Iron
+    // Ring prints "Flames of mana…" AND the catalog's manaflare line), and an
+    // already-active blind is not announced twice.
+    if (bt && bt.start.has(msg) && !_BLIND_RX.some(b => b.rx.test(line))
+        && !(_blindState[String(character).toLowerCase()] || {}).active) {
+      const cl = String(character).toLowerCase();
+      const ts = parseEqTimestamp(line);
+      const atMs = ts ? ts.getTime() : Date.now();
+      const secs = bt.start.get(msg);
+      _blindState[cl] = {
+        active: true, source: 'npc_blind', since: atMs,
+        expiresAt: atMs + (secs ? secs * 1000 : _BLIND_DUR_GENERIC_MS),
+        target: _zealTargetForChar(cl) || null, selfHits: 0,
+      };
+      _pushBlindEvent('blind_start', '👁 Blinded' + (secs ? ' — ' + secs + 's' : ''), 'Blinded', atMs);
+      return;
+    }
+    if (bt && bt.fade.has(msg)) {
+      const s = _blindState[String(character).toLowerCase()];
+      if (s && s.active) {
+        const ts = parseEqTimestamp(line);
+        s.active = false;
+        s.endedAt = ts ? ts.getTime() : Date.now();
+        _pushBlindEvent('blind_end', '👁 Vision restored', 'Vision restored', s.endedAt);
+      }
+      return;
+    }
+  }
   // Cheap gate covering every land/fade/self-hit pattern below: blind lines,
   // the manaflare pair, the fade texts, and the ALL-CAPS YOURSELF self-hit.
   if (line.indexOf('lind') === -1 && line.indexOf('manaflare') === -1
@@ -4500,6 +4725,132 @@ function parseConsiderLine(line, character) {
     rank:      entry[2],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
+}
+
+// ── /consider → a level (the guild lead, 2026-09-24) ────────────────────────
+// "fill in level data based on the current character's level if they consider
+// them and find them to be in specific ranges. this may mean capturing exact
+// level from even con or /who, or a range from con and anon."
+//
+// A consider prints "<name> <standing> -- <level phrase>". The phrase names the
+// con COLOUR, and the colour is the target's level against yours by the
+// server's own table — EQMacEmu zone/mob_ai.cpp Mob::GetLevelCon, mirrored
+// exactly in _levelCon. So a white con IS the level, and every other colour
+// is a range (_conLevelRange).
+//
+// ⚠ The phrase text is the CLIENT's, not the server's. Three are fixed and
+// documented (ZAM's consider page, the Project 1999 wiki): red "what would you
+// like your tombstone to say?", yellow "looks like quite a gamble.", white
+// "looks like an even fight.". The blue and green phrases change with the
+// player's level and the old references disagree, so they are LEARNED, not
+// typed in: every consider of something whose level we already know (an NPC
+// with a fixed catalog level, or a player /who showed) labels its phrase with
+// the colour the table gives, and the labels persist across restarts.
+// Each row: [highest level of yours it covers, green if diff ≤ g, light blue if diff ≤ lb].
+const _CON_BRACKETS = [
+  [7, -4, null], [8, -5, -4], [12, -6, -4], [16, -7, -5], [20, -8, -6], [24, -9, -7],
+  [28, -10, -8], [30, -11, -9], [32, -12, -9], [36, -13, -10], [40, -14, -11], [44, -16, -12],
+  [48, -17, -13], [52, -18, -14], [54, -19, -15], [56, -20, -15], [60, -21, -16], [61, -19, -14],
+  [62, -17, -12], [9999, -16, -11],
+];
+function _levelCon(my, other) {
+  const diff = other - my;
+  if (diff === 0) return 'white';
+  if (diff >= 1 && diff <= 2) return 'yellow';
+  if (diff >= 3) return 'red';
+  const b = _CON_BRACKETS.find(x => my <= x[0]);
+  if (diff <= b[1]) return 'green';
+  if (b[2] != null && diff <= b[2]) return 'lightblue';
+  return 'blue';
+}
+// The levels a colour allows, given yours. Red is open-ended (max null).
+function _conLevelRange(my, colour) {
+  const b = _CON_BRACKETS.find(x => my <= x[0]);
+  switch (colour) {
+    case 'white':     return { min: my, max: my };
+    case 'yellow':    return { min: my + 1, max: my + 2 };
+    case 'red':       return { min: my + 3, max: null };
+    case 'blue':      return { min: Math.max(1, my + (b[2] != null ? b[2] : b[1]) + 1), max: Math.max(1, my - 1) };
+    case 'lightblue': return b[2] == null ? null : { min: Math.max(1, my + b[1] + 1), max: Math.max(1, my + b[2]) };
+    case 'green':     return { min: 1, max: Math.max(1, my + b[1]) };
+    default:          return null;
+  }
+}
+const _CON_LEVEL_RX = new RegExp('\\]\\s+(.+?)\\s+(?:' + CON_STANDINGS.map(([p]) => p).join('|') + ')\\s+--\\s+(.+?)\\s*$', 'i');
+const _CON_PHRASE_SEED = new Map([
+  ['what would you like your tombstone to say', 'red'],
+  ['looks like quite a gamble', 'yellow'],
+  ['looks like an even fight', 'white'],
+]);
+function _conPhraseKey(p) { return String(p || '').toLowerCase().replace(/[\s.?!]+$/, '').trim(); }
+let _conPhraseVotes = new Map();   // phraseKey → { colour: count }
+let _conPhraseLoaded = false;
+const CON_PHRASE_FILE = path.join(__dirname, 'logsync.con-phrases.json');
+function _conPhrasesLoad() {
+  if (_conPhraseLoaded) return;
+  _conPhraseLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(CON_PHRASE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(j || {})) if (v && typeof v === 'object') _conPhraseVotes.set(k, v);
+  } catch { /* first run — nothing learned yet */ }
+}
+function _conPhrasesSave() {
+  try { fs.writeFileSync(CON_PHRASE_FILE, JSON.stringify(Object.fromEntries(_conPhraseVotes))); } catch { /* best effort */ }
+}
+// A phrase's colour: the documented three, else a learned label that is
+// unanimous (or at least 80% of three or more sightings).
+function _conColourOf(key) {
+  if (_CON_PHRASE_SEED.has(key)) return _CON_PHRASE_SEED.get(key);
+  const v = _conPhraseVotes.get(key);
+  if (!v) return null;
+  let best = null, n = 0, total = 0;
+  for (const [c, k] of Object.entries(v)) { total += k; if (k > n) { n = k; best = c; } }
+  if (n === total) return best;
+  return (total >= 3 && n / total >= 0.8) ? best : null;
+}
+// A target whose level we know without the consider: an NPC with ONE catalog
+// level. NOT a player, even one /who has shown: the client's consider of a
+// PLAYER does not follow the level table (the guild lead, 2026-09-24: level-60
+// players conned by a level 60 read "looks like quite a gamble", a yellow by
+// the table), so a player's consider would teach the wrong colour.
+function _knownLevelOf(name) {
+  const mob = (typeof _npcMobInfoFor === 'function') ? _npcMobInfoFor(name) : null;
+  if (mob && Number(mob.level) > 0 && !mob.maxlevel) return Number(mob.level);
+  return null;
+}
+const _conLevelByTarget = new Map();   // charLower|targetLower → { colour, phrase, my, min, max, exact, at }
+function noteConsiderLevel(line, character) {
+  if (!line || !character || line.indexOf(' -- ') === -1) return null;
+  const m = line.match(_CON_LEVEL_RX);
+  if (!m) return null;
+  const target = m[1].trim();
+  if (!target || target.length > 64 || /['"‘’]/.test(target)) return null;
+  const my = _levelOf(character);
+  if (!my) return null;
+  _conPhrasesLoad();
+  const key = _conPhraseKey(m[2]);
+  const known = _knownLevelOf(target);
+  if (known != null && !_CON_PHRASE_SEED.has(key)) {
+    const colour = _levelCon(my, known);
+    const v = _conPhraseVotes.get(key) || {};
+    v[colour] = (v[colour] || 0) + 1;
+    _conPhraseVotes.set(key, v);
+    _conPhrasesSave();
+  }
+  const colour = _conColourOf(key);
+  if (!colour) return null;
+  const r = _conLevelRange(my, colour);
+  const rec = { colour, phrase: m[2].trim(), my, min: r ? r.min : null, max: r ? r.max : null,
+                exact: colour === 'white' ? my : null, at: Date.now() };
+  _conLevelByTarget.set(String(character).toLowerCase() + '|' + target.toLowerCase(), rec);
+  if (_conLevelByTarget.size > 500) _conLevelByTarget.delete(_conLevelByTarget.keys().next().value);
+  return rec;
+}
+// A consider stays useful for six hours — levels move slowly, and a stale
+// range is still a range.
+function conLevelFor(character, target) {
+  const rec = _conLevelByTarget.get(String(character || '').toLowerCase() + '|' + String(target || '').toLowerCase());
+  return (rec && Date.now() - rec.at <= 6 * 3_600_000) ? rec : null;
 }
 
 // PoP flag grant — "You have received a character flag!" The line never
@@ -6365,7 +6716,12 @@ function trackDisciplineTimerLine(line, character) {
   if (!total) return;                                           // "in ." — nothing to count
   const name = String(character || '').trim();
   if (!name) return;
-  const at = parseEqTimestamp(line) || Date.now();
+  // parseEqTimestamp returns a Date, and `Date + number` is STRING
+  // concatenation — this used to store "Sat Aug 30 … GMT…634000", so every
+  // read came back NaN and toISOString threw (found 2026-09-24 building the
+  // HUD). The test's stand-in parser returned a number, which hid it.
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : Date.now();
   _discReadyAt.set(name.toLowerCase(), { at: at + total * 1000, name });
 }
 
@@ -6784,16 +7140,87 @@ function trackRollItemLine(line) {
   }
 }
 
+// ── Deathrolls (the guild lead, 2026-09-23) ─────────────────────────────────
+// "First one to roll a zero loses." Each step is an ordinary /random whose range
+// is the last result, so one game used to fill the Rolls card with a dozen
+// "1 roller" sets. The same rule as the bot's utils/deathroll.js (which records
+// and announces games): range = previous result, a different player each step,
+// ≤2 min apart, ≥3 rolls. Here it also finds a game STILL IN PROGRESS, so the
+// card can say whose turn it is. One observer, so no clock-skew merge needed.
+const DEATHROLL_STEP_MS = 2 * 60 * 1000;
+const DEATHROLL_MIN_ROLLS = 3;
+function _deathrollChains() {
+  const rolls = [];
+  for (const s of _rollSets) for (const r of s.rolls) rolls.push({ r, from: s.from, to: s.to });
+  rolls.sort((a, b) => a.r.atMs - b.r.atMs);
+  const used = new Set();
+  const chains = [];
+  for (let i = 0; i < rolls.length; i++) {
+    if (used.has(i) || rolls[i].from !== 0) continue;
+    const chain = [i];
+    let cur = rolls[i];
+    for (let j = i + 1; j < rolls.length && cur.r.value > 0; j++) {
+      const n = rolls[j];
+      if (n.r.atMs - cur.r.atMs > DEATHROLL_STEP_MS) break;
+      if (used.has(j)) continue;
+      if (n.from === 0 && n.to === cur.r.value && n.r.nameLower !== cur.r.nameLower) { chain.push(j); cur = n; }
+    }
+    if (chain.length < DEATHROLL_MIN_ROLLS) continue;
+    for (const k of chain) used.add(k);
+    chains.push(chain.map(k => rolls[k]));
+  }
+  return chains;
+}
+// One chain → one Rolls entry. It keeps the set shape (from/to/started_at_ms,
+// so the Command Center's dismiss and expand keys work unchanged) and carries
+// the game itself under `deathroll`.
+function _deathrollEntry(ch, now) {
+  const first = ch[0], last = ch[ch.length - 1];
+  const done = last.r.value === 0;
+  const players = [];
+  for (const c of ch) if (!players.some(p => p.toLowerCase() === c.r.nameLower)) players.push(c.r.name);
+  const steps = ch.map(c => ({ name: c.r.name, to: c.to, value: c.r.value, at_ms: c.r.atMs }));
+  return {
+    kind: 'deathroll',
+    from: 0, to: first.to, item: null, qty: null,
+    players: players.length,
+    winners: [],
+    open: !done && (now - last.r.atMs) <= DEATHROLL_STEP_MS,
+    started_at_ms: first.r.atMs, last_at_ms: last.r.atMs,
+    rolls: steps.map(s => ({ name: s.name, value: s.value, at_ms: s.at_ms })),
+    deathroll: {
+      players, steps, done,
+      loser: done ? last.r.name : null,
+      winners: done ? players.filter(p => p.toLowerCase() !== last.r.nameLower) : [],
+      // Whose turn: with two players it can only be the other one; with more,
+      // the rotation is theirs to choose, so only the range is known.
+      next: done ? null : { to: last.r.value,
+        name: players.length === 2 ? players.find(p => p.toLowerCase() !== last.r.nameLower) : null },
+    },
+  };
+}
+
 // Serialized sets, newest first. Winners = the top-(qty) rolls counting each
-// player's FIRST roll only ((3) linked on the item = three winners).
+// player's FIRST roll only ((3) linked on the item = three winners). A
+// deathroll replaces the sets it is made of with ONE entry (kind 'deathroll').
 function rollSetsSnapshot(maxAgeMs) {
   const now = Date.now();
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
   }
+  const chains = _deathrollChains();
+  const inGame = new Set();
+  for (const ch of chains) for (const c of ch) inGame.add(c.r);
   const out = [];
+  for (const ch of chains) {
+    const e = _deathrollEntry(ch, now);
+    if (maxAgeMs && (now - e.last_at_ms) > maxAgeMs) continue;
+    out.push(e);
+  }
   for (const s of _rollSets) {
     if (maxAgeMs && (now - s.lastMs) > maxAgeMs) continue;
+    // Every roll in this set belongs to a game — the game's entry shows it.
+    if (s.rolls.length && s.rolls.every(r => inGame.has(r))) continue;
     const firstByName = new Map();
     for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
     const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
@@ -11876,6 +12303,1149 @@ function _resolveMainTarget(activeCharacter) {
   }
   return best ? { name: best.name, hp_pct: best.hp_pct != null ? best.hp_pct : null, raider_count: best.raider_count || 0 } : null;
 }
+// ── Me overlay (the guild lead, 2026-09-24) ─────────────────────────────────
+// "a 'me' overlay. my target, my casting, my health, mana, XP detail. avg DPS
+// per fight, total per day/night during raids, then the things that are
+// important to classes with mana. clerics focus on how many CHs are left,
+// enchanters, charms or mezzes left, theft of thought or harvest timers, party
+// health data." One snapshot of the ACTIVE character; apps/mimic/me.html draws
+// it three ways (A/B/C, picked in game) for the guild lead to choose from.
+//
+// Everything here is what Zeal already sends (docs/zeal-pipe-protocol.md) plus
+// the spell catalog's mana / recast / mez fields (bot 3.1.144-145). A value the
+// client does not send is null, never a guess — the overlay hides it.
+function _meSpell(name) {
+  const k = String(name || '').toLowerCase();
+  if (!k) return null;
+  return _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/`/g, "'")) || null;
+}
+function _meLabel(st, id) {
+  const ci = Array.isArray(st.charInfo) ? st.charInfo : [];
+  const hit = ci.find(x => x && x.id === id);
+  return hit && String(hit.value).trim() !== '' ? String(hit.value).trim() : null;
+}
+// "1,469" / "2.5%" / "12" → number; anything without a digit → null.
+function _meNum(v) {
+  if (v == null) return null;
+  const m = String(v).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+function _meGauge(st, slot) {
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === slot) : null;
+  return g && g.hp_pct != null ? { pct: g.hp_pct, text: g.text || '' } : null;
+}
+
+// XP / AA per hour, measured here: a sliding hour of (time, level*100 + %)
+// samples, so the rate is in "% of a level (or an AA) per hour" — the unit the
+// in-game XP/HR readouts use. A drop (spent AA, death, de-level) restarts the
+// window rather than reading as negative progress. Under five minutes of
+// samples it is not a rate yet and stays null.
+const _meRateSamples = new Map();   // charLower|kind → [{ t, v }]
+function _meRate(key, value, now) {
+  if (value == null) return null;
+  let arr = _meRateSamples.get(key);
+  if (!arr) { arr = []; _meRateSamples.set(key, arr); }
+  const last = arr[arr.length - 1];
+  if (last && value < last.v) arr.length = 0;
+  if (!arr.length || value !== arr[arr.length - 1].v || now - arr[arr.length - 1].t >= 60_000) arr.push({ t: now, v: value });
+  while (arr.length > 2 && now - arr[0].t > 60 * 60_000) arr.shift();
+  if (arr.length < 2) return null;
+  const span = arr[arr.length - 1].t - arr[0].t;
+  if (span < 5 * 60_000) return null;
+  return Math.round(((arr[arr.length - 1].v - arr[0].v) * 3_600_000 / span) * 10) / 10;
+}
+
+// Tonight's damage, per character, from every finished fight this agent saw
+// (trash included — "avg DPS per fight, total per day/night"). The night rolls
+// over at 6am local, the same boundary the rest of the platform uses. A pet's
+// damage counts for its owner. In memory: a restart starts the night over.
+const _meNight = { key: null, byChar: new Map() };
+function _meNightKey(ms) {
+  const d = new Date(ms - 6 * 3_600_000);
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+function _meNoteFight(entry) {
+  if (!entry) return;
+  const key = _meNightKey(entry.endedMs || Date.now());
+  if (_meNight.key !== key) { _meNight.key = key; _meNight.byChar = new Map(); }
+  const seen = new Set();
+  for (const p of (entry.local || [])) {
+    const k = String(p.pet_owner || p.character || '').toLowerCase();
+    if (!k) continue;
+    const e = _meNight.byChar.get(k) || { dmg: 0, secs: 0, fights: 0 };
+    e.dmg += Number(p.dmg) || 0;
+    if (!seen.has(k)) { e.secs += entry.durationSec || 0; e.fights += 1; seen.add(k); }
+    _meNight.byChar.set(k, e);
+  }
+}
+
+// Recast timers for long-recast spells the player casts ("theft of thought or
+// harvest timers"). Stamped at "You begin casting X" — ready at begin + cast
+// time + recast — and taken back if that cast fizzles or is interrupted, which
+// never starts the recast. Spells under 20s recast are not worth a timer.
+const _meRecasts = new Map();   // charLower → Map(spellLower → { name, startedAt, castMs, readyAt })
+function _meNoteSelfCast(cl, name, atMs) {
+  const e = _meSpell(name);
+  if (!e || !(Number(e.recast) >= 20_000)) return;
+  let m = _meRecasts.get(cl);
+  if (!m) { m = new Map(); _meRecasts.set(cl, m); }
+  const castMs = Number(e.cast_ms) || 0;
+  m.set(String(name).toLowerCase(), { name, startedAt: atMs, castMs, readyAt: atMs + castMs + Number(e.recast) });
+}
+function _meNoteCastFailed(line, character) {
+  if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+      && line.indexOf('miss the gem') === -1) return;   // cheap gate
+  if (!_CAST_FAIL_RX.test(line)) return;
+  _meLastCast.delete(String(character).toLowerCase());   // nothing will land from it
+  const m = _meRecasts.get(String(character).toLowerCase());
+  if (!m) return;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  let hit = null;
+  for (const [k, r] of m) {
+    if (atMs >= r.startedAt && atMs - r.startedAt <= r.castMs + 1500
+        && (!hit || r.startedAt > hit[1].startedAt)) hit = [k, r];
+  }
+  if (hit) m.delete(hit[0]);
+}
+
+// ── Damage in/out, by element (the HUD layout) ──────────────────────────────
+// "damage in/out shown clearly. resists and cast damage too with elements
+// associated with it" (the guild lead, 2026-09-24). Every damage event this
+// character deals or takes, tagged melee or spell and — for a spell — its
+// element, from the catalog's resist type (bot 3.1.146: 1 magic · 2 fire ·
+// 3 cold · 4 poison · 5 disease).
+//
+// ⚠ A spell that hits YOU is logged "You were hit by non-melee for N" — no
+// spell name. Its element comes from the landing text printed just before it
+// ("You are engulfed in flames."), and only when every spell sharing that
+// text has the same element; otherwise it stays "spell", unnamed. Never a
+// guess.
+const _ME_ELEMENTS = { 1: 'magic', 2: 'fire', 3: 'cold', 4: 'poison', 5: 'disease' };
+const _meHits = new Map();          // charLower → [{ t, dir, amount, kind, name, el, other, proc }]
+const _meLastCast = new Map();      // charLower → { name (lower), t } — "You begin casting X." (tells a proc from a cast)
+const _meLastLanding = new Map();   // charLower → { el, name, t }
+let _meYouTextsFor = null, _meYouTexts = null;
+function _meYouElementTexts() {
+  if (_meYouTexts && _meYouTextsFor === _spellByNameLower) return _meYouTexts;
+  const by = new Map();   // text → { els:Set, names:Set }
+  for (const e of _spellByNameLower.values()) {
+    if (!e || !e.you || e.good === 1) continue;
+    const k = String(e.you).trim();
+    let v = by.get(k);
+    if (!v) { v = { els: new Set(), names: new Set() }; by.set(k, v); }
+    v.els.add(_ME_ELEMENTS[e.rt] || null);
+    v.names.add(e.name);
+  }
+  const out = new Map();
+  for (const [k, v] of by) {
+    if (v.els.size !== 1) continue;
+    const el = [...v.els][0];
+    if (!el) continue;
+    out.set(k, { el, name: v.names.size === 1 ? [...v.names][0] : null });
+  }
+  _meYouTexts = out; _meYouTextsFor = _spellByNameLower;
+  return out;
+}
+function _meNoteSelfLanding(line, character) {
+  if (!line || !character) return;
+  const at = line.indexOf('] ');
+  if (at < 0) return;
+  const hit = _meYouElementTexts().get(line.slice(at + 2).trim());
+  if (!hit) return;
+  const ts = parseEqTimestamp(line);
+  _meLastLanding.set(String(character).toLowerCase(), { el: hit.el, name: hit.name, t: ts ? ts.getTime() : Date.now() });
+}
+function _meNoteHit(character, ev) {
+  if (!character || !ev || ev.type !== 'damage' || !(ev.amount > 0)) return;
+  const cl = String(character).toLowerCase();
+  const isYou = (s) => s != null && (/^you$/i.test(s) || String(s).toLowerCase() === cl);
+  let dir = null;
+  if ((ev.attacker == null && ev.defender == null) || isYou(ev.defender)) dir = 'in';
+  else if ((ev.attacker == null || isYou(ev.attacker)) && ev.defender) dir = 'out';
+  if (!dir) return;
+  const t = ev.ts ? Date.parse(ev.ts) : Date.now();
+  const label = String(ev.spellName || ev.ability || '').trim();
+  const spell = label && label.toLowerCase() !== 'non-melee' ? _meSpell(label) : null;
+  let arr = _meHits.get(cl);
+  if (!arr) { arr = []; _meHits.set(cl, arr); }
+  let kind, name = null, el = null;
+  // Your DAMAGE SHIELD is its own kind (the guild lead, 2026-09-24: "Damage shield
+  // hits are also mixed in there - those should be separate"). A named shield
+  // line ("… is pierced by YOUR thorns …") says so outright. The anonymous
+  // "<mob> was hit by non-melee for N" is a shield only when that mob has
+  // just meleed YOU and the amount fits the shield you visibly wear — the
+  // same test the fight parser's _settleDsPending applies, which runs too late
+  // for this hook to read. A weapon proc lands on YOUR swing, never on theirs.
+  // Like that test, a shield must be VISIBLE (known > 0) for an anonymous hit
+  // to count — otherwise every proc near a mob's swing would.
+  // ⚠ The shield's line can print BEFORE the hit that set it off (in game,
+  // 2026-09-24: 14-point shield hits in the guild lead's own lane), so a mob's
+  // melee on you also re-reads the anonymous hits on that mob just before it.
+  const nonMelee = /^non-melee$/i.test(label);
+  const fitsDs = (amount) => { const k = _knownDsPerHitFor(character); return k > 0 && amount <= k + DS_UNLISTED_SLACK; };
+  if (ev.ds) { kind = 'ds'; name = String(ev.ability || 'damage shield'); }
+  else if (dir === 'out' && nonMelee && ev.defender) {
+    const mob = String(ev.defender).toLowerCase();
+    const hitMe = arr.some(x => x.dir === 'in' && x.kind === 'melee' && x.other && String(x.other).toLowerCase() === mob && Math.abs(t - x.t) <= 1500);
+    if (hitMe && fitsDs(ev.amount)) { kind = 'ds'; name = 'damage shield'; }
+  }
+  if (!kind) {
+    if (spell) { kind = 'spell'; name = spell.name; el = _ME_ELEMENTS[spell.rt] || null; }
+    else if (ev.spellName || /^non-melee$/i.test(label)) {
+      kind = 'spell';
+      const last = dir === 'in' ? _meLastLanding.get(cl) : null;
+      if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
+    } else { kind = 'melee'; name = label || null; }
+  }
+  // A weapon PROC (the guild lead, 2026-09-24: "Procs should be purple"): your
+  // spell damage in the same moment as your own swing, when it is not a spell
+  // you just began casting. The proc can print on either side of its swing, so
+  // a swing also re-reads the spell hits just before it.
+  // ⚠ Your own nuke usually prints ANONYMOUSLY too ("<mob> was hit by non-melee
+  // for N"), so a spell hit with no name claims the cast you began in the last
+  // 12 s — once: the cast lands one hit, and a proc after it is still a proc.
+  // A fizzle or an interruption drops the cast (_meNoteCastFailed).
+  const lastCast = _meLastCast.get(cl);
+  let fromCast = false;
+  if (dir === 'out' && kind === 'spell' && lastCast && t - lastCast.t >= 0 && t - lastCast.t <= 12_000) {
+    if (name && lastCast.name === String(name).toLowerCase()) fromCast = true;
+    else if (!name && !lastCast.claimed) { fromCast = true; lastCast.claimed = true; }
+  }
+  const nearSwing = arr.some(x => x.dir === 'out' && x.kind === 'melee' && Math.abs(t - x.t) <= 1500);
+  arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
+    anon: dir === 'out' && kind === 'spell' && nonMelee, cast: fromCast,
+    proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast });
+  if (dir === 'out' && kind === 'melee') {
+    for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
+      const x = arr[i];
+      if (x.dir === 'out' && x.kind === 'spell' && !x.proc && !x.cast) x.proc = true;
+    }
+  }
+  if (dir === 'in' && kind === 'melee' && ev.attacker) {
+    const mob = String(ev.attacker).toLowerCase();
+    for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
+      const x = arr[i];
+      if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
+      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false;
+    }
+  }
+  const cutoff = t - 10 * 60_000;
+  while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
+}
+// In/out totals and per-element split since `sinceMs`, plus the newest hits.
+function _meCombatSince(cl, sinceMs, now) {
+  const arr = _meHits.get(cl) || [];
+  const side = () => ({ dmg: 0, max: 0, by: {} });
+  const out = side(), inn = side();
+  for (const h of arr) {
+    if (h.t < sinceMs) continue;
+    const s = h.dir === 'in' ? inn : out;
+    s.dmg += h.amount;
+    if (h.amount > s.max) s.max = h.amount;
+    const k = h.kind === 'melee' ? 'melee' : (h.el || 'spell');
+    s.by[k] = (s.by[k] || 0) + h.amount;
+  }
+  const secs = Math.max(1, Math.round((now - sinceMs) / 1000));
+  out.dps = Math.round(out.dmg / secs); inn.dps = Math.round(inn.dmg / secs);
+  // Up to 60 of the last 15 s, each stamped with its log second (`at`) so the
+  // HUD can put one ROUND per line — "i sometimes hit 6 times in one round"
+  // (the guild lead, 2026-09-24) filled the old ten-line feed in two rounds.
+  const feed = arr.filter(h => now - h.t <= 15_000).slice(-60).reverse()
+    .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, proc: !!h.proc, at: h.t, age_ms: Math.max(0, now - h.t) }));
+  // The damage shield in this window, and what it does per hit.
+  const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
+  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
+  return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
+}
+// Damage per MOB — done, taken and your damage shield — so the HUD can roll
+// old hits into a running total and drop it when the mob dies (the guild lead,
+// 2026-09-24: "Have the damage done and taken per mob roll off into a total as
+// well, then drop out after each mob" · "Have the damage shield hits roll into
+// a total"). Same-named mobs are told apart by death: a hit belongs to the
+// life that ends at the first death of that name at or after it. A live total
+// stays while the mob was hit in the last 30 s. A dead one stays 90 s — the
+// HUD shows it as a dim "ghost" of the fight until the next fight starts in
+// that column (round seven: "Then after the fight a ghost of those shows up").
+const _meMobDeaths = new Map();   // mobLower → [death times, oldest first]
+const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 90_000;
+function _meNoteMobDeath(name, t) {
+  const k = String(name || '').trim().toLowerCase();
+  if (!k) return;
+  const list = _meMobDeaths.get(k) || [];
+  list.push(t);
+  if (list.length > 8) list.shift();
+  _meMobDeaths.delete(k);
+  _meMobDeaths.set(k, list);
+  if (_meMobDeaths.size > 200) _meMobDeaths.delete(_meMobDeaths.keys().next().value);
+}
+function _meMobTallies(cl, now) {
+  const by = new Map();
+  for (const h of _meHits.get(cl) || []) {
+    if (!h.other) continue;
+    const k = String(h.other).toLowerCase();
+    const died = (_meMobDeaths.get(k) || []).find(d => d >= h.t);
+    const key = k + '|' + (died == null ? 'alive' : died);
+    let v = by.get(key);
+    if (!v) { v = { key, name: h.other, out: 0, in: 0, ds: 0, first: h.t, last: h.t, dead_at: died == null ? null : died }; by.set(key, v); }
+    if (h.kind === 'ds') v.ds += h.amount; else if (h.dir === 'in') v.in += h.amount; else v.out += h.amount;
+    if (h.t > v.last) v.last = h.t;
+  }
+  return [...by.values()]
+    .filter(v => v.dead_at != null ? now - v.dead_at <= _ME_TALLY_DEAD_MS : now - v.last <= _ME_TALLY_IDLE_MS)
+    .sort((a, b) => b.last - a.last).slice(0, 4);
+}
+
+// ── HUD timers and target read-outs (the guild lead, 2026-09-24) ─────────────
+// "Nillipuss is able to provide server tick counters and melee delay timers,
+// and I would like to see those as well." · "Melee cooldowns and discipline
+// cooldowns need to be in here." · the target "should have their target's
+// health as well. If it's slowed, does it enrage?"
+// Each value says where it came from (`source`) and whether it is an estimate
+// (`est`). One we cannot stand behind is null, and the HUD draws nothing.
+
+// SERVER TICK — exact. Zeal gauge 24 ("ServerTick"), timed by Zeal off the
+// server's own stamina packet: value = per-mille of the 6 s tick still to go,
+// text = the whole seconds it shows (1-6). Zeal's reverse option flips the
+// value but not the text, so the direction is whichever reading agrees with
+// the text. Mimic stores value/10 as hp_pct, so ms = hp_pct × 60.
+const _ME_TICK_MS = 6000;
+function _meTick(st, now) {
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 24) : null;
+  if (!g || g.hp_pct == null) return null;
+  const shows = (ms) => Math.min(6, Math.floor(ms / 1000) + 1);
+  const fwd = g.hp_pct * 60, rev = (100 - g.hp_pct) * 60;
+  const secs = parseInt(g.text, 10);
+  const ms = (Number.isFinite(secs) && shows(fwd) !== secs && shows(rev) === secs) ? rev : fwd;
+  const age = Math.max(0, now - (st.updatedAt || now));
+  return { ms_left: Math.round((((ms - age) % _ME_TICK_MS) + _ME_TICK_MS) % _ME_TICK_MS), period_ms: _ME_TICK_MS, source: 'zeal' };
+}
+
+// SWING TIMER — measured, not read. Zeal draws an attack-recovery gauge (34)
+// for UI skins like Nillipuss, but its named pipe never sends that id: the
+// pipe's GaugeNames map stops at 33 (docs/zeal-attack-timer-pipe-request.md
+// is the one-line ask). If a Zeal build ever sends 34, it wins. Until then
+// the delay is learned from your own weapon swings — lines that land
+// together are one round, round-to-round is the delay, and the next round is
+// predicted from the last. The log is read every 500 ms and stamped to the
+// second, so this is about ±0.5 s and says `source: 'log', est: true`.
+//
+// Main hand vs off hand: when both land in one round the server swings the
+// primary first (Client::Process), so a round with two DIFFERENT verbs names
+// both hands. When both hands share a verb (a monk's punch and punch) nothing
+// can tell them apart, and no hand is claimed.
+const _ME_SWING_RX = /^You (?:try to )?(hit|slash|crush|pierce|punch)\b/;
+const _meSwings = new Map();          // charLower → { rounds: [{ t, lastAt, sec, verbs }], votes }
+const _meSawAttackGauge = new Set();  // characters whose Zeal has sent gauge 34
+function _meNoteSwing(cl, verb, atMs, sec, secMs) {
+  let s = _meSwings.get(cl);
+  if (!s) { s = { rounds: [], votes: new Map() }; _meSwings.set(cl, s); }
+  const last = s.rounds[s.rounds.length - 1];
+  if (last && last.sec === sec && atMs - last.lastAt <= 600) {
+    last.verbs.push(verb); last.lastAt = atMs;
+    if (atMs < last.t) last.t = atMs;
+    return;
+  }
+  if (last) {
+    const distinct = [...new Set(last.verbs)];
+    if (distinct.length === 2) {
+      const k = distinct[0] + '|' + distinct[1];
+      s.votes.set(k, (s.votes.get(k) || 0) + 1);
+    }
+  }
+  s.rounds.push({ t: atMs, lastAt: atMs, sec, secMs: Number.isFinite(secMs) ? secMs : null, verbs: [verb] });
+  if (s.rounds.length > 40) s.rounds.shift();
+}
+// Where each round could have happened, and the delay and last swing that fit
+// them all (the guild lead, 2026-09-24: "swing timer is completely wrong").
+// The old reading took each round's ARRIVAL time as the swing: arrivals come
+// in 500 ms polls against 1-second log stamps, so the phase could be off by
+// most of a second — on a hasted two-hander (~1.8 s) that is half the bar.
+// Each round is pinned by two facts: it happened inside its log second, and
+// before we read it but no more than _ME_SWING_LAG before. At the right delay,
+// those windows, carried forward to the last round, all overlap — and many
+// rounds overlap in a much narrower slot than any one of them (a vernier).
+// The delay is searched ±20% around the median gap; the middle of the delays
+// that fit, and the middle of the slot they leave, are the answer.
+const _ME_SWING_LAG = 1000;
+function _meSwingFit(rs) {
+  const gaps = [];
+  for (let i = 1; i < rs.length; i++) {
+    const d = rs[i].t - rs[i - 1].t;
+    if (d >= 900 && d <= 8000) gaps.push(d);
+  }
+  if (gaps.length < 4) return null;
+  const sorted = gaps.slice(-15).sort((x, y) => x - y);
+  const p0 = sorted[Math.floor(sorted.length / 2)];
+  // The run of newest rounds whose gaps are whole numbers of swings — a
+  // skipped swing (out of range, stunned) is a double gap, not a new delay.
+  const n = rs.length;
+  const run = [n - 1], pos = [0];
+  for (let i = n - 1; i > 0 && run.length < 12; i--) {
+    const d = rs[i].t - rs[i - 1].t, k = Math.round(d / p0);
+    if (k < 1 || k > 3 || Math.abs(d - k * p0) > 0.35 * p0) break;
+    run.unshift(i - 1); pos.unshift(pos[0] - k);
+  }
+  const win = run.map((i) => {
+    const r = rs[i];
+    let lo = r.t - _ME_SWING_LAG, hi = r.t;
+    if (r.secMs != null) { lo = Math.max(lo, r.secMs); hi = Math.min(hi, r.secMs + 1000); }
+    if (lo > hi) { lo = r.t - _ME_SWING_LAG; hi = r.t; }   // a clock that disagrees: trust the arrival
+    return { lo, hi };
+  });
+  for (let drop = 0; run.length - drop >= 4; drop++) {
+    const fits = [];
+    for (let p = Math.round(p0 * 0.8); p <= p0 * 1.2; p += 5) {
+      let L = -Infinity, H = Infinity;
+      for (let j = drop; j < run.length; j++) {
+        const back = -pos[j] * p;   // swings from this round to the last, in ms
+        L = Math.max(L, win[j].lo + back); H = Math.min(H, win[j].hi + back);
+      }
+      if (L <= H) fits.push({ p, L, H });
+    }
+    if (fits.length) {
+      const f = fits[Math.floor(fits.length / 2)];
+      return { period: f.p, lastAt: (f.L + f.H) / 2, spread: f.H - f.L };
+    }
+  }
+  return { period: p0, lastAt: rs[n - 1].t - 250, spread: _ME_SWING_LAG };
+}
+// The hand pairing seen in at least three rounds, and in most of them.
+function _meHands(s) {
+  if (!s) return null;
+  let best = null, total = 0;
+  for (const [k, n] of s.votes) { total += n; if (!best || n > best[1]) best = [k, n]; }
+  if (!best || best[1] < 3 || best[1] * 2 <= total) return null;
+  const [mh, oh] = best[0].split('|');
+  return { mh, oh };
+}
+function _meSwingState(cl, st, now) {
+  const s = _meSwings.get(cl) || null;
+  const hands = _meHands(s);
+  const rs = s ? s.rounds.filter(r => !hands || r.verbs.includes(hands.mh)) : [];
+  const fit = rs.length >= 5 ? _meSwingFit(rs) : null;
+  const period = fit ? fit.period : null;
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === 34) : null;
+  if (g && g.hp_pct != null) _meSawAttackGauge.add(cl);
+  if (_meSawAttackGauge.has(cl)) {
+    // Mimic drops a gauge that reads 0 with no text, so a missing 34 from a
+    // client that has sent it before means "ready".
+    const frac = g && g.hp_pct != null ? g.hp_pct / 100 : 0;
+    return { frac_left: frac, ms_left: period ? Math.round(period * frac) : null, period_ms: period, source: 'zeal', est: false, hands };
+  }
+  if (!period) return null;
+  const since = now - fit.lastAt;
+  if (!st.autoattack || since > period * 3) return { ms_left: null, period_ms: period, source: 'log', est: true, hands, idle: true };
+  return { ms_left: Math.round(period - (((since % period) + period) % period)), period_ms: period, source: 'log', est: true, hands,
+    spread_ms: Math.round(fit.spread) };
+}
+function _meVerbBase(v) {
+  return String(v || '').toLowerCase().trim().replace(/(ch|sh|ss)es$/, '$1').replace(/([^s])s$/, '$1');
+}
+
+// COMBAT ABILITIES — one shared server timer (pTimerCombatAbility,
+// zone/special_attacks.cpp): reuse = base × 100 / haste − 1 seconds, base from
+// common/features.h. Haste is not on the pipe, so the unhasted value is the
+// ceiling, and the timer tightens to the quickest repeat you have actually
+// managed (you cannot beat the real timer, so the fastest repeats are the best
+// reading of it) — never below the 100%-haste floor.
+const _ME_ABILITIES = {
+  'kick': ['Kick', 8], 'bash': ['Bash', 8], 'backstab': ['Backstab', 10],
+  'flying kick': ['Flying Kick', 8], 'round kick': ['Round Kick', 8],
+  'dragon punch': ['Dragon Punch', 6], 'eagle strike': ['Eagle Strike', 6], 'tiger claw': ['Tiger Claw', 7],
+};
+const _ME_ABILITY_RX = /^You (?:try to )?(flying kick|round kick|dragon punch|eagle strike|tiger claw|backstab|kick|bash)\b/;
+// Skills with a timer of their own, and the server line that starts each
+// (zone/string_ids.h; reuse from common/features.h, started at reuse − 1).
+// `est` where an AA shortens the real timer and we cannot see the AA:
+// Fervent Blessing / Touch of the Wicked (LoH / HT 72 min, −12 min a rank;
+// zone/spells.cpp), and Rapid Feign below.
+// ⚠ A SUCCESSFUL Feign Death prints nothing for you — only the failure line
+// does ("You have fallen to the ground."). The exact moment comes from a
+// `/pipe fd` line on the Feign Death hotkey (see _meNotePipeCooldowns).
+// ⚠ Feign Death's length is the CLIENT's button timer, not the server's: the
+// in-game Rapid Feign text reads "reduces your reuse time on feign death by
+// 10, 25, and 50 percent", and at 3/3 the guild lead's monk gets 5 s (2026-09-24)
+// — so a 10 s base. (The server's own timer, 9 − 1 s cut to 3 s at 3/3, is
+// shorter than the button and never the limit.) The pipe does not carry AA
+// ranks; Rapid Feign unlocks at 59, so a monk 59+ is taken as 3/3 — see
+// _meSkillSecs.
+const _ME_SKILL_LINES = [
+  { key: 'mend',  label: 'Mend',         secs: 289,  est: false, rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
+  { key: 'taunt', label: 'Taunt',        secs: 5,    est: false, rx: /^You taunt .+ to ignore others and attack you!/ },
+  { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You feign death\./ },   // failures: _meFdFailed
+  { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
+  { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
+];
+const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
+// The cooldowns each class always sees, even before the first use this
+// session (the guild lead, 2026-09-24: "I would need feign death and Mend on here
+// as a monk / warriors would use taunt and kick / paladins and shadowknights
+// would have their lay on hands and harmtouch"). Anything else appears once used.
+// Every class with disciplines keeps a DISC slot too (the guild lead, 2026-09-24:
+// "I lost my discipline timer" — it vanished a minute after coming ready, and
+// on every agent restart).
+const _ME_CLASS_CDS = {
+  Monk: ['ability', 'mend', 'fd', 'disc'],
+  Warrior: ['ability', 'taunt', 'disc'],
+  Paladin: ['loh', 'disc'],
+  'Shadow Knight': ['ht', 'disc'],
+  Rogue: ['disc'], Ranger: ['disc'], Bard: ['disc'], Beastlord: ['disc'],
+};
+const _meAbility = new Map();    // charLower → { name, base, at, gaps }
+const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs, est })
+// A skill's reuse for THIS character. Only Feign Death varies: 10 s, or 5 s
+// for a monk of 59+ (Rapid Feign 3/3 assumed — see above).
+function _meSkillSecs(cl, s) {
+  if (s.key !== 'fd') return s.secs;
+  const zst = _meZealFor(cl);
+  const level = zst ? _meNum(_meLabel(zst, 2)) : null;
+  return level != null && level >= 59 ? 5 : s.secs;
+}
+function _meStartSkill(cl, key, atMs) {
+  const s = _ME_SKILL_BY_KEY.get(key);
+  if (!s) return;
+  let mp = _meSkillCds.get(cl);
+  if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
+  mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
+  _meTimersSave();
+}
+// A Feign Death that FAILED (the guild lead, 2026-09-24: "I did not get an 'FD
+// Failure' message when this happened - FD cooldown in the Hud should show an
+// X on it"). The failure prints in the THIRD person with your own name —
+// "Aldenmar has fallen to the ground." — which the "You have fallen" pattern
+// never matched. The press already started the timer if a /pipe fd line came
+// with it; otherwise the failure is the press. Either way the timer is marked.
+function _meFdFailed(cl, atMs) {
+  const mp = _meSkillCds.get(cl);
+  const cur = mp && mp.get('fd');
+  if (!cur || atMs - cur.at > 3000 || atMs < cur.at) _meStartSkill(cl, 'fd', atMs);
+  _meSkillCds.get(cl).get('fd').failed = atMs;
+  _meTimersSave();
+}
+const _ME_FD_FAIL_SHOW_MS = 5000;   // the ✗ stays this long after the timer runs out
+// `/pipe <word>` from a hotkey: the exact press, for the timers the log cannot
+// see (a successful Feign Death above all — the guild lead offered the /pipe line
+// for it, 2026-09-24). Zeal forwards /pipe text; Mimic keeps the last eight per
+// character with its own receive time, which is the press to within the
+// pipe delay. Each entry is read once.
+const _ME_PIPE_WORDS = {
+  'fd': 'fd', 'feign': 'fd', 'feign death': 'fd', 'mend': 'mend', 'taunt': 'taunt',
+  'loh': 'loh', 'lay on hands': 'loh', 'ht': 'ht', 'harm touch': 'ht',
+};
+const _mePipeSeen = new Map();   // charLower → newest custom_recent `at` already read
+function _meNotePipeCooldowns(cl, st) {
+  const rec = Array.isArray(st.custom_recent) ? st.custom_recent : [];
+  const seen = _mePipeSeen.get(cl) || 0;
+  let newest = seen;
+  for (const e of rec) {
+    if (!e || !(e.at > seen)) continue;
+    newest = Math.max(newest, e.at);
+    const w = String(e.text || '').trim().toLowerCase().replace(/^cd\s+/, '');
+    if (_ME_PIPE_WORDS[w]) _meStartSkill(cl, _ME_PIPE_WORDS[w], e.at);
+    else if (_ME_ABILITIES[w]) _meNoteAbility(cl, w, e.at);
+  }
+  _mePipeSeen.set(cl, newest);
+}
+function _meNoteAbility(cl, verb, atMs) {
+  const def = _ME_ABILITIES[verb];
+  if (!def) return;
+  let a = _meAbility.get(cl);
+  if (!a) { a = { gaps: [] }; _meAbility.set(cl, a); }
+  if (a.at && atMs - a.at >= 1000 && atMs - a.at < def[1] * 1000) { a.gaps.push(atMs - a.at); if (a.gaps.length > 20) a.gaps.shift(); }
+  a.name = def[0]; a.base = def[1]; a.at = atMs;
+}
+function _meCooldowns(cl, now, cls) {
+  _meTimersLoad();
+  const out = [];
+  const a = _meAbility.get(cl);
+  if (a && a.at) {
+    const ceil = (a.base - 1) * 1000;
+    const floor = (a.base / 2 - 1) * 1000;
+    // Second-quickest repeat: the quickest can be a poll-timing artefact.
+    const g = a.gaps.slice().sort((x, y) => x - y);
+    const seen = g.length >= 3 ? g[1] : null;
+    const total = seen ? Math.max(floor, Math.min(ceil, seen)) : ceil;
+    out.push({ key: 'ability', label: a.name, ms_left: Math.max(0, a.at + total - now), total_ms: total, est: true, seen: true });
+  }
+  const m = _meSkillCds.get(cl);
+  if (m) {
+    for (const [k, c] of m) {
+      const endAt = c.at + c.secs * 1000;
+      out.push({ key: k, label: c.label, ms_left: Math.max(0, endAt - now), total_ms: c.secs * 1000, est: c.est, seen: true,
+        failed: !!(c.failed && c.failed >= c.at && now - endAt <= _ME_FD_FAIL_SHOW_MS) });
+    }
+  }
+  const disc = _meDisc(cl, now);
+  if (disc) out.push(disc);
+  // The class's own set first, in its order; one never used this session is
+  // shown as unknown (seen: false) — not as ready, which we cannot know.
+  const want = _ME_CLASS_CDS[cls] || [];
+  const byKey = new Map(out.map(c => [c.key, c]));
+  const lead = want.map(k => byKey.get(k) || {
+    key: k, label: k === 'ability' ? 'Kick' : (k === 'disc' ? 'Discipline' : _ME_SKILL_BY_KEY.get(k).label),
+    ms_left: null, total_ms: null, est: true, seen: false,
+  });
+  return lead.concat(out.filter(c => !want.includes(c.key)));
+}
+
+// DISCIPLINES — the activation line (the disc spell's own landing text,
+// eqemu_spells.cast_on_you) starts the timer with the server's reuse for that
+// disc: zone/effects.cpp CastDiscipline takes 54 s off per level above the
+// level it unlocks at, clamped to 3:54–72:00. The refusal line ("You can use
+// a new discipline in …", trackDisciplineTimerLine) is exact and wins.
+// ⚠ Estimate, and kept out of the Command Center's refusal-only timer on
+// purpose: if Quarm runs the server's disc timer GROUPS, a disc from another
+// group is usable while this one counts down.
+// text → [name, base reuse s, { class: level it unlocks at }]
+const _ME_DISCS = new Map([
+  ['You assume an aggressive fighting style.',  ['Aggressive', 1620, { Warrior: 60 }]],
+  ['You assume a precise fighting style.',      ['Precision', 1800, { Warrior: 57 }]],
+  ['You assume a defensive fighting style.',    ['Defensive', 900, { Warrior: 55 }]],
+  ['You assume an evasive fighting style.',     ['Evasive', 900, { Warrior: 52 }]],
+  ['Your hands clench with fatal fervor.',      ['Ashenhand', 4320, { Monk: 60 }]],
+  ['A consuming rage takes over your weapons.', ['Furious', 3600, { Warrior: 56 }]],
+  ['Your instincts take over as you turn aside every attack.', ['Whirlwind', 3600, { Monk: 53 }]],
+  ['Your weapons move with uncanny grace.',     ['Counterattack', 3600, { Rogue: 53 }]],
+  ['Your body becomes one with the earth.',     ['Stonestance', 720, { Monk: 51 }]],
+  ['A protective spirit guards you.',           ['Protective Spirit', 720, { Beastlord: 55 }]],
+  ['Your feet glow with mystic power.',         ['Thunderkick', 540, { Monk: 52 }]],
+  ['You instincts take over as you avoid every attack.', ['Fortitude', 3600, { Warrior: 59 }]],
+  ['You become untouchable.',                   ['Voiddance', 3600, { Monk: 54 }]],
+  ['Your weapons strike true.',                 ['Fellstrike', 1800, { Warrior: 58 }]],
+  ['Your muscles bulge with the force of will.', ['Innerflame', 1800, { Monk: 56 }]],
+  ['Your muscles quiver with power.',           ['Duelist', 1800, { Rogue: 59 }]],
+  ['A bestial fury consumes you.',              ['Bestial Rage', 1800, { Beastlord: 60 }]],
+  ['Your fists begin to blur.',                 ['Hundred Fists', 1800, { Monk: 57 }]],
+  ['Your hands speeds up.',                     ['Blinding Speed', 1800, { Rogue: 58 }]],
+  ['Your focus becomes perfect.',               ['Charge', 1800, { Warrior: 53 }]],
+  ['You feel unstoppable.',                     ['Deadeye', 1800, { Rogue: 54 }]],
+  ['You feel like a killing machine.',          ['Mighty Strike', 3600, { Warrior: 54 }]],
+  ['You bounce about nimbly.',                  ['Nimble', 1800, { Rogue: 55 }]],
+  ['Your body is filled with silent fury.',     ['Silentfist', 594, { Monk: 59 }]],
+  ['Your arms feel alive with mystic energy.',  ['Kinesthetics', 1800, { Rogue: 57 }]],
+  ['Your weapon is bathed in a holy light.',    ['Holyforge', 4320, { Paladin: 55 }]],
+  ['Your body is surrounded in an aura of sanctification.', ['Sanctification', 4320, { Paladin: 60 }]],
+  ['Your bow crackles with natural energy.',    ['Trueshot', 4320, { Ranger: 55 }]],
+  ['Your weapons begin to spin.',               ['Weapon Shield', 4320, { Ranger: 60 }]],
+  ['An unholy aura envelopes your body.',       ['Unholy Aura', 4320, { 'Shadow Knight': 55 }]],
+  ['Your skin glows with dark energy.',         ['Leechcurse', 4320, { 'Shadow Knight': 60 }]],
+  ['You dance about nimbly.',                   ['Deftdance', 4320, { Bard: 55 }]],
+  ['Your voice becomes perfectly melodious.',   ['Puretone', 4320, { Bard: 60 }]],
+  ['You channel your will into magical resistance.', ['Resistant', 3600, { Warrior: 30, Monk: 30, Rogue: 30, Paladin: 51, Ranger: 51, 'Shadow Knight': 51, Bard: 51, Beastlord: 51 }]],
+  ['Your will drives fear from your mind.',     ['Fearless', 3600, { Warrior: 40, Monk: 40, Rogue: 40, Paladin: 54, Ranger: 54, 'Shadow Knight': 54, Bard: 54, Beastlord: 54 }]],
+]);
+function _meDiscReuseSecs(base, unlockLvl, level) {
+  let lvl = Number(level) || unlockLvl;
+  if (base < 1620 && lvl > 60) lvl = 60;
+  return Math.max(234, Math.min(4320, base - (lvl - unlockLvl) * 54));
+}
+const _meDiscs = new Map();   // charLower → { name, at, total_ms }
+function _meZealFor(cl) {
+  const hit = _zealState && Object.entries(_zealState).find(([ch]) => String(ch).toLowerCase() === cl);
+  return hit ? hit[1] : null;
+}
+function _meNoteDisc(cl, def, atMs) {
+  const zst = _meZealFor(cl);
+  const who = whoData.get(cl);
+  const cls = normalizeClass((zst && _meLabel(zst, 3)) || (who && who.class) || _raidClassByName.get(cl) || '') || null;
+  const level = (zst && _meNum(_meLabel(zst, 2))) || (who && who.level) || null;
+  const unlocks = def[2];
+  const unlock = (cls && unlocks[cls]) || Math.min(...Object.values(unlocks));
+  _meDiscs.set(cl, { name: def[0], at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000 });
+  _meTimersSave();
+}
+function _meDisc(cl, now) {
+  _meTimersLoad();
+  const act = _meDiscs.get(cl) || null;
+  const ref = _discReadyAt.get(cl) || null;
+  if (ref && ref.at > now) {
+    const left = ref.at - now;
+    return { key: 'disc', label: act ? act.name : 'Discipline', ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false, seen: true };
+  }
+  if (!act) return null;
+  // Kept once ready — it reads "ready" instead of vanishing (it used to be
+  // dropped a minute after coming ready).
+  const left = act.at + act.total_ms - now;
+  return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
+}
+
+// The long timers survive an agent restart — a Mimic update restarts the agent,
+// and a 20-minute discipline, a 72-minute Lay on Hands or a 5-minute Mend
+// cannot be read back out of a log we no longer tail. Kept in
+// logsync.hud-timers.json beside the agent (the con-phrase file's pattern) for
+// 12 hours past ready, then dropped.
+const _ME_TIMER_KEEP_MS = 12 * 3600_000;
+let _meTimersLoaded = false, _meTimersSaveT = null;
+function _meTimerFile() { return path.join(__dirname, 'logsync.hud-timers.json'); }
+function _meTimersLoad() {
+  if (_meTimersLoaded) return;
+  _meTimersLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_meTimerFile(), 'utf8')) || {};
+    const now = Date.now();
+    for (const [cl, e] of Object.entries(j)) {
+      if (!e || typeof e !== 'object') continue;
+      if (e.disc && e.disc.at + e.disc.total_ms > now - _ME_TIMER_KEEP_MS && !_meDiscs.has(cl)) _meDiscs.set(cl, e.disc);
+      if (e.refusal && e.refusal.at > now && !_discReadyAt.has(cl)) _discReadyAt.set(cl, e.refusal);
+      for (const [k, c] of Object.entries(e.skills || {})) {
+        if (!c || !(c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS)) continue;
+        let mp = _meSkillCds.get(cl);
+        if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
+        if (!mp.has(k)) mp.set(k, c);
+      }
+    }
+  } catch { /* first run, or not writable — nothing to restore */ }
+}
+function _meTimersSave() {
+  if (_meTimersSaveT) return;
+  _meTimersSaveT = setTimeout(() => {
+    _meTimersSaveT = null;
+    try {
+      const out = {};
+      const now = Date.now();
+      const slot = (cl) => (out[cl] = out[cl] || {});
+      for (const [cl, d] of _meDiscs) if (d.at + d.total_ms > now - _ME_TIMER_KEEP_MS) slot(cl).disc = d;
+      for (const [cl, r] of _discReadyAt) if (r.at > now) slot(cl).refusal = r;
+      for (const [cl, mp] of _meSkillCds) {
+        for (const [k, c] of mp) if (c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS) (slot(cl).skills = slot(cl).skills || {})[k] = c;
+      }
+      fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
+    } catch { /* best effort */ }
+  }, 2000);
+  try { if (_meTimersSaveT.unref) _meTimersSaveT.unref(); } catch { void 0; }
+}
+
+// ENRAGE — the server's own lines (zone/string_ids.h NPC_ENRAGE_START/END):
+// "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
+// (EnragedDurationTimer), so an entry with no end line expires after 12 s.
+const _meEnraged = new Map();   // mobLower → until
+// One raw-line hook for all of the above. Live tail only; every branch is a
+// prefix or exact-text test, so a line that is none of these costs almost
+// nothing.
+function _meNoteRawLine(line, character) {
+  if (!line || !character) return;
+  const at = line.indexOf('] ');
+  if (at < 0) return;
+  const msg = line.slice(at + 2).trimEnd();
+  const now = Date.now();
+  const cl = String(character).toLowerCase();
+  _meTimersLoad();   // before any write, so a restored timer is not overwritten by a stale file
+  // A death closes that mob's damage total on the HUD (_meMobTallies).
+  if (msg.indexOf(' slain') !== -1 || msg.endsWith(' died.')) {
+    const dm = line.match(_SLAIN_YOU_RX) || line.match(_SLAIN_BY_RX) || /^(.+?) died\.$/.exec(msg);
+    if (dm && dm[1]) {
+      const ts = parseEqTimestamp(line);
+      _meNoteMobDeath(dm[1].trim().replace(/!$/, ''), ts ? ts.getTime() : now);
+    }
+  }
+  // A failed Feign Death — your own, in either person (see _meFdFailed).
+  if (msg === 'You have fallen to the ground.'
+      || (msg.endsWith(' has fallen to the ground.') && msg.slice(0, -' has fallen to the ground.'.length).toLowerCase() === cl)) {
+    _meFdFailed(cl, now);
+    return;
+  }
+  if (msg.startsWith('You')) {
+    // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
+    if (msg.startsWith('You can use a new discipline')) _meTimersSave();
+    // What you are casting, so its damage is not taken for a proc (_meNoteHit).
+    if (msg.startsWith('You begin casting ')) {
+      const d = parseEqTimestamp(line);
+      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now });
+    }
+    let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
+    if (m) { const d = parseEqTimestamp(line); _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at), d ? d.getTime() : null); return; }
+    m = _ME_ABILITY_RX.exec(msg);
+    if (m) { _meNoteAbility(cl, m[1].toLowerCase(), now); return; }
+    for (const s of _ME_SKILL_LINES) {
+      if (!s.rx.test(msg)) continue;
+      _meStartSkill(cl, s.key, now);
+      return;
+    }
+  }
+  const disc = _ME_DISCS.get(msg);
+  if (disc) { _meNoteDisc(cl, disc, now); return; }
+  // Lay on Hands / Harm Touch are instant (cast_time 0) and may print no
+  // "begin casting" line; the landing text does print, but a bystander sees the
+  // same text. Credit it to you only when you are the class that has it and it
+  // landed on your own target (or on you, with no target).
+  // A Harm Touch landing — on you, or on someone your Shadow Knight target is on.
+  if (msg === 'You writhe in the grip of agony.') _npcHtLanded(cl, null, now);
+  else if (msg.endsWith(' writhes in the grip of agony.')) _npcHtLanded(cl, msg.slice(0, -' writhes in the grip of agony.'.length), now);
+  const loh = msg.endsWith(' feels a healing touch.') || msg === 'You feel a healing touch.';
+  if (loh || msg.endsWith(' writhes in the grip of agony.')) {
+    const zst = _meZealFor(cl);
+    const cls = zst ? normalizeClass(_meLabel(zst, 3) || '') : null;
+    if (cls === (loh ? 'Paladin' : 'Shadow Knight')) {
+      const who = msg.startsWith('You feel') ? cl : msg.slice(0, msg.lastIndexOf(loh ? ' feels ' : ' writhes ')).toLowerCase();
+      const tgt = zst.target_name ? String(zst.target_name).toLowerCase() : null;
+      if (tgt === who || (!tgt && who === cl)) _meStartSkill(cl, loh ? 'loh' : 'ht', now);
+    }
+    return;
+  }
+  if (msg.endsWith(' has become ENRAGED.')) {
+    _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
+  } else if (msg.endsWith(' is no longer enraged.')) {
+    _meEnraged.delete(msg.slice(0, -' is no longer enraged.'.length).toLowerCase());
+  } else {
+    // A flurry or a rampage as it happens, so the HUD's F / R badge can light
+    // up (the guild lead, 2026-09-24). Server strings NPC_FLURRY "%1 executes a
+    // FLURRY of attacks on %2!", NPC_RAMPAGE "%1 goes on a RAMPAGE!" (Quarm
+    // adds "against <target>"), AE_RAMPAGE "%1 goes on a WILD RAMPAGE!".
+    const f = _ME_FLURRY_RX.exec(msg);
+    const r = f ? null : _ME_RAMPAGE_RX.exec(msg);
+    if (f || r) {
+      const k = (f || r)[1].toLowerCase();
+      const e = _meMobBursts.get(k) || {};
+      if (f) e.flurryAt = now; else e.rampageAt = now;
+      _meMobBursts.delete(k);
+      _meMobBursts.set(k, e);
+      if (_meMobBursts.size > 50) _meMobBursts.delete(_meMobBursts.keys().next().value);
+    }
+  }
+}
+const _ME_FLURRY_RX = /^(.+?) executes a FLURRY of attacks on .+!$/;
+const _ME_RAMPAGE_RX = /^(.+?) goes on a (?:WILD )?RAMPAGE\b/;
+const _meMobBursts = new Map();   // mobLower → { flurryAt, rampageAt }
+const _ME_BURST_LIT_MS = 6000;    // how long a badge stays lit after the line
+
+// ── An NPC Shadow Knight's Harm Touch, on Target Info (the guild lead, 2026-09-24)
+// "Next to name (Shadow Knight) it should say HT with a checkmark or HT with a
+// red X and a timer. We won't always know the mob that harmtouched us if
+// multiple hit us at once or we're targetting something else, but if we tab
+// target to a shadowknight that's attacking us, there's a good chance we can
+// assign that HT to it."
+// Server: an NPC Shadow Knight casts Harm Touch off its knight-attack timer
+// and restarts it at HarmTouchReuseTimeNPC = 2400 s (zone/special_attacks.cpp;
+// features.h: "NPCs have 40 minute timers according to logs"). The timer is
+// not running at spawn, so a fresh one has it ready. It lands on you as "You
+// writhe in the grip of agony." and on anyone else as "<name> writhes in the
+// grip of agony." (Harm Touch, Harm Touch NPC — spells 88, 929, 2821).
+// Who cast it is never in the log, so it is assigned:
+//   · at once, when your target is a Shadow Knight mob on the victim (hitting
+//     YOU in the last 20 s, or with the victim as its target's target);
+//   · later, when you target a Shadow Knight mob that was hitting you when it
+//     landed and has no Harm Touch recorded inside the last 40 minutes.
+const _NPC_HT_REUSE_MS = 2400 * 1000;
+const _npcHtUsed = new Map();      // "name#spawnid" (or "name") → when it landed
+const _npcHtPending = new Map();   // charLower → { at, attackers: Set(nameLower) }
+function _npcHtKey(name, id) { return String(name).toLowerCase() + (Number.isFinite(id) ? '#' + id : ''); }
+function _isShadowKnightMob(mob) {
+  if (!mob) return false;
+  if (String(mob.class || '') === 'Shadow Knight') return true;
+  return Array.isArray(mob.class_variants) && mob.class_variants.some(v => v && v.class === 'Shadow Knight');
+}
+function _meAttackersOf(cl, now, ms) {
+  const out = new Set();
+  for (const h of _meHits.get(cl) || []) if (h.dir === 'in' && h.other && now - h.t <= ms) out.add(String(h.other).toLowerCase());
+  return out;
+}
+function _npcHtLanded(cl, victim, now) {
+  const st = _meZealFor(cl) || {};
+  const attackers = victim ? null : _meAttackersOf(cl, now, 20_000);
+  const tgt = st.target_name ? String(st.target_name) : null;
+  if (tgt) {
+    const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+    const cached = _mobInfoByName.get(_mobInfoCacheKey(tgt, zoneId));
+    if (cached && _isShadowKnightMob(cached.mob)) {
+      const tl = tgt.toLowerCase();
+      let onVictim;
+      if (!victim) onVictim = attackers.has(tl);
+      else {
+        const pipeTot = _pipeCandidateOf(st, 'target_of_target');
+        const tot = pipeTot ? pipeTot.name : _victimForMob(tl, now);
+        onVictim = !!tot && String(tot).toLowerCase() === String(victim).toLowerCase();
+      }
+      if (onVictim) { _npcHtUsed.set(_npcHtKey(tgt, Number.isFinite(st.target_id) ? st.target_id : null), { at: now, later: false }); return; }
+    }
+  }
+  if (!victim && attackers.size) _npcHtPending.set(cl, { at: now, attackers });
+  if (_npcHtUsed.size > 300) _npcHtUsed.delete(_npcHtUsed.keys().next().value);
+}
+// The Harm Touch read-out for the mob you are targeting: null unless it is a
+// Shadow Knight. `ready` with no timer means none seen in the last 40 minutes.
+function _npcHtFor(cl, st, cached, id) {
+  if (!st || !st.target_name || !cached || !_isShadowKnightMob(cached.mob)) return null;
+  const now = Date.now();
+  const k = _npcHtKey(st.target_name, Number.isFinite(id) ? id : null);
+  let rec = _npcHtUsed.get(k) || null;
+  if (rec && now - rec.at >= _NPC_HT_REUSE_MS) { _npcHtUsed.delete(k); rec = null; }
+  const p = _npcHtPending.get(String(cl || '').toLowerCase());
+  if (!rec && p && now - p.at < _NPC_HT_REUSE_MS && p.attackers.has(String(st.target_name).toLowerCase())) {
+    rec = { at: p.at, later: true };
+    _npcHtUsed.set(k, rec);
+    _npcHtPending.delete(String(cl).toLowerCase());
+  }
+  if (!rec) return { ready: true, ready_in_ms: 0, used_at: null };
+  return { ready: false, ready_in_ms: rec.at + _NPC_HT_REUSE_MS - now, used_at: rec.at, assigned_later: rec.later };
+}
+
+// HP % for a name the HUD needs (the target's target): self, a groupmate's
+// gauge, then the cross-client resolver the Tank overlay uses.
+function _meHpPctFor(nameLower, active, st) {
+  if (!nameLower) return null;
+  if (nameLower === String(active).toLowerCase()) return st.self_hp_pct ?? null;
+  const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot >= 11 && x.slot <= 15 && x.text && String(x.text).toLowerCase() === nameLower) : null;
+  if (g && g.hp_pct != null) return g.hp_pct;
+  const v = _resolveHpValuesForName(nameLower, active, st);
+  return v && v.max ? Math.max(0, Math.min(100, v.cur * 100 / v.max)) : null;
+}
+// What the HUD shows about the target beyond its HP: who it is hitting (and
+// their HP), is it slowed, can it enrage, is it enraged now. Special
+// abilities come from the same cached mob-info row Target Info uses — looked
+// up here too, so the HUD works with Target Info closed.
+function _meTargetExtras(st, active, now) {
+  if (!st.target_name) return null;
+  const tl = String(st.target_name).toLowerCase();
+  // A corpse has no slow, enrage or level to show (the guild lead, 2026-09-24:
+  // "Corpses shouldn't ever say 'not slowed'"), and no catalog row to fetch.
+  if (/['`’]s corpse\d*$/i.test(String(st.target_name))) return { corpse: true };
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  let specials = null, cached = null;
+  try {
+    cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId)) || null;
+    if (!cached || (now - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, active, zoneId);
+    if (cached && cached.mob && Array.isArray(cached.mob.specials)) specials = cached.mob.specials;
+  } catch { void 0; }
+  // Level and class, for the line under the target's bar (the guild lead,
+  // 2026-09-24: "display level or level range and class under the target's
+  // bar"): an NPC's from its catalog row, a player's from /who.
+  let level = null, level_max = null, klass = null, level_src = null;
+  const mob = cached && cached.mob ? cached.mob : null;
+  if (mob) {
+    if (Number(mob.level) > 0) { level = Number(mob.level); level_src = 'catalog'; }
+    if (Number(mob.maxlevel) > level) level_max = Number(mob.maxlevel);
+    klass = (mob.class_ambiguous && Array.isArray(mob.class_variants) && mob.class_variants.length > 1)
+      ? mob.class_variants.map(v => v.class).join(' / ') : (mob.class || null);
+  } else {
+    const pl = _targetPlayerInfo(st, active, cached);
+    if (pl) { level = pl.level; level_src = pl.level_src; klass = pl.class; }
+  }
+  const burst = _meMobBursts.get(tl) || {};
+  let tot = null;
+  const pipeTot = _pipeCandidateOf(st, 'target_of_target');
+  const totName = pipeTot ? pipeTot.name : _victimForMob(tl, now);
+  if (totName) tot = { name: totName, hp_pct: _meHpPctFor(String(totName).toLowerCase(), active, st), source: pipeTot ? 'zeal' : 'log' };
+  const slow = _bestSlowForTarget(tl, now);
+  const until = _meEnraged.get(tl);
+  if (until && until <= now) _meEnraged.delete(tl);
+  return {
+    tot,
+    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
+    enrage: specials ? specials.includes('Enrage') : null,
+    // A summoner starts pulling its target to it below 97% HP (the server's
+    // default; a mob's own setting can move it, which the catalog row doesn't carry).
+    summon: specials ? specials.includes('Summon') : null,
+    unslowable: specials ? specials.includes('Unslowable') : null,
+    enraged: !!(until && until > now),
+    level, level_max, level_src, class: klass,
+    // The mob's own resists, for the line under its name (the guild lead,
+    // round eight: "Put their resists below their name").
+    // The bot's mob-info row carries them as `resists: { mr, fr, cr, pr, dr }`.
+    resists: mob && mob.resists && ['mr', 'fr', 'cr', 'pr', 'dr'].some(k => mob.resists[k] != null)
+      ? { mr: mob.resists.mr ?? null, fr: mob.resists.fr ?? null, cr: mob.resists.cr ?? null, pr: mob.resists.pr ?? null, dr: mob.resists.dr ?? null } : null,
+    // Flurry / rampage: whether it can, and whether it just did (the HUD's
+    // F and R badges light up for a few seconds after the line).
+    flurry: specials ? specials.includes('Flurry') : null,
+    rampage: specials ? (specials.includes('Rampage') || specials.includes('Area Rampage')) : null,
+    flurry_lit: !!(burst.flurryAt && now - burst.flurryAt <= _ME_BURST_LIT_MS),
+    rampage_lit: !!(burst.rampageAt && now - burst.rampageAt <= _ME_BURST_LIT_MS),
+  };
+}
+
+// Time left on the cast, from how fast Zeal's own cast gauge is moving (the
+// guild lead, 2026-09-24: "Cast time is definitely wrong, especially for
+// clickies"). The catalog's cast time is the SPELL's; a clicky casts at the
+// ITEM's time, and haste or a focus moves it too, so the gauge's rate is the
+// truth. The first readings of a cast have no rate yet — until the gauge has
+// moved 5% over a quarter second, the catalog time stands in (est).
+const _meCastTrack = new Map();   // charLower → { spell, t0, p0, lastP }
+function _meCastRemaining(cl, st, castG, castE) {
+  if (!st.casting || !castG || castG.pct == null) { _meCastTrack.delete(cl); return null; }
+  const t = st.updatedAt || Date.now(), p = Number(castG.pct);
+  let tr = _meCastTrack.get(cl);
+  if (!tr || tr.spell !== st.casting || p < tr.lastP - 1) {   // a new cast (a repeat restarts low)
+    tr = { spell: st.casting, t0: t, p0: p, lastP: p };
+    _meCastTrack.set(cl, tr);
+  }
+  tr.lastP = p;
+  const dp = p - tr.p0, dt = t - tr.t0;
+  if (dp >= 5 && dt >= 250) return { ms: Math.max(0, Math.round(dt * (100 - p) / dp)), measured: true };
+  if (castE && castE.cast_ms) return { ms: Math.max(0, Math.round(castE.cast_ms * (1 - p / 100))), measured: false };
+  return null;
+}
+
+function _serializeMeState() {
+  const now = Date.now();
+  let active = null, activeTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const s = _zealState[ch];
+    const ts = (s && s.updatedAt) || 0;
+    if (ts > activeTs && (now - ts) < 60_000) { activeTs = ts; active = ch; }
+  }
+  if (!active) return { ok: true, character: null, generated_at: now };
+  const st = _zealState[active] || {};
+  const cl = String(active).toLowerCase();
+
+  const level = _meNum(_meLabel(st, 2));
+  const who = whoData.get(cl);
+  const cls = normalizeClass(_meLabel(st, 3) || (who && who.class) || _raidClassByName.get(cl) || '') || null;
+
+  const manaG = _meGauge(st, 2);
+  const manaCur = st.self_mana_cur != null ? st.self_mana_cur : null;
+  const manaMax = st.self_mana_max != null ? st.self_mana_max : null;
+  const manaPct = manaG ? manaG.pct : _meNum(_meLabel(st, 20));
+  const endG = _meGauge(st, 3);
+  const xpPct = _meNum(_meLabel(st, 26)) ?? (_meGauge(st, 4) ? _meGauge(st, 4).pct : null);
+  const aaPct = _meNum(_meLabel(st, 27)) ?? (_meGauge(st, 5) ? _meGauge(st, 5).pct : null);
+  const aaBanked = _meNum(_meLabel(st, 71));
+
+  // Casting: the spell name (label 134) and Zeal's cast-progress gauge (7).
+  const castG = _meGauge(st, 7);
+  const castE = st.casting ? _meSpell(st.casting) : null;
+  const castLeft = _meCastRemaining(cl, st, castG, castE);
+  const casting = st.casting ? {
+    spell: st.casting,
+    pct: castG ? castG.pct : null,
+    remaining_ms: castLeft ? castLeft.ms : null,
+    est: castLeft ? !castLeft.measured : true,
+  } : null;
+
+  // The spell bar: gems 1-8 (labels 60-67) with each one's recast gauge
+  // (26-33, drawn as the client draws it) and "casts left" at current mana.
+  const gems = [];
+  for (let i = 0; i < 8; i++) {
+    const name = _meLabel(st, 60 + i);
+    if (!name || /^(empty|none)$/i.test(name)) continue;
+    const e = _meSpell(name);
+    const g = _meGauge(st, 26 + i);
+    const mana = e && e.mana ? Number(e.mana) : null;
+    gems.push({
+      slot: i + 1, name, mana,
+      casts_left: (mana && manaCur != null) ? Math.floor(manaCur / mana) : null,
+      recast_pct: g ? g.pct : null,
+      mez: !!(e && e.mez),
+      charm: CHARM_SPELLS.has(String(name).toLowerCase()) || CHARM_SPELLS.has(String(name).toLowerCase().replace(/'/g, '`')),
+    });
+  }
+
+  // Long-recast timers the player started (ToT, Harvest, …).
+  const timers = [];
+  const rm = _meRecasts.get(cl);
+  if (rm) {
+    for (const [k, r] of rm) {
+      const left = r.readyAt - now;
+      if (left <= -60_000) { rm.delete(k); continue; }
+      const e = _meSpell(r.name);
+      timers.push({ name: r.name, ready_in_ms: Math.max(0, left), recast_ms: e && e.recast ? Number(e.recast) : null });
+    }
+    timers.sort((a, b) => a.ready_in_ms - b.ready_in_ms);
+  }
+
+  // Class focus — the few numbers a class plays by.
+  const focus = [];
+  const castsOf = (spell) => (spell && spell.mana && manaCur != null) ? Math.floor(manaCur / Number(spell.mana)) : null;
+  if (cls === 'Cleric') {
+    const ch = _meSpell('Complete Healing');
+    if (ch) focus.push({ key: 'ch', label: 'CH left', value: castsOf(ch), sub: (ch.mana || '?') + ' mana each' });
+  }
+  const mezGem = gems.filter(g => g.mez && g.mana).sort((a, b) => b.mana - a.mana)[0];
+  if (mezGem) focus.push({ key: 'mez', label: 'Mez left', value: mezGem.casts_left, sub: mezGem.name });
+  const charmGem = gems.filter(g => g.charm && g.mana).sort((a, b) => b.mana - a.mana)[0];
+  if (charmGem) focus.push({ key: 'charm', label: 'Charm left', value: charmGem.casts_left, sub: charmGem.name });
+  for (const t of timers) {
+    focus.push({ key: 'timer:' + t.name.toLowerCase(), label: t.name, timer_ms: t.ready_in_ms, recast_ms: t.recast_ms });
+  }
+
+  // Group: Zeal's group gauges 11-15 (name + HP%), class from /pipeverbose.
+  const group = [];
+  const gm = Array.isArray(st.group_members) ? st.group_members : [];
+  for (let slot = 11; slot <= 15; slot++) {
+    const g = Array.isArray(st.gauges) ? st.gauges.find(x => x && x.slot === slot && x.text) : null;
+    if (!g) continue;
+    const v = gm.find(m => m && m.name && String(m.name).toLowerCase() === String(g.text).toLowerCase());
+    group.push({ name: g.text, hp_pct: g.hp_pct != null ? g.hp_pct : null, class: v && v.class ? normalizeClass(v.class) : null });
+  }
+
+  // DPS: this fight (live), and tonight (every finished fight).
+  let fight = null;
+  const et = stats.currentEncounterThreat;
+  if (et && !et.flushedAt && et.startedAt) {
+    let dmg = 0;
+    for (const [name, p] of Object.entries(et.perPlayer || {})) {
+      const owner = String(p.pet_owner || name).toLowerCase();
+      if (owner === cl) dmg += (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
+    }
+    const secs = Math.max(1, Math.round((now - Date.parse(et.startedAt)) / 1000));
+    fight = { target: et.bossName || et.targetName || null, dmg, secs, dps: Math.round(dmg / secs) };
+  }
+  const nightKey = _meNightKey(now);
+  const n = (_meNight.key === nightKey && _meNight.byChar.get(cl)) || null;
+  const night = n ? { dmg: n.dmg, secs: n.secs, fights: n.fights, avg_dps: n.secs ? Math.round(n.dmg / n.secs) : null } : null;
+
+  const tgtG = _meGauge(st, 6);
+  const petG = _meGauge(st, 16);
+  const blind = _blindState[cl];
+  // Damage in/out: this fight while one is live, else the last 30 seconds.
+  const combatSince = (fight && et && et.startedAt) ? Date.parse(et.startedAt) : now - 30_000;
+  const combat = _meCombatSince(cl, combatSince, now);
+  combat.live = !!fight;
+  // Your damage shield per hit — the HUD's DS button ("a button with current DS
+  // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
+  // right now, else the last one that landed.
+  const dsKnown = _knownDsPerHitFor(active);
+  if (!combat.ds && dsKnown) combat.ds = { hits: 0, total: 0, last: null };
+  if (combat.ds) { combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown; }
+  // HUD: swing timer, and which hand each of your melee hits came from when
+  // the two hands swing with different verbs.
+  const swing = _meSwingState(cl, st, now);
+  if (swing && swing.hands) {
+    for (const f of combat.feed) {
+      if (f.dir !== 'out' || f.kind !== 'melee' || !f.name) continue;
+      const v = _meVerbBase(f.name);
+      f.hand = v === swing.hands.mh ? 'MH' : (v === swing.hands.oh ? 'OH' : null);
+    }
+  }
+  _meNotePipeCooldowns(cl, st);
+  const cooldowns = _meCooldowns(cl, now, cls);   // the discipline rides in here
+  const tx = _meTargetExtras(st, active, now);
+  return {
+    ok: true,
+    character: active,
+    generated_at: now,
+    level, class: cls,
+    // Warriors, rogues and monks have no mana at all (the guild lead, 2026-09-24:
+    // "don't expose that for them"); a class we cannot read falls back to an
+    // empty pool.
+    no_mana: cls ? _NO_MANA_CLASSES.test(cls) : (manaMax === 0),
+    hp: { cur: st.self_hp_cur ?? null, max: st.self_hp_max ?? null, pct: st.self_hp_pct ?? null },
+    mana: { cur: manaCur, max: manaMax, pct: manaPct },
+    tick: _meTick(st, now),
+    swing,
+    autoattack: !!st.autoattack,
+    cooldowns,
+    end: { pct: endG ? endG.pct : _meNum(_meLabel(st, 21)) },
+    xp: { pct: xpPct, per_hr: _meRate(cl + '|xp', (level != null && xpPct != null) ? level * 100 + xpPct : null, now) },
+    aa: { pct: aaPct, banked: aaBanked, per_hr: _meRate(cl + '|aa', (aaPct != null) ? (aaBanked || 0) * 100 + aaPct : null, now) },
+    weight: { cur: _meNum(_meLabel(st, 24)), max: _meNum(_meLabel(st, 25)) },
+    target: st.target_name ? { name: st.target_name, hp_pct: st.target_hp_pct ?? (tgtG ? tgtG.pct : null), id: st.target_id ?? null, ...(tx || {}) } : null,
+    pet: petG && petG.text ? { name: petG.text, hp_pct: petG.pct } : null,
+    casting,
+    gems,
+    timers,
+    focus,
+    group,
+    dps: { fight, night },
+    combat,
+    // Char-info labels 12-16 (docs/zeal-pipe-protocol.md).
+    resists: {
+      mr: _meNum(_meLabel(st, 16)), fr: _meNum(_meLabel(st, 14)), cr: _meNum(_meLabel(st, 15)),
+      pr: _meNum(_meLabel(st, 12)), dr: _meNum(_meLabel(st, 13)),
+    },
+    blind: !!(blind && blind.active),
+  };
+}
+
 function _serializeTankState() {
   // Active focused character — same heuristic _serializeForDashboard uses.
   const now = Date.now();
@@ -12883,6 +14453,7 @@ let _stateJsonCache = { at: 0, body: null };
 // a 500 reads as an empty-but-successful state and BLANKS the whole overlay.
 // Serve the last good body on a serialize throw instead of ever 500-ing.
 let _tankStateLastGood = null;
+let _meStateLastGood = null;
 let _commandCenterLastGood = null;
 // How long a finished fight's threat snapshot stays visible as a read-back.
 // Mirrors the window applied inside EncounterBuilder._publishLiveThreat().
@@ -12956,7 +14527,10 @@ function _serializeForDashboard() {
       target:    s.target  || null,
     };
   }
-  const _blindActive = _activeCharacter ? (_blindOut[_activeCharacter] || null) : null;
+  // ⚠ _blindState is keyed LOWERCASE and _activeCharacter is display case.
+  // Looked up as-is (until 2026-09-24) this was always null for a capitalised
+  // name, so Blind Mode's auto-show never fired — the callouts still did.
+  const _blindActive = _activeCharacter ? (_blindOut[String(_activeCharacter).toLowerCase()] || null) : null;
 
   return {
     version:            AGENT_VERSION,
@@ -14130,6 +15704,19 @@ tr:hover td { background:#1f242c }
 .wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
 .wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
+.wp-ov-hk { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap; }
+.wp-ov-hk:hover { border-color:var(--blue); color:var(--text); }
+.wp-ov-hk.set { color:var(--blue); }
+.wp-ov-hk.blocked { color:var(--red); border-color:var(--red); }
+.wp-ov-hk.capturing { color:#f0b429; border-color:#f0b429; }
+.wp-ovtop { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:0 10px; align-items:start; }
+.wp-ovcol { min-width:0; }
+.wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
+.wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
+.wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
+.wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
+.wp-ov-pin:hover { opacity:0.8; }
+.wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -17379,7 +18966,7 @@ var WP_OVERLAY_ROWS = [
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
-  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table.'],
+  ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
@@ -17390,7 +18977,13 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
+
+// Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
+// nine with a mini rendition; the pet tracker is 'pets' there.
+var WP_MINI_KEY_OF = { hud: 'hud', tank: 'tank', mobinfo: 'mobinfo', chchain: 'chchain', charm: 'charm',
+  exttarget: 'exttarget', pet: 'pets', popraid: 'popraid', buffQueue: 'buffQueue' };
 
 function renderOverlays(s) {
   let h = '';
@@ -17404,23 +18997,48 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
+  // Two columns (the guild lead, 2026-09-24: "Make the top section of the overlays
+  // dashboard into two columns and put the opacity slider with the background
+  // button"): how overlays LOOK on the left, the all-overlay keys and placement
+  // on the right. One column when the window is narrow (.wp-ovtop).
+  h += '<div class="wp-ovtop"><div class="wp-ovcol">';
   // 🎨 Theme picker (the guild lead, 2026-07-12) — direct pick instead of cycling
   // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
   // active one highlights from status.overlayTheme.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   h += '<b>🎨 Theme</b><span class="dim">applies to all overlays</span>';
   var thCur = (s && s.overlayTheme) || 'default';
-  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast']];
+  // The colour-blind three (the guild lead, 2026-09-24) sit on their own line.
+  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast'],
+    null, ['deutan','Deuteranopia (red-green)'],['protan','Protanopia (red-green)'],['tritan','Tritanopia (blue-yellow)']];
   for (var ti = 0; ti < THEMES.length; ti++) {
+    if (!THEMES[ti]) { h += '<span style="flex-basis:100%"></span><span class="dim">colour-blind:</span>'; continue; }
     var on = THEMES[ti][0] === thCur;
     h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
   }
   h += '</div>';
+  // 🔅 Opacity and backgrounds, together. Opacity fades the whole overlay —
+  // what it shows, its background with it (the guild lead, 2026-09-24:
+  // "Currently opacity only works on backgrounds, not on the actual
+  // content"); the background slider is the old one, the card behind the
+  // content, 100% = solid. Both set every overlay; the setup bar fine-tunes one.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b>🔅 Opacity — all overlays</b>'
+    + '<b>🔅 Opacity</b><span class="dim" style="font-size:11px">the whole overlay</span>'
     + '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
     + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
-    + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<b>🌫 Background</b><span class="dim" style="font-size:11px">the card behind it</span>'
+    + '<input id="wpAllBgAlpha" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllBgAlphaVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
+    + '<span class="dim" style="font-size:11px">hotkey</span>'
+    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">both set every overlay at once — fine-tune one in its setup bar</span>'
     + '</div>';
   // 🔍 Overlay scale (a member's 5K monitor). Global slider here; each overlay
   // also carries its own "size" slider in its setup bar that overrides this.
@@ -17433,6 +19051,7 @@ function renderOverlays(s) {
     + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
     + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
     + '</div>';
+  h += '</div><div class="wp-ovcol">';   // right column: the all-overlay keys and placement
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -17447,25 +19066,17 @@ function renderOverlays(s) {
     + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
     + '<button type="button" id="wpHideHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '</div>';
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--gold)">Toggle backgrounds on ALL overlays:</b>'
-    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
-    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
-    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
-    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     // Tray parity (the guild lead, 2026-08-19): lock/unlock, setup mode, and hide-all
     // live here too, not just in the tray. Stateful labels start as … and are
     // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
     + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '<button type="button" class="wp-ov-act" data-act="lock" id="wpOvLockBtn" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
-    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
+    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
+    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
   // 💥 Damage-taken audio alert (the guild lead, 2026-07-31). Not an overlay — an opt-in
   // spoken cue — but its hotkey belongs with the other global hotkeys, so it
@@ -17481,6 +19092,18 @@ function renderOverlays(s) {
     + '<button type="button" id="wpDmgHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
     + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
+  // ▭ Minimize ALL — the fourth all-overlay key (Ctrl+Shift+M), which had no
+  // row here: the tray-parity rule (CLAUDE.md) applies to hotkeys too.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">▭ Minimize ALL overlays:</b>'
+    + '<code id="wpMiniHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpMiniHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpMiniHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<button type="button" class="wp-ov-act" data-act="miniall" id="wpOvMiniAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<span id="wpMiniHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">Takes every overlay that has a mini down to it; press again to put them back, except the ones with a 📌 in the table below.</span>'
     + '</div>';
   // 💾 Per-character overlay layouts — tray parity (the guild lead, 2026-08-19:
   // "Overlay layouts should be saves and in the overlay tab"). Baked from
@@ -17507,8 +19130,9 @@ function renderOverlays(s) {
     }
   }
   h += '</div>';
+  h += '</div></div>';   // end of the two columns
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
-    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
+    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray). The HUD ring keeps both at its <b>bottom</b>, under its tick and swing bars.'
     + '</div>';
   h += '</div>';
 
@@ -17521,21 +19145,43 @@ function renderOverlays(s) {
   // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
   // so the section stays byte-stable across polls (see the morphInto note).
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Description</th></tr>';
-  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
-    var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Hotkey</th><th>Mini</th><th>Description</th></tr>';
+  // The Dock and trigger alerts (TTS) first, the overlays alphabetically under
+  // them (the guild lead, 2026-09-24) — "/who" sorts as "who".
+  var ovRows = WP_OVERLAY_ROWS.filter(function(r){ return r[0] === 'dock' || r[0] === 'trigger'; })
+    .concat(WP_OVERLAY_ROWS.filter(function(r){ return r[0] !== 'dock' && r[0] !== 'trigger'; })
+      .sort(function(a, b){ return a[1].replace(/^\\W+/, '').localeCompare(b[1].replace(/^\\W+/, ''), 'en', { sensitivity: 'base' }); }));
+  for (var i = 0; i < ovRows.length; i++) {
+    var key = ovRows[i][0], label = ovRows[i][1], desc = ovRows[i][2];
     // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
     // would tie the callouts to being on screen. The dock can't dock itself.
-    var dockCell = (key === 'trigger' || key === 'dock')
+    // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
+    // dock") — it is a square round the character; main's catalog agrees.
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
+    // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
+    // Mini-mode overlays in here. Those need to go in") — the same switch and
+    // 📌 as the overlay's right-click menu, for the nine that have a mini.
+    // Painted from status; a row without one shows a dash.
+    var miniKey = WP_MINI_KEY_OF[key];
+    var miniCell = miniKey
+      ? '<td style="white-space:nowrap"><button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
+        + ' <button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button></td>'
+      : '<td class="dim" style="font-size:11px">&mdash;</td>';
+    // ⌨ Its own show/hide hotkey (the guild lead, 2026-09-24: "Each overlay
+    // should get its own hotkey config as well"). Label painted post-render
+    // by wpRefreshOverlayHotkeys, like the toggles, for byte-stability.
     h += '<tr><td style="color:var(--text)">' + label + '</td>'
       +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
       +  dockCell
+      +  '<td><button type="button" class="wp-ov-hk" data-ov="' + key + '">…</button></td>'
+      +  miniCell
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
+  h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Hotkey: click a row&rsquo;s button, then press the keys (Ctrl, Alt or Shift + a key). Backspace clears it, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
   h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
   h += '</div>';
 
@@ -17574,6 +19220,7 @@ function renderOverlays(s) {
   h += '</div>';
   setSectionHTML('overlays', h);
   wpRefreshOverlayToggles();
+  wpRefreshOverlayHotkeys();
   wpWireHideHotkey();
   wpWireExtPref();
   wpWireBqPref();
@@ -17648,15 +19295,29 @@ function wpWireBqPref() {
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function wpWireHideHotkey() {
-  var ao = document.getElementById('wpAllOpacity');
-  var aov = document.getElementById('wpAllOpacityVal');
-  if (ao && window.mimic && window.mimic.setAllOpacity) {
-    _bindOnce(ao, 'input', function(){
-      var v = parseFloat(ao.value || '1');
-      if (aov) aov.textContent = Math.round(v * 100) + '%';
-      try { window.mimic.setAllOpacity(v); } catch (e) {}
+  // Opacity (the whole overlay) and Background (the card) — each seeded from
+  // what is saved, taking the overlays' common value (the first one, if they
+  // differ: this slider sets all of them the same).
+  [['wpAllOpacity', 'wpAllOpacityVal', 'setAllOpacity', 'overlayOpacity'],
+   ['wpAllBgAlpha', 'wpAllBgAlphaVal', 'setAllBgAlpha', 'overlayBgAlpha']].forEach(function(o){
+    var el = document.getElementById(o[0]), val = document.getElementById(o[1]);
+    if (!el || !window.mimic || !window.mimic[o[2]]) return;
+    if (!el.__wpInit && window.mimic.getConfig) {
+      el.__wpInit = true;
+      window.mimic.getConfig().then(function(cfg){
+        var m = (cfg && cfg[o[3]]) || {}, first = null;
+        for (var k in m) { if (typeof m[k] === 'number') { first = m[k]; break; } }
+        var v = (first != null && first >= 0.15 && first <= 1) ? first : 1;
+        el.value = String(v);
+        if (val) val.textContent = Math.round(v * 100) + '%';
+      }).catch(function(){});
+    }
+    _bindOnce(el, 'input', function(){
+      var v = parseFloat(el.value || '1');
+      if (val) val.textContent = Math.round(v * 100) + '%';
+      try { window.mimic[o[2]](v); } catch (e) {}
     });
-  }
+  });
   // Global overlay-size slider — seed from the stored value on first wire of
   // each rendered element (a section repaint makes a fresh element, so the
   // seed re-runs then and never mid-drag). Label tracks the drag; the scale
@@ -17718,6 +19379,7 @@ function wpWireHideHotkey() {
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
   _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
   _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
+  _wpWireHotkeyRow('wpMiniHotkey', 'miniHotkey', 'miniHotkeyEnabled', 'CommandOrControl+Shift+M');
   wpWireDamageAlert();
 }
 // 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
@@ -17761,6 +19423,12 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
     }
   }
   window.mimic.getConfig().then(paint).catch(function(){ cur.textContent = _wpFmtAccel(defAccel); });
+  // A key the OS refused (another program holds it) is shown red, as in the table.
+  if (window.mimic.getStatus) window.mimic.getStatus().then(function(st){
+    var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
+    cur.style.color = blocked ? 'var(--red)' : '';
+    cur.title = blocked ? 'Another program already uses this key, so it does nothing here — Change… to pick another.' : '';
+  }).catch(function(){});
   if (en) _bindOnce(en, 'click', function(){
     window.mimic.getConfig().then(function(cfg){
       var next = !(cfg && cfg[enKey] !== false);
@@ -17772,37 +19440,166 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
     }).catch(function(){});
   });
   _bindOnce(btn, 'click', function(){
-    if (_wpHotkeyCapturing) return;
-    _wpHotkeyCapturing = true;
-    if (hint) hint.textContent = 'Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…';
-    function done(msg) {
-      _wpHotkeyCapturing = false;
-      document.removeEventListener('keydown', onKey, true);
-      if (hint) hint.textContent = msg || '';
-      if (msg) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
+    function say(msg, fade) {
+      if (!hint) return;
+      hint.textContent = msg || '';
+      if (fade) setTimeout(function(){ if (hint) hint.textContent = ''; }, 4000);
     }
-    function onKey(e) {
-      e.preventDefault(); e.stopPropagation();
-      if (e.key === 'Escape') { done('Cancelled.'); return; }
-      var k = e.key;
-      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
-      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { if (hint) hint.textContent = 'Add Ctrl, Alt or Shift — a bare key would eat normal typing.'; return; }
-      var key = k.length === 1 ? k.toUpperCase() : k;                // letters → upper; F1-F12 etc. pass through
-      if (key === ' ') key = 'Space';
-      var parts = [];
-      if (e.ctrlKey)  parts.push('CommandOrControl');
-      if (e.altKey)   parts.push('Alt');
-      if (e.shiftKey) parts.push('Shift');
-      parts.push(key);
-      var accel = parts.join('+');
+    var started = _wpCaptureAccel(say, function(accel){
       var patch2 = {}; patch2[cfgKey] = accel;
       window.mimic.saveConfig(patch2).then(function(){
         cur.textContent = _wpFmtAccel(accel);
-        done('Saved — active immediately.');
-      }).catch(function(){ done('Save failed.'); });
-    }
-    document.addEventListener('keydown', onKey, true);
+        // The save re-registers every key; read back whether the OS took it.
+        return window.mimic.getStatus().then(function(st){
+          var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
+          if (blocked) { cur.style.color = 'var(--red)'; say('Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — pick a different one.'); }
+          else { cur.style.color = ''; say('Saved — active immediately.', true); }
+        });
+      }).catch(function(){ say('Save failed.', true); });
+    }, null, cfgKey);
+    if (started) say('Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…');
   });
+}
+// Key capture, shared by every hotkey control on this page: waits for a real
+// key with Ctrl, Alt or Shift held and hands back an Electron accelerator.
+// Esc cancels; Backspace/Delete run onClear when the caller offers one.
+// Letters and digits are read from the physical key (e.code), so Shift+1 is
+// "Shift+1", not "Shift+!". Returns false when a capture is already running.
+//
+// A key already in use says so (the guild lead, 2026-09-24: "it should tell you
+// when you're trying to use one that's currently in use rather than doing
+// nothing"). Two ways a key is taken, and each looked like nothing happening:
+//   • Mimic's own — while this captures, Mimic lets go of every key it holds
+//     (hotkeyCapture), so the key arrives and is checked against the list it
+//     returns. \`selfId\` is the control being set, which may keep its own key.
+//   • another program's — Windows hands a global hotkey to its owner, so the
+//     key never arrives here; only its modifiers do. Modifiers pressed and let
+//     go with no key between is that signature, and it is said out loud.
+var _WP_HOTKEY_USES = {
+  hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
+  damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key',
+};
+function _wpHotkeyUseLabel(id) {
+  if (_WP_HOTKEY_USES[id]) return _WP_HOTKEY_USES[id];
+  var k = String(id).replace(/^overlay:/, '');
+  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) if (WP_OVERLAY_ROWS[i][0] === k) return 'the ' + WP_OVERLAY_ROWS[i][1] + ' overlay’s key';
+  return 'another Mimic key';
+}
+// "Ctrl+Shift+H", "CommandOrControl+Shift+h" and "Shift+Control+H" are one key.
+function _wpAccelNorm(a) {
+  var mods = [], key = '';
+  String(a || '').split('+').forEach(function(p){
+    var t = p.trim().toLowerCase();
+    if (/^(commandorcontrol|cmdorctrl|control|ctrl|command|cmd)$/.test(t)) mods.push('ctrl');
+    else if (t === 'alt' || t === 'option') mods.push('alt');
+    else if (t === 'shift') mods.push('shift');
+    else if (t) key = t;
+  });
+  return mods.sort().join('+') + '+' + key;
+}
+function _wpCaptureAccel(say, onAccel, onClear, selfId) {
+  if (_wpHotkeyCapturing) return false;
+  _wpHotkeyCapturing = true;
+  var uses = [], modsDown = false, gotKey = false;
+  var bridge = window.mimic && window.mimic.hotkeyCapture;
+  if (bridge) { try { window.mimic.hotkeyCapture(true).then(function(u){ uses = Array.isArray(u) ? u : []; }).catch(function(){}); } catch (e) { void e; } }
+  function stop() {
+    _wpHotkeyCapturing = false;
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('keyup', onUp, true);
+    if (bridge) { try { window.mimic.hotkeyCapture(false); } catch (e) { void e; } }
+  }
+  function onUp(e) {
+    var mod = e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta';
+    if (!mod || e.ctrlKey || e.altKey || e.shiftKey) return;   // still holding one
+    if (modsDown && !gotKey) say('Nothing came through with those held. If you pressed a key with them, another program is already using that combination as its own hotkey — try a different one (Esc cancels).');
+    modsDown = false; gotKey = false;
+  }
+  function onKey(e) {
+    e.preventDefault(); e.stopPropagation();
+    var k = e.key, code = e.code || '';
+    if (k === 'Escape') { stop(); say('Cancelled.', true); if (onClear) onClear(null); return; }
+    if (onClear && (k === 'Backspace' || k === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey) { stop(); onClear(true); return; }
+    if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') { modsDown = true; return; }  // wait for the real key
+    gotKey = true;
+    if (!e.ctrlKey && !e.altKey && !e.shiftKey) { say('Add Ctrl, Alt or Shift — a bare key would eat normal typing.'); return; }
+    var key = /^Key[A-Z]$/.test(code) ? code.slice(3)
+      : /^Digit[0-9]$/.test(code) ? code.slice(5)
+      : /^Numpad[0-9]$/.test(code) ? 'num' + code.slice(6)
+      : (k.length === 1 ? k.toUpperCase() : k);                     // F1-F12 etc. pass through
+    if (key === ' ') key = 'Space';
+    var parts = [];
+    if (e.ctrlKey)  parts.push('CommandOrControl');
+    if (e.altKey)   parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+    parts.push(key);
+    var accel = parts.join('+'), n = _wpAccelNorm(accel);
+    for (var i = 0; i < uses.length; i++) {
+      if (uses[i].id !== selfId && _wpAccelNorm(uses[i].accel) === n) {
+        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id) + ' — press a different one (Esc cancels).');
+        return;                                                     // keep listening
+      }
+    }
+    stop();
+    onAccel(accel);
+  }
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('keyup', onUp, true);
+  return true;
+}
+// ⌨ The Overlays table's Hotkey column: each overlay's own show/hide key,
+// saved in Mimic's cfg.overlayHotkeys and bound there as a global shortcut
+// that runs the same toggle as the row's ON/OFF button. A key another app
+// already holds is shown in red: the OS refused it, so it does nothing.
+function wpRefreshOverlayHotkeys() {
+  if (!(window.mimic && window.mimic.getConfig && window.mimic.getStatus)) return;
+  Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
+    var map = (r[0] && r[0].overlayHotkeys) || {}, blocked = (r[1] && r[1].overlayHotkeysBlocked) || {};
+    var bs = document.querySelectorAll('.wp-ov-hk');
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i], k = b.getAttribute('data-ov');
+      if (b.classList.contains('capturing')) continue;
+      var a = typeof map[k] === 'string' ? map[k] : '';
+      b.textContent = a ? _wpFmtAccel(a) : 'set…';
+      b.className = 'wp-ov-hk' + (a ? (blocked[k] ? ' blocked' : ' set') : '');
+      b.title = a ? (blocked[k] ? 'Another app already uses this key — pick a different one.' : 'Press it anywhere to show or hide this overlay. Click to change.')
+                  : 'Give this overlay its own show/hide key.';
+    }
+  }).catch(function(){});
+}
+function wpCaptureOverlayHotkey(btn) {
+  var k = btn.getAttribute('data-ov');
+  var hint = document.getElementById('wpOvHkHint');
+  var keep = hint ? hint.textContent : '';
+  function say(msg, fade) {
+    if (!hint) return;
+    hint.textContent = msg || keep;
+    if (fade) setTimeout(function(){ if (hint) hint.textContent = keep; }, 4000);
+  }
+  function save(accel) {
+    window.mimic.getConfig().then(function(cfg){
+      var map = Object.assign({}, (cfg && cfg.overlayHotkeys) || {});
+      if (accel) map[k] = accel; else delete map[k];
+      return window.mimic.saveConfig({ overlayHotkeys: map });
+    }).then(function(){
+      btn.classList.remove('capturing');
+      // Registration runs inside the save; read back whether the OS took it.
+      wpRefreshOverlayHotkeys();
+      if (!accel) { say('Hotkey removed.', true); return; }
+      return window.mimic.getStatus().then(function(st){
+        var blocked = st && st.overlayHotkeysBlocked && st.overlayHotkeysBlocked[k];
+        say(blocked ? 'Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — click the red key and pick a different one.'
+                    : 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide it.', !blocked);
+      });
+    }).catch(function(){ btn.classList.remove('capturing'); say('Save failed.', true); });
+  }
+  var started = _wpCaptureAccel(say, save, function(clear){
+    if (clear) save(null); else { btn.classList.remove('capturing'); wpRefreshOverlayHotkeys(); }
+  }, 'overlay:' + k);
+  if (!started) return;
+  btn.classList.add('capturing');
+  btn.textContent = 'press keys…';
+  say('Press the keys for this overlay now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
 }
 
 // Dock / undock an overlay from the Overlays page. Docking moves it out of its
@@ -17834,11 +19631,11 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
@@ -17885,6 +19682,22 @@ function wpRefreshOverlayToggles() {
       if (haBtn2) haBtn2.textContent = st.hideAllActive
         ? '👁 Show overlays (undo hide-all)'
         : '🙈 Hide all overlays';
+      // ▭ Mini: each capable row's switch and 📌, and the Minimize ALL button.
+      var miniMap = st.overlayMini || {}, pinMap = st.overlayMiniPinned || {};
+      var mbs = document.querySelectorAll('.wp-ov-mini');
+      for (var mi = 0; mi < mbs.length; mi++) {
+        var mk = mbs[mi].getAttribute('data-mini'), mOn = !!miniMap[mk];
+        mbs[mi].textContent = mOn ? '▭ MINI' : '▭ full';
+        mbs[mi].className = 'wp-ov-mini' + (mOn ? ' on' : '');
+        mbs[mi].title = mOn ? 'Mini now. Click for the full overlay.' : 'Full size now. Click for its mini.';
+      }
+      var pbs = document.querySelectorAll('.wp-ov-pin');
+      for (var pi2 = 0; pi2 < pbs.length; pi2++) {
+        var pk = pbs[pi2].getAttribute('data-mini');
+        pbs[pi2].className = 'wp-ov-pin' + (pinMap[pk] ? ' on' : '');
+      }
+      var maBtn = document.getElementById('wpOvMiniAllBtn');
+      if (maBtn) maBtn.textContent = st.miniAllActive ? '▭ Restore overlays (undo minimize-all)' : '▭ Minimize all now';
 
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
@@ -17917,6 +19730,20 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
     var d = (t && t.closest) ? t.closest('.wp-ov-dock') : null;
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
+    var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
+    if (hk && window.mimic && window.mimic.saveConfig) { wpCaptureOverlayHotkey(hk); return; }
+    var mn = (t && t.closest) ? t.closest('.wp-ov-mini') : null;
+    if (mn && window.mimic && window.mimic.setOverlayMini) {
+      window.mimic.setOverlayMini(mn.getAttribute('data-mini'), !mn.classList.contains('on'))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
+      return;
+    }
+    var pn = (t && t.closest) ? t.closest('.wp-ov-pin') : null;
+    if (pn && window.mimic && window.mimic.setOverlayMiniPin) {
+      window.mimic.setOverlayMiniPin(pn.getAttribute('data-mini'), !pn.classList.contains('on'))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
+      return;
+    }
     var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');
@@ -17933,6 +19760,11 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      if (a === 'miniall' && window.mimic.toggleMiniAll) {
+        window.mimic.toggleMiniAll().then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       if (a === 'hideall' && window.mimic.hideAllToggle) {
         window.mimic.hideAllToggle().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
@@ -18812,6 +20644,31 @@ document.addEventListener('click', function (ev) {
 // Bidding and rolling are two ways of handing out the same drop, so they share
 // a screen instead of being split across the Dashboard (bids) and Stats
 // (rolls). The bidding card mounts itself here — see its ensure().
+// ☠️ One deathroll = one line (the guild lead, 2026-09-23: "These are called
+// Deathrolls. First one to roll a zero loses"; option A). The agent groups the
+// steps (_deathrollEntry); this only draws them. Red is the 0 — the "death".
+function _wpDeathrollHtml(e) {
+  var g = e.deathroll || {};
+  var names = (g.players || []).map(esc);
+  var who = names.length === 2 ? names[0] + ' vs ' + names[1] : names.join(', ');
+  var state;
+  if (g.done) state = '<span style="color:var(--red)">' + esc(g.loser) + ' hit 0</span>';
+  else if (e.open && g.next) state = '<span style="color:var(--gold,#f0c419)">' + (g.next.name ? esc(g.next.name) + ' to roll' : 'next roll') + ' 0–' + g.next.to + '</span>';
+  else state = '<span class="dim">stopped at 0–' + (g.next ? g.next.to : '?') + '</span>';
+  var h = '<details ' + wpKeep('droll|' + e.started_at_ms) + '>';
+  h += '<summary>☠️ <b>Deathroll ' + Number(e.to).toLocaleString('en-US') + '</b> — ' + who + ' · ' + state
+     + ' <span class="dim">· ' + (g.steps || []).length + ' rolls · ' + new Date(e.started_at_ms).toLocaleTimeString()
+     + (e.open ? ' · live' : '') + '</span></summary>';
+  h += '<table><tr><th>Range</th><th>Player</th><th>Rolled</th><th>Time</th></tr>';
+  for (var i = 0; i < (g.steps || []).length; i++) {
+    var st = g.steps[i];
+    h += '<tr><td class="dim">0–' + st.to + '</td><td>' + esc(st.name) + '</td>'
+       + '<td class="num"' + (st.value === 0 ? ' style="color:var(--red)"' : '') + '>' + st.value + '</td>'
+       + '<td class="dim">' + new Date(st.at_ms).toLocaleTimeString() + '</td></tr>';
+  }
+  return h + '</table></details>';
+}
+
 function renderLootTab(s) {
   const sec = document.getElementById('loot');
   if (!sec) return;
@@ -18826,7 +20683,8 @@ function renderLootTab(s) {
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
-      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
+      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
@@ -23557,6 +25415,8 @@ const COMMAND_HTML = `<!doctype html>
   .roll-detail .d{display:flex;gap:6px;font-size:9px;color:#9aa4ad;line-height:1.5}
   .roll-detail .d .v{color:#e6edf3;font-variant-numeric:tabular-nums;margin-left:auto}
   .roll-detail .d.win .v{color:#f0c419;font-weight:700}
+  .roll-detail .d.lose .v{color:#f85149;font-weight:700}
+  .roll-detail .d .rng{opacity:.6;flex-shrink:0;font-variant-numeric:tabular-nums}
   /* A re-roll never wins, so it has to be legible at a glance or the list looks
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
@@ -23950,6 +25810,32 @@ const COMMAND_HTML = `<!doctype html>
             var rs  = visRolls[ri];
             var rid = _rollId(rs);
             var expanded = !!(rid && _openRolls.has(rid));
+            if (rs.kind === 'deathroll') {
+              // ☠️ A deathroll is ONE row (the guild lead, 2026-09-23, option A), not
+              // a dozen "1 roll" sets. Expand shows each step in order.
+              var dg = rs.deathroll || {};
+              var dn = (dg.players || []).map(esc);
+              var dState = dg.done ? '<span style="color:#f85149">' + esc(dg.loser) + ' hit 0</span>'
+                : (rs.open && dg.next ? '<span style="color:#f0c419">' + (dg.next.name ? esc(dg.next.name) + ' to roll' : 'next') + ' 0–' + dg.next.to + '</span>'
+                : '<span style="opacity:.6">stopped</span>');
+              html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
+                   +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
+                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
+                   +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
+                   +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
+                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+              if (expanded) {
+                html += '<div class="roll-detail">';
+                for (var dk = 0; dk < (dg.steps || []).length; dk++) {
+                  var ds = dg.steps[dk];
+                  html += '<div class="d' + (ds.value === 0 ? ' lose' : '') + '"><span>' + esc(ds.name) + '</span>'
+                       +    '<span class="rng">0–' + ds.to + '</span><span class="v">' + ds.value + '</span></div>';
+                }
+                html += '</div>';
+              }
+              continue;
+            }
             var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
             html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
@@ -24508,6 +26394,14 @@ function startWebDashboard(port) {
         let _b;
         try { _b = JSON.stringify(_serializeTankState()); _tankStateLastGood = _b; }
         catch (e) { console.error('[api/tank-state] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _tankStateLastGood; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(_b || 'null');
+      }
+      // Me overlay (me.html) — the active character's own panel.
+      if (req.url === '/api/me') {
+        let _b;
+        try { _b = JSON.stringify(_serializeMeState()); _meStateLastGood = _b; }
+        catch (e) { console.error('[api/me] serialize failed, serving last-good:', e && (e.stack || e.message || e)); _b = _meStateLastGood; }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
@@ -30329,6 +32223,9 @@ function _recordFightHistory(et) {
   };
   stats.fightHistory.unshift(entry);
   if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
+  // Me overlay: tonight's damage per character (the dupe guard above keeps a
+  // multi-log flush from counting one fight twice).
+  if (typeof _meNoteFight === 'function') _meNoteFight(entry);
 
   if (!_uploadOpts || _uploadOpts.dryRun || !_uploadOpts.botUrl || !_uploadOpts.token) return;
   for (const delay of FIGHT_HISTORY_SETTLE_MS) {
@@ -35285,6 +37182,49 @@ function _zealBuffsForName(nameLower) {
   }
   return null;
 }
+// A PLAYER target's identity for Target Info (the guild lead, 2026-09-24:
+// "add in class and level from /who data for target overlay for players").
+// Level, best source first: a live /who that is not anonymous (exact) → your
+// own /consider (a white con is exact, any other colour a range — see
+// noteConsiderLevel) → /who history from the bot (the last level anyone saw).
+// Class from live /who, the raid roster, or history. Null for an NPC.
+function _targetPlayerInfo(st, selfChar, cached) {
+  const name = String(st.target_name || '').trim();
+  if (!name || /\s/.test(name) || name.startsWith('#')) return null;
+  if (cached && cached.mob) return null;                       // the catalog knows it: an NPC
+  const k = name.toLowerCase();
+  const who = whoData.get(k) || null;
+  const raidCls = _raidClassByName.get(k) || null;
+  try { fetchWhoLookup([name]); } catch { /* cached / offline */ }
+  const hist = (_whoLookupCache.get(k) || {}).data || null;
+  const con = conLevelFor(selfChar, name);
+  // Nothing says it is a player yet: wait for the catalog lookup to come back empty.
+  if (!who && !raidCls && !hist && !con && !(cached && !cached.mob)) return null;
+  const liveWho = who && !who.anonymous ? who : null;
+  // A player's level comes from /who only — live, else the last one history
+  // saw. Their consider is not a level: the client's consider of a player does
+  // not follow the table (level-60 players read "quite a gamble", a yellow, to
+  // a level 60 — the guild lead, 2026-09-24), so a con range here was wrong.
+  let level = null, level_min = null, level_max = null, level_src = null;
+  if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
+  else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
+  const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
+  const cls = clsRaw ? normalizeClass(String(clsRaw)) : null;
+  const class_src = (liveWho && liveWho.class) ? 'who' : raidCls ? 'raid' : (hist && hist.class) ? 'history' : null;
+  return {
+    name,
+    class: cls, class_src,
+    level, level_min, level_max, level_src,
+    con_colour: null,   // see the level note above: a player's consider colour is not trusted
+    history_level: hist && Number(hist.level) > 0 ? Number(hist.level) : null,
+    anonymous: !!(who && who.anonymous),
+    guild: (liveWho && liveWho.guild) || (hist && hist.guild) || null,
+    // PvP: whether there is mana to take, and what YOUR drains took.
+    drain_immune: cls === 'Bard',
+    no_mana: cls ? _NO_MANA_CLASSES.test(cls) : null,
+    drained: pvpDrainState(selfChar, name),
+  };
+}
 function buildMobInfo() {
   const st = _currentTargetState();
   if (!st || !st.target_name) return null;
@@ -35424,6 +37364,12 @@ function buildMobInfo() {
     // "last cast" — which is exactly what shipped and was wrong.
     target_mana:    npcManaState(st.target_name, _curIdForRelay),
     target_lastcast: lastNpcCast(st.target_name, _curIdForRelay),
+    // A player target: class, level (exact or a /consider range), and the PvP
+    // drain tally. Null for NPCs.
+    target_player:  _targetPlayerInfo(st, selfChar, cached),
+    // A Shadow Knight mob's Harm Touch: ready, or used with the time until it is
+    // back. Null for anything else (_npcHtFor).
+    target_npc_ht:  _npcHtFor(selfChar, st, cached, _curIdForRelay),
   };
 }
 
@@ -39465,11 +41411,18 @@ async function main() {
             noteSlainForFaction(b.character, sm[1].trim().replace(/!$/, ''),
               sts ? sts.toISOString() : new Date().toISOString());
           }
+          // A mob's mana estimate dies with it, whoever killed it.
+          if (line.indexOf('slain') !== -1) {
+            const dm = sm || line.match(_SLAIN_BY_RX);
+            if (dm && dm[1]) { try { _npcManaOnSlain(dm[1].trim().replace(/!$/, '')); } catch (e) { void e; } }
+          }
         }
         const facEvt = parseFactionLine(line, b.character);
         if (facEvt && !_sourceExcluded) factionBuffer.push(facEvt);
         const conFacEvt = parseConsiderLine(line, b.character);
         if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
+        // …and its level phrase (Target Info's player level / range).
+        try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
 
@@ -39498,6 +41451,8 @@ async function main() {
           // the relay above just registered, so the bot doesn't retire a
           // debuff the raider is still carrying.
           noteCureCastFailed(line, b.character);
+          // ...and a long-recast spell that failed never started its recast.
+          _meNoteCastFailed(line, b.character);
         }
         // Blind landings / fades (Pitted Iron Ring + generic NPC blind) —
         // drives the Mimic Blind Mode auto-pop in v1.1.8. Cheap regex set,
@@ -39540,6 +41495,9 @@ async function main() {
           // Also stamp it under the target name so Mob Info can show buffs on
           // whatever we're targeting (mob or player).
           recordTargetBuffLanding(bcEvt);
+          // A drain (ToT, Mana Sieve, Torment …) takes mana off the mob's
+          // estimate, or counts toward the PvP tally on a player.
+          try { _noteManaDrainLanding(bcEvt, b.character); } catch (e) { void e; }
           // #105 — a slow landing on the current fight target → slow_on timeline
           // tick. Self-cast path: the caster is this log's character.
           try { b.builder.noteSlowLanding(bcEvt, b.character); } catch (e) { void e; }
@@ -39574,6 +41532,8 @@ async function main() {
             // path does, and that breaks on instanced mob names like
             // "#Diabo_Xi_Va_Temariel" vs the emote's "Diabo Xi Va Temariel").
             recordTargetBuffLanding(dbEvt);
+            // Someone else's TIMED drain on a mob (Torment of Argli …).
+            try { _noteManaDrainLanding(dbEvt, null); } catch (e) { void e; }
             // #105 — bystander-observed slow on the fight target → slow_on tick
             // (the caster is unknown from a landing line, so it's unattributed).
             try { b.builder.noteSlowLanding(dbEvt, null); } catch (e) { void e; }
@@ -39750,11 +41710,21 @@ async function main() {
         // dropped before parseEvent ever sees them. Same watch-tail hook as
         // _checkTankBuster, same try/catch isolation; gated on the active boss.
         try { _checkAoeDance(line, ts ? ts.getTime() : Date.now()); } catch { void 0; }
+        // Me HUD: remember the element of a spell that just landed on us, so
+        // the "You were hit by non-melee" line after it can be coloured. RAW
+        // line, for the same reason as above — landing texts match no keep.
+        try { _meNoteSelfLanding(line, b.character); } catch { void 0; }
+        // Me HUD timers: your swings (swing timer), combat abilities, Mend,
+        // Taunt, discipline activations, and enrage start/end. Raw line for
+        // the same reason — misses and disc texts match no keep pattern.
+        try { _meNoteRawLine(line, b.character); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
         const ev = parseEvent(line, ts);
         if (ev) {
+          // Me HUD: damage in/out feed for this character.
+          try { _meNoteHit(b.character, ev); } catch { void 0; }
           // #142 — tank-buster detection off the ~4000 non-melee damage line
           // (Rage of Ssraeshza, spell 2310). Fires "TANK BUSTER" + (re)arms the
           // 60s cadence countdown. Local-only, live tail; keyed off the boss +

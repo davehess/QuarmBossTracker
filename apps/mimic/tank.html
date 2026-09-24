@@ -142,6 +142,35 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#f8b87b;border-color:#f8b87b}
   body.setup #move-btn{top:30px}
+  /* ▭ Mini — "One strip" (the guild vote, closed 2026-09-17): "Just the mob
+     and the tank, ramp if there is ramp, and the damage-shield total returned
+     per hit in a spiky box right of the tank." The markup below only exists
+     while body.wp-mini is on (miniTankHtml); full mode never sees it.
+     The 22px side gutters keep the first row out from under the corner ✥ ✕,
+     which stay put and fade in mini — the DS box must not sit under ✕. */
+  body.wp-mini #wrap{min-width:0}
+  body.wp-mini #empty{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 22px;text-align:left}
+  .mini{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:2px 22px;display:flex;flex-direction:column;gap:2px}
+  .mini-row{display:flex;align-items:center;gap:5px;min-height:16px;font-size:11px;line-height:1.35;
+    text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
+  .mini-pct{width:4ch;text-align:right;font-weight:700;color:#56d364}
+  .mini-bar{flex:1 1 48px;min-width:24px;height:4px;background:rgba(255,255,255,0.09);border-radius:2px;overflow:hidden}
+  .mini-bar i{display:block;height:100%;background:#56d364}
+  .mini-row.low .mini-pct{color:#f0b429}  .mini-row.low .mini-bar i{background:#f0b429}
+  .mini-row.crit .mini-pct{color:#f85149} .mini-row.crit .mini-bar i{background:#f85149}
+  .mini-row.none .mini-pct{color:#6e7681}
+  .mini-nm{font-weight:700;color:#fff}
+  .mini-arr{color:#6e7681;flex:0 0 auto}
+  .mini-mob{color:#ffa657}
+  /* The spiky box: what ONE hit returns. Dark text on the fill, so no outline. */
+  .mini-ds{display:inline-grid;place-items:center;flex:0 0 auto;min-width:52px;height:20px;padding:0 6px;box-sizing:border-box;
+    background:#56d364;color:#03170a;font-weight:700;font-size:10px;text-shadow:none;
+    clip-path:polygon(100% 50%,86.7% 59.8%,93.3% 75%,76.9% 76.9%,75% 93.3%,59.8% 86.7%,50% 100%,40.2% 86.7%,25% 93.3%,23.1% 76.9%,6.7% 75%,13.3% 59.8%,0 50%,13.3% 40.2%,6.7% 25%,23.1% 23.1%,25% 6.7%,40.2% 13.3%,50% 0,59.8% 13.3%,75% 6.7%,76.9% 23.1%,93.3% 25%,86.7% 40.2%)}
+  .mini-ds.off{background:#3a4048;color:#9aa4ad}
+  .mini-ramp{background:rgba(180,32,32,0.35);border-radius:3px;padding:0 4px;margin:0 -4px}
+  .mini-who{font-weight:700;color:#fff}
+  .mini-da{color:#f0c419;font-size:10px;font-weight:700}
+  .mini-call{flex:0 0 auto;color:#fff;background:#f85149;border-radius:3px;padding:0 4px;font-size:10px;font-weight:800;text-shadow:none}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
@@ -156,7 +185,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span aria-hidden>🛡</span><span>Tank</span><span class="who" id="who"></span><span class="badge" id="syncBadge" title="When cross-raid HP sync ships (Tier 4), this will turn green and update at sub-second.">local</span></div>
+    <div class="title wp-mini-hide"><span aria-hidden>🛡</span><span>Tank</span><span class="who" id="who"></span><span class="badge" id="syncBadge" title="When cross-raid HP sync ships (Tier 4), this will turn green and update at sub-second.">local</span></div>
     <div id="content"></div>
   </div>
 <script>
@@ -361,9 +390,66 @@
     return pct + '%';
   }
 
+  // ▭ Mini — "One strip" (the guild vote, closed 2026-09-17). One row: the
+  // tank's HP bar, "tank ← mob" (the mob is NAMED, not barred — its HP lives
+  // on Target info), and the spiky damage-shield box. A second row only while
+  // rampage has a target. Everything else (enrage, Death Touch, CH chain, buff
+  // list, off-heals, inbound heal bars) is the full overlay's job.
+  // What ONE hit returns: the sum of the tank's damage-shield buffs at their
+  // catalog per-hit values (the vote's example: 65 + 20 = 85/hit). Not the
+  // fight's running total and not the observed average — it moves only when a
+  // DS lands or fades, which is the point of a number read at a glance.
+  function dsPerHit(ds){
+    var n = 0, src = (ds && ds.sources) || [];
+    for (var i = 0; i < src.length; i++) n += Number(src[i] && src[i].per_hit) || 0;
+    return n;
+  }
+  function miniBarRow(pct, cls, tail){
+    return '<div class="mini-row ' + cls + '">'
+         +   '<span class="mini-pct wp-mini-num">' + (pct == null ? '—' : pct + '%') + '</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:' + (pct == null ? 0 : pct) + '%"></i></span>'
+         +   tail
+         + '</div>';
+  }
+  function miniTankHtml(s){
+    // Same tank the full overlay centres on: the MT when one is resolved, the
+    // local character otherwise — and the same DS source it reads.
+    var mt = (s.mt && s.mt.name) ? s.mt : null;
+    var raw = mt ? mt.hp_pct : s.hp_pct;
+    var hp = raw == null ? null : Math.max(0, Math.min(100, Math.round(raw)));
+    var ds = (mt && mt.ds) ? mt.ds : s.ds;
+    var per = dsPerHit(ds);
+    var mob = s.target && s.target.name;
+    var tail = '<span class="mini-nm wp-mini-name">' + esc(mt ? mt.name : s.character) + '</span>'
+             + (mob ? '<span class="mini-arr">←</span><span class="mini-mob wp-mini-name">' + esc(mob) + '</span>' : '')
+             + '<span class="mini-ds wp-mini-num' + (per > 0 ? '' : ' off') + '" title="Damage returned on each hit — the sum of the tank\'s damage-shield buffs">'
+             +   (per > 0 ? per + '/hit' : 'no DS') + '</span>';
+    var h = miniBarRow(hp, hp == null ? 'none' : hpClass(hp), tail);
+    var rp = s.rampage;
+    if (rp && rp.target) {
+      var rhp = rp.hp_pct == null ? null : Math.max(0, Math.min(100, Math.round(rp.hp_pct)));
+      var rda = rp.da || null;
+      // "CH!" follows the full overlay's own two start-CH cues for this person:
+      // the ramp bar's ≤5s green "get ready to heal" (rda.critical), and the DA
+      // card's "start CH on <name>" (s.da.critical) — but only when <name> is
+      // the person on this row; that card is about the local character's DA.
+      var daOn = s.da && s.da.critical && String(s.da.ramp_target || s.character || '').toLowerCase() === String(rp.target).toLowerCase();
+      var chNow = !!((rda && rda.critical) || daOn);
+      var rtail = '<span class="mini-who wp-mini-name">💀 ' + esc(rp.target) + '</span>'
+                + (rda ? '<span class="mini-da wp-mini-num">DA' + (rda.seconds != null ? ' ' + fmtSec(rda.seconds) : '') + '</span>' : '')
+                + (chNow ? '<span class="mini-call">CH!</span>' : '');
+      h += '<div class="mini-ramp">' + miniBarRow(rhp, rhp == null ? 'none' : hpClass(rhp), rtail) + '</div>';
+    }
+    return '<div class="mini">' + h + '</div>';
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
+      // Forget the last painted HTML, or the guard below would skip repainting
+      // an identical frame when the character comes back and leave this message
+      // up. Mini's strip repeats byte-for-byte far more often than the cards.
+      contentEl.__wpHtml = null;
       whoEl.textContent = '';
       return;
     }
@@ -382,6 +468,19 @@
     var now = Date.now();
     _inb = mergeInbound(_inb, Array.isArray(s.inbound_heals) ? s.inbound_heals : [], now);
     _inbRamp = mergeInbound(_inbRamp, (s.rampage && Array.isArray(s.rampage.inbound_heals)) ? s.rampage.inbound_heals : [], now);
+
+    // ▭ Mini: the strip instead of the cards, through the same byte-stability
+    // guard and auto-height. After the inbound merges on purpose, so a heal in
+    // flight is still there, colour and all, when mini flips back off.
+    if (document.body.classList.contains('wp-mini')) {
+      var mhtml = miniTankHtml(s);
+      if (contentEl.__wpHtml !== mhtml) {
+        contentEl.innerHTML = mhtml;
+        contentEl.__wpHtml = mhtml;
+        _requestAutoHeight();
+      }
+      return;
+    }
 
     // Main Tank HP — when the agent has resolved an MT (CH-chain target or
     // whoever the boss's melee is connecting on), the overlay is about THEM,
@@ -595,10 +694,20 @@
     paintInbound();
   }
 
+  // Mini flips (preload's _wpApplyMini) re-render from the last poll at once
+  // instead of waiting up to 500ms, then refit: the flip changes the height
+  // even when the poll's HTML would not (the title bar hides by CSS alone).
+  var _lastTank = null;
+  window.addEventListener('wp-mini-change', function(){
+    if (_lastTank) render(_lastTank);
+    _requestAutoHeight();
+  });
+
   async function tick(){
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/tank-state', { cache: 'no-store' });
       const s = await r.json();
+      _lastTank = s;
       render(s);
     } catch (e) {
       // Quiet — agent might be restarting. Next tick will recover.

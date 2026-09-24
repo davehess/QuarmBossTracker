@@ -20,13 +20,16 @@ const block = sliceBlock(src, 'const _DISC_REFUSAL_RX =',
   '// ── Raid-wide healer/caster mana roster');
 
 // parseEqTimestamp lives elsewhere in the monolith; the tracker only needs it to
-// date the line, so the harness supplies the real EQ format parse.
+// date the line, so the harness supplies the real EQ format parse — returning a
+// DATE, exactly as the real one does. This stand-in used to return a number,
+// and that is how `Date + ms` string concatenation shipped: every assertion
+// here passed while the live timer read NaN (2026-09-24).
 const HARNESS = `
   function parseEqTimestamp(line){
     var m = /^\\[(.+?)\\]/.exec(line);
     if (!m) return null;
-    var t = Date.parse(m[1]);
-    return isNaN(t) ? null : t;
+    var d = new Date(m[1]);
+    return isNaN(d.getTime()) ? null : d;
   }
 `;
 
