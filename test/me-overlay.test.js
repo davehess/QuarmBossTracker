@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
+import { readSource, ROOT, sliceBlock, stripJs, stripCss } from './_source-slice.js';
 
 const agent = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
 const meHtml = readSource(path.join(ROOT, 'apps', 'mimic', 'me.html'));
@@ -326,12 +326,22 @@ describe('the three HUDs', () => {
       expect(cl).toContain('var(--blue)');
     });
 
-    it(name + ' outlines a mob that can enrage in red, and names it while ENRAGED', () => {
+    // Round four, the guild lead: "The ENRAGES section should just make a red
+    // outline for the last 8% of the healthbar".
+    it(name + ' outlines the last 8% of the target\'s health bar in red for a mob that can enrage', () => {
+      const RED = /<path d="M([\d.]+) ([\d.]+) A172 172 0 0 1 ([\d.]+) ([\d.]+)" stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/;
       const can = fn(base), not = fn(cleric);
-      expect(can).toMatch(/stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/);
-      expect(not).not.toMatch(/stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/);
+      const m = can.match(RED);
+      expect(m).not.toBeNull();
+      expect(not).not.toMatch(RED);
+      // Clockwise degrees from 12 o'clock: the bar runs -44..44, the outline covers its low end only.
+      const deg = (x, y) => Math.atan2(x - 200, 200 - y) * 180 / Math.PI;
+      expect(deg(+m[1], +m[2])).toBeCloseTo(-44, 0);
+      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.08, 0);
+      expect(can).not.toMatch(/>enrages</);                        // the outline says it; no word
       const on = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enraged: true }) }));
       expect(on).toContain('ENRAGED');
+      expect(on).toMatch(/A172 172 0 0 1 [\d.]+ [\d.]+" stroke="var\(--red\)"/);   // solid while it is
     });
 
     it(name + ' carries the target\'s target with their HP, and the slow state', () => {
@@ -350,6 +360,22 @@ describe('the three HUDs', () => {
       expect(h).toContain('MEND');
     });
 
+    // Round four, the guild lead: "Tick and swing timer should be their own
+    // bars underneath abilities". Underneath = further out at the bottom of the
+    // ring; each is its own labelled path, not a slot among the cooldowns.
+    it(name + ' puts the tick and the swing on their own bars, under the cooldowns', () => {
+      const h = fn(base);
+      const r = (id) => { const m = h.match(new RegExp('<path id="' + id + '" d="M[\\d.]+ [\\d.]+ A([\\d.]+) ')); return m ? +m[1] : null; };
+      const text = (id) => (h.match(new RegExp('<textPath href="#' + id + '"[^>]*>([\\s\\S]*?)</textPath>')) || [])[1] || '';
+      expect(text('htk')).toMatch(/TICK/);
+      expect(text('hsw')).toMatch(/~SWING/);
+      const cds = [0, 1, 2].map(i => text('hcd' + i).replace(/<[^>]+>/g, ''));
+      expect(cds.join(' ')).toMatch(/FK/);
+      expect(cds.join(' ')).not.toMatch(/TICK|SWING/);
+      expect(r('htk')).toBeGreaterThan(r('hcd0'));
+      expect(r('hsw')).toBeGreaterThan(r('hcd0'));
+    });
+
     it(name + ' puts hits inside the ring: on you, yours', () => {
       const h = fn(base);
       expect(h).toMatch(/<textPath href="#hout0"[^>]*>[\s\S]*?>110</);
@@ -365,7 +391,9 @@ describe('the three HUDs', () => {
   for (const [name, fn] of Object.entries(HUDS)) {
     it(name + ' keeps the middle open — no straight text within 95 units of the centre', () => {
       const h = fn(Object.assign({}, cleric, { casting: { spell: 'Complete Healing', pct: 40, remaining_ms: 6000 } }))
-        + fn(base);
+        + fn(base)
+        + fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 138, from_buffs: false } }) }));
+      expect(h).toContain('>DS~<');                                  // the button's own text is measured too
       const boxes = [...h.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="([\d.]+)"[^>]*?text-anchor="(\w+)"[^>]*>([\s\S]*?)<\/text>/g)];
       expect(boxes.length).toBeGreaterThan(3);
       for (const m of boxes) {
@@ -467,6 +495,26 @@ describe('the HUD — rounds, damage shield, builder', () => {
     const listed = R.HUD_PARTS.flatMap(g => g[1].map(it => it[0])).sort();
     expect(listed).toEqual(Object.keys(R.HUD_DEFAULTS).sort());
   });
+
+  // Round four, the guild lead: "Everything feels very bold, we need to be able
+  // to make it thinner." Thin is the default; bold is the round-three look.
+  it('line weight: thin by default, and it thins every arc — bold is the old look', () => {
+    reset();
+    const one = s([hit('out', 45, 0)], { hp: { pct: 80 }, tick: { ms_left: 3000 } });
+    const widths = (h) => [...h.matchAll(/stroke-width="([\d.]+)"/g)].map(m => +m[1]);
+    expect(R.HUD_DEFAULTS.weight).toBe('thin');
+    const thin = R.renderHud(one);
+    expect(thin).toContain('class="w-thin"');
+    R.hudParts.weight = 'bold';
+    const bold = R.renderHud(one);
+    expect(bold).toContain('class="w-bold"');
+    expect(Math.max(...widths(bold))).toBe(6);                     // round three's health arc
+    expect(Math.max(...widths(thin))).toBeLessThan(4);
+    expect(widths(thin).length).toBe(widths(bold).length);         // same parts, only thinner
+    R.hudParts.weight = 'nonsense';
+    expect(R.renderHud(one)).toContain('class="w-thin"');          // a bad saved value falls back
+    reset();
+  });
 });
 
 describe('the in-game picker', () => {
@@ -483,6 +531,16 @@ describe('the in-game picker', () => {
     expect(body).toContain("builderEl.addEventListener('mouseenter', hoverOn)");
     expect(body).toContain("builderEl.addEventListener('mouseleave', hoverOff)");
     expect(body).toContain('localStorage.setItem(HUD_PARTS_KEY, JSON.stringify(hudParts))');
+  });
+  // Round four, the guild lead: "The configuration section needs to pop up on
+  // the side and not over the overlay."
+  it('the builder opens BESIDE the ring: the window grows by the panel, the ring keeps its width, closing puts it back', () => {
+    expect(body).toContain('setBounds({ x: toLeft ? x - PANEL_W : x, y: y, width: w + PANEL_W, height: hgt })');
+    expect(body).toContain("document.documentElement.style.setProperty('--ring-w', w + 'px')");
+    expect(stripCss(meHtml)).toContain('body.building #wrap{width:var(--ring-w)}');
+    expect(body).toMatch(/function closeBuilder\(restore\)\{[\s\S]*?if \(restore !== false && pre && pre\.width\) setBounds\(pre\);/);
+    // quitting with it open must not leave the ring off-centre next launch
+    expect(body).toMatch(/if \(pre\) closeBuilder\(isHud\(style\)\);/);
   });
   it('a HUD makes the window a centred square — the ring is the bounds', () => {
     expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);

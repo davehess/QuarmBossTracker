@@ -76,12 +76,24 @@
   body.hud .title{position:fixed;left:4px;right:4px;bottom:3px;min-height:0;padding:0;font-size:10px;opacity:.4;z-index:30;transition:opacity .12s}
   body.hud .title:hover{opacity:1}
   #hudsvg{display:block;width:100%;height:100%;overflow:visible}
-  /* The HUD builder (⚙): a checklist over the ring, only while it is open. */
+  /* The HUD builder (⚙) opens BESIDE the ring, not over it (the guild lead,
+     round four: "The configuration section needs to pop up on the side and
+     not over the overlay"): the window grows by --panel-w toward whichever
+     side has room, the ring keeps its exact width and place (--ring-w), and
+     closing puts the window back. */
+  :root{ --panel-w:240px; --ring-w:100%; }
   #build-btn{display:none}
   body.hud #build-btn{display:inline-block}
-  #builder{position:fixed;left:10%;right:10%;top:9%;bottom:11%;z-index:80;overflow:auto;
+  #builder{position:fixed;right:0;top:0;bottom:0;width:calc(var(--panel-w) - 8px);box-sizing:border-box;z-index:80;overflow:auto;
     background:rgba(13,17,23,0.95);border:1px solid var(--border);border-radius:8px;padding:8px 12px;
     font-size:11px;box-shadow:0 4px 18px rgba(0,0,0,.55)}
+  body.build-left #builder{right:auto;left:0}
+  body.building #wrap{width:var(--ring-w)}
+  body.building.build-left #wrap{margin-left:auto}
+  body.building.hud .title{right:calc(var(--panel-w) + 4px)}
+  body.building.build-left.hud .title{right:4px;left:calc(var(--panel-w) + 4px)}
+  body.building #hide-btn{right:calc(var(--panel-w) + 6px)}
+  body.building.build-left #move-btn{left:calc(var(--panel-w) + 6px)}
   #builder[hidden]{display:none}
   #builder .bhead{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:2px}
   #builder .bhead .sp{flex:1}
@@ -91,6 +103,13 @@
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
   #hudsvg text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
+  /* Line weight (⚙ → Line weight): the dark edge round the text, and the
+     numbers' boldness. Arcs are scaled in the script. Consolas has only
+     regular and bold, so 500 reads as regular there. */
+  #hudsvg.w-thin text{stroke-width:1.6px;stroke:rgba(0,0,0,.8)}
+  #hudsvg.w-thin [font-weight="700"]{font-weight:500}
+  #hudsvg.w-normal text{stroke-width:2.3px}
+  #hudsvg.w-normal [font-weight="700"]{font-weight:600}
 
   /* C — role card */
   .focus{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:4px;margin-top:2px}
@@ -246,6 +265,7 @@
     if (!b) return;
     var next = b.getAttribute('data-v');
     if (next === style) return;
+    if (builderEl && !builderEl.hidden) closeBuilder(false);   // leaving the HUD: the card's bounds follow
     if (isHud(next) && !isHud(style)) {
       try { localStorage.setItem(CARD_KEY, JSON.stringify({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight })); } catch (err) {}
       var side = Math.round(Math.min(screen.availWidth, screen.availHeight) * 0.5);
@@ -395,7 +415,7 @@
     var p0 = P(r, ccw ? a1 : a0), p1 = P(r, ccw ? a0 : a1);
     return 'M' + f1(p0[0]) + ' ' + f1(p0[1]) + ' A' + r + ' ' + r + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' ' + (ccw ? 0 : 1) + ' ' + f1(p1[0]) + ' ' + f1(p1[1]);
   }
-  function stroke(d, color, w){ return d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + w + '" fill="none" stroke-linecap="round"/>' : ''; }
+  function stroke(d, color, w){ return d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + f1(w) + '" fill="none" stroke-linecap="round"/>' : ''; }
   // Track + fill. fromEnd: the fill grows from a1 back toward a0 (the right
   // arc fills from the bottom up by running backwards).
   function gauge(r, a0, a1, frac, color, w, fromEnd){
@@ -497,7 +517,7 @@
   function blindRing(s){
     return s.blind ? '<circle cx="200" cy="200" r="194" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="10 6"/>' + T(CX, 128, '👁 BLINDED', 11, 'var(--red)', 'middle', 700) : '';
   }
-  function svgWrap(inner){ return '<svg id="hudsvg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet">' + inner + '</svg>'; }
+  function svgWrap(inner, weight){ return '<svg id="hudsvg" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" class="w-' + (weight || 'thin') + '">' + inner + '</svg>'; }
   // Round two (the guild lead, 2026-09-24, after playing all three): "Bars are a
   // little too thick" · "The way the text wraps on H1 for the name up top is
   // the format I want to see for the other pieces. Ticks, swing, HP and
@@ -516,15 +536,19 @@
       + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
-  // Tick, swing (or your cast — the game pauses your swing while you cast) and
-  // every cooldown, as one list of "timers" for the bottom sector.
-  function timerItems(d, p){
-    var items = [];
-    if (p.tick && d.tick) items.push({ id: 'tick', label: 'TICK', value: String(Math.ceil(d.tick.left / 1000)), frac: d.tick.frac, color: '#8b949e', seen: true });
-    if (p.cast && d.cast) items.push({ id: 'cast', label: '✦ CAST', value: d.cast.left != null ? tfmt(d.cast.left) : '', frac: d.cast.frac, color: 'var(--blue)', seen: true });
-    else if (p.swing && d.swing && !d.swing.idle) items.push({ id: 'swing', label: (d.swing.est ? '~' : '') + 'SWING', value: d.swing.left != null ? tfmt(d.swing.left) : '', frac: d.swing.frac, color: 'var(--melee)', seen: true });
-    if (p.cooldowns) d.cds.forEach(function(c){ items.push({ id: c.key, label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), seen: c.seen, ready: c.seen && c.left <= 0 }); });
-    return items;
+  // The two running timers, each its own bar under the cooldowns: the server
+  // tick, and your swing — or your cast while you cast (the game pauses your
+  // swing for it).
+  function tickItem(d, p){
+    return p.tick && d.tick ? { label: 'TICK', value: String(Math.ceil(d.tick.left / 1000)), frac: d.tick.frac, color: '#8b949e' } : null;
+  }
+  function swingItem(d, p){
+    if (p.cast && d.cast) return { label: '✦ CAST', value: d.cast.left != null ? tfmt(d.cast.left) : '', frac: d.cast.frac, color: 'var(--blue)' };
+    if (p.swing && d.swing && !d.swing.idle) return { label: (d.swing.est ? '~' : '') + 'SWING', value: d.swing.left != null ? tfmt(d.swing.left) : '', frac: d.swing.frac, color: 'var(--melee)' };
+    return null;
+  }
+  function cdItems(d, p){
+    return p.cooldowns ? d.cds.map(function(c){ return { label: cdShort(c), value: cdValue(c), frac: c.frac, color: cdColor(c), ready: c.seen && c.left <= 0 }; }) : [];
   }
 
   // ── The builder: which parts the HUD draws ─────────────────────────────────
@@ -540,14 +564,19 @@
   // computer. Every part has a fixed place on the ring, so switching one off
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
-    ['Target', [['target', 'Target name + health'], ['tot', 'Who it is hitting, with their health'], ['status', 'Slowed / can enrage / ENRAGED']]],
+    ['Target', [['target', 'Target name + health'], ['tot', 'Who it is hitting, with their health'], ['status', 'Slowed · enrage zone (last 8%) · ENRAGED']]],
     ['You', [['hp', 'Health'], ['right', 'Mana, or endurance'], ['dps', 'Damage per second (out · in)'], ['focus', 'Class number (CHs left…)']]],
-    ['Timers', [['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar'], ['cooldowns', 'Cooldowns']]],
+    ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick (bar under them)'], ['swing', 'Swing timer (bar under them)'], ['cast', 'Cast bar (takes the swing bar while you cast)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield (button + its own lane)'], ['rounds', 'Rounds shown per lane', [2, 3, 4, 5]]]],
-    ['Other', [['resists', 'Resists']]],
+    ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
+  // Line weight (the guild lead, round four: "Everything feels very bold, we
+  // need to be able to make it thinner"): thin is the default; bold is the
+  // round-three look. It scales every arc and the text's dark edge, and takes
+  // the numbers off bold.
+  var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
-    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 4, resists: 1 };
+    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 4, resists: 1, weight: 'thin' };
   var HUD_PARTS_KEY = 'wpHudParts';
   var hudParts = (function(){
     var p = Object.assign({}, HUD_DEFAULTS);
@@ -593,63 +622,81 @@
   // ── HUD ────────────────────────────────────────────────────────────────────
   // One ring (r 172), fixed places:
   //   top      target arc, its name written along the ring; who it is hitting
-  //            and its slow/enrage state just inside
+  //            and its slow state just inside
   //   left     health · hits ON YOU along the inside
   //   right    mana or endurance · YOUR hits along the inside, and below them
   //            the damage-shield lane with its per-hit button
-  //   bottom   tick, swing (or cast), cooldowns — short arcs, each labelled
-  //            along the ring beneath it · resists just inside
-  // Nothing drawn inside r ≈ 105: the middle of the screen is the character's.
+  //   bottom   cooldowns on an inner arc, each labelled beneath it; under
+  //            them, on the ring, the tick bar (left) and the swing bar
+  //            (right — your cast takes it while you cast), each labelled
+  //            beneath · resists inside the cooldowns
+  // Nothing drawn inside r ≈ 100: the middle of the screen is the character's.
+  // Round four (the guild lead, 2026-09-24): "Tick and swing timer should be
+  // their own bars underneath abilities" · "Everything feels very bold" · "The
+  // ENRAGES section should just make a red outline for the last 8% of the
+  // healthbar".
+  var ENRAGE_PCT = 8;   // Quarm bosses enrage at ~8% HP (same as the Tank overlay)
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
+    var W = HUD_WEIGHTS[p.weight] || HUD_WEIGHTS.thin;
     if (p.target && d.t) {
-      // Red outline = this mob can enrage; solid and named while it IS enraged.
-      if (p.status && d.t.enrage) h += stroke(arcD(R, -44, 44), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', d.t.enraged ? 13 : 11);
-      h += gauge(R, -44, 44, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6);
+      // The enrage zone: a red outline round the last 8% of the health bar
+      // (its low end — the bar empties toward the left), solid while it IS
+      // enraged. The outline goes under the bar so the bar stays readable.
+      if (p.status && d.t.enrage) h += stroke(arcD(R, -44, -44 + 88 * ENRAGE_PCT / 100), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', 6 * W + 5);
+      h += gauge(R, -44, 44, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6 * W);
       h += ringLabel('htn', R + 10, -64, 64, '<tspan fill="' + (d.t.enraged ? 'var(--red)' : '#e6edf3') + '">' + esc(d.t.name) + '</tspan>'
         + '<tspan fill="' + hpColor(d.t.hp) + '" font-weight="700">  ' + pctTxt(d.t.hp) + '</tspan>', 13);
       var y = 58;
       if (p.tot && d.t.tot) {
-        h += gauge(R - 10, -30, 30, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 2.5);
+        h += gauge(R - 10, -30, 30, (d.t.tot.hp || 0) / 100, hpColor(d.t.tot.hp), 2.5 * W);
         h += T(CX, y, '→ ' + esc(d.t.tot.name) + ' <tspan fill="' + hpColor(d.t.tot.hp) + '">' + pctTxt(d.t.tot.hp) + '</tspan>', 10.5, '#c9d1d9'); y += 12;
       }
       if (p.status && d.t.slow) { h += T(CX, y, d.t.slow.s, 9.5, d.t.slow.c); y += 12; }
-      if (p.status && d.t.enrage) h += T(CX, y, d.t.enraged ? 'ENRAGED' : 'enrages', d.t.enraged ? 11 : 9.5, 'var(--red)', 'middle', 700);
+      if (p.status && d.t.enraged) h += T(CX, y, 'ENRAGED', 11, 'var(--red)', 'middle', 700);
     }
     if (p.hp) {
-      h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6);
+      h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
       h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11);
     }
     if (p.right && d.right.pct != null) {
-      h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6, true);
+      h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       h += ringLabel('hrt', R + 10, 56, 124, rightLabel(d, p.dps, p.focus), 11);
-      if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2);
+      if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     }
-    // The bottom sector (128°–232°): tick, swing or cast, cooldowns — left to right.
-    var items = timerItems(d, p).slice(0, 6);
-    if (items.length) {
-      var gap = 2, seg = Math.min(22, (104 - gap * (items.length - 1)) / items.length);
-      var a1 = 180 + (seg * items.length + gap * (items.length - 1)) / 2;
-      items.forEach(function(it, i){
-        var a0 = a1 - seg;
-        h += it.ready ? stroke(arcD(R, a0, a1), 'var(--green)', 4) : gauge(R, a0, a1, it.frac, it.color, 4);
-        h += ringLabel('hb' + i, R + 15, a0, a1, '<tspan fill="' + it.color + '">' + it.label + ' ' + it.value + '</tspan>', 8.5, true);
-        a1 = a0 - gap;
+    // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
+    // o'clock), left to right, each labelled along the ring beneath it.
+    var cds = cdItems(d, p).slice(0, 5);
+    if (cds.length) {
+      var gap = 2, seg = Math.min(20, (80 - gap * (cds.length - 1)) / cds.length);
+      var c1 = 180 + (seg * cds.length + gap * (cds.length - 1)) / 2;
+      cds.forEach(function(it, i){
+        var c0 = c1 - seg;
+        h += it.ready ? stroke(arcD(150, c0, c1), 'var(--green)', 4 * W) : gauge(150, c0, c1, it.frac, it.color, 4 * W);
+        h += ringLabel('hcd' + i, 165, c0, c1, '<tspan fill="' + it.color + '">' + it.label + ' ' + it.value + '</tspan>', 8.5, true);
+        c1 = c0 - gap;
       });
     }
-    // Hits: on you down the left, yours down the right, damage shield below.
+    // Under them, on the ring itself: the tick bar and the swing bar.
+    var tk = tickItem(d, p), sw = swingItem(d, p);
+    [[tk, 'htk', 184, 228], [sw, 'hsw', 132, 176]].forEach(function(b){
+      if (!b[0]) return;
+      h += gauge(R, b[2], b[3], b[0].frac, b[0].color, 4 * W);
+      h += ringLabel(b[1], R + 15, b[2], b[3], '<tspan fill="' + b[0].color + '">' + b[0].label + ' ' + b[0].value + '</tspan>', 8.5, true);
+    });
+    // Hits: on you down the left, yours down the right, damage shield below them.
     var n = Math.max(2, Math.min(5, parseInt(p.rounds, 10) || 4));
     if (p.hitsIn) h += hitLane('hin', hitRounds(d.feed, function(f){ return f.dir === 'in'; }, n), 152, 238, 302);
-    if (p.hitsOut) h += hitLane('hout', hitRounds(d.feed, function(f){ return f.dir === 'out' && f.kind !== 'ds'; }, n), 152, 58, 122);
+    if (p.hitsOut) h += hitLane('hout', hitRounds(d.feed, function(f){ return f.dir === 'out' && f.kind !== 'ds'; }, n), 152, 50, 110);
     if (p.ds && d.ds) {
-      h += hitLane('hds', hitRounds(d.feed, function(f){ return f.kind === 'ds'; }, 3), 152, 127, 153);
-      var bp = P(122, 146);
-      h += '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="rgba(13,17,23,0.72)" stroke="var(--orange)" stroke-width="1.2"/>'
-        + T(bp[0], bp[1] + 3.5, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5, 'var(--orange)', 'middle', 700)
-        + T(bp[0], bp[1] + 23, 'DS' + (d.ds.from_buffs ? '' : '~'), 8, 'var(--orange)');
+      h += hitLane('hds', hitRounds(d.feed, function(f){ return f.kind === 'ds'; }, 3), 152, 114, 137);
+      var bp = P(114, 125);
+      h += '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="rgba(13,17,23,0.72)" stroke="var(--orange)" stroke-width="' + f1(1.2 * W + 0.3) + '"/>'
+        + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, 'var(--orange)')
+        + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5, 'var(--orange)', 'middle', 700);
     }
-    if (p.resists && d.res) h += ringLabel('hrs', R - 14, 156, 216, resTspans(d.res), 8, true);
-    return svgWrap(h + blindRing(s));
+    if (p.resists && d.res) h += ringLabel('hrs', 136, 146, 214, resTspans(d.res), 8, true);
+    return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
   }
 
 
@@ -714,16 +761,49 @@
   builderList.addEventListener('change', function(e){
     var k = e.target && e.target.getAttribute('data-part');
     if (!k) return;
-    hudParts[k] = e.target.type === 'checkbox' ? (e.target.checked ? 1 : 0) : parseInt(e.target.value, 10);
+    var v = e.target.value;
+    hudParts[k] = e.target.type === 'checkbox' ? (e.target.checked ? 1 : 0) : (/^\d+$/.test(v) ? parseInt(v, 10) : v);
     saveParts();
   });
   builderEl.addEventListener('mouseenter', hoverOn);
   builderEl.addEventListener('mouseleave', hoverOff);
+  // Open beside the ring: grow the window by the panel's width to the right,
+  // or to the left when the right edge of the screen is too close. The
+  // bounds from before are kept on this computer until the panel closes, so
+  // quitting with it open does not leave the ring off-centre next time.
+  var PANEL_W = 240, BUILD_KEY = 'wpHudPreBuild';
+  function openBuilder(){
+    var x = window.screenX, y = window.screenY, w = window.outerWidth, hgt = window.outerHeight;
+    var sl = screen.availLeft || 0;
+    var toLeft = x + w + PANEL_W > sl + screen.availWidth && x - PANEL_W >= sl;
+    var pre = { x: x, y: y, width: w, height: hgt };
+    try { localStorage.setItem(BUILD_KEY, JSON.stringify(pre)); } catch (e) {}
+    document.documentElement.style.setProperty('--ring-w', w + 'px');
+    document.body.classList.add('building');
+    document.body.classList.toggle('build-left', toLeft);
+    renderBuilder();
+    builderEl.hidden = false;
+    setBounds({ x: toLeft ? x - PANEL_W : x, y: y, width: w + PANEL_W, height: hgt });
+  }
+  function closeBuilder(restore){
+    var pre = null;
+    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
+    builderEl.hidden = true;
+    document.body.classList.remove('building', 'build-left');
+    document.documentElement.style.removeProperty('--ring-w');
+    if (restore !== false && pre && pre.width) setBounds(pre);
+    hoverOff();
+  }
+  // Quit with the panel open → the window comes back at the ring's size.
+  (function(){
+    var pre = null;
+    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
+    if (pre) closeBuilder(isHud(style));
+  })();
   document.getElementById('build-btn').addEventListener('click', function(){
-    builderEl.hidden = !builderEl.hidden;
-    if (!builderEl.hidden) renderBuilder();
+    if (builderEl.hidden) openBuilder(); else closeBuilder();
   });
-  document.getElementById('builder-close').addEventListener('click', function(){ builderEl.hidden = true; hoverOff(); });
+  document.getElementById('builder-close').addEventListener('click', function(){ closeBuilder(); });
   document.getElementById('builder-reset').addEventListener('click', function(){
     hudParts = Object.assign({}, HUD_DEFAULTS);
     renderBuilder(); saveParts();

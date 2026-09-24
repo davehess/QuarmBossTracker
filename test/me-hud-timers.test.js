@@ -13,7 +13,7 @@
 //
 // Run: npx vitest run test/me-hud-timers.test.js
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
 import { readSource, ROOT, sliceBlock } from './_source-slice.js';
 
@@ -56,6 +56,14 @@ function load({ zeal = {}, victim = null, dsKnown = 0 } = {}) {
     function _resolveHpValuesForName() { return null; }
     ${dsSlack}
     function _knownDsPerHitFor() { return ${Number(dsKnown) || 0}; }
+    // A fake disk shared across load() calls — a second load() is an agent
+    // restart reading what the first one saved.
+    const __dirname = '/agent';
+    const path = { join: (...a) => a.join('/') };
+    const fs = {
+      readFileSync: (f) => { const s = globalThis.__hudDisk; if (!s || !(f in s)) throw new Error('ENOENT'); return s[f]; },
+      writeFileSync: (f, v) => { (globalThis.__hudDisk = globalThis.__hudDisk || {})[f] = v; },
+    };
   `;
   // eslint-disable-next-line no-new-func
   return new Function(pre + meBlock + '\nreturn { ' + EXPORTS.join(', ') + ' };')();
@@ -268,10 +276,11 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
 
   it('each class always sees its own set — unknown (seen: false) until first used', () => {
     const keys = (cls) => load({ zeal: zeal(cls) })._serializeMeState().cooldowns.map(c => [c.key, c.seen]);
-    expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false]]);
-    expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false]]);
-    expect(keys('Paladin')).toEqual([['loh', false]]);
-    expect(keys('Shadow Knight')).toEqual([['ht', false]]);
+    expect(keys('Monk')).toEqual([['ability', false], ['mend', false], ['fd', false], ['disc', false]]);
+    expect(keys('Warrior')).toEqual([['ability', false], ['taunt', false], ['disc', false]]);
+    expect(keys('Paladin')).toEqual([['loh', false], ['disc', false]]);
+    expect(keys('Shadow Knight')).toEqual([['ht', false], ['disc', false]]);
+    expect(keys('Rogue')).toEqual([['disc', false]]);
     expect(keys('Cleric')).toEqual([]);
   });
 
@@ -279,7 +288,36 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     const h = load({ zeal: zeal('Monk') });
     say(h, 'Aldenmar', 'You mend your wounds and heal some damage.');
     say(h, 'Aldenmar', 'You taunt a gnoll to ignore others and attack you!');
-    expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'taunt']);
+    expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'disc', 'taunt']);
+  });
+
+  // The guild lead, 2026-09-24: "I lost my discipline timer".
+  it('a discipline stays on the HUD as ready once its timer runs out — it no longer vanishes', () => {
+    const h = load({ zeal: monk60() });
+    say(h, 'Aldenmar', 'Your fists begin to blur.');   // Hundred Fists: 1800 − 3×54 s at 60
+    clock += 2 * 3600_000;
+    h._zealState.Aldenmar.updatedAt = clock;          // still logged in two hours later
+    const d = cd(h, 'disc');
+    expect(d).toMatchObject({ label: 'Hundred Fists', ms_left: 0, seen: true });
+  });
+
+  it('long timers survive an agent restart (a Mimic update) — read back from disk', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      globalThis.__hudDisk = {};
+      const first = load({ zeal: monk60() });
+      say(first, 'Aldenmar', 'Your fists begin to blur.');
+      say(first, 'Aldenmar', 'You mend your wounds and heal some damage.');
+      vi.advanceTimersByTime(2100);                     // the debounced save
+      expect(Object.keys(globalThis.__hudDisk)).toEqual(['/agent/logsync.hud-timers.json']);
+      clock += 60_000;
+      const second = load({ zeal: monk60() });          // a fresh agent, same disk
+      expect(cd(second, 'disc')).toMatchObject({ label: 'Hundred Fists', ms_left: (1800 - 3 * 54) * 1000 - 60_000, seen: true });
+      expect(cd(second, 'mend')).toMatchObject({ ms_left: 289_000 - 60_000, seen: true });
+    } finally {
+      vi.useRealTimers();
+      delete globalThis.__hudDisk;
+    }
   });
 
   // The client's button timer: 10 s, cut 10/25/50% by Rapid Feign — and the
@@ -377,6 +415,22 @@ describe('damage shield — its own kind, and its per-hit value', () => {
     const h = load({ zeal: Z.zeal, dsKnown: 40 });
     h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 38 });
     expect(feedKinds(h)).toEqual([['out', 'spell', 38]]);
+  });
+
+  // In game (2026-09-24), 14-point shield hits sat in the guild lead's own lane: the
+  // shield's line can print BEFORE the mob's hit that set it off.
+  it('…and when the shield line prints BEFORE the mob\'s hit, that hit re-reads it', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 14 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 14 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'hits', amount: 57 });
+    expect(feedKinds(h)).toEqual([['in', 'melee', 57], ['out', 'ds', 14]]);
+  });
+
+  it('…but never without a shield you visibly wear — the fight parser\'s own rule', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 0 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'hits', amount: 82 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount: 38 });
+    expect(feedKinds(h)[0]).toEqual(['out', 'spell', 38]);
   });
 
   it('…and not when it is far bigger than the shield you wear', () => {

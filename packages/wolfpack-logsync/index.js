@@ -12474,12 +12474,18 @@ function _meNoteHit(character, ev) {
   // just meleed YOU and the amount fits the shield you visibly wear — the
   // same test the fight parser's _settleDsPending applies, which runs too late
   // for this hook to read. A weapon proc lands on YOUR swing, never on theirs.
+  // Like that test, a shield must be VISIBLE (known > 0) for an anonymous hit
+  // to count — otherwise every proc near a mob's swing would.
+  // ⚠ The shield's line can print BEFORE the hit that set it off (in game,
+  // 2026-09-24: 14-point shield hits in the guild lead's own lane), so a mob's
+  // melee on you also re-reads the anonymous hits on that mob just before it.
+  const nonMelee = /^non-melee$/i.test(label);
+  const fitsDs = (amount) => { const k = _knownDsPerHitFor(character); return k > 0 && amount <= k + DS_UNLISTED_SLACK; };
   if (ev.ds) { kind = 'ds'; name = String(ev.ability || 'damage shield'); }
-  else if (dir === 'out' && /^non-melee$/i.test(label) && ev.defender) {
+  else if (dir === 'out' && nonMelee && ev.defender) {
     const mob = String(ev.defender).toLowerCase();
-    const hitMe = arr.some(x => x.dir === 'in' && x.kind === 'melee' && x.other && String(x.other).toLowerCase() === mob && t - x.t <= 1500 && t >= x.t);
-    const known = hitMe ? _knownDsPerHitFor(character) : 0;
-    if (hitMe && (!known || ev.amount <= known + DS_UNLISTED_SLACK)) { kind = 'ds'; name = 'damage shield'; }
+    const hitMe = arr.some(x => x.dir === 'in' && x.kind === 'melee' && x.other && String(x.other).toLowerCase() === mob && Math.abs(t - x.t) <= 1500);
+    if (hitMe && fitsDs(ev.amount)) { kind = 'ds'; name = 'damage shield'; }
   }
   if (!kind) {
     if (spell) { kind = 'spell'; name = spell.name; el = _ME_ELEMENTS[spell.rt] || null; }
@@ -12489,7 +12495,16 @@ function _meNoteHit(character, ev) {
       if (last && Math.abs(t - last.t) <= 2000) { el = last.el; name = last.name; }
     } else { kind = 'melee'; name = label || null; }
   }
-  arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null) });
+  arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
+    anon: dir === 'out' && kind === 'spell' && nonMelee });
+  if (dir === 'in' && kind === 'melee' && ev.attacker) {
+    const mob = String(ev.attacker).toLowerCase();
+    for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
+      const x = arr[i];
+      if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
+      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false;
+    }
+  }
   const cutoff = t - 10 * 60_000;
   while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
 }
@@ -12656,11 +12671,15 @@ const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // session (the guild lead, 2026-09-24: "I would need feign death and Mend on here
 // as a monk / warriors would use taunt and kick / paladins and shadowknights
 // would have their lay on hands and harmtouch"). Anything else appears once used.
+// Every class with disciplines keeps a DISC slot too (the guild lead, 2026-09-24:
+// "I lost my discipline timer" — it vanished a minute after coming ready, and
+// on every agent restart).
 const _ME_CLASS_CDS = {
-  Monk: ['ability', 'mend', 'fd'],
-  Warrior: ['ability', 'taunt'],
-  Paladin: ['loh'],
-  'Shadow Knight': ['ht'],
+  Monk: ['ability', 'mend', 'fd', 'disc'],
+  Warrior: ['ability', 'taunt', 'disc'],
+  Paladin: ['loh', 'disc'],
+  'Shadow Knight': ['ht', 'disc'],
+  Rogue: ['disc'], Ranger: ['disc'], Bard: ['disc'], Beastlord: ['disc'],
 };
 const _meAbility = new Map();    // charLower → { name, base, at, gaps }
 const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs, est })
@@ -12678,6 +12697,7 @@ function _meStartSkill(cl, key, atMs) {
   let mp = _meSkillCds.get(cl);
   if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
   mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
+  _meTimersSave();
 }
 // `/pipe <word>` from a hotkey: the exact press, for the timers the log cannot
 // see (a successful Feign Death above all — the guild lead offered the /pipe line
@@ -12711,6 +12731,7 @@ function _meNoteAbility(cl, verb, atMs) {
   a.name = def[0]; a.base = def[1]; a.at = atMs;
 }
 function _meCooldowns(cl, now, cls) {
+  _meTimersLoad();
   const out = [];
   const a = _meAbility.get(cl);
   if (a && a.at) {
@@ -12728,12 +12749,14 @@ function _meCooldowns(cl, now, cls) {
       out.push({ key: k, label: c.label, ms_left: Math.max(0, c.at + c.secs * 1000 - now), total_ms: c.secs * 1000, est: c.est, seen: true });
     }
   }
+  const disc = _meDisc(cl, now);
+  if (disc) out.push(disc);
   // The class's own set first, in its order; one never used this session is
   // shown as unknown (seen: false) — not as ready, which we cannot know.
   const want = _ME_CLASS_CDS[cls] || [];
   const byKey = new Map(out.map(c => [c.key, c]));
   const lead = want.map(k => byKey.get(k) || {
-    key: k, label: k === 'ability' ? 'Kick' : _ME_SKILL_BY_KEY.get(k).label,
+    key: k, label: k === 'ability' ? 'Kick' : (k === 'disc' ? 'Discipline' : _ME_SKILL_BY_KEY.get(k).label),
     ms_left: null, total_ms: null, est: true, seen: false,
   });
   return lead.concat(out.filter(c => !want.includes(c.key)));
@@ -12803,18 +12826,67 @@ function _meNoteDisc(cl, def, atMs) {
   const unlocks = def[2];
   const unlock = (cls && unlocks[cls]) || Math.min(...Object.values(unlocks));
   _meDiscs.set(cl, { name: def[0], at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000 });
+  _meTimersSave();
 }
 function _meDisc(cl, now) {
+  _meTimersLoad();
   const act = _meDiscs.get(cl) || null;
   const ref = _discReadyAt.get(cl) || null;
   if (ref && ref.at > now) {
     const left = ref.at - now;
-    return { key: 'disc', label: act ? act.name : 'Discipline', ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false };
+    return { key: 'disc', label: act ? act.name : 'Discipline', ms_left: left, total_ms: Math.max(left, act ? act.total_ms : left), est: false, seen: true };
   }
   if (!act) return null;
+  // Kept once ready — it reads "ready" instead of vanishing (it used to be
+  // dropped a minute after coming ready).
   const left = act.at + act.total_ms - now;
-  if (left <= -60_000) { _meDiscs.delete(cl); return null; }
-  return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true };
+  return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
+}
+
+// The long timers survive an agent restart — a Mimic update restarts the agent,
+// and a 20-minute discipline, a 72-minute Lay on Hands or a 5-minute Mend
+// cannot be read back out of a log we no longer tail. Kept in
+// logsync.hud-timers.json beside the agent (the con-phrase file's pattern) for
+// 12 hours past ready, then dropped.
+const _ME_TIMER_KEEP_MS = 12 * 3600_000;
+let _meTimersLoaded = false, _meTimersSaveT = null;
+function _meTimerFile() { return path.join(__dirname, 'logsync.hud-timers.json'); }
+function _meTimersLoad() {
+  if (_meTimersLoaded) return;
+  _meTimersLoaded = true;
+  try {
+    const j = JSON.parse(fs.readFileSync(_meTimerFile(), 'utf8')) || {};
+    const now = Date.now();
+    for (const [cl, e] of Object.entries(j)) {
+      if (!e || typeof e !== 'object') continue;
+      if (e.disc && e.disc.at + e.disc.total_ms > now - _ME_TIMER_KEEP_MS && !_meDiscs.has(cl)) _meDiscs.set(cl, e.disc);
+      if (e.refusal && e.refusal.at > now && !_discReadyAt.has(cl)) _discReadyAt.set(cl, e.refusal);
+      for (const [k, c] of Object.entries(e.skills || {})) {
+        if (!c || !(c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS)) continue;
+        let mp = _meSkillCds.get(cl);
+        if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
+        if (!mp.has(k)) mp.set(k, c);
+      }
+    }
+  } catch { /* first run, or not writable — nothing to restore */ }
+}
+function _meTimersSave() {
+  if (_meTimersSaveT) return;
+  _meTimersSaveT = setTimeout(() => {
+    _meTimersSaveT = null;
+    try {
+      const out = {};
+      const now = Date.now();
+      const slot = (cl) => (out[cl] = out[cl] || {});
+      for (const [cl, d] of _meDiscs) if (d.at + d.total_ms > now - _ME_TIMER_KEEP_MS) slot(cl).disc = d;
+      for (const [cl, r] of _discReadyAt) if (r.at > now) slot(cl).refusal = r;
+      for (const [cl, mp] of _meSkillCds) {
+        for (const [k, c] of mp) if (c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS) (slot(cl).skills = slot(cl).skills || {})[k] = c;
+      }
+      fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
+    } catch { /* best effort */ }
+  }, 2000);
+  try { if (_meTimersSaveT.unref) _meTimersSaveT.unref(); } catch { void 0; }
 }
 
 // ENRAGE — the server's own lines (zone/string_ids.h NPC_ENRAGE_START/END):
@@ -12831,7 +12903,10 @@ function _meNoteRawLine(line, character) {
   const msg = line.slice(at + 2).trimEnd();
   const now = Date.now();
   const cl = String(character).toLowerCase();
+  _meTimersLoad();   // before any write, so a restored timer is not overwritten by a stale file
   if (msg.startsWith('You')) {
+    // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
+    if (msg.startsWith('You can use a new discipline')) _meTimersSave();
     let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
     if (m) { _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at)); return; }
     m = _ME_ABILITY_RX.exec(msg);
@@ -13036,9 +13111,7 @@ function _serializeMeState() {
     }
   }
   _meNotePipeCooldowns(cl, st);
-  const cooldowns = _meCooldowns(cl, now, cls);
-  const disc = _meDisc(cl, now);
-  if (disc) cooldowns.push(disc);
+  const cooldowns = _meCooldowns(cl, now, cls);   // the discipline rides in here
   const tx = _meTargetExtras(st, active, now);
   return {
     ok: true,
