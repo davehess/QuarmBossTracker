@@ -19,8 +19,19 @@ import {
   isNoDrop, isNoRent, isLoreItem, loreText,
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
+import { type ItemRecipe, TradeskillsInline, TradeskillsGrouped, INLINE_CAP } from './Tradeskills';
 
 export const dynamic = 'force-dynamic';
+
+// Beta preview (2026-09-24): ?v=b / ?v=c add a Tradeskills section in two
+// layouts (see ./Tradeskills.tsx) and widen Quest turn-ins to every Quarm quest
+// script that takes or gives the item (quest_scripts_for_item). No ?v= renders
+// production's page unchanged, so the comparison has a baseline.
+type Variant = 'b' | 'c' | null;
+type ScriptHit = {
+  path: string; zone_short: string; zone_name: string | null; npc_name: string | null;
+  npc_id: number | null; is_encounter: boolean; as_component: boolean; as_reward: boolean;
+};
 
 type DropRow = { npc_id: number; npc_name: string | null; effective_chance: number | null };
 type TurninIO = { item_id: number; qty?: number; kind?: string } | null;
@@ -45,15 +56,27 @@ const ATTR_ORDER: [keyof ItemRow, string][] = [
 const zoneOf = (entityId: number) => Math.floor(entityId / 1000);
 const deUnderscore = (s: string | null) => (s ?? '').replace(/_/g, ' ').trim();
 
-export default async function DbItemPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DbItemPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ v?: string }>;
+}) {
   const { id } = await params;
   const itemId = Number(id);
   if (!Number.isInteger(itemId) || itemId <= 0) notFound();
+  const { v: vRaw } = await searchParams;
+  const variant: Variant = vRaw === 'b' || vRaw === 'c' ? vRaw : null;
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/item/${itemId}`);
 
   const sb = supabaseAdmin();
+
+  // Started before the main batch so both run in parallel. B renders each
+  // recipe's combine inline, so only B asks for parts.
+  const previewRes = variant ? Promise.all([
+    sb.rpc('item_recipes', { p_item_id: itemId, p_with_parts: variant === 'b' ? INLINE_CAP : 0 }),
+    sb.rpc('quest_scripts_for_item', { p_item_id: itemId }),
+  ]) : null;
 
   const [cardRes, itemRes, dropRes, merchRes, givesRes, getsRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
@@ -156,12 +179,29 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
     return io.qty && io.qty > 1 ? `${nm} ×${io.qty}` : nm;
   };
 
+  const preview = previewRes ? await previewRes : null;
+  const recipes = (preview?.[0].data ?? []) as ItemRecipe[];
+  const scriptHits = (preview?.[1].data ?? []) as ScriptHit[];
+
   return (
     <div className="space-y-4 max-w-3xl">
       <div className="text-sm text-dim">
         <Link href="/search" className="text-blue hover:underline">← search</Link>
         <span className="mx-2">·</span>
         <span className="text-dim/70">wpqdi · item #{itemId}</span>
+        {process.env.NEXT_PUBLIC_IS_BETA === '1' && (
+          <span className="ml-3 text-[11px]">
+            preview:{' '}
+            {([[null, 'current'], ['b', 'B inline'], ['c', 'C grouped']] as const).map(([v, label], i) => (
+              <span key={label}>
+                {i > 0 && <span className="text-dim/60"> · </span>}
+                {variant === v
+                  ? <span className="text-gold">{label}</span>
+                  : <Link href={v ? `/db/item/${itemId}?v=${v}` : `/db/item/${itemId}`} className="text-blue hover:underline">{label}</Link>}
+              </span>
+            ))}
+          </span>
+        )}
       </div>
 
       {/* Item window — laid out like the in-game card: a flags line, then one
@@ -271,7 +311,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
       </section>
 
       {/* Quest turn-ins — what this is FOR, and what hands it out. */}
-      {(gives.length > 0 || gets.length > 0) && (
+      {!variant && (gives.length > 0 || gets.length > 0) && (
         <section className="bg-panel border border-border rounded-lg p-4">
           <h2 className="text-sm text-orange mb-2">Quest turn-ins</h2>
           {gives.length > 0 && (
@@ -293,6 +333,10 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
           <p className="text-dim/60 text-[10px] mt-2">Read from the server&apos;s quest scripts — rewards can be conditional (faction, class, or a spoken keyword) in ways a script scrape can&apos;t always see.</p>
         </section>
       )}
+
+      {variant && <QuestsMerged hits={scriptHits} gives={gives} gets={gets} ioLabel={ioLabel} />}
+      {variant === 'b' && <TradeskillsInline recipes={recipes} itemId={itemId} />}
+      {variant === 'c' && <TradeskillsGrouped recipes={recipes} />}
 
       {/* Sold by */}
       {soldZones.length > 0 && (
@@ -333,6 +377,85 @@ function TurninRow({ t, ioLabel }: { t: Turnin; ioLabel: (io: TurninIO) => strin
         {!!t.exp_award && <span className="text-purple/80"> · {t.exp_award.toLocaleString()} exp</span>}
       </div>
     </li>
+  );
+}
+
+// ── Beta: Quests, one row per quest NPC ─────────────────────────────────────
+// Coverage comes from Quarm's own scripts (quest_scripts_for_item); the
+// give → get detail line comes from the parsed turn-ins where one exists for the
+// same NPC. The parsed table alone missed every script whose reward is computed
+// (Orc Scalp → Captain Ashlan) and the count_handed_item form (most Bone Chips
+// quests), which is why "Quest turn-ins" was often absent.
+const npcKey = (name: string | null, zone: string | null) =>
+  `${(name ?? '').replace(/_/g, ' ').replace(/^#+/, '').trim().toLowerCase()}|${zone ?? ''}`;
+
+type QuestNpc = { name: string; npcId: number | null; zone: string | null; encounter: boolean; details: Turnin[] };
+
+function questRows(hits: ScriptHit[], turnins: Turnin[], pick: (h: ScriptHit) => boolean): QuestNpc[] {
+  const rows = new Map<string, QuestNpc>();
+  for (const h of hits.filter(pick)) {
+    const k = npcKey(h.npc_name, h.zone_short);
+    if (!rows.has(k)) rows.set(k, {
+      name: deUnderscore(h.npc_name).replace(/^#+/, ''), npcId: h.npc_id,
+      zone: h.zone_name || h.zone_short, encounter: h.is_encounter, details: [],
+    });
+  }
+  for (const t of turnins) {
+    const k = npcKey(t.npc_name, t.zone_short);
+    const row = rows.get(k) ?? {
+      name: deUnderscore(t.npc_name).replace(/^#+/, ''), npcId: t.npc_id,
+      zone: t.zone_short, encounter: false, details: [],
+    };
+    row.npcId = row.npcId ?? t.npc_id;
+    row.details.push(t);
+    rows.set(k, row);
+  }
+  return [...rows.values()].sort((a, b) => (a.zone ?? '').localeCompare(b.zone ?? '') || a.name.localeCompare(b.name));
+}
+
+function QuestsMerged({ hits, gives, gets, ioLabel }: {
+  hits: ScriptHit[]; gives: Turnin[]; gets: Turnin[]; ioLabel: (io: TurninIO) => string | null;
+}) {
+  const handIn = questRows(hits, gives, h => h.as_component);
+  const recv   = questRows(hits, gets,  h => h.as_reward);
+  const block = (title: string, rows: QuestNpc[]) => rows.length > 0 && (
+    <>
+      <h3 className="text-xs text-dim uppercase tracking-wide mb-1">{title} ({rows.length})</h3>
+      <ul className="text-sm space-y-1 mb-3">
+        {rows.map(r => (
+          <li key={`${title}|${r.name}|${r.zone}`} className="border-b border-border/30 pb-1">
+            <span className="text-text">
+              {r.npcId
+                ? <Link href={`/db/npc/${r.npcId}`} className="hover:text-blue hover:underline">{r.name}</Link>
+                : r.name}
+            </span>
+            {r.encounter && <span className="text-dim text-[11px]"> (event script)</span>}
+            {r.zone && <span className="text-dim text-[11px]"> · {r.zone}</span>}
+            {r.details.map(t => {
+              const give = (t.inputs  ?? []).map(ioLabel).filter(Boolean).join(', ');
+              const get  = (t.outputs ?? []).map(ioLabel).filter(Boolean).join(', ');
+              return (
+                <div key={t.id} className="text-[11px] text-dim">
+                  {give && <>give <span className="text-text/90">{give}</span></>}
+                  {give && get ? ' → ' : ''}
+                  {get && <>get <span className="text-green/90">{get}</span></>}
+                  {!!t.exp_award && <span className="text-purple/80"> · {t.exp_award.toLocaleString()} exp</span>}
+                </div>
+              );
+            })}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+  return (
+    <section className="bg-panel border border-border rounded-lg p-4">
+      <h2 className="text-sm text-orange mb-2">Quests</h2>
+      {!handIn.length && !recv.length
+        ? <p className="text-dim text-xs">No quest script takes or gives this item.</p>
+        : <>{block('Hand in to', handIn)}{block('Received from', recv)}</>}
+      <p className="text-dim/60 text-[10px] mt-2">Read from the quest scripts Quarm runs (the upstream copy). A give → get line shows where the script names a fixed reward; rewards picked at runtime, or gated on faction, class or a spoken keyword, can&apos;t always be read out.</p>
+    </section>
   );
 }
 
