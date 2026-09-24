@@ -9,13 +9,19 @@
 // Display gracefully degrades:
 //   • If the item id resolved (card != null), render full stats.
 //   • If only fallbackName arrived (id was null on the inventory row), render
-//     name + "no detail mirrored" + a PQDI search link.
+//     name + "no detail mirrored" + a search link to OUR /search. (It used to
+//     be `pqdi.cc/search?term=`, which PQDI does not serve — its search is a
+//     POST form with a CSRF token, so there is no GET URL to deep-link.)
+//
+// ⚠ PQDI answers only on `www.pqdi.cc`; bare `pqdi.cc` resets the connection
+// (a member's report, 2026-09-24: inventory links "don't ever load").
 //
 // Implementation is a CSS-positioned popover that toggles via mouseenter +
 // focus. No portal, no library — keeps the page server-rendered everywhere
 // except this one tooltip surface.
 
 import { useId, useRef, useState } from 'react';
+import Link from 'next/link';
 import ItemIcon from './ItemIcon';
 import WpDbLink from '@/components/WpDbLink';
 
@@ -40,7 +46,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
   const [open, setOpen] = useState(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tipId = useId();
-  const pqdiHref = card ? `https://pqdi.cc/item/${card.item_id}` : `https://pqdi.cc/search?term=${encodeURIComponent(fallbackName)}`;
+  const pqdiHref = card ? `https://www.pqdi.cc/item/${card.item_id}` : null;
 
   // Close on a short delay so the cursor can travel from the item up to the
   // tooltip (crossing the small gap) without it vanishing — that gap was the
@@ -84,7 +90,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
             <div className="text-purple/90 text-[10px] mt-0.5">Lore: {card.lore}</div>
           )}
           {!card && (
-            <p className="text-dim text-[10px] mt-1 italic">Item id not in our mirror — open PQDI for details.</p>
+            <p className="text-dim text-[10px] mt-1 italic">Item id not in our mirror — search by name below.</p>
           )}
           {card && (
             <div className="mt-2 space-y-1">
@@ -113,7 +119,7 @@ export default function ItemHover({ card, fallbackName, className, children }: {
               {!!card.recommended_level && <Row k="Rec">{card.recommended_level}</Row>}
               {card.clickeffect != null && card.clickeffect > 0 && (
                 <Row k="Clicky">
-                  <a href={`https://pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
+                  <a href={`https://www.pqdi.cc/spell/${card.clickeffect}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">
                     spell #{card.clickeffect}
                   </a>
                   <WpDbLink kind="spell" id={card.clickeffect} />
@@ -127,7 +133,9 @@ export default function ItemHover({ card, fallbackName, className, children }: {
           )}
           <div className="mt-2 pt-1.5 border-t border-border/60 text-[10px] flex justify-between">
             <span>
-              <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI ↗</a>
+              {pqdiHref
+                ? <a href={pqdiHref} target="_blank" rel="noreferrer" className="text-blue hover:underline">PQDI ↗</a>
+                : <Link href={`/search?q=${encodeURIComponent(fallbackName)}`} className="text-blue hover:underline">Search</Link>}
               {card && <WpDbLink kind="item" id={card.item_id} />}
             </span>
             <span className="text-dim/70">stats-only · v1</span>
