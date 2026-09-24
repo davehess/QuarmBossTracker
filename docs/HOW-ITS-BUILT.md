@@ -2807,6 +2807,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   text just before it (`_meNoteSelfLanding`); `_meCombatSince` → `combat`;
   resists from labels 12-16. The HUD sizes its own window through the new
   `overlay-set-bounds` IPC (`window.mimic.overlaySetBounds`).
+  **B → three circle HUDs (agent 3.7.5, 2026-09-24):** `renderH1/H2/H3` in
+  `me.html`, each one square SVG (viewBox 400×400) that scales with the
+  window; timers aged locally and repainted every 100 ms. Agent side, just
+  above `_serializeMeState`: `_meTick` (Zeal gauge 24), `_meSwingState`
+  (gauge 34 if sent, else learned from `_meNoteSwing` rounds; MH/OH via
+  `_meHands`), `_meCooldowns` (shared combat-ability timer + Mend/Taunt/HT
+  from `_ME_SKILL_LINES`), `_meDisc` (`_ME_DISCS` activation text + the
+  refusal line), `_meTargetExtras` (enrage/unslowable/ENRAGED/slow/target's
+  target), all fed by one live-tail hook, `_meNoteRawLine`. `no_mana` for
+  WAR/ROG/MNK. Tests: `test/me-hud-timers.test.js`. Swing-timer upstream ask:
+  `docs/zeal-attack-timer-pipe-request.md`. `DECISIONS-2026-09-21.md` §13.
 - **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
   (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
   `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`
