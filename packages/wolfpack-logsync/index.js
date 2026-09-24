@@ -6784,16 +6784,87 @@ function trackRollItemLine(line) {
   }
 }
 
+// ── Deathrolls (the guild lead, 2026-09-23) ─────────────────────────────────
+// "First one to roll a zero loses." Each step is an ordinary /random whose range
+// is the last result, so one game used to fill the Rolls card with a dozen
+// "1 roller" sets. The same rule as the bot's utils/deathroll.js (which records
+// and announces games): range = previous result, a different player each step,
+// ≤2 min apart, ≥3 rolls. Here it also finds a game STILL IN PROGRESS, so the
+// card can say whose turn it is. One observer, so no clock-skew merge needed.
+const DEATHROLL_STEP_MS = 2 * 60 * 1000;
+const DEATHROLL_MIN_ROLLS = 3;
+function _deathrollChains() {
+  const rolls = [];
+  for (const s of _rollSets) for (const r of s.rolls) rolls.push({ r, from: s.from, to: s.to });
+  rolls.sort((a, b) => a.r.atMs - b.r.atMs);
+  const used = new Set();
+  const chains = [];
+  for (let i = 0; i < rolls.length; i++) {
+    if (used.has(i) || rolls[i].from !== 0) continue;
+    const chain = [i];
+    let cur = rolls[i];
+    for (let j = i + 1; j < rolls.length && cur.r.value > 0; j++) {
+      const n = rolls[j];
+      if (n.r.atMs - cur.r.atMs > DEATHROLL_STEP_MS) break;
+      if (used.has(j)) continue;
+      if (n.from === 0 && n.to === cur.r.value && n.r.nameLower !== cur.r.nameLower) { chain.push(j); cur = n; }
+    }
+    if (chain.length < DEATHROLL_MIN_ROLLS) continue;
+    for (const k of chain) used.add(k);
+    chains.push(chain.map(k => rolls[k]));
+  }
+  return chains;
+}
+// One chain → one Rolls entry. It keeps the set shape (from/to/started_at_ms,
+// so the Command Center's dismiss and expand keys work unchanged) and carries
+// the game itself under `deathroll`.
+function _deathrollEntry(ch, now) {
+  const first = ch[0], last = ch[ch.length - 1];
+  const done = last.r.value === 0;
+  const players = [];
+  for (const c of ch) if (!players.some(p => p.toLowerCase() === c.r.nameLower)) players.push(c.r.name);
+  const steps = ch.map(c => ({ name: c.r.name, to: c.to, value: c.r.value, at_ms: c.r.atMs }));
+  return {
+    kind: 'deathroll',
+    from: 0, to: first.to, item: null, qty: null,
+    players: players.length,
+    winners: [],
+    open: !done && (now - last.r.atMs) <= DEATHROLL_STEP_MS,
+    started_at_ms: first.r.atMs, last_at_ms: last.r.atMs,
+    rolls: steps.map(s => ({ name: s.name, value: s.value, at_ms: s.at_ms })),
+    deathroll: {
+      players, steps, done,
+      loser: done ? last.r.name : null,
+      winners: done ? players.filter(p => p.toLowerCase() !== last.r.nameLower) : [],
+      // Whose turn: with two players it can only be the other one; with more,
+      // the rotation is theirs to choose, so only the range is known.
+      next: done ? null : { to: last.r.value,
+        name: players.length === 2 ? players.find(p => p.toLowerCase() !== last.r.nameLower) : null },
+    },
+  };
+}
+
 // Serialized sets, newest first. Winners = the top-(qty) rolls counting each
-// player's FIRST roll only ((3) linked on the item = three winners).
+// player's FIRST roll only ((3) linked on the item = three winners). A
+// deathroll replaces the sets it is made of with ONE entry (kind 'deathroll').
 function rollSetsSnapshot(maxAgeMs) {
   const now = Date.now();
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
   }
+  const chains = _deathrollChains();
+  const inGame = new Set();
+  for (const ch of chains) for (const c of ch) inGame.add(c.r);
   const out = [];
+  for (const ch of chains) {
+    const e = _deathrollEntry(ch, now);
+    if (maxAgeMs && (now - e.last_at_ms) > maxAgeMs) continue;
+    out.push(e);
+  }
   for (const s of _rollSets) {
     if (maxAgeMs && (now - s.lastMs) > maxAgeMs) continue;
+    // Every roll in this set belongs to a game — the game's entry shows it.
+    if (s.rolls.length && s.rolls.every(r => inGame.has(r))) continue;
     const firstByName = new Map();
     for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
     const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
@@ -18812,6 +18883,31 @@ document.addEventListener('click', function (ev) {
 // Bidding and rolling are two ways of handing out the same drop, so they share
 // a screen instead of being split across the Dashboard (bids) and Stats
 // (rolls). The bidding card mounts itself here — see its ensure().
+// ☠️ One deathroll = one line (the guild lead, 2026-09-23: "These are called
+// Deathrolls. First one to roll a zero loses"; option A). The agent groups the
+// steps (_deathrollEntry); this only draws them. Red is the 0 — the "death".
+function _wpDeathrollHtml(e) {
+  var g = e.deathroll || {};
+  var names = (g.players || []).map(esc);
+  var who = names.length === 2 ? names[0] + ' vs ' + names[1] : names.join(', ');
+  var state;
+  if (g.done) state = '<span style="color:var(--red)">' + esc(g.loser) + ' hit 0</span>';
+  else if (e.open && g.next) state = '<span style="color:var(--gold,#f0c419)">' + (g.next.name ? esc(g.next.name) + ' to roll' : 'next roll') + ' 0–' + g.next.to + '</span>';
+  else state = '<span class="dim">stopped at 0–' + (g.next ? g.next.to : '?') + '</span>';
+  var h = '<details ' + wpKeep('droll|' + e.started_at_ms) + '>';
+  h += '<summary>☠️ <b>Deathroll ' + Number(e.to).toLocaleString('en-US') + '</b> — ' + who + ' · ' + state
+     + ' <span class="dim">· ' + (g.steps || []).length + ' rolls · ' + new Date(e.started_at_ms).toLocaleTimeString()
+     + (e.open ? ' · live' : '') + '</span></summary>';
+  h += '<table><tr><th>Range</th><th>Player</th><th>Rolled</th><th>Time</th></tr>';
+  for (var i = 0; i < (g.steps || []).length; i++) {
+    var st = g.steps[i];
+    h += '<tr><td class="dim">0–' + st.to + '</td><td>' + esc(st.name) + '</td>'
+       + '<td class="num"' + (st.value === 0 ? ' style="color:var(--red)"' : '') + '>' + st.value + '</td>'
+       + '<td class="dim">' + new Date(st.at_ms).toLocaleTimeString() + '</td></tr>';
+  }
+  return h + '</table></details>';
+}
+
 function renderLootTab(s) {
   const sec = document.getElementById('loot');
   if (!sec) return;
@@ -18826,7 +18922,8 @@ function renderLootTab(s) {
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
-      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
+      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
@@ -23557,6 +23654,8 @@ const COMMAND_HTML = `<!doctype html>
   .roll-detail .d{display:flex;gap:6px;font-size:9px;color:#9aa4ad;line-height:1.5}
   .roll-detail .d .v{color:#e6edf3;font-variant-numeric:tabular-nums;margin-left:auto}
   .roll-detail .d.win .v{color:#f0c419;font-weight:700}
+  .roll-detail .d.lose .v{color:#f85149;font-weight:700}
+  .roll-detail .d .rng{opacity:.6;flex-shrink:0;font-variant-numeric:tabular-nums}
   /* A re-roll never wins, so it has to be legible at a glance or the list looks
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
@@ -23950,6 +24049,32 @@ const COMMAND_HTML = `<!doctype html>
             var rs  = visRolls[ri];
             var rid = _rollId(rs);
             var expanded = !!(rid && _openRolls.has(rid));
+            if (rs.kind === 'deathroll') {
+              // ☠️ A deathroll is ONE row (the guild lead, 2026-09-23, option A), not
+              // a dozen "1 roll" sets. Expand shows each step in order.
+              var dg = rs.deathroll || {};
+              var dn = (dg.players || []).map(esc);
+              var dState = dg.done ? '<span style="color:#f85149">' + esc(dg.loser) + ' hit 0</span>'
+                : (rs.open && dg.next ? '<span style="color:#f0c419">' + (dg.next.name ? esc(dg.next.name) + ' to roll' : 'next') + ' 0–' + dg.next.to + '</span>'
+                : '<span style="opacity:.6">stopped</span>');
+              html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
+                   +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
+                   +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
+                   +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
+                   +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
+                   +    '<span class="cls">' + (rs.open ? 'live' : '') + '</span>'
+                   +    '<span class="rollDismiss" data-roll-id="' + esc(rid) + '" title="Dismiss this deathroll (this client)">✕</span></div>';
+              if (expanded) {
+                html += '<div class="roll-detail">';
+                for (var dk = 0; dk < (dg.steps || []).length; dk++) {
+                  var ds = dg.steps[dk];
+                  html += '<div class="d' + (ds.value === 0 ? ' lose' : '') + '"><span>' + esc(ds.name) + '</span>'
+                       +    '<span class="rng">0–' + ds.to + '</span><span class="v">' + ds.value + '</span></div>';
+                }
+                html += '</div>';
+              }
+              continue;
+            }
             var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
             html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')

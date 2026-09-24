@@ -4772,6 +4772,31 @@ document.addEventListener('click', function (ev) {
 // Bidding and rolling are two ways of handing out the same drop, so they share
 // a screen instead of being split across the Dashboard (bids) and Stats
 // (rolls). The bidding card mounts itself here — see its ensure().
+// ☠️ One deathroll = one line (the guild lead, 2026-09-23: "These are called
+// Deathrolls. First one to roll a zero loses"; option A). The agent groups the
+// steps (_deathrollEntry); this only draws them. Red is the 0 — the "death".
+function _wpDeathrollHtml(e) {
+  var g = e.deathroll || {};
+  var names = (g.players || []).map(esc);
+  var who = names.length === 2 ? names[0] + ' vs ' + names[1] : names.join(', ');
+  var state;
+  if (g.done) state = '<span style="color:var(--red)">' + esc(g.loser) + ' hit 0</span>';
+  else if (e.open && g.next) state = '<span style="color:var(--gold,#f0c419)">' + (g.next.name ? esc(g.next.name) + ' to roll' : 'next roll') + ' 0–' + g.next.to + '</span>';
+  else state = '<span class="dim">stopped at 0–' + (g.next ? g.next.to : '?') + '</span>';
+  var h = '<details ' + wpKeep('droll|' + e.started_at_ms) + '>';
+  h += '<summary>☠️ <b>Deathroll ' + Number(e.to).toLocaleString('en-US') + '</b> — ' + who + ' · ' + state
+     + ' <span class="dim">· ' + (g.steps || []).length + ' rolls · ' + new Date(e.started_at_ms).toLocaleTimeString()
+     + (e.open ? ' · live' : '') + '</span></summary>';
+  h += '<table><tr><th>Range</th><th>Player</th><th>Rolled</th><th>Time</th></tr>';
+  for (var i = 0; i < (g.steps || []).length; i++) {
+    var st = g.steps[i];
+    h += '<tr><td class="dim">0–' + st.to + '</td><td>' + esc(st.name) + '</td>'
+       + '<td class="num"' + (st.value === 0 ? ' style="color:var(--red)"' : '') + '>' + st.value + '</td>'
+       + '<td class="dim">' + new Date(st.at_ms).toLocaleTimeString() + '</td></tr>';
+  }
+  return h + '</table></details>';
+}
+
 function renderLootTab(s) {
   const sec = document.getElementById('loot');
   if (!sec) return;
@@ -4786,7 +4811,8 @@ function renderLootTab(s) {
     h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Every /random heard in the zone, grouped by roll range. Link loot in raid chat as <code>Item Name (qty)NNN | ...</code> and each set picks up its item name — (3) means the top three rolls win one each. First roll per player counts; re-rolls are listed struck through.</div>';
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
-      var rWinners = (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
+      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
