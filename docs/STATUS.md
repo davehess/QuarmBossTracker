@@ -105,6 +105,17 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Item page: quests from Quarm's own scripts + tradeskill recipes, two layouts on `beta` (RPCs `quest_scripts_for_item` + `item_recipes` live; PQDI link fix ✅ web 1.8.2 on production, 2026-09-24).** A member: inventory PQDI links *"don't ever load"* and *"our pages don't have tradeskill recipes or quests listed."* Links: bare `pqdi.cc` → `www.pqdi.cc` (4 sites) + the dead PQDI search fallback → our `/search`. Quests: the old section read only literal-reward ProjectEQ parses, so Orc Scalp showed nothing and most Bone Chips quests were missing; now matches PQDI's quest tab. Recipes: made / used / tool / container, plus a `/db/recipe/<id>` page. Compare `b.wolfpack.quest/db/item/13073?v=b` vs `?v=c`; graduate the pick with the Quests section and recipe page. `DECISIONS-2026-09-21.md` §12.
 - **⏳ Mob mana counts drains; players on Target Info get class, level and a PvP drain tally (agent 3.7.4 on `beta`, bot 3.1.147, 2026-09-24).** A member's request (drains) + the guild lead's (PvP tally, "class and level from /who … a range from con and anon"). Drain rules read from the Quarm server source — instant drains on NPCs above 52 are cut to a third, capped at 105. Level from /consider uses the server's con table; blue/green phrases are learned. `DECISIONS-2026-09-21.md` §11.
 - **⏳ A hotkey per overlay, a fight list in DPS History, L size 420 px (agent 3.7.11 on `beta`, 2026-09-24).** The guild lead: *"Each overlay should get its own hotkey config"* · *"History should give us a list of the fights to choose from on the right side"*; a member: the 400 px L size *"cuts off a bit on the dps window"*. Hotkey column on the dashboard's Overlays table (no defaults; a key another app holds shows red); History lists the last six fights; L is 420 px on every overlay. Also answered: the cursor cannot be kept on screen with the UI hidden (F10) by any client or Zeal setting — options and the upstream ask in `DECISIONS-2026-09-21.md` §13.
+- **⏳ HUD round six + player levels on Target Info (agent 3.7.12 on `beta`, 2026-09-24).**
+  - **Target Info:** a player's level now comes from `/who` only. A player's consider doesn't follow the level colours: level 60s read "quite a gamble" to a level 60.
+  - **HUD, target:**
+    - level and class under the target's bar;
+    - F/R fists for flurry and rampage;
+    - nothing but the name on a corpse;
+    - "unslowable" in smaller text.
+  - **HUD, hit columns:** each column opens with the mob's running total. The last rounds show as separate hits under it and slide up into the total as they age. The total drops out when the mob dies. The damage shield works the same way.
+  - **HUD, builder:** settings save per character, and each part has a text-size slider.
+
+  `DECISIONS-2026-09-21.md` §15.
 - **⏳ HUD rounds four and five (agents 3.7.9 and 3.7.10 on `beta`, 2026-09-24).** Round four:
   - Tick and swing each get their own bar under the cooldowns.
   - Thin lines are the default, with a Line weight part.
