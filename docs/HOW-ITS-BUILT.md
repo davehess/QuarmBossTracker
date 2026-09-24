@@ -2867,6 +2867,19 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   with `builder-all` (`sizes.all`, multiplied in `sz`), `data-reset` ↺ per row,
   300 px. Agent: `_meFdFailed` (own-name "has fallen to the ground"),
   `_meCastRemaining` (cast gauge rate → `casting.remaining_ms` / `est`).
+  **Round eight (agent 3.7.14):** swing from `_meSwingFit` (each round's log
+  second ∩ arrival − `_ME_SWING_LAG` windows, carried to the newest round;
+  period searched ±20% of the median gap → `swing.spread_ms`). Procs:
+  `_meNoteHit` flags `proc` on your spell hit within 1.5 s of your swing
+  unless it claims the cast in `_meLastCast` (set on "You begin casting",
+  cleared by `_meNoteCastFailed`); HUD draws `f.proc` purple. Columns:
+  `HIT_LANES` by `side`, `laneSpan` (outer end on `LANE_EDGE_R` 158, room to
+  `LANE_MID_R` 100), `flushX`; `laneColumn` lays Σ totals (fitted), then
+  listed rounds oldest first — older ones as a sum keyed `<lane>|R|<at>`, the
+  newest `split` (builder, default 2) hit by hit; ghosts send hits to their
+  sum or the total. Target: name at R+5 (`htn`), level/class `htl` and
+  resists + slow `htr` curved inside; `_meTargetExtras.resists` from the bot
+  row's nested `resists`. Cooldowns: ready is always "<label> ✓".
 - **NPC Harm Touch on Target Info (agent 3.7.13, beta)** — `_npcHtLanded` from
   "writhe(s) in the grip of agony" (pinned on an SK target on the victim, else
   `_npcHtPending` with the attackers), `_npcHtFor` (pins a pending one on
