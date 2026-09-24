@@ -72,7 +72,8 @@
   body.hud #wrap{padding:0;height:100%}
   body.hud .card{background:transparent;border-color:transparent;padding:0;height:100%;position:relative}
   body.hud #body{position:absolute;inset:0}
-  /* The name + picker drop into the square's bottom corners — outside the ring. */
+  /* The picker drops out of the card into the bottom row under the ring
+     (placed with ✥ and ✕ further down). */
   body.hud .title{position:fixed;left:4px;right:4px;bottom:3px;min-height:0;padding:0;font-size:10px;opacity:.4;z-index:30;transition:opacity .12s}
   body.hud .title:hover{opacity:1}
   #hudsvg{display:block;width:100%;height:100%;overflow:visible}
@@ -104,8 +105,6 @@
   body.build-left #builder{right:auto;left:0}
   body.building #wrap{width:var(--ring-w)}
   body.building.build-left #wrap{margin-left:auto}
-  body.building.hud .title{right:calc(var(--panel-w) + 4px)}
-  body.building.build-left.hud .title{right:4px;left:calc(var(--panel-w) + 4px)}
   body.building #hide-btn{right:calc(var(--panel-w) + 6px)}
   body.building.build-left #move-btn{left:calc(var(--panel-w) + 6px)}
   #builder[hidden]{display:none}
@@ -169,19 +168,29 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
-  /* HUD: ✥ under the tick bar, ✕ under the swing bar (the guild lead,
-     2026-09-24: "Put the Move icon and X at the bottom underneath the tick
-     timer and the swing timer"). Centred at r 199 of the 400-unit ring, 206°
-     and 154° clockwise from 12 o'clock — (28.2%, 94.7%) and (71.8%, 94.7%)
-     of the ring's square, which is the window, or --ring-w wide while the
-     builder panel is open. The name and the Box/HUD picker take the top
-     corners they left, clear of the ring. */
-  body.hud #move-btn,body.hud.setup #move-btn{top:calc(var(--ring-w) * 0.947 - 9px);left:calc(var(--ring-w) * 0.282 - 9px)}
-  body.hud #hide-btn,body.hud.setup #hide-btn{top:calc(var(--ring-w) * 0.947 - 9px);right:auto;left:calc(var(--ring-w) * 0.718 - 9px)}
-  body.hud.building.build-left #move-btn{left:calc(var(--panel-w) + var(--ring-w) * 0.282 - 9px)}
-  body.hud.building.build-left #hide-btn{left:calc(var(--panel-w) + var(--ring-w) * 0.718 - 9px)}
-  body.hud .title{top:3px;bottom:auto}
-  body.hud.unlocked .title{left:60px}   /* clear of the ✥ 🔒 pair an unlocked overlay shows top-left */
+  /* HUD: one row at the bottom of the ring, centred — ✥ [Box|HUD|⚙] ✕ — below
+     the tick and swing timers (the guild lead, 2026-09-24: "Put the Move icon
+     and X at the bottom underneath the tick timer and the swing timer", then:
+     "the character name doesn't need to be at the top left. The selection
+     for Box/Hud should be in the middle horizontally, vertically below the
+     bottom tick/swing timers, directly next to the movement and X buttons").
+     At 6 o'clock the bars' labels do not reach (they are centred on 206° and
+     154°), so the bottom 20px of the square are clear. The picker has a fixed
+     width (--pk-w) so the buttons can sit flush beside it in plain CSS; the
+     row is centred on the ring — the window, or --ring-w wide from --ring-x
+     while the builder panel is open. No name here: the Box still shows it. */
+  body.hud{--ring-x:0px;--pk-w:88px}
+  body.hud.building.build-left{--ring-x:var(--panel-w)}
+  body.hud .title,body.hud.building .title,body.hud.building.build-left .title{
+    top:calc(var(--ring-w) - 20px);bottom:auto;right:auto;width:var(--pk-w);
+    left:calc(var(--ring-x) + var(--ring-w) / 2 - var(--pk-w) / 2)}
+  body.hud .title .conn,body.hud .title .nm,body.hud .title .cl,body.hud .title .sp{display:none}
+  body.hud #picker{width:100%;box-sizing:border-box}
+  body.hud #picker button{flex:1 1 0;padding:1px 0}
+  body.hud #move-btn,body.hud.setup #move-btn,body.hud.building.build-left #move-btn{
+    top:calc(var(--ring-w) - 21px);left:calc(var(--ring-x) + var(--ring-w) / 2 - var(--pk-w) / 2 - 22px)}
+  body.hud #hide-btn,body.hud.setup #hide-btn,body.hud.building #hide-btn{
+    top:calc(var(--ring-w) - 21px);right:auto;left:calc(var(--ring-x) + var(--ring-w) / 2 + var(--pk-w) / 2 + 4px)}
   /* The HUD's background is a SHADOW behind what it draws, never a square
      (the guild lead, 2026-09-24: "The HUD mode shouldn't include the background
      as a square, rather as a shadow behind the content"): the backgrounds

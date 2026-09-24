@@ -153,6 +153,25 @@
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  /* ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17).
+     Three rows: the player I am chasing, me, the player chasing me. Every
+     rule is scoped to body.wp-mini, so full mode is exactly what it was. */
+  body.wp-mini .hud{padding:3px 6px}
+  /* ✥ and ✕ keep their corners in mini; the title row sits between them so
+     the /rs copy can never slide under ✕. */
+  body.wp-mini .title{padding:0 16px}
+  /* History's fight list is a picker, and mini has no room to pick in. */
+  body.wp-mini .histwrap{display:block}
+  body.wp-mini .histlist{display:none}
+  body.wp-mini #deeps li.mrow{grid-template-columns:3ch minmax(0,1fr) auto;gap:1px 6px;align-items:center;padding:1px 0}
+  body.wp-mini #deeps li.mrow .r{font-size:10px}
+  body.wp-mini #deeps li.mrow .v{text-align:right;white-space:nowrap}
+  body.wp-mini #deeps li.mrow .v .dps{font-size:10px}
+  .mbar{grid-column:2 / -1;background:rgba(255,255,255,0.08);overflow:hidden}
+  .mbar i{display:block;height:100%;background:#a371f7}
+  /* The tab strip is hidden in mini, so the bar says which tab this is:
+     red on Tank, where the number is damage TAKEN. */
+  li.mrow.tk .mbar i{background:#f85149}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -184,12 +203,12 @@
            perPlayer[].dmg from the active encounter; Tank reads incoming damage
            (perPlayer[].took) so you can see who's eating the boss melee in
            real time. -->
-      <span class="rowcfg">
+      <span class="rowcfg wp-mini-hide">
         <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
         <span id="rowsN" class="rowsn">10</span>
         <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
       </span>
-      <span class="tabs">
+      <span class="tabs wp-mini-hide">
         <button id="tabDps"  class="tab on" type="button">DPS</button>
         <button id="tabTank" class="tab"    type="button">Tank</button>
         <button id="tabHist" class="tab"    type="button"
@@ -202,7 +221,7 @@
          in the title row, which also gave that crowded row its width back. -->
     <div class="histwrap">
       <div class="board">
-        <div id="colhdr" class="colhdr" style="display:none">
+        <div id="colhdr" class="colhdr wp-mini-hide" style="display:none">
           <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
         </div>
         <ul id="deeps"></ul>
@@ -417,6 +436,37 @@
       + ' title="' + esc(h.boss) + (h.settled ? '' : ' — guild numbers still settling') + '">'
       + '<span class="hb">' + esc(h.boss) + (h.settled ? '' : ' …') + '</span>'
       + '<span class="hm">' + dur + agoTxt + '</span></button></li>';
+  }
+
+  // ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17:
+  // "Mini focuses on the user directly"). The player just above me, me, and
+  // the player just below, from whichever tab was last picked: the race is
+  // the point of a meter. At the top of the board that is me and the two
+  // below; at the bottom, the two above and me. With no row of my own (no
+  // damage dealt or taken yet) it is the top three, so a mini is never blank
+  // while a fight is on.
+  function miniWindow(allRows, me) {
+    var lc = me ? String(me).toLowerCase() : null;
+    var i = lc ? allRows.findIndex(function(r){ return String(r[0]).toLowerCase() === lc; }) : -1;
+    var start = i < 0 ? 0 : Math.max(0, Math.min(i - 1, allRows.length - 3));
+    return allRows.slice(start, start + 3);
+  }
+  // One mini row: rank, name, total, @rate, then a share-of-raid bar under
+  // the name. "me" reuses the full board's li.me highlight.
+  function miniRowsHtml(rows, me, totalDmg, secs, tank) {
+    var lc = me ? String(me).toLowerCase() : null;
+    return rows.map(function(row){
+      var d = row[1];
+      var pct = totalDmg > 0 ? Math.min(100, (d / totalDmg) * 100) : 0;
+      var isMe = !!lc && String(row[0]).toLowerCase() === lc;
+      return '<li class="mrow' + (isMe ? ' me' : '') + (tank ? ' tk' : '') + '">'
+        + '<span class="r">#' + row[4] + '</span>'
+        + '<span class="n wp-mini-name" title="' + esc(row[0]) + '">' + esc(row[0]) + '</span>'
+        + '<span class="v wp-mini-num"><span class="d">' + fmt(d) + '</span> <span class="dps">@'
+        +   fmt(secs > 0 ? Math.round(d / secs) : 0) + '</span></span>'
+        + '<span class="mbar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>'
+        + '</li>';
+    }).join('');
   }
 
   // Visible-row count — how many names the scoreboard shows (you're always
@@ -811,6 +861,11 @@
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
       }
+      // ▭ Mini swaps only the rows; the byte-stability guard and the fit
+      // below then run exactly as they do in full mode.
+      if (document.body.classList.contains('wp-mini')) {
+        bodyHtml = miniRowsHtml(miniWindow(allRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
+      }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.
       if (ul.__wpHtml !== bodyHtml) {
@@ -846,6 +901,9 @@
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }
   }
+  // ▭ A mini flip repaints now, not on the next poll; tick() ends in the
+  // auto-fit, so the window height follows the new rows.
+  window.addEventListener('wp-mini-change', function(){ tick().catch(function(){}); });
   tick(); setInterval(tick, 1000);
 </script>
 </body></html>

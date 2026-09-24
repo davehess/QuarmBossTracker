@@ -94,6 +94,28 @@ describe('dashboard: mini mode on the Overlays page', () => {
   });
 });
 
+// "HUD doesn't make sense to dock, remove that." (the guild lead, 2026-09-24)
+describe('the HUD ring is not dockable', () => {
+  it('it is out of the dock catalog, and its dashboard row has no DOCK button', () => {
+    const catalog = stripJs(sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', '\n];'));
+    expect(catalog).not.toMatch(/key: 'me'/);
+    expect(catalog).toMatch(/key: 'mobinfo'/);                        // the others stay
+    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')");
+  });
+  it('a HUD that was docked gets its own window back — as undocking it would have', () => {
+    const load = (raw) => new Function('fs', 'CONFIG_FILE', 'defaultConfig',
+      sliceBlock(mainRaw, 'function loadConfig() {', '\n}\n') + '\nreturn loadConfig();')(
+      { readFileSync: () => JSON.stringify(raw) }, () => 'x', () => ({}));
+    const was = load({ dockedOverlays: ['mobinfo', 'me'], dockedPrev: { me: true, mobinfo: false }, showMe: false });
+    expect(was.dockedOverlays).toEqual(['mobinfo']);
+    expect(was.showMe).toBe(true);
+    expect(was.dockedPrev).toEqual({ mobinfo: false });
+    const off = load({ dockedOverlays: ['me.html'], dockedPrev: { me: false }, showMe: false });
+    expect([off.dockedOverlays, off.showMe]).toEqual([[], false]);     // it was off before it was docked
+    expect(load({ dockedOverlays: ['tank'], showMe: false })).toMatchObject({ dockedOverlays: ['tank'], showMe: false });
+  });
+});
+
 describe('dashboard: the Overlays page layout', () => {
   it('the table: Dock and trigger alerts first, then alphabetical ("/who" as "who")', () => {
     const rows = new Function(sliceBlock(dash, 'var WP_OVERLAY_ROWS = [', '\n];\n') + '\nreturn WP_OVERLAY_ROWS;')();

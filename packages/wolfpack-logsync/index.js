@@ -19156,7 +19156,9 @@ function renderOverlays(s) {
     // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
     // would tie the callouts to being on screen. The dock can't dock itself.
-    var dockCell = (key === 'trigger' || key === 'dock')
+    // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
+    // dock") — it is a square round the character; main's catalog agrees.
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the

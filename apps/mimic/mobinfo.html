@@ -161,6 +161,28 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
   body.setup #move-btn{top:30px}
+  /* ▭ Mini — "Two rows, draining timers" (the guild vote, closed 2026-09-17:
+     "Mini is mob health plus slow and root timers"). The markup only exists
+     while body.wp-mini is on (miniTargetHtml). The 22px side gutters keep the
+     HP row out from under the corner ✥ ✕, which stay put and fade in mini. */
+  body.wp-mini #empty{padding:1px 22px;font-size:11px}
+  .mini{background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;padding:2px 22px;display:flex;flex-direction:column;gap:2px}
+  .mini-row{display:flex;align-items:center;gap:5px;min-height:16px;font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .mini-pct,.mini-lab{width:4ch;text-align:right;font-weight:700}
+  .mini-pct{color:#56d364}
+  .mini-bar{flex:1 1 48px;min-width:24px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
+  .mini-bar i{display:block;height:100%;background:#56d364}
+  .mini-row.mid .mini-pct{color:#f0b429} .mini-row.mid .mini-bar i{background:#f0b429}
+  .mini-row.lo .mini-pct{color:#f85149}  .mini-row.lo .mini-bar i{background:#f85149}
+  .mini-row.none .mini-pct{color:#6e7681}
+  .mini-nm{font-weight:700;color:#e9d5ff}
+  /* Timer rows: amber is slow on every overlay (root will be blue #58a6ff). */
+  .mini-row.slow .mini-lab{color:#f0b429;font-size:10px;letter-spacing:.3px}
+  .mini-row.slow .mini-bar i{background:#f0b429}
+  .mini-t{color:#e6edf3}
+  .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .mini .ht.ok{color:#56d364}
+  .mini .ht.used{color:#f85149}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -175,7 +197,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title">
+    <div class="title wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span>🎯 Target Info</span>
       <span id="lvlRange" class="lvlRange"></span>
@@ -611,6 +633,41 @@
     return '<div class="loot">' + rows + '</div>';
   }
 
+  // ── ▭ Mini — "Two rows, draining timers" (the guild vote, closed 2026-09-17:
+  // "Mini is mob health plus slow and root timers"). Row one is the mob's HP
+  // bar and name (and a Shadow Knight mob's HT chip, which is cheap and is the
+  // one thing about it that can kill the tank). Then a SLOW row whose amber bar
+  // drains with the time left — read from bar length in peripheral vision, the
+  // digits are the backup. The row is absent, not empty, while nothing is
+  // landed. ⚠ No ROOT row yet: nothing the overlay receives says a debuff is a
+  // root (the agent flags pacify and slow, not root), and guessing from spell
+  // names is the invented-data failure this repo keeps paying for.
+  function _miniTimerRow(kind, label, rem, total, tip){
+    var pct = (rem != null && total) ? Math.max(0, Math.min(100, rem / total * 100)) : 100;
+    return '<div class="mini-row ' + kind + '" title="' + tip + '">'
+         +   '<span class="mini-lab wp-mini-num">' + label + '</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:' + pct.toFixed(0) + '%"></i></span>'
+         +   '<span class="mini-t wp-mini-num">' + (rem != null ? fmtSecs(rem) : '?') + '</span>'
+         + '</div>';
+  }
+  function miniTargetHtml(mi, nm, htChip){
+    var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, Math.round(mi.target_hp_pct))) : null;
+    // The 50/25 steps every mini bar shares (preload's _WP_MINI_CSS).
+    var band = hp == null ? 'none' : (hp <= 25 ? 'lo' : (hp <= 50 ? 'mid' : 'hi'));
+    var h = '<div class="mini-row ' + band + '">'
+          +   '<span class="mini-pct wp-mini-num">' + (hp == null ? '—' : hp + '%') + '</span>'
+          +   '<span class="mini-bar wp-mini-bar"><i style="width:' + (hp == null ? 0 : hp) + '%"></i></span>'
+          +   '<span class="mini-nm wp-mini-name">' + esc(nm) + '</span>' + (htChip || '')
+          + '</div>';
+    var sl = mi.target_slow;
+    if (sl && sl.name) {
+      var tip = sl.ambiguous ? 'Slowed — strength unknown: the game prints one message for several slows'
+              : esc(sl.name) + (sl.magnitude ? ' · ' + sl.magnitude + '%' : '') + (sl.caster ? ' · by ' + esc(sl.caster) : '');
+      h += _miniTimerRow('slow', 'SLOW', sl.remaining_secs, sl.total_secs, tip);
+    }
+    return '<div class="mini">' + h + '</div>';
+  }
+
   function _renderBody(mi){
     if (!mi || !mi.target_name) {
       bodyEl.innerHTML = '';
@@ -638,10 +695,12 @@
     // checkmark or HT with a red X and a timer"). The agent (_npcHtFor) pins
     // the landing on this mob when it can; NPC reuse is 40 minutes.
     var nht = mi.target_npc_ht;
+    var htChip = '';   // kept on its own too: mini shows it beside the name
     if (nht) {
-      cls += nht.ready
+      htChip = nht.ready
         ? ' <span class="ht ok" title="No Harm Touch from this mob seen in the last 40 minutes">HT ✓</span>'
         : ' <span class="ht used" title="Harm Touch used' + (nht.assigned_later ? ' — landed on you while it was hitting you; pinned on it when you targeted it' : '') + '. NPCs get it back after 40 minutes.">HT ✗ ' + fmtSecs(nht.ready_in_ms / 1000) + '</span>';
+      cls += htChip;
     }
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
@@ -680,6 +739,13 @@
               + ' · EQ slows do not stack — strongest shown';
       }
       slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
+    }
+    // ▭ Mini: health and the slow timer only. The header, tabs, resists, mana
+    // and the buff/cast lists are the full overlay's; the title bar hides by CSS.
+    if (document.body.classList.contains('wp-mini')) {
+      bodyEl.innerHTML = miniTargetHtml(mi, nm, htChip);
+      _fitHeight();
+      return;
     }
     // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
     // numeric line for any NPC with non-zero mana. Live tracking (per-cast
@@ -926,9 +992,12 @@
       + tabBody
       + lastFight
       + '</div>';
-    // Grow the host window to fit the rendered content so the Loot tab can
-    // show every row without a scrollbar. Skipped when the IPC isn't wired
-    // (dev / old preload).
+    _fitHeight();
+  }
+  // Grow the host window to fit the rendered content so the Loot tab can
+  // show every row without a scrollbar. Skipped when the IPC isn't wired
+  // (dev / old preload). Shared with mini, whose flip must refit as well.
+  function _fitHeight(){
     try {
       if (window.mimic && window.mimic.overlayAutoHeight) {
         var w = document.getElementById('wrap') || document.body;
@@ -936,6 +1005,13 @@
       }
     } catch (e) {}
   }
+  // Mini flips (preload's _wpApplyMini) repaint from the last poll at once
+  // rather than up to 500ms later, then refit — the no-target path returns
+  // before _renderBody's own fit, and the flip still changes the height there.
+  window.addEventListener('wp-mini-change', function(){
+    _renderBody(_lastMi);
+    _fitHeight();
+  });
 
   async function tick(){
     try {

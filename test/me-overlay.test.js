@@ -950,16 +950,33 @@ describe('the in-game picker', () => {
     expect(body).toMatch(/if \(_firstRun && isHud\(style\)\) \{[\s\S]*?setBounds\(\{ width: side0, height: side0, center: true \}\)/);
   });
   // "Put the Move icon and X at the bottom underneath the tick timer and the
-  // swing timer." The tick bar spans 184–228° and the swing bar 132–176°
-  // (clockwise from 12 o'clock); each button is centred at r 199 on their middles.
-  it('in the HUD, ✥ sits under the tick bar and ✕ under the swing bar; the name and picker take the top corners', () => {
+  // swing timer", then: "the character name doesn't need to be at the top
+  // left. The selection for Box/Hud should be in the middle horizontally,
+  // vertically below the bottom tick/swing timers, directly next to the
+  // movement and X buttons." The row's CSS, evaluated for a real ring.
+  it('in the HUD, ✥ [Box|HUD|⚙] ✕ is one row, centred under the ring and below its labels; no name', () => {
     const css = stripCss(meHtml);
-    const at = (deg) => { const a = (deg - 90) * Math.PI / 180; return [(200 + 199 * Math.cos(a)) / 400, (200 + 199 * Math.sin(a)) / 400]; };
-    const rule = (id) => css.match(new RegExp('body\\.hud #' + id + ',body\\.hud\\.setup #' + id + '\\{top:calc\\(var\\(--ring-w\\) \\* ([\\d.]+) - 9px\\);(?:right:auto;)?left:calc\\(var\\(--ring-w\\) \\* ([\\d.]+) - 9px\\)\\}'));
-    const mv = rule('move-btn'), hd = rule('hide-btn');
-    expect(+mv[2]).toBeCloseTo(at(206)[0], 2); expect(+mv[1]).toBeCloseTo(at(206)[1], 2);
-    expect(+hd[2]).toBeCloseTo(at(154)[0], 2); expect(+hd[1]).toBeCloseTo(at(154)[1], 2);
-    expect(css).toMatch(/body\.hud \.title\{top:3px;bottom:auto\}/);
+    const decl = (sel, prop) => {
+      const i = css.indexOf(sel + '{') >= 0 ? css.indexOf(sel + '{') : css.indexOf(sel + ',');
+      const body = css.slice(css.indexOf('{', i) + 1, css.indexOf('}', i));
+      return (body.match(new RegExp('(?:^|;)\\s*' + prop + ':([^;]+)')) || [])[1];
+    };
+    const px = (expr, v) => new Function('return ' + expr.replace(/var\(--([\w-]+)\)/g, (_, n) => v[n])
+      .replace(/calc\(/g, '(').replace(/px/g, ''))();
+    const pkW = +decl('body.hud', '--pk-w').replace('px', '');
+    for (const v of [{ 'ring-w': 420, 'ring-x': 0, 'pk-w': pkW }, { 'ring-w': 420, 'ring-x': 300, 'pk-w': pkW }]) {   // alone; builder open on the left
+      const T = 'body.hud .title,body.hud.building .title', MV = 'body.hud #move-btn,body.hud.setup #move-btn', HD = 'body.hud #hide-btn,body.hud.setup #hide-btn';
+      const mv = px(decl(MV, 'left'), v), pk = px(decl(T, 'left'), v), hd = px(decl(HD, 'left'), v);
+      const top = px(decl(MV, 'top'), v), ptop = px(decl(T, 'top'), v);
+      expect(pk + pkW / 2).toBeCloseTo(v['ring-x'] + 210, 5);                     // centred on the ring
+      expect(pk - (mv + 18)).toBeGreaterThanOrEqual(0); expect(pk - (mv + 18)).toBeLessThanOrEqual(6);   // ✥ right beside it
+      expect(hd - (pk + pkW)).toBeGreaterThanOrEqual(0); expect(hd - (pk + pkW)).toBeLessThanOrEqual(6); // ✕ right beside it
+      expect(top + 18).toBeLessThanOrEqual(420); expect(ptop + 16).toBeLessThanOrEqual(420);             // inside the square
+      // below the tick / swing labels: their baseline (r 187, glyphs inward) at the row's outer edge
+      const s = 420 / 400, dx = (v['ring-x'] + 210 - mv) / s;
+      expect(top / s).toBeGreaterThan(200 + Math.sqrt(187 * 187 - dx * dx));
+    }
+    expect(css).toMatch(/body\.hud \.title \.conn,body\.hud \.title \.nm,body\.hud \.title \.cl,body\.hud \.title \.sp\{display:none\}/);
   });
   // "The HUD mode shouldn't include the background as a square, rather as a
   // shadow behind the content."

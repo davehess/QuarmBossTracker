@@ -92,6 +92,24 @@
   .petbuff.crit .t{color:#f85149}
   .petbuffs .src{font-size:9px;color:#6e7681;align-self:center;margin-left:2px}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000}
+  /* ▭ Mini — "Two rows", the guild vote (closed 2026-09-17). Only mini emits
+     .cm, so full mode never sees these. Row one is the pet (HP, name → what it
+     is hitting), row two is the charm timer; the timer bar replaces the tick
+     pips and the BROKE badge. */
+  .cm{background:rgb(0 0 0 / var(--bg-alpha));border-radius:4px;padding:2px 5px;margin-bottom:3px;text-shadow:0 1px 2px #000}
+  /* The fixed ✥/✕ sit over the FIRST card only; gutter it so hover (which
+     brings them back to full opacity) never covers the HP number. */
+  #list > .cm:first-child{padding-left:22px;padding-right:22px}
+  .cm-row{display:flex;align-items:center;gap:5px;min-height:15px;font-size:10px;line-height:1.3}
+  .cm-pct{min-width:4ch;text-align:right;font-weight:bold;font-size:11px}
+  .cm-lab{white-space:nowrap}
+  .cm-bar{flex:1 1 40px;min-width:30px;height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden}
+  .cm-bar > i{display:block;height:100%}
+  .cm-tail{flex:0 1 auto;font-size:11px;color:#c9d1d9}
+  .cm-tail b{color:#fff}
+  .cm-arr{color:#6e7681}
+  .cm-tg{color:#f0883e}
+  body.wp-mini #empty{font-size:10px;padding-left:22px}
   /* drag/lock/setup — same pattern as overlay.html / triggers.html */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -136,7 +154,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>🔮 Charm tracker</span></div>
+    <div class="title wp-mini-hide"><span id="conn" class="conn bad">○</span><span>🔮 Charm tracker</span></div>
     <div id="list"></div>
     <div id="empty">no active charm</div>
   </div>
@@ -312,6 +330,53 @@
     return '<div class="bufrows' + staleClass + '">' + rows + '<div class="src" title="' + esc(srcLabel) + '">' + (staleClass ? '⏳ stale' : 'ⓘ') + '</div></div>';
   }
 
+  // ── ▭ Mini — "Two rows" (the guild vote, closed 2026-09-17) ────────────────
+  // What the pet is hitting. The charm row does not carry it, but the SAME
+  // /api/state this page already polls does: petHealth[].target, the Pet
+  // tracker's "Attacking X Master." ack. Only while charmed, and only when that
+  // owner's pet IS this charm — after a break the owner's pet (and its ack)
+  // may be something else entirely.
+  function charmPetTarget(s, p){
+    if (!p || !p.is_active || !p.owner) return null;
+    var own = String(p.owner).toLowerCase(), pet = String(p.pet || '').toLowerCase();
+    var rows = (s && s.petHealth) || [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r && r.target && String(r.owner || '').toLowerCase() === own && String(r.pet || '').toLowerCase() === pet) return r.target;
+    }
+    return null;
+  }
+  // One two-row block per charm. v carries what the tick loop already worked
+  // out, so mini and full can never disagree about the timer: remMs/pct (the
+  // duration bar), est (duration guessed — keeps full mode's ~ and grey), and
+  // urgent (full mode's own `imminent`, the moment the overlay flashes and
+  // speaks — red here at exactly that moment, never on a guess). No MR: the
+  // charm feed has no resist data for the pet, so the MR slot stays empty.
+  function charmMiniHtml(p, v){
+    var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
+    // The shared mini bar steps (preload _WP_MINI_CSS): 50 / 25.
+    var hpCol = hp == null ? '#8b949e' : (hp > 50 ? '#56d364' : (hp > 25 ? '#f0b429' : '#f85149'));
+    var row1 = '<div class="cm-row">'
+      + '<span class="cm-pct wp-mini-num" style="color:' + hpCol + '">' + (hp == null ? '?' : Math.round(hp)) + '%</span>'
+      + (hp == null ? '' : '<span class="cm-bar wp-mini-bar"><i style="width:' + hp.toFixed(0) + '%;background:' + hpCol + '"></i></span>')
+      + '<span class="cm-tail wp-mini-name"><b>' + esc(p.pet || '?') + '</b>'
+      +   (v.target ? ' <span class="cm-arr">→</span> <span class="cm-tg">' + esc(v.target) + '</span>' : '')
+      + '</span></div>';
+    var lab, pct, col;
+    if (v.broke)             { lab = '⏳ 0:00 recharm'; pct = 0; col = '#f85149'; }
+    else if (p.is_dire_charm) { lab = '∞ dire'; pct = 100; col = '#56d364'; }
+    else {
+      lab = '⏳ ' + (v.est ? '~' : '') + fmtElapsed(v.remMs) + (v.urgent ? ' recharm' : '');
+      pct = v.pct;
+      col = v.urgent ? '#f85149' : (v.est ? '#8b94a3' : '#a371f7');
+    }
+    var row2 = '<div class="cm-row">'
+      + '<span class="cm-lab wp-mini-num" style="color:' + col + '">' + lab + '</span>'
+      + '<span class="cm-bar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%;background:' + col + '"></i></span>'
+      + '</div>';
+    return '<div class="cm" data-key="' + esc(p.key || '') + '">' + row1 + row2 + '</div>';
+  }
+
   // Per-charm session memory: key → { started_at, warned }. Re-armed when a
   // pet's started_at changes (re-charm = new session). Used to fire the warn
   // once and to detect breaks (was active, now gone/broken).
@@ -366,7 +431,7 @@
       // fire after the window. Was spoken as "recharm pet" — the SAME phrase
       // used below for the proactive early-warning callout (warnAt), which
       // made an actual unexpected break sound identical to a routine
-      // heads-up. Dave 2026-07-03 (mainly for enchanters, who see this a lot
+      // heads-up. The guild lead, 2026-07-03 (mainly for enchanters, who see this a lot
       // — Quarm charms often break well early): "It needs to say 'Charm
       // Break' when it breaks... Recharm pet is for when it's coming up."
       // Split: this is the ACTUAL break, so it gets its own distinct phrase;
@@ -425,6 +490,7 @@
 
       var html = '';
       var anyImminent = false;
+      var mini = document.body.classList.contains('wp-mini');
       for (const p of shown) {
         const broke = !p.is_active;
         const startedAt = p.started_at || p.last_tick_at || now;
@@ -490,6 +556,13 @@
             mem.recharmNowWarned = true; warnHit = true;
             speak('recharm now');
           }
+        }
+
+        // Mini: the callouts above have already run — only the drawing differs.
+        if (mini) {
+          html += charmMiniHtml(p, { broke: broke, remMs: durRemMs, pct: durPct, est: durEst,
+                                     urgent: imminent && !durEst, target: charmPetTarget(s, p) });
+          continue;
         }
 
         var cls = 'charm' + (p.is_dire_charm ? ' dire' : '') + (broke ? ' broke' : '') + (warnHit ? ' warn' : '') + (imminent ? ' imminent' : '');
@@ -571,6 +644,11 @@
       body: JSON.stringify({ key: key })
     }).catch(function(){}).then(function(){ tick(); });
   });
+  // Mini flipped: repaint in the other rendition, THEN re-measure. The explicit
+  // re-measure covers the cases the byte guard skips — no charm up (the list is
+  // '' either way, but the title line just appeared or vanished) and an agent
+  // that is offline (tick drew nothing new).
+  window.addEventListener('wp-mini-change', function(){ tick().then(_requestAutoHeight); });
   tick(); setInterval(tick, 500);
 </script>
 </body></html>

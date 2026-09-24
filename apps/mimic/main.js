@@ -300,6 +300,15 @@ function loadConfig() {
     if (!Array.isArray(raw.eqPathsExcluded)) {
       raw.eqPathsExcluded = [];
     }
+    // The HUD ring left the dock (the guild lead, 2026-09-24: "HUD doesn't make
+    // sense to dock"). Docking had switched its own window off, so a HUD
+    // that was docked gets its window back, as undocking it would have.
+    if (Array.isArray(raw.dockedOverlays) && raw.dockedOverlays.some(k => /^me(\.html)?$/i.test(String(k)))) {
+      raw.dockedOverlays = raw.dockedOverlays.filter(k => !/^me(\.html)?$/i.test(String(k)));
+      const prev = raw.dockedPrev && typeof raw.dockedPrev === 'object' ? raw.dockedPrev : {};
+      raw.showMe = prev.me !== undefined ? !!prev.me : true;
+      delete prev.me;
+    }
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
 }
@@ -5473,13 +5482,15 @@ const _DOCK_CATALOG = [
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
   { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
-  { key: 'me',        label: 'HUD',            file: 'me.html',           flag: 'showMe' },
   // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
   // file is only the offline fallback. `agentPath` makes the PANE resolve the
   // same way the window does, so a docked Command Center is never a stale copy.
   { key: 'command',   label: 'Command Center', file: 'command.html',      flag: 'showCommand',
     agentPath: '/overlay/command' },
 ];
+// ⚠ The HUD ring (me.html) is absent too (the guild lead, 2026-09-24: "HUD doesn't
+// make sense to dock"): it is a square centred on the character, sized to the
+// ring — a grid cell can hold neither. loadConfig gives a docked one its window back.
 // ⚠ The TRIGGER overlay is deliberately absent. #97 has it fire TTS from a
 // HIDDEN window, and its flag (enableTriggerTts) means "make sound", not "be
 // visible" — docking it would tie the callouts to a pane's existence. It is
@@ -6374,7 +6385,7 @@ function buildTrayMenu() {
         if (mi.checked && !popRaidWindow) createPopRaidOverlay(); else applyPopRaidVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'HUD (your HP, mana, timers, cooldowns, target)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays && !_dockedNow.includes('me'), click: (mi) => {
+    { label: 'HUD (your HP, mana, timers, cooldowns, target)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays, click: (mi) => {
         const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
