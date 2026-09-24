@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
-| **HUD (was "Me"): A, H1, H2, H3 or C** | **On beta, agent 3.7.6 (§11, §13).** Round two after a night in game: thinner rings, every arc labelled along the ring, the middle kept clear, per-class cooldowns always shown (monk Kick/Mend/FD, warrior Kick/Taunt, paladin LoH, SK HT), `/pipe fd` for the silent successful feign. Renamed "HUD" | the guild lead adds `/pipe fd` to the FD hotkey, plays, and picks one; then graduate it and delete the rest. Optional: the one-line Zeal PR (`docs/zeal-attack-timer-pipe-request.md`) makes the swing timer exact |
+| **HUD (was "Me"): one HUD + a ⚙ builder; A and C still offered** | **On beta, agent 3.7.8 (§11, §13 rounds 2–3).** The guild lead picked across the three: H1's wrapped labels, H2's in/out separation, H3's hits-on-you lane — merged into ONE HUD built from parts, each switchable in a ⚙ checklist. Hits one round per line; damage shield in its own lane with a per-hit button. FD 5 s at 59+ | the guild lead plays with the builder; then decide whether A and C stay, and whether the builder moves to the dashboard (the alternative in §13 round 3). Optional: the one-line Zeal PR makes the swing timer exact |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
@@ -798,3 +798,37 @@ add in /pipeoutput for FD too"* · *"Lets also change the name to HUD"*.
 - Renamed "HUD" in every label a raider sees; the internal key stays `me` so
   saved positions and settings carry over. ⚠ Sits next to the existing "DPS
   HUD" and "Tank HUD" overlays in the tray list.
+
+**Round three, same day (agent 3.7.8): one HUD, built from parts.** The guild lead
+after a night with all three: *"I think we need an overlay builder for this one
+in mimic - people will want to customize it, and we can make subelements on
+this"* · *"The wrap mode on H1 is the way i want things to be"* · *"H2's
+separation of hits against me vs hits out"* · H3's hits *"should be smaller and
+more - i sometimes hit 6 times in one round, that will fill everything up"* ·
+*"Damage shield hits are also mixed in there - those should be separate, and
+should have a button with current DS amount per hit in it"*.
+- **H1/H2/H3 merged into one HUD** in H1's wrapped style (the pick, per the UI
+  rule: graduate it and delete the rest — H2/H3 code and tests are gone). A
+  saved H1/H2/H3/B opens the HUD. A and C stay until the guild lead says otherwise.
+- **Parts**, each with a fixed place so switching one off leaves a gap instead
+  of moving the others: target · who it is hitting · slow/enrage · health ·
+  mana or endurance · DPS · class number · tick · swing · cast · cooldowns ·
+  hits on you (left) · your hits (right) · damage shield · resists · rounds per
+  lane (2–5).
+- **Hits: one ROUND per line** — every hit sharing a log second — numbers only,
+  newest line outermost; `main | off` when the two hands swing different verbs.
+- **Damage shield: its own kind.** A named shield line, or *"<mob> was hit by
+  non-melee for N"* when that mob meleed you within 1.5 s and N fits the shield
+  you visibly wear (+30 slack) — the same test the fight parser applies, which
+  runs too late for the HUD's hook. A weapon proc lands on YOUR swing, so it
+  stays a spell. The button shows the worn shield's per-hit value, else the last
+  one that landed (marked `DS~`).
+- **Builder — what shipped and the alternative, four costs each:**
+  - *Shipped:* a ⚙ checklist over the ring, saved per computer. Build S ·
+    maintenance S (one list: `HUD_PARTS`, with a test that every part has a
+    default and vice versa) · runtime nil · change S.
+  - *Alternative:* a builder on the dashboard's Overlays tab with a live preview
+    and drag-to-place slots. Build M–L (a preview renderer outside the overlay,
+    slot geometry per part) · maintenance M (every new part needs a slot rule) ·
+    runtime nil · change M. Worth it only if people want to MOVE parts, not just
+    hide them; the checklist answers "what do you want displayed".

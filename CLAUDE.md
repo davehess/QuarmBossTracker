@@ -948,7 +948,8 @@ Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
 tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal
 health (diagnostic), HUD (`me.html`, key `me` — the player's own panel, reads
-`/api/me`; A, three circle HUDs and C on beta until one is picked), plus
+`/api/me`; the HUD ring built from parts via its ⚙ builder, plus layouts A
+and C, on beta), plus
 Settings, UI Studio, loading.
 
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
