@@ -35,6 +35,24 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
   watching client-generated combat text ("has been slain by", "points of
   non-melee damage"), legitimately appear in none of the three sources.
 
+### Item page: quests + tradeskill recipes (2026-09-24 — RPCs live, UI on `beta`)
+- **`quest_scripts_for_item(p_item_id)`** — which of the scripts above take an
+  item in (`check_turn_in` / `count_handed_item` item table) or hand it out
+  (`QuestReward` / `SummonItem` args), with NPC id resolved from the zone id
+  encoding. Coverage source for `/db/item`'s Quests section; the older
+  `scripted_npc_turnins` (ProjectEQ-parsed, literal rewards only) still supplies
+  the give → get detail line. Matches PQDI's quest tab on the items checked.
+- **`item_recipes(p_item_id, p_with_parts)`** — every recipe an item is in, as
+  made / used / tool (consumed + returned) / container, with each recipe's full
+  entry list for the first `p_with_parts`. Labels: `web/lib/tradeskills.ts`
+  (skill + world-container enums from the EQMacEmu source).
+- **`/db/recipe/[id]`** — one combine: container, components, tools, results,
+  what a failure keeps. Links out to `www.pqdi.cc/recipe/<id>`.
+- On `beta` only until the guild lead picks: `/db/item/<id>?v=b` (inline
+  combines) / `?v=c` (grouped by skill). `DECISIONS-2026-09-21.md` §12.
+- ⚠ **PQDI answers only on `www.pqdi.cc`** and has no GET search URL;
+  `test/pqdi-links.test.js` guards both.
+
 Everything flows through one pipeline: **EQ log file + Zeal named pipe →
 agent (on the player's PC) → bot HTTP API (bearer per-user token) → Supabase
 → (web reads Supabase) / (bot posts Discord) / (agents poll bot)**. The agent

@@ -118,6 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
+| **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
 | **Me overlay: A, B or C** | **On beta, agent 3.7.3 (§11).** A Classic · B HUD around the screen centre (damage in/out by element, resists) · C Role, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
 | **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
@@ -644,3 +645,51 @@ spawn ids):
 5. One archive entry per fight, #191 (S, bot, 1 vote).
 Housekeeping alongside: the roadmap vote queue is stale (it still lists the
 Zeal spawn-id request, golden-log CI, `/guide`, `/raid/review` as open).
+
+## 12. PQDI links, and recipes + quests on the item page (2026-09-24)
+
+**The report** (a member, relayed by the guild lead): clicking an item on the
+inventory pages *"don't ever load — https://pqdi.cc/item/11594 for example.
+Our pages don't have tradeskill recipes or quests listed."*
+
+**Links — FIXED on `main`, web 1.8.2.** PQDI answers only on `www.pqdi.cc`; the
+bare host resets the connection. Four links used it (`/me/inventory`, the
+inventory hover card ×2, `/admin/spells`). The hover card's no-id fallback went
+to `pqdi.cc/search?term=`, which PQDI never served — its search is a POST with a
+CSRF token, so no GET link can exist; it now searches our `/search`.
+`test/pqdi-links.test.js` fails on either shape anywhere in `web/`.
+
+**Quests — the data was the gap, not the page.** `/db/item` already had a
+"Quest turn-ins" section, but it reads `scripted_npc_turnins`, parsed from the
+**ProjectEQ** scripts and only for branches whose reward is a literal. That
+drops every script that computes its reward (Orc Scalp → Captain Ashlan in
+Highpass: PQDI has it, we had nothing) and the `count_handed_item` form (most
+Bone Chips quests). New RPC `quest_scripts_for_item` reads **Quarm's own**
+mirrored scripts (`eqemu_quest_scripts`, via its trigram index — 2–30 ms) and
+classifies each hit as component / reward. Checked against PQDI's quest tab on
+three items: identical NPC lists, plus two PQDI omits (an alternate-zone copy,
+an event script). A bare number match is dropped — item and NPC ids share a
+number space.
+
+**Recipes — new RPC `item_recipes`** over the tradeskill mirror (7,448 recipes).
+Four roles per recipe: made · used · **tool** (consumed and returned — the
+Smithy Hammer is in 777 recipes and comes back from 772; without the split every
+one read as "makes a Smithy Hammer") · container (a portable kit). Skill and
+world-container labels are read off the EQMacEmu source (`skills.h`,
+`item_data.h` `BagTypes`), and PQDI's recipe pages agree wherever they name one.
+New page `/db/recipe/<id>`: components, container, tools, results, what a failure
+keeps.
+
+**UI on `beta` as two layouts** (`b.wolfpack.quest/db/item/<id>?v=b` / `?v=c`;
+no `?v=` is production's page). Both carry the new Quests section; they differ
+only in Tradeskills:
+- **B · Inline** — each recipe on one line with its whole combine (components →
+  result, container, skill + trivial); this item in gold. First 25 recipes get
+  the combine, the rest a name list. Build S · maintenance S · runtime: parts for
+  25 recipes (~10 KB) · change M (the row is coupled to the recipe shape).
+- **C · Grouped** — PQDI's shape: Made by / Used in, split by tradeskill, recipe
+  names as chips with the trivial; groups start closed past 40 recipes. Build S ·
+  maintenance S · runtime: names only (Water Flask's 744 ≈ 40 KB, collapsed) ·
+  change S. Ingredients are one click away on `/db/recipe`.
+Migrations landed on `main` and are applied (both functions only read the
+mirrors). The recipe page is beta-only until a layout is picked.
