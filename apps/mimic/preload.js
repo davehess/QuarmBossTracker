@@ -133,13 +133,55 @@ const _WP_THEME_CSS =
   'body.wp-theme-light{filter:invert(1) hue-rotate(180deg) contrast(1.15) brightness(1.03)}' +
   'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
   'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
-  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
-const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast' };
+  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}' +
+  'body.wp-theme-deutan{filter:url(#wp-cvd-deutan)}' +
+  'body.wp-theme-protan{filter:url(#wp-cvd-protan)}' +
+  'body.wp-theme-tritan{filter:url(#wp-cvd-tritan)}';
+// Colour-blind themes (the guild lead, 2026-09-24: "Add the colorblind color
+// schemes to themes as well"). Same one-filter-per-theme idea, but a colour
+// MATRIX rather than a CSS shorthand: each moves the platform's own semantic
+// colours apart for that kind of colour vision — danger vs healthy (red /
+// green), warning vs OK (orange / green), danger vs warning, a proc vs a
+// plain hit, mana vs health. Fitted, not the textbook daltonize: that one
+// merged red into orange for tritan and gold into green for deutan. Every row
+// sums to 1, so greys (and the text) stay grey; no colour goes dark enough to
+// vanish on a dark overlay. How they were fitted and scored:
+// docs/DECISIONS-2026-09-21.md §18; test/overlay-themes-cvd.test.js holds them to it.
+const _WP_CVD_MATRICES = {
+  deutan: '0.678 0.6 -0.278 0 0  -0.132 1.253 -0.121 0 0  -0.6 0.196 1.404 0 0  0 0 0 1 0',
+  protan: '0.951 0.092 -0.043 0 0  -0.112 1.331 -0.219 0 0  0.6 -0.293 0.693 0 0  0 0 0 1 0',
+  tritan: '1.172 -0.6 0.428 0 0  -0.4 2 -0.6 0 0  -0.048 0.368 0.68 0 0  0 0 0 1 0',
+};
+const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast',
+  deutan: 'Deuteranopia (red-green)', protan: 'Protanopia (red-green)', tritan: 'Tritanopia (blue-yellow)' };
+// The matrices live in an SVG the filters point at — once per document.
+function _wpCvdDefs() {
+  if (document.getElementById('wp-cvd-defs')) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('id', 'wp-cvd-defs');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+  const defs = document.createElementNS(ns, 'defs');
+  for (const k of Object.keys(_WP_CVD_MATRICES)) {
+    const f = document.createElementNS(ns, 'filter');
+    f.setAttribute('id', 'wp-cvd-' + k);
+    f.setAttribute('color-interpolation-filters', 'sRGB');
+    const m = document.createElementNS(ns, 'feColorMatrix');
+    m.setAttribute('type', 'matrix');
+    m.setAttribute('values', _WP_CVD_MATRICES[k]);
+    f.appendChild(m);
+    defs.appendChild(f);
+  }
+  svg.appendChild(defs);
+  document.body.appendChild(svg);
+}
 function _wpApplyTheme(theme) {
   try {
     if (!_wpOverlayDoc()) return;
     const cl = document.body.classList;
     for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    if (_WP_CVD_MATRICES[theme]) _wpCvdDefs();
     if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
   } catch (e) {}
 }
@@ -184,6 +226,27 @@ function _wpApplyMini(on) {
 }
 ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
 
+// ── Opacity — the whole overlay (2.7.1; main's applyOverlayOpacity) ──────────
+// Everything the overlay SHOWS fades, its background with it; what you use to
+// set it does not — the setup bar, the right-click menu, the corner ✥ ✕ and
+// the banners stay solid, or at 15% the slider would vanish under your cursor.
+// One rule for every overlay, keyed on those ids rather than on each page's
+// own container (the DPS HUD and trigger alerts have no #wrap).
+const _WP_OPACITY_CSS =
+  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar)' +
+  ':not(#wpResizeMenu):not(#mimic-conn-banner):not(#mimic-update-banner):not(#wp-cvd-defs):not(script):not(style)' +
+  '{opacity:var(--wp-content-alpha,1)}';
+ipcRenderer.on('content-alpha', function (_e, v) {
+  const a = (typeof v === 'number' && v >= 0.15 && v <= 1) ? v : 1;
+  try { document.documentElement.style.setProperty('--wp-content-alpha', String(a)); } catch (e) {}
+  // The setup bar's own slider shows what is saved (each page starts it at 100%).
+  try {
+    const s = document.getElementById('opacitySlider'), t = document.getElementById('opacityVal');
+    if (s && document.activeElement !== s) s.value = String(a);
+    if (t && document.activeElement !== s) t.textContent = Math.round(a * 100) + '%';
+  } catch (e) {}
+});
+
 // Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
 // on every config save; read once at load so a freshly created overlay starts
 // right. Renderers ask window.mimic.isMuted() before speaking or playing.
@@ -194,7 +257,9 @@ document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
     st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
-      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+      // (on <body> itself, so the opacity fade of its children cannot reach
+      // it — the overlay's opacity is folded into the alpha instead)
+      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / calc(var(--bg-alpha,0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
@@ -224,7 +289,8 @@ document.addEventListener('DOMContentLoaded', function () {
         + 'body.setup:has(#drag-controls) #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
         + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
       + _WP_THEME_CSS
-      + _WP_MINI_CSS;
+      + _WP_MINI_CSS
+      + (WP_IS_DOCKED ? '' : _WP_OPACITY_CSS);
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
@@ -359,6 +425,7 @@ function _buildOverlayMenu(onClose, state) {
   menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
     () => ipcRenderer.invoke('wp-growup-toggle')));
   // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
+  // → the three colour-blind ones
   // and applies to ALL overlays at once. Click repeatedly to step through.
   menu.appendChild(mkItem('🎨 Theme: ' + (_WP_THEME_LABELS[st.theme || 'default'] || st.theme) + ' (all overlays)', '#3a2440',
     () => ipcRenderer.invoke('wp-theme-cycle')));
@@ -554,13 +621,18 @@ contextBridge.exposeInMainWorld('mimic', {
   autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
   rescueOverlays:  ()     => ipcRenderer.invoke('rescue-overlays'),
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
+  setAllBgAlpha:   (v)    => ipcRenderer.invoke('wp-bg-alpha-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
   // ▭ Mini mode, for the dashboard's Overlays tab. Tray↔dashboard parity
   // (CLAUDE.md): the right-click menu's two rows and the Ctrl+Shift+M hotkey
   // all reach the SAME internals through main's _setOverlayMini, never a
   // parallel path.
   setOverlayMini:  (n, on) => ipcRenderer.invoke('wp-mini-set', n, on),
+  setOverlayMiniPin: (n, on) => ipcRenderer.invoke('wp-mini-pin-set', n, !!on),
   toggleMiniAll:   ()     => ipcRenderer.invoke('wp-mini-all'),
+  // ⌨ While the dashboard captures a hotkey, Mimic lets go of the keys it holds
+  // (so they arrive) and returns them — [{ id, accel }] — to check a clash.
+  hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),

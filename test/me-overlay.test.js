@@ -261,7 +261,7 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, renderC, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE, HIT_STEP, laneSpan, LANE_EDGE_R, LANE_MID_R };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE, HIT_STEP, laneSpan, LANE_EDGE_R, LANE_MID_R };')();
 // The hit columns are their own layer now (round five); a lane's lines, top to bottom.
 // Round seven made a round ONE line of hits side by side, so a lane reads as
 // its lines, top to bottom, each line's items left to right.
@@ -277,11 +277,14 @@ const laneOf = (snap, id) => {
 };
 const HUDS = { HUD: R.renderHud };
 
-describe('the three layouts', () => {
+// The guild lead, 2026-09-24: "We can remove version C, default the HUD to
+// version, rename A into Box" · "Endurance can be small" · "Remove the
+// background from the Box version. Give the numbers on health some drop shadow."
+describe('the Box (was A)', () => {
   const zeal = zealFor('Aldenmar', { cls: 'Cleric', mana: [1686, 3015], gems: ['Complete Healing'], group: [['Brackwyn', 34]] });
   const s = load({ zeal })._serializeMeState();
 
-  it('A · Classic prints cur/max inside the bars, Nillipuss-style', () => {
+  it('prints cur/max inside the bars, Nillipuss-style', () => {
     const h = R.renderA(s);
     expect(h).toContain('1,469 / 3,214');
     expect(h).toContain('1,686 / 3,015');
@@ -289,10 +292,22 @@ describe('the three layouts', () => {
     expect(h).toContain('Brackwyn');
   });
 
-  it('C · Role leads with the class number, large', () => {
-    const h = R.renderC(s);
-    expect(h.indexOf('class="fv">4<')).toBeGreaterThan(-1);
-    expect(h.indexOf('class="fv">4<')).toBeLessThan(h.indexOf('class="vit"'));
+  it('endurance is small — a thin bar with its % beside it, no word in it', () => {
+    const h = R.renderA(Object.assign({}, s, { end: { pct: 91 } }));
+    expect(h).toMatch(/<div class="brow small"><div class="bar thin"><i style="width:91\.0%;background:var\(--orange\)"><\/i><span><\/span><\/div><div class="pct"[^>]*>91%<\/div><\/div>/);
+    expect(h).not.toContain('>endurance<');
+  });
+
+  it('no mana row for a monk (it showed an empty 0% bar)', () => {
+    const monk = Object.assign({}, s, { class: 'Monk', no_mana: true, mana: { cur: 0, max: 0, pct: 0 } });
+    expect(R.renderA(monk)).not.toContain('var(--blue)">0%');
+    expect(R.renderA(s)).toContain('1,686 / 3,015');                      // a cleric keeps it
+  });
+
+  it('no card behind it, and a dark halo on the numbers inside the bars', () => {
+    const css = stripCss(meHtml);
+    expect(css).toMatch(/body:not\(\.hud\) \.card\{background:transparent;border-color:transparent\}/);
+    expect(css).toMatch(/\.bar > span\{text-shadow:[^}]*#000/);
   });
 });
 
@@ -918,13 +933,40 @@ describe('the HUD — rounds, damage shield, builder', () => {
 
 describe('the in-game picker', () => {
   const body = stripJs(meHtml);
-  it('offers A, the HUD and C, and remembers the pick', () => {
-    for (const v of ['a', 'hud', 'c']) expect(meHtml).toContain('data-v="' + v + '"');
-    for (const v of ['b', 'h1', 'h2', 'h3']) expect(meHtml).not.toContain('data-v="' + v + '"');
+  it('offers Box and the HUD — no C — and remembers the pick', () => {
+    expect(meHtml).toMatch(/<button data-v="a"[^>]*>Box<\/button><button data-v="hud"[^>]*>HUD<\/button>/);
+    for (const v of ['b', 'c', 'h1', 'h2', 'h3']) expect(meHtml).not.toContain('data-v="' + v + '"');
     expect(body).toContain("localStorage.setItem(STYLE_KEY, style)");
   });
-  it('someone who had picked B, H1, H2 or H3 lands on the HUD', () => {
-    expect(body).toContain("if (saved === 'b' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';");
+  // The pick, run: what a saved value (or none) opens on.
+  const pickBlock = sliceBlock(meHtml, "  var STYLE_KEY = 'wpMeStyle';", '\n  } catch (e) {}\n');
+  const opensOn = (saved) => new Function('localStorage', pickBlock + '\nreturn [style, _firstRun];')({ getItem: () => saved });
+  it('someone new starts on the HUD; a Box pick survives the rename; B, C, H1–H3 land on the HUD', () => {
+    expect(opensOn(null)).toEqual(['hud', true]);
+    expect(opensOn('a')).toEqual(['a', false]);
+    for (const v of ['b', 'c', 'h1', 'h2', 'h3']) expect(opensOn(v)).toEqual(['hud', false]);
+  });
+  it('…and someone new gets the HUD\'s centred square, as the HUD button would give', () => {
+    expect(body).toMatch(/if \(_firstRun && isHud\(style\)\) \{[\s\S]*?setBounds\(\{ width: side0, height: side0, center: true \}\)/);
+  });
+  // "Put the Move icon and X at the bottom underneath the tick timer and the
+  // swing timer." The tick bar spans 184–228° and the swing bar 132–176°
+  // (clockwise from 12 o'clock); each button is centred at r 199 on their middles.
+  it('in the HUD, ✥ sits under the tick bar and ✕ under the swing bar; the name and picker take the top corners', () => {
+    const css = stripCss(meHtml);
+    const at = (deg) => { const a = (deg - 90) * Math.PI / 180; return [(200 + 199 * Math.cos(a)) / 400, (200 + 199 * Math.sin(a)) / 400]; };
+    const rule = (id) => css.match(new RegExp('body\\.hud #' + id + ',body\\.hud\\.setup #' + id + '\\{top:calc\\(var\\(--ring-w\\) \\* ([\\d.]+) - 9px\\);(?:right:auto;)?left:calc\\(var\\(--ring-w\\) \\* ([\\d.]+) - 9px\\)\\}'));
+    const mv = rule('move-btn'), hd = rule('hide-btn');
+    expect(+mv[2]).toBeCloseTo(at(206)[0], 2); expect(+mv[1]).toBeCloseTo(at(206)[1], 2);
+    expect(+hd[2]).toBeCloseTo(at(154)[0], 2); expect(+hd[1]).toBeCloseTo(at(154)[1], 2);
+    expect(css).toMatch(/body\.hud \.title\{top:3px;bottom:auto\}/);
+  });
+  // "The HUD mode shouldn't include the background as a square, rather as a
+  // shadow behind the content."
+  it('in the HUD, the backgrounds toggle draws a shadow behind the ring, never a square', () => {
+    const css = stripCss(meHtml);
+    expect(css).toMatch(/body\.hud\.wp-backdrop #wrap\{background:transparent !important\}/);
+    expect(css).toMatch(/body\.hud\.wp-backdrop #hudsvg,body\.hud\.wp-backdrop #hudlanes\{\s*filter:drop-shadow\([^}]*var\(--bg-alpha/);
   });
   // Round seven, the guild lead: "Config for hud should be able to scroll easily,
   // and have a top level slider for all of the text as well as reset to

@@ -3142,13 +3142,39 @@ function _overlayEntries() {
 // card surface that hides EQ behind it; text stays at full brightness at
 // every slider position so even very transparent cards stay readable.
 // setOpacity is held at 1.0 always (no compound dim).
+//
+// 2.7.1 split it in two (the guild lead, 2026-09-24: "Currently opacity only
+// works on backgrounds, not on the actual content" · "The Opacity slider at
+// the top of the Setup this overlay doesn't work at all" — on an overlay with
+// no card behind it, like the HUD ring, a background-only slider has nothing
+// to change):
+//   cfg.overlayOpacity[k] — OPACITY: the whole overlay, content and
+//     background, faded in the renderer (preload's --wp-content-alpha), never
+//     its setup bar, menu or corner buttons. The setup-bar slider and the
+//     dashboard's "Opacity — all overlays" set it.
+//   cfg.overlayBgAlpha[k] — BACKGROUND opacity, the 1.2 meaning above (the
+//     card surface, 100% = opaque). Its slider sits with the backgrounds button.
+// Every value saved before the split was a background value, so it moves
+// across once and opacity starts at 100% — nobody's overlays change on update.
+function _opacityMaps(cfg) {
+  if (!cfg.opacitySplit) {
+    cfg.overlayBgAlpha = Object.assign({}, cfg.overlayBgAlpha || {}, cfg.overlayOpacity || {});
+    cfg.overlayOpacity = {};
+    cfg.opacitySplit = 1;
+    saveConfig(cfg);
+  }
+  const ok = (v) => typeof v === 'number' && v >= 0.15 && v <= 1.0;
+  return {
+    content: (k) => { const v = (cfg.overlayOpacity || {})[k]; return ok(v) ? v : 1.0; },
+    bg:      (k) => { const v = (cfg.overlayBgAlpha || {})[k]; return ok(v) ? v : 1.0; },
+  };
+}
 function applyOverlayOpacity(win, key) {
   if (!win || win.isDestroyed()) return;
-  const cfg = loadConfig();
-  const o = (cfg.overlayOpacity || {})[key];
-  const val = (typeof o === 'number' && o >= 0.15 && o <= 1.0) ? o : 1.0;
+  const m = _opacityMaps(loadConfig());
   try { win.setOpacity(1.0); } catch {}
-  try { win.webContents.send('bg-alpha', val); } catch {}
+  try { win.webContents.send('bg-alpha', m.bg(key)); } catch {}
+  try { win.webContents.send('content-alpha', m.content(key)); } catch {}
   // Scale rides the same lifecycle (every window's ready-to-show + every
   // change broadcast), so ONE hook covers all overlays incl. future ones.
   applyOverlayScale(win, key);
@@ -5786,6 +5812,48 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
     }
   }
 }
+// ⌨ Setting a key that is already in use (the guild lead, 2026-09-24: "When
+// setting hotkeys it should tell you when you're trying to use one that's
+// currently in use rather than doing nothing"). A key held as a GLOBAL shortcut
+// never reaches the focused window — Windows hands it to its owner — so
+// pressing Ctrl+Shift+H in the dashboard to reuse it fired hide-all and the
+// capture saw nothing at all. While the dashboard captures, Mimic lets go of
+// every key it holds, so its own keys arrive and the dashboard can name the
+// clash (_mimicHotkeyUses). A key another PROGRAM holds still never arrives;
+// the dashboard says so when the modifiers come and go with no key between.
+// Resumes on its own after 30 s, so a dashboard closed mid-capture cannot
+// leave every hotkey off.
+let _hotkeysSuspended = false, _hotkeysResumeTimer = null;
+let _blockedHotkeys = {};            // family cfg key → accelerator the OS refused
+function _mimicHotkeyUses(cfg) {
+  const c = cfg || {};
+  const own = (k, def) => (typeof c[k] === 'string' && c[k].trim()) ? c[k].trim() : def;
+  const uses = [];
+  if (c.hideAllHotkeyEnabled !== false)     uses.push({ id: 'hideAllHotkey', accel: own('hideAllHotkey', _DEFAULT_HIDE_HOTKEY) });
+  if (c.backdropHotkeyEnabled !== false)    uses.push({ id: 'backdropHotkey', accel: own('backdropHotkey', _DEFAULT_BACKDROP_HOTKEY) });
+  if (c.damageAlertHotkeyEnabled !== false) uses.push({ id: 'damageAlertHotkey', accel: own('damageAlertHotkey', _DEFAULT_DAMAGE_HOTKEY) });
+  if (c.miniHotkeyEnabled !== false)        uses.push({ id: 'miniHotkey', accel: own('miniHotkey', _DEFAULT_MINI_HOTKEY) });
+  const map = (c.overlayHotkeys && typeof c.overlayHotkeys === 'object') ? c.overlayHotkeys : {};
+  for (const key of _OVERLAY_HOTKEY_KEYS) {
+    if (typeof map[key] === 'string' && map[key].trim()) uses.push({ id: 'overlay:' + key, accel: map[key].trim() });
+  }
+  return uses;
+}
+function _setHotkeysSuspended(on) {
+  if (_hotkeysResumeTimer) { clearTimeout(_hotkeysResumeTimer); _hotkeysResumeTimer = null; }
+  if (on) {
+    _hotkeysSuspended = true;
+    try { require('electron').globalShortcut.unregisterAll(); } catch {}
+    _hotkeysResumeTimer = setTimeout(() => _setHotkeysSuspended(false), 30_000);
+  } else if (_hotkeysSuspended) {
+    _hotkeysSuspended = false;
+    registerHideAllHotkey();
+  }
+}
+ipcMain.handle('hotkey-capture', (_e, on) => {
+  _setHotkeysSuspended(!!on);
+  return on ? _mimicHotkeyUses(loadConfig()) : true;
+});
 function _damageAlertAccelerator() {
   const cfg = loadConfig();
   return (cfg && typeof cfg.damageAlertHotkey === 'string' && cfg.damageAlertHotkey.trim())
@@ -5837,6 +5905,10 @@ function _applyDamageAlert(next, announce) {
 function toggleDamageAlert() { _applyDamageAlert(!loadConfig().damageAlert, true); }
 
 function registerHideAllHotkey() {
+  // The dashboard is capturing a key: hold nothing until it is done
+  // (_setHotkeysSuspended re-runs this on resume).
+  if (_hotkeysSuspended) return;
+  _blockedHotkeys = {};
   try {
     const { globalShortcut } = require('electron');
     // Restore persisted hide state so the toggle is correct across restarts.
@@ -5850,7 +5922,7 @@ function registerHideAllHotkey() {
     if (accel && cfg.hideAllHotkeyEnabled !== false) {
       const ok = globalShortcut.register(accel, toggleHideAllOverlays);
       if (ok) _registeredHideAccel = accel;
-      else appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.hideAllHotkey = accel; appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`); }
     }
     // Backdrop hotkey — flips the solid background on/off for ALL overlays at
     // once (per-overlay control lives in the right-click chrome menu).
@@ -5860,7 +5932,7 @@ function registerHideAllHotkey() {
     if (bAccel && cfg.backdropHotkeyEnabled !== false) {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
-      else appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.backdropHotkey = bAccel; appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`); }
     }
     // 💥 Damage-taken alert hotkey — same shape as the two above: configurable
     // accelerator (cfg.damageAlertHotkey), per-hotkey kill switch, and a log
@@ -5870,7 +5942,7 @@ function registerHideAllHotkey() {
     if (dAccel && cfg.damageAlertHotkeyEnabled !== false) {
       const ok3 = globalShortcut.register(dAccel, toggleDamageAlert);
       if (ok3) _registeredDamageAccel = dAccel;
-      else appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.damageAlertHotkey = dAccel; appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`); }
     }
     // ▭ Minimize-all hotkey. Same shape again; the persisted latch is restored
     // first so a restart taken while everything was mini still knows which way
@@ -5882,7 +5954,7 @@ function registerHideAllHotkey() {
     if (mAccel && cfg.miniHotkeyEnabled !== false) {
       const ok4 = globalShortcut.register(mAccel, toggleMinimizeAllOverlays);
       if (ok4) _registeredMiniAccel = mAccel;
-      else appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`);
+      else { _blockedHotkeys.miniHotkey = mAccel; appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`); }
     }
     // ⌨ One per overlay, registered last so the four above keep their keys.
     _registerOverlayHotkeys(globalShortcut, cfg);
@@ -5975,6 +6047,15 @@ function currentStatus() {
     // Overlay hotkeys the OS refused (key → accelerator), so the dashboard can
     // say "taken by another app" instead of showing a key that does nothing.
     overlayHotkeysBlocked: Object.assign({}, _blockedOverlayAccels),
+    // …and the same for the four all-overlay keys (hide-all, backgrounds,
+    // damage alert, minimize-all), by their cfg key.
+    hotkeysBlocked: Object.assign({}, _blockedHotkeys),
+    // ▭ Mini mode for the dashboard's Overlays table: which overlays have a
+    // mini, which are mini now, which are pinned mini (📌), and the Ctrl+Shift+M latch.
+    miniCapable: _MINI_KEYS.slice(),
+    overlayMini: Object.assign({}, (cfg.overlayMini && typeof cfg.overlayMini === 'object') ? cfg.overlayMini : {}),
+    overlayMiniPinned: Object.assign({}, (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {}),
+    miniAllActive: !!_miniAllActive,
     agentRunning: !!agentProc,
     localOnly,
     quietMode: !!cfg.quietMode,
@@ -7436,22 +7517,28 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
 // renderer-side as a body-level CSS filter (see preload _WP_THEME_CSS). The
 // chrome-menu item cycles through the list; new windows pick the theme up
 // from their wp-overlay-menu-state pull at load.
-const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast'];
+// The last three are the colour-blind themes (colour matrices, not shorthands).
+const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 'protan', 'tritan'];
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
 const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me'];
-ipcMain.handle('wp-opacity-all', (_e, v) => {
+// `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
+// background) — see applyOverlayOpacity for the split.
+function _setOpacityAll(field, v) {
   const val = Math.max(0.15, Math.min(1, +v || 1));
   const cfg = loadConfig();
-  const map = (cfg.overlayOpacity && typeof cfg.overlayOpacity === 'object') ? cfg.overlayOpacity : {};
+  _opacityMaps(cfg);
+  const map = (cfg[field] && typeof cfg[field] === 'object') ? cfg[field] : {};
   for (const k of _ALL_OVERLAY_KEYS) map[k] = val;
   for (const [k] of _overlayEntries()) map[k] = val;   // panels + anything new
-  cfg.overlayOpacity = map;
+  cfg[field] = map;
   saveConfig(cfg);
   applyAllOverlayOpacities();
   return val;
-});
+}
+ipcMain.handle('wp-opacity-all', (_e, v) => _setOpacityAll('overlayOpacity', v));
+ipcMain.handle('wp-bg-alpha-all', (_e, v) => _setOpacityAll('overlayBgAlpha', v));
 // Direct theme set (dashboard Overlays-tab picker) — same broadcast path.
 // All-overlay backdrop flip — same as the Ctrl+Shift+B hotkey.
 ipcMain.handle('wp-backdrop-toggle-all', () => { try { toggleAllBackdrops(); return true; } catch { return false; } });
@@ -7564,6 +7651,18 @@ ipcMain.handle('wp-mini-state', (e) => {
 ipcMain.handle('wp-mini-set', (_e, name, on) => {
   if (!_MINI_KEYS.includes(name)) return null;
   return _setOverlayMini(name, !!on);
+});
+// …and its 📌, named for the same reason (the right-click menu's pin toggle
+// is sender-derived). One writer for the pin map either way.
+ipcMain.handle('wp-mini-pin-set', (_e, name, on) => {
+  if (!_MINI_KEYS.includes(name)) return null;
+  const cfg = loadConfig();
+  const map = (cfg.overlayMiniPinned && typeof cfg.overlayMiniPinned === 'object') ? cfg.overlayMiniPinned : {};
+  map[name] = !!on;
+  cfg.overlayMiniPinned = map;
+  saveConfig(cfg);
+  pushStatus();
+  return !!map[name];
 });
 ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return true; } catch { return false; } });
 
@@ -8273,7 +8372,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
   const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
-    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys'];
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
@@ -8507,6 +8606,7 @@ ipcMain.handle('set-overlay-opacity', (_e, key, value) => {
   if (typeof key !== 'string' || typeof value !== 'number') return false;
   value = Math.max(0.15, Math.min(1.0, value));
   const cfg = loadConfig();
+  _opacityMaps(cfg);   // a first save must not be mistaken for a pre-split background value
   cfg.overlayOpacity = cfg.overlayOpacity || {};
   cfg.overlayOpacity[key] = value;
   saveConfig(cfg);

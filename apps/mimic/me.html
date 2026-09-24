@@ -4,20 +4,20 @@
   /* Me overlay (the guild lead, 2026-09-24): "a 'me' overlay. my target, my
      casting, my health, mana, XP detail. avg DPS per fight, total per
      day/night during raids, then the things that are important to classes
-     with mana." Three layouts of the SAME /api/me data, picked in game with
-     the A/B/C switch in the title bar, so the guild lead can choose one:
-       A  Classic — a Nillipuss-style player window: every number, cur/max
-          inside the bars, the % column on the right edge.
+     with mana." Two layouts of the SAME /api/me data now, picked in game with
+     the Box / HUD switch (the guild lead, 2026-09-24: "We can remove version C,
+     default the HUD to version, rename A into Box"):
+       Box (was A, Classic) — a Nillipuss-style player window: every number,
+          cur/max inside the bars, the % column on the right edge.
        HUD 1/2/3 — a ring around the CENTRE of the screen (the guild lead, same day:
           "one of those me overlays should be a HUD style that goes around the
           players center of their screen … damage in/out shown clearly.
           resists and cast damage too with elements"). It was layout B; after a
           first night with it: "The Circle should be the bounds for the
           resizing with some light info on the inside of the circle" — so the
-          window IS the ring's square and everything scales with it. Three
-          takes on it to pick from (see the HUD section of the script).
-       C  Role    — the class's own numbers first (CHs left, mezzes left,
-          Theft of Thought / Harvest timers), then group health.
+          window IS the ring's square and everything scales with it. The
+          default for anyone who has not picked.
+       (C, Role — the class's own numbers first — was retired the same day.)
      Colour is semantic, never decoration: green/orange/red = HP health,
      blue = mana and casting, gold = XP, purple = AA, red = danger. */
   :root{ --bg-alpha:0.55; --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9;
@@ -133,15 +133,15 @@
   #hudlanes text{transition:transform .3s ease-out,opacity .3s ease-out}
   @media (prefers-reduced-motion: reduce){ #hudlanes text{transition:none} }
 
-  /* C — role card */
-  .focus{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:4px;margin-top:2px}
-  .fbox{border:1px solid var(--border);border-radius:5px;padding:3px 6px;background:rgba(22,27,34,0.65)}
-  .fbox .fv{font-size:22px;font-weight:700;line-height:1.1;color:#fff;font-variant-numeric:tabular-nums}
-  .fbox .fl{font-size:10px;color:var(--dim);line-height:1.25;overflow-wrap:anywhere}
-  .fbox .fl .fs{display:block;color:#8b949e}
-  .fbox.low .fv{color:var(--orange)} .fbox.out .fv{color:var(--red)} .fbox.ready .fv{color:var(--green)}
-  .vit{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:5px}
-  .vit .t{font-size:10px;color:var(--dim);display:flex;justify-content:space-between}
+  /* Box (was A) — the guild lead, 2026-09-24: "Remove the background from the
+     Box version. Give the numbers on health some drop shadow." · "Endurance
+     can be small". No card behind it (the ⌨ backgrounds toggle still gives
+     one to whoever wants it); the numbers inside the bars get a dark halo so
+     they read over the green; endurance is a thin bar with its % beside it. */
+  body:not(.hud) .card{background:transparent;border-color:transparent}
+  .bar > span{text-shadow:0 0 2px #000,0 1px 2px #000,0 0 4px rgba(0,0,0,.85)}
+  .brow.small{margin-top:2px}
+  .brow.small .pct{font-size:10px}
 
   /* chrome — same pattern as the other overlays */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -169,6 +169,27 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
+  /* HUD: ✥ under the tick bar, ✕ under the swing bar (the guild lead,
+     2026-09-24: "Put the Move icon and X at the bottom underneath the tick
+     timer and the swing timer"). Centred at r 199 of the 400-unit ring, 206°
+     and 154° clockwise from 12 o'clock — (28.2%, 94.7%) and (71.8%, 94.7%)
+     of the ring's square, which is the window, or --ring-w wide while the
+     builder panel is open. The name and the Box/HUD picker take the top
+     corners they left, clear of the ring. */
+  body.hud #move-btn,body.hud.setup #move-btn{top:calc(var(--ring-w) * 0.947 - 9px);left:calc(var(--ring-w) * 0.282 - 9px)}
+  body.hud #hide-btn,body.hud.setup #hide-btn{top:calc(var(--ring-w) * 0.947 - 9px);right:auto;left:calc(var(--ring-w) * 0.718 - 9px)}
+  body.hud.building.build-left #move-btn{left:calc(var(--panel-w) + var(--ring-w) * 0.282 - 9px)}
+  body.hud.building.build-left #hide-btn{left:calc(var(--panel-w) + var(--ring-w) * 0.718 - 9px)}
+  body.hud .title{top:3px;bottom:auto}
+  body.hud.unlocked .title{left:60px}   /* clear of the ✥ 🔒 pair an unlocked overlay shows top-left */
+  /* The HUD's background is a SHADOW behind what it draws, never a square
+     (the guild lead, 2026-09-24: "The HUD mode shouldn't include the background
+     as a square, rather as a shadow behind the content"): the backgrounds
+     toggle darkens round the arcs and the text, as strong as the Background
+     slider says. */
+  body.hud.wp-backdrop #wrap{background:transparent !important}
+  body.hud.wp-backdrop #hudsvg,body.hud.wp-backdrop #hudlanes{
+    filter:drop-shadow(0 0 2px rgb(0 0 0 / var(--bg-alpha,0.92))) drop-shadow(0 0 7px rgb(8 10 14 / var(--bg-alpha,0.92)))}
   @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} }
 </style></head>
 <body>
@@ -197,8 +218,8 @@
         <span id="conn" class="conn bad">○</span>
         <span id="tname" class="nm">HUD</span><span id="tclass" class="cl"></span>
         <span class="sp"></span>
-        <span id="picker" title="Pick a layout — this is a beta test of three designs">
-          <button data-v="a" title="A · Classic — every number, Nillipuss-style bars">A</button><button data-v="hud" title="HUD — a ring around your character; pick its parts with ⚙">HUD</button><button data-v="c" title="C · Role — your class's numbers first, then your group">C</button><button id="build-btn" title="Build your HUD — pick which parts it shows">⚙</button>
+        <span id="picker" title="Pick a layout">
+          <button data-v="a" title="Box — every number, Nillipuss-style bars">Box</button><button data-v="hud" title="HUD — a ring around your character; pick its parts with ⚙">HUD</button><button id="build-btn" title="Build your HUD — pick which parts it shows">⚙</button>
         </span>
       </div>
       <div id="body"></div>
@@ -263,15 +284,20 @@
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
-  // ── the A/B/C picker (remembered on this machine) ────────────────────────
+  // ── the Box / HUD picker (remembered on this machine) ─────────────────────
+  // The guild lead, 2026-09-24: "We can remove version C, default the HUD to
+  // version, rename A into Box." A keeps its stored key ('a'), so a saved pick
+  // survives the rename; the HUD is where anyone new starts.
   var STYLE_KEY = 'wpMeStyle';
-  var style = 'a';
+  var style = 'hud', _firstRun = false;
   function isHud(v){ return v === 'hud'; }
   try {
     var saved = localStorage.getItem(STYLE_KEY);
-    // The first HUD was layout B, then H1/H2/H3 — all of them are the HUD now.
-    if (saved === 'b' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';
-    if (saved === 'a' || saved === 'c' || isHud(saved)) style = saved;
+    _firstRun = saved == null;
+    // The first HUD was layout B, then H1/H2/H3 — all of them are the HUD now;
+    // and C, retired, lands there too.
+    if (saved === 'b' || saved === 'c' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';
+    if (saved === 'a' || isHud(saved)) style = saved;
   } catch (e) {}
   var picker = document.getElementById('picker');
   function paintPicker(){
@@ -306,6 +332,13 @@
     paintPicker(); _lastHtml = null; render(_last);
   });
   paintPicker();
+  // Someone opening it for the first time starts on the HUD — in the centred
+  // square the HUD button would have given them, not the card-shaped default.
+  if (_firstRun && isHud(style)) {
+    var side0 = Math.round(Math.min(screen.availWidth, screen.availHeight) * 0.5);
+    setBounds({ width: side0, height: side0, center: true });
+    try { localStorage.setItem(STYLE_KEY, style); } catch (err) {}
+  }
 
   // ── helpers ──────────────────────────────────────────────────────────────
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
@@ -327,7 +360,6 @@
     return '<div class="brow">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">' + (p == null ? '' : Math.round(p) + '%') + '</div></div>';
   }
   function curMax(o){ return (o && o.cur != null && o.max != null) ? n0(o.cur) + ' / ' + n0(o.max) : ''; }
-  function rate(v, unit){ return v == null ? '<span class="dim">measuring…</span>' : v.toFixed(1) + '%' + unit; }
   // Time left on a cast, as a DEPLETING bar — countdowns run right to left
   // across the platform (the CH cast bar).
   function castHtml(c){
@@ -346,11 +378,6 @@
   function focusValue(f){
     if (f.timer_ms != null) return f.timer_ms <= 0 ? 'ready' : mmss(f.timer_ms);
     return f.value == null ? '—' : String(f.value);
-  }
-  function focusTone(f){
-    if (f.timer_ms != null) return f.timer_ms <= 0 ? 'ready' : '';
-    if (f.value == null) return '';
-    return f.value === 0 ? 'out' : (f.value <= 2 ? 'low' : '');
   }
   function dpsLine(d){
     if (!d) return '';
@@ -386,8 +413,12 @@
     var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
     var h = '';
     h += brow(hpP, hpColor(hpP), curMax(s.hp));
-    if (mnP != null) h += brow(mnP, 'var(--blue)', curMax(s.mana));
-    if (s.end && s.end.pct != null) h += brow(s.end.pct, 'var(--orange)', 'endurance');
+    // No mana row for a warrior, rogue or monk — the HUD's rule (it had
+    // shown an empty 0% bar for a monk).
+    if (mnP != null && !s.no_mana) h += brow(mnP, 'var(--blue)', curMax(s.mana));
+    // "Endurance can be small": a thin bar, its % beside it.
+    if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
+      + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
     if (s.xp && s.xp.pct != null) h += brow(s.xp.pct, 'var(--gold)', 'XP/hr ' + (s.xp.per_hr == null ? '…' : s.xp.per_hr.toFixed(1) + '%'));
     if (s.aa && s.aa.pct != null) h += brow(s.aa.pct, 'var(--purple)', 'AA/hr ' + (s.aa.per_hr == null ? '…' : s.aa.per_hr.toFixed(1) + '%') + (s.aa.banked ? ' · ' + s.aa.banked + ' banked' : ''));
     var meta = [];
@@ -1079,34 +1110,6 @@
   }
 
 
-  // ── C · Role ──────────────────────────────────────────────────────────────
-  function renderC(s){
-    var h = '';
-    if (s.focus && s.focus.length) {
-      h += '<div class="focus">';
-      s.focus.forEach(function(f){
-        h += '<div class="fbox ' + focusTone(f) + '" title="' + esc(f.sub || f.label) + '"><div class="fv">' + focusValue(f) + '</div><div class="fl">' + esc(f.label) + (f.sub && f.timer_ms == null ? '<span class="fs">' + esc(f.sub) + '</span>' : '') + '</div></div>';
-      });
-      h += '</div>';
-    }
-    var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
-    h += '<div class="vit">';
-    h += '<div><div class="t"><span>HP</span><span class="num" style="color:' + hpColor(hpP) + '">' + (hpP == null ? '—' : Math.round(hpP) + '%') + '</span></div>' + bar(hpP, hpColor(hpP), '', 'thin') + '</div>';
-    h += '<div><div class="t"><span>Mana</span><span class="num" style="color:var(--blue)">' + (s.mana && s.mana.cur != null ? n0(s.mana.cur) : (mnP == null ? '—' : Math.round(mnP) + '%')) + '</span></div>' + bar(mnP, 'var(--blue)', '', 'thin') + '</div>';
-    var eP = s.end ? s.end.pct : null;
-    h += '<div><div class="t"><span>End</span><span class="num" style="color:var(--orange)">' + (eP == null ? '—' : Math.round(eP) + '%') + '</span></div>' + bar(eP, 'var(--orange)', '', 'thin') + '</div>';
-    h += '</div>';
-    h += castHtml(s.casting);
-    h += targetHtml(s.target);
-    if (s.group && s.group.length) h += '<div class="lbl">group</div>' + groupHtml(s.group);
-    var d = dpsLine(s.dps); if (d) h += '<div class="lbl">damage</div>' + d;
-    if (s.xp && s.xp.pct != null) {
-      h += '<div class="kv"><span>XP <b>' + s.xp.pct.toFixed(1) + '%</b> ' + rate(s.xp.per_hr, '/hr') + '</span>'
-         + (s.aa && s.aa.pct != null ? '<span>AA <b>' + s.aa.pct.toFixed(1) + '%</b> ' + rate(s.aa.per_hr, '/hr') + '</span>' : '') + '</div>';
-    }
-    return h;
-  }
-
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
   var _last = null, _lastHtml = null;
@@ -1295,7 +1298,7 @@
       document.getElementById('tclass').textContent = (s.level != null ? s.level + ' ' : '') + (s.class || '');
       // The HUDs draw their own blind ring inside the SVG.
       if (s.blind && !isHud(style)) html += '<div class="blind">👁 BLINDED — this panel still works</div>';
-      html += isHud(style) ? renderHud(s) : (style === 'c' ? renderC(s) : renderA(s));
+      html += isHud(style) ? renderHud(s) : renderA(s);
     }
     document.body.classList.toggle('hud', isHud(style));
     // The hit columns repaint every frame; paintLanes writes only what moved.

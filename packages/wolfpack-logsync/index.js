@@ -15709,6 +15709,14 @@ tr:hover td { background:#1f242c }
 .wp-ov-hk.set { color:var(--blue); }
 .wp-ov-hk.blocked { color:var(--red); border-color:var(--red); }
 .wp-ov-hk.capturing { color:#f0b429; border-color:#f0b429; }
+.wp-ovtop { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:0 10px; align-items:start; }
+.wp-ovcol { min-width:0; }
+.wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
+.wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
+.wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
+.wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
+.wp-ov-pin:hover { opacity:0.8; }
+.wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -18969,8 +18977,13 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick A, the HUD ring or C in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
+
+// Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
+// nine with a mini rendition; the pet tracker is 'pets' there.
+var WP_MINI_KEY_OF = { hud: 'hud', tank: 'tank', mobinfo: 'mobinfo', chchain: 'chchain', charm: 'charm',
+  exttarget: 'exttarget', pet: 'pets', popraid: 'popraid', buffQueue: 'buffQueue' };
 
 function renderOverlays(s) {
   let h = '';
@@ -18984,23 +18997,48 @@ function renderOverlays(s) {
     return;
   }
   h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
+  // Two columns (the guild lead, 2026-09-24: "Make the top section of the overlays
+  // dashboard into two columns and put the opacity slider with the background
+  // button"): how overlays LOOK on the left, the all-overlay keys and placement
+  // on the right. One column when the window is narrow (.wp-ovtop).
+  h += '<div class="wp-ovtop"><div class="wp-ovcol">';
   // 🎨 Theme picker (the guild lead, 2026-07-12) — direct pick instead of cycling
   // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
   // active one highlights from status.overlayTheme.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
   h += '<b>🎨 Theme</b><span class="dim">applies to all overlays</span>';
   var thCur = (s && s.overlayTheme) || 'default';
-  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast']];
+  // The colour-blind three (the guild lead, 2026-09-24) sit on their own line.
+  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast'],
+    null, ['deutan','Deuteranopia (red-green)'],['protan','Protanopia (red-green)'],['tritan','Tritanopia (blue-yellow)']];
   for (var ti = 0; ti < THEMES.length; ti++) {
+    if (!THEMES[ti]) { h += '<span style="flex-basis:100%"></span><span class="dim">colour-blind:</span>'; continue; }
     var on = THEMES[ti][0] === thCur;
     h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
   }
   h += '</div>';
+  // 🔅 Opacity and backgrounds, together. Opacity fades the whole overlay —
+  // what it shows, its background with it (the guild lead, 2026-09-24:
+  // "Currently opacity only works on backgrounds, not on the actual
+  // content"); the background slider is the old one, the card behind the
+  // content, 100% = solid. Both set every overlay; the setup bar fine-tunes one.
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b>🔅 Opacity — all overlays</b>'
+    + '<b>🔅 Opacity</b><span class="dim" style="font-size:11px">the whole overlay</span>'
     + '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
     + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
-    + '<span class="dim" style="font-size:11px">sets every overlay at once — fine-tune single ones in their setup bar</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<b>🌫 Background</b><span class="dim" style="font-size:11px">the card behind it</span>'
+    + '<input id="wpAllBgAlpha" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
+    + '<span id="wpAllBgAlphaVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
+    + '<span class="dim" style="font-size:11px">hotkey</span>'
+    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">both set every overlay at once — fine-tune one in its setup bar</span>'
     + '</div>';
   // 🔍 Overlay scale (a member's 5K monitor). Global slider here; each overlay
   // also carries its own "size" slider in its setup bar that overrides this.
@@ -19013,6 +19051,7 @@ function renderOverlays(s) {
     + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
     + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
     + '</div>';
+  h += '</div><div class="wp-ovcol">';   // right column: the all-overlay keys and placement
   // How to move them. Convention is consistent across every overlay so users
   // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
   // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
@@ -19027,25 +19066,17 @@ function renderOverlays(s) {
     + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
     + '<button type="button" id="wpHideHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '</div>';
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--gold)">Toggle backgrounds on ALL overlays:</b>'
-    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
-    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
-    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
-    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     // Tray parity (the guild lead, 2026-08-19): lock/unlock, setup mode, and hide-all
     // live here too, not just in the tray. Stateful labels start as … and are
     // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
     + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '<button type="button" class="wp-ov-act" data-act="lock" id="wpOvLockBtn" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
     + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
-    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
+    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
+    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
     + '</div>';
   // 💥 Damage-taken audio alert (the guild lead, 2026-07-31). Not an overlay — an opt-in
   // spoken cue — but its hotkey belongs with the other global hotkeys, so it
@@ -19061,6 +19092,18 @@ function renderOverlays(s) {
     + '<button type="button" id="wpDmgHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
     + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
     + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '</div>';
+  // ▭ Minimize ALL — the fourth all-overlay key (Ctrl+Shift+M), which had no
+  // row here: the tray-parity rule (CLAUDE.md) applies to hotkeys too.
+  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<b style="color:var(--gold)">▭ Minimize ALL overlays:</b>'
+    + '<code id="wpMiniHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
+    + '<button type="button" id="wpMiniHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
+    + '<button type="button" id="wpMiniHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
+    + '<button type="button" class="wp-ov-act" data-act="miniall" id="wpOvMiniAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
+    + '<span id="wpMiniHotkeyHint" class="dim" style="font-size:11px"></span>'
+    + '<span style="flex-basis:100%"></span>'
+    + '<span class="dim" style="font-size:11px">Takes every overlay that has a mini down to it; press again to put them back, except the ones with a 📌 in the table below.</span>'
     + '</div>';
   // 💾 Per-character overlay layouts — tray parity (the guild lead, 2026-08-19:
   // "Overlay layouts should be saves and in the overlay tab"). Baked from
@@ -19087,8 +19130,9 @@ function renderOverlays(s) {
     }
   }
   h += '</div>';
+  h += '</div></div>';   // end of the two columns
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
-    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray).'
+    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray). The HUD ring keeps both at its <b>bottom</b>, under its tick and swing bars.'
     + '</div>';
   h += '</div>';
 
@@ -19101,15 +19145,29 @@ function renderOverlays(s) {
   // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
   // so the section stays byte-stable across polls (see the morphInto note).
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Hotkey</th><th>Description</th></tr>';
-  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
-    var key = WP_OVERLAY_ROWS[i][0], label = WP_OVERLAY_ROWS[i][1], desc = WP_OVERLAY_ROWS[i][2];
+  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Hotkey</th><th>Mini</th><th>Description</th></tr>';
+  // The Dock and trigger alerts (TTS) first, the overlays alphabetically under
+  // them (the guild lead, 2026-09-24) — "/who" sorts as "who".
+  var ovRows = WP_OVERLAY_ROWS.filter(function(r){ return r[0] === 'dock' || r[0] === 'trigger'; })
+    .concat(WP_OVERLAY_ROWS.filter(function(r){ return r[0] !== 'dock' && r[0] !== 'trigger'; })
+      .sort(function(a, b){ return a[1].replace(/^\\W+/, '').localeCompare(b[1].replace(/^\\W+/, ''), 'en', { sensitivity: 'base' }); }));
+  for (var i = 0; i < ovRows.length; i++) {
+    var key = ovRows[i][0], label = ovRows[i][1], desc = ovRows[i][2];
     // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
     // would tie the callouts to being on screen. The dock can't dock itself.
     var dockCell = (key === 'trigger' || key === 'dock')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
+    // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
+    // Mini-mode overlays in here. Those need to go in") — the same switch and
+    // 📌 as the overlay's right-click menu, for the nine that have a mini.
+    // Painted from status; a row without one shows a dash.
+    var miniKey = WP_MINI_KEY_OF[key];
+    var miniCell = miniKey
+      ? '<td style="white-space:nowrap"><button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
+        + ' <button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button></td>'
+      : '<td class="dim" style="font-size:11px">&mdash;</td>';
     // ⌨ Its own show/hide hotkey (the guild lead, 2026-09-24: "Each overlay
     // should get its own hotkey config as well"). Label painted post-render
     // by wpRefreshOverlayHotkeys, like the toggles, for byte-stability.
@@ -19117,6 +19175,7 @@ function renderOverlays(s) {
       +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
       +  dockCell
       +  '<td><button type="button" class="wp-ov-hk" data-ov="' + key + '">…</button></td>'
+      +  miniCell
       +  '<td class="dim">' + desc + '</td></tr>';
   }
   h += '</table>';
@@ -19234,15 +19293,29 @@ function wpWireBqPref() {
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
 function wpWireHideHotkey() {
-  var ao = document.getElementById('wpAllOpacity');
-  var aov = document.getElementById('wpAllOpacityVal');
-  if (ao && window.mimic && window.mimic.setAllOpacity) {
-    _bindOnce(ao, 'input', function(){
-      var v = parseFloat(ao.value || '1');
-      if (aov) aov.textContent = Math.round(v * 100) + '%';
-      try { window.mimic.setAllOpacity(v); } catch (e) {}
+  // Opacity (the whole overlay) and Background (the card) — each seeded from
+  // what is saved, taking the overlays' common value (the first one, if they
+  // differ: this slider sets all of them the same).
+  [['wpAllOpacity', 'wpAllOpacityVal', 'setAllOpacity', 'overlayOpacity'],
+   ['wpAllBgAlpha', 'wpAllBgAlphaVal', 'setAllBgAlpha', 'overlayBgAlpha']].forEach(function(o){
+    var el = document.getElementById(o[0]), val = document.getElementById(o[1]);
+    if (!el || !window.mimic || !window.mimic[o[2]]) return;
+    if (!el.__wpInit && window.mimic.getConfig) {
+      el.__wpInit = true;
+      window.mimic.getConfig().then(function(cfg){
+        var m = (cfg && cfg[o[3]]) || {}, first = null;
+        for (var k in m) { if (typeof m[k] === 'number') { first = m[k]; break; } }
+        var v = (first != null && first >= 0.15 && first <= 1) ? first : 1;
+        el.value = String(v);
+        if (val) val.textContent = Math.round(v * 100) + '%';
+      }).catch(function(){});
+    }
+    _bindOnce(el, 'input', function(){
+      var v = parseFloat(el.value || '1');
+      if (val) val.textContent = Math.round(v * 100) + '%';
+      try { window.mimic[o[2]](v); } catch (e) {}
     });
-  }
+  });
   // Global overlay-size slider — seed from the stored value on first wire of
   // each rendered element (a section repaint makes a fresh element, so the
   // seed re-runs then and never mid-drag). Label tracks the drag; the scale
@@ -19304,6 +19377,7 @@ function wpWireHideHotkey() {
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
   _wpWireHotkeyRow('wpBdHotkey', 'backdropHotkey', 'backdropHotkeyEnabled', 'CommandOrControl+Shift+B');
   _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
+  _wpWireHotkeyRow('wpMiniHotkey', 'miniHotkey', 'miniHotkeyEnabled', 'CommandOrControl+Shift+M');
   wpWireDamageAlert();
 }
 // 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
@@ -19347,6 +19421,12 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
     }
   }
   window.mimic.getConfig().then(paint).catch(function(){ cur.textContent = _wpFmtAccel(defAccel); });
+  // A key the OS refused (another program holds it) is shown red, as in the table.
+  if (window.mimic.getStatus) window.mimic.getStatus().then(function(st){
+    var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
+    cur.style.color = blocked ? 'var(--red)' : '';
+    cur.title = blocked ? 'Another program already uses this key, so it does nothing here — Change… to pick another.' : '';
+  }).catch(function(){});
   if (en) _bindOnce(en, 'click', function(){
     window.mimic.getConfig().then(function(cfg){
       var next = !(cfg && cfg[enKey] !== false);
@@ -19367,9 +19447,14 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
       var patch2 = {}; patch2[cfgKey] = accel;
       window.mimic.saveConfig(patch2).then(function(){
         cur.textContent = _wpFmtAccel(accel);
-        say('Saved — active immediately.', true);
+        // The save re-registers every key; read back whether the OS took it.
+        return window.mimic.getStatus().then(function(st){
+          var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
+          if (blocked) { cur.style.color = 'var(--red)'; say('Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — pick a different one.'); }
+          else { cur.style.color = ''; say('Saved — active immediately.', true); }
+        });
       }).catch(function(){ say('Save failed.', true); });
-    });
+    }, null, cfgKey);
     if (started) say('Press the new key combo now (needs Ctrl, Alt or Shift — Esc cancels)…');
   });
 }
@@ -19378,16 +19463,63 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
 // Esc cancels; Backspace/Delete run onClear when the caller offers one.
 // Letters and digits are read from the physical key (e.code), so Shift+1 is
 // "Shift+1", not "Shift+!". Returns false when a capture is already running.
-function _wpCaptureAccel(say, onAccel, onClear) {
+//
+// A key already in use says so (the guild lead, 2026-09-24: "it should tell you
+// when you're trying to use one that's currently in use rather than doing
+// nothing"). Two ways a key is taken, and each looked like nothing happening:
+//   • Mimic's own — while this captures, Mimic lets go of every key it holds
+//     (hotkeyCapture), so the key arrives and is checked against the list it
+//     returns. \`selfId\` is the control being set, which may keep its own key.
+//   • another program's — Windows hands a global hotkey to its owner, so the
+//     key never arrives here; only its modifiers do. Modifiers pressed and let
+//     go with no key between is that signature, and it is said out loud.
+var _WP_HOTKEY_USES = {
+  hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
+  damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key',
+};
+function _wpHotkeyUseLabel(id) {
+  if (_WP_HOTKEY_USES[id]) return _WP_HOTKEY_USES[id];
+  var k = String(id).replace(/^overlay:/, '');
+  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) if (WP_OVERLAY_ROWS[i][0] === k) return 'the ' + WP_OVERLAY_ROWS[i][1] + ' overlay’s key';
+  return 'another Mimic key';
+}
+// "Ctrl+Shift+H", "CommandOrControl+Shift+h" and "Shift+Control+H" are one key.
+function _wpAccelNorm(a) {
+  var mods = [], key = '';
+  String(a || '').split('+').forEach(function(p){
+    var t = p.trim().toLowerCase();
+    if (/^(commandorcontrol|cmdorctrl|control|ctrl|command|cmd)$/.test(t)) mods.push('ctrl');
+    else if (t === 'alt' || t === 'option') mods.push('alt');
+    else if (t === 'shift') mods.push('shift');
+    else if (t) key = t;
+  });
+  return mods.sort().join('+') + '+' + key;
+}
+function _wpCaptureAccel(say, onAccel, onClear, selfId) {
   if (_wpHotkeyCapturing) return false;
   _wpHotkeyCapturing = true;
-  function stop() { _wpHotkeyCapturing = false; document.removeEventListener('keydown', onKey, true); }
+  var uses = [], modsDown = false, gotKey = false;
+  var bridge = window.mimic && window.mimic.hotkeyCapture;
+  if (bridge) { try { window.mimic.hotkeyCapture(true).then(function(u){ uses = Array.isArray(u) ? u : []; }).catch(function(){}); } catch (e) { void e; } }
+  function stop() {
+    _wpHotkeyCapturing = false;
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('keyup', onUp, true);
+    if (bridge) { try { window.mimic.hotkeyCapture(false); } catch (e) { void e; } }
+  }
+  function onUp(e) {
+    var mod = e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta';
+    if (!mod || e.ctrlKey || e.altKey || e.shiftKey) return;   // still holding one
+    if (modsDown && !gotKey) say('Nothing came through with those held. If you pressed a key with them, another program is already using that combination as its own hotkey — try a different one (Esc cancels).');
+    modsDown = false; gotKey = false;
+  }
   function onKey(e) {
     e.preventDefault(); e.stopPropagation();
     var k = e.key, code = e.code || '';
     if (k === 'Escape') { stop(); say('Cancelled.', true); if (onClear) onClear(null); return; }
     if (onClear && (k === 'Backspace' || k === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey) { stop(); onClear(true); return; }
-    if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') return;  // wait for the real key
+    if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') { modsDown = true; return; }  // wait for the real key
+    gotKey = true;
     if (!e.ctrlKey && !e.altKey && !e.shiftKey) { say('Add Ctrl, Alt or Shift — a bare key would eat normal typing.'); return; }
     var key = /^Key[A-Z]$/.test(code) ? code.slice(3)
       : /^Digit[0-9]$/.test(code) ? code.slice(5)
@@ -19399,10 +19531,18 @@ function _wpCaptureAccel(say, onAccel, onClear) {
     if (e.altKey)   parts.push('Alt');
     if (e.shiftKey) parts.push('Shift');
     parts.push(key);
+    var accel = parts.join('+'), n = _wpAccelNorm(accel);
+    for (var i = 0; i < uses.length; i++) {
+      if (uses[i].id !== selfId && _wpAccelNorm(uses[i].accel) === n) {
+        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id) + ' — press a different one (Esc cancels).');
+        return;                                                     // keep listening
+      }
+    }
     stop();
-    onAccel(parts.join('+'));
+    onAccel(accel);
   }
   document.addEventListener('keydown', onKey, true);
+  document.addEventListener('keyup', onUp, true);
   return true;
 }
 // ⌨ The Overlays table's Hotkey column: each overlay's own show/hide key,
@@ -19442,13 +19582,18 @@ function wpCaptureOverlayHotkey(btn) {
     }).then(function(){
       btn.classList.remove('capturing');
       // Registration runs inside the save; read back whether the OS took it.
-      setTimeout(wpRefreshOverlayHotkeys, 150);
-      say(accel ? 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide it.' : 'Hotkey removed.', true);
+      wpRefreshOverlayHotkeys();
+      if (!accel) { say('Hotkey removed.', true); return; }
+      return window.mimic.getStatus().then(function(st){
+        var blocked = st && st.overlayHotkeysBlocked && st.overlayHotkeysBlocked[k];
+        say(blocked ? 'Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — click the red key and pick a different one.'
+                    : 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide it.', !blocked);
+      });
     }).catch(function(){ btn.classList.remove('capturing'); say('Save failed.', true); });
   }
   var started = _wpCaptureAccel(say, save, function(clear){
     if (clear) save(null); else { btn.classList.remove('capturing'); wpRefreshOverlayHotkeys(); }
-  });
+  }, 'overlay:' + k);
   if (!started) return;
   btn.classList.add('capturing');
   btn.textContent = 'press keys…';
@@ -19535,6 +19680,22 @@ function wpRefreshOverlayToggles() {
       if (haBtn2) haBtn2.textContent = st.hideAllActive
         ? '👁 Show overlays (undo hide-all)'
         : '🙈 Hide all overlays';
+      // ▭ Mini: each capable row's switch and 📌, and the Minimize ALL button.
+      var miniMap = st.overlayMini || {}, pinMap = st.overlayMiniPinned || {};
+      var mbs = document.querySelectorAll('.wp-ov-mini');
+      for (var mi = 0; mi < mbs.length; mi++) {
+        var mk = mbs[mi].getAttribute('data-mini'), mOn = !!miniMap[mk];
+        mbs[mi].textContent = mOn ? '▭ MINI' : '▭ full';
+        mbs[mi].className = 'wp-ov-mini' + (mOn ? ' on' : '');
+        mbs[mi].title = mOn ? 'Mini now. Click for the full overlay.' : 'Full size now. Click for its mini.';
+      }
+      var pbs = document.querySelectorAll('.wp-ov-pin');
+      for (var pi2 = 0; pi2 < pbs.length; pi2++) {
+        var pk = pbs[pi2].getAttribute('data-mini');
+        pbs[pi2].className = 'wp-ov-pin' + (pinMap[pk] ? ' on' : '');
+      }
+      var maBtn = document.getElementById('wpOvMiniAllBtn');
+      if (maBtn) maBtn.textContent = st.miniAllActive ? '▭ Restore overlays (undo minimize-all)' : '▭ Minimize all now';
 
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
@@ -19569,6 +19730,18 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
     if (hk && window.mimic && window.mimic.saveConfig) { wpCaptureOverlayHotkey(hk); return; }
+    var mn = (t && t.closest) ? t.closest('.wp-ov-mini') : null;
+    if (mn && window.mimic && window.mimic.setOverlayMini) {
+      window.mimic.setOverlayMini(mn.getAttribute('data-mini'), !mn.classList.contains('on'))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
+      return;
+    }
+    var pn = (t && t.closest) ? t.closest('.wp-ov-pin') : null;
+    if (pn && window.mimic && window.mimic.setOverlayMiniPin) {
+      window.mimic.setOverlayMiniPin(pn.getAttribute('data-mini'), !pn.classList.contains('on'))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
+      return;
+    }
     var act = (t && t.closest) ? t.closest('.wp-ov-act') : null;
     if (act && window.mimic) {
       var a = act.getAttribute('data-act');
@@ -19585,6 +19758,11 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      if (a === 'miniall' && window.mimic.toggleMiniAll) {
+        window.mimic.toggleMiniAll().then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       if (a === 'hideall' && window.mimic.hideAllToggle) {
         window.mimic.hideAllToggle().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
