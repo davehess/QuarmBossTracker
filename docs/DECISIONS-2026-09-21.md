@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Me overlay: A, B or C** | **On beta, agent 3.7.3 (§11).** A Classic · B HUD around the screen centre (damage in/out by element, resists) · C Role, picked in its title bar. Blind Mode fixed and catalog-driven | the guild lead tests tomorrow and picks one; then graduate it and delete the other two render functions |
-| **Mob mana: drains and taps** | **Scoped 2026-09-24 (§11), not built.** Own drains exact; others' timed drains via the bystander index; instant drains/procs only where the text is unique | say go; needs a `drain` catalog field + formula check first |
+| **Mob mana drains · PvP drain tally · player level on Target Info** | **On beta, agent 3.7.4 (+ bot 3.1.147), 2026-09-24 (§11).** Server rules verified from source; high-level NPC cut applied; con phrases for blue/green are learned, not typed | test in game: a ToT on a raid mob should read −105; /consider an anonymous player for a range. Stable with the next cut |
 | **Next five from the roadmap** | **Proposed 2026-09-24 (§11):** debuffs by spawn id · mez owner + timer · same-name tracking by spawn id · charm credit by `pet_id` · one archive entry per fight | the guild lead picks order |
 | **Deathrolls** | **Recording + Discord post LIVE with bot 3.1.142 (§10).** Display option A shipped to beta (agent 3.7.1: one line in the Rolls card and the Command Center, whose turn while live). /fun card **graduated to production 2026-09-24 (web 1.8.1)** at the guild lead's word. Tonight's first game backfilled as a record (not posted) | the Mimic display rides the next stable cut; nothing else |
 | **Extended Target: a `tags:` row piled up tags on mobs already dead** | **FIXED bot 3.1.143 (2026-09-24).** The guild lead picked option 1 (each distinct tag once; option 2, a 2-min expiry for unmatched tags, not taken) plus the spawn-id matching: `_extPlaceTags` now puts a tag on the row whose raiders' Zeal reports its spawn id | nothing. Tags still live 10 min after death; if one stale chip still bothers anyone, option 2 is the next step |
@@ -611,6 +611,24 @@ not on the pipe either). What CAN work: a "you drained N from them this fight"
 tally for your OWN drains (the cast names the spell; full strength on players),
 shown as an upper bound because the server only takes what they have. /who
 class says whether there is anything to take (no-mana classes and bards: none).
+
+**Built the same day (agent 3.7.4 on beta, catalog `drain` in bot 3.1.147).**
+The guild lead: *"go on the mob version, and yes to the PvP tally. add in class
+and level from /who data for target overlay for players … capturing exact
+level from even con or /who, or a range from con and anon."*
+- Mob drains follow the rules above, including the high-level cut; timed ticks
+  count to the nearest whole tick (the server's tick phase is unseen). The
+  ledger now dies with its mob and evicts idle entries — the reset bug found in
+  scoping is fixed.
+- Target Info for a player: class and level from live /who → raid roster →
+  /who history; when anonymous, a /consider gives the exact level on an even
+  con and a RANGE otherwise, by the server's `Mob::GetLevelCon` table
+  (mirrored exactly). Only three con phrases are typed in (red, yellow, white —
+  documented by ZAM and the Project 1999 wiki); the blue/green phrases vary by
+  level bracket and the references disagree, so the agent **learns** them from
+  considers of targets whose level it already knows, and keeps what it learns
+  in `logsync.con-phrases.json`. Until a phrase is learned, that consider gives
+  no range rather than a guessed one.
 
 **The next five** (from the roadmap review — 13 roadmap votes from 3 voters,
 so votes break ties, they don't set order; 20 of 30 active players now send
