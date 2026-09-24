@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted.** Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
+| **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
@@ -952,3 +952,80 @@ only draw one of its own. Practical options:
    UI state to its pipe — without it Mimic cannot tell F10 is on.
 Unverified: that the game's own cursor-draw call sits behind the same UI-state
 check. That needs a disassembly from a local session.
+
+## 14. Laya assessed as a Jev alternative — not adopted (2026-09-24)
+
+The guild lead: *"Evaluate this Jev alternative https://github.com/NandhaKishorM/laya"*.
+Read from the source, cloned at `970dc8c` (v0.3.20). The repo was created
+2026-09-18 and had 276 commits by then. Checked against the §6 plugin
+(`tamaratran/fast-jev-compaction` at `e3f262a`).
+
+**What it is.** Laya is not a compaction tool. It is an open-weights
+replacement for Jev, the *model*: typed `choice` / `score` / `noul` decisions
+from an encoder in one forward pass. Three checkpoints (ModernBERT-large 421M
+and mmBERT-base 322M), Apache-2.0, run locally on torch + transformers.
+`laya-serve` speaks Jev's own `/v1/systemone` wire protocol, so a Jev client
+can point at it.
+
+**Why that matters here.** §6's blocker was privacy: the plugin sends every
+message and every tool input to `api.typesafe.ai`. A local Laya server would
+keep all of that on the machine. That part is real.
+
+**Why it still does not work as a drop-in — each point read from the code:**
+1. **The plugin cannot be pointed at it without a fork.** The library takes a
+   `baseUrl`, but the Claude Code hook calls `buildJevRequest({ apiKey, model })`
+   with no URL (`hooks/fast-jev.ts` `jevAsker`). The plugin settings have no URL
+   field either. It always calls `https://api.typesafe.ai/v1/systemone`.
+2. **The defaults are rejected outright.** The plugin sends up to 25,000 tokens
+   of state (about 100k characters). `laya-serve` refuses more than 50,000
+   characters (`MAX_STATE_CHARS`, HTTP 413). A batch of about 40 calls also
+   comes to about 80 questions against `MAX_QUESTIONS = 64`. The plugin treats
+   any error as failure and falls back to the built-in summary, so it would
+   silently never work.
+3. **Laya would not see the calls it is asked about.** `laya-serve` passes no
+   `max_len`, so each request is cut to the checkpoint default: 512 tokens for
+   English, 1,024 for multilingual. It keeps the *start* of the state (`truncate_left`
+   is only set for list states), and the plugin's state is an object: the task
+   text, the last three prompts, then the history oldest-first. So almost every
+   "should call N stay" question would be answered from the same first few
+   hundred tokens, before any of the calls.
+4. **Even at its longest, it cannot hold the history the plugin sends.**
+   `laya-multilingual` goes to 8,192 tokens, and by its own measurements is
+   16–18 of 20 correct up to about 4,000 tokens and 8–17 of 20 beyond. The
+   plugin wants 25,000.
+5. **Nobody has measured it on this task.** Laya was trained and benchmarked
+   on support triage, phishing, moderation, retrieval relevance and routing,
+   not on "is this tool output still needed". Zero-shot, the base English
+   checkpoint scores 0.362 on Laya's own typed-decisions benchmark, against
+   0.766 fine-tuned. The Laya-vs-Jev charts use Jev numbers published by a
+   third party, which Laya never ran (its `BENCHMARKS.md` says so).
+6. **A wrong answer does not fail safe.** The plugin falls back only on errors.
+   A confident wrong "drop" deletes context the session still needed, and it
+   only shows up later, as re-reading or as a decision made without it.
+
+**Cost, in the four numbers, for the smallest version that could work** — fork
+the plugin to add a URL, patch `laya-serve` to pass `max_len=8192`, and shrink
+the plugin's state budget to about 6k tokens:
+- **build** M — two forks, plus a small labelled set of our own compactions to
+  check the answers against. Without that set, nobody would know whether it
+  works.
+- **maintenance** ⚠ high — a six-day-old project with 23 tagged releases so far,
+  two forks to keep rebased, and `torch` + `transformers` 5.x.
+- **runtime** ⚠ high, and it lands exactly when the session is stalled waiting to
+  compact. Each question re-encodes the whole state, so the cost is questions ×
+  state length. Laya's own figure is about 1.7 s for a 4,000-token input on an
+  Apple GPU, and a compaction asks tens of questions. On a cloud container
+  there is also a CPU-only install of a few GB of dependencies and weights on
+  every fresh session, against the disk allowance.
+- **change** low — it can be removed, and failures fall back to the built-in
+  summary.
+
+**§6's other finding still stands.** Our compaction pain is cross-session, and
+this, like Jev, only helps within one session. The committed docs are the fix
+that survives.
+
+**Recommendation: do not adopt.** Watch it: a Laya checkpoint fine-tuned on
+keep/drop decisions, served with a real context length, would answer §6's
+privacy objection properly. The fastest honest test is a desktop session
+running `laya-serve` with `max_len=8192` against about 20 compactions we label
+by hand. Clones for re-reading: the session scratchpad (not committed).
