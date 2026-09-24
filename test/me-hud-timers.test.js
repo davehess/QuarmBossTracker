@@ -277,27 +277,40 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     expect(h._serializeMeState().cooldowns.map(c => c.key)).toEqual(['ability', 'mend', 'fd', 'taunt']);
   });
 
-  it('a failed feign starts Feign Death at 8 s (9 − 1; Rapid Feign would cut it, so est)', () => {
-    const h = load({ zeal: zeal('Monk') });
+  // The client's button timer: 10 s, cut 10/25/50% by Rapid Feign — and the
+  // guild lead's 3/3 monk sees 5 s. Rapid Feign unlocks at 59, so 59+ is 3/3.
+  const monk60 = (extra = {}) => ({ Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Monk' }], gauges: [], updatedAt: clock, ...extra } });
+
+  it('a failed feign starts Feign Death: 5 s for a monk of 59+ (Rapid Feign 3/3), marked est', () => {
+    const h = load({ zeal: monk60() });
     say(h, 'Aldenmar', 'You have fallen to the ground.');
     const fd = cd(h, 'fd');
     expect(fd.seen).toBe(true);
-    expect(fd.total_ms).toBe(8000);
-    expect(fd.ms_left).toBe(8000);
+    expect(fd.total_ms).toBe(5000);
+    expect(fd.ms_left).toBe(5000);
     expect(fd.est).toBe(true);
   });
 
+  it('…and the full 10 s below 59, where Rapid Feign cannot be trained (or level unknown)', () => {
+    const low = load({ zeal: { Aldenmar: { charInfo: [{ id: 2, value: '58' }, { id: 3, value: 'Monk' }], gauges: [], updatedAt: clock } } });
+    say(low, 'Aldenmar', 'You have fallen to the ground.');
+    expect(cd(low, 'fd').total_ms).toBe(10_000);
+    const unknown = load({ zeal: zeal('Monk') });
+    say(unknown, 'Aldenmar', 'You have fallen to the ground.');
+    expect(cd(unknown, 'fd').total_ms).toBe(10_000);
+  });
+
   it('`/pipe fd` on the hotkey starts it at the press — Mimic\'s receive time', () => {
-    const h = load({ zeal: zeal('Monk', { custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
-    expect(cd(h, 'fd').ms_left).toBe(5000);
+    const h = load({ zeal: monk60({ custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
+    expect(cd(h, 'fd').ms_left).toBe(2000);
   });
 
   it('reads each /pipe line once — an old line still in the ring never drags a newer start back', () => {
-    const h = load({ zeal: zeal('Monk', { custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
-    expect(cd(h, 'fd').ms_left).toBe(5000);
+    const h = load({ zeal: monk60({ custom_recent: [{ at: clock - 3000, text: 'fd' }] }) });
+    expect(cd(h, 'fd').ms_left).toBe(2000);
     clock += 9000;
     say(h, 'Aldenmar', 'You have fallen to the ground.');   // a newer feign
-    expect(cd(h, 'fd').ms_left).toBe(8000);
+    expect(cd(h, 'fd').ms_left).toBe(5000);
   });
 
   it('/pipe words for the others too, and unrelated /pipe text is ignored', () => {

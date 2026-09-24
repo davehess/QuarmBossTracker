@@ -12609,16 +12609,23 @@ const _ME_ABILITIES = {
 const _ME_ABILITY_RX = /^You (?:try to )?(flying kick|round kick|dragon punch|eagle strike|tiger claw|backstab|kick|bash)\b/;
 // Skills with a timer of their own, and the server line that starts each
 // (zone/string_ids.h; reuse from common/features.h, started at reuse − 1).
-// `est` where an AA shortens the real timer and we cannot see the AA: Rapid
-// Feign (FD 8 s → 7/6/3), Fervent Blessing / Touch of the Wicked (LoH / HT
-// 72 min, −12 min a rank; zone/spells.cpp).
+// `est` where an AA shortens the real timer and we cannot see the AA:
+// Fervent Blessing / Touch of the Wicked (LoH / HT 72 min, −12 min a rank;
+// zone/spells.cpp), and Rapid Feign below.
 // ⚠ A SUCCESSFUL Feign Death prints nothing for you — only the failure line
 // does ("You have fallen to the ground."). The exact moment comes from a
 // `/pipe fd` line on the Feign Death hotkey (see _meNotePipeCooldowns).
+// ⚠ Feign Death's length is the CLIENT's button timer, not the server's: the
+// in-game Rapid Feign text reads "reduces your reuse time on feign death by
+// 10, 25, and 50 percent", and at 3/3 the guild lead's monk gets 5 s (2026-09-24)
+// — so a 10 s base. (The server's own timer, 9 − 1 s cut to 3 s at 3/3, is
+// shorter than the button and never the limit.) The pipe does not carry AA
+// ranks; Rapid Feign unlocks at 59, so a monk 59+ is taken as 3/3 — see
+// _meSkillSecs.
 const _ME_SKILL_LINES = [
   { key: 'mend',  label: 'Mend',         secs: 289,  est: false, rx: /^You (?:magically mend your wounds|mend your wounds|have worsened your wounds|have failed to mend your wounds)/ },
   { key: 'taunt', label: 'Taunt',        secs: 5,    est: false, rx: /^You taunt .+ to ignore others and attack you!/ },
-  { key: 'fd',    label: 'Feign Death',  secs: 8,    est: true,  rx: /^You (?:have fallen to the ground|feign death)\./ },
+  { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You (?:have fallen to the ground|feign death)\./ },
   { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
   { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
 ];
@@ -12635,12 +12642,20 @@ const _ME_CLASS_CDS = {
 };
 const _meAbility = new Map();    // charLower → { name, base, at, gaps }
 const _meSkillCds = new Map();   // charLower → Map(key → { label, at, secs, est })
+// A skill's reuse for THIS character. Only Feign Death varies: 10 s, or 5 s
+// for a monk of 59+ (Rapid Feign 3/3 assumed — see above).
+function _meSkillSecs(cl, s) {
+  if (s.key !== 'fd') return s.secs;
+  const zst = _meZealFor(cl);
+  const level = zst ? _meNum(_meLabel(zst, 2)) : null;
+  return level != null && level >= 59 ? 5 : s.secs;
+}
 function _meStartSkill(cl, key, atMs) {
   const s = _ME_SKILL_BY_KEY.get(key);
   if (!s) return;
   let mp = _meSkillCds.get(cl);
   if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
-  mp.set(key, { label: s.label, at: atMs, secs: s.secs, est: s.est });
+  mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
 }
 // `/pipe <word>` from a hotkey: the exact press, for the timers the log cannot
 // see (a successful Feign Death above all — the guild lead offered the /pipe line
