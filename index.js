@@ -11334,6 +11334,70 @@ async function _announceMimic271Once() {
   }, 5 * 60_000);
 }
 
+// ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────
+// The guild lead: "post the inventory change to Wlfpck-general channel." Web
+// 1.8.8 split the one "Quests: public" switch into "Quest page" and "Inventory
+// page", and turned inventory private for the characters that had the old
+// switch on. Same one-post-ever latch as the 2.7.1 card; names and pings nobody.
+const _INVSPLIT_KV_KEY = 'announce_inventory_split_general';
+const _WLFPCK_GENERAL_ID = '1210572328589721660';   // #wlfpck-general (documented in .env.example)
+function _invSplitEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x56d364)
+    .setTitle('🔒 Your quest page and your inventory are shared separately now')
+    .setDescription([
+      'Each character on wolfpack.quest/me now has two switches:',
+      '',
+      '- **Quest page** — members see your quest progress, keys and completed quests.',
+      '- **Inventory page** — members see your bags, bank and spellbook.',
+      '',
+      'The old **Quests: public** switch also shared your inventory and spellbook without saying so. If you had it on, your quest page is still public and your inventory is now private. Want your inventory shared? Turn **Inventory page** back on at wolfpack.quest/me.',
+      '',
+      'What we collect and who can see it: wolfpack.quest/privacy',
+    ].join('\n'))
+    .setFooter({ text: 'Web 1.8.8 · one-time announcement' });
+}
+async function _announceInventorySplitOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_INVSPLIT_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[inv-split-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+  let ch = g?.channels?.cache?.find(c => c?.name === 'wlfpck-general' && typeof c.send === 'function') || null;
+  if (!ch) ch = await client.channels.fetch(_WLFPCK_GENERAL_ID).catch(() => null);
+  if (!ch || typeof ch.send !== 'function') { console.log('[inv-split-announce] no #wlfpck-general channel found — will retry'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_invSplitEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[inv-split-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _INVSPLIT_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[inv-split-announce] posted to #wlfpck-general:', posted.id);
+  return 'posted';
+}
+// 90 s after boot (the guild cache is warm by then), then every 5 minutes until
+// it has posted or finds it already had, for up to 2 hours.
+{
+  let tries = 0, t = null;
+  const attempt = () => _announceInventorySplitOnce()
+    .then(r => { if ((r === 'posted' || r === 'latched') && t) { clearInterval(t); t = null; } return r; })
+    .catch(err => console.warn('[inv-split-announce]', err?.message));
+  setTimeout(() => {
+    attempt().then(r => {
+      if (r === 'posted' || r === 'latched') return;
+      t = setInterval(() => { if (++tries > 24) { clearInterval(t); t = null; return; } attempt(); }, 5 * 60_000);
+    });
+  }, 90_000);
+}
+
 // One-shot: rename the ALREADY-POSTED v2.0.0 stable release card (it went out
 // reading "Full Cry" before the rename; the stable announcer stores no message
 // id, so find-and-edit). Latches in bot_kv once the card is edited — or once a
