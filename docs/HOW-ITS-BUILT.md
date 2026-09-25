@@ -2959,6 +2959,16 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   release list (`web/lib/linuxRelease.ts`, up to 5 × 100) — it used to read only
   the newest 30 and fell back to the releases page once Windows betas buried the
   Linux build. Tests: `test/linux-release-link.test.js`.
+- **HUD: hit numbers inside or outside the ring (Mimic 2.7.2 beta, 2026-09-25)**
+  — `apps/mimic/me.html`: builder part `hitsSide` (`HUD_PARTS` → Hits);
+  `_lanesOut` / `laneOutR()` / `flushRight()` mirror `laneSpan` and `flushX`;
+  `hudWidthFactor()` + `reshapeForHits()` widen the window by `LANE_EXT` a side
+  (also with the builder open, and on a character switch). Tests:
+  `test/me-overlay.test.js` ("numbers outside the ring").
+- **One-time Discord posts** — pattern: a function in `index.js` latched in
+  `bot_kv` (`kvLatch.shouldRunOnce`, fail-closed), e.g. `_announceMimic271Once`
+  (#raid-chat) and `_announceInventorySplitOnce` (#wlfpck-general). Tests
+  `test/announce-*.test.js` run the real function against fakes.
 - **DPS meter header: stacked controls (Mimic 2.7.2 beta, 2026-09-25)** —
   `apps/mimic/overlay.html` `.title`: the `#copyRs` /rs copy is a bare 📋 (✓
   after a copy); `.ctlstack` = the − N + `.rowcfg` over `#tabHist`; `.tabstack`
