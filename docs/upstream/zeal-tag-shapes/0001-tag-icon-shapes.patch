@@ -1,67 +1,73 @@
-From fefa1c0e47baf301a6d6162d8c98256d8dd4146a Mon Sep 17 00:00:00 2001
+From b83036b117a1428fa150089222ef694c54f79ae8 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 25 Sep 2026 13:35:57 +0000
-Subject: [PATCH] Add six icon shapes for /tag: skull, X, sword, diamond,
- flame, star
+Subject: [PATCH] Add icon shapes and numbered badges 1-12 for /tag
 
 Tags can show a colored arrow, the stop sign or the paw today. Raid
-marking wants a few more distinct symbols, the familiar skull / X /
-sword / diamond / flame / star set, so a caller can say "kill skull,
-sheep diamond" and everyone sees a different shape.
+marking wants more distinct symbols: the familiar skull / X / sword /
+diamond / flame / star set, and numbers for kill or crowd-control order,
+so a caller can say "kill skull, then 3" and everyone sees it.
 
-- New shape keys 1 to 6 after '^' (skull, red X, gold sword, blue
-  diamond, green flame, purple star), each with its own fixed color like
-  the paw and stop sign. Older clients ignore an unknown key, so they
-  still show the tag text, just without the shape.
-- tag_shapes.cpp/.h (new): the geometry, with no DirectX dependency.
-  Every shape is built from flat parts extruded to the same thickness as
-  the octagon and paw. Each part is convex (or star-shaped about its
-  center) so it triangulates as a simple fan; concave outlines come from
-  overlapping parts, and detail (eye sockets, nose, teeth, the sword's
-  fuller, the diamond's facet, the flame's core, the star's inner star)
-  is a part standing slightly proud of both faces in a dark or light
-  accent tone. No textures and no concave triangulation.
+- Icon keys after '^': K skull, X red X, A gold sword, D blue diamond,
+  F green flame, T purple star, L wolf's head (the one free letter in
+  "wolf"). They avoid R/O/Y/G/B/W/P/S on purpose: an
+  older client reads only the first key character, so a free letter shows
+  the text with no shape rather than a different, wrong one.
+- Numbered badges ^1^ to ^12^: a white disc with block digits. "^10^" to
+  "^12^" are read as two-digit keys (only when both characters are digits
+  and a '^' follows, so no existing prefix changes meaning). The digits sit
+  on each face separately, the back copy mirrored, so a badge reads
+  correctly from either side.
+- tag_shapes.cpp/.h (new): the geometry, with no DirectX dependency. Every
+  shape is flat parts extruded to the same thickness as the octagon and
+  paw; each part is convex (or star-shaped about its center) so it
+  triangulates as a simple fan. Concave outlines come from overlapping
+  parts, and detail (eye sockets, teeth, the sword's fuller, the diamond's
+  facet, digits) is a part standing slightly proud of the face in a dark,
+  light or contrasting accent tone. No textures, no concave triangulation.
 - TagArrows builds the meshes at startup, colors them with the existing
-  face gradients plus the two accent tones, and sizes the vertex buffer
-  to hold every shape at once alongside the arrow color cache.
+  face gradients plus the accent tones, and sizes the vertex buffer to
+  hold every shape at once alongside the arrow color cache.
 - The shape is now picked from the tag's own color rather than after a
   nameplate color is substituted, so a nameplate color can no longer
   collide with a shape's color.
 - Prettyprint, the target tooltip and /tag help name the new shapes.
-- README: the new keys and an example.
+- README: the new keys and examples.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- README.md                 |   3 +
+ README.md                 |   5 +
  Zeal/Zeal.vcxproj         |   2 +
- Zeal/Zeal.vcxproj.filters |   6 ++
- Zeal/nameplate.cpp        |  66 +++++++++++-
- Zeal/tag_arrows.cpp       |  71 ++++++++++++-
- Zeal/tag_arrows.h         |  20 ++++
- Zeal/tag_shapes.cpp       | 206 ++++++++++++++++++++++++++++++++++++++
- Zeal/tag_shapes.h         |  50 +++++++++
- 8 files changed, 419 insertions(+), 5 deletions(-)
+ Zeal/Zeal.vcxproj.filters |   6 +
+ Zeal/nameplate.cpp        | 135 +++++++++++++++--
+ Zeal/tag_arrows.cpp       |  71 ++++++++-
+ Zeal/tag_arrows.h         |  23 +++
+ Zeal/tag_shapes.cpp       | 298 ++++++++++++++++++++++++++++++++++++++
+ Zeal/tag_shapes.h         |  56 +++++++
+ 8 files changed, 581 insertions(+), 15 deletions(-)
  create mode 100644 Zeal/tag_shapes.cpp
  create mode 100644 Zeal/tag_shapes.h
 
 diff --git a/README.md b/README.md
-index c4bd3a9..71f8de5 100644
+index c4bd3a9..9c282b2 100644
 --- a/README.md
 +++ b/README.md
-@@ -693,6 +693,8 @@ Manual editing of the ini file is required to copy from old section to the new s
+@@ -693,6 +693,9 @@ Manual editing of the ini file is required to copy from old section to the new s
        - Colored arrow: (`R` = red, `O` = orange, `Y` = yellow, `G` = green, `B` = blue, `W` = white)
        - Green pet paw symbol: `P`
        - Red stop sign (octagon): `S`
-+      - Icon shapes: `1` = skull, `2` = red X, `3` = gold sword, `4` = blue diamond, `5` = green flame,
-+        `6` = purple star
++      - Icon shapes: `K` = skull, `X` = red X, `A` = gold sword, `D` = blue diamond, `F` = green flame,
++        `T` = purple star, `L` = wolf
++      - Numbered badges: `1` to `12` (e.g. `^7^`, `^12^`), readable from either side
        - Clear any existing shape: `-`
  - Tags can be cleared with:
    - `/tag clear`: Clears tag from current target if there is a target else all tags
-@@ -723,6 +725,7 @@ Manual editing of the ini file is required to copy from old section to the new s
+@@ -723,6 +726,8 @@ Manual editing of the ini file is required to copy from old section to the new s
    - `/tag rsay Assist me` broadcasts a raid-wide tag that sets 'Assist Me'
    - `/tag rsay +TASH` appends ' | TASH' to the tag text (does not affect explicit shape)
    - `/tag rsay ^p^` adds an explicit paw shape above the target for all raid members
-+  - `/tag rsay ^1^Kill first` adds a skull above the target with the text 'Kill first'
++  - `/tag rsay ^k^Kill first` adds a skull above the target with the text 'Kill first'
++  - `/tag rsay ^3^` adds a numbered badge 3 above the target (e.g. a kill or crowd-control order)
    - `/tag rsay -` clears text but leaves shape if explicitly set
    - `/tag rsay ^-^` leaves text but clears the shape
    - `/tag rsay +^Y^OFFTANK` appends ' | OFFTANK' to the tag text and adds explicit yellow arrow shape
@@ -110,31 +116,70 @@ index eda60ee..701987f 100644
        <Filter>Source Files</Filter>
      </ClCompile>
 diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
-index 030a79f..4503a90 100644
+index 030a79f..d0ac21c 100644
 --- a/Zeal/nameplate.cpp
 +++ b/Zeal/nameplate.cpp
-@@ -37,6 +37,12 @@ enum TagArrowColor : DWORD {
+@@ -37,6 +37,13 @@ enum TagArrowColor : DWORD {
    Nameplate = 1,
    Paw = D3DCOLOR_XRGB(0x20, 0xc0, 0x20),       // Ensure this is unique.
    StopSign = D3DCOLOR_XRGB(0xf0, 0x00, 0x00),  // Ensure this is unique.
-+  Skull = D3DCOLOR_XRGB(0xe8, 0xe2, 0xd1),     // Icon shapes (keys 1 to 6): ensure these are unique too.
++  Skull = D3DCOLOR_XRGB(0xe8, 0xe2, 0xd1),     // Icon shapes (keys K X A D F T L): ensure these are unique too.
 +  Cross = D3DCOLOR_XRGB(0xe8, 0x1c, 0x1c),
 +  Sword = D3DCOLOR_XRGB(0xf2, 0xc0, 0x2a),
 +  Diamond = D3DCOLOR_XRGB(0x2e, 0x8c, 0xf5),
 +  Flame = D3DCOLOR_XRGB(0x3c, 0xd8, 0x3c),
 +  Star = D3DCOLOR_XRGB(0xb5, 0x5c, 0xf2),
++  Wolf = D3DCOLOR_XRGB(0xdc, 0xe2, 0xea),
    Red = D3DCOLOR_XRGB(0xff, 0, 0),
    Orange = D3DCOLOR_XRGB(0xff, 0x80, 0),
    Yellow = D3DCOLOR_XRGB(0xff, 0xff, 0),
-@@ -45,6 +51,34 @@ enum TagArrowColor : DWORD {
+@@ -45,6 +52,74 @@ enum TagArrowColor : DWORD {
    White = D3DCOLOR_XRGB(0xff, 0xff, 0xff),
  };
  
-+// Names of the icon shapes for tag keys '1' to '6'.
-+static constexpr const char *kIconShapeNames[] = {"Skull", "X", "Sword", "Diamond", "Flame", "Star"};
++// Numbered badges ^1^ to ^12^ all look alike (a white badge). The shape is looked up from the tag color,
++// so each number's color differs in the low bits of blue only, which keeps every key's value unique.
++static constexpr DWORD kNumberColorBase = D3DCOLOR_XRGB(0xf0, 0xf0, 0xf0);
++static constexpr int kMaxTagNumber = 12;
++static constexpr const char *kNumberNames[kMaxTagNumber] = {"#1", "#2", "#3", "#4",  "#5",  "#6",
++                                                            "#7", "#8", "#9", "#10", "#11", "#12"};
++
++static DWORD GetNumberColor(int number) { return kNumberColorBase + number; }
++
++// Returns the badge number (1 to 12) of a tag color, else 0.
++static int GetTagNumber(DWORD tag_color) {
++  if (tag_color <= kNumberColorBase || tag_color > kNumberColorBase + kMaxTagNumber) return 0;
++  return static_cast<int>(tag_color - kNumberColorBase);
++}
++
++// Display name of an icon or numbered shape (nullptr for the arrows, paw and stop sign).
++static const char *GetShapeName(DWORD tag_color) {
++  if (int number = GetTagNumber(tag_color)) return kNumberNames[number - 1];
++  switch (tag_color) {
++    case TagArrowColor::Skull:
++      return "Skull";
++    case TagArrowColor::Cross:
++      return "X";
++    case TagArrowColor::Sword:
++      return "Sword";
++    case TagArrowColor::Diamond:
++      return "Diamond";
++    case TagArrowColor::Flame:
++      return "Flame";
++    case TagArrowColor::Star:
++      return "Star";
++    case TagArrowColor::Wolf:
++      return "Wolf";
++    default:
++      break;
++  }
++  return nullptr;
++}
 +
 +// The shape drawn for an explicit tag color (plain colors draw an arrow).
 +static TagArrows::Shape GetTagShape(DWORD tag_color) {
++  if (int number = GetTagNumber(tag_color))
++    return static_cast<TagArrows::Shape>(static_cast<int>(TagArrows::Shape::Number1) + number - 1);
 +  switch (tag_color) {
 +    case TagArrowColor::Paw:
 +      return TagArrows::Shape::Paw;
@@ -152,6 +197,8 @@ index 030a79f..4503a90 100644
 +      return TagArrows::Shape::Flame;
 +    case TagArrowColor::Star:
 +      return TagArrows::Shape::Star;
++    case TagArrowColor::Wolf:
++      return TagArrows::Shape::Wolf;
 +    default:
 +      break;
 +  }
@@ -161,7 +208,7 @@ index 030a79f..4503a90 100644
  static float z_position_offset = 1.5f;  // Static global to allow parse overrides during evaluation.
  
  static void ChangeDagStringSprite(Zeal::GameStructures::GAMEDAGINFO *dag, int fontTexture, const char *str) {
-@@ -418,9 +452,7 @@ void NamePlate::render_ui() {
+@@ -418,9 +493,7 @@ void NamePlate::render_ui() {
      // If an explicit tag color was set, use that color otherwise use the nameplate color.
      if (!is_corpse && info.tag_color != TagArrowColor::Off) {
        auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
@@ -172,64 +219,108 @@ index 030a79f..4503a90 100644
        position.z += sprite_font->get_text_height(full_text) + 1.5f;
        float bearing = (shape == TagArrows::Shape::Arrow) ? 0.0f : get_bearing(self, entity);
        tag_arrows->QueueTagShape(position, tag_color, shape, bearing);
-@@ -982,6 +1014,8 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+@@ -982,15 +1055,33 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
    Zeal::Game::print_chat("Usage: /tag target <text_to_match>");
    Zeal::Game::print_chat("Usage: /tag <gsay | rsay | chat> local> <message | clear | channel>");
    Zeal::Game::print_chat("Usage: <message> prefixes: '+' to append, '^R^' or '*R:' for color arrow (R, O, Y, G, B, W)");
 +  Zeal::Game::print_chat(
-+      "Usage: shapes in place of the color: P paw, S stop, 1 skull, 2 X, 3 sword, 4 diamond, 5 flame, 6 star");
++      "Usage: shapes in place of the color: P paw, S stop, K skull, X x, A sword, D diamond, F flame, T star, "
++      "L wolf");
++  Zeal::Game::print_chat("Usage: numbered badges in place of the color: 1 to 12 (like '^7^' or '^12^')");
    Zeal::Game::print_chat("Example: /tag rsay Assist me");
    Zeal::Game::print_chat("Example: /tag gsay Off tank");
    Zeal::Game::print_chat("Example: /tag gsay clear (broadcasts a clear all tags)");
-@@ -1008,6 +1042,18 @@ static D3DCOLOR GetTagArrowColor(char color_key) {
+   return;
+ }
+ 
+-// Returns a RGB color based on the color_key (else TagArrowColor::Off if no match).
+-static D3DCOLOR GetTagArrowColor(char color_key) {
+-  color_key = std::tolower(color_key);
++// Returns the key of a "^key^" prefix (text starts with '^'): two digits for "^10^" to "^12^", else the
++// single character after the '^'.
++static std::string ReadTagKey(const std::string &text) {
++  bool two_digits = text.size() > 3 && std::isdigit(static_cast<unsigned char>(text[1])) &&
++                    std::isdigit(static_cast<unsigned char>(text[2])) && text[3] == '^';
++  return text.substr(1, two_digits ? 2 : 1);
++}
++
++// Returns a RGB color based on the key (else TagArrowColor::Off if no match).
++static D3DCOLOR GetTagArrowColor(const std::string &key) {
++  if (key.empty()) return TagArrowColor::Off;
++  if (std::isdigit(static_cast<unsigned char>(key[0]))) {  // Numbered badge.
++    int number = 0;
++    for (char c : key) number = number * 10 + (c - '0');
++    return (number >= 1 && number <= kMaxTagNumber) ? GetNumberColor(number) : TagArrowColor::Off;
++  }
++  char color_key = std::tolower(key[0]);
+   switch (color_key) {
+     case 'r':
+       return TagArrowColor::Red;
+@@ -1008,6 +1099,20 @@ static D3DCOLOR GetTagArrowColor(char color_key) {
        return TagArrowColor::Paw;
      case 's':
        return TagArrowColor::StopSign;
-+    case '1':
++    case 'k':
 +      return TagArrowColor::Skull;
-+    case '2':
++    case 'x':
 +      return TagArrowColor::Cross;
-+    case '3':
++    case 'a':
 +      return TagArrowColor::Sword;
-+    case '4':
++    case 'd':
 +      return TagArrowColor::Diamond;
-+    case '5':
++    case 'f':
 +      return TagArrowColor::Flame;
-+    case '6':
++    case 't':
 +      return TagArrowColor::Star;
++    case 'l':
++      return TagArrowColor::Wolf;
      default:
        break;
    }
-@@ -1271,6 +1317,8 @@ static std::string prettyprint_tag_message(const std::string &msg) {
+@@ -1099,8 +1204,9 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+   // The tag arrow is either enabled explicitly with a specific color (which must be disabled explicitly)
+   // or enabled by default on a NPC if there is any tag text (can suppress with ^-^).
+   if (tag_text.size() > 2 && tag_text[0] == '^') {
+-    it->second.tag_color = GetTagArrowColor(tag_text[1]);
+-    tag_text = tag_text.substr(2);
++    const std::string key = ReadTagKey(tag_text);
++    it->second.tag_color = GetTagArrowColor(key);
++    tag_text = tag_text.substr(1 + key.size());
+   } else if (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) {
+     bool disable_arrow = !setting_tag_default_arrow.get() || entity->Type != Zeal::GameEnums::NPC ||
+                          (tag_text.empty() && it->second.tag_text.empty());
+@@ -1267,13 +1373,17 @@ static std::string prettyprint_tag_message(const std::string &msg) {
+   }
+ 
+   if (text.size() > 2 && text[0] == '^') {
+-    if (text[1] == 's' || text[1] == 'S')
++    const std::string key = ReadTagKey(text);
++    const char *shape_name = GetShapeName(GetTagArrowColor(key));
++    if (key == "s" || key == "S")
        prefix += "Stop";
-     else if (text[1] == 'p' || text[1] == 'P')
+-    else if (text[1] == 'p' || text[1] == 'P')
++    else if (key == "p" || key == "P")
        prefix += "Paw";
-+    else if (text[1] >= '1' && text[1] <= '6')
-+      prefix += kIconShapeNames[text[1] - '1'];
++    else if (shape_name)
++      prefix += shape_name;
      else
-       prefix += std::string("Arrow:") + text[1];
-     text = text.substr(2);
-@@ -1360,6 +1408,18 @@ static const char *get_tag_color_description(DWORD color) {
-       return "Paw";
+-      prefix += std::string("Arrow:") + text[1];
+-    text = text.substr(2);
++      prefix += "Arrow:" + key;
++    text = text.substr(1 + key.size());
+   }
+ 
+   // Prefix ends with a ^ if one exists. Adding this search here to try and support
+@@ -1361,6 +1471,7 @@ static const char *get_tag_color_description(DWORD color) {
      case TagArrowColor::StopSign:
        return "Stop";
-+    case TagArrowColor::Skull:
-+      return kIconShapeNames[0];
-+    case TagArrowColor::Cross:
-+      return kIconShapeNames[1];
-+    case TagArrowColor::Sword:
-+      return kIconShapeNames[2];
-+    case TagArrowColor::Diamond:
-+      return kIconShapeNames[3];
-+    case TagArrowColor::Flame:
-+      return kIconShapeNames[4];
-+    case TagArrowColor::Star:
-+      return kIconShapeNames[5];
      default:
++      if (const char *name = GetShapeName(color)) return name;
        break;
    }
+   return "Unknown";
 diff --git a/Zeal/tag_arrows.cpp b/Zeal/tag_arrows.cpp
-index fde0949..4e13d62 100644
+index fde0949..e96721f 100644
 --- a/Zeal/tag_arrows.cpp
 +++ b/Zeal/tag_arrows.cpp
 @@ -157,7 +157,7 @@ void TagArrows::FlushQueueToScreen() {
@@ -241,21 +332,16 @@ index fde0949..4e13d62 100644
                                           ArrowVertex::kFvfCode, D3DPOOL_DEFAULT, &vertex_buffer))) {
        vertex_buffer = nullptr;  // Ensure nullptr.
        Release();                // Do a full cleanup.
-@@ -240,6 +240,13 @@ TagArrows::RenderInfo TagArrows::GetRenderInfo(const Arrow &tag) {
-       return AllocateOctagon(tag);
+@@ -241,7 +241,7 @@ TagArrows::RenderInfo TagArrows::GetRenderInfo(const Arrow &tag) {
      case Shape::Paw:
        return AllocatePaw(tag);
-+    case Shape::Skull:
-+    case Shape::Cross:
-+    case Shape::Sword:
-+    case Shape::Diamond:
-+    case Shape::Flame:
-+    case Shape::Star:
-+      return AllocateIconShape(tag);
      default:
-       return RenderInfo();
+-      return RenderInfo();
++      return AllocateIconShape(tag);  // Icon shapes and numbered badges (range checked there).
    }
-@@ -252,7 +259,7 @@ int TagArrows::AppendVertices(std::vector<ArrowVertex> &vertices) {
+ }
+ 
+@@ -252,7 +252,7 @@ int TagArrows::AppendVertices(std::vector<ArrowVertex> &vertices) {
      start_vertex_index = render_infos.back().start_vertex_index + render_infos.back().num_vertices;
    }
  
@@ -264,7 +350,7 @@ index fde0949..4e13d62 100644
      start_vertex_index = 0;
      render_infos.clear();  // Flush cache.
    }
-@@ -280,6 +287,7 @@ void TagArrows::CalculateShapes() {
+@@ -280,6 +280,7 @@ void TagArrows::CalculateShapes() {
    AppendOctagonIndices();
    CalculatePawVertices();
    AppendPawIndices();
@@ -272,7 +358,7 @@ index fde0949..4e13d62 100644
  }
  
  void TagArrows::CalculateArrowVertices() {
-@@ -549,6 +557,65 @@ TagArrows::RenderInfo TagArrows::AllocatePaw(const Arrow &tag) {
+@@ -549,6 +550,70 @@ TagArrows::RenderInfo TagArrows::AllocatePaw(const Arrow &tag) {
    return render_infos.back();
  }
  
@@ -310,14 +396,19 @@ index fde0949..4e13d62 100644
 +  Gradient gradient2(tag.color, 64, min_z, max_z, 0.0f, 0.7f);
 +  Gradient light_gradient(light, 224, min_z, max_z);
 +  Gradient light_gradient2(light, 96, min_z, max_z, 0.0f, 0.7f);
++  // Contrast parts (a badge's digits) take the dark accent on a light tag color, else the light one.
++  const int luminance = static_cast<int>(
++      (((tag.color >> 16) & 0xFF) * 299 + ((tag.color >> 8) & 0xFF) * 587 + (tag.color & 0xFF) * 114) / 1000);
++  const auto contrast = (luminance > 140) ? TagShapes::Tone::Dark : TagShapes::Tone::Light;
 +
 +  std::vector<ArrowVertex> vertices;
 +  vertices.reserve(icon.mesh.vertices.size());
 +  for (const auto &vertex : icon.mesh.vertices) {
++    const auto tone = (vertex.tone == TagShapes::Tone::Contrast) ? contrast : vertex.tone;
 +    D3DCOLOR color = dark;
-+    if (vertex.tone == TagShapes::Tone::Base)
++    if (tone == TagShapes::Tone::Base)
 +      color = vertex.y < 0 ? gradient.GetColor(vertex.z) : gradient2.GetColor(vertex.z);
-+    else if (vertex.tone == TagShapes::Tone::Light)
++    else if (tone == TagShapes::Tone::Light)
 +      color = vertex.y < 0 ? light_gradient.GetColor(vertex.z) : light_gradient2.GetColor(vertex.z);
 +    vertices.push_back({.x = vertex.x, .y = vertex.y, .z = vertex.z, .color = color});
 +  }
@@ -339,7 +430,7 @@ index fde0949..4e13d62 100644
  bool TagArrows::CreateIndexBuffer() {
    if (index_buffer) return true;
 diff --git a/Zeal/tag_arrows.h b/Zeal/tag_arrows.h
-index 4f71028..63cfc1d 100644
+index 4f71028..9757464 100644
 --- a/Zeal/tag_arrows.h
 +++ b/Zeal/tag_arrows.h
 @@ -1,8 +1,10 @@
@@ -353,7 +444,7 @@ index 4f71028..63cfc1d 100644
  #include "vectors.h"
  
  // Directx 8 compatible class for rendering a 3-D shapes at specified locations.
-@@ -12,6 +14,13 @@ class TagArrows {
+@@ -12,6 +14,16 @@ class TagArrows {
      Arrow = 0,    // 3-D arrow pointing down (primary shape).
      Octagon = 1,  // 3-D extruded octagon (stop-sign) shape.
      Paw = 2,      // 3-D extruded pet paw print shape.
@@ -364,10 +455,13 @@ index 4f71028..63cfc1d 100644
 +    Diamond = 6,
 +    Flame = 7,
 +    Star = 8,
++    Wolf = 9,
++    Number1 = 10,  // Numbered badges: Number1 + (n - 1), up to Number12.
++    Number12 = 21,
    };
  
    // Vertices allow texturing and color modulation.
-@@ -67,6 +76,7 @@ class TagArrows {
+@@ -67,6 +79,7 @@ class TagArrows {
    void CalculateArrowVertices();    // Calculates the cached, fixed 3D arrow shape stored in vertices.
    void CalculateOctagonVertices();  // Calculates the cached, fixed 3D octagon shape stored in vertices.
    void CalculatePawVertices();      // Calculates the cached, fixed 3D paw shape stored in vertices.
@@ -375,7 +469,7 @@ index 4f71028..63cfc1d 100644
    bool CreateIndexBuffer();         // Populates the index_buffer LUT for mapping triangles across vertices.
    void AppendArrowIndices();
    void AppendOctagonIndices();
-@@ -76,6 +86,7 @@ class TagArrows {
+@@ -76,6 +89,7 @@ class TagArrows {
    RenderInfo AllocateArrow(const Arrow &arrow);
    RenderInfo AllocateOctagon(const Arrow &arrow);
    RenderInfo AllocatePaw(const Arrow &arrow);
@@ -383,7 +477,7 @@ index 4f71028..63cfc1d 100644
    int AppendVertices(std::vector<ArrowVertex> &vertices);
  
    IDirect3DDevice8 &device;
-@@ -99,4 +110,13 @@ class TagArrows {
+@@ -99,4 +113,13 @@ class TagArrows {
    unsigned int octagon_primitive_count = 0;
    unsigned int paw_index_start = 0;
    unsigned int paw_primitive_count = 0;
@@ -400,13 +494,14 @@ index 4f71028..63cfc1d 100644
 \ No newline at end of file
 diff --git a/Zeal/tag_shapes.cpp b/Zeal/tag_shapes.cpp
 new file mode 100644
-index 0000000..1f4816f
+index 0000000..f209fd6
 --- /dev/null
 +++ b/Zeal/tag_shapes.cpp
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,298 @@
 +#include "tag_shapes.h"
 +
 +#include <cmath>
++#include <string>
 +#include <utility>
 +
 +namespace TagShapes {
@@ -415,6 +510,7 @@ index 0000000..1f4816f
 +constexpr float kPi = 3.14159265f;
 +constexpr float kHalfThickness = 0.25f;  // Same thickness as the octagon and paw.
 +constexpr float kProud = 0.03f;          // How far detail parts stand out of each face.
++constexpr float kInset = 0.02f;          // How far a one-sided part sinks into its face.
 +
 +struct Point {
 +  float x;
@@ -425,7 +521,8 @@ index 0000000..1f4816f
 +  std::vector<Point> outline;  // Convex, or star-shaped around center.
 +  Point center;
 +  Tone tone = Tone::Base;
-+  float half_thickness = kHalfThickness;
++  float y_front = -kHalfThickness;  // The part spans y_front to y_back.
++  float y_back = kHalfThickness;
 +};
 +
 +std::vector<Point> Ellipse(Point center, float rx, float rz, int count) {
@@ -475,7 +572,7 @@ index 0000000..1f4816f
 +}
 +
 +Part Detail(std::vector<Point> outline, Point center, Tone tone) {
-+  return {std::move(outline), center, tone, kHalfThickness + kProud};
++  return {std::move(outline), center, tone, -(kHalfThickness + kProud), kHalfThickness + kProud};
 +}
 +
 +// Adds a strip to the mesh, joined to the previous one with degenerate triangles.
@@ -492,7 +589,7 @@ index 0000000..1f4816f
 +void AppendPart(Mesh &mesh, const Part &part) {
 +  const int count = static_cast<int>(part.outline.size());
 +  const int base = static_cast<int>(mesh.vertices.size());
-+  for (float y : {-part.half_thickness, part.half_thickness}) {
++  for (float y : {part.y_front, part.y_back}) {
 +    mesh.vertices.push_back({part.center.x, y, part.center.z, part.tone});
 +    for (const auto &point : part.outline) mesh.vertices.push_back({point.x, y, point.z, part.tone});
 +  }
@@ -570,6 +667,90 @@ index 0000000..1f4816f
 +  return {{Star(center, 1.35f, 0.55f, 5), center}, Detail(Star(center, 0.62f, 0.25f, 5), center, Tone::Light)};
 +}
 +
++std::vector<Part> WolfParts() {
++  // A head-on wolf's head: a face tapering to the chin, two upright ears, fur spikes at the cheeks, and
++  // dark inner ears, slanted eyes, nose and muzzle lines standing proud of the face.
++  const std::vector<Point> face = {{0, 0},         {0.42f, 0.3f},  {0.95f, 0.9f}, {1.18f, 1.4f},
++                                   {1.05f, 1.92f}, {0.5f, 2.2f},   {-0.5f, 2.2f}, {-1.05f, 1.92f},
++                                   {-1.18f, 1.4f}, {-0.95f, 0.9f}, {-0.42f, 0.3f}};
++  std::vector<Part> parts;
++  parts.push_back({face, {0, 1.3f}});
++  for (float side : {-1.0f, 1.0f}) {
++    const auto at = [side](float x, float z) { return Point{side * x, z}; };
++    parts.push_back({{at(1.1f, 1.8f), at(1.02f, 3.0f), at(0.3f, 2.1f)}, at(0.8f, 2.3f)});  // Ear.
++    parts.push_back(
++        Detail({at(0.98f, 2.0f), at(0.96f, 2.72f), at(0.55f, 2.12f)}, at(0.83f, 2.28f), Tone::Dark));  // Inner ear.
++    parts.push_back({{at(1.1f, 1.62f), at(1.55f, 1.3f), at(1.15f, 1.18f)}, at(1.27f, 1.37f)});         // Upper fur.
++    parts.push_back({{at(1.0f, 1.12f), at(1.4f, 0.72f), at(0.86f, 0.8f)}, at(1.09f, 0.88f)});          // Lower fur.
++    parts.push_back(Detail({at(0.66f, 1.5f), at(0.24f, 1.24f), at(0.28f, 1.12f), at(0.62f, 1.34f)}, at(0.45f, 1.3f),
++                           Tone::Dark));                                                                     // Eye.
++    parts.push_back(Detail(Bar(at(0.26f, 0.8f), 0.62f, 0.07f, side * 1.35f), at(0.26f, 0.8f), Tone::Dark));  // Muzzle.
++  }
++  parts.push_back(Detail({{-0.22f, 0.66f}, {0.22f, 0.66f}, {0.13f, 0.47f}, {0, 0.4f}, {-0.13f, 0.47f}}, {0, 0.55f},
++                         Tone::Dark));  // Nose.
++  return parts;
++}
++
++// Block digits for the numbered badges: seven-segment strokes that overlap at the corners, so a digit is a
++// few rectangles. '1' is a stem with a flag rather than the right-hand segments, so it reads as a one.
++constexpr float kDigitWidth = 0.64f;
++constexpr float kDigitHeight = 1.3f;
++constexpr float kStroke = 0.2f;
++
++std::vector<std::vector<Point>> DigitStrokes(int digit, float x0, float z0) {
++  const float x1 = x0 + kDigitWidth, z1 = z0 + kDigitHeight, zm = z0 + kDigitHeight / 2, t = kStroke;
++  if (digit == 1) {
++    const float stem = x0 + kDigitWidth * 0.55f;
++    return {Rect(stem - t / 2, z0, stem + t / 2, z1), Rect(stem - t / 2 - 0.2f, z1 - t, stem - t / 2, z1)};
++  }
++  // Segments a (top), b (upper right), c (lower right), d (bottom), e (lower left), f (upper left), g (middle).
++  const std::vector<Point> segments[7] = {Rect(x0, z1 - t, x1, z1),
++                                          Rect(x1 - t, zm - t / 2, x1, z1),
++                                          Rect(x1 - t, z0, x1, zm + t / 2),
++                                          Rect(x0, z0, x1, z0 + t),
++                                          Rect(x0, z0, x0 + t, zm + t / 2),
++                                          Rect(x0, zm - t / 2, x0 + t, z1),
++                                          Rect(x0, zm - t / 2, x1, zm + t / 2)};
++  static constexpr const char *kLit[10] = {"abcdef", "bc",     "abdeg", "abcdg",   "bcfg",
++                                           "acdfg",  "acdefg", "abc",   "abcdefg", "abcdfg"};
++  std::vector<std::vector<Point>> strokes;
++  for (const char *segment = kLit[digit]; *segment; ++segment) strokes.push_back(segments[*segment - 'a']);
++  return strokes;
++}
++
++Point Centroid(const std::vector<Point> &points) {
++  Point sum = {0, 0};
++  for (const auto &point : points) sum = {sum.x + point.x, sum.z + point.z};
++  return {sum.x / static_cast<float>(points.size()), sum.z / static_cast<float>(points.size())};
++}
++
++std::vector<Point> Mirror(const std::vector<Point> &points) {
++  std::vector<Point> mirrored;
++  for (const auto &point : points) mirrored.push_back({-point.x, point.z});
++  return mirrored;
++}
++
++std::vector<Part> NumberParts(int number) {
++  const Point center = {0, 1.25f};
++  std::vector<Part> parts;
++  parts.push_back({Ellipse(center, 1.25f, 1.25f, 48), center});  // The badge.
++  const std::string digits = std::to_string(number);
++  const float gap = 0.14f;
++  const float width = static_cast<float>(digits.size()) * kDigitWidth + static_cast<float>(digits.size() - 1) * gap;
++  float x = -width / 2;
++  for (char digit : digits) {
++    for (const auto &stroke : DigitStrokes(digit - '0', x, center.z - kDigitHeight / 2)) {
++      // Each face gets its own copy, the back one mirrored, so the number reads correctly from either side.
++      const auto back = Mirror(stroke);
++      parts.push_back(
++          {stroke, Centroid(stroke), Tone::Contrast, -(kHalfThickness + kProud), -(kHalfThickness - kInset)});
++      parts.push_back({back, Centroid(back), Tone::Contrast, kHalfThickness - kInset, kHalfThickness + kProud});
++    }
++    x += kDigitWidth + gap;
++  }
++  return parts;
++}
++
 +}  // namespace
 +
 +Mesh Build(Kind kind) {
@@ -593,7 +774,12 @@ index 0000000..1f4816f
 +    case Kind::Star:
 +      parts = StarParts();
 +      break;
++    case Kind::Wolf:
++      parts = WolfParts();
++      break;
 +    default:
++      if (kind >= Kind::Number1 && kind <= Kind::Number12)
++        parts = NumberParts(static_cast<int>(kind) - static_cast<int>(Kind::Number1) + 1);
 +      break;
 +  }
 +
@@ -612,16 +798,17 @@ index 0000000..1f4816f
 +}  // namespace TagShapes
 diff --git a/Zeal/tag_shapes.h b/Zeal/tag_shapes.h
 new file mode 100644
-index 0000000..b5591c8
+index 0000000..54725b1
 --- /dev/null
 +++ b/Zeal/tag_shapes.h
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,56 @@
 +#pragma once
 +
 +#include <cstdint>
 +#include <vector>
 +
-+// Geometry for the icon-style tag shapes (skull, cross, sword, diamond, flame, star).
++// Geometry for the icon-style tag shapes (skull, cross, sword, diamond, flame, star, wolf) and the
++// numbered badges 1 to 12.
 +//
 +// Each shape is a set of flat parts extruded to a thickness, and every part is convex (or at least
 +// star-shaped around its center) so it triangulates as a simple fan. Concave outlines are built by
@@ -638,14 +825,19 @@ index 0000000..b5591c8
 +  Diamond,
 +  Flame,
 +  Star,
++  Wolf,
++  Number1,  // Number1 to Number12 are consecutive: Number1 + (n - 1).
++  Number12 = Number1 + 11,
 +  Count,  // Number of shapes (not a shape).
 +};
 +
-+// Which color a vertex takes: the tag color, a dark accent, or a light accent.
++// Which color a vertex takes: the tag color, a dark accent, a light accent, or whichever of the two
++// accents contrasts with the tag color (the digits on a numbered badge).
 +enum class Tone : uint8_t {
 +  Base = 0,
 +  Dark,
 +  Light,
++  Contrast,
 +};
 +
 +struct Vertex {
