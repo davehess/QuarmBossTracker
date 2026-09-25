@@ -159,8 +159,58 @@ per message, so each fits the 4,000-character feedback box (§5):
 
 ## 6. Menu of good async items (snapshot — pick from these or ask for the live list)
 
-*This menu is being refreshed against the live ledger. Until it is, ask the
-human to paste an open item from `docs/STATUS.md` or from wolfpack.quest/roadmap.*
+These are self-contained and reviewable without officer-only data or a live
+raid. Most come out of Mimic 2.7.1 (2026-09-24), where the new HUD and the
+nine "mini mode" overlays shipped with a few known gaps.
+
+**Code drafts:**
+- **Target Info mini: a ROOT timer row.** The mini Target Info shows the mob's
+  health bar and a draining SLOW row, but no ROOT row, because nothing the
+  overlay receives marks a debuff as a root. Draft: in the agent, flag root
+  spells (spell effect 99, "root") on the target's buff list the way pacify is
+  already flagged; in the overlay, add a blue ROOT row that drains like SLOW and
+  vanishes when no root is up. *(Agent `packages/wolfpack-logsync/index.js` +
+  Mimic `apps/mimic/mobinfo.html`, `beta`. Medium.)*
+- **Pet mini: the haste percentage.** The mini Pet overlay shows the pet's haste
+  buff by NAME where the guild voted for its PERCENT, because the pet data only
+  carries the name. Draft: a small name → haste-% table in the page, the way the
+  Extended Target overlay already carries slow percentages, sourced from the
+  spell catalog (the reviewer can pull the numbers). *(Mimic `apps/mimic/pets.html`,
+  `beta`. Quick.)*
+- **Charm mini: the mob's magic resist.** The vote wanted "MR current (full)" —
+  the resist after debuffs like Tashanian, with the base in brackets — but the
+  charm data carries no resists. Draft where the numbers could come from (Target
+  Info already receives the mob's catalog resists) and how the debuff is
+  subtracted. *(Mimic `apps/mimic/charm.html` + possibly the agent, `beta`. Medium.)*
+- **Two clicks that fall through to the game.** On a locked overlay every
+  clickable thing needs the hover handshake (§2). Two do not: the category
+  headers in the full Buff queue, and the dismiss ✕ on each pet in the full Pet
+  list. Draft: add the handshake to both, matching how each page does it for its
+  other buttons. *(Mimic `apps/mimic/buffqueue.html`, `apps/mimic/pets.html`,
+  `beta`. Quick.)*
+- **CH chain: an interrupted heal turns blue again.** In the full CH chain
+  overlay, a healer's row goes red for 4 s after an interrupt, then back to a blue
+  "casting" bar for the rest of the 10 s cast — as if a heal were still coming.
+  Draft: once interrupted, a cast never counts as casting again (a NEW cast
+  afterwards is fine). *(Mimic `apps/mimic/chchain.html`, `beta`. Quick.)*
+- **Say what a pasted parse is.** The DPS meter's copy-to-/rs line should end in
+  "| local" (this client's view) or "| merged" (the raid's merged view) so a
+  paste says what it is — but only once the bot's chat parser is shown to accept
+  the extra token without mis-reading the line. Draft both halves: the suffix in
+  Mimic, and the parser check (plus fix, if needed) in the bot. *(Mimic
+  `apps/mimic/overlay.html` on `beta` + bot `index.js` on `main`. Medium.)*
+- **More skills on the HUD.** The HUD tracks each class's key cooldowns
+  (combat ability, discipline, Mend, Feign Death, Lay on Hands, Harm Touch …).
+  The guild has been asked which other skills people want tracked; draft the
+  additions for a class you play: the skill, how its use shows in the log, and
+  its reuse time on this server (the reviewer checks it against the server
+  source). *(Agent's per-class cooldown table + the HUD, `beta`. Medium.)*
+
+**Not code — a log line or an observation unblocks these:**
+- A verbatim log line (timestamp and all) of a **pet** being hit by Death Touch —
+  the callout recognises players but not pets.
+- From the next Emperor pull: did the **tank-buster** countdown fire once or
+  twice per cast? Two detection paths exist and must not both speak.
 
 For any other item, ask the human to paste the relevant entry from
 `docs/STATUS.md`, or pick one from wolfpack.quest/roadmap ("What's next").
