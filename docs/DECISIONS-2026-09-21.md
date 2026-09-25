@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; not compiled here | the guild lead: build it once locally, run the test plan, open the PR upstream (compare link in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -1719,6 +1720,33 @@ size; nothing else had to move because both SVG layers were already
 `overflow: visible`. One layout, as asked — the inside/outside choice *is* the
 option. The picker row now sits by the ring's height (`--ring-h`), since the
 window is no longer square.
+
+## 26. A Bandolier chat filter for Zeal — change on the guild lead's fork (2026-09-25)
+
+The guild lead, from the Quarm Discord thread "Bandolier Spam/Filter Option":
+*"This is something I'd like to get implemented in Zeal. Please review Zeal and
+lets find a way to add a chat filter for Bandolier messages. Currently they're in
+Other i believe."*
+
+**Confirmed in Zeal's source (v1.4.7):** `/bandolier` is Zeal's own feature and
+prints with `print_chat()`'s default color 0 — the client's **Other** filter. So
+it is fixable entirely inside Zeal, no server change.
+
+**The change** (`docs/zeal-bandolier-filter-request.md` has the PR text; branch
+`bandolier-chat-filter` on github.com/davehess/zeal, 25 lines across 5 files):
+a new `CHANNEL_BANDOLIER` and a **Bandolier** entry in the Zeal chat-filter
+submenu, on the existing `/mystats` pattern. Routine status lines (loading, swap
+complete, already equipped, please wait, saving, list) go there; failures keep
+their channels so a swap that did not happen is still seen. Same colour as
+before; unassigned it shows in the main window, so nothing moves until someone
+assigns it. Appended last because Zeal saves each filter's window by list
+position (`ChannelMap41+index`). A filter, not a suppress checkbox: it covers
+both asks (own window, or a window kept out of the way) and adds no setting.
+
+Not compiled here (no MSVC in a cloud session). The other open Zeal issues the
+guild lead shared are triaged in the same doc — #218 is already done (can be
+closed), #213 (target level/class/race + loc on the pipe) is the one worth doing
+next for Mimic.
 
 
 
