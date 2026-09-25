@@ -116,7 +116,8 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30, §31).** Branch `tag-shapes` on the fork (`7ab0f2b`): letters `K X A D F T L M U N H` = skull, X, sword, diamond, flame, star, wolf, moon, lasso, lute, shield; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial. Wolf traced from the landing-page art, **five variants** (classic ships as placeholder). `test-all` = `302f764` | the guild lead: **pick a wolf** (`wolf-variants.png`), rebuild `test-all`, check in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30, §31, §32).** Branch `tag-shapes` on the fork (`22ce809`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf** (outlined, the guild lead's pick); `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial. `test-all` = `863d8a6` | the guild lead: rebuild `test-all`, check in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
+| **Zeal: guild emblems (preview only, no C++)** | **2026-09-25 (§32).** 30 guilds (the 29 listed + Wolf Pack = the `^WP^` wolf), two directions previewed: a hand-built pictogram each vs a monogram banner each; proposed key `^#<code>^`. `docs/upstream/zeal-guild-emblems/` | the guild lead: pick pictograms / banners / both, correct the invented codes and the "stretch" symbols. Only then port to C++ |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -2011,6 +2012,67 @@ of the shapes and persistence branches). A pipe masked the failed merge, so
 `test-all` was briefly pushed without persistence (`e4af8d0`). Fixed within
 minutes as `302f764`. Lesson: never pipe a `git merge` whose exit status gates a
 push.
+
+## 32. Zeal tags, round four — outlined wolf on `^WP^`, $ and €, and a symbol for each guild (2026-09-25)
+
+**The guild lead's calls, in order:**
+- *"Dollar Symbol, Euro symbol. For the wolf i like the second column"*: the
+  **outlined** wolf ships, plus `^$^` (green) and `^E^` (amber).
+- *"We should try to make a symbol for each of these guilds"*, with a list of 29
+  guilds.
+- *"make the wolf WP"*: the wolf's key moved from `^L^` to **`^WP^`**, and `L` is
+  free again.
+- *"before you render all of those symbols in c++ please show me a preview of all
+  of those guild symbols"*: **no C++ for the guild symbols until the guild lead
+  has picked from the preview.**
+
+**`^WP^` is the one icon key that an older client draws as something.** It reads
+the `W` and shows a white arrow, where every other new key shows text only. A white
+arrow is still a plain marker, not a contradicting one. Only an exact `^WP^` changes
+meaning; `^W^` and `^WPx^` stay white arrows. The extracted-parser test covers all
+three, and it was mutation-checked in both directions: dropping the two-character
+read, and mapping `WP` back to white.
+
+**Guild symbols: two directions, prototyped in Python only**
+(`docs/upstream/zeal-guild-emblems/`, the script in
+`zeal-tag-shapes/preview/guild_emblems.py`). Both use the same part rules as
+`tag_shapes.cpp`, for 30 guilds: the list plus Wolf Pack, whose symbol is the
+`^WP^` wolf from a dump of the real meshes.
+- **Pictograms, one per guild.** These read far better at tag size.
+  - Cost: every new, renamed or redesigned guild is a Zeal release.
+  - Risk: a table of guild artwork may not be something upstream wants.
+- **Monogram banners.** One template, with any code typed in the tag.
+  - Cost: no maintenance per guild.
+  - Measured weaknesses: colour computed from the letters collides (9 of 30
+    green), and three letters are barely legible at about 40 px.
+- **Proposed: both behind one key, `^#<code>^`.** Zeal draws the guild's pictogram
+  when it has one, and the banner otherwise. What people type never changes when
+  a guild gains a pictogram.
+  - Checked against upstream `e24a3ed`: an older client turns the shape off and
+    shows the text.
+
+**Guessed, for the guild lead to correct:**
+- Every code (guilds may have their own).
+- The symbols the proposal marks as a stretch: Axiom, Hardened Casuals, The Drift
+  and Mass Group Ego.
+
+**Checks:**
+- All meshes pass the strip check (wolf 854 vertices, dollar 650, euro 500).
+- `preview.png` was re-rendered with 13 icons.
+- The patch was regenerated from `22ce809`.
+
+**Found in passing: a chained push command reset a local branch.** A
+`--force-with-lease` push with no remote-tracking ref (the fork's fetch refspec
+covers only `main`) was refused as "stale info". The command's `a && b || c`
+chain then ran the fallback `git reset --hard main` on the current branch, which
+was `tag-shapes`. Nothing reached the remote. It was restored from the reflog, and
+the diff was verified to be only the `WP` change.
+
+Lessons:
+- On that fork, give the lease explicitly: `--force-with-lease=<branch>:<sha>`.
+- Never let `||` follow a chain that contains a push.
+- Check the merge state by hand: `set -e` did not stop the merge loop that
+  rebuilt `test-all`.
 
 
 
