@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: on `beta` (`a77c58fd`), column live and backfilled; production unchanged | the guild lead: preview `b.wolfpack.quest/me` + a quest page, then say go — graduation = cherry-pick `a77c58fd`, web version bump + roadmap entry, and the call on the 11 characters' inventory sharing (recommended: private) |
+| **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
@@ -1688,11 +1688,14 @@ so those two zones show access but tick no quest), and a guild-wide keys view
   page but not the inventory page does not get the inventory listings on it
   (key-evidence names, discovery, stack turn-ins, rewards held, hidden/dismissed,
   the "probably don't need" lists, broken items).
-- ⚠ **Graduation needs one call from the guild lead:** those 11 characters only
-  ever saw a switch labelled "Quests", yet it also shared their inventory. At
-  graduation, turn their inventory pages private (recommended — nobody knowingly
-  chose that), or leave them as they are. Production is unchanged until then,
-  because main still reads the old flag for all three pages.
+- **Graduated, web 1.8.8 (same day).** The guild lead: *"go ahead, make their
+  inventories private."* Those 11 characters only ever saw a switch labelled
+  "Quests", yet it also shared their inventory. Their inventory pages went
+  private (`20260925120704`), applied only after 1.8.8 was serving so their
+  quest pages never showed as private under the old code; the quest pages stay
+  public. Result: 0 inventory pages public, 11 quest pages public.
+- Before graduation, production was unchanged: main read the old flag for all
+  three pages until 1.8.8.
 
 
 

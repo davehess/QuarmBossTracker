@@ -67,7 +67,7 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
   `show_inventory_publicly` opens inventory + spellbook. `/me` switches "Quest
   page" / "Inventory page" (`web/app/me/ExclusionToggles.tsx`). A shared quest
   page with a private inventory hides its inventory listings (`showInvDetail` in
-  the quests page). On `beta` until graduated; column live
+  the quests page). Live, web 1.8.8; column
   (`20260925112702`). Test: `test/quest-inventory-sharing-split.test.js`.
 
 Everything flows through one pipeline: **EQ log file + Zeal named pipe →
