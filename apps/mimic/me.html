@@ -87,7 +87,7 @@
      defaults for each line"): wider, so rows stop wrapping to three lines;
      the header — name, close, the All-text slider — stays put while the
      list scrolls under it; a scrollbar you can see and grab. */
-  :root{ --panel-w:300px; --ring-w:100%; }
+  :root{ --panel-w:300px; --ring-w:100%; --ring-h:100%; }
   #build-btn{display:none}
   body.hud #build-btn{display:inline-block}
   #builder{position:fixed;right:0;top:0;bottom:0;width:calc(var(--panel-w) - 8px);box-sizing:border-box;z-index:80;overflow-y:auto;overflow-x:hidden;
@@ -181,16 +181,18 @@
      while the builder panel is open. No name here: the Box still shows it. */
   body.hud{--ring-x:0px;--pk-w:88px}
   body.hud.building.build-left{--ring-x:var(--panel-w)}
+  /* --ring-h, not --ring-w: with hit numbers outside the ring the window is
+     wider than it is tall. */
   body.hud .title,body.hud.building .title,body.hud.building.build-left .title{
-    top:calc(var(--ring-w) - 20px);bottom:auto;right:auto;width:var(--pk-w);
+    top:calc(var(--ring-h) - 20px);bottom:auto;right:auto;width:var(--pk-w);
     left:calc(var(--ring-x) + var(--ring-w) / 2 - var(--pk-w) / 2)}
   body.hud .title .conn,body.hud .title .nm,body.hud .title .cl,body.hud .title .sp{display:none}
   body.hud #picker{width:100%;box-sizing:border-box}
   body.hud #picker button{flex:1 1 0;padding:1px 0}
   body.hud #move-btn,body.hud.setup #move-btn,body.hud.building.build-left #move-btn{
-    top:calc(var(--ring-w) - 21px);left:calc(var(--ring-x) + var(--ring-w) / 2 - var(--pk-w) / 2 - 22px)}
+    top:calc(var(--ring-h) - 21px);left:calc(var(--ring-x) + var(--ring-w) / 2 - var(--pk-w) / 2 - 22px)}
   body.hud #hide-btn,body.hud.setup #hide-btn,body.hud.building #hide-btn{
-    top:calc(var(--ring-w) - 21px);right:auto;left:calc(var(--ring-x) + var(--ring-w) / 2 + var(--pk-w) / 2 + 4px)}
+    top:calc(var(--ring-h) - 21px);right:auto;left:calc(var(--ring-x) + var(--ring-w) / 2 + var(--pk-w) / 2 + 4px)}
   /* The HUD's background is a SHADOW behind what it draws, never a square
      (the guild lead, 2026-09-24: "The HUD mode shouldn't include the background
      as a square, rather as a shadow behind the content"): the backgrounds
@@ -330,7 +332,7 @@
     if (isHud(next) && !isHud(style)) {
       try { localStorage.setItem(CARD_KEY, JSON.stringify({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight })); } catch (err) {}
       var side = Math.round(Math.min(screen.availWidth, screen.availHeight) * 0.5);
-      setBounds({ width: side, height: side, center: true });
+      setBounds({ width: Math.round(side * hudWidthFactor()), height: side, center: true });
     } else if (!isHud(next) && isHud(style)) {
       var card = null;
       try { card = JSON.parse(localStorage.getItem(CARD_KEY) || 'null'); } catch (err) {}
@@ -341,6 +343,33 @@
     paintPicker(); _lastHtml = null; render(_last);
   });
   paintPicker();
+  // The HUD window is the ring's square, or wider by LANE_EXT a side while its
+  // hit numbers sit OUTSIDE the ring — the ring keeps its size either way.
+  // (hudParts is not read yet on the very first paint: a square then.)
+  function hudWidthFactor(){
+    var p = (typeof hudParts !== 'undefined' && hudParts) || null;
+    return p && p.hitsSide === 'outside' ? (400 + 2 * LANE_EXT) / 400 : 1;
+  }
+  // Switching the numbers between inside and outside widens or narrows the
+  // window about its centre. With the builder open, the ring's own bounds (the
+  // ones closing it restores) change the same way.
+  function reshapeForHits(was, now){
+    if (!isHud(style) || was === now) return;
+    var f = (400 + 2 * LANE_EXT) / 400, k = now === 'outside' ? f : 1 / f;
+    if (builderEl && !builderEl.hidden) {
+      var pre = null;
+      try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
+      if (!pre || !pre.width) return;
+      var nw = Math.round(pre.width * k), nx = Math.round(pre.x - (nw - pre.width) / 2);
+      try { localStorage.setItem(BUILD_KEY, JSON.stringify({ x: nx, y: pre.y, width: nw, height: pre.height })); } catch (e) {}
+      document.documentElement.style.setProperty('--ring-w', nw + 'px');
+      var left = document.body.classList.contains('build-left');
+      setBounds({ x: left ? nx - PANEL_W : nx, y: pre.y, width: nw + PANEL_W, height: pre.height });
+      return;
+    }
+    var w = window.outerWidth, w2 = Math.round(w * k);
+    setBounds({ x: Math.round(window.screenX - (w2 - w) / 2), y: window.screenY, width: w2, height: window.outerHeight });
+  }
   // Someone opening it for the first time starts on the HUD — in the centred
   // square the HUD button would have given them, not the card-shaped default.
   if (_firstRun && isHud(style)) {
@@ -699,7 +728,8 @@
     ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
-      ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]]]],
+      ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
+      ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
   // Line weight (the guild lead, round four: "Everything feels very bold, we
@@ -708,7 +738,7 @@
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
-    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, resists: 1, tres: 1, weight: 'thin', sizes: {} };
+    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin', sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
@@ -795,6 +825,18 @@
   // 162) and never reach inside LANE_MID_R (the open middle).
   var HIT_STEP = 10.5, HIT_SIZE = 9, ROUND_GAP = 4.5, WRAP_STEP = 0.85, LANE_EDGE_R = 158, LANE_MID_R = 100;
   var LANE_PART = { hin: 'hitsIn', hout: 'hitsOut', hds: 'ds' };
+  // Numbers OUTSIDE the ring (the guild lead, 2026-09-25: "add an option for the
+  // HUD to have damage numbers outside the circle" — builder: Hits → Numbers).
+  // Same columns, same ledger, mirrored: each line starts just clear of the
+  // ring's health / mana labels (≈ r 197) and runs outward — your hits flush
+  // left against the right side, hits on you flush right against the left —
+  // up to LANE_EXT beyond the 400-wide square. The window widens by the same
+  // amount (reshapeForHits), so the ring keeps its size; both SVG layers are
+  // overflow:visible, so lines past the square still draw.
+  var LANE_EXT = 120, _lanesOut = false;
+  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('right')); }
+  // Which edge a line hugs: the ring's side of the column.
+  function flushRight(L){ return _lanesOut ? L.side === 'left' : L.side === 'right'; }
   // "a Temple Patroller" → "Patroller": enough to tell two totals apart.
   function shortMob(n){
     var w = String(n || '').replace(/^(an?|the)\s+/i, '').split(/\s+/);
@@ -824,6 +866,13 @@
   function laneSpan(L, y, size){
     var top = y - size, dyFar = Math.max(Math.abs(y - 200), Math.abs(top - 200));
     var dyNear = (top <= 200 && y >= 200) ? 0 : Math.min(Math.abs(y - 200), Math.abs(top - 200));
+    if (_lanesOut) {
+      // Outside: clear of the ring where the glyphs come closest to it (the
+      // edge of the line nearest the ring's middle row), out to LANE_EXT.
+      var ro = laneOutR(), ring = Math.sqrt(Math.max(0, ro * ro - dyNear * dyNear));
+      if (L.side === 'right') { var a = 200 + ring; return { outer: a, room: (400 + LANE_EXT) - a }; }
+      var b = 200 - ring; return { outer: b, room: b + LANE_EXT };
+    }
     var edge = Math.sqrt(Math.max(0, LANE_EDGE_R * LANE_EDGE_R - dyFar * dyFar));
     var mid = Math.sqrt(Math.max(0, LANE_MID_R * LANE_MID_R - dyNear * dyNear));
     if (L.side === 'right') { var o = 200 + edge; return { outer: o, room: o - Math.max(200 + mid, L.innerX || 0) }; }
@@ -831,7 +880,7 @@
   }
   function laneRoom(L, y, size){ return laneSpan(L, y, size).room; }
   // Where a piece `w` wide starts so it sits flush against the arc.
-  function flushX(L, y, size, w){ var sp = laneSpan(L, y, size); return L.side === 'right' ? sp.outer - w : sp.outer; }
+  function flushX(L, y, size, w){ var sp = laneSpan(L, y, size); return flushRight(L) ? sp.outer - w : sp.outer; }
   function textW(s, size){ return String(s).length * 0.6 * size; }
   function hitW(h, size){ return textW(n0(h.f.amount), size) + (h.f.hand === 'OH' ? 3 * 0.6 * 6 : 0); }
   function layRound(L, hits, y, size, step){
@@ -932,7 +981,7 @@
     });
     // Where a piece goes as it leaves: its right edge onto the target's (your
     // hits, flush right), or its left edge (hits on you, flush left).
-    var toward = function(tp, w){ return L.side === 'right' ? tp.x + tp.w - w : tp.x; };
+    var toward = function(tp, w){ return flushRight(L) ? tp.x + tp.w - w : tp.x; };
     all.forEach(function(rd){
       var sp = sumPos[rd.at];
       rd.hits.forEach(function(h){
@@ -953,6 +1002,7 @@
   function hudLanes(d, p){
     var n = Math.max(2, Math.min(8, parseInt(p.rounds, 10) || 5));
     var split = Math.max(1, Math.min(n, parseInt(p.split, 10) || 2));
+    _lanesOut = p.hitsSide === 'outside';
     var out = { items: [], ghosts: [] };
     function add(id, pick){
       var r = laneColumn(id, d.feed, pick, d.tallies || [], n, split);
@@ -1222,16 +1272,18 @@
   function useCharacterParts(ch){
     if (!ch || ch === _hudPartsFor) return;
     _hudPartsFor = ch;
-    var p = readParts(ch);
+    var p = readParts(ch), was = hudParts.hitsSide;
     Object.keys(hudParts).forEach(function(k){ delete hudParts[k]; });
     Object.assign(hudParts, p);
+    reshapeForHits(was, hudParts.hitsSide);
     if (!builderEl.hidden) renderBuilder();
   }
   builderList.addEventListener('change', function(e){
     var k = e.target && e.target.getAttribute('data-part');
     if (!k) return;
-    var v = e.target.value;
+    var v = e.target.value, was = hudParts.hitsSide;
     hudParts[k] = e.target.type === 'checkbox' ? (e.target.checked ? 1 : 0) : (/^\d+$/.test(v) ? parseInt(v, 10) : v);
+    reshapeForHits(was, hudParts.hitsSide);
     saveParts();
   });
   // Size sliders — each part's, and "All text" in the header — repaint as they
@@ -1248,11 +1300,12 @@
     var b = e.target && e.target.closest ? e.target.closest('[data-reset]') : null;
     if (!b) return;
     e.preventDefault();   // inside a <label>: do not toggle its checkbox
-    var k = b.getAttribute('data-reset');
+    var k = b.getAttribute('data-reset'), was = hudParts.hitsSide;
     var sizes = Object.assign({}, hudParts.sizes);
     delete sizes[k];
     hudParts.sizes = sizes;
     if (k in HUD_DEFAULTS && k !== 'sizes') hudParts[k] = HUD_DEFAULTS[k];
+    reshapeForHits(was, hudParts.hitsSide);
     renderBuilder(); saveParts();
   });
   builderEl.addEventListener('mouseenter', hoverOn);
@@ -1269,6 +1322,7 @@
     var pre = { x: x, y: y, width: w, height: hgt };
     try { localStorage.setItem(BUILD_KEY, JSON.stringify(pre)); } catch (e) {}
     document.documentElement.style.setProperty('--ring-w', w + 'px');
+    document.documentElement.style.setProperty('--ring-h', hgt + 'px');
     document.body.classList.add('building');
     document.body.classList.toggle('build-left', toLeft);
     renderBuilder();
@@ -1281,6 +1335,7 @@
     builderEl.hidden = true;
     document.body.classList.remove('building', 'build-left');
     document.documentElement.style.removeProperty('--ring-w');
+    document.documentElement.style.removeProperty('--ring-h');
     if (restore !== false && pre && pre.width) setBounds(pre);
     hoverOff();
   }
@@ -1295,8 +1350,10 @@
   });
   document.getElementById('builder-close').addEventListener('click', function(){ closeBuilder(); });
   document.getElementById('builder-reset').addEventListener('click', function(){
+    var was = hudParts.hitsSide;
     Object.keys(hudParts).forEach(function(k){ delete hudParts[k]; });
     Object.assign(hudParts, HUD_DEFAULTS, { sizes: {} });
+    reshapeForHits(was, hudParts.hitsSide);
     renderBuilder(); saveParts();
   });
   function render(s){

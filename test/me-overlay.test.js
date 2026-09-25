@@ -579,6 +579,43 @@ describe('the three HUDs', () => {
     for (const it of its) expect(it.anchor).toBe('start');           // upright text, placed by its measured width
   });
 
+  // The guild lead, 2026-09-25: "add an option for the HUD to have damage numbers
+  // outside the circle." Builder: Hits → Numbers inside/outside. Mirrored: your
+  // hits START flush against the outside of the ring on the right, hits on you
+  // END flush against it on the left — never over the ring or its labels, never
+  // past the widened window (LANE_EXT a side).
+  it('numbers outside the ring: mirrored, clear of the ring, inside the widened window', () => {
+    const part = R.HUD_PARTS.flatMap(g => g[1]).find(it => it[0] === 'hitsSide');
+    expect(part && part[2]).toEqual(['inside', 'outside']);
+    expect(R.HUD_DEFAULTS.hitsSide).toBe('inside');
+    const at = 1_790_000_000_000;
+    const feed = [0, 3, 6, 9, 12].flatMap(sec => [45, 51, 88, 120, 77, 64].map(n => ({ dir: 'out', amount: n, kind: 'melee', name: 'punch', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })))
+      .concat([0, 3, 6].map(sec => ({ dir: 'in', amount: 169, kind: 'melee', name: 'hits', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })));
+    Object.assign(R.hudParts, R.HUD_DEFAULTS, { hitsSide: 'outside' });
+    try {
+      const its = R.hudLanes(R.hudData(Object.assign({}, base, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed } })), R.hudParts).items;
+      const lines = (id) => {
+        const by = {};
+        for (const it of its.filter(x => x.lane === id)) (by[it.y] = by[it.y] || []).push(it);
+        return Object.values(by).map(row => ({ y: row[0].y, size: row[0].size, x0: Math.min(...row.map(i => i.x)), x1: Math.max(...row.map(i => i.x + i.text.length * 0.6 * i.size)) }));
+      };
+      const outs = lines('hout'), ins = lines('hin');
+      expect(outs.length).toBeGreaterThan(2);
+      expect(ins.length).toBeGreaterThan(1);
+      for (const l of outs) expect(l.x0).toBeCloseTo(R.laneSpan(R.HIT_LANES.hout, l.y, l.size).outer, 3);   // flush left, on the ring's side
+      for (const l of ins) expect(l.x1).toBeCloseTo(R.laneSpan(R.HIT_LANES.hin, l.y, l.size).outer, 3);    // flush right, on the ring's side
+      for (const l of outs.concat(ins)) {
+        const near = l.x0 > 200 ? l.x0 : l.x1;                      // the end nearest the ring
+        const dy = Math.min(Math.abs(l.y - 200), Math.abs(l.y - l.size - 200));
+        expect(Math.hypot(near - 200, dy)).toBeGreaterThanOrEqual(196.9);   // r 197: past the ring and its health/mana labels
+        expect(l.x0).toBeGreaterThanOrEqual(-120 - 0.01);
+        expect(l.x1).toBeLessThanOrEqual(520 + 0.01);
+      }
+    } finally {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS);
+    }
+  });
+
   it('a class cooldown never used this session is unknown ("—"), never "ready"', () => {
     const s2 = Object.assign({}, base, { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: null, total_ms: null, est: true, seen: false }] });
     for (const fn of Object.values(HUDS)) {
@@ -964,16 +1001,21 @@ describe('the in-game picker', () => {
     const px = (expr, v) => new Function('return ' + expr.replace(/var\(--([\w-]+)\)/g, (_, n) => v[n])
       .replace(/calc\(/g, '(').replace(/px/g, ''))();
     const pkW = +decl('body.hud', '--pk-w').replace('px', '');
-    for (const v of [{ 'ring-w': 420, 'ring-x': 0, 'pk-w': pkW }, { 'ring-w': 420, 'ring-x': 300, 'pk-w': pkW }]) {   // alone; builder open on the left
+    // alone; builder open on the left; and the numbers OUTSIDE the ring, where
+    // the window is 1.6× as wide as it is tall (2026-09-25) — the row still
+    // centres on the ring and sits on the window's height, not its width.
+    for (const v of [{ 'ring-w': 420, 'ring-h': 420, 'ring-x': 0, 'pk-w': pkW }, { 'ring-w': 420, 'ring-h': 420, 'ring-x': 300, 'pk-w': pkW },
+      { 'ring-w': 672, 'ring-h': 420, 'ring-x': 0, 'pk-w': pkW }]) {
       const T = 'body.hud .title,body.hud.building .title', MV = 'body.hud #move-btn,body.hud.setup #move-btn', HD = 'body.hud #hide-btn,body.hud.setup #hide-btn';
       const mv = px(decl(MV, 'left'), v), pk = px(decl(T, 'left'), v), hd = px(decl(HD, 'left'), v);
       const top = px(decl(MV, 'top'), v), ptop = px(decl(T, 'top'), v);
-      expect(pk + pkW / 2).toBeCloseTo(v['ring-x'] + 210, 5);                     // centred on the ring
+      const cx = v['ring-x'] + v['ring-w'] / 2, H = v['ring-h'];
+      expect(pk + pkW / 2).toBeCloseTo(cx, 5);                                     // centred on the ring
       expect(pk - (mv + 18)).toBeGreaterThanOrEqual(0); expect(pk - (mv + 18)).toBeLessThanOrEqual(6);   // ✥ right beside it
       expect(hd - (pk + pkW)).toBeGreaterThanOrEqual(0); expect(hd - (pk + pkW)).toBeLessThanOrEqual(6); // ✕ right beside it
-      expect(top + 18).toBeLessThanOrEqual(420); expect(ptop + 16).toBeLessThanOrEqual(420);             // inside the square
+      expect(top + 18).toBeLessThanOrEqual(H); expect(ptop + 16).toBeLessThanOrEqual(H);                 // inside the window
       // below the tick / swing labels: their baseline (r 187, glyphs inward) at the row's outer edge
-      const s = 420 / 400, dx = (v['ring-x'] + 210 - mv) / s;
+      const s = H / 400, dx = (cx - mv) / s;
       expect(top / s).toBeGreaterThan(200 + Math.sqrt(187 * 187 - dx * dx));
     }
     expect(css).toMatch(/body\.hud \.title \.conn,body\.hud \.title \.nm,body\.hud \.title \.cl,body\.hud \.title \.sp\{display:none\}/);
@@ -1034,8 +1076,9 @@ describe('the in-game picker', () => {
     expect(body).toContain('paintLanes(isHud(style) && s && s.character ? hudLanes(hudData(s), hudParts) : null, hudParts.weight)');
     expect(meHtml).toContain('<svg id="hudlanes"');
   });
-  it('a HUD makes the window a centred square — the ring is the bounds', () => {
-    expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);
+  it('a HUD makes the window a centred square — the ring is the bounds (wider only for numbers outside it)', () => {
+    expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: Math\.round\(side \* hudWidthFactor\(\)\), height: side, center: true \}\)/);
+    expect(body).toMatch(/return p && p\.hitsSide === 'outside' \? \(400 \+ 2 \* LANE_EXT\) \/ 400 : 1;/);
   });
   it('is clickable on a locked (click-through) overlay — the hover handshake', () => {
     expect(body).toContain("picker.addEventListener('mouseenter', hoverOn)");
