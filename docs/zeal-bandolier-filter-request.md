@@ -17,6 +17,30 @@ their own filter.
 
 **Open the PR:** https://github.com/CoastalRedwood/Zeal/compare/main...davehess:zeal:bandolier-chat-filter
 
+## Build and test locally (the clone used for #229)
+
+The guild lead's local clone from the spawn-id PR has `origin` = the fork and an
+`upstream` remote (steps: `docs/upstream/zeal-spawn-id/PULL-REQUEST.md`). From a
+**Developer PowerShell for VS 2022** (so `msbuild` is on the path):
+
+```powershell
+cd <the Zeal clone>                 # the folder with Zeal.sln
+git fetch origin
+git switch -c bandolier-chat-filter origin/bandolier-chat-filter
+# The commit is authored as the session; make it yours before the PR:
+git commit --amend --no-edit --reset-author
+git push --force-with-lease origin bandolier-chat-filter
+msbuild /m /p:Configuration=Release /p:Platform=x86 /p:zeal_build_version=bandolier Zeal.sln
+```
+
+Output: `Release\Zeal.asi` next to `Zeal.sln` (expect `Build succeeded. 0 Error(s)`).
+If it trips on C++20 module scanning, add the CI's flags:
+`/p:LanguageStandard=stdcpp20 /p:ExportHeader="" /p:ScanDependencies=""`.
+To test: close EverQuest, back up the EQ folder's `Zeal.asi`, copy the new one
+over it, run the test plan below, then copy the backup back. Don't press
+Mimic's Zeal *Install* while testing — it would replace the test build with the
+official release.
+
 ---
 
 ## PR title
