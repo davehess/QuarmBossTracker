@@ -1,0 +1,155 @@
+diff --git a/README.md b/README.md
+index c4bd3a9..bc39f70 100644
+--- a/README.md
++++ b/README.md
+@@ -135,6 +135,8 @@ ___
+   - **Description:** Allows you to save and load bandolier sets
+     - Works for primary, secondary, range and ammo slots
+     - Primary and secondary always swap but range and ammo will not change if you save a set with both of them empty
++    - Status messages (loading, swap complete, already equipped, saving, list) go to the Zeal->Bandolier chat
++      filter, so a chat window can take them (or not) apart from Other; failures stay in their usual channels
+     - The item getting swapped out first tries to store in the slot of the swap in item, then in the location
+       it was originally swapped in from (if available), then in the preferred bag if there is room, then in
+       any inventory bag (starting from last) if there is room, then in a pack slot
+@@ -628,7 +630,7 @@ Manual editing of the ini file is required to copy from old section to the new s
+ 
+ ## Chat filtering
+ - Adds additional chat filtering options under the Zeal submenu that includes things like:
+-  - Random, loot, money, Pet chat & damage, Melee specials, Other damage shield, Zeal Spam
++  - Random, loot, money, Pet chat & damage, Melee specials, Other damage shield, Zeal Spam, Bandolier
+ - Supports reporting damage taken by NPCs from damage shields and spell damage from other
+   players if the 'Others non-melee' option is enabled
+   - Spell damage by others is routed to the Spells->Others channel
+diff --git a/Zeal/bandolier.cpp b/Zeal/bandolier.cpp
+index 8e04c39..c29a42d 100644
+--- a/Zeal/bandolier.cpp
++++ b/Zeal/bandolier.cpp
+@@ -5,6 +5,7 @@
+ #include <format>
+ 
+ #include "callbacks.h"
++#include "chatfilter.h"
+ #include "commands.h"
+ #include "game_addresses.h"
+ #include "game_functions.h"
+@@ -33,7 +34,7 @@ void Bandolier::save(const std::string &name) {
+   if (!is_valid_name(name)) return;
+ 
+   initialize_ini_filename();
+-  Zeal::Game::print_chat("Saving bandolier set [%s]", name.c_str());
++  Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Saving bandolier set [%s]", name.c_str());
+ 
+   auto *char_info = Zeal::Game::get_char_info();
+   if (!char_info) return;
+@@ -47,14 +48,17 @@ void Bandolier::save(const std::string &name) {
+ // Removes (deletes) the bandolier set from the ini file.
+ void Bandolier::remove(const std::string &name) {
+   initialize_ini_filename();
+-  Zeal::Game::print_chat("Removing bandolier set [%s]", name.c_str());
++  Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Removing bandolier set [%s]", name.c_str());
+   if (!ini.deleteSection(name)) Zeal::Game::print_chat("Error removing bandolier set [%s]", name.c_str());
+ }
+ 
+ // Loads a bandolier set from the ini file and initiates memorization.
++// The routine status lines of a swap (loading, complete, already equipped, please wait) go to the
++// Zeal->Bandolier chat filter so weaving with sets does not flood "Other"; failures keep their
++// usual channels so a swap that did not happen is still seen.
+ void Bandolier::load(const std::string &name) {
+   if (!steps.empty()) {
+-    Zeal::Game::print_chat("Already swapping bandolier sets, please wait");
++    Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Already swapping bandolier sets, please wait");
+     return;
+   }
+ 
+@@ -65,7 +69,7 @@ void Bandolier::load(const std::string &name) {
+     Zeal::Game::print_chat("The bandolier set [%s] does not exist", name.c_str());
+     return;
+   }
+-  Zeal::Game::print_chat("Loading bandolier set [%s]", name.c_str());
++  Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Loading bandolier set [%s]", name.c_str());
+ 
+   Zeal::GameStructures::GAMECHARINFO *char_info = Zeal::Game::get_char_info();
+   if (!char_info) return;
+@@ -196,7 +200,7 @@ void Bandolier::load(const std::string &name) {
+   }
+ 
+   if (steps.empty()) {
+-    Zeal::Game::print_chat("Bandolier set [%s] is already equipped", name.c_str());
++    Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Bandolier set [%s] is already equipped", name.c_str());
+     return;
+   }
+ }
+@@ -216,7 +220,7 @@ void Bandolier::tick() {
+   steps.erase(step);
+ 
+   if (steps.empty()) {
+-    Zeal::Game::print_chat("Bandolier set swap complete");
++    Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Bandolier set swap complete");
+   }
+ }
+ 
+@@ -318,11 +322,11 @@ Bandolier::Bandolier(ZealService *zeal) {
+         if (args.size() == 2 && Zeal::String::compare_insensitive(args[1], "list")) {
+           initialize_ini_filename();
+           std::vector<std::string> sets = ini.getSectionNames();
+-          Zeal::Game::print_chat("--- bandolier sets (%i) ---", sets.size());
++          Zeal::Game::print_chat(CHANNEL_BANDOLIER, "--- bandolier sets (%i) ---", sets.size());
+           for (auto &set : sets) {
+-            Zeal::Game::print_chat(set);
++            Zeal::Game::print_chat(CHANNEL_BANDOLIER, "%s", set.c_str());
+           }
+-          Zeal::Game::print_chat("--- end of bandolier sets ---", sets.size());
++          Zeal::Game::print_chat(CHANNEL_BANDOLIER, "--- end of bandolier sets ---");
+           return true;
+         }
+         if (args.size() == 3 && Zeal::Game::get_self() && Zeal::Game::get_char_info()) {
+@@ -342,7 +346,7 @@ Bandolier::Bandolier(ZealService *zeal) {
+           int slot = 0;
+           if (Zeal::String::compare_insensitive(args[1], "bag") && Zeal::String::tryParse(args[2], &slot, true) &&
+               slot > 0 && slot <= GAME_NUM_INVENTORY_PACK_SLOTS) {
+-            Zeal::Game::print_chat("Preferred Bandolier bag set to pack slot %d", slot);
++            Zeal::Game::print_chat(CHANNEL_BANDOLIER, "Preferred Bandolier bag set to pack slot %d", slot);
+             setting_bag_slot.set(slot);
+           }
+         }
+diff --git a/Zeal/chat.cpp b/Zeal/chat.cpp
+index c9c6c96..e9fbfb5 100644
+--- a/Zeal/chat.cpp
++++ b/Zeal/chat.cpp
+@@ -331,6 +331,9 @@ UINT32 __fastcall GetRGBAFromIndex(int t, int u, USHORT index) {
+       return c->get_color_callback(26);
+     case CHANNEL_ZEAL_SPAM:
+       return c->get_color_callback(27);
++    case CHANNEL_BANDOLIER:
++      index = 0;  // The same color bandolier messages always had (print_chat default).
++      break;
+     default:
+       break;
+   }
+diff --git a/Zeal/chatfilter.cpp b/Zeal/chatfilter.cpp
+index 434bc94..f39f05c 100644
+--- a/Zeal/chatfilter.cpp
++++ b/Zeal/chatfilter.cpp
+@@ -554,6 +554,10 @@ chatfilter::chatfilter(ZealService *zeal) {
+       [this, zeal](short &color, const std::string &data) { return color == CHANNEL_OTHER_DAMAGE_SHIELD; }));
+   Extended_ChannelMaps.push_back(CustomFilter(
+       "Zeal Spam", 0x1000E, [this](short &color, std::string &data) { return HandleZealSpamCallbacks(color, data); }));
++  // Keep new entries at the end: the ids must stay contiguous (0x10000 + list index) and each
++  // filter's window is saved by its list position (UI ini ChatManager ChannelMap41 + index).
++  Extended_ChannelMaps.push_back(CustomFilter(
++      "Bandolier", 0x1000F, [this](short &color, const std::string &data) { return color == CHANNEL_BANDOLIER; }));
+ 
+   // Callbacks
+   zeal->callbacks->AddOutputText([this](Zeal::GameUI::ChatWnd *&wnd, std::string &msg, short &channel) {
+diff --git a/Zeal/chatfilter.h b/Zeal/chatfilter.h
+index c7b9377..84cfd7e 100644
+--- a/Zeal/chatfilter.h
++++ b/Zeal/chatfilter.h
+@@ -15,6 +15,7 @@
+ #define CHANNEL_OTHER_MELEE_CRIT 1008
+ #define CHANNEL_OTHER_DAMAGE_SHIELD 1009
+ #define CHANNEL_ZEAL_SPAM 1010
++#define CHANNEL_BANDOLIER 1011
+ 
+ struct CustomFilter {
+   std::string name;                     // String name - Appears in the Menu
