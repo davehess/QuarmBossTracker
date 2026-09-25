@@ -2,10 +2,10 @@
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-shapes`** on
 the guild lead's fork (github.com/davehess/zeal/tree/tag-shapes, one commit,
-`7ab0f2b`); the same change is `0001-tag-icon-shapes.patch` here. Every mesh
+`22ce809`); the same change is `0001-tag-icon-shapes.patch` here. Every mesh
 passes the strip check (`preview/dump.cpp`); the key parser is extracted verbatim
 and tested with g++; clang-format with Zeal's style reports nothing on the changed
-lines. The combined test build is branch `test-all` (`302f764`: Bandolier + this +
+lines. The combined test build is branch `test-all` (`863d8a6`: Bandolier + this +
 tag persistence); never open a PR from it.*
 
 ## How it grew (all 2026-09-25, the guild lead's calls)
@@ -23,6 +23,10 @@ tag persistence); never open a PR from it.*
    reference images; then a shield.
 5. *"Take the pet paw and add each digit and letter in so charmers can add their
    initial in"*: `^PK^` draws the paw with a K on its pad.
+6. *"For the wolf i like the second column"*: the **outlined** wolf now ships.
+   *"Dollar Symbol, Euro symbol."*: `^$^` and `^E^`.
+7. *"make the wolf WP"*: the wolf moved from `^L^` to `^WP^` (Wolf Pack), and `L`
+   is free again.
 
 ## What's different about this approach
 
@@ -55,11 +59,13 @@ eye sockets or teeth.
 | `^D^` | Diamond | blue `2e8cf5` | 20 |
 | `^F^` | Flame | green `3cd83c` | 216 |
 | `^T^` | Star | purple `b55cf2` | 44 |
-| `^L^` | Wolf (traced, yellow eyes) | bone `e8e2d4` | 704 (classic) |
+| `^WP^` | Wolf (traced, outlined, yellow eyes) | bone `e8e2d4` | 854 |
 | `^M^` | Moon (mez) | moon white `f2f2f5` | 616 |
 | `^U^` | Lasso (pull) | rope brown `9c5f2e` | 890 |
 | `^N^` | Lute (bard) | lute brown `a86b3a` | 450 |
 | `^H^` | Shield (tank) | steel `a8b0bc` | 102 |
+| `^$^` | Dollar sign | green `3ab05a` | 650 |
+| `^E^` | Euro sign | amber `e8a020` | 500 |
 | `^1^` … `^12^` | Numbered badge | white `f0f0f0` (+n) | 138–258 |
 | `^P0^` … `^PZ^` | Paw with a letter or digit | paw green `20c040` (+n) | paw + 100–180 |
 
@@ -67,12 +73,21 @@ eye sockets or teeth.
 - **Letters avoid R, O, Y, G, B, W, P and S on purpose.** An older client reads
   only the first character after `^`. A letter nobody uses shows the text and no
   shape; `S` for skull would have drawn a stop sign, the opposite message.
-- `L` is the one free letter in "wolf". The rest are mnemonics: `M` moon/mez,
-  `U` pUll, `N` note, `H` sHield.
-- **Two-character keys** are read only in two exact forms: two digits followed by
-  a `^` (`^10^`–`^12^`), or `P` plus a letter or digit followed by a `^`. No
-  existing prefix changes meaning.
-- **On older clients** `^12^` shows only the text, and `^PK^` shows a plain paw.
+- The letters are mnemonics: `M` moon/mez, `U` pUll, `N` note, `H` sHield, `E`
+  euro. `$` is the one punctuation key: it is the symbol itself.
+- **`WP` is Wolf Pack's wolf** (the guild lead's call). It is the one icon key that
+  starts with a letter an older client draws: `W`, a white arrow. That is still a
+  plain marker, not a contradicting one.
+- **Two-character keys** are read only in three exact forms, each followed by a
+  `^`:
+  - two digits (`^10^`–`^12^`);
+  - `P` plus a letter or digit;
+  - `W` then `P`.
+
+  Only an exact `^WP^` changes meaning (from a white arrow); `^W^` and `^WPx^`
+  are still a white arrow.
+- **On older clients** `^12^` shows only the text, `^PK^` a plain paw, and `^WP^`
+  a white arrow.
 - **Numbers and lettered paws encode as a base colour + n**, because Zeal looks
   up a tag's shape from its colour. Every value was checked against every named
   colour, and all named colours against each other.
@@ -81,7 +96,7 @@ eye sockets or teeth.
 
 ## Previews (all rendered off-client from the real geometry code)
 
-- `preview.png`: the eleven icons face-on and turned 35°, over a dusk sky and a
+- `preview.png`: the thirteen icons face-on and turned 35°, over a dusk sky and a
   sandstone wall.
 - `badges.png`: badges 1–12 face-on and seen from behind (they still read the
   right way round).
@@ -94,7 +109,8 @@ eye sockets or teeth.
      `wolf-solid` + `wolf-eyes` layering).
   5. **steel**: grey wolf, light linework, yellow eyes.
 
-  The branch ships **classic** as a placeholder. Swapping it is a copy of
+  **The branch ships outlined, the guild lead's pick** (*"For the wolf i like the
+  second column"*). Swapping it is a copy of
   `wolf-variants/tag_shapes_wolf_<name>.inc` over `Zeal/tag_shapes_wolf.inc`. For
   shadow and steel, also change the wolf's colour in `nameplate.cpp` (`1c212a` and
   `3a404a`).
@@ -141,21 +157,24 @@ Tags can show a coloured arrow, the stop sign or the paw today. Raid marking wan
 more distinct symbols, and this adds four kinds:
 - the familiar skull / X / sword / diamond / flame / star set;
 - role marks (moon for mez, lasso for pull, lute for bard, shield for tank);
+- a wolf's head and two currency signs;
 - numbers for kill or crowd-control order;
 - a way for a charmer to mark their own pet.
 
 **What changes**
 
 - Icon keys after `^`: `K` skull, `X` red X, `A` gold sword, `D` blue diamond, `F`
-  green flame, `T` purple star, `L` wolf's head, `M` moon, `U` lasso, `N` lute,
-  `H` shield.
+  green flame, `T` purple star, `M` moon, `U` lasso, `N` lute, `H` shield, `$`
+  dollar sign, `E` euro sign.
   - They avoid R/O/Y/G/B/W/P/S on purpose. An older client reads only the first
     key character, so an unused letter shows the text with no shape rather than a
     different, wrong one.
+- `^WP^`: a wolf's head. An older client reads the `W` and draws a white arrow.
 - Numbered badges `^1^` to `^12^`: a white disc with block digits.
 - Lettered paws `^P0^` to `^PZ^`: the paw with a letter or digit on its pad.
-  - The two-character keys are read only in exactly those forms (two digits, or
-    `P` + letter or digit, followed by `^`), so no existing prefix changes meaning.
+  - The two-character keys are read only in exactly those forms (two digits, `P` +
+    letter or digit, or `WP`, followed by `^`). The only existing prefix that
+    changes meaning is an exact `^WP^`, which was a white arrow.
   - An older client sees `^PK^` as a plain paw.
 - Digits and letters sit on each face separately, the back copy mirrored, so they
   read correctly from either side.
@@ -185,20 +204,20 @@ colouring.
 
 1. Build; `/tag on`; target an NPC; `/tag local ^K^Kill first`: a skull above the
    nameplate with the text "Kill first".
-2. `^X^ ^A^ ^D^ ^F^ ^T^ ^L^ ^M^ ^U^ ^N^ ^H^` on other NPCs. Each shape turns to
+2. `^X^ ^A^ ^D^ ^F^ ^T^ ^WP^ ^M^ ^U^ ^N^ ^H^ ^$^ ^E^` on other NPCs. Each shape turns to
    face you as you walk around it, like the paw and stop sign do.
 3. `^1^` through `^12^`: numbered badges. Walk around one; the number never reads
    backwards.
 4. `^PK^`, `^P7^`: the paw with K / 7 on its pad, readable from either side;
    `^P^` is still a plain paw.
-5. `^R^`, `^P^`, `^S^`: the arrow, paw and stop sign are unchanged.
+5. `^R^`, `^P^`, `^S^`, `^W^`: the arrows, paw and stop sign are unchanged.
 6. Many shapes at once, plus a few arrow colours: every shape draws and none
    flickers.
 7. `/tag local ^-^` clears the shape and leaves the text.
 8. With `/tag prettyprint on`, an rsay tag reads "… => <name> (Skull)", "(#7)" or
    "(Paw K)". With `/tag tooltip on`, the target window names the shape.
 9. A client without this change receiving `^K^Kill first`, `^12^` or `^PK^` shows
-   the text (and a plain paw for `^PK^`).
+   the text (and a plain paw for `^PK^`); `^WP^` shows a white arrow.
 
 ---
 
@@ -208,8 +227,9 @@ Nothing ships to our fleet until it is in an official Zeal release. Then:
 
 - The agent's tag parser (`_ZEAL_TAG_SHAPES` in
   `packages/wolfpack-logsync/index.js`) knows only R/O/Y/G/B/W/P/S and a
-  single-character key. It needs the eleven letters, `1`–`12` and `P` + character,
-  so Extended Target can show the icon, number or paw initial.
+  single-character key. It needs the twelve single-character icon keys, `WP`,
+  `1`–`12` and `P` + character, so Extended Target can show the icon, number or
+  paw initial.
 - The prettyprint regex beside it (`Arrow:[ROYGBW]|Paw|Stop`) needs the new
   names, `#1`–`#12` and `Paw <c>`. Otherwise a prettyprinted line reads the shape
   into the target's name.
