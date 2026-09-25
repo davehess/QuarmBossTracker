@@ -1,4 +1,4 @@
-From 0d66a285ab5865b58fd140fbb864d7c00098926b Mon Sep 17 00:00:00 2001
+From ca719992ad2429078c9d57669da03358eb490dc7 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 25 Sep 2026 13:44:43 +0000
 Subject: [PATCH] Keep nameplate tags through zoning, character switch and
@@ -42,8 +42,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  README.md          |   8 +++
  Zeal/nameplate.cpp | 151 ++++++++++++++++++++++++++++++++++++++++++++-
- Zeal/nameplate.h   |  23 +++++++
- 3 files changed, 181 insertions(+), 1 deletion(-)
+ Zeal/nameplate.h   |  30 +++++++++
+ 3 files changed, 188 insertions(+), 1 deletion(-)
 
 diff --git a/README.md b/README.md
 index c4bd3a9..05ff2c3 100644
@@ -269,7 +269,7 @@ index 030a79f..d14024c 100644
    if (it == nameplate_info_map.end()) return allow_missing_spawn;
  
 diff --git a/Zeal/nameplate.h b/Zeal/nameplate.h
-index 7233a6b..8e6db7c 100644
+index 7233a6b..c0ca156 100644
 --- a/Zeal/nameplate.h
 +++ b/Zeal/nameplate.h
 @@ -2,7 +2,9 @@
@@ -282,21 +282,18 @@ index 7233a6b..8e6db7c 100644
  #include <vector>
  
  #include "bitmap_font.h"
-@@ -60,6 +62,7 @@ class NamePlate {
-   ZealSetting<bool> setting_tag_default_arrow = {true, "Zeal", "NameplateTagDefaultArrow", false};
-   ZealSetting<bool> setting_tag_alternate_symbols = {false, "Zeal", "NameplateTagAlternateSymbols", false};
-   ZealSetting<std::string> setting_tag_channel = {"", "Zeal", "NameplateTagChannel", false};
-+  ZealSetting<bool> setting_tag_persist = {true, "Zeal", "NameplateTagPersist", false};
+@@ -12,6 +14,27 @@
+ #include "zeal_settings.h"
  
-   // Text settings.
-   ZealSetting<bool> setting_hide_self = {false, "Zeal", "NameplateHideSelf", false};
-@@ -152,6 +155,22 @@ class NamePlate {
-   bool check_for_tag_channel_message(const char *message, int color_index);
-   void synchronize_pretty_print() const;
- 
+ class NamePlate {
++ private:
 +  // Tag persistence: tags survive zoning, a character switch, a device reset and a client crash.
 +  // Live tags are mirrored into saved_tags (keyed by zone and spawn id) and to a per-character file,
 +  // and restored onto an entity with the same zone, spawn id and name when it appears again.
++  //
++  // Declared ahead of the settings on purpose: members are constructed in declaration order, and a
++  // ZealSetting's constructor runs its change callback, which for the font settings calls clean_ui().
++  // clean_ui() touches saved_tags, so it must already exist by then.
 +  struct SavedTag {
 +    std::string name;      // Stripped entity name when tagged; a reused spawn id with another name is not restored.
 +    std::string tag_text;  // Without the trailing newline.
@@ -305,6 +302,27 @@ index 7233a6b..8e6db7c 100644
 +    bool live_seen = false;   // Matched to a live entity since the last clean_ui().
 +  };
 +
++  std::map<std::pair<int, int>, SavedTag> saved_tags;  // Keyed by {zone id, spawn id}.
++  std::string saved_tags_filename;                     // The character file saved_tags was last loaded from.
++  bool saved_tags_dirty = false;
++  ULONGLONG saved_tags_next_sync = 0;
++
+  public:
+   // The positive color indices must be kept in sync with the color options.
+   enum class ColorIndex : int {
+@@ -60,6 +83,7 @@ class NamePlate {
+   ZealSetting<bool> setting_tag_default_arrow = {true, "Zeal", "NameplateTagDefaultArrow", false};
+   ZealSetting<bool> setting_tag_alternate_symbols = {false, "Zeal", "NameplateTagAlternateSymbols", false};
+   ZealSetting<std::string> setting_tag_channel = {"", "Zeal", "NameplateTagChannel", false};
++  ZealSetting<bool> setting_tag_persist = {true, "Zeal", "NameplateTagPersist", false};
+ 
+   // Text settings.
+   ZealSetting<bool> setting_hide_self = {false, "Zeal", "NameplateHideSelf", false};
+@@ -152,6 +176,12 @@ class NamePlate {
+   bool check_for_tag_channel_message(const char *message, int color_index);
+   void synchronize_pretty_print() const;
+ 
++  // Tag persistence (state is declared at the top of the class).
 +  void sync_saved_tags();
 +  void clear_saved_tags_in_zone();
 +  void load_saved_tags(const std::string &filename);
@@ -313,15 +331,6 @@ index 7233a6b..8e6db7c 100644
    void clean_ui();
    void render_ui();
    void load_sprite_font();
-@@ -162,4 +181,8 @@ class NamePlate {
-   std::function<void()> update_options_ui_callback;
-   std::function<unsigned int(int)> get_color_callback;
-   int tag_channel_number = -1;
-+  std::map<std::pair<int, int>, SavedTag> saved_tags;  // Keyed by {zone id, spawn id}.
-+  std::string saved_tags_filename;                     // The character file saved_tags was last loaded from.
-+  bool saved_tags_dirty = false;
-+  ULONGLONG saved_tags_next_sync = 0;
- };
 -- 
 2.43.0
 
