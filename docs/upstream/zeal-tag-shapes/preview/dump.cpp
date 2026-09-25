@@ -7,7 +7,9 @@
 #include "tag_shapes.h"
 
 int main() {
-  const char *names[] = {"Skull", "Cross", "Sword", "Diamond", "Flame", "Star"};
+  const char *names[] = {"Skull", "Cross", "Sword", "Diamond", "Flame", "Star", "Wolf", "#1",  "#2", "#3",
+                         "#4",    "#5",    "#6",    "#7",      "#8",    "#9",   "#10",  "#11", "#12"};
+  static_assert(sizeof(names) / sizeof(names[0]) == static_cast<int>(TagShapes::Kind::Count));
   int failures = 0;
   std::printf("[\n");
   for (int k = 0; k < static_cast<int>(TagShapes::Kind::Count); ++k) {

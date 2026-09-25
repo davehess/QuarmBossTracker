@@ -17,8 +17,14 @@ COLORS = {  # Must match the TagArrowColor values in nameplate.cpp.
     "Diamond": (0x2E, 0x8C, 0xF5),
     "Flame": (0x3C, 0xD8, 0x3C),
     "Star": (0xB5, 0x5C, 0xF2),
+    "Wolf": (0xDC, 0xE2, 0xEA),
 }
-KEYS = {"Skull": "1", "Cross": "2", "Sword": "3", "Diamond": "4", "Flame": "5", "Star": "6"}
+NUMBER_COLOR = (0xF0, 0xF0, 0xF0)  # kNumberColorBase; the low bits of blue only keep each key unique.
+KEYS = {"Skull": "K", "Cross": "X", "Sword": "A", "Diamond": "D", "Flame": "F", "Star": "T", "Wolf": "L"}
+
+
+def color_of(name, number_color):
+    return COLORS.get(name, number_color)
 
 
 def gradient(color, grey, min_h, max_h, clamp_low=0.15):
@@ -41,8 +47,11 @@ def vertex_colors(mesh, color):
     front, back = gradient(color, 192, lo, hi), gradient(color, 64, lo, hi, 0.0)
     light_front, light_back = gradient(light, 224, lo, hi), gradient(light, 96, lo, hi, 0.0)
     dark = tuple(c // 6 for c in color)
+    luminance = (color[0] * 299 + color[1] * 587 + color[2] * 114) // 1000
     out = []
     for x, y, z, tone in mesh["vertices"]:
+        if tone == 3:  # Contrast: dark on a light tag color, light on a dark one.
+            tone = 1 if luminance > 140 else 2
         if tone == 1:
             out.append(dark)
         elif tone == 2:
@@ -120,18 +129,24 @@ def write_png(path, rows):
 def main():
     meshes = json.load(open(sys.argv[1]))
     out_path = sys.argv[2]
-    cell, scale = 150, 44
+    # Optional third argument: the numbered badges' color as rrggbb (to preview alternatives).
+    number_color = tuple(int(sys.argv[3][i:i + 2], 16) for i in (0, 2, 4)) if len(sys.argv) > 3 else NUMBER_COLOR
+    cell, scale = 120, 34
     backgrounds = [(58, 66, 80), (120, 104, 84)]  # A dusk sky and a sandstone wall.
-    views = [0, 35]
+    icons = [m for m in meshes if m["name"] in COLORS]
+    numbers = [m for m in meshes if m["name"] not in COLORS]
     rows_out = []
     for bg in backgrounds:
-        for yaw in views:
-            cells = [render(m, COLORS[m["name"]], yaw, cell, scale, bg) for m in meshes]
-            for r in range(cell):
-                rows_out.append([p for c in cells for p in c[r]])
+        for group, yaws in ((icons, (0, 35)), (numbers[:6], (0, 150)), (numbers[6:], (0, 150))):
+            for yaw in yaws:
+                cells = [render(m, color_of(m["name"], number_color), yaw, cell, scale, bg) for m in group]
+                while len(cells) < max(len(icons), 6):
+                    cells.append([[bg] * cell for _ in range(cell)])
+                for r in range(cell):
+                    rows_out.append([p for c in cells for p in c[r]])
     write_png(out_path, rows_out)
     for m in meshes:
-        print(f'{KEYS[m["name"]]} {m["name"]:8s} drawn {m["drawn"]}')
+        print(f'{KEYS.get(m["name"], m["name"][1:]):>2} {m["name"]:8s} drawn {m["drawn"]}')
 
 
 if __name__ == "__main__":

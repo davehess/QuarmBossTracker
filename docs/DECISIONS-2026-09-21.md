@@ -116,7 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: six icon tag shapes (branch, not built yet)** | **2026-09-25 (§27).** Branch `tag-shapes` on the fork (`fefa1c0`): `^1^`–`^6^` = skull, X, sword, diamond, flame, star; multi-part extrusion with proud accent parts, preview rendered off-client from the real geometry code. PR text + preview: `docs/upstream/zeal-tag-shapes/` | the guild lead: build + test in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn `1`–`6` |
+| **Zeal: icon tag shapes + numbered badges 1–12 + wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30).** Branch `tag-shapes` on the fork (`b83036b`): letters `K X A D F T L` = skull, X, sword, diamond, flame, star, wolf; `^1^`–`^12^` = numbered badges, readable from both sides. The first 6 icons rendered over live mobs; persistence survived camp + `/q`. `test-all` = `61448e2` | the guild lead: rebuild `test-all`, check the badges/letters/wolf in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the letters and `1`–`12`. Open question: corpse tags (§30) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -1900,6 +1900,58 @@ with Zeal disabled**. The cause was the Windows 11 preview update **KB5124010**
 One machine, mechanism unknown. Written into `docs/RUNBOOK-client-crash-triage.md`
 §3b as the first question for any "worked yesterday, crashes at launch even without
 Zeal" report, ahead of the §5 ladder.
+
+## 30. Zeal tags, round two — letter keys, numbered badges, a wolf; corpse tags checked (2026-09-25)
+
+**In game, first test build (`test-all`):** all six icons rendered over live mobs.
+Persistence held through a camp and through `/q` (the
+guild lead's stand-in for a crash, quicker to log back in from).
+
+**The guild lead's calls:**
+- *"we should have numbered tags 1-12, each of those other icons should have their
+  own tag that's not a number"*.
+- *"add in a wolf"*, with the guild's wolf-head logo as the reference.
+
+**Landed on `tag-shapes` (`b83036b`):**
+- **Icon letter keys:** `K` skull, `X` X, `A` sword, `D` diamond, `F` flame, `T`
+  star, `L` wolf.
+  - Chosen to avoid R/O/Y/G/B/W/P/S. An older Zeal reads only the first key
+    character, so a free letter shows the text and no shape. `S` for skull would
+    have drawn a stop sign on those clients, the opposite message.
+  - `L` is the only free letter in "wolf".
+- **Numbered badges `^1^`–`^12^`:** a white disc with block digits.
+  - `^10^`–`^12^` are read as two-digit keys only when both characters are digits
+    and a `^` follows, so no existing prefix changes meaning.
+  - The digits sit on each face separately, with the back copy mirrored, so a badge
+    never reads backwards.
+  - A dark badge was rendered too and lost contrast on dark backgrounds, so white
+    is the default (one constant).
+- **Tests:** the key parser was extracted verbatim and tested with g++ for every
+  number, every letter, `13`/`0`/`-`, and no collision between badge values and
+  named colours. All 19 meshes pass the strip check.
+
+**Corpse tags — why they don't work today.** It is deliberate code in
+`nameplate.cpp` (1.4.7), not an engine limit:
+1. `is_taggable_target()` allows only Player and NPC types, so `/tag` on a corpse
+   answers "Must have a valid target with a visible nameplate".
+2. `handle_tag_message` adds tag text only to `Type == NPC`.
+3. `render_ui` skips both tag text and shape when `is_corpse`.
+4. The tagged-nameplate colour is skipped for corpses.
+5. `/tag target` needs a tab-targetable NPC, and corpses are not.
+
+A tag on a living mob therefore stays in memory after it dies, just hidden. Our
+persistence branch drops it at death.
+
+**Allowing it** would take about five small edits, plus one design choice: whether
+a kill marker should vanish at death. The recommendation is yes. Hide tags a mob
+carried before it died, and show only tags set on the corpse itself (a flag saved
+when the tag is applied). Otherwise every "kill skull" would linger on the corpse.
+
+Not built: the guild lead's call, together with whether player corpses (rez
+priority) are in scope. The corpse keeps the NPC's spawn id on EQEmu, as far as we
+know. That is **unverified on Quarm**, and so is whether a player corpse keeps the
+player's id. The name check would still hold either way, since `strip_name` drops
+"'s corpse".
 
 
 
