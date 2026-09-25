@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
@@ -1602,6 +1603,37 @@ corner.
 **The alternative, if History under the counter reads wrong:** History back
 beside DPS/Tank (as literally asked). Cost: the name wraps to two lines at
 ~320px. Build and change cost are one markup move either way.
+
+## 23. The guild lead's agent stalled mid-fight on Emperor Ssraeshza (2026-09-25, ~03:20 UTC)
+
+The guild lead, mid-raid: Target Info *"is frozen mid-fight"*; the full
+screenshot also showed the CH chain overlay's red **"OVERLAY BLIND — agent not
+responding. GO MANUAL."** (no answer from the local agent for 5 s). A Mimic
+restart fixed it.
+
+**What the server side shows** (aggregate counts only):
+- **It was the agent, not one overlay.** The guild lead's threat-snapshot
+  uploads ran at 5–10 a minute from 03:10, fell to **1 in the 03:20 minute**,
+  and came back at 03:21 with the restart. Uploads are the agent's own
+  outbound work, so the whole process went quiet, not just its local server.
+- **Only this one agent.** The other 13 uploaders in the fight held a steady
+  10 a minute straight through 03:20.
+- **Already running slow before the stall:** the guild lead's rate was 5–9 a
+  minute in the minutes before, against everyone else's 10.
+- **Not a slow leak over the night:** the agent had been running only ~15 min,
+  since the update to 2.7.2-beta.2 (between 02:49 and 03:09 UTC). beta.2 changed
+  only the DPS meter header (renderer code, cannot stall the agent); the agent is
+  3.7.16, the same as the 2.7.1 stable.
+- **Ruled out by reading the code:** the HUD's per-request work (`_serializeMeState`):
+  the hit list is capped at 400, swing rounds at 40, the swing fit is bounded,
+  and the three loops added since 09-22 all terminate.
+
+**Cause: not found yet.** Mimic restarts an agent that CRASHES; nothing restarts
+one that HANGS (no watchdog in `main.js`), which is why this needed a manual
+restart mid-fight. Next: the guild lead's `%APPDATA%\wolfpack-mimic\agent.log`
+around 23:15–23:22 ET (it appends, so the lines before the restart survive), and
+a proposed hang watchdog — ping the agent, and restart it after ~30 s without an
+answer, without counting that as a crash for the rollback logic.
 
 
 
