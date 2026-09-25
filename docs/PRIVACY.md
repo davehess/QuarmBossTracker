@@ -224,9 +224,8 @@ short-chat format is on — so **read the preview before you send**.
 
 - 🔒 **Only you** — your relayed tells; your `/me` page.
 - 🛡 **You and officers** — your inventory, spellbook and quest pages. Officers
-  can also upload inventory for any character. The **"Quests: public"** switch
-  shares your inventory and spellbook with members along with your quests — for
-  now the three go together.
+  can also upload inventory for any character. Two switches on `/me` share them
+  with members, separately: **Quest page** and **Inventory page**.
 - 🐺 **Signed-in members** — parses, DKP and bids, attendance, loot, kill
   timers, `/who` sightings, and each character's equipped gear and AAs.
   Members' Mimic can look up your current zone, HP and buffs — that's how the
@@ -249,7 +248,8 @@ server events, counted from the start).
 | **Exclude from stats** | `/me`, per character | Your Mimic stops uploading that character's fights, chat, buffs and similar; hidden from your `/me` stats, the raid review and the quartermaster | Stop other raiders recording it; stop your live status; delete what's stored. Uploads can slip through for a moment after Mimic starts, before it has fetched your settings |
 | **Exclude inventory** | `/me` | Your Mimic stops uploading that character's inventory and spellbook; hides its gear page | Delete what was uploaded; hide the inventory and spellbook pages (you and officers still see the old data) |
 | **Tell relay** | `/me` | Off by default. On: tells upload, are stored and DM'd to you | Delete past tells when turned off |
-| **Quests: public** | `/me` | Shows your quests, inventory and spellbook to members — for now one switch covers all three | — |
+| **Quest page: public** | `/me` | Shows your quest tracker to members — quest progress, keys and completed quests | Show your inventory lists on it — those need the inventory page to be public too |
+| **Inventory page: public** | `/me` | Shows your inventory (bags and bank) and spellbook to members | — |
 | **Unticking a character** | Mimic's setup screen | Mimic never opens that character's log | Stop that character's live status (it comes from Zeal, not the log) |
 | **Crash reports** | Mimic tray | Off by default | — |
 | **Start with Windows** | Mimic tray | On by default | — |

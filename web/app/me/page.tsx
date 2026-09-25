@@ -65,6 +65,7 @@ type CharRow = {
   tell_relay:         boolean | null;
   tell_dm:            boolean | null;
   show_inventory_publicly: boolean | null;
+  show_quests_publicly:    boolean | null;
 };
 
 type SkillBucket = { hits: number; dmg: number };
@@ -179,7 +180,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   // household.
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly')
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly, show_quests_publicly')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
@@ -969,6 +970,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               tellRelay={!!c.tell_relay}
               tellDm={c.tell_dm !== false}
               showInventoryPublicly={!!c.show_inventory_publicly}
+              showQuestsPublicly={!!c.show_quests_publicly}
             />
             <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
             <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
@@ -1304,6 +1306,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
                   tellRelay={!!c.tell_relay}
                   tellDm={c.tell_dm !== false}
                   showInventoryPublicly={!!c.show_inventory_publicly}
+                  showQuestsPublicly={!!c.show_quests_publicly}
                 />
               </li>
             ))}

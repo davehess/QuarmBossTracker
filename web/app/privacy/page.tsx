@@ -58,7 +58,8 @@ const SWITCHES: { name: string; where: string; does: string; doesnt: string }[] 
     doesnt: 'Delete what was uploaded; hide the inventory and spellbook pages (you and officers still see the old data).',
   },
   { name: 'Tell relay', where: '/me', does: 'Off by default. On: tells upload, are stored and DM’d to you.', doesnt: 'Delete past tells when turned off.' },
-  { name: 'Quests: public', where: '/me', does: 'Shows your quests, inventory and spellbook to members — for now one switch covers all three.', doesnt: '—' },
+  { name: 'Quest page: public', where: '/me', does: 'Shows your quest tracker to members — quest progress, keys and completed quests.', doesnt: 'Show your inventory lists on it — those need the inventory page to be public too.' },
+  { name: 'Inventory page: public', where: '/me', does: 'Shows your inventory (bags and bank) and spellbook to members.', doesnt: '—' },
   { name: 'Unticking a character', where: 'Mimic’s setup screen', does: 'Mimic never opens that character’s log.', doesnt: 'Stop that character’s live status (it comes from Zeal, not the log).' },
   { name: 'Crash reports', where: 'Mimic tray', does: 'Off by default.', doesnt: '—' },
   { name: 'Start with Windows', where: 'Mimic tray', does: 'On by default.', doesnt: '—' },
@@ -370,7 +371,7 @@ export default function PrivacyPage() {
         <ul className="space-y-2">
           {([
             ['ONLY YOU', 'bg-purple/20 text-purple border-purple/40', <>Your relayed tells; your <Link href="/me" className="text-blue hover:underline">/me</Link> page.</>],
-            ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. The <B>&ldquo;Quests: public&rdquo;</B> switch shares your inventory and spellbook with members along with your quests — for now the three go together.</>],
+            ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. Two switches on /me share them with members, separately: <B>Quest page</B> and <B>Inventory page</B>.</>],
             ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP and buffs — that&apos;s how the buff queue and Target Info work.</>],
             ['OFFICERS', 'bg-gold/20 text-gold border-gold/40', <>The admin pages cover all of it, including chat history, member page views and feedback.</>],
             ['DISCORD', 'bg-blue/20 text-blue border-blue/40', <>Whoever can read the channel: relayed guild and raid chat, parse cards (which name deaths), the night&apos;s damage leaderboard, deathrolls, PvP kills and feedback.</>],
