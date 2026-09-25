@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; **built locally 2026-09-25, 0 warnings / 0 errors** (commit re-authored, `4d16f8d`) | the guild lead: install the build, run the in-game test plan, open the PR upstream (compare link in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
+| **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; first build (`4d16f8d`) compiled clean and passed in game; then **all** bandolier messages moved into the filter, failures in red (the guild lead's call) — `30a79bb`, force-pushed | the guild lead: `git reset --hard origin/bandolier-chat-filter`, rebuild, run test-plan step 4 (failures), open the PR upstream (compare link in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -1747,6 +1747,24 @@ Not compiled here (no MSVC in a cloud session). The other open Zeal issues the
 guild lead shared are triaged in the same doc — #218 is already done (can be
 closed), #213 (target level/class/race + loc on the pipe) is the one worth doing
 next for Mimic.
+
+**Follow-up, same day — failures go in the filter too.** The first build (`4d16f8d`)
+compiled clean (0 warnings, 0 errors) and passed in game: Bandolier listed after
+Zeal Spam, loads and swaps in their own window. The guild lead then spotted a red
+*"You cannot swap items when holding something in the cursor!"* and asked where it
+went. Zeal prints the same "cannot swap" text two ways: default colour (Other) when
+the pre-swap check catches it, spell-failure red when a step fails mid-swap; "no
+empty inventory slot" / "item not found" were red too. Offered: A (leave as
+tested), B (make the pre-swap ones red for consistency), and the option the session
+advised against, routing failures into the filter (a hidden Bandolier window would hide a
+failed swap). **The guild lead's call: *"B, those should all be part of the
+filter"*** — every bandolier message goes to the Bandolier filter, failures in red.
+Landed as a second channel, `CHANNEL_BANDOLIER_FAILURE` (1012) → spell-failure
+colour, taken by the same filter entry, so failures still stand out *inside* that
+window. Usage stays default colour (it also prints after a successful `/band bag`,
+a pre-existing fall-through that was left alone). Amended into the single commit
+(`30a79bb`, still the guild lead's authorship), force-pushed; needs one rebuild +
+the failure steps of the test plan.
 
 
 
