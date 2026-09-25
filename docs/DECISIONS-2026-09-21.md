@@ -1697,6 +1697,30 @@ so those two zones show access but tick no quest), and a guild-wide keys view
 - Before graduation, production was unchanged: main read the old flag for all
   three pages until 1.8.8.
 
+## 25. The sharing change announced in #wlfpck-general; HUD hit numbers can sit outside the ring (2026-09-25)
+
+**The post.** The guild lead: *"post the inventory change to Wlfpck-general
+channel."* No session can post to Discord directly, so it went out the way the
+2.7.1 card did: a one-time post in the bot (bot 3.1.149,
+`_announceInventorySplitOnce`), latched in `bot_kv`
+(`announce_inventory_split_general`) so no redeploy can repeat it. Posted
+2026-09-25 12:37 UTC. It says what the "Quest page" and "Inventory page"
+switches do, that the old switch also shared inventory, and how to turn
+inventory back on; it names and pings nobody.
+
+**HUD numbers outside.** The guild lead: *"add an option for the HUD to have
+damage numbers outside the circle."* ⚙ builder → Hits → *Numbers inside or
+outside the ring* (default inside), on `beta` (`cfb53ee5`, Mimic 2.7.2 beta).
+Outside, the columns mirror — your hits flush left against the right side of
+the ring, hits on you flush right against the left — starting clear of the
+health/mana labels (r ≈ 197) and running outward. The window widens 1.6× about
+its centre when the option flips (and narrows back), so the ring keeps its
+size; nothing else had to move because both SVG layers were already
+`overflow: visible`. One layout, as asked — the inside/outside choice *is* the
+option. The picker row now sits by the ring's height (`--ring-h`), since the
+window is no longer square.
+
+
 
 
 
