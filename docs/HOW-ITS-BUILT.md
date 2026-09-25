@@ -2933,6 +2933,15 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `#histList` (`histItemHtml`, delegated click → `HIST_IDX`) right of the
   scoreboard in `.histwrap`; the ◀ ▶ pager is gone; the 7-column layout is a
   container query on `.board`. Tests: `test/dps-history-list.test.js`.
+- **Linux: Zeal's pipe under Wine, and the Linux download link (web 1.8.6,
+  2026-09-25)** — the guide is `docs/RUNBOOK-linux-zeal-pipe.md` (why a bridge,
+  requirements, Mimic's automatic route, the manual outflow commands,
+  troubleshooting). The bridge code itself (`apps/mimic/linuxZealBridge.js`) and
+  the Deck install runbook live on the `claude/deck-156-refresh` branch only.
+  `/mimic/linux` finds the newest Linux AppImage by paging back through the
+  release list (`web/lib/linuxRelease.ts`, up to 5 × 100) — it used to read only
+  the newest 30 and fell back to the releases page once Windows betas buried the
+  Linux build. Tests: `test/linux-release-link.test.js`.
 - **DPS meter header: stacked controls (Mimic 2.7.2 beta, 2026-09-25)** —
   `apps/mimic/overlay.html` `.title`: the `#copyRs` /rs copy is a bare 📋 (✓
   after a copy); `.ctlstack` = the − N + `.rowcfg` over `#tabHist`; `.tabstack`
