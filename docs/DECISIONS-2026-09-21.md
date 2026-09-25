@@ -120,6 +120,7 @@ is ephemeral. It is a desktop-session job.
 | **Duplicate callouts** | **DONE 2026-09-23 (§7).** Five guild triggers disabled — each doubled by a built-in agent callout on the same line. No guild-vs-guild overlaps exist (4,321 spell lines checked) | nothing. Re-enable the slow ones if slows on ADDS need a callout: the built-in is main-target only |
 | **Item page: recipes + quests, B or C** | **On beta 2026-09-24 (§12).** Quests from Quarm's own scripts (Orc Scalp, Bone Chips now match PQDI) + a Tradeskills section in two layouts + `/db/recipe/<id>`. PQDI links fixed on production (web 1.8.2) | the guild lead compares `b.wolfpack.quest/db/item/13073?v=b` and `?v=c`, picks one; graduate it with the Quests section and the recipe page, delete the other |
 | **HUD (was "Me"): one HUD + a ⚙ builder, and Box (was A); C retired** | **On STABLE, Mimic 2.7.1 / agent 3.7.16 (§11, §13 rounds 2–5, §15 round 6, §16 round 7, §17 round 8, §18, §19).** §19: not dockable; ✥ [Box\|HUD\|⚙] ✕ centred under the ring, no name. §18: C removed, A renamed Box, the HUD the default; HUD ✥/✕ under the tick and swing bars, its background a shadow; Box without a card, thin endurance. Round 8: the swing timer is fitted from log seconds + arrivals (was ~240 ms off); hit columns hug the ring, out flush right, in flush left; older rounds one number each, the newest two hit by hit; procs purple; target name on top of its bar, level, class, resists and slow curved inside; ready is always ✓. Round 7: a round of hits on one line; in/out swapped; the name along the inside of its bar, its target on top; FD ✗ on a failed feign; cast time from the cast bar (clickies); builder with All-text and a ↺ per line; a Shadow Knight mob's Harm Touch on Target Info. Round 6 as follows: One HUD built from parts in a ⚙ checklist that opens BESIDE the ring, saved per character, with a text-size slider per part; thin lines by default. Target: level and class under its bar, F/R fists for flurry/rampage, summon mark at 97%, enrage outline on the last 8%, nothing but the name on a corpse. Hit columns are ledgers: each mob's running total on top, the last few rounds as separate hits under it, older hits sliding up into the total, which drops out when the mob dies. Target Info no longer takes a player's level from /consider | the guild lead plays with round eight and says whether the ⚙ opens a NEW dashboard window or reveals one already open (§17). Optional: the one-line Zeal PR makes the swing timer exact |
+| **Contributing: AI brief + public roadmap refreshed** | **On `beta` 2026-09-25 (§20); main after the raid freeze (web 1.8.4).** Stale items pruned against the ledger, #209–#211 minted, the /roadmap 404 link fixed, nineteen member names removed from the roadmap | the guild lead hands out the brief link; a sweep of the names left in `STATUS.md` and two code comments |
 | **Mimic mini mode — the nine renditions** | **Built and on stable, Mimic 2.7.1 / agent 3.7.16 (§19).** Three data gaps: Target Info has no ROOT row (the agent does not flag roots), Charm shows no MR (no resists in its data), Pet shows the haste buff's name, not its % | the guild lead tries them in raid; then, if wanted: the agent flags roots (SPA 99) like pacify; a name → haste % table for pets; resists into the charm data |
 | **Colour-blind themes, opacity split, "key in use"** | **On STABLE, Mimic 2.7.1 / agent 3.7.16 (§18, §19).** Three fitted colour matrices; Opacity = the whole overlay, Background its own slider (old values migrate once); a taken hotkey is named, another program's is detected | the guild lead tries the three themes with someone who has that colour vision, if anyone in the guild does — the fit is measured, not yet seen by a colour-blind eye |
 | **A hotkey per overlay · DPS History fight list · L size 420 px** | **On beta, agent 3.7.11 (§13, after round five).** Hotkey column on the dashboard's Overlays table (no default keys; refused keys shown red). History lists the last six fights on the right. L is 420 px for every overlay | the guild lead sets a key or two and checks the History list at L size. Optional: show each overlay's key in the tray menu |
@@ -1438,5 +1439,57 @@ release carrying its installer — the bot deploys minutes after the push, the
 installer builds after that, and a post that beat it would send the raid to
 an update that did not exist yet. It checks every 5 minutes for up to 12 hours.
 An unreadable latch (Supabase down) holds and retries rather than posting.
+
+## 20. Contributing: the AI brief and the public roadmap brought up to date (2026-09-25, web 1.8.4)
+
+The guild lead: *"`docs/AI-CONTRIBUTOR-BRIEF.md` … this and the roadmap need
+updating so people can contribute"*, then, mid-raid: *"push it up to either
+main because it's just a document … or give me a link to the new version on
+beta that I can get to someone."*
+
+**Beta, not main, during the raid.** The change touches the `/roadmap` page as
+well as the doc, and any push to `main` redeploys the bot on Railway whatever
+the files are — the mid-raid restart the freeze exists to prevent. Beta carries
+no bot, and these files cut no Mimic build, so the brief went to `beta` and the
+link handed out was the brief's GitHub page on that branch. Main follows after
+00:30 ET.
+
+**What was stale, and how it was checked.** A read-only audit of both lists
+against the ledger and the code (file:line evidence for each):
+- **Roadmap "What's next":** 4 of 23 items had shipped and came off — #75 golden
+  log, #80 raid review, #81 raid guide (phase 0), #193 Zeal spawn id (upstream,
+  Zeal 1.4.6). Ten more were partly done and now say so in their status line
+  (#190 the engine repair is in, the re-count is not; #144 displays guarded,
+  source not; #142, #192, #56, #87, #68–70, #199, #194, #195, #196). Three were
+  added and numbered: **#209** mini-mode data gaps, **#210** the overlay
+  click-throughs + the CH row that turns blue again, **#211** more skills on the
+  HUD (a "we need" item, so raiders' answers arrive through the roadmap box).
+  Next free number: #212.
+- **The brief's menu:** 8 of 10 items had shipped long ago (#134, #132, #133,
+  #99, #83, #66, #67, #130; #100 partly). The new menu is #209–#211, #144 at the
+  source, the charm too-high-level line, #191, #54, #199 phase one, the
+  "| local" / "| merged" parse-paste suffix, and two log-line asks (#169, #142).
+- **The page's only contributor link pointed at `docs/roadmap.md`, which does
+  not exist** — a 404. It now points at the brief, the coding-assistant helper
+  and `STATUS.md`, with drafts sent to `/feedback`, one item per post (the box
+  holds 4,000 characters).
+
+**The brief itself** gained what it lacked since July: current sizes and
+routing (the dashboard is authored in `dashboard.html`; web previews on beta),
+the public-repo rules (attribution by role, never a character → player
+mapping, no machine details), UI-as-options, colour semantics, the overlay
+chrome + mini mode, test discipline, and Supabase's cost model.
+
+**Names on public pages.** The roadmap's prose carried nineteen member or
+character names — credits ("Reported by …"), another member's attendance
+record, an alt-family reference ("…'s family has 83 …"), a
+character-with-its-player pairing in a fleet example, and a set that read as
+one person's mule characters. All are roles now, or the invented placeholders
+where an example needs a name-shaped token. ⚠ **Seen and NOT fixed** (outside
+this change): names in `docs/STATUS.md` (five places), a member's handle in an
+agent comment, a mob-name-shaped member reference in an agent comment, and the
+third-party OpenDKP maintainer named in `web/app/opendkp/page.tsx` (the rule
+says "the upstream maintainer"). A sweep task is queued.
+
 
 

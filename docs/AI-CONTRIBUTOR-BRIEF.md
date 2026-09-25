@@ -163,32 +163,32 @@ These are self-contained and reviewable without officer-only data or a live
 raid. Most come out of Mimic 2.7.1 (2026-09-24), where the new HUD and the
 nine "mini mode" overlays shipped with a few known gaps.
 
-**Code drafts:**
-- **Target Info mini: a ROOT timer row.** The mini Target Info shows the mob's
+**Code drafts** (numbers are the project's ledger ids):
+- **#209 — Target Info mini: a ROOT timer row.** The mini Target Info shows the mob's
   health bar and a draining SLOW row, but no ROOT row, because nothing the
   overlay receives marks a debuff as a root. Draft: in the agent, flag root
   spells (spell effect 99, "root") on the target's buff list the way pacify is
   already flagged; in the overlay, add a blue ROOT row that drains like SLOW and
   vanishes when no root is up. *(Agent `packages/wolfpack-logsync/index.js` +
   Mimic `apps/mimic/mobinfo.html`, `beta`. Medium.)*
-- **Pet mini: the haste percentage.** The mini Pet overlay shows the pet's haste
+- **#209 — Pet mini: the haste percentage.** The mini Pet overlay shows the pet's haste
   buff by NAME where the guild voted for its PERCENT, because the pet data only
   carries the name. Draft: a small name → haste-% table in the page, the way the
   Extended Target overlay already carries slow percentages, sourced from the
   spell catalog (the reviewer can pull the numbers). *(Mimic `apps/mimic/pets.html`,
   `beta`. Quick.)*
-- **Charm mini: the mob's magic resist.** The vote wanted "MR current (full)" —
+- **#209 — Charm mini: the mob's magic resist.** The vote wanted "MR current (full)" —
   the resist after debuffs like Tashanian, with the base in brackets — but the
   charm data carries no resists. Draft where the numbers could come from (Target
   Info already receives the mob's catalog resists) and how the debuff is
   subtracted. *(Mimic `apps/mimic/charm.html` + possibly the agent, `beta`. Medium.)*
-- **Two clicks that fall through to the game.** On a locked overlay every
+- **#210 — Two clicks that fall through to the game.** On a locked overlay every
   clickable thing needs the hover handshake (§2). Two do not: the category
   headers in the full Buff queue, and the dismiss ✕ on each pet in the full Pet
   list. Draft: add the handshake to both, matching how each page does it for its
   other buttons. *(Mimic `apps/mimic/buffqueue.html`, `apps/mimic/pets.html`,
   `beta`. Quick.)*
-- **CH chain: an interrupted heal turns blue again.** In the full CH chain
+- **#210 — CH chain: an interrupted heal turns blue again.** In the full CH chain
   overlay, a healer's row goes red for 4 s after an interrupt, then back to a blue
   "casting" bar for the rest of the 10 s cast — as if a heal were still coming.
   Draft: once interrupted, a cast never counts as casting again (a NEW cast
@@ -199,12 +199,39 @@ nine "mini mode" overlays shipped with a few known gaps.
   the extra token without mis-reading the line. Draft both halves: the suffix in
   Mimic, and the parser check (plus fix, if needed) in the bot. *(Mimic
   `apps/mimic/overlay.html` on `beta` + bot `index.js` on `main`. Medium.)*
-- **More skills on the HUD.** The HUD tracks each class's key cooldowns
+- **#211 — More skills on the HUD.** The HUD tracks each class's key cooldowns
   (combat ability, discipline, Mend, Feign Death, Lay on Hands, Harm Touch …).
   The guild has been asked which other skills people want tracked; draft the
   additions for a class you play: the skill, how its use shows in the log, and
   its reuse time on this server (the reviewer checks it against the server
   source). *(Agent's per-class cooldown table + the HUD, `beta`. Medium.)*
+- **#144 — Health read from the wrong gauge, at the source.** Mimic works out
+  which of Zeal's numbers is the player's own HP, and a weight reading (like
+  130/180) can be mistaken for health. The displays are already guarded (they
+  ignore any pool under 500); the source is not. Draft: tighten the detection so
+  a candidate must look like a real HP pool (maximum at least 500, a clear
+  margin between candidates), with a test, since every Mimic uploads this.
+  *(Mimic `apps/mimic/main.js`, the self-HP detection, `beta`. Quick.)*
+- **A charm refused for level.** When a charm fails with "Your target is too
+  high of a level for your charm spell.", the engine does not read that line.
+  It is usually followed in the same second by "Your target resisted the …
+  spell.", which it does handle — but if no resist line follows, the charm it
+  was expecting can stay staged (for about 12 seconds) and the next pet event
+  could start a charm timer that never happened. Draft: clear the staged charm
+  on the too-high line itself. *(Agent, the charm pipeline, `beta`. Quick.)*
+- **#191 — One archive entry per fight.** The bot's parse archive thread
+  sometimes gets near-identical entries posted seconds apart by different
+  uploaders. Collapse them — carefully, because the bot also rebuilds its
+  history from that thread when it restarts. *(Bot `index.js`, `main`. Medium.)*
+- **#54 — Named-mob kill counts on /me.** On the member's own page, how many of
+  each named mob each of their characters has killed, with a search and a
+  timeframe filter. PRIVATE scope; honor the opt-out flags. *(Web
+  `web/app/me/`, plus a query or database function, `main`. Medium.)*
+- **#199, phase one — richer fight pages.** The fight page has a
+  damage-over-time chart already; add the melee / DoT / spell mix bars and a
+  per-ability breakdown per player, from the per-ability rollups the database
+  already stores (only for uploads new enough to carry them). Web-only. *(Web
+  `web/app/parses/[id]/`, `main`. Medium.)*
 
 **Not code — a log line or an observation unblocks these:**
 - A verbatim log line (timestamp and all) of a **pet** being hit by Death Touch —

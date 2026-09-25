@@ -3554,10 +3554,16 @@ voting + blocked-on-evidence submissions) shows a canonical `#` per item.
 Items that already had ledger numbers keep them (#56, #68–70, #75, #80, #81,
 #84, #86, #87, #114, #142, #144, #156, #169). These were UNNUMBERED and got
 minted here — the numbering is now owned by this ledger, next free is
-**#209** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
+**#212** (#200–#207 minted 2026-08-04 for the death/timestamp follow-ups and
 the callout designs, and **#208** was taken the same day by the item-page
 under-reporting fix; all of them are written up in the Open TODO section, not
-here — corrected 2026-08-09, this line still read "#208"):
+here — corrected 2026-08-09, this line still read "#208"). **#209–#211 minted
+2026-09-25** for the roadmap queue and the contributor brief: **#209** the three
+mini-mode data gaps (Target Info ROOT row, Pet haste %, Charm MR), **#210** the
+overlay click-throughs (full Buff queue headers, full Pet dismiss ✕) and the
+full CH chain row that turns blue again after an interrupt, **#211** more skills
+on the HUD (collecting what raiders want tracked) — see
+`DECISIONS-2026-09-21.md` §19–§20:
 - **#190** dead ^-anchored guild triggers batch (rn-buster-audit follow-up) —
   **MEASURED + FIX PREPARED 2026-08-04: `docs/RUNBOOK-dead-triggers.md`.**
   **37 of 109 enabled triggers can never match a log line**, including the eight
