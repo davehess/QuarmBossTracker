@@ -97,19 +97,41 @@ export default function RoadmapPage() {
       </section>
 
       <section className="bg-panel border border-border rounded-lg p-5">
+        {/* The old link pointed at docs/roadmap.md, which does not exist (a 404).
+            Contributing goes through the brief (any chat AI) or the helper (an AI
+            that can read the repo), with the live ledger for detail. */}
         <p className="text-sm text-text">
-          Want the developer-level detail — exact file paths, version numbers, open
-          design questions? It's all public on{' '}
+          Want to help build it? Paste our{' '}
           <a
-            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/roadmap.md"
+            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/AI-CONTRIBUTOR-BRIEF.md"
             target="_blank"
             rel="noreferrer"
             className="text-blue hover:underline"
           >
-            GitHub
+            contributor brief
+          </a>{' '}
+          into ChatGPT, Gemini or Claude and it will draft a change for one of the items
+          above that we can review and merge. If your AI can read code, start from the{' '}
+          <a
+            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/GEMINI-SPARK-HELPER.md"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue hover:underline"
+          >
+            helper for coding assistants
+          </a>{' '}
+          instead. The developer-level detail — file paths, versions, open questions — is in
+          the{' '}
+          <a
+            href="https://github.com/davehess/QuarmBossTracker/blob/main/docs/STATUS.md"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue hover:underline"
+          >
+            live work list
           </a>
-          . Ideas or feedback of your own?{' '}
-          <a href="/feedback" className="text-blue hover:underline">Drop it here</a>.
+          . Send a draft, an idea or feedback{' '}
+          <a href="/feedback" className="text-blue hover:underline">here</a> — one item per post.
         </p>
       </section>
     </article>

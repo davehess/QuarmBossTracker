@@ -1,37 +1,43 @@
 # AI contributor brief — self-contained (for chat AIs that can't browse the repo)
 
-**How to use this file:** paste this ENTIRE file into a fresh Gemini / ChatGPT
-chat, then send the prompt at the bottom (§7). Everything the AI needs is here —
-it does **not** need to browse GitHub or read live files. Its job is to produce
-**reviewable draft revisions as text**, which a human then brings back to the
-project's Claude Code session to evaluate, harden, and merge.
+**How to use this file:** paste this ENTIRE file into a fresh Gemini / ChatGPT /
+Claude chat, then send the prompt at the bottom (§7). Everything the AI needs is
+here — it does **not** need to browse GitHub or read live files. Its job is to
+produce **reviewable draft revisions as text**, which you then send to the
+project (§5) to be checked against the real code, hardened, tested and merged.
 
-*Snapshot date: 2026-07-20. The live queue lives in `docs/STATUS.md` +
-`docs/DESIGN-platform-queue.md`; the guardrails below are stable.*
+*Snapshot date: 2026-09-25 (Mimic 2.7.1 stable · agent 3.7.16 · bot 3.1.148 ·
+web 1.8.3). The live work list is `docs/STATUS.md` plus the "Open — read this
+first" table at the top of the newest `docs/DECISIONS-*.md`; the member-facing
+version is wolfpack.quest/roadmap. The guardrails below are stable.*
 
-> **Wrong file?** If the assistant CAN read the repo and run commands (Gemini
-> Spark, an agentic IDE session), use **`docs/GEMINI-SPARK-HELPER.md`** instead
-> — it covers boot order, branch routing, the verification gate and the test
-> tiers. This file is only for a chat with no repo access.
+> **Wrong file?** If the assistant CAN read the repo and run commands (Claude
+> Code, Gemini Spark, an agentic IDE session), use
+> **`docs/GEMINI-SPARK-HELPER.md`** instead — it covers boot order, branch
+> routing, the verification gate and the test tiers. This file is only for a
+> chat with no repo access.
 
 ---
 
 ## 1. What the project is
 
 Wolf Pack is a guild platform for the EverQuest emulator **Project Quarm**. Four
-components in one monorepo:
+components in one public monorepo (github.com/davehess/QuarmBossTracker):
 
 | Component | Path | Language | Branch |
 |---|---|---|---|
-| **Bot** — Discord bot + HTTP API for the agents | `index.js`, `commands/`, `utils/` | Node (CommonJS), discord.js v14 | `main` |
-| **Web** — wolfpack.quest | `web/` | Next.js 14 (App Router), TypeScript, Tailwind | `main` |
-| **Agent** — log-parsing engine on each raider's PC | `packages/wolfpack-logsync/index.js` (one ~24k-line file, zero deps) | Node (CommonJS) | `beta` |
-| **Mimic** — Electron desktop app that bundles the agent + overlays | `apps/mimic/` (`main.js`, `preload.js`, `*.html`) | Electron/Node + browser HTML | `beta` |
+| **Bot** — Discord bot + HTTP API for the agents | `index.js` (~20k lines), `commands/` (~90 slash commands), `utils/` | Node (CommonJS), discord.js v14 | `main` |
+| **Web** — wolfpack.quest | `web/` | Next.js 14 (App Router), TypeScript, Tailwind | `main`; previews on `beta` at b.wolfpack.quest |
+| **Agent** — log-parsing engine on each raider's PC | `packages/wolfpack-logsync/index.js` (one ~42k-line file, zero npm deps); its local dashboard is authored in `packages/wolfpack-logsync/dashboard.html` | Node (CommonJS) | `beta` |
+| **Mimic** — Electron desktop app that bundles the agent + the overlays | `apps/mimic/` (`main.js`, `preload.js`, one `*.html` per overlay) | Electron/Node + browser HTML | `beta` (stable releases are cut from `main`) |
 
 **Data flow (one direction):** EQ log file + Zeal named pipe → **agent** (player's
 PC) → **bot** HTTP API (per-user bearer token) → **Supabase** (Postgres) →
 **web** reads Supabase / **bot** posts Discord. The agent never talks to Supabase
-or Discord directly; the web never talks to the bot/agent directly.
+or Discord directly; the web never talks to the bot/agent directly. Zeal 1.4.6+
+puts a **spawn id** on the pipe, so same-named mobs can be told apart for
+raiders on current Zeal; older Zeal is name-keyed, and the code must keep
+working for both.
 
 ## 2. The guardrails — hard constraints (this is the review bar)
 
@@ -46,6 +52,12 @@ Any draft that violates these will be rejected. Treat them as non-negotiable.
   declare one.
 - Honor opt-out flags `exclude_from_stats` / `exclude_inventory` — excluded
   characters never contribute or display.
+- **The repository is public.** Never put a member's name or character name in
+  code, comments, docs or commit text — attribute by role ("the guild lead",
+  "a member", "an officer"). Worked examples use invented names (Aldenmar,
+  Brackwyn, Corvale, Nyssara, Rethlan). **Never write down which characters
+  belong to which player.** No addresses, hostnames or anything describing a
+  member's own machine or network.
 
 **Security:**
 - Supabase Row-Level Security tiers: public `eqemu_*` catalog is anon-readable;
@@ -64,10 +76,28 @@ Any draft that violates these will be rejected. Treat them as non-negotiable.
 - **Never deduplicate a `per_observer` data stream** (live-state, threat,
   casting, target-casts, encounter) — every observer's view is a distinct fact.
 
-**Agent dashboard caveat:** the agent's browser dashboard is one giant backtick
-template literal (`WEB_HTML`) with two escape layers; one bad char blanks the
-page. If an item touches it, note that the change needs `npm run check:dashboard`
-to pass and that sections must stay byte-stable across polls.
+**Screens people read mid-fight:**
+- **UI changes come as options.** A change to how something looks is proposed
+  as two genuinely different designs (not one design in two colours), each
+  previewed on the beta site or beta Mimic, and the guild lead picks one. Say
+  which you would pick and why; never assume yours is the one that ships.
+- **Colour means something.** Red = danger/death, green = healthy/ready,
+  orange/amber = warning, blue = mana/casting, gold = rolls/XP, purple =
+  rare/mez/procs. Monospace everywhere. An overlay is read at a glance over a
+  moving game: density beats whitespace, and motion is a cost.
+- **Every Mimic overlay has the same chrome:** ✕ hide (top-right), ✥ move
+  (top-left) with a right-click menu, and a hover handshake on every clickable
+  control — locked overlays are click-through, so a control without it passes
+  the click to EverQuest. Nine overlays also have a **mini mode** (a small
+  version drawn when `body.wp-mini` is on); a change to one of those says what
+  it does in mini.
+
+**Agent dashboard caveat:** the dashboard is authored in
+`packages/wolfpack-logsync/dashboard.html` and folded into the agent file by
+`npm run sync:dashboard`; `npm run check:dashboard` fails the build on drift.
+Draft changes against `dashboard.html`. Sections must stay byte-stable across
+polls (volatile numbers live in their own small placeholder), or the page
+flickers every two seconds.
 
 ## 3. How things currently work (enough to draft correctly)
 
@@ -78,95 +108,72 @@ to pass and that sections must stay byte-stable across polls.
   service-role client server-side (`supabaseAdmin()`); pure logic lives in
   `web/lib/*.ts` (importable, unit-tested).
 - **Overlays** (Mimic `*.html`) poll the local agent (`/api/state`,
-  `/api/tank-state`, etc.) ~1.5–2s and render. They're LOCAL — they read the
-  player's own agent, not Supabase.
+  `/api/tank-state`, `/api/me`, …) every 1–2 s and render. They're LOCAL — they
+  read the player's own agent, not Supabase. Themes (including three
+  colour-blind ones) are one CSS filter over every overlay.
+- **The HUD** (`apps/mimic/me.html`) is the player's own panel — a ring round
+  the screen centre, or a Box — fed by the agent's `/api/me`.
 - **Triggers/callouts** run in the agent: compiled patterns + Zeal gauge
-  conditions → text/timer/TTS. Rehearsal-flagged paths never upload.
+  conditions → text/timer/TTS. Patterns match the RAW log line, which starts
+  with a timestamp. Rehearsal-flagged paths never upload.
+- **Supabase is on a paid plan with no request quota.** Writes are cheap;
+  reads cost egress and the database only grows, so prefer narrow selects and
+  cached reads, and say what a new table keeps and for how long.
 - **Tests:** vitest. `web/lib/*` and `utils/*` are imported directly; logic
   inside the monoliths is tested by "source-slicing" the real function out of the
-  shipped file. New logic needs a test.
+  shipped file and running it. Prefer testing behaviour over matching source
+  text; a test that matches text must strip comments first (a comment can make
+  it pass on its own). New logic needs a test, and a new test is checked by
+  breaking the code on purpose and watching it fail.
 
 ## 4. Your output format (per item you pick)
 
-For EACH item you draft, produce exactly this, in plain text/markdown:
+For EACH item you draft, produce exactly this, in plain text/markdown — one item
+per message, so each fits the 4,000-character feedback box (§5):
 
 1. **Item** — which queue item (name/number).
 2. **Understanding** — what the issue/feature actually is, in 2–3 sentences.
 3. **How it works today** — the current behavior/code path you're changing
    (state your assumptions explicitly, since you can't see the code).
 4. **Proposed change** — the fix, as concretely as you can: which file(s), which
-   function(s), pseudocode or actual code blocks. Keep the diff minimal.
+   function(s), pseudocode or actual code blocks. Keep the diff minimal. For a
+   UI change, two options (§2).
 5. **Guardrail check** — confirm it respects privacy, security, minimal-diff,
    fail-open (§2). Flag anything you're unsure about.
 6. **Confidence + why** — high/medium/low and the reason. Call out assumptions a
    reviewer must verify against the real code.
-7. **Test idea** — how you'd prove it works.
+7. **Test idea** — how you'd prove it works, and how you'd break the code to
+   prove the test can fail.
 
-## 5. What you CANNOT do (and what happens next)
+## 5. What you CANNOT do (and how a draft gets in)
 
 - You can't run the code, see live data, or open a pull request. Your output is a
-  **draft** — a human copies it back to the project's Claude Code session, which
-  verifies your assumptions against the real code, hardens it, adds tests, and
-  merges to the right branch (bot/web → `main`, agent/Mimic → `beta`).
+  **draft**. The person who asked you sends it in — one item per post at
+  **wolfpack.quest/feedback** (signed in; 4,000 characters per post), or in
+  **#feedback** on Discord — and a Claude Code session working in the real repo
+  verifies your assumptions against the code, hardens it, adds tests, and
+  merges it to the right branch (bot/web → `main`, agent/Mimic → `beta`).
 - So: **be honest about assumptions**, prefer well-specified items over
   speculative ones, and don't invent file paths/function names you're unsure of —
   describe the change at a level the reviewer can map onto the real code.
 
 ## 6. Menu of good async items (snapshot — pick from these or ask for the live list)
 
-These are self-contained and reviewable without officer-only data. (Numbers are
-the project's queue ids.)
-
-- **#134 — Discord death post over-counts.** The website shows correct deaths
-  (each raider once), but the Discord auto-parse card multi-counts (e.g. "a member
-  ×3"). The website already does correct cross-uploader death dedup (name+ts, ~3s
-  window, + suppress names any single uploader reported dying 2+ times). Draft:
-  port that dedup logic to the bot's Discord death-block rendering so the two
-  match. *(Bot, `main`.)*
-- **#132 — Loot-capture parser misses multi-item lists + false positive.** The
-  officer loot-capture parser reads comma/pipe-separated item lists from `/gu`/`/rs`
-  chat, but drops large multi-item lists and false-positives on chatter like
-  "Grats Fungal". Draft: a more robust item-list parser (handle `Song:`/`Spell:`/
-  multi-word item names, don't truncate) + a tighter guard against non-loot
-  chatter. *(Bot/agent.)*
-- **#133 — Collapse duplicate items into multiples.** When the same item appears
-  multiple times in the auctions panel or loot capture, collapse into one entry
-  with ×N instead of separate rows. Draft: group-by-name + sum quantities.
-  *(Web + agent display.)*
-- **#99 — Per-mob view.** A page/section showing every recorded fight against a
-  given boss (all encounters for one npc), so the guild sees trends over time.
-  Draft: a `/boss/[id]` enhancement or new page reading `encounters` grouped by
-  npc. *(Web, `main`.)*
-- **#100 — Per-person cross-fight performance.** On `/character/[name]`, show a
-  raider's damage/healing/deaths across many fights (their history), respecting
-  the ANON/GUILD scopes and opt-outs. *(Web, `main`.)*
-- **#54 — /me named-mob kill counts.** On the member `/me` page, show how many of
-  each named mob the character has killed, with a search + timeframe filter.
-  *(Web + a Supabase query over encounters.)*
-- **#83 — "Where's the parse" deep links.** One-click "Post to /rs" from the DPS
-  HUD, and deep links between a Discord parse post and the wolfpack.quest parse
-  page (each links to the other). *(Web + bot.)*
-- **#66 — Command Center per-line dismiss.** The Command Center overlay needs a
-  per-line ✕ / dismiss-all for stale cure entries. *(Mimic overlay, `beta`.)*
-- **#67 — Buff-queue redraw fix.** Dismissing one buff-queue item currently
-  collapses + redraws the whole overlay (disruptive mid-raid); it should remove
-  just that row. *(Mimic overlay, `beta`.)*
-- **#130 — Slow info on Target Info.** Show the active slow(s) on the current mob
-  with the remaining timer, and mark the highest-% slow as the effective one
-  (in EQ only the strongest slow applies). *(Agent + overlay, `beta`.)*
+*This menu is being refreshed against the live ledger. Until it is, ask the
+human to paste an open item from `docs/STATUS.md` or from wolfpack.quest/roadmap.*
 
 For any other item, ask the human to paste the relevant entry from
-`docs/STATUS.md` or `docs/DESIGN-platform-queue.md`.
+`docs/STATUS.md`, or pick one from wolfpack.quest/roadmap ("What's next").
 
 ## 7. The prompt to send (after pasting this file)
 
 > You are drafting revisions for the Wolf Pack Project-Quarm platform described
 > above. You cannot browse the repo or run code — work only from this brief.
 > Review the guardrails (§2) and the "how things work" notes (§3) as binding.
-> Pick THREE items from the menu (§6) that you're most confident you can draft a
-> real revision for. For each, produce the §4 output format exactly. Do NOT try
-> to implement or open a PR — produce clean drafts a reviewer can verify and
-> harden. Then, in at most three sentences total, tell me your overall
-> understanding of what these three share, what your drafts change about the
-> present behavior, and why you're confident. Be explicit about every assumption
-> a reviewer must check against the real code.
+> Pick up to THREE items from the menu (§6) that you're most confident you can
+> draft a real revision for. For each, produce the §4 output format exactly, one
+> item per message. Do NOT try to implement or open a PR — produce clean drafts
+> a reviewer can verify and harden. Then, in at most three sentences total, tell
+> me your overall understanding of what these items share, what your drafts
+> change about the present behavior, and why you're confident. Be explicit about
+> every assumption a reviewer must check against the real code.
