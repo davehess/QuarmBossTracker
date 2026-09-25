@@ -48,11 +48,19 @@ def vertex_colors(mesh, color):
     light_front, light_back = gradient(light, 224, lo, hi), gradient(light, 96, lo, hi, 0.0)
     dark = tuple(c // 6 for c in color)
     luminance = (color[0] * 299 + color[1] * 587 + color[2] * 114) // 1000
+    eye = (0xFF, 0xCF, 0x5C)  # The landing page's wolf-eye yellow.
+    shade = tuple(c * 7 // 10 for c in color)
+    eye_front, eye_back = gradient(eye, 255, lo, hi, 0.55), gradient(eye, 160, lo, hi, 0.4)
+    shade_front, shade_back = gradient(shade, 150, lo, hi), gradient(shade, 50, lo, hi, 0.0)
     out = []
     for x, y, z, tone in mesh["vertices"]:
         if tone == 3:  # Contrast: dark on a light tag color, light on a dark one.
             tone = 1 if luminance > 140 else 2
-        if tone == 1:
+        if tone == 4:
+            out.append((eye_front if y < 0 else eye_back)(z))
+        elif tone == 5:
+            out.append((shade_front if y < 0 else shade_back)(z))
+        elif tone == 1:
             out.append(dark)
         elif tone == 2:
             out.append((light_front if y < 0 else light_back)(z))

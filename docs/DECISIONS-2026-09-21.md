@@ -116,7 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes + numbered badges 1–12 + wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30).** Branch `tag-shapes` on the fork (`b83036b`): letters `K X A D F T L` = skull, X, sword, diamond, flame, star, wolf; `^1^`–`^12^` = numbered badges, readable from both sides. The first 6 icons rendered over live mobs; persistence survived camp + `/q`. `test-all` = `61448e2` | the guild lead: rebuild `test-all`, check the badges/letters/wolf in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the letters and `1`–`12`. Open question: corpse tags (§30) |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30, §31).** Branch `tag-shapes` on the fork (`7ab0f2b`): letters `K X A D F T L M U N H` = skull, X, sword, diamond, flame, star, wolf, moon, lasso, lute, shield; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial. Wolf traced from the landing-page art, **five variants** (classic ships as placeholder). `test-all` = `302f764` | the guild lead: **pick a wolf** (`wolf-variants.png`), rebuild `test-all`, check in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -1952,6 +1952,65 @@ priority) are in scope. The corpse keeps the NPC's spawn id on EQEmu, as far as 
 know. That is **unverified on Quarm**, and so is whether a player corpse keeps the
 player's id. The name check would still hold either way, since `strip_name` drops
 "'s corpse".
+
+## 31. Zeal tags, round three — traced wolf (five variants), moon, lasso, lute, shield, lettered paws (2026-09-25)
+
+**The guild lead's calls, in order:**
+- *"That wolf doesn't look good, try 5 more versions. use the wolfpack.quest
+  landing page svg and make the eyes yellow"*.
+- A moon, a lasso and a lute as reference images: *"that's a moon, lasso for
+  pulling, and a lute for bard"*.
+- *"Take the pet paw and add each digit and letter in so charmers can add their
+  initial in"*.
+- *"we also need a version of this shield"*.
+
+**The wolf is now traced, not hand-built.** The landing-page wolf is a PNG, not
+an SVG: `web/public/wolf.png` (bone, alpha-keyed) plus `wolf-eyes.png` (the
+`#FFCF5C` eye islands); provenance in `wolf.provenance.txt`.
+
+`trace_wolf.py` builds it with the standard library only: a PNG decoder,
+crack-following contours, Douglas–Peucker, ear clipping. It follows the artwork's
+nesting (face → dark linework → yellow eye islands → pupils) and fills each region
+as its own layer, one step prouder than its parent, so nothing needs a polygon
+with holes. The output is `Zeal/tag_shapes_wolf.inc`, generated data like the
+paw's point tables.
+
+**Five variants, all built from that trace** (`wolf-variants.png`):
+1. **classic:** the landing wolf in bone.
+2. **outlined:** a dark border, for bright backgrounds.
+3. **badge:** on a dark disc, matching the numbered badges.
+4. **shadow:** a dark silhouette with glowing eyes, like the site's
+   `wolf-solid` + `wolf-eyes` layering.
+5. **steel:** grey with light linework.
+
+A full-detail trace and a silhouette-only version were tried and dropped: the
+first reads the same as classic at tag size, and the second lost its eyes on a
+bone face. **Classic ships as a placeholder until the guild lead picks.**
+
+**New keys** (all avoid the letters an older client already draws):
+- `M` moon (mez);
+- `U` lasso (pull);
+- `N` lute (bard);
+- `H` shield (tank; the reference was a 50-px grey heater shield, built with a
+  darker rim, cross band and boss);
+- `^P0^`–`^PZ^`: the paw with a 5×7 block letter or digit on its pad. It is
+  drawn as the paw plus a glyph shape queued at the same spot, so there are 36
+  small glyph meshes rather than 36 paws. An older client reads `^PK^` as a
+  plain paw.
+
+**Checks:**
+- All 59 meshes pass the strip check, and each wolf variant was compiled through
+  the real code.
+- The key parser was extracted verbatim and tested: every number and paw glyph,
+  every letter, lowercase paw letters, and no collision among named, numbered and
+  paw-glyph colours.
+- `static_assert`s now tie `TagArrows::Shape` to `TagShapes::Kind`.
+
+**Found in passing:** a `test-all` rebuild hit a merge conflict (the include lists
+of the shapes and persistence branches). A pipe masked the failed merge, so
+`test-all` was briefly pushed without persistence (`e4af8d0`). Fixed within
+minutes as `302f764`. Lesson: never pipe a `git merge` whose exit status gates a
+push.
 
 
 
