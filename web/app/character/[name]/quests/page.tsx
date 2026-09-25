@@ -5,7 +5,12 @@
 //     viewer's wolfpack_members.discord_id).
 //   • Always visible to officers.
 //   • Visible to other signed-in members only if the character has set
-//     characters.show_inventory_publicly = true.
+//     characters.show_quests_publicly = true (its own switch since 2026-09-25;
+//     it used to share show_inventory_publicly with the inventory pages).
+//   • For those members, the inventory-derived parts — key evidence item
+//     names, inventory-driven discovery, stack turn-ins, turn-in rewards held,
+//     hidden/dismissed, and the "probably don't need" / broken-item lists —
+//     show only if show_inventory_publicly is on too (`showInvDetail`).
 //
 // Data:
 //   • quest_catalog + quest_required_item — the curated list of trackable
@@ -73,7 +78,7 @@ async function load(decoded: string) {
     charRes, questsRes, itemsRes, keysRes, prefsRes,
   ] = await Promise.all([
     sb.from('characters')
-      .select('name, class, race, main_name, discord_id, show_inventory_publicly')
+      .select('name, class, race, main_name, discord_id, show_inventory_publicly, show_quests_publicly')
       .ilike('name', decoded)
       .limit(1),
     sb.from('quest_catalog')
@@ -97,7 +102,7 @@ async function load(decoded: string) {
   ]);
 
   const char = (charRes.data && charRes.data[0]) as
-    | { name: string; class: string | null; race: string | null; main_name: string | null; discord_id: string | null; show_inventory_publicly: boolean }
+    | { name: string; class: string | null; race: string | null; main_name: string | null; discord_id: string | null; show_inventory_publicly: boolean; show_quests_publicly: boolean }
     | undefined;
   if (!char) return null;
 
@@ -130,9 +135,9 @@ async function load(decoded: string) {
   // Key inference: holding a NO-DROP item exclusive to a locked zone proves
   // you had the key (the guild lead, 2026-06-24). This implies the catalog quest
   // whose reward IS that key — VP key, Trakanon Idol, VT Scepter of Shadows.
-  // The Howling Stones row has no key_item_id (no single mirrored key item),
-  // so its catalog implication is currently null but the evidence is still
-  // reported for the diagnostic line.
+  // Five keyed zones since 2026-09-25 (v2: the server's door table), each with
+  // its real key item; Howling Stones and Sleeper's Tomb have no catalog quest
+  // yet, so their quest implication is null but the zone access still shows.
   const { data: inferredRows } = await sb
     .rpc('inferred_keys_for_character', { p_guild_id: 'wolfpack', p_character: decoded });
   type InferredKey = {
@@ -274,7 +279,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   }
 
   // Visibility gate. Officer or owner always; everyone else needs the
-  // character's show_inventory_publicly flag.
+  // character's show_quests_publicly flag.
   const officer = await isOfficer(user.id);
   let isOwner = false;
   if (char.discord_id) {
@@ -285,7 +290,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       .maybeSingle();
     isOwner = !!me?.discord_id && me.discord_id === char.discord_id;
   }
-  if (!officer && !isOwner && !char.show_inventory_publicly) {
+  if (!officer && !isOwner && !char.show_quests_publicly) {
     return (
       <div className="space-y-4">
         <div className="text-sm"><Link href={`/character/${encodeURIComponent(decoded)}`} className="text-blue hover:underline">← back to {decoded}</Link></div>
@@ -299,6 +304,9 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       </div>
     );
   }
+  // Quest page shared but inventory not: keep the quest content, hide the
+  // parts that are really inventory listings.
+  const showInvDetail = officer || isOwner || !!char.show_inventory_publicly;
 
   // Index inventory by lowercase item name (we may not have item_id for
   // every row from the eventual upload). Sum quantities across slots so
@@ -802,7 +810,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold flex items-center gap-3 mb-1">
           📋 {decoded} — Quest tracker
-          {!char.show_inventory_publicly && (
+          {!char.show_quests_publicly && (
             <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-dim/20 border border-dim/60 text-dim uppercase" title="Owner/officer only. Toggle on /me to share with the guild.">
               🔒 Private
             </span>
@@ -817,6 +825,12 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           useful for MQ planning. Catalog is officer-managed at{' '}
           <Link href="/admin/quests" className="text-blue hover:underline">/admin/quests</Link>.
         </p>
+        {!showInvDetail && (
+          <p className="text-xs text-dim mt-3">
+            🔒 {decoded}&apos;s inventory page is private, so this shows quest progress
+            only — not the inventory lists.
+          </p>
+        )}
         {inventory.length === 0 && (
           <p className="text-xs text-orange mt-3">
             ⚠ No inventory data yet for any character. The page will light up
@@ -957,7 +971,8 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                   {k.key_item_name && `· ${k.key_item_name}`}
                 </span>
                 <span className="text-dim/70 text-[10px]">
-                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}
+                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held
+                  {showInvDetail && <> — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}</>}
                 </span>
               </li>
             ))}
@@ -970,7 +985,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           Reworked (the guild lead, 2026-06-24): ready-to-turn-in first, NO DROP vs
           tradeable split, gem-only matches minimized, "Item — NPC — where"
           format with PQDI links and ✓/✗ per component. */}
-      {(discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
+      {showInvDetail && (discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
         <section className="bg-panel border border-purple/40 rounded-lg p-5">
           <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
           <p className="text-xs text-dim leading-5 mb-3">
@@ -1028,6 +1043,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       )}
 
       {/* Stack turn-ins */}
+      {showInvDetail && (
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Stack turn-ins ({stacks.length})</h3>
         <p className="text-xs text-dim mb-3">
@@ -1076,6 +1092,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </table>
         )}
       </section>
+      )}
 
       {/* Completed quests (collapsible-ish — just a dim folded list) */}
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -1114,7 +1131,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         {/* Turn-in rewards held — deduped by item with a held count (the guild lead
             2026-06-24: "there shouldn't be multiples displayed - we should see a
             count (x)"). Holding a turn-in's reward implies the turn-in was done. */}
-        {completedTurninItems.length > 0 && (
+        {showInvDetail && completedTurninItems.length > 0 && (
           <div className="mt-4">
             <h4 className="text-sm text-green mb-1">Turn-in rewards held ({completedTurninItems.length})</h4>
             <p className="text-[11px] text-dim mb-1.5">
@@ -1136,7 +1153,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       {/* Hidden / Dismissed — restore from here. Hidden = "out of the way for now",
           dismissed = "I'm not doing this." Both stay in the database; restore
           buttons bring them back to active. */}
-      {(hiddenProgress.length > 0 || dismissedProgress.length > 0) && (
+      {showInvDetail && (hiddenProgress.length > 0 || dismissedProgress.length > 0) && (
         <section className="bg-panel border border-border rounded-lg p-5 space-y-3">
           {hiddenProgress.length > 0 && (
             <details>
@@ -1179,6 +1196,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           2026-06-30 — "if these are not quest pieces they can be in a
           different section... Droppable vs nondroppable with the specific
           bag and slot they're in.") */}
+      {showInvDetail && (<>
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need ({dontNeedQuest.length})</h3>
         <p className="text-xs text-dim leading-6 mb-2">
@@ -1212,10 +1230,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         )}
       </section>
+      </>)}
 
       {/* Broken quest items — NO DROP, no value, feed no quest, unusable.
           Advisory only ("safe to destroy"); double-check before deleting. */}
-      {brokenItems.length > 0 && (
+      {showInvDetail && brokenItems.length > 0 && (
         <section className="bg-panel border border-red/30 rounded-lg p-5">
           <h3 className="text-lg text-red-400 mb-2">🗑 Broken quest items ({brokenItems.length})</h3>
           <p className="text-xs text-dim leading-6 mb-2">

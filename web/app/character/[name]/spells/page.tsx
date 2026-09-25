@@ -15,8 +15,9 @@
 //     cross-check, not the answer). Rendering + the zone-by-zone 🛒 shopping
 //     mode live in MissingSpellsView (client); grouping in lib/spellSources.
 //
-// Visibility mirrors the quests page: owner + officers always; others need
-// characters.show_inventory_publicly.
+// Visibility mirrors the inventory page: owner + officers always; others need
+// characters.show_inventory_publicly (the /me "Inventory page" switch — the
+// quests page has had its own switch since 2026-09-25).
 
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
@@ -78,8 +79,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
         <section className="bg-panel border border-border rounded-lg p-6">
           <h2 className="text-xl text-gold">🔒 Private</h2>
           <p className="text-sm text-dim mt-2">
-            {decoded} hasn&apos;t made their tracker public yet. Only the owner
-            (and officers) can see this page.
+            {decoded} hasn&apos;t made their inventory and spellbook public yet. Only
+            the owner (and officers) can see this page.
           </p>
         </section>
       </div>
