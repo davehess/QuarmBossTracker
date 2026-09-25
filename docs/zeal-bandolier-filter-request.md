@@ -3,10 +3,11 @@
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). The change is pushed to the
 guild lead's fork as branch **`bandolier-chat-filter`**
 (github.com/davehess/zeal/tree/bandolier-chat-filter, one commit); the same diff
-is `docs/zeal-bandolier-filter.patch` (`git apply` clean on v1.4.7). It has NOT
-been compiled here — a cloud session has no MSVC — so build it once locally
-before opening the PR. clang-format with Zeal's own `Zeal/.clang-format` reports
-nothing on the changed lines.*
+is `docs/zeal-bandolier-filter.patch` (`git apply` clean on v1.4.7). **Built
+locally 2026-09-25** by the guild lead (VS 2022, Release|x86, `Build succeeded.
+0 Warning(s) 0 Error(s)`), commit re-authored and force-pushed as `4d16f8d`; the
+in-game test plan below is what remains before the PR. clang-format with Zeal's
+own `Zeal/.clang-format` reports nothing on the changed lines.*
 
 **Where it came from:** the Quarm Discord suggestion "Bandolier Spam/Filter
 Option" (2026-09-09, seconded twice and bumped 2026-09-24): bandolier reminder
@@ -19,27 +20,38 @@ their own filter.
 
 ## Build and test locally (the clone used for #229)
 
-The guild lead's local clone from the spawn-id PR has `origin` = the fork and an
-`upstream` remote (steps: `docs/upstream/zeal-spawn-id/PULL-REQUEST.md`). From a
-**Developer PowerShell for VS 2022** (so `msbuild` is on the path):
+The guild lead's local clone from the spawn-id PR (`C:\dev\zeal-pr\Zeal`) has
+`origin` = the fork and an `upstream` remote (steps:
+`docs/upstream/zeal-spawn-id/PULL-REQUEST.md`). From a **Developer Command
+Prompt or Developer PowerShell for VS 2022** (so `msbuild` is on the path).
+⚠ No inline `# comments` on these lines — cmd.exe passes `#` through as an
+argument, which is what broke `git remote -v` the first time round:
 
-```powershell
-cd <the Zeal clone>                 # the folder with Zeal.sln
+```
+cd C:\dev\zeal-pr\Zeal
 git fetch origin
 git switch -c bandolier-chat-filter origin/bandolier-chat-filter
-# The commit is authored as the session; make it yours before the PR:
 git commit --amend --no-edit --reset-author
 git push --force-with-lease origin bandolier-chat-filter
 msbuild /m /p:Configuration=Release /p:Platform=x86 /p:zeal_build_version=bandolier Zeal.sln
 ```
 
-Output: `Release\Zeal.asi` next to `Zeal.sln` (expect `Build succeeded. 0 Error(s)`).
-If it trips on C++20 module scanning, add the CI's flags:
+(The amend makes the commit yours rather than the session's; done once,
+2026-09-25.) Output: `Release\Zeal.asi` next to `Zeal.sln`. If it trips on C++20
+module scanning, add the CI's flags:
 `/p:LanguageStandard=stdcpp20 /p:ExportHeader="" /p:ScanDependencies=""`.
-To test: close EverQuest, back up the EQ folder's `Zeal.asi`, copy the new one
-over it, run the test plan below, then copy the backup back. Don't press
-Mimic's Zeal *Install* while testing — it would replace the test build with the
-official release.
+
+To test, close EverQuest first, then (cmd):
+
+```
+copy A:\EQ\Zeal.asi A:\EQ\Zeal.asi.v147-backup
+copy C:\dev\zeal-pr\Zeal\Release\Zeal.asi A:\EQ\Zeal.asi
+```
+
+run the test plan below, and put the release back afterwards with
+`copy A:\EQ\Zeal.asi.v147-backup A:\EQ\Zeal.asi`. Don't press Mimic's Zeal
+*Install* while testing — it would replace the test build with the official
+release.
 
 ---
 
