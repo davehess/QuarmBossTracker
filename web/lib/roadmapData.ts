@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1.8.8-2026-09-25',
+    title: 'Web 1.8.8',
+    version: 'Web 1.8.8',
+    date: '2026-09-25',
+    headline: 'Your quests and your inventory are shared separately now, and the quest page knows every zone that needs a key.',
+    features: [
+      {
+        name: 'Two sharing switches',
+        blurb: 'On /me, "Quest page" and "Inventory page" are separate. If your quest page is public but your inventory is not, members see your quest progress, keys and completed quests, but not your inventory lists.',
+      },
+      {
+        name: 'Keys worked out from your loot',
+        blurb: 'The quest page knows all five zones that need a key at the door (Veeshan’s Peak, Sleeper’s Tomb, Howling Stones, Sebilis and Vex Thal) and works out which keys you have from NO DROP loot that only drops inside.',
+      },
+    ],
+    fixes: [
+      'The old "Quests: public" switch also made your inventory and spellbook public. Characters that had it on keep their quest page public, and their inventory page is now private. Turn it back on from /me if you want it shared.',
+      'Items that are also quest rewards somewhere else no longer count as proof of a key.',
+    ],
+  },
+  {
     key: 'web-1.8.6-2026-09-25',
     title: 'Web 1.8.6',
     version: 'Web 1.8.6',
