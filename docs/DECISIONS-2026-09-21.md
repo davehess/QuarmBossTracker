@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: on `beta` (`a77c58fd`), column live and backfilled; production unchanged | the guild lead: preview `b.wolfpack.quest/me` + a quest page, then say go — graduation = cherry-pick `a77c58fd`, web version bump + roadmap entry, and the call on the 11 characters' inventory sharing (recommended: private) |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
@@ -1634,6 +1635,65 @@ restart mid-fight. Next: the guild lead's `%APPDATA%\wolfpack-mimic\agent.log`
 around 23:15–23:22 ET (it appends, so the lines before the restart survive), and
 a proposed hang watchdog — ping the agent, and restart it after ~30 s without an
 answer, without counting that as a crash for the rollback logic.
+
+## 24. Keys assumed from NO DROP loot, for every keyed zone; quests and inventory get separate switches (2026-09-25)
+
+The guild lead: *"we should separate out inventory versus quests"* and *"sweep
+for no drop items from zones that require keys and make key assumptions for
+them."*
+
+**Which zones need keys — from the server, not memory.** `eqemu_doors` rows with
+a key item that teleport into another zone (all `opentype` 58: each player
+clicks the door with the key in hand, so one key-holder cannot let a group in).
+Exactly five on the Quarm mirror: **Veeshan's Peak** (Key of Veeshan),
+**Sleeper's Tomb** (Sleeper's Key — new; not keyed on classic live, keyed on
+Quarm), **Howling Stones** (Key to Charasis — the old seed had no key item),
+**Sebilis** (Trakanon Idol), **Vex Thal** (The Scepter of Shadows). Each zone's
+one `zone_points` row sits on its door (the door's destination record), except
+Veeshan's Peak's, ~200 units off — treated the same, unconfirmed.
+
+**The rule, tightened** (`20260925112238`, made fast in `20260925112514`): an
+item is evidence when it is NO DROP, drops in exactly one zone and that zone is
+keyed, and is not a quest reward anywhere. Two changes from June's version:
+- a drop's zone now also comes from the NPC id's zone prefix for NPCs with no
+  placed spawn (scripted bosses) — +12 evidence items, and stricter where a
+  scripted NPC drops the same item elsewhere;
+- quest rewards are excluded — the sweep found five false positives: the four
+  Resistance Stones (Sleeper's Tomb drops, also Shadowhaven rewards) and A Dusty
+  Iksar Skull (Howling Stones, also a Cabilis reward). No evidence item is a
+  tradeskill product.
+Polarity re-verified: `eqemu_items.nodrop = false` means NO DROP on this mirror.
+
+**The sweep** (`inferred_zone_access('wolfpack')`, service role only): 24
+characters with Howling Stones access, 97 Sebilis, 64 Sleeper's Tomb, 69
+Veeshan's Peak, 76 Vex Thal. Sebilis looks high and is real: the NO DROP
+Fungus Covered Great Stick and Scale Shirt drop 100% from the Myconid Spore
+King, a level 56 named on a 26-minute respawn that people have camped for
+years (the tradeable Staff/Tunic come from ordinary myconids at 0.5%).
+The quests page's "Inferred zone access" card uses the same rules and now knows
+all five zones — live on production already, since it reads the database.
+Per-call cost: 4.5 s in the first version, 168 ms after filtering to the
+character's own NO DROP items first.
+
+**Not done:** catalog quests for the Charasis and Sleeper's keys (there are none,
+so those two zones show access but tick no quest), and a guild-wide keys view
+("who can enter VT tonight") — the sweep function is there for one when wanted.
+
+**The split** (on `beta`, `a77c58fd`; column live as `20260925112702`):
+- `characters.show_quests_publicly` is new and backfilled from the old flag, so
+  the 11 characters that had "Quests: public" on keep their quest pages public.
+- `/me` has **"Quest page"** and **"Inventory page"** switches. "page" keeps
+  them apart from the existing "Inventory: on / EXCLUDED" upload switch.
+- The quests page gates on the quest switch; a visitor who can see the quest
+  page but not the inventory page does not get the inventory listings on it
+  (key-evidence names, discovery, stack turn-ins, rewards held, hidden/dismissed,
+  the "probably don't need" lists, broken items).
+- ⚠ **Graduation needs one call from the guild lead:** those 11 characters only
+  ever saw a switch labelled "Quests", yet it also shared their inventory. At
+  graduation, turn their inventory pages private (recommended — nobody knowingly
+  chose that), or leave them as they are. Production is unchanged until then,
+  because main still reads the old flag for all three pages.
+
 
 
 
