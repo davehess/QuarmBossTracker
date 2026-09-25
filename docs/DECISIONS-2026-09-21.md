@@ -116,8 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf (branch; first version rendered in game)** | **2026-09-25 (§27, §30, §31, §32).** Branch `tag-shapes` on the fork (`22ce809`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf** (outlined, the guild lead's pick); `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial. `test-all` = `863d8a6` | the guild lead: rebuild `test-all`, check in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
-| **Zeal: guild emblems (preview only, no C++)** | **2026-09-25 (§32).** 30 guilds (the 29 listed + Wolf Pack = the `^WP^` wolf), two directions previewed: a hand-built pictogram each vs a monogram banner each; proposed key `^#<code>^`. `docs/upstream/zeal-guild-emblems/` | the guild lead: pick pictograms / banners / both, correct the invented codes and the "stretch" symbols. Only then port to C++ |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `dfe6143` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -2073,6 +2072,59 @@ Lessons:
 - Never let `||` follow a chain that contains a push.
 - Check the merge state by hand: `set -e` did not stop the merge loop that
   rebuilt `test-all`.
+
+## 33. Guild marks built: a banner (`^B<code>^`) and an icon (`^I<code>^`) for 30 guilds (2026-09-25)
+
+**The guild lead's calls:**
+- *"I like the flags, make them B__ for Banner. Lets put them all in and give me a
+  list of each of the tag commands so i can try them out in game after we compile"*
+- *"I want both"*: the banners and the icons.
+
+**What landed on `tag-shapes` (`3c02f65`; `test-all` `dfe6143`):**
+- **One table, `TagShapes::kGuilds`**, one row per guild: code, name, banner colour,
+  icon colour. Changing a code is a one-row edit.
+- **`^B<code>^`** is the swallowtail banner with the code in the paw glyphs' 5×7
+  font.
+  - Banner colours step round the hue wheel by the golden ratio, alternating bright
+    and deep. This replaces the preview's colour hashed from the letters, which put
+    9 of 30 in green.
+  - Wolf Pack's banner is the platform gold.
+- **`^I<code>^`** is the guild's icon: 27 ported from the Python prototype.
+  - Wolf Pack, Europa and Loot & Some Fun use the existing wolf, € and $ through
+    an `icon_key` alias, so no mesh is duplicated.
+  - The d20 now shows its "20": the prototype drew the digits level with the face,
+    so they were hidden.
+- **Keys:** `B` or `I`, then letters up to the next `^`, read as a guild key only
+  when they name a guild (either case).
+  - So `^Blue^` stays a blue arrow, as does `^BC^` (Breakfast Club is `^BBC^`).
+  - On an older client a banner shows as a blue arrow; an icon shows as text only.
+  - **The icon letter `I` was our pick**: the guild lead named only `B`. `I` is not a
+    key on older clients, so nothing wrong is drawn there.
+- **`/tag guilds`** prints every code and name, five to a line. The help, README,
+  prettyprint (`Banner EUR`, `Icon MAY`) and tooltip all know the new marks.
+- **Geometry additions:**
+  - a small ear-clipping triangulator, for the concave outlines (bolt, crescent,
+    wings, claws, crown);
+  - tapered-stroke, petal and chain-link helpers;
+  - a settle step that centres each icon and puts its base at z = 0.
+
+**Checks:**
+- All 120 new meshes pass the strip check. The three alias icons are empty by
+  design.
+- The build is clean with `-Wall -Wextra -Wconversion`. Zeal builds with MSVC `/W2`
+  and does not treat warnings as errors.
+- The key test covers every guild in both cases, the alias icons, the unknown-code
+  cases, and all **126 tag colours distinct**.
+  - It now also extracts `TagArrows::Shape` from `tag_arrows.h`, so the shape
+    lookup is tested against the real enum.
+  - Four mutations were each caught: dropping the guild key read, the banner
+    colour, the icon alias, and the banner shape.
+  - The test ran on the `tag-shapes` source and again on the merged `test-all`.
+- The vertex buffer grows from about 12k to about 32k vertices (about 0.5 MB).
+- `guilds.png` is rendered from the real meshes.
+
+**For the guild lead:** `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md` has the build
+steps, every command, and the cases that must not change.
 
 
 

@@ -13,6 +13,8 @@ int main() {
                                     "Wolf",  "Moon",  "Lasso", "Lute",    "Shield", "Dollar", "Euro"};
   for (int n = 1; n <= 12; ++n) names.push_back("#" + std::to_string(n));
   for (const char *c = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"; *c; ++c) names.push_back(std::string("P") + *c);
+  for (const auto &guild : TagShapes::kGuilds) names.push_back(std::string("B") + guild.code);
+  for (const auto &guild : TagShapes::kGuilds) names.push_back(std::string("I") + guild.code);
   if (names.size() != static_cast<size_t>(TagShapes::Kind::Count)) {
     std::fprintf(stderr, "names out of step with TagShapes::Kind\n");
     return 1;

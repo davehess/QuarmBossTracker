@@ -1,5 +1,17 @@
 # Guild emblems for Zeal `/tag` — two directions, prototyped
 
+> **Decided 2026-09-25: both.** The guild lead: *"I like the flags, make them B__ for
+> Banner. Lets put them all in"*, then *"I want both"*.
+> - `^B<code>^` draws the banner and `^I<code>^` the icon, for all 30 guilds. The
+>   single `^#<code>^` key proposed below was not used.
+> - Built in C++ on the `tag-shapes` branch (`3c02f65`); the real-mesh render is
+>   `../zeal-tag-shapes/guilds.png`, and every command to try is in
+>   `../zeal-tag-shapes/TRY-IN-GAME.md`.
+> - The codes in the table below are what shipped. They are still ours, invented,
+>   and each is one table row to change.
+>
+> The rest of this page is the proposal as it was written.
+
 *2026-09-25. The guild lead: "We should try to make a symbol for each of these
 guilds." These are the 29 guilds from the list the guild lead shared, plus Wolf
 Pack, whose symbol is the `^WP^` wolf (*"make the wolf WP"*). The guild lead then

@@ -1,11 +1,12 @@
-# Zeal PR draft — icon shapes, numbered badges and lettered paws for `/tag`
+# Zeal PR draft — icon shapes, numbered badges, lettered paws and guild marks for `/tag`
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-shapes`** on
 the guild lead's fork (github.com/davehess/zeal/tree/tag-shapes, one commit,
-`22ce809`); the same change is `0001-tag-icon-shapes.patch` here. Every mesh
+`3c02f65`); the same change is `0001-tag-icon-shapes.patch` here. **Every command to
+try in game: `TRY-IN-GAME.md`.** Every mesh
 passes the strip check (`preview/dump.cpp`); the key parser is extracted verbatim
 and tested with g++; clang-format with Zeal's style reports nothing on the changed
-lines. The combined test build is branch `test-all` (`863d8a6`: Bandolier + this +
+lines. The combined test build is branch `test-all` (`dfe6143`: Bandolier + this +
 tag persistence); never open a PR from it.*
 
 ## How it grew (all 2026-09-25, the guild lead's calls)
@@ -27,6 +28,10 @@ tag persistence); never open a PR from it.*
    *"Dollar Symbol, Euro symbol."*: `^$^` and `^E^`.
 7. *"make the wolf WP"*: the wolf moved from `^L^` to `^WP^` (Wolf Pack), and `L`
    is free again.
+8. *"We should try to make a symbol for each of these guilds"*, then, from the
+   preview, *"I like the flags, make them B__ for Banner"* and *"I want both"*: every
+   guild on the list, plus Wolf Pack, gets a **banner** (`^B<code>^`) and an **icon**
+   (`^I<code>^`), 30 guilds in all (`guilds.png`).
 
 ## What's different about this approach
 
@@ -68,6 +73,8 @@ eye sockets or teeth.
 | `^E^` | Euro sign | amber `e8a020` | 500 |
 | `^1^` … `^12^` | Numbered badge | white `f0f0f0` (+n) | 138–258 |
 | `^P0^` … `^PZ^` | Paw with a letter or digit | paw green `20c040` (+n) | paw + 100–180 |
+| `^B<code>^` (`^BEUR^`) | A guild's banner: a swallowtail flag in its own colour with the code on it | per guild | 286–526 |
+| `^I<code>^` (`^IMAY^`) | A guild's icon (27 new; Wolf Pack, Europa and Loot & Some Fun reuse the wolf, € and $) | per guild | 16–1440 |
 
 **How the keys were chosen:**
 - **Letters avoid R, O, Y, G, B, W, P and S on purpose.** An older client reads
@@ -88,6 +95,19 @@ eye sockets or teeth.
   are still a white arrow.
 - **On older clients** `^12^` shows only the text, `^PK^` a plain paw, and `^WP^`
   a white arrow.
+- **Guild keys** (`B` or `I` plus a code) are read only when the letters up to the
+  next `^` are a guild code in `TagShapes::kGuilds`, in either case.
+  - So `^Blue^` and `^BXYZ^` are still blue arrows, and `^BC^` is blue too
+    (Breakfast Club's banner is `^BBC^`).
+  - On an older client a banner shows as a blue arrow (the `B`), and an icon shows
+    only the text (`I` is not a key there).
+  - `/tag guilds` lists every code in game.
+- **Every banner and icon has its own colour**, because the shape is looked up from
+  the colour. The test checks all 126 tag colours (named, numbered, paw letters,
+  banners, icons) are distinct.
+- **The guild codes are ours**, invented for the preview (`WP`, `MAY`, `EUR` …). A
+  guild that already uses an abbreviation should get that one instead: change the
+  table row.
 - **Numbers and lettered paws encode as a base colour + n**, because Zeal looks
   up a tag's shape from its colour. Every value was checked against every named
   colour, and all named colours against each other.
@@ -101,6 +121,8 @@ eye sockets or teeth.
 - `badges.png`: badges 1–12 face-on and seen from behind (they still read the
   right way round).
 - `paws.png`: every lettered paw, front and back.
+- `guilds.png`: all 30 guilds, banner above icon, rendered from the real C++ meshes
+  and the colours in `kGuilds` (`preview/guild_sheet.py`).
 - `wolf-variants.png`: **the five wolves to pick from**, left to right:
   1. **classic**: the landing-page wolf in bone, dark linework, yellow eyes.
   2. **outlined**: the same with a dark border, so it reads on bright ground.
@@ -124,7 +146,12 @@ rasterise with the same gradient colouring as `TagArrows`. To regenerate:
 g++ -std=c++20 -I<zeal>/Zeal -o dump preview/dump.cpp <zeal>/Zeal/tag_shapes.cpp
 ./dump > meshes.json && python3 preview/preview_all.py meshes.json <zeal>/Zeal/tag_arrows.cpp .
 python3 preview/trace_wolf.py web/public/wolf.png web/public/wolf-eyes.png <out-dir>
+python3 preview/guild_sheet.py meshes.json <zeal>/Zeal/tag_shapes.cpp guilds.png
+cd preview && sh keys.sh <zeal>
 ```
+
+`keys.sh` extracts the key parser from `nameplate.cpp` verbatim and runs `keys.cpp`
+against it: every key, every guild in both cases, and all tag colours distinct.
 
 ## Build and test locally
 
@@ -159,7 +186,8 @@ more distinct symbols, and this adds four kinds:
 - role marks (moon for mez, lasso for pull, lute for bard, shield for tank);
 - a wolf's head and two currency signs;
 - numbers for kill or crowd-control order;
-- a way for a charmer to mark their own pet.
+- a way for a charmer to mark their own pet;
+- a banner and an icon for each of 30 guilds.
 
 **What changes**
 
@@ -176,6 +204,11 @@ more distinct symbols, and this adds four kinds:
     letter or digit, or `WP`, followed by `^`). The only existing prefix that
     changes meaning is an exact `^WP^`, which was a white arrow.
   - An older client sees `^PK^` as a plain paw.
+- Guild marks, from one table (`TagShapes::kGuilds`: code, name, colours):
+  - `^B<code>^`: a swallowtail banner in the guild's colour with its code on it.
+  - `^I<code>^`: the guild's icon.
+  - Read only when the code names a guild, so `^Blue^` is still a blue arrow.
+  - `/tag guilds` lists the codes.
 - Digits and letters sit on each face separately, the back copy mirrored, so they
   read correctly from either side.
 - `tag_shapes.cpp/.h` (new) holds the geometry, with no DirectX dependency.
@@ -211,6 +244,9 @@ colouring.
 4. `^PK^`, `^P7^`: the paw with K / 7 on its pad, readable from either side;
    `^P^` is still a plain paw.
 5. `^R^`, `^P^`, `^S^`, `^W^`: the arrows, paw and stop sign are unchanged.
+   - Guild marks: `^BEUR^`, `^IMAY^` and `^beur^` draw a guild banner, a guild icon
+     and the banner again. `^Blue^` and `^BC^` are still blue arrows. `/tag guilds`
+     lists all 30 codes.
 6. Many shapes at once, plus a few arrow colours: every shape draws and none
    flickers.
 7. `/tag local ^-^` clears the shape and leaves the text.
@@ -228,8 +264,8 @@ Nothing ships to our fleet until it is in an official Zeal release. Then:
 - The agent's tag parser (`_ZEAL_TAG_SHAPES` in
   `packages/wolfpack-logsync/index.js`) knows only R/O/Y/G/B/W/P/S and a
   single-character key. It needs the twelve single-character icon keys, `WP`,
-  `1`–`12` and `P` + character, so Extended Target can show the icon, number or
-  paw initial.
+  `1`–`12`, `P` + character, and `B`/`I` + a guild code, so Extended Target can show
+  the icon, number, paw initial or guild.
 - The prettyprint regex beside it (`Arrow:[ROYGBW]|Paw|Stop`) needs the new
-  names, `#1`–`#12` and `Paw <c>`. Otherwise a prettyprinted line reads the shape
+  names, `#1`–`#12`, `Paw <c>`, `Banner <code>` and `Icon <code>`. Otherwise a prettyprinted line reads the shape
   into the target's name.
