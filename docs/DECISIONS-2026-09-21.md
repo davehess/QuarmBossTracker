@@ -1579,5 +1579,30 @@ the invented `Brackwyn`; the relayed-tell quote in §4 lost the character name;
 `CLAUDE.md`'s "HTTP-only cookies" and "excluded characters never contribute or
 display" lines were corrected; the roadmap gained the Web 1.8.5 entry.
 
+## 22. DPS meter header: a bare 📋, and the controls in two stacked columns (2026-09-25, Mimic 2.7.2 beta)
+
+The guild lead, mid-raid, from a screenshot of the DPS meter on Blood of
+Ssraeshza (the name wrapped to three lines beside `📋 /rs`, `− 16 +` and a
+one-row `DPS Tank History` strip): *"the /rs is too big, should just be a copy
+icon. We should stack DPS and Tank on top of each other and make more
+horizontal room."*
+
+**Built as asked, plus one step, and why.** The copy button is a bare 📋 (✓
+for two seconds after a copy) and DPS sits on top of Tank. Measured in a
+headless render at the screenshot's 321px: that alone took the name from
+three lines to two — the name needs ~147px and got 86. History, left beside
+the DPS/Tank column, was the next-widest thing (~52px), so it moved under the
+− N + counter: `[− N +] / [History]` then `[DPS] / [Tank]`, two columns, the
+header two rows tall. With Consolas-width text (what Windows renders; the
+cloud box has none, so widths were scaled) the name then fits on one line,
+with ~4px to spare after trimming two margins; at 260px it wraps to two. The
+header row is centred vertically, which also moves the name clear of the ✥
+corner.
+
+**The alternative, if History under the counter reads wrong:** History back
+beside DPS/Tank (as literally asked). Cost: the name wraps to two lines at
+~320px. Build and change cost are one markup move either way.
+
+
 
 

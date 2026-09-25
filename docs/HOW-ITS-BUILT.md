@@ -2933,6 +2933,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `#histList` (`histItemHtml`, delegated click → `HIST_IDX`) right of the
   scoreboard in `.histwrap`; the ◀ ▶ pager is gone; the 7-column layout is a
   container query on `.board`. Tests: `test/dps-history-list.test.js`.
+- **DPS meter header: stacked controls (Mimic 2.7.2 beta, 2026-09-25)** —
+  `apps/mimic/overlay.html` `.title`: the `#copyRs` /rs copy is a bare 📋 (✓
+  after a copy); `.ctlstack` = the − N + `.rowcfg` over `#tabHist`; `.tabstack`
+  = `#tabDps` over `#tabTank`. Both columns carry `wp-mini-hide`. Tests:
+  `test/dps-header-stack.test.js`.
 - **Overlay size presets** — `overlay-resize-preset` in `main.js` (XS 200 · S 260
   · M 320 · L 420 · XL 500), labels in `preload.js`'s chrome menu. Tests:
   `test/overlay-resize-presets.test.js`.
