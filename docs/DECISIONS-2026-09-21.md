@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; first build (`4d16f8d`) compiled clean and passed in game; then **all** bandolier messages moved into the filter, failures in red (the guild lead's call) — `30a79bb`, force-pushed | the guild lead: `git reset --hard origin/bandolier-chat-filter`, rebuild, run test-plan step 4 (failures), open the PR upstream (compare link in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
+| **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
+| **Zeal: six icon tag shapes (branch, not built yet)** | **2026-09-25 (§27).** Branch `tag-shapes` on the fork (`fefa1c0`): `^1^`–`^6^` = skull, X, sword, diamond, flame, star; multi-part extrusion with proud accent parts, preview rendered off-client from the real geometry code. PR text + preview: `docs/upstream/zeal-tag-shapes/` | the guild lead: build + test in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn `1`–`6` |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -1763,8 +1764,39 @@ Landed as a second channel, `CHANNEL_BANDOLIER_FAILURE` (1012) → spell-failure
 colour, taken by the same filter entry, so failures still stand out *inside* that
 window. Usage stays default colour (it also prints after a successful `/band bag`,
 a pre-existing fall-through that was left alone). Amended into the single commit
-(`30a79bb`, still the guild lead's authorship), force-pushed; needs one rebuild +
-the failure steps of the test plan.
+(`30a79bb`, still the guild lead's authorship), force-pushed. **Rebuilt and passed
+in game the same day**: cursor, no-empty-slot and set-does-not-exist failures red in
+the Bandolier window, loads/swaps in the default colour. A load typed mid-cast never
+reaches Zeal — the client answers "You can't use that command right now" first —
+which the guild lead called fine; the PR's test step was reworded to match. Ready to
+open.
+
+## 27. Six icon shapes for Zeal `/tag` — branch on the guild lead's fork (2026-09-25)
+
+The guild lead: *"We should make another branch for additional zeal tag icons. see
+about generating some of these"*, with a reference strip of six raid markers
+numbered 1–6: skull, red X, gold sword, blue diamond, green flame, purple star.
+The upstream maintainer had said in the Quarm Discord that a skull was tried and
+dropped because *"the 2-d extrusion approach"* did not look right.
+
+**The approach that gets past that:** each shape is several convex parts (fan-
+triangulated), concave outlines come from overlapping parts, and detail is a part
+standing 0.03 proud of both faces in a dark or light accent tone — eye sockets,
+nose and teeth on the skull, the sword's fuller, the diamond's facet, the flame's
+core. Same unlit, vertex-coloured triangle-strip path as the arrow/octagon/paw; no
+textures. Geometry lives in a new DirectX-free `tag_shapes.cpp`, which is what made
+an off-client check possible: `docs/upstream/zeal-tag-shapes/preview/` compiles it
+unchanged with g++, decodes the strips exactly as Direct3D draws them (all indices
+in range, no stray join triangles) and rasterises `preview.png` with the same
+gradients. Keys `^1^`–`^6^` follow the numbering on the reference strip; older
+clients ignore an unknown key and still show the text. Side fix in the same
+change: the shape is chosen from the tag's own colour before a nameplate colour is
+substituted, so a nameplate colour can no longer draw a paw by coincidence.
+
+Not compiled with MSVC yet (no Windows SDK in a cloud session). Branch `tag-shapes`
+(`fefa1c0`), starts from 1.4.7, independent of the Bandolier branch. Our agent's
+tag parser knows only R/O/Y/G/B/W/P/S — it needs `1`–`6` (and the prettyprint
+regex the six names) once upstream ships, not before.
 
 
 

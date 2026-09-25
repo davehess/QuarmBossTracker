@@ -12,8 +12,11 @@ loads/swaps went to their own window. The guild lead then asked for **every**
 bandolier message in the filter, failures included (they were split between white
 in Other and red in Spell Failures depending on when the check caught them). That
 is `30a79bb`, amended into the same single commit (still authored by the guild
-lead) and force-pushed; it needs one rebuild and the failure steps of the test
-plan before the PR.*
+lead) and force-pushed. **Rebuilt and passed in game the same day:** the cursor,
+no-empty-slot and set-does-not-exist failures all landed in the Bandolier window
+in red, and loads and swaps in the default colour. A load pressed mid-cast never
+reaches Zeal: the client answers "You can't use that command right now" first,
+which the guild lead judged fine. The PR is ready to open.*
 
 **Where it came from:** the Quarm Discord suggestion "Bandolier Spam/Filter
 Option" (2026-09-09, seconded twice and bumped 2026-09-24): bandolier reminder
@@ -126,9 +129,10 @@ toggle could come later on top of the same channels if people still want one.
 3. Assign Bandolier to a second window; weave between two sets — "Loading…" /
    "swap complete" / "already equipped" go to that window and Other stays clean.
 4. Failures, all in the Bandolier window in red, none in Other or the spell-failure
-   window: press a load while casting; while holding an item on the cursor; with
-   no room in your bags to unequip; for a set whose item is not in your bags;
-   `/band load nosuchset`.
+   window: load while holding an item on the cursor; with no room in your bags to
+   unequip; for a set whose item is not in your bags; `/band load nosuchset`. (A
+   load typed mid-cast is refused by the client itself — "You can't use that
+   command right now" — before Zeal sees it.)
 5. `/band list` and a bare `/band` (usage) — land in the Bandolier window.
 6. Relog: the Bandolier assignment persists (ChannelMap56 in the UI ini), and the
    other Zeal filters kept theirs.
