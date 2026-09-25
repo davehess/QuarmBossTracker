@@ -1,0 +1,166 @@
+From aa975e1a026e8a479b0a33feeb4f539c49184ccd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 17:56:07 +0000
+Subject: [PATCH] Allow tagging corpses; keep a mob's pre-death tag off its
+ corpse
+
+/tag on a corpse answered "Must have a valid target with a visible
+nameplate to tag": only live players and NPCs were taggable, and tag text
+and shapes were never drawn on a corpse. Marking corpses is useful (loot
+order, a rez mark on a player corpse), but a kill marker such as "kill
+skull" should not linger on the corpse it made.
+
+- NPC and player corpses are taggable targets and take tag text and the
+  default arrow, like NPCs (live players still take only a shape).
+- NamePlateInfo::corpse_tag records that a tag was set on the corpse
+  itself. A corpse draws its tag text, shape and tagged nameplate color
+  only when it is set; the first tag applied to a corpse replaces
+  whatever the mob carried before it died.
+- /tag target can select a corpse only by a tag set on the corpse, so a
+  pre-death "Kill" never targets the body.
+- README: note corpse tagging.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
+---
+ README.md          |  2 ++
+ Zeal/nameplate.cpp | 39 ++++++++++++++++++++++++++++-----------
+ Zeal/nameplate.h   |  1 +
+ 3 files changed, 31 insertions(+), 11 deletions(-)
+
+diff --git a/README.md b/README.md
+index c4bd3a9..4705716 100644
+--- a/README.md
++++ b/README.md
+@@ -678,6 +678,8 @@ Manual editing of the ini file is required to copy from old section to the new s
+ - Requires enabling both Nameplates Zeal fonts and tags (`/tag on`)
+ - Tagged NPC nameplates use either the dedicated `Tagged` color or if targeted the `Target` color
+ - Tagged nameplates have a matching implicit colored arrow added if `Default tag arrow` is set
++- Corpses (NPC and player) can be tagged too. A corpse shows only tags set on it after the death, so a
++  kill marker the mob carried does not linger on its corpse
+ - Tags can be set with locally or broadcast through rsay, gsay, or a joined chat channel
+   - `/tag <rsay | gsay | chat | local> <tag_text>`
+   - Note: % replacement commands (%t, %n) aren't supported in `<tag_text>`
+diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
+index 030a79f..09d1adc 100644
+--- a/Zeal/nameplate.cpp
++++ b/Zeal/nameplate.cpp
+@@ -387,9 +387,11 @@ void NamePlate::render_ui() {
+     Vec3 position = entity->ActorInfo->DagHeadPoint->Position;
+     position.z += get_nameplate_z_offset(*entity);
+ 
+-    // Support optional tag text and healthbar for zeal font mode only.
++    // Support optional tag text and healthbar for zeal font mode only. A corpse shows only a tag set on
++    // the corpse itself, so a kill marker from before the death does not linger on it.
+     bool is_corpse = entity->Type >= Zeal::GameEnums::NPCCorpse;
+-    bool add_text_tag = !is_corpse && !info.tag_text.empty();
++    bool show_tag = !is_corpse || info.corpse_tag;
++    bool add_text_tag = show_tag && !info.tag_text.empty();
+     std::string full_text = add_text_tag ? info.tag_text + info.text : info.text;
+     if (setting_health_bars.get() && is_hp_updated(entity)) {
+       const char healthbar[4] = {'\n', BitmapFontBase::kStatsBarBackground, BitmapFontBase::kHealthBarValue, 0};
+@@ -416,7 +418,7 @@ void NamePlate::render_ui() {
+     if (!full_text.empty()) sprite_font->queue_string(full_text.c_str(), position, true, nameplate_color);
+ 
+     // If an explicit tag color was set, use that color otherwise use the nameplate color.
+-    if (!is_corpse && info.tag_color != TagArrowColor::Off) {
++    if (show_tag && info.tag_color != TagArrowColor::Off) {
+       auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
+       TagArrows::Shape shape = (tag_color == TagArrowColor::Paw)        ? TagArrows::Shape::Paw
+                                : (tag_color == TagArrowColor::StopSign) ? TagArrows::Shape::Octagon
+@@ -559,7 +561,8 @@ bool NamePlate::handle_SetNameSpriteTint(Zeal::GameStructures::Entity *entity) {
+   bool is_target = (entity == Zeal::Game::get_target());
+   bool is_corpse = (entity->Type >= Zeal::GameEnums::NPCCorpse);
+   auto it = zeal_fonts ? nameplate_info_map.find(entity) : nameplate_info_map.end();
+-  if (!is_target && !is_corpse && it != nameplate_info_map.end() && !it->second.tag_text.empty() &&
++  if (!is_target && it != nameplate_info_map.end() && (!is_corpse || it->second.corpse_tag) &&
++      !it->second.tag_text.empty() &&
+       (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) &&
+       !setting_tag_disable_tagged_color.get())
+     color_index = ColorIndex::Tagged;
+@@ -790,12 +793,18 @@ void NamePlate::clear_tags() {
+ 
+ static constexpr int kMaxTagTextLength = 32;
+ 
++// Tag text (and the default arrow) goes on NPCs and on corpses of both kinds (a rez mark); players only
++// take an explicit shape.
++static bool takes_tag_text(const Zeal::GameStructures::Entity *entity) {
++  return entity->Type == Zeal::GameEnums::EntityTypes::NPC || entity->Type == Zeal::GameEnums::EntityTypes::NPCCorpse ||
++         entity->Type == Zeal::GameEnums::EntityTypes::PlayerCorpse;
++}
++
+ // This may not be 100% correct in terms of visible nameplates but should be fairly good.
+ static bool is_taggable_target(const Zeal::GameStructures::Entity *target) {
+   if (!target) return false;
+ 
+-  if (target->Type != Zeal::GameEnums::EntityTypes::Player && target->Type != Zeal::GameEnums::EntityTypes::NPC)
+-    return false;
++  if (target->Type != Zeal::GameEnums::EntityTypes::Player && !takes_tag_text(target)) return false;
+ 
+   if (!target->ActorInfo || !target->ActorInfo->ViewActor_ || !target->ActorInfo->DagHeadPoint) return false;
+ 
+@@ -825,7 +834,8 @@ bool NamePlate::handle_tag_target(const std::string &target_text) {
+     // SetNameSpriteState_destructor call but adding it out of paranoia against a stale cache.
+     Zeal::GameStructures::Entity *current_ent = Zeal::Game::get_entity_list();
+     while (current_ent && current_ent != entry.first) current_ent = current_ent->Next;
+-    if (!current_ent || entry.first->Type != Zeal::GameEnums::NPC) continue;
++    if (!current_ent || !takes_tag_text(entry.first)) continue;
++    if (entry.first->Type != Zeal::GameEnums::NPC && !entry.second.corpse_tag) continue;  // A tag from its life.
+ 
+     // There's a substring match but do a secondary exact check also.
+     auto split = Zeal::String::split_text(tag_text, kDelimiter);
+@@ -1074,6 +1084,13 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+ 
+   if (!apply) return true;
+ 
++  // The first tag on a corpse replaces whatever the mob carried before it died (kept hidden until now).
++  if (entity->Type != Zeal::GameEnums::NPC && takes_tag_text(entity) && !it->second.corpse_tag) {
++    it->second.tag_text = "";
++    it->second.tag_color = TagArrowColor::Off;
++    it->second.corpse_tag = true;
++  }
++
+   // Convert any characters that are not visible ASCII to ?.
+   std::string tag_text = split[1];
+   for (char &c : tag_text)
+@@ -1097,12 +1114,12 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+   if (erase) it->second.tag_text = "";
+ 
+   // The tag arrow is either enabled explicitly with a specific color (which must be disabled explicitly)
+-  // or enabled by default on a NPC if there is any tag text (can suppress with ^-^).
++  // or enabled by default on a NPC or corpse if there is any tag text (can suppress with ^-^).
+   if (tag_text.size() > 2 && tag_text[0] == '^') {
+     it->second.tag_color = GetTagArrowColor(tag_text[1]);
+     tag_text = tag_text.substr(2);
+   } else if (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) {
+-    bool disable_arrow = !setting_tag_default_arrow.get() || entity->Type != Zeal::GameEnums::NPC ||
++    bool disable_arrow = !setting_tag_default_arrow.get() || !takes_tag_text(entity) ||
+                          (tag_text.empty() && it->second.tag_text.empty());
+     it->second.tag_color = disable_arrow ? TagArrowColor::Off : TagArrowColor::Nameplate;
+   }
+@@ -1117,8 +1134,8 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+   tag_text = Zeal::String::trim_and_reduce_spaces(tag_text);  // Cleanup leading/trailing/multiple internal spaces.
+ 
+   // If empty now it was a prefix only command which were handled above (append  / flush are no-ops).
+-  // We also only allow text tag content on NPCs's.
+-  if (tag_text.empty() || entity->Type != Zeal::GameEnums::NPC) return true;
++  // We also only allow text tag content on NPCs and corpses.
++  if (tag_text.empty() || !takes_tag_text(entity)) return true;
+ 
+   if (flush_others_append || flush_others_no_append)
+     for (auto &entry : nameplate_info_map) RemoveTagTextField(tag_text, entry.second.tag_text, entry.second.tag_color);
+diff --git a/Zeal/nameplate.h b/Zeal/nameplate.h
+index 7233a6b..b940401 100644
+--- a/Zeal/nameplate.h
++++ b/Zeal/nameplate.h
+@@ -119,6 +119,7 @@ class NamePlate {
+     std::string tag_text;
+     DWORD color;
+     DWORD tag_color;
++    bool corpse_tag = false;  // The tag was set on the corpse (tags from before the death stay hidden).
+   };
+ 
+   struct RenderInfo {
+-- 
+2.43.0
+
