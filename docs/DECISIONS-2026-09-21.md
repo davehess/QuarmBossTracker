@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
+| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch, not built yet)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`0d66a28`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. File code round-trip tested off-client | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: six icon tag shapes (branch, not built yet)** | **2026-09-25 (§27).** Branch `tag-shapes` on the fork (`fefa1c0`): `^1^`–`^6^` = skull, X, sword, diamond, flame, star; multi-part extrusion with proud accent parts, preview rendered off-client from the real geometry code. PR text + preview: `docs/upstream/zeal-tag-shapes/` | the guild lead: build + test in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn `1`–`6` |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
@@ -1797,6 +1798,55 @@ Not compiled with MSVC yet (no Windows SDK in a cloud session). Branch `tag-shap
 (`fefa1c0`), starts from 1.4.7, independent of the Bandolier branch. Our agent's
 tag parser knows only R/O/Y/G/B/W/P/S — it needs `1`–`6` (and the prettyprint
 regex the six names) once upstream ships, not before.
+
+## 28. Zeal tags that survive a crash, relog or character switch — and stay in their zone (2026-09-25)
+
+The guild lead: *"We should see what it would take to persist zeal tags in zones
+for users that crash and come back in and lose the tags on mobs or switch
+characters and lose them. That's a current issue"*, then *"As well as not tag same
+spawn-ids in other zones"*.
+
+**Both causes, read from Zeal 1.4.7:** tags live only in `nameplate_info_map`
+(keyed by entity pointer), which `clean_ui()` empties on zoning, character select
+and a graphics device reset — nothing is ever written to disk. And
+`handle_tag_message` applies a received tag by `get_entity_by_id(spawn_id)` alone.
+Spawn ids are per zone, so an rsay or chat-channel tag from someone in another zone
+lands on whichever local mob has that number, even though the sender already puts
+the stripped target name in the message.
+
+**Built rather than scoped** — branch `tag-persistence` on the fork (`0d66a28`),
+starting from 1.4.7:
+- a received tag must also match the local entity's stripped name; no message
+  format change, so older clients and our agent's parser are unaffected;
+- about once a second, live tags are mirrored into a map keyed by {zone, spawn id}
+  with the name, written to `<character>_tags.txt` on change (temp file + rename),
+  and restored onto a returning entity with the same zone, id and name;
+- dropped when the mob becomes a corpse, when another name holds the id, on a
+  `clear` (the whole zone, out-of-view mobs included), or 3 hours after last seen.
+  `/tag persist` toggles it and defaults to on.
+
+The file load and save functions were extracted verbatim and round-trip tested with
+g++. Mutating the merge rule and the expiry rule each made the test fail. Not
+compiled with MSVC yet.
+
+**Choices made without asking, listed in the PR doc so the guild lead can change
+them:** 3 h expiry (a zone that repops overnight reissues the same ids and names,
+so a long window would restore yesterday's tags on today's mobs); on by default;
+one file per character; name-only cross-zone check (a zone field in the message
+would close the rare same-name-same-id case but changes the wire format our agent
+parses). **Not covered:** tags sent while a client was offline — recovering those
+needs a resync between clients over rate-limited chat channels, a separate design.
+Doc: `docs/upstream/zeal-tag-persistence/`.
+
+## 29. Field issue — Windows 11 preview update KB5124010 breaks EQ at launch (2026-09-25)
+
+A member reported in the Quarm Discord (shared by the guild lead): EQ would not
+launch, or crashed at once, with Windows' *"Memory could not be read"* box, **even
+with Zeal disabled**. The cause was the Windows 11 preview update **KB5124010**
+(build **26200.9550**), installed overnight, and uninstalling it fixed the client.
+One machine, mechanism unknown. Written into `docs/RUNBOOK-client-crash-triage.md`
+§3b as the first question for any "worked yesterday, crashes at launch even without
+Zeal" report, ahead of the §5 ladder.
 
 
 

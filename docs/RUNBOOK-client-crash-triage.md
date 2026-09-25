@@ -135,6 +135,28 @@ cause, two very different-looking dialogs.
 went on to play for months afterwards. Say so — someone staring at a client that
 will not start assumes their install is dead.
 
+## 3b. Known cause — Windows 11 preview update KB5124010 (2026-09-25)
+
+**Symptom:** EverQuest will not launch, or crashes at once, with Windows' own
+*"Memory could not be read"* box. It worked the day before, and **it still crashes
+with Zeal disabled**.
+
+**Cause and fix:** a member traced it to the Windows 11 preview update
+**KB5124010** (OS build **26200.9550**), which had installed itself overnight.
+Uninstalling that update fixed it. Reported in the Quarm Discord on 2026-09-25;
+one machine, and the mechanism is not known.
+
+- **Ask first**, before any step in §5, when the report reads "worked yesterday,
+  crashes at launch, even without Zeal": *Settings → Windows Update → Update
+  history* — is KB5124010 there, or is `winver` build 26200.9550?
+- To remove it: *Update history → Uninstall updates → KB5124010*, then pause
+  updates for a week so it doesn't reinstall before Microsoft ships a fix.
+- It is a **preview** (optional) update. It arrives through the "get the latest
+  updates as soon as they're available" toggle, so turning that off is the
+  lasting fix.
+- ⚠ Not a Zeal crash, so there may be no Zeal crash bundle for it (the failure can
+  come before Zeal's handler is installed). The missing bundle is itself a hint.
+
 ## 4. "Blames Zeal" does not mean Zeal did it
 
 `crash_blames_zeal` is true whenever the report names a Zeal callback, which it
