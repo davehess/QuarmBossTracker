@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
-| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch, not built yet)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`0d66a28`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. File code round-trip tested off-client | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
+| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: six icon tag shapes (branch, not built yet)** | **2026-09-25 (§27).** Branch `tag-shapes` on the fork (`fefa1c0`): `^1^`–`^6^` = skull, X, sword, diamond, flame, star; multi-part extrusion with proud accent parts, preview rendered off-client from the real geometry code. PR text + preview: `docs/upstream/zeal-tag-shapes/` | the guild lead: build + test in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn `1`–`6` |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
@@ -1852,7 +1852,7 @@ Spawn ids are per zone, so an rsay or chat-channel tag from someone in another z
 lands on whichever local mob has that number, even though the sender already puts
 the stripped target name in the message.
 
-**Built rather than scoped** — branch `tag-persistence` on the fork (`0d66a28`),
+**Built rather than scoped** — branch `tag-persistence` on the fork (`0d66a28`, now `ca71999` — see the crash note below),
 starting from 1.4.7:
 - a received tag must also match the local entity's stripped name; no message
   format change, so older clients and our agent's parser are unaffected;
@@ -1875,6 +1875,21 @@ would close the rare same-name-same-id case but changes the wire format our agen
 parses). **Not covered:** tags sent while a client was offline — recovering those
 needs a resync between clients over rate-limited chat channels, a separate design.
 Doc: `docs/upstream/zeal-tag-persistence/`.
+
+**Crash on first build, same day.** The combined `test-all` build crashed EQ at
+launch: Zeal's own dialog, a null read in `Zeal.asi`, `Callbacks: Startup`. The
+Windows 11 update in §29 was ruled out by `winver` (the guild lead is on Windows 10,
+build 19045). The guild lead sent the crash zip plus their `Zeal.asi` and `Zeal.pdb`.
+`scripts/read-minidump.py` gave the offset `Zeal.asi+0x9fcd9`, and `llvm-symbolizer`
+on the PDB named the chain: `NamePlate::NamePlate` → `setting_zeal_fonts`'
+constructor → `ZealSetting::init` runs its change callback → `clean_ui()` → the new
+`saved_tags` loop, on a map declared *below* the settings and so not yet
+constructed. Fix `ca71999`: the persistence state moved to the top of the class,
+with a comment. **Lesson for any Zeal change:** a `ZealSetting` with a callback runs
+that callback during construction, so anything the callback touches must be
+declared above it. **Method worth keeping:** crash zip + `Zeal.asi` + `Zeal.pdb` →
+`read-minidump.py` → `llvm-symbolizer --obj=Zeal.asi <0x10000000+offset>` gives
+file:line from a cloud session in two commands.
 
 ## 29. Field issue — Windows 11 preview update KB5124010 breaks EQ at launch (2026-09-25)
 

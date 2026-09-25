@@ -2,11 +2,23 @@
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-persistence`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, one
-commit, `0d66a28`); the same change is `0001-tag-persistence.patch` here. Not
-compiled with MSVC yet. The tag-file load and save functions were extracted
-verbatim from `nameplate.cpp` and round-trip tested with g++ (`test/roundtrip.cpp`,
-build note below). Breaking the merge rule or the expiry rule makes the test fail.
-clang-format with Zeal's style reports nothing on the changed lines.*
+commit, `ca71999`); the same change is `0001-tag-persistence.patch` here. The
+tag-file load and save functions were extracted verbatim from `nameplate.cpp` and
+round-trip tested with g++ (`test/roundtrip.cpp`, build note below). Breaking the
+merge rule or the expiry rule makes the test fail. clang-format with Zeal's style
+reports nothing on the changed lines.*
+
+*⚠ The first version (`0d66a28`) crashed EverQuest at launch; `ca71999` fixes
+it. The guild lead's MSVC build, run 2026-09-25, died before character select with a
+null read. Their crash dump, symbolized against their own `Zeal.pdb`, gives the
+chain: `NamePlate::NamePlate` → constructing `setting_zeal_fonts` →
+`ZealSetting::init` runs the setting's change callback → `clean_ui()` → the new
+loop over `saved_tags`. `saved_tags` was declared at the bottom of the class, so it
+had not been constructed yet. Members are built in declaration order, and this
+setting's callback fires from its constructor. The state is now declared at the
+top of the class, with a comment saying why. Upstream's own `clean_ui()` has the
+same latent pattern with `nameplate_info_map`; it survives only because clearing
+all-zero memory happens to be harmless. Worth mentioning in the PR.*
 
 **Where it came from:** the guild lead, 2026-09-25: *"We should see what it would
 take to persist zeal tags in zones for users that crash and come back in and lose
