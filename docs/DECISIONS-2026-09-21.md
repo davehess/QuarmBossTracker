@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
 | ~~⚠ **Tower archive: five merge bugs fixed, catch-up IN PROGRESS**~~ (superseded by the row above) | 2026-09-23. The nightly merge failed 17 nights. Root cause was `encounters` never restoring into the snapshot (its id default lives in the `extensions` schema, which `--schema=public` never creates); four more bugs sat behind it (alphabetical order, one conflict target, DISTINCT FROM joins, generated/identity columns). All fixed; `archive-merge.sql` on Tower is now the repo's file (md5 `0b2ceb1a`), its own `refresh-local-archive.sh` carries the extensions block, 20/20 self-test on Tower. The last run was started 06:2x PDT and appeared to hang in the restore | find out whether that run finished or collided with the 05:30 nightly job (§7 has the check). Then merge the older dumps oldest-first and latest LAST — `docs/PATCH-tower-merge-order.md`. ⚠ `buff_casts` 09-06 → 09-15 is **recoverable** from the 09-11+ dumps if still on disk (an earlier note here said lost — wrong). ⚠ `target_observations` was swept in production at 2026-09-23 04:00 UTC; the 09-22 dump holds them, the 09-23 one does not. Then the production watermark |
@@ -190,7 +191,7 @@ than that table ever had.
 ## 4. NPC tells were reaching Discord DMs (2026-09-22)
 
 The guild lead: *"Some NPCs will tell you things like this privately."* The DM
-thread read **`Gage → Hitya: Welcome to my bank!`** and **`Come back soon!`**,
+thread read **`Gage → <character>: Welcome to my bank!`** and **`Come back soon!`**,
 twice over.
 
 `Gage` is a real `eqemu_npc_types` row, and it defeats **both** existing guards:
@@ -1490,6 +1491,93 @@ this change): names in `docs/STATUS.md` (five places), a member's handle in an
 agent comment, a mob-name-shaped member reference in an agent comment, and the
 third-party OpenDKP maintainer named in `web/app/opendkp/page.tsx` (the rule
 says "the upstream maintainer"). A sweep task is queued.
+
+## 21. Privacy audit, and the privacy statement rewritten to match the code (2026-09-25, web 1.8.5)
+
+The guild lead: *"do a privacy audit and update the privacy information. are
+there application privacy best practices we can make claims about?"*
+
+**How it was checked.** Three read-only audits ran in parallel — the Mimic
+client and agent, the bot and database (aggregate SELECTs only, no personal
+data read out), and the website (code, public pages, count-only queries). Each
+claim on the old page was marked true, partly true or false with file:line
+evidence. `docs/PRIVACY.md` and `/privacy` were then rewritten from the
+evidence, not from the old text.
+
+**Fixed live the same night.** Two SECURITY DEFINER functions were executable
+with the public key — the 11-argument `bump_agent_upload_stat` (added
+2026-09-01; the July lockdown revoked only the two older overloads by exact
+signature) and `prune_opendkp_call_stats`. EXECUTE is now service-role only
+(`20260925021113_revoke_public_exec_upload_stat_and_prune.sql`, applied and
+committed). The bot kept writing upload stats afterwards (133 rows in 15
+minutes).
+
+**What the old statement got wrong** (dated 2026-05-30, partly updated since):
+- "We never upload tells" — the opt-in tell relay stores tells in both
+  directions, the other party's words included.
+- "Only what you opt into is synced" / "no agent running = nothing collected" —
+  about twenty streams are on by default once Mimic is signed in, and other
+  raiders' agents record people who never installed anything.
+- "No out-of-raid position collection" — your own live status (position
+  included) goes out whenever Zeal is connected, in or out of a raid, even with
+  logging off, and it ignores both exclusion switches.
+- "Never cross-guild" (raid positions) — the raid roster upload includes
+  pick-up members from other guilds.
+- "Only opens EQ's own log" / "no startup changes" / "one server plus GitHub" —
+  it reads Zeal's feed, ini and UI files, exports and crash files; the installer
+  turns on Start with Windows; it also talks to public time servers, Zeal's and
+  UI packs' GitHub repos, and Amazon's sign-in for OpenDKP.
+- "Exclude any character from stats" — by design it stops only your own
+  uploads (the 2026-08-13 decision), and deletes nothing.
+- "See everything we have on you on /me" — /me shows a fraction; there is no
+  export.
+- Crash reports: "metadata only" undersold it, and "nothing older than 30 days"
+  holds only on the first sweep.
+- Not disclosed at all: the Discord email, sign-in IP/browser records, page-view
+  logging, cookies, the retention reality (most data kept indefinitely; a
+  permanent archive and 30 days of full backups on the guild lead's server),
+  the sub-processors, and AI coding sessions' database access.
+
+**What the new statement promises** — only what the code keeps today: open
+source; private channels filtered on the user's PC first; sensitive features
+off by default (tell relay, crash reports, old-log uploads, UI backups, log
+attachments); no selling, ads or third-party trackers on the site; encrypted in
+transit and at rest (with the at-rest layers named); members-only website pages.
+And a **"What we can't promise yet"** section: no deletion dates for most data,
+no self-serve export or delete, opt-outs that don't reach backwards, and other
+raiders' Mimic recording you. Editing rule, in the file's header: *describe what
+the software does today; a promise goes in only once the code keeps it.*
+
+**Kept out of the public statement on purpose.** Some audit findings are
+security weaknesses rather than data flows. The page does not describe them and
+neither does this file; the guild lead has them from the session. A data flow
+gets disclosed; a way in does not.
+
+**Best-practice frameworks, and where we stand** (the second half of the ask).
+We can say we follow these *in part* — never "compliant", which is a legal
+claim we have no basis for:
+- **Privacy by Design** (Cavoukian's 7 principles): meets *visibility and
+  transparency* (open source + the new page) and partly *privacy as the
+  default* (sensitive features off). Misses *full lifecycle protection* (no
+  retention for most data) and *respect for user privacy* (no self-serve
+  controls).
+- **GDPR Article 5 principles, as good practice** (we are a hobby guild, not a
+  data controller claiming compliance): *transparency* now met; *data
+  minimisation* partly (filtering on the PC; but server-wide /who and position
+  every few seconds); *storage limitation* not met; *integrity and
+  confidentiality* partly.
+- **Mozilla's Lean Data Practices** ("stay lean, build in security, engage your
+  users"): engage — met by the page; stay lean — partly.
+- **OWASP Top 10 Privacy Risks**: *non-transparent policies* is addressed by
+  the rewrite; the ones that still apply most are *insufficient deletion of
+  personal data*, *collection of data not required for the primary purpose*
+  (server-wide /who), and *missing or insufficient session expiration* (Mimic's
+  sign-in tokens never expire).
+
+Also in this change: the real character name in the page's hail example became
+the invented `Brackwyn`; the relayed-tell quote in §4 lost the character name;
+`CLAUDE.md`'s "HTTP-only cookies" and "excluded characters never contribute or
+display" lines were corrected; the roadmap gained the Web 1.8.5 entry.
 
 
 

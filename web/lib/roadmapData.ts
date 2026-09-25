@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1.8.5-2026-09-25',
+    title: 'Web 1.8.5',
+    version: 'Web 1.8.5',
+    date: '2026-09-25',
+    headline: 'The privacy page, rewritten: what Mimic, the bot and the website really collect, who can see it, and how long we keep it — including what we are still fixing.',
+    features: [
+      {
+        name: 'Checked against the code',
+        blurb: 'Every line was checked against what the software actually does today. It covers what Mimic reads and changes on your PC, what it sends by default and what only when you turn it on, and what other raiders’ Mimic records about you.',
+      },
+      {
+        name: 'What your switches really do',
+        blurb: 'Each opt-out on /me and in Mimic now shows what it does and what it doesn’t, how long each kind of data is kept, and every outside service that handles it.',
+      },
+    ],
+    fixes: [
+      'The old page said tells were never uploaded, that nothing was sent unless you opted in, and that your position was only sent during raids. None of that was accurate, and the new page says what really happens.',
+    ],
+  },
+  {
     key: 'mimic-2.7.1-2026-09-24',
     title: 'Mimic 2.7.1 · Agent 3.7.16',
     version: 'Mimic 2.7.1 · Agent 3.7.16 · Web 1.8.3',

@@ -993,7 +993,9 @@ click — reserve a ~30px right gutter).
 
 Next.js 14 App Router + Supabase Auth (Discord OAuth). Two sign-in gates:
 guild membership + role membership (role IDs from `wolfpack_roles`, synced by
-the bot). Sessions via HTTP-only cookies refreshed in `middleware.ts`.
+the bot). Sessions via the `@supabase/ssr` auth cookies (its defaults — the
+2026-09-25 audit found the old "HTTP-only" claim here was wrong), refreshed in
+`middleware.ts`.
 
 Routes: public landing + auth; member surfaces (`/me` — tells, buffs/zone,
 characters, stats; `/parses`, `/raid`, `/buffs`, `/who`, `/pvp`, `/boards`,
@@ -1172,7 +1174,12 @@ dedups so re-submissions attach instead of duplicating.
 
 **Stat visibility scopes.** Every log-derived stat declares `PRIVATE` (owner's
 `/me` only) / `ANON` (nameless aggregates) / `GUILD` (named, signed-in
-members). Excluded characters never contribute or display.
+members). ⚠ `exclude_from_stats` stops the character's OWN agent uploading
+and hides it on `/me`, the raid review and the quartermaster — it does NOT stop
+other raiders' agents observing it, and those rows still store and display by
+name (the guild lead, 2026-08-13; `index.js` near the ingest comment that
+cites that date). The public `/privacy` page says so; don't write "excluded
+characters never contribute or display" again (it was here until 2026-09-25).
 
 **Guild trigger shapes.** Default to the portable shape (`text_overlay` +
 `tts`, trigger-level `timer_duration_sec`, `warning_seconds/_text`) — fires on
