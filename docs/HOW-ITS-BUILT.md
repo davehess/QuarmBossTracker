@@ -53,6 +53,23 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
 - ⚠ **PQDI answers only on `www.pqdi.cc`** and has no GET search URL;
   `test/pqdi-links.test.js` guards both.
 
+### Keys assumed from loot · the quest tracker's sharing (2026-09-25)
+- **Keyed zones** — `locked_zone_keys`: the five zones whose entry door needs a
+  key in `eqemu_doors` (Veeshan's Peak, Sleeper's Tomb, Howling Stones, Sebilis,
+  Vex Thal). **Evidence** — `locked_zone_evidence_for(item_ids)`: NO DROP, drops
+  in exactly one zone (placed spawns + NPC-id prefix), that zone keyed, not a
+  quest reward. `inferred_keys_for_character` feeds the "🗝 Inferred zone access"
+  card on `/character/<name>/quests` (and ticks the key's catalog quest);
+  `inferred_zone_access(guild)` is the guild-wide sweep. All service-role only.
+  Migrations `20260925112238`, `…112514`; tests `test/zone-key-inference-v2.test.js`.
+  `DECISIONS-2026-09-21.md` §24.
+- **Sharing** — `characters.show_quests_publicly` opens the quests page;
+  `show_inventory_publicly` opens inventory + spellbook. `/me` switches "Quest
+  page" / "Inventory page" (`web/app/me/ExclusionToggles.tsx`). A shared quest
+  page with a private inventory hides its inventory listings (`showInvDetail` in
+  the quests page). On `beta` until graduated; column live
+  (`20260925112702`). Test: `test/quest-inventory-sharing-split.test.js`.
+
 Everything flows through one pipeline: **EQ log file + Zeal named pipe →
 agent (on the player's PC) → bot HTTP API (bearer per-user token) → Supabase
 → (web reads Supabase) / (bot posts Discord) / (agents poll bot)**. The agent
