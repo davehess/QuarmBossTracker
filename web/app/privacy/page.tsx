@@ -58,7 +58,7 @@ const SWITCHES: { name: string; where: string; does: string; doesnt: string }[] 
     doesnt: 'Delete what was uploaded; hide the inventory and spellbook pages (you and officers still see the old data).',
   },
   { name: 'Tell relay', where: '/me', does: 'Off by default. On: tells upload, are stored and DM’d to you.', doesnt: 'Delete past tells when turned off.' },
-  { name: 'Quests: public', where: '/me', does: 'Shows your quests to members…', doesnt: '…and also shows your inventory and spellbook — it’s one switch.' },
+  { name: 'Quests: public', where: '/me', does: 'Shows your quests, inventory and spellbook to members — for now one switch covers all three.', doesnt: '—' },
   { name: 'Unticking a character', where: 'Mimic’s setup screen', does: 'Mimic never opens that character’s log.', doesnt: 'Stop that character’s live status (it comes from Zeal, not the log).' },
   { name: 'Crash reports', where: 'Mimic tray', does: 'Off by default.', doesnt: '—' },
   { name: 'Start with Windows', where: 'Mimic tray', does: 'On by default.', doesnt: '—' },
@@ -285,10 +285,9 @@ export default function PrivacyPage() {
           </li>
           <li>Turning relay off stops new uploads; it does not delete tells already stored.</li>
           <li>
-            <B>Mimic&apos;s own Tells setting (Off / Local / Synced) currently changes nothing</B> — its
-            description says tells are never uploaded and that Synced is encrypted with a key only you
-            hold, and neither is true. The web switch is the one that counts. We are fixing the wording
-            in Mimic.
+            <B>Mimic also has a Tells setting (Off / Local / Synced), which isn&apos;t wired up yet.</B>{' '}
+            It doesn&apos;t affect uploads — tell relay on /me is the switch that decides. Its description
+            in Mimic still describes how it was planned to work, and we&apos;re updating it.
           </li>
         </Bullets>
       </Section>
@@ -371,7 +370,7 @@ export default function PrivacyPage() {
         <ul className="space-y-2">
           {([
             ['ONLY YOU', 'bg-purple/20 text-purple border-purple/40', <>Your relayed tells; your <Link href="/me" className="text-blue hover:underline">/me</Link> page.</>],
-            ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. <B>Turning &ldquo;Quests: public&rdquo; on shows your inventory and spellbook to all members too</B> — it&apos;s one switch today.</>],
+            ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. The <B>&ldquo;Quests: public&rdquo;</B> switch shares your inventory and spellbook with members along with your quests — for now the three go together.</>],
             ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP and buffs — that&apos;s how the buff queue and Target Info work.</>],
             ['OFFICERS', 'bg-gold/20 text-gold border-gold/40', <>The admin pages cover all of it, including chat history, member page views and feedback.</>],
             ['DISCORD', 'bg-blue/20 text-blue border-blue/40', <>Whoever can read the channel: relayed guild and raid chat, parse cards (which name deaths), the night&apos;s damage leaderboard, deathrolls, PvP kills and feedback.</>],
