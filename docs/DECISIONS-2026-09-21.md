@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch, not built yet)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`0d66a28`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. File code round-trip tested off-client | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: six icon tag shapes (branch, not built yet)** | **2026-09-25 (§27).** Branch `tag-shapes` on the fork (`fefa1c0`): `^1^`–`^6^` = skull, X, sword, diamond, flame, star; multi-part extrusion with proud accent parts, preview rendered off-client from the real geometry code. PR text + preview: `docs/upstream/zeal-tag-shapes/` | the guild lead: build + test in game, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn `1`–`6` |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
-| **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **2026-09-25 ~03:20 UTC (§23).** Uploads stopped for ~1 min on that one agent only (13 others steady); a Mimic restart fixed it. Agent 3.7.16, ~15 min after a restart, so not a slow leak; the HUD's per-request paths are bounded. Cause unknown | (1) the guild lead sends `%APPDATA%\wolfpack-mimic\agent.log` for 23:15–23:22 ET; (2) the guild lead's call on a hang watchdog in Mimic (restart an agent that stops answering for ~30 s) |
+| **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
 | **Jev context compaction (`fast-jev-compaction`)** | **assessed 2026-09-23 (§6), not adopted. Laya, the open local alternative, assessed 2026-09-24 (§14), not adopted either:** it would keep the data local, but the plugin cannot be pointed at it without a fork, its server rejects the plugin's default request size, and it reads only the first 512–1,024 tokens of the state. §6 as it stood: Real tool, real vendor, and it fixes a real loss — but our compaction pain is CROSS-session (cloud ↔ desktop cannot share a conversation at all) and Jev only helps within one session. It also routes every user and assistant message verbatim, plus every tool input, to a third-party early-access API | the guild lead's call, and it is a privacy call, not a tooling one. ⚠ **Blocked from here**: `typesafe.ai` and `docs.typesafe.ai` are both refused by the cloud egress proxy, so the data-retention/training policy, the price, and waitlist status are unverified. A desktop session can read them |
 | **Tower archive: CAUGHT UP 2026-09-23** | Merged the 09-23 dump (131 → 141 tables staged, ~2.72M → 3.44M rows), then 09-11, 09-17, 09-22 and 09-23 again, latest last. Recovered `buff_casts` 09-06 → 09-15 (+78.6k from the 09-11/09-17 dumps alone) and the `target_observations` production swept this morning (+78.7k). Threat snapshots already complete: 1,201,796 rows in the archive vs production's count at dump time | ⚠ **Production watermark deliberately NOT set** — see §8: the per-fight graphs now exist (bot 3.1.141), but July's snapshots cannot be graphed at all, so setting it is now the guild lead's July decision, not a technical gap. Two more facts for that call: the snapshot_at index was never applied (CONCURRENTLY cannot run in the migration runner), and a DELETE does not shrink the database — the "~890 MB reclaimed" claim in `CLAUDE.md`/`COSTS.md` is really "no growth for about a month" unless VACUUM FULL or pg_repack runs. Optional: merge the 09-01 dump (then latest again) for `buff_casts` 08-25 → 08-29 |
@@ -1638,6 +1638,44 @@ restart mid-fight. Next: the guild lead's `%APPDATA%\wolfpack-mimic\agent.log`
 around 23:15–23:22 ET (it appends, so the lines before the restart survive), and
 a proposed hang watchdog — ping the agent, and restart it after ~30 s without an
 answer, without counting that as a crash for the rollback logic.
+
+**Follow-up, same day — cause found in the agent.log, fixed on beta (agent
+3.7.17).** The log has no per-line timestamps, but three boots can be dated from the
+catalog-cache stamps and the queue-file names: beta.2 at **03:05:06 UTC**, the
+manual restart at **03:21:23 UTC** (the server-side gap), and beta.3 the next
+morning. Nearly all of the session between the first two is one line repeated
+**4,656 times**: "<A>'s fight on Emperor Ssraeshza ended via peer <B>",
+alternating with the reverse.
+
+- **Mechanism:** `EncounterBuilder.flush()` closes matching fights on its live peer
+  trackers, so one whose log missed the kill line doesn't sit open forever. It did
+  that **before resetting itself**, so the peer's own flush found the first tracker
+  still open and flushed it back, A → B → A → B, until the call stack overflowed.
+  A bare `catch (e) { void e; }` swallowed the RangeError. Every level then unwound
+  normally, each having re-run a whole boss flush and re-queued its upload. That
+  is the minute-plus of blocked process.
+- **Not the first time:** the same logs hold three earlier cascades that nobody
+  noticed: Thall Va Kelun **5,417** levels deep, A Shissar Defiler **3,344**, and an
+  earlier Emperor attempt **1,033**. The code has been like this since at least
+  2026-09-11.
+- **Server not flooded:** no uploader has more than 11 contribution rows in
+  02:30–04:00 UTC, so the repeats either never left the blocked process or merged.
+- **Fix:** reset *before* closing peers (capturing the boss name and last-event time
+  first), so a peer's loop finds nothing open and the chain ends at one level; the
+  catch now logs. `test/cross-flush-no-recursion.test.js` drives the real class:
+  two and three trackers each flush once, and a tracker on another boss stays
+  open. On the old code it fails with **440 flushes per tracker instead of 1**.
+  Full gate green (293 files / 4,036 tests).
+- **Scope:** only installs running more than one live tracker in the same fight.
+  The stable agent 3.7.16 carries the same code, so stable needs a graduation.
+  The hang watchdog is still worth doing as a backstop, but it is no longer the
+  fix.
+- **Found in passing, not changed:** every boot logs "queue file unreadable
+  (Unexpected end of JSON input)" and moves the queue aside as `.corrupt-*`. It is
+  a false alarm: an empty queue saves as a zero-byte file, and the loader's legacy
+  fallback runs `JSON.parse('')`. Nothing is lost, but it leaves a corrupt-file
+  artifact at each start.
+
 
 ## 24. Keys assumed from NO DROP loot, for every keyed zone; quests and inventory get separate switches (2026-09-25)
 
