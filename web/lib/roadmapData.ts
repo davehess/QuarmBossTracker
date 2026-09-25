@@ -37,9 +37,9 @@ export type Release = {
 
 export const releases: Release[] = [
   {
-    key: 'web-1.8.5-2026-09-25',
-    title: 'Web 1.8.5',
-    version: 'Web 1.8.5',
+    key: 'web-1.8.6-2026-09-25',
+    title: 'Web 1.8.6',
+    version: 'Web 1.8.6',
     date: '2026-09-25',
     headline: 'The privacy page, rewritten: what Mimic, the bot and the website really collect, who can see it, and how long we keep it — including what we are still fixing.',
     features: [
@@ -54,6 +54,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'The old page said tells were never uploaded, that nothing was sent unless you opted in, and that your position was only sent during raids. None of that was accurate, and the new page says what really happens.',
+      'The Linux download link (wolfpack.quest/mimic/linux, and the Linux button on /start) sent you to the general releases page instead of the Linux build. It finds the Linux build again.',
     ],
   },
   {
