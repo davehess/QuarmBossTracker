@@ -10038,6 +10038,26 @@ class EncounterBuilder {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
     _recordFightHistory(stats.currentEncounterThreat);
+    // Mirror to the per-character map so the 2-min stale window applies
+    // independently per character (a player's other character can
+    // still be mid-fight while this one wraps up).
+    if (this.character && stats.currentEncounterThreatByChar) {
+      const k = String(this.character).toLowerCase();
+      if (stats.currentEncounterThreatByChar[k]) {
+        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
+      }
+    }
+    // Reset BEFORE closing peers (the guild lead's agent stall, 2026-09-25).
+    // With the reset after the loop, the peer's own flush found THIS builder
+    // still open (>= 10 events, same boss) and flushed it back: A → B → A → B
+    // until the stack overflowed, each level re-running a whole boss flush and
+    // re-queuing its upload — thousands of times per kill, blocking the agent
+    // for over a minute (Emperor Ssraeshza: 4,656 levels). The catch below
+    // swallowed the RangeError, so it never showed as an error. Reset first
+    // and a peer's loop sees nothing to close here, so it ends at one level.
+    const flushedBoss      = this.bossName;
+    const flushedLastEvent = this.lastEvent;
+    this.reset();
     // Cross-builder flush propagation. If this Mimic install is tailing more
     // than one character's log (several watched logs on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
@@ -10048,9 +10068,9 @@ class EncounterBuilder {
     // matches, AND (c) its lastEvent is within the same fight window. The
     // peer's own flush() handles the upload + onFlush callback exactly as
     // if it had seen the death event in its log.
-    if (this.bossName) {
-      const peerBossLower = String(this.bossName).toLowerCase();
-      const myEndedAtMs   = this.lastEvent ? Date.parse(this.lastEvent) : Date.now();
+    if (flushedBoss) {
+      const peerBossLower = String(flushedBoss).toLowerCase();
+      const myEndedAtMs   = flushedLastEvent ? Date.parse(flushedLastEvent) : Date.now();
       for (const peer of _liveBuilders) {
         if (peer === this) continue;
         if (!peer.events || peer.events.length < 10) continue;
@@ -10075,22 +10095,14 @@ class EncounterBuilder {
         if (peerTop !== peerBossLower) continue;
         try {
           if (!_dashboardEnabled) {
-            console.log(`[cross-flush] ${peer.character}'s fight on ${this.bossName} ended via peer ${this.character}`);
+            console.log(`[cross-flush] ${peer.character}'s fight on ${flushedBoss} ended via peer ${this.character}`);
           }
           peer.flush();
-        } catch (e) { void e; }
+        } catch (e) {
+          console.warn(`[cross-flush] closing ${peer.character}'s fight failed: ${e && e.message}`);
+        }
       }
     }
-    // Mirror to the per-character map so the 2-min stale window applies
-    // independently per character (a player's other character can
-    // still be mid-fight while this one wraps up).
-    if (this.character && stats.currentEncounterThreatByChar) {
-      const k = String(this.character).toLowerCase();
-      if (stats.currentEncounterThreatByChar[k]) {
-        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
-      }
-    }
-    this.reset();
   }
 }
 
