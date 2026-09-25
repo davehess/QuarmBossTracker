@@ -24,6 +24,21 @@
   .tab:hover{color:#fff;border-color:#a371f7}
   .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
+  /* DPS over Tank, one column (the guild lead, 2026-09-25: "stack DPS and Tank
+     on top of each other and make more horizontal room") — the boss name
+     was wrapping to two lines beside a one-row strip. */
+  .tabstack,.ctlstack{display:flex;flex-direction:column;gap:1px}
+  .tabstack .tab,.ctlstack > .tab{text-align:center;line-height:12px}
+  /* History sits under the row count, not beside DPS/Tank — that is what
+     gets a name like "Blood of Ssraeshza" back onto one line at ~320px. */
+  .ctlstack{margin-left:auto}
+  .ctlstack .rowcfg{margin-left:0}
+  .title > .tabs{margin-left:4px}
+  /* The header is two rows tall now; the name and 📋 sit on its middle. */
+  .title{align-items:center}
+  /* 📋 alone — the "/rs" label made the button wider than the name it
+     sat beside. The tooltip still says what it copies. */
+  #copyRs{padding:0 3px;margin-left:2px}
   .boss{font-size:12px;color:#f6c365;margin:4px 0 6px}
   ul{list-style:none;margin:0;padding:0}
   /* EQLogParser-style row: rank · name · %% · Damage · DPS · Sec. Grid columns
@@ -194,25 +209,31 @@
       <!-- 📋 → /rs — one-click copy of this fight's parse as an EQLogParser-
            convention line the guild recognizes (bot re-ingests it as a
            chat-extracted parse via utils/parseEqLog.js). Sits right of the
-           boss name and grows leftward into the flex gap so its "✓ copied"
-           feedback never reaches the ✕ gutter at the top-right. Shown on the
-           DPS tab only; hidden until a fight has damage to copy. -->
+           boss name as a bare 📋 (✓ for two seconds after a copy), so it
+           never reaches the ✕ gutter at the top-right. Shown on the DPS tab
+           only; hidden until a fight has damage to copy. -->
       <button id="copyRs" class="tab" type="button" style="display:none;white-space:nowrap"
-              title="Copy this fight's parse — paste on your /rs line in game">📋 /rs</button>
+              title="Copy this fight's parse — paste on your /rs line in game">📋</button>
       <!-- DPS / Tank tab toggle — same surface EQLogParser exposes. DPS reads
            perPlayer[].dmg from the active encounter; Tank reads incoming damage
            (perPlayer[].took) so you can see who's eating the boss melee in
            real time. -->
-      <span class="rowcfg wp-mini-hide">
-        <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
-        <span id="rowsN" class="rowsn">10</span>
-        <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
-      </span>
-      <span class="tabs wp-mini-hide">
-        <button id="tabDps"  class="tab on" type="button">DPS</button>
-        <button id="tabTank" class="tab"    type="button">Tank</button>
+      <!-- Two stacked columns, so the header is two rows tall and the boss
+           name gets the width: [− N +] over [History], then [DPS] over [Tank]. -->
+      <span class="ctlstack wp-mini-hide">
+        <span class="rowcfg">
+          <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
+          <span id="rowsN" class="rowsn">10</span>
+          <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
+        </span>
         <button id="tabHist" class="tab"    type="button"
                 title="The guild's numbers for the last few mobs, once every client has reported">History</button>
+      </span>
+      <span class="tabs wp-mini-hide">
+        <span class="tabstack">
+          <button id="tabDps"  class="tab on" type="button">DPS</button>
+          <button id="tabTank" class="tab"    type="button">Tank</button>
+        </span>
       </span>
     </div>
     <!-- History: the scoreboard on the left, the fights to pick from on the
@@ -508,8 +529,8 @@
       var line = (TAB_MODE === 'history') ? _histParseLine : _lastParseLine;
       if (!line) return;
       var done = function(){
-        copyRsBtn.textContent = '✓ copied — paste in /rs';
-        setTimeout(function(){ try { copyRsBtn.textContent = '📋 /rs'; } catch (e) {} }, 2200);
+        copyRsBtn.textContent = '✓';
+        setTimeout(function(){ try { copyRsBtn.textContent = '📋'; } catch (e) {} }, 2200);
       };
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
