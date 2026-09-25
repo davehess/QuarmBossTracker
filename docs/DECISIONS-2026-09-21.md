@@ -115,8 +115,9 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
-| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); `test-all` rebuilt as `c69c3e8` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `dfe6143` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys. Open: corpse tags (§30) |
+| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); in `test-all` `1f866c4` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `1f866c4` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
+| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` `1f866c4`. A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -2125,6 +2126,51 @@ Lessons:
 
 **For the guild lead:** `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md` has the build
 steps, every command, and the cases that must not change.
+
+## 34. Corpses can be tagged; the test list is labelled key-then-name (2026-09-25)
+
+**The guild lead's calls:**
+- *"give me the testing list for the /tag local <tag> but the actual name at the end
+  should be the tag lettering and then afterwards the guild name"*.
+  - Done: every line in `TRY-IN-GAME.md` now reads `/tag local ^BEUR^BEUR Europa`
+    (`^K^K Skull` for the non-guild shapes).
+  - A tag's text is capped at 32 characters **including the `^key^` prefix**. Only
+    the two Here There Be Monsters lines (33) are cut, to "…Be Monster".
+- *"Also i can't tag corpses or anything without visible nameplates"*, with a
+  screenshot of "Must have a valid target with a visible nameplate to tag". **Read as
+  the §30 corpse decision: build it**, with the design recommended there.
+
+**Built on a new branch, `tag-corpses` (`aa975e1`, off upstream main).** It is its own
+branch so it can be its own PR. The change is 31 lines added, 11 removed:
+- NPC and player corpses are taggable, and take text and the default arrow.
+- `NamePlateInfo::corpse_tag` marks a tag set on the corpse itself.
+  - The render path, the tagged colour and `/tag target` honour a corpse's tag only
+    with that flag.
+  - The first tag on a corpse replaces the mob's pre-death tag, which stays hidden
+    until then.
+  - So "kill skull" never lingers on the body, while "loot" or "rez me" on a corpse
+    shows.
+- `/tag target` reaches corpses: its filter is line of sight, not entity type.
+- It merges cleanly into `test-all` (`1f866c4`). The key test passes on the merge.
+- The persistence branch still drops a mob's saved tag at death, and does not save
+  corpse tags across a relog (corpses decay).
+
+**Not built: tagging a target whose model is not drawn** (too far away, or not loaded
+yet).
+- A tag lives on the per-nameplate entry keyed by entity pointer, which is created only
+  for a drawn actor and erased in the entity-destructor hook.
+- Pre-creating one for an undrawn actor risks a dangling pointer if that hook does not
+  fire for it.
+- The safe design is to hold the tag by spawn id and apply it when the nameplate
+  appears (what the persistence branch already does on restore).
+- **Waiting on the guild lead:** which mob hit the message, and whether this case is
+  wanted.
+- Race-hidden nameplates and "names off" were checked: those mobs have an entry and
+  can be tagged today.
+
+**Not compiled with MSVC here.** The corpse change touches only `nameplate.cpp/.h`,
+which needs the DirectX headers. It was reviewed and formatted but not compiled.
+`test-all` is the first real build of it.
 
 
 
