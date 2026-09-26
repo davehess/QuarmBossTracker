@@ -6,8 +6,8 @@ the guild lead's fork (github.com/davehess/zeal/tree/tag-shapes, one commit,
 try in game: `TRY-IN-GAME.md`.** Every mesh
 passes the strip check (`preview/dump.cpp`); the key parser is extracted verbatim
 and tested with g++; clang-format with Zeal's style reports nothing on the changed
-lines. The combined test build is branch `test-all` (`1f866c4`: Bandolier + this +
-tag persistence + corpse tags); never open a PR from it.*
+lines. The combined test build is branch `test-all` (`e742081`: Bandolier + this +
+tag persistence + corpse tags + tag pictures); never open a PR from it.*
 
 ## How it grew (all 2026-09-25, the guild lead's calls)
 

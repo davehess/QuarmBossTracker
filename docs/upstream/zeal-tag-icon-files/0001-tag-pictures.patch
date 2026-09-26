@@ -1,0 +1,477 @@
+From ac5d1771463cbb39dcec58cb7a6288a6f03a562b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 03:44:38 +0000
+Subject: [PATCH] Add tag pictures: ^I<name>^ shows a .png or .tga from
+ uifiles/zeal/tagicons
+
+Guilds keep asking for their own logos as tag markers. Building each one
+into Zeal means a code change and a release per guild, and a painted logo
+can't be drawn as an extruded shape anyway. Tag pictures work like the
+target ring textures instead: drop a file in a folder and use it.
+
+- uifiles/zeal/tagicons/<name>.png or .tga, where <name> is 1 to 6 letters
+  or digits in any case. ^I<name>^ draws that picture flat, facing the
+  camera the way the nameplate text does, sitting where the shape would.
+  A picture takes over from a built-in guild icon with the same code
+  (EUR.png replaces the built-in EUR icon for whoever has the file).
+- Only players with the file see the picture. Others see the guild's
+  built-in shape, or just the text for a code that isn't a guild. If
+  the file won't load, the tag falls back to the built-in shape, or a
+  white arrow when there is none.
+- Files are checked before they are decoded: the PNG or true-color TGA
+  header must give a size of at most 512 pixels a side, and the file must
+  be at most 1 MB. Anything else is skipped with a chat message, once.
+- Each picture is loaded once (a managed texture) and released with the
+  other tag resources; /tag icons lists the pictures, reads the folder
+  again and reloads changed files.
+- The tag chat line reads "(Picture EUR)" for a picture tag.
+- README: document tag pictures.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
+---
+ README.md           |   5 ++
+ Zeal/nameplate.cpp  |  88 +++++++++++++++++++++++++++--
+ Zeal/nameplate.h    |   1 +
+ Zeal/tag_arrows.cpp | 131 ++++++++++++++++++++++++++++++++++++++++++++
+ Zeal/tag_arrows.h   |  34 ++++++++++++
+ 5 files changed, 254 insertions(+), 5 deletions(-)
+
+diff --git a/README.md b/README.md
+index ac4fbb6..2ad02a7 100644
+--- a/README.md
++++ b/README.md
+@@ -701,6 +701,11 @@ Manual editing of the ini file is required to copy from old section to the new s
+       - A guild's banner (a flag with its code) or icon: `B` or `I` then the guild's code (e.g. `^BEUR^`,
+         `^IMAY^`). `/tag guilds` lists the codes. An unknown code is read as the single letter (`^Blue^`
+         is still a blue arrow)
++      - A picture: `I` then the name of a `.png` or `.tga` file in `uifiles/zeal/tagicons` (e.g. `^IEUR^`
++        for `EUR.png`), drawn flat and facing you. Names are 1 to 6 letters or digits; files up to 512
++        pixels a side and 1 MB, with a transparent background. A picture takes over from a guild's
++        built-in icon with the same code. Only players who have the file see the picture; others see the
++        guild's built-in shape, or just the text. `/tag icons` lists the pictures and reads the folder again
+       - Clear any existing shape: `-`
+ - Tags can be cleared with:
+   - `/tag clear`: Clears tag from current target if there is a target else all tags
+diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
+index 52f2ca2..f4be29d 100644
+--- a/Zeal/nameplate.cpp
++++ b/Zeal/nameplate.cpp
+@@ -4,6 +4,8 @@
+ #include <array>
+ #include <cmath>
+ #include <cstdio>
++#include <filesystem>
++#include <map>
+ 
+ #include "callbacks.h"
+ #include "chat.h"
+@@ -15,6 +17,7 @@
+ #include "string_util.h"
+ #include "tag_arrows.h"
+ #include "target_ring.h"
++#include "ui_skin.h"
+ #include "zeal.h"
+ 
+ // Test cases:
+@@ -105,6 +108,50 @@ static int GetGuildIcon(DWORD tag_color) {
+   return -1;
+ }
+ 
++// Tag pictures (^IEUR^ with EUR.png): <code>.png or <code>.tga files in uifiles/zeal/tagicons, like the
++// target ring textures. A picture takes over from a built-in guild icon with the same code. A viewer
++// without the file sees the guild's built-in shape, or only the text for a code that isn't a guild. The
++// folder is read on first use and again on /tag icons, so a picture added while playing needs that command.
++static constexpr char kTagImageFolder[] = "tagicons";
++static constexpr size_t kMaxTagImageCode = 6;  // Letters and digits, keeping "^I<code>^" short.
++
++static std::string ToLower(std::string text) {
++  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return std::tolower(c); });
++  return text;
++}
++
++static std::map<std::string, std::filesystem::path> ScanTagImages() {
++  std::map<std::string, std::filesystem::path> images;  // By lower-case code.
++  try {
++    for (const auto &entry : std::filesystem::directory_iterator(UISkin::get_zeal_resources_path() / kTagImageFolder)) {
++      const std::string code = ToLower(entry.path().stem().string());
++      const std::string extension = ToLower(entry.path().extension().string());
++      if (!entry.is_regular_file() || (extension != ".png" && extension != ".tga") || code.empty() ||
++          code.size() > kMaxTagImageCode ||
++          !std::all_of(code.begin(), code.end(), [](unsigned char c) { return std::isalnum(c); }))
++        continue;
++      images.emplace(code, entry.path());  // With both EUR.png and EUR.tga, the first one listed wins.
++    }
++  } catch (const std::filesystem::filesystem_error &) {
++    // No folder, or it can't be read: no pictures.
++  }
++  return images;
++}
++
++static const std::map<std::string, std::filesystem::path> &GetTagImages(bool rescan = false) {
++  static std::map<std::string, std::filesystem::path> images = ScanTagImages();
++  if (rescan) images = ScanTagImages();
++  return images;
++}
++
++// Returns the picture file named by an 'I' plus code key ("IEUR" or "ieur"), else nullptr.
++static const std::filesystem::path *GetTagImage(const std::string &key) {
++  if (key.size() < 2 || std::tolower(static_cast<unsigned char>(key[0])) != 'i') return nullptr;
++  const auto &images = GetTagImages();
++  const auto it = images.find(ToLower(key.substr(1)));
++  return (it == images.end()) ? nullptr : &it->second;
++}
++
+ // Display name of an icon, numbered or lettered shape (nullptr for the arrows, plain paw and stop sign).
+ static const char *GetShapeName(DWORD tag_color) {
+   if (int number = GetTagNumber(tag_color)) return kNumberNames[number - 1];
+@@ -578,6 +625,8 @@ void NamePlate::render_ui() {
+       auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
+       TagArrows::Shape shape = GetTagShape(info.tag_color);  // From the tag, so no nameplate color can match.
+       position.z += sprite_font->get_text_height(full_text) + 1.5f;
++      const auto *image = info.tag_image.empty() ? nullptr : GetTagImage("i" + info.tag_image);
++      if (image && tag_arrows->QueueTagImage(position, image->string())) continue;  // Drawn in place of a shape.
+       float bearing = (shape == TagArrows::Shape::Arrow) ? 0.0f : get_bearing(self, entity);
+       tag_arrows->QueueTagShape(position, tag_color, shape, bearing);
+       if (int glyph = GetPawGlyph(info.tag_color); glyph >= 0)  // The charmer's initial, over the paw's pad.
+@@ -1083,6 +1132,25 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+     return;
+   }
+ 
++  if (args.size() == 2 && args[1] == "icons") {
++    const auto &images = GetTagImages(true);     // Reads the folder again, so new pictures count.
++    if (tag_arrows) tag_arrows->ForgetImages();  // And changed pictures are loaded again.
++    const auto folder = UISkin::get_zeal_resources_path() / kTagImageFolder;
++    Zeal::Game::print_chat("Tag pictures ^I<name>^ from %s (<name>.png or .tga, up to %d letters or digits):",
++                           folder.string().c_str(), static_cast<int>(kMaxTagImageCode));
++    if (images.empty()) Zeal::Game::print_chat("  none found");
++    std::string line;
++    int count = 0;
++    for (const auto &[code, path] : images) {
++      line += std::string(line.empty() ? "" : ", ") + path.stem().string();
++      if (++count % 10 == 0 || count == static_cast<int>(images.size())) {
++        Zeal::Game::print_chat("  %s", line.c_str());
++        line.clear();
++      }
++    }
++    return;
++  }
++
+   if (args.size() == 2 && args[1] == "clear") {
+     auto target = Zeal::Game::get_target();
+     if (target) {
+@@ -1162,6 +1230,9 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+   Zeal::Game::print_chat("Usage: a paw with a letter or digit on it: P then the character (like '^PK^')");
+   Zeal::Game::print_chat(
+       "Usage: a guild's banner or icon: B or I then its code (like '^BEUR^'); /tag guilds lists them");
++  Zeal::Game::print_chat(
++      "Usage: a picture from uifiles/zeal/tagicons: I then its file name (like '^IEUR^' for EUR.png); /tag icons "
++      "lists them");
+   Zeal::Game::print_chat("Example: /tag rsay Assist me");
+   Zeal::Game::print_chat("Example: /tag gsay Off tank");
+   Zeal::Game::print_chat("Example: /tag gsay clear (broadcasts a clear all tags)");
+@@ -1176,9 +1247,9 @@ static int ReadGuildKey(const std::string &key, char kind) {
+ 
+ // Returns the key of a "^key^" prefix (text starts with '^'): two digits for "^10^" to "^12^", 'P' plus
+ // a letter or digit for a paw with that character ("^PK^"), "WP" for the wolf ("^WP^"), 'B' or 'I' plus
+-// a guild code for that guild's banner or icon ("^BEUR^", "^IEUR^"), else the single character after the
+-// '^'. Older clients read only the first character, so "^PK^" shows them a plain paw, "^WP^" a white arrow
+-// and "^BEUR^" a blue one.
++// a guild code for that guild's banner or icon ("^BEUR^", "^IEUR^"), 'I' plus the code of a picture in the
++// tagicons folder, else the single character after the '^'. Older clients read only the first character,
++// so "^PK^" shows them a plain paw, "^WP^" a white arrow and "^BEUR^" a blue one.
+ static std::string ReadTagKey(const std::string &text) {
+   bool two_digits = text.size() > 3 && std::isdigit(static_cast<unsigned char>(text[1])) &&
+                     std::isdigit(static_cast<unsigned char>(text[2])) && text[3] == '^';
+@@ -1186,11 +1257,11 @@ static std::string ReadTagKey(const std::string &text) {
+       text.size() > 3 && (text[1] == 'p' || text[1] == 'P') && TagShapes::GlyphIndex(text[2]) >= 0 && text[3] == '^';
+   bool wolf =
+       text.size() > 3 && (text[1] == 'w' || text[1] == 'W') && (text[2] == 'p' || text[2] == 'P') && text[3] == '^';
+-  // A guild key runs to the next '^' and must name a guild, so "^Blue^" stays a blue arrow.
++  // A guild or picture key runs to the next '^' and must name one, so "^Blue^" stays a blue arrow.
+   const size_t end = text.find('^', 1);
+   if (end != std::string::npos) {
+     const std::string key = text.substr(1, end - 1);
+-    if (ReadGuildKey(key, 'b') >= 0 || ReadGuildKey(key, 'i') >= 0) return key;
++    if (ReadGuildKey(key, 'b') >= 0 || ReadGuildKey(key, 'i') >= 0 || GetTagImage(key)) return key;
+   }
+   return text.substr(1, (two_digits || paw_glyph || wolf) ? 2 : 1);
+ }
+@@ -1349,11 +1420,16 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+   if (tag_text.size() > 2 && tag_text[0] == '^') {
+     const std::string key = ReadTagKey(tag_text);
+     it->second.tag_color = GetTagArrowColor(key);
++    const bool image = GetTagImage(key) != nullptr;
++    it->second.tag_image = image ? ToLower(key.substr(1)) : "";
++    if (image && it->second.tag_color == TagArrowColor::Off)
++      it->second.tag_color = TagArrowColor::White;  // No built-in shape: a white arrow if the picture won't load.
+     tag_text = tag_text.substr(1 + key.size());
+   } else if (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) {
+     bool disable_arrow = !setting_tag_default_arrow.get() || entity->Type != Zeal::GameEnums::NPC ||
+                          (tag_text.empty() && it->second.tag_text.empty());
+     it->second.tag_color = disable_arrow ? TagArrowColor::Off : TagArrowColor::Nameplate;
++    it->second.tag_image.clear();  // A cleared picture tag must not come back with the default arrow.
+   }
+ 
+   // Support skipping any unrecognized future prefix.
+@@ -1522,6 +1598,8 @@ static std::string prettyprint_tag_message(const std::string &msg) {
+       prefix += "Stop";
+     else if (key == "p" || key == "P")
+       prefix += "Paw";
++    else if (const auto *image = GetTagImage(key))
++      prefix += "Picture " + image->stem().string();
+     else if (shape_name)
+       prefix += shape_name;
+     else
+diff --git a/Zeal/nameplate.h b/Zeal/nameplate.h
+index 7233a6b..21c1523 100644
+--- a/Zeal/nameplate.h
++++ b/Zeal/nameplate.h
+@@ -119,6 +119,7 @@ class NamePlate {
+     std::string tag_text;
+     DWORD color;
+     DWORD tag_color;
++    std::string tag_image;  // Lower-case code of the tag's picture ("eur" for EUR.png), else empty.
+   };
+ 
+   struct RenderInfo {
+diff --git a/Zeal/tag_arrows.cpp b/Zeal/tag_arrows.cpp
+index cc85249..d6e2028 100644
+--- a/Zeal/tag_arrows.cpp
++++ b/Zeal/tag_arrows.cpp
+@@ -1,10 +1,19 @@
+ #include "tag_arrows.h"
+ 
++#include <algorithm>
+ #include <array>
++#include <filesystem>
++#include <fstream>
+ #include <span>
+ 
+ #include "game_functions.h"
+ 
++// Tag pictures: the file is checked before it is decoded, and the picture stands about as tall as the arrow.
++static constexpr uintmax_t kMaxImageFileBytes = 1024 * 1024;
++static constexpr unsigned int kMaxImagePixels = 512;  // On either side.
++static constexpr float kImageHeight = 3.5f;           // World units (the arrow is 4 tall).
++static constexpr float kMaxImageAspect = 2.f;         // Wider pictures are squeezed to twice their height.
++
+ // Arrow consists of 3 circles with a vertex at the tip.
+ static constexpr int kNumCircleVertices = 60;                         // Spaced every 6 degrees.
+ static constexpr int kNumArrowVertices = 3 * kNumCircleVertices + 2;  // Three circles + top and bottom centers.
+@@ -136,6 +145,14 @@ void TagArrows::Release() {
+   index_buffer = nullptr;
+ 
+   arrow_queue.clear();
++  ForgetImages();
++}
++
++void TagArrows::ForgetImages() {
++  for (auto &[filename, image] : images)
++    if (image.texture) image.texture->Release();
++  images.clear();
++  image_queue.clear();
+ }
+ 
+ void TagArrows::Dump() const {
+@@ -152,7 +169,62 @@ void TagArrows::QueueTagShape(const Vec3 &position, const D3DCOLOR color, Shape
+   arrow_queue.emplace_back(Arrow{.position = position, .color = color, .shape = shape, .bearing = bearing});
+ }
+ 
++bool TagArrows::QueueTagImage(const Vec3 &position, const std::string &filename) {
++  auto it = images.find(filename);
++  if (it == images.end()) it = images.emplace(filename, ReadImageFile(filename)).first;
++  if (!it->second.texture) return false;
++  image_queue.push_back(
++      Image{.position = position, .texture = it->second.texture, .width = kImageHeight * it->second.aspect});
++  return true;
++}
++
++// Reads a picture's size from its header (a PNG's IHDR, or a true-color TGA's header), so an oversized file
++// is refused before it is decoded. Returns false for anything that isn't one of those.
++static bool ReadImageSize(const std::string &filename, unsigned int &width, unsigned int &height) {
++  std::ifstream file(filename, std::ios::binary);
++  std::array<unsigned char, 24> header = {};
++  if (!file.read(reinterpret_cast<char *>(header.data()), header.size())) return false;
++  static constexpr std::array<unsigned char, 8> kPngSignature = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
++  if (std::equal(kPngSignature.begin(), kPngSignature.end(), header.begin())) {
++    auto big_endian = [&](int i) {
++      return (static_cast<unsigned int>(header[i]) << 24) | (header[i + 1] << 16) | (header[i + 2] << 8) |
++             header[i + 3];
++    };
++    width = big_endian(16);
++    height = big_endian(20);
++    return true;
++  }
++  if (header[2] != 2 && header[2] != 10) return false;  // TGA image type: true-color, plain or run-length.
++  width = header[12] | (header[13] << 8);
++  height = header[14] | (header[15] << 8);
++  return true;
++}
++
++TagArrows::LoadedImage TagArrows::ReadImageFile(const std::string &filename) {
++  std::error_code error;
++  const uintmax_t bytes = std::filesystem::file_size(filename, error);
++  unsigned int width = 0, height = 0;
++  if (error || bytes == 0 || bytes > kMaxImageFileBytes || !ReadImageSize(filename, width, height) || width == 0 ||
++      height == 0 || width > kMaxImagePixels || height > kMaxImagePixels) {
++    Zeal::Game::print_chat("Tag picture skipped (needs a PNG or TGA, up to %d pixels a side and 1 MB): %s",
++                           kMaxImagePixels, filename.c_str());
++    return {};
++  }
++  IDirect3DTexture8 *texture = nullptr;
++  if (FAILED(D3DXCreateTextureFromFileExA(&device, filename.c_str(), D3DX_DEFAULT, D3DX_DEFAULT, D3DX_DEFAULT, 0,
++                                          D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, D3DX_DEFAULT, D3DX_DEFAULT, 0, nullptr,
++                                          nullptr, &texture))) {
++    Zeal::Game::print_chat("Tag picture failed to load: %s", filename.c_str());
++    return {};
++  }
++  return LoadedImage{.texture = texture, .aspect = min(kMaxImageAspect, static_cast<float>(width) / height)};
++}
++
+ void TagArrows::FlushQueueToScreen() {
++  if (!image_queue.empty()) {  // Pictures need none of the shape buffers below.
++    RenderImages();
++    image_queue.clear();
++  }
+   if (arrow_queue.empty()) return;
+ 
+   if (!vertex_buffer) {
+@@ -227,6 +299,65 @@ void TagArrows::RenderQueue() {
+   render_state.restore_state();
+ }
+ 
++// Draws each queued picture as a quad that faces the camera, the same way the nameplate text does.
++void TagArrows::RenderImages() {
++  D3DRenderStateStash render_state(device);
++  render_state.store_and_modify({D3DRS_CULLMODE, D3DCULL_NONE});
++  render_state.store_and_modify({D3DRS_ALPHABLENDENABLE, TRUE});
++  render_state.store_and_modify({D3DRS_SRCBLEND, D3DBLEND_SRCALPHA});
++  render_state.store_and_modify({D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA});
++  render_state.store_and_modify({D3DRS_ALPHATESTENABLE, TRUE});  // Clear pixels leave the depth buffer alone.
++  render_state.store_and_modify({D3DRS_ALPHAREF, 0x08});
++  render_state.store_and_modify({D3DRS_ALPHAFUNC, D3DCMP_GREATER});
++  render_state.store_and_modify({D3DRS_ZENABLE, TRUE});
++  render_state.store_and_modify({D3DRS_ZWRITEENABLE, TRUE});
++  render_state.store_and_modify({D3DRS_LIGHTING, FALSE});
++
++  D3DTextureStateStash texture_state(device);
++  texture_state.store_and_modify({D3DTSS_COLOROP, D3DTOP_MODULATE});
++  texture_state.store_and_modify({D3DTSS_COLORARG1, D3DTA_TEXTURE});
++  texture_state.store_and_modify({D3DTSS_COLORARG2, D3DTA_DIFFUSE});
++  texture_state.store_and_modify({D3DTSS_ALPHAOP, D3DTOP_MODULATE});
++  texture_state.store_and_modify({D3DTSS_ALPHAARG1, D3DTA_TEXTURE});
++  texture_state.store_and_modify({D3DTSS_ALPHAARG2, D3DTA_DIFFUSE});
++  texture_state.store_and_modify({D3DTSS_MINFILTER, D3DTEXF_LINEAR});
++  texture_state.store_and_modify({D3DTSS_MAGFILTER, D3DTEXF_LINEAR});
++  texture_state.store_and_modify({D3DTSS_MIPFILTER, D3DTEXF_LINEAR});  // Smaller copies for distant tags.
++  texture_state.store_and_modify({D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP});
++  texture_state.store_and_modify({D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP});
++
++  // Note: Not preserving shader or texture to avoid reference counting.
++  device.SetVertexShader(ImageVertex::kFvfCode);
++
++  D3DXMATRIX original_world, view, face_camera, translation, world;
++  device.GetTransform(D3DTS_WORLD, &original_world);
++  device.GetTransform(D3DTS_VIEW, &view);
++  D3DXMatrixIdentity(&face_camera);  // Transpose the rotation of the camera view (as SpriteFont does).
++  for (int row = 0; row < 3; row++)
++    for (int col = 0; col < 3; col++) face_camera(col, row) = view(row, col);
++
++  constexpr D3DCOLOR kWhite = 0xffffffff;  // Untinted.
++  for (const auto &image : image_queue) {
++    // Model y runs down the picture, as the nameplate text is laid out, so the picture spans y from
++    // -kImageHeight (its top) to 0 (its bottom, at the position).
++    const float half = image.width / 2;
++    const ImageVertex vertices[4] = {{-half, -kImageHeight, 0, kWhite, 0, 0},
++                                     {half, -kImageHeight, 0, kWhite, 1, 0},
++                                     {-half, 0, 0, kWhite, 0, 1},
++                                     {half, 0, 0, kWhite, 1, 1}};
++    D3DXMatrixTranslation(&translation, image.position.x, image.position.y, image.position.z);
++    world = face_camera * translation;
++    device.SetTransform(D3DTS_WORLD, &world);
++    device.SetTexture(0, image.texture);
++    device.DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, vertices, sizeof(ImageVertex));
++  }
++
++  device.SetTexture(0, NULL);  // Release the reference to the last picture.
++  device.SetTransform(D3DTS_WORLD, &original_world);
++  texture_state.restore_state();
++  render_state.restore_state();
++}
++
+ TagArrows::RenderInfo TagArrows::GetRenderInfo(const Arrow &tag) {
+   // Go through cache buffer checking if there is a match.
+   for (const auto &render_info : render_infos) {
+diff --git a/Zeal/tag_arrows.h b/Zeal/tag_arrows.h
+index 42eb40f..b06cff7 100644
+--- a/Zeal/tag_arrows.h
++++ b/Zeal/tag_arrows.h
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include <array>
++#include <string>
++#include <unordered_map>
+ #include <vector>
+ 
+ #include "directx.h"
+@@ -57,6 +59,14 @@ class TagArrows {
+   // and specifies the bottom of the tap shape (e.g. tip of the arrow pointing down).
+   void QueueTagShape(const Vec3 &position, const D3DCOLOR color, Shape shape = Shape::Arrow, float bearing = 0.f);
+ 
++  // Queues a picture from a .png or .tga file, drawn flat and facing the camera (like the nameplate text) with
++  // its bottom edge at the position. Returns false and queues nothing if the file can't be loaded, so the
++  // caller can draw a shape instead. Each file is loaded once and kept until Release() or ForgetImages().
++  bool QueueTagImage(const Vec3 &position, const std::string &filename);
++
++  // Drops the loaded pictures so changed files are read again.
++  void ForgetImages();
++
+   // Renders queued arrows to the screen and clears the queue.
+   // Note that the D3D stream source, indices, vertex shader, and texture states
+   // are not preserved across this call.
+@@ -77,6 +87,26 @@ class TagArrows {
+     float bearing;   // Bearing from player to tag target.
+   };
+ 
++  // A queued picture and the vertex format it is drawn with.
++  struct Image {
++    Vec3 position;               // Bottom center, in world coordinates.
++    IDirect3DTexture8 *texture;  // Owned by images.
++    float width;                 // In world units (the height is fixed).
++  };
++
++  struct ImageVertex {
++    static constexpr DWORD kFvfCode = (D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1);
++
++    float x, y, z;
++    D3DCOLOR color;
++    float u, v;
++  };
++
++  struct LoadedImage {
++    IDirect3DTexture8 *texture = nullptr;  // nullptr if the file failed to load (so it isn't retried every frame).
++    float aspect = 1.f;                    // Width over height.
++  };
++
+   struct RenderInfo {
+     Shape shape = Shape::Arrow;
+     D3DCOLOR color = 0;
+@@ -103,9 +133,13 @@ class TagArrows {
+   RenderInfo AllocatePaw(const Arrow &arrow);
+   RenderInfo AllocateIconShape(const Arrow &arrow);
+   int AppendVertices(std::vector<ArrowVertex> &vertices);
++  LoadedImage ReadImageFile(const std::string &filename);
++  void RenderImages();  // Draws the queued pictures.
+ 
+   IDirect3DDevice8 &device;
+   std::vector<Arrow> arrow_queue;  // Loaded to batch up processing in each render pass.
++  std::vector<Image> image_queue;
++  std::unordered_map<std::string, LoadedImage> images;  // By filename.
+ 
+   // Vertex buffer acts as a cache of most recently used shapes (stored in render_infos).
+   IDirect3DVertexBuffer8 *vertex_buffer = nullptr;
+-- 
+2.43.0
+
