@@ -2564,6 +2564,42 @@ strip's labels in the lighter song-chip purple, and the grey "off" chips a step 
 up). `test/overlay-opacity-and-mini-dashboard.test.js` checks the rule; putting the old
 rule back fails it.
 
+## 45. Melody: the DIRGE NUKE board (2026-09-26, agent 3.7.22 beta)
+
+**The guild lead:** *"the melody overlay needs a little switch and a red button that says DIRGE
+NUKE on it when amplification and resonance/harmonize and Puretone is available … As soon as
+Amplification flips on as the last item, the control board slides out quickly but animated and
+shows the Puretone Key (that turns if you do it) and then the NUKE button that has a cooldown on
+it for recast and HOW MANY Dirges you can do (mana divided by 800)"*. The pre-buffs named: both
+Guardian Rhythms and Psalm of Mystic Shielding, 3 minutes left on Selo's, Niv's Harmony.
+
+**Built** as asked, with an animated preview for the guild lead (a private page, not in the repo).
+How it works: `HOW-ITS-BUILT.md`, "Melody: the DIRGE NUKE board".
+
+**Calls made from the data, for the guild lead to confirm:**
+- **Selo's: 2:00, not 3:00.** Selo's Accelerating Chorus is 25 ticks (2:30) at most: formula 4 in
+  `eqemu_spells` 2605, and 25 is the highest of 73 live samples in `character_live_state`. A 3:00
+  lamp could never light. 2:00 means it was sung in the last 30 seconds. One constant,
+  `DIRGE_SELO_MIN_SECS` in `melody.html`.
+- **"Niv's Harmony" is Niv's Harmonic** (spell 1763), the only Niv's song with "Harmon" in it.
+  The bard strip's existing "Niv's Melody" row is a different song (Melody of Preservation →
+  Breath of Harmony) and is left alone.
+- **The NUKE "cooldown" is the 3-second sing.** Denon's Desperate Dirge (742) has
+  `recast_time 0`, so there is no lockout after it. The ring fills while Zeal shows the Dirge
+  being cast and starts over for each back-to-back cast.
+- **Puretone "ready"** uses the agent's existing disc timer. That timer is an estimate of the
+  shared discipline timer (4320 s at 60), except when the refusal line gives the exact time. A
+  timer never seen counts as ready, since the board is a reminder, not a gate.
+- **Exact spell names** for the pre-buffs. The strip's matcher falls back to the first word,
+  which would take any "Psalm of …" for Psalm of Mystic Shielding.
+
+**Found on the way, fixed in the same change:** `melody.html` read `curKind` in the label shown
+between casts but never defined it. Every tick in that gap threw, so the song list froze and the
+connection dot went red until the next cast. It is also on stable. One line defines it.
+
+**Landed:** beta `611b145b`. `test/melody-dirge-board.test.js` covers both halves; seven
+deliberate breaks, all caught.
+
 
 
 

@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'dirge-nuke-2026-09-26',
+    title: 'Agent 3.7.22',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.15',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Bards get a DIRGE NUKE button on the Melody overlay.',
+    features: [
+      {
+        name: 'Get set, then nuke',
+        blurb: 'Flip the DIRGE switch on Melody and lamps show your pre-buffs: Guardian Rhythms, Psalm of Mystic Shielding, Selo’s, Niv’s Harmonic, Resonance or Harmonize, Amplification and Puretone. When they are all lit, a control board slides out.',
+      },
+      {
+        name: 'Turn the key, press the button',
+        blurb: 'Pop Puretone Discipline and the key turns. The red NUKE button fills while you sing each Dirge, and the big number is how many Dirges your mana has left.',
+      },
+    ],
+    fixes: [
+      'The Melody overlay no longer freezes for a moment between songs.',
+    ],
+  },
+  {
     key: 'overlay-background-2026-09-26',
     title: 'Mimic 2.7.2-beta',
     version: 'Mimic 2.7.2-beta · Web 1.8.14',
