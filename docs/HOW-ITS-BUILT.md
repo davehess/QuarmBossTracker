@@ -1571,6 +1571,23 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### /who overlay: the player you target goes on top, guild under the name (agent 3.7.19, beta, 2026-09-26)
+The guild lead, in a raid shared with other guilds: *"add guild under the player's
+name when we know it. When we click on them put them at the top of the /who
+overlay."*
+- **Agent:** `buildWhoSnapshot()` adds `target`, from `_whoTargetPlayer()`.
+  - It uses the same sources as Target Info's player line (`_targetPlayerInfo`):
+    this session's /who, then who-lookup history, then the raid roster's class.
+  - It returns the guild with `guild_src` `who`/`history`, plus main, Mimic
+    presence and the flags.
+  - The player is removed from Current and Recently gone.
+  - A card needs a /who row, history or a raid class. Target Info alone would
+    take in pets.
+- **Overlay:** `apps/mimic/who.html` `targetHtml()` draws a Target section above
+  the lists: the name line, then `<Guild>` on its own line, in italics when it
+  comes from history. It shows even before any /who.
+- **Test:** `test/who-target-card.test.js`.
+
 ### Extended Target: the spot for Zeal's target of target (agent 3.6.40 · beta 2.6.8-beta.3, 2026-09-12)
 Consumer side of the drafted upstream change (`docs/zeal-tot-pipe.patch`): the
 pipe's `player` message gains `target_of_target` and `target_hit_by`, each

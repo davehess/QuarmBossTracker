@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'who-target-2026-09-26',
+    title: 'Agent 3.7.19',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.19 · Web 1.8.11',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Click a player and they go to the top of the /who overlay, with their guild under their name.',
+    features: [
+      {
+        name: 'Who is that?',
+        blurb: 'Target any player and the /who overlay puts them on top: name, class and level, and their guild on the line underneath. Handy in a raid shared with other guilds.',
+      },
+      {
+        name: 'Even when they are /anon',
+        blurb: 'If their /who hides it, the guild and class come from the last time anyone saw them, shown in italics so you know it is history. It works before you have run a /who at all.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'hud-tracking-2026-09-26',
     title: 'Agent 3.7.18',
     version: 'Mimic 2.7.2-beta · Agent 3.7.18 · Web 1.8.9',
