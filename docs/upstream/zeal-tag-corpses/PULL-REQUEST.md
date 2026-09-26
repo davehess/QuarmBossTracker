@@ -2,7 +2,7 @@
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-corpses`** on the
 guild lead's fork (github.com/davehess/zeal/tree/tag-corpses, one commit, `aa975e1`); the
-same change is `0001-tag-corpses.patch` here. It is merged into `test-all` (`e742081`),
+same change is `0001-tag-corpses.patch` here. It is merged into `test-all` (`d32bed1`),
 and the steps to try it are in `../zeal-tag-shapes/TRY-IN-GAME.md` → "Corpses".*
 
 ## Why

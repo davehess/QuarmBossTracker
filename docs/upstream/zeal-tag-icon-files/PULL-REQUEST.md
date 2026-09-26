@@ -3,7 +3,7 @@
 *Drafted 2026-09-26 on top of the tag-shapes branch (`3c02f65`). Branch **`tag-icon-files`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-icon-files, one commit,
 `ac5d177`); the same change is `0001-tag-pictures.patch` here. It is merged into
-`test-all` (`e742081`). The steps to try it are in `../zeal-tag-shapes/TRY-IN-GAME.md` →
+`test-all` (`d32bed1`). The steps to try it are in `../zeal-tag-shapes/TRY-IN-GAME.md` →
 "Pictures".*
 
 ## Why
