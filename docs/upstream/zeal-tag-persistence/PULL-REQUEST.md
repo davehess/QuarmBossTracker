@@ -1,12 +1,19 @@
 # Zeal PR draft — keep tags through a crash, relog or character switch; ignore tags from other zones
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-persistence`**
-on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, one
-commit, `ca71999`); the same change is `0001-tag-persistence.patch` here. The
-tag-file load and save functions were extracted verbatim from `nameplate.cpp` and
-round-trip tested with g++ (`test/roundtrip.cpp`, build note below). Breaking the
-merge rule or the expiry rule makes the test fail. clang-format with Zeal's style
-reports nothing on the changed lines.*
+on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, two
+commits: `ca71999`, then `9a3fd09` for player tags, 2026-09-26). The same change is
+`0001-tag-persistence.patch` here.*
+
+*How it was tested:*
+- *The tag-file load and save functions, the save/restore loop and the
+  entity-destructor hook were extracted verbatim from `nameplate.cpp` and run with
+  g++ (`test/sync.sh`).*
+- *The tests cover a round trip of the file, a player leaving and coming back
+  under a new spawn id, zoning together, a death and rez, a clear in view, and the
+  NPC rules.*
+- *Six deliberate breaks each make them fail.*
+- *clang-format with Zeal's style reports nothing on the changed lines.*
 
 *⚠ The first version (`0d66a28`) crashed EverQuest at launch; `ca71999` fixes
 it. The guild lead's MSVC build, run 2026-09-25, died before character select with a
@@ -57,6 +64,21 @@ then *"As well as not tag same spawn-ids in other zones"*.
 - **Character switch:** the character's file is loaded at login and merged with
   what the session already holds (newer wins). In-process switches keep
   everything, and a crash comes back to that character's own file.
+- **Players are kept by name (`9a3fd09`).** The guild lead, 2026-09-26: *"tagged
+  players should keep their tags if possible - i know they have spawn ids that
+  change"*.
+  - A player gets a new spawn id every time they zone in, so a zone and spawn id
+    key loses them. Their names are unique on the server.
+  - Players therefore have their own map (`saved_player_tags`), keyed by stripped
+    name and tied to no zone. The tag comes back when they return after zoning,
+    camping or dying, and follows them into another zone with you. Their corpse
+    neither takes the tag nor drops it.
+  - `handle_entity_destructor` marks a leaving player's saved tag as not live.
+    Without that, a player who left and came back while you stayed read as a
+    cleared tag, and the saved copy was deleted.
+  - A clear in view still drops it, and a `clear` drops every player tag.
+  - In the file, a player line is zone `-1`, spawn id `0`, then the name. Older
+    builds never match zone `-1`.
 - `/tag persist <on | off>`, **on by default**. README updated.
 
 **Not covered:** tags broadcast while a client was offline. Recovering those
@@ -91,12 +113,11 @@ copy C:\dev\zeal-pr\Zeal\Release\Zeal.asi A:\EQ\Zeal.asi
 It starts from 1.4.7, so this build has neither the Bandolier filter nor the tag
 shapes. Restore the release with `copy A:\EQ\Zeal.asi.v147-backup A:\EQ\Zeal.asi`.
 
-The file functions can be re-tested off-client. The test extracts them from the
-real source, so it cannot drift:
+The save/restore rules and the file functions can be re-tested off-client. The
+test extracts them from the real source, so it cannot drift:
 
 ```
-awk '/^static constexpr long long kSavedTagMaxAgeSeconds/{print} /^void NamePlate::load_saved_tags/{f=1} /^void NamePlate::write_saved_tags/{f=1} f{print} f&&/^}/{f=0}' <zeal>/Zeal/nameplate.cpp > extracted.inc
-g++ -std=c++20 -I. -o roundtrip test/roundtrip.cpp && ./roundtrip
+cd test && sh sync.sh <zeal checkout>
 ```
 
 ---
@@ -133,6 +154,11 @@ landed on whatever local mob had that id.
   after it was last seen.
 - The character's file is loaded at login or a character switch and merged with the
   session's (newer wins).
+- Players are kept by name instead, since a player's spawn id changes every time they
+  zone in (names are unique on the server). Their tag comes back after they zone,
+  camp or die, and follows them into another zone with you. The entity destructor
+  marks a leaving player as not live, so their return restores the tag rather than
+  reading as a clear. A player line in the file is zone `-1`, spawn id `0`.
 - `/tag persist <on | off>`, on by default. README updated.
 
 Tags broadcast while a client was offline are not recovered — that would need a
@@ -156,3 +182,10 @@ discussion.
    Zeal Spam.
 7. `/tag persist off`, then relog: tags are not restored.
 8. Alt-tab out of exclusive full screen and back: tags survive the device reset.
+9. Tag a player (`/tag local ^H^`). They zone out and back in: the shield returns
+   within about a second, although their spawn id changed.
+10. Zone together with a tagged player: the tag follows them into the new zone.
+    They die and are rezzed: their corpse carries no tag, and the tag is back on
+    them after the rez.
+11. `/tag clear` with the player targeted, then they zone out and back: no tag.
+    The file has a `-1` line for a tagged player, and none after the clear.

@@ -1,7 +1,7 @@
 From ca719992ad2429078c9d57669da03358eb490dc7 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 25 Sep 2026 13:44:43 +0000
-Subject: [PATCH] Keep nameplate tags through zoning, character switch and
+Subject: [PATCH 1/2] Keep nameplate tags through zoning, character switch and
  crash; ignore tags from other zones
 
 Tags live only in nameplate_info_map, which clean_ui() empties on zoning,
@@ -331,6 +331,233 @@ index 7233a6b..c0ca156 100644
    void clean_ui();
    void render_ui();
    void load_sprite_font();
+-- 
+2.43.0
+
+
+From 9a3fd09d21d617921cb0d4dba088a9c7548302a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 26 Sep 2026 05:12:41 +0000
+Subject: [PATCH 2/2] Keep a player's tag by name, so it survives their zoning,
+ camping and dying
+
+Saved tags were keyed by zone and spawn id, which only works for NPCs. A
+player gets a new spawn id every time they zone in, so a tagged player
+who zoned out and back, or who zoned with you, came back untagged. Worse,
+if they left and returned while you stayed in the zone, the saved tag was
+still marked as seen live, so the untagged newcomer read as a clear and
+the saved tag was deleted.
+
+Player names are unique on the server, so:
+
+- Players are saved in their own map, keyed by stripped name and not tied
+  to a zone. The tag comes back when they return after zoning, camping or
+  dying (their corpse neither takes it nor drops it), and follows them
+  into another zone with you.
+- handle_entity_destructor marks a leaving player's saved tag as not live,
+  so their return restores it instead of clearing it.
+- Clearing a tag on a player in view still drops it. A clear drops every
+  player tag, since they belong to no zone. Player tags expire 3 hours
+  after the player was last seen, like the rest.
+- The tag file gains player lines: zone -1, spawn id 0, then the name.
+  Older builds never match zone -1, so a shared file stays harmless.
+- NPC rules are unchanged; the shared save/restore steps moved into one
+  lambda that both maps use.
+- README: note player tags.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
+---
+ README.md          |  3 ++
+ Zeal/nameplate.cpp | 68 ++++++++++++++++++++++++++++++----------------
+ Zeal/nameplate.h   |  7 ++++-
+ 3 files changed, 54 insertions(+), 24 deletions(-)
+
+diff --git a/README.md b/README.md
+index 05ff2c3..8403eac 100644
+--- a/README.md
++++ b/README.md
+@@ -723,6 +723,9 @@ Manual editing of the ini file is required to copy from old section to the new s
+   - Saved per zone and spawn id to `<character>_tags.txt` in the EverQuest folder as they change
+   - Restored when a mob with the same zone, spawn id and name appears again; dropped when it dies, when a
+     `clear` is received, or 3 hours after it was last seen
++  - A player's tag is kept by name instead, since a player gets a new spawn id each time they zone in: it
++    comes back when they return after zoning, camping or dying, and follows them into other zones with you.
++    It is dropped when cleared, on a `clear`, or 3 hours after they were last seen
+   - Tags broadcast while you were offline are not recovered
+ - A received tag only applies if the target name in it matches the mob with that spawn id, so tags sent from
+   another zone (rsay or a chat channel) no longer land on an unrelated mob that shares the spawn id
+diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
+index d14024c..be0d5ce 100644
+--- a/Zeal/nameplate.cpp
++++ b/Zeal/nameplate.cpp
+@@ -98,6 +98,13 @@ static int __fastcall SetNameSpriteTint_UpdateState(void *this_display, void *no
+ void NamePlate::handle_entity_destructor(Zeal::GameStructures::Entity *entity) {
+   auto it = nameplate_info_map.find(entity);
+   if (it != nameplate_info_map.end()) nameplate_info_map.erase(it);
++
++  // A tagged player who leaves (zoning, camping, dying) comes back as a new entity: let the next sync
++  // restore their tag rather than read the untagged newcomer as a clear.
++  if (entity && entity->Type == Zeal::GameEnums::Player && !saved_player_tags.empty()) {
++    auto saved = saved_player_tags.find(Zeal::Game::strip_name(entity->Name));
++    if (saved != saved_player_tags.end()) saved->second.live_seen = false;
++  }
+ }
+ 
+ bool NamePlate::handle_shownames_command(const std::vector<std::string> &args) {
+@@ -294,6 +301,7 @@ void NamePlate::load_sprite_font() {
+ void NamePlate::clean_ui() {
+   nameplate_info_map.clear();
+   for (auto &entry : saved_tags) entry.second.live_seen = false;  // Restored as the entities reappear.
++  for (auto &entry : saved_player_tags) entry.second.live_seen = false;
+   sprite_font.reset();      // Relying on spritefont destructor to be invoked to release resources.
+   tag_arrows.reset();       // Also relying on destructor to release resources.
+   tag_channel_number = -1;  // Force a reset.
+@@ -820,25 +828,18 @@ void NamePlate::sync_saved_tags() {
+ 
+   const long long now = time(nullptr);
+   const int zone_id = self->ZoneId;
+-  for (auto &[entity, info] : nameplate_info_map) {
+-    if (!entity || !entity->SpawnId) continue;
+-    const auto key = std::make_pair(zone_id, static_cast<int>(entity->SpawnId));
+-    auto saved = saved_tags.find(key);
+-    if (entity->Type >= Zeal::GameEnums::NPCCorpse) {  // A kill ends the tag.
+-      if (saved != saved_tags.end()) {
+-        saved_tags.erase(saved);
+-        saved_tags_dirty = true;
+-      }
+-      continue;
+-    }
+ 
+-    const std::string name = Zeal::Game::strip_name(entity->Name);
++  // One live entity against its saved copy: save a new or changed tag (or note it is still live), restore
++  // the tag onto an entity that is back untagged, and drop a saved tag that was cleared while in view.
++  auto sync_one = [&](auto &saved_map, const auto &key, const std::string &name, Zeal::GameStructures::Entity *entity,
++                      NamePlateInfo &info) {
++    auto saved = saved_map.find(key);
+     std::string text = info.tag_text;
+     if (!text.empty() && text.back() == '\n') text.pop_back();
+     if (!text.empty() || info.tag_color != TagArrowColor::Off) {  // Tagged: save it (or note it is still live).
+-      if (saved == saved_tags.end() || saved->second.name != name || saved->second.tag_text != text ||
++      if (saved == saved_map.end() || saved->second.name != name || saved->second.tag_text != text ||
+           saved->second.tag_color != info.tag_color) {
+-        saved_tags[key] = {
++        saved_map[key] = {
+             .name = name, .tag_text = text, .tag_color = info.tag_color, .last_seen = now, .live_seen = true};
+         saved_tags_dirty = true;
+       } else {
+@@ -848,9 +849,9 @@ void NamePlate::sync_saved_tags() {
+           saved_tags_dirty = true;
+         }
+       }
+-    } else if (saved != saved_tags.end()) {
++    } else if (saved != saved_map.end()) {
+       if (saved->second.name != name || saved->second.live_seen) {
+-        saved_tags.erase(saved);  // Another mob now has the spawn id, or the tag was cleared.
++        saved_map.erase(saved);  // Another mob now has the spawn id, or the tag was cleared.
+         saved_tags_dirty = true;
+       } else {  // Back after zoning, a character switch or a crash: restore it.
+         info.tag_text = saved->second.tag_text.empty() ? "" : saved->second.tag_text + "\n";
+@@ -861,24 +862,42 @@ void NamePlate::sync_saved_tags() {
+           info.color = get_color_callback(static_cast<int>(ColorIndex::Tagged));
+       }
+     }
++  };
++
++  for (auto &[entity, info] : nameplate_info_map) {
++    if (!entity || !entity->SpawnId) continue;
++    const std::string name = Zeal::Game::strip_name(entity->Name);
++    if (entity->Type == Zeal::GameEnums::Player) {  // By name, in any zone: the spawn id changes on each zone-in.
++      sync_one(saved_player_tags, name, name, entity, info);
++      continue;
++    }
++    const auto key = std::make_pair(zone_id, static_cast<int>(entity->SpawnId));
++    if (entity->Type >= Zeal::GameEnums::NPCCorpse) {  // A kill ends the tag.
++      if (saved_tags.erase(key)) saved_tags_dirty = true;
++      continue;
++    }
++    sync_one(saved_tags, key, name, entity, info);
+   }
+ 
+-  const auto expired = std::erase_if(
+-      saved_tags, [now](const auto &entry) { return now - entry.second.last_seen > kSavedTagMaxAgeSeconds; });
+-  if (expired) saved_tags_dirty = true;
++  auto too_old = [now](const auto &entry) { return now - entry.second.last_seen > kSavedTagMaxAgeSeconds; };
++  if (std::erase_if(saved_tags, too_old) + std::erase_if(saved_player_tags, too_old)) saved_tags_dirty = true;
+   if (saved_tags_dirty) write_saved_tags();
+ }
+ 
+ void NamePlate::clear_saved_tags_in_zone() {
+   const auto *self = Zeal::Game::get_self();
+-  if (!self || saved_tags.empty()) return;
++  if (!self || (saved_tags.empty() && saved_player_tags.empty())) return;
+   const int zone_id = self->ZoneId;
+   std::erase_if(saved_tags, [zone_id](const auto &entry) { return entry.first.first == zone_id; });
++  saved_player_tags.clear();  // Player tags belong to no zone, so a clear takes all of them.
+   write_saved_tags();
+ }
+ 
++static constexpr int kSavedPlayerZone = -1;  // The file's zone field for a player tag, matched by name alone.
++
+ // File format, one tag per line: zone_id, spawn_id, last_seen (unix time), color (hex), name, text, tab separated.
+-// Merged into saved_tags, keeping the newer of any duplicate.
++// A player's line has zone kSavedPlayerZone and spawn id 0. Merged into saved_tags and saved_player_tags,
++// keeping the newer of any duplicate.
+ void NamePlate::load_saved_tags(const std::string &filename) {
+   std::ifstream file(filename);
+   if (!file) return;
+@@ -903,7 +922,7 @@ void NamePlate::load_saved_tags(const std::string &filename) {
+     const DWORD color = strtoul(fields[3].c_str(), &end, 16);
+     if (*end) continue;
+ 
+-    auto &saved = saved_tags[{zone_id, spawn_id}];
++    auto &saved = (zone_id == kSavedPlayerZone) ? saved_player_tags[fields[4]] : saved_tags[{zone_id, spawn_id}];
+     if (saved.last_seen >= last_seen) continue;  // This session already has a newer copy.
+     saved = {.name = fields[4], .tag_text = fields[5], .tag_color = color, .last_seen = last_seen, .live_seen = false};
+   }
+@@ -917,10 +936,13 @@ void NamePlate::write_saved_tags() {
+   {
+     std::ofstream file(temp_filename, std::ios::trunc);
+     if (!file) return;
+-    file << "# Zeal nameplate tags (zone, spawn_id, last_seen, color, name, text)\n";
++    file << "# Zeal nameplate tags (zone, spawn_id, last_seen, color, name, text; zone -1 is a player, by name)\n";
+     for (const auto &[key, tag] : saved_tags)
+       file << key.first << '\t' << key.second << '\t' << tag.last_seen << '\t' << std::hex << tag.tag_color << std::dec
+            << '\t' << tag.name << '\t' << tag.tag_text << '\n';
++    for (const auto &[name, tag] : saved_player_tags)
++      file << kSavedPlayerZone << "\t0\t" << tag.last_seen << '\t' << std::hex << tag.tag_color << std::dec << '\t'
++           << name << '\t' << tag.tag_text << '\n';
+     if (!file) return;
+   }
+   std::error_code error;
+diff --git a/Zeal/nameplate.h b/Zeal/nameplate.h
+index c0ca156..51863b2 100644
+--- a/Zeal/nameplate.h
++++ b/Zeal/nameplate.h
+@@ -18,6 +18,9 @@ class NamePlate {
+   // Tag persistence: tags survive zoning, a character switch, a device reset and a client crash.
+   // Live tags are mirrored into saved_tags (keyed by zone and spawn id) and to a per-character file,
+   // and restored onto an entity with the same zone, spawn id and name when it appears again.
++  // Players are kept apart in saved_player_tags, keyed by name alone: a name is unique on the server,
++  // while a player gets a new spawn id every time they zone in, so their tag follows them through
++  // zoning (theirs or yours), a camp and a death.
+   //
+   // Declared ahead of the settings on purpose: members are constructed in declaration order, and a
+   // ZealSetting's constructor runs its change callback, which for the font settings calls clean_ui().
+@@ -27,10 +30,12 @@ class NamePlate {
+     std::string tag_text;  // Without the trailing newline.
+     DWORD tag_color = 0;
+     long long last_seen = 0;  // time() the tag was last set or seen live, for expiry.
+-    bool live_seen = false;   // Matched to a live entity since the last clean_ui().
++    bool live_seen = false;   // Matched to a live entity since the last clean_ui() (or, for a player, since
++                              // they last left).
+   };
+ 
+   std::map<std::pair<int, int>, SavedTag> saved_tags;  // Keyed by {zone id, spawn id}.
++  std::map<std::string, SavedTag> saved_player_tags;   // Keyed by stripped player name, in any zone.
+   std::string saved_tags_filename;                     // The character file saved_tags was last loaded from.
+   bool saved_tags_dirty = false;
+   ULONGLONG saved_tags_next_sync = 0;
 -- 
 2.43.0
 

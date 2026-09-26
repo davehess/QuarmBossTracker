@@ -1,8 +1,8 @@
 # Every `/tag` shape, to try in game
 
-*2026-09-25, for the `test-all` build (`e742081` since 2026-09-26): Bandolier + tag shapes
-(`3c02f65`) + tag persistence + corpse tags (`aa975e1`) + tag pictures (`ac5d177`). Each line
-below is one command to paste into EQ chat.
+*2026-09-25, for the `test-all` build (`d32bed1` since 2026-09-26): Bandolier + tag shapes
+(`3c02f65`) + tag persistence with player tags kept by name (`9a3fd09`) + corpse tags
+(`aa975e1`) + tag pictures (`ac5d177`). Each line below is one command to paste into EQ chat.
 **Each tag's text is the key you typed, then the name**, so what you see names the command.*
 
 ## Build it
@@ -233,6 +233,19 @@ Setup: make the folder `A:\EQ\uifiles\zeal\tagicons` and copy in the three test 
    shows a white arrow. Delete the file afterwards.
 9. Known gap: **a picture tag does not survive a relog yet.** After a relog it comes back
    as the built-in shape, or a white arrow. The saved-tags file predates pictures.
+
+## Tagged players keep their tags (new: `tag-persistence` `9a3fd09`, 2026-09-26)
+
+A player's tag is kept by name, because their spawn id changes every time they zone in.
+
+1. Tag a guildmate with `/tag local ^H^H Shield`. Ask them to zone out and straight back.
+   **The shield is back over them within about a second.**
+2. Zone somewhere together. **It follows them into the new zone.**
+3. If they die: **the corpse has no tag. After the rez, the shield is back on them.**
+4. Target them and `/tag clear`, then ask them to zone out and back: **no tag.** A clear
+   sticks.
+5. Your `<character>_tags.txt` in the EverQuest folder shows a tagged player as a line
+   starting `-1	0`.
 
 ## Things that should NOT change
 

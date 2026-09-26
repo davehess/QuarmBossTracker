@@ -115,10 +115,10 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
-| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); in `test-all` (`e742081` now) | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; rendered in game 2026-09-26, §39)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `e742081` (now with tag pictures, §38). **In game 2026-09-26:** every symbol, badge, lettered paw and all 30 guild icons draw correctly, including over other guilds' players | the guild lead: try the banners (`^B<code>^`, not in the screenshots yet), correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
-| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` (`e742081` now). A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
-| **Zeal: guild logos as tag pictures from a folder (branch; built, not yet in game)** | **2026-09-26 (§38).** Branch `tag-icon-files` on the fork (`ac5d177`), in `test-all` `e742081`: `uifiles/zeal/tagicons/<name>.png` (or `.tga`) shows as `^I<name>^`, like target rings; a picture beats the built-in icon with the same code; files checked before decoding (PNG/TGA header, ≤512 px, ≤1 MB); `/tag icons` lists and reloads. Draw path not compiled here; logic tested + mutation-checked | the guild lead: rebuild `test-all`, run TRY-IN-GAME → "Pictures" (the UP card first: it catches a mirrored quad); send the reply to the requesting guild; open the PR (`docs/upstream/zeal-tag-icon-files/`) |
+| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed). **2026-09-26 (§40): players are now kept by name** (`9a3fd09`), so a tagged player keeps the tag through their zoning, a camp or a death; in `test-all` (`d32bed1` now) | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; rendered in game 2026-09-26, §39)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `d32bed1` (now with tag pictures §38 and player tags kept by name §40). **In game 2026-09-26:** every symbol, badge, lettered paw and all 30 guild icons draw correctly, including over other guilds' players | the guild lead: try the banners (`^B<code>^`, not in the screenshots yet), correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
+| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` (`d32bed1` now). A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
+| **Zeal: guild logos as tag pictures from a folder (branch; built, not yet in game)** | **2026-09-26 (§38).** Branch `tag-icon-files` on the fork (`ac5d177`), in `test-all` (`d32bed1` now): `uifiles/zeal/tagicons/<name>.png` (or `.tga`) shows as `^I<name>^`, like target rings; a picture beats the built-in icon with the same code; files checked before decoding (PNG/TGA header, ≤512 px, ≤1 MB); `/tag icons` lists and reloads. Draw path not compiled here; logic tested + mutation-checked | the guild lead: rebuild `test-all`, run TRY-IN-GAME → "Pictures" (the UP card first: it catches a mirrored quad); send the reply to the requesting guild; open the PR (`docs/upstream/zeal-tag-icon-files/`) |
 | **Zeal tag icons gallery `/zeal-icons` (beta preview, two layouts)** | **2026-09-26 (§39).** The guild lead: *"yes, host the picture files in the gallery"*. Public page on `beta`: every guild's banner + icon with copyable keys, symbols/badges/paws, Europa's picture as `EUR.png`/`EUR.tga`; logos come in via Discord, no uploads. **A** `b.wolfpack.quest/zeal-icons` (one catalogue page) · **B** `b.wolfpack.quest/zeal-icons?v=b` (guild index + `/zeal-icons/<code>` per guild). Beta `f71e9975` | the guild lead: pick A or B. Session: graduate the pick to main (roadmap entry, web bump, footer link), delete the other; optional for B, the guild's icon in Discord link previews (touches the shared preview route) |
 | **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
 | **Security audit before a public guild-logo page** | **2026-09-26 (§36).** Web + bot + database audited; the most severe finding reproduced locally first. Two fixes live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents get only the tuning keys their role needs). **Findings are in the guild lead's private report, not here.** Logo page: gallery + Discord intake first; no outsider sign-in until the membership fixes land | the guild lead: rotate the credential named in the report; check the Supabase Auth settings it lists; pick the fix order. Session: membership gate (web + database) next, then the logo gallery |
@@ -2410,6 +2410,38 @@ on our site.
   crops of the icons alone would be fine, if wanted.
 - **An image in Discord link previews for guild pages (B).** It needs a change to the
   shared preview route, `api/embed-meta`, so it waits for the pick.
+
+## 40. A tagged player keeps the tag: players are saved by name, not spawn id (2026-09-26)
+
+**The guild lead:** *"tagged players should keep their tags if possible - i know they have
+spawn ids that change"*.
+
+**What was wrong** on the tag-persistence branch (§28): saved tags were keyed by zone and
+spawn id, which only works for NPCs.
+- **A player gets a new spawn id every time they zone in.** So a tagged player who
+  zoned out and back, or zoned with you, came back untagged.
+- **Worse:** if they left and returned while you stayed in the zone, the saved copy was
+  still marked "seen live". The untagged newcomer read as a clear, and the saved tag was
+  deleted.
+
+**The call:** players are saved by name, in their own map and tied to no zone. A
+character name is unique on the server.
+- **The tag comes back** when they return after zoning, camping or dying.
+- **It follows them** into another zone with you.
+- **Their corpse** neither takes the tag nor drops it.
+- **The entity destructor** marks a leaving player's saved tag as not live, so their
+  return restores it.
+- **A clear in view still drops it**, and a `clear` drops every player tag. Tags expire 3
+  hours after the player was last seen.
+- **The tag file** gains player lines (zone `-1`, spawn id `0`, then the name). Older
+  builds never match them.
+
+**Where it landed:** `tag-persistence` `9a3fd09`, merged into `test-all` `d32bed1`.
+- **Tests:** `docs/upstream/zeal-tag-persistence/test/sync.sh` runs the real save/restore
+  loop and destructor hook, extracted verbatim, through each case above. It also runs
+  the file round trip. Six deliberate breaks, all caught.
+- **Steps to try in game:** TRY-IN-GAME → "Tagged players keep their tags"; the PR
+  test plan, steps 9–11.
 
 
 
