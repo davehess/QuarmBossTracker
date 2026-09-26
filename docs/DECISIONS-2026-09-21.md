@@ -119,6 +119,9 @@ is ephemeral. It is a desktop-session job.
 | **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `1f866c4` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
 | **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` `1f866c4`. A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
 | **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
+| **Security audit before a public guild-logo page** | **2026-09-26 (§36).** Web + bot + database audited; the most severe finding reproduced locally first. Two fixes live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents get only the tuning keys their role needs). **Findings are in the guild lead's private report, not here.** Logo page: gallery + Discord intake first; no outsider sign-in until the membership fixes land | the guild lead: rotate the credential named in the report; check the Supabase Auth settings it lists; pick the fix order. Session: membership gate (web + database) next, then the logo gallery |
+| **Mimic 3.0 = the overlay engine, with an alpha channel** | **2026-09-26 (§36).** One transparent freeform view combining every overlay, later screen-aware layout. Alpha channel planned: its own updater channel + opt-in, pruned alpha releases, the workflow on the branch | build the alpha channel when 3.0 work starts |
+| **Clicky charge counters on the HUD** | **2026-09-26 (§36).** From a zeal-suggestions thread (last-charge warning). Quarmy export count + observed clicks → charges left, as a HUD builder part | session: next after the security follow-ups |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -2225,6 +2228,67 @@ live wording differs, the parser table `_ME_TRACK_DIRS` is the one place to chan
   caught.
 - The full suite passed (4,045 tests); lint and check:dashboard are clean.
 - Beta `fe43d0b8` (Mimic builds as 2.7.2-beta.N); roadmap entry with Web 1.8.9.
+
+## 36. Security audit before a public guild-logo page; two fixes live; 3.0 = the overlay engine (2026-09-26)
+
+**The guild lead:** *"could we make a site for the other guilds to upload their
+consolidated logos to turn into zeal icons? it's inviting traffic into our site so
+we need to do a security audit first. so far people are receptive to more icons"*
+
+**How it was checked.**
+- **In parallel:**
+  - a read-only audit of the website (sign-in, every route handler and server
+    action, headers, uploads);
+  - a read-only audit of the bot's HTTP surface (every route, auth, limits);
+  - the database: Supabase security advisors, and every policy that lets
+    `anon`/`authenticated` read. Schema and counts only; no member data was read.
+- **The most severe claim was reproduced before anything was reported**, locally,
+  against a fake Supabase that logged each query.
+
+**Kept out of this file on purpose**, as in §21: the findings themselves, how they
+could be used, and their evidence. The guild lead has the full report privately. A
+data flow gets disclosed; a way in does not.
+
+**Fixed live the same night:**
+- **web 1.8.10**: every `/admin` page that loads data now calls `requireOfficer()`
+  (`web/lib/officer.ts`) as its first statement, instead of relying on the admin
+  layout alone.
+  - Verified locally before and after.
+  - `test/admin-pages-officer-gate.test.js` walks every admin page and was
+    mutation-checked.
+- **bot 3.1.150**: `_tuningForAgent()` sends each agent only the tuning keys its role
+  needs.
+  - `test/tuning-for-agent.test.js` covers it.
+  - The guild lead is to rotate the credential it concerned.
+
+**Decided for the logo page (recommendation, the guild lead to confirm):**
+- **Outsiders never get a member-grade session.** The membership work in the private
+  report lands before any page invites outsiders to sign in.
+- **Near-term: a public gallery plus a Discord intake.** Logos go to an officer; no
+  upload on our site.
+- **Later: an anonymous upload with a CAPTCHA** into a private bucket, officer-
+  approved. PNG only, checked by content, capped, re-encoded; originals are never
+  shown publicly.
+- **Conversion stays offline, on our side.** Each new icon is a Zeal build, the same
+  as the 30 guild marks (§33).
+
+**Also decided tonight (the guild lead):**
+- **Mimic 3.0 = the overlay engine.** *"a HUD/overlay builder engine where we could
+  combine everything into a single transparent freeform view, or be able to have it
+  see the screen and move windows accordingly"* · *"in fact that will be 3.0. can
+  we have an alpha channel"*.
+  - It gets an **alpha channel** of its own.
+  - Traps to design around:
+    - Mimic treats any pre-release as beta, so alpha needs its own updater channel
+      and an opt-in;
+    - old alpha releases must be pruned so they never push betas out of GitHub's
+      10-entry release feed (the Linux lesson, 2026-07-30);
+    - the build workflow must live on the alpha branch itself.
+  - Planned, not built.
+- **Clicky charge counters on the HUD.** A zeal-suggestions thread asks for a
+  last-charge warning (`/protect expendable`). The Quarmy export's per-item count,
+  merged with the clicks the agent sees, gives charges left.
+  - Queued, not built.
 
 
 
