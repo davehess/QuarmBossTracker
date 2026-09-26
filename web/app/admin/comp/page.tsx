@@ -7,6 +7,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { ARCHETYPES } from '@/lib/comp';
 import CompEditor from './CompEditor';
 
@@ -39,6 +40,7 @@ const STARTER = [
 ];
 
 export default async function AdminCompPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const { data } = await sb
     .from('comp_templates')

@@ -15,7 +15,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
 
@@ -133,6 +133,7 @@ export default async function AdminTriggersPage({
     notes?:        string;
   }>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const admin = supabaseAdmin();
   let q: any = admin

@@ -20,6 +20,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import {
   weeklyActive, activations, activationsByMonth, retention,
@@ -32,6 +33,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Adoption — Admin' };
 
 export default async function AdminAdoptionPage() {
+  await requireOfficer();
   const admin = supabaseAdmin();
 
   const [dayRows, encRows, memberRows, statRows, charRows] = await Promise.all([

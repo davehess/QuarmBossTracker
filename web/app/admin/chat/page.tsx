@@ -17,6 +17,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { dayLabel } from '@/lib/format';
 import { loadItemCatalog, linkifyItems, type ItemCatalog } from '@/lib/item-link';
 import { userTz } from '@/lib/timezone';
@@ -394,6 +395,7 @@ export default async function AdminChatPage({
 }: {
   searchParams: Promise<Params>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const tz = await userTz();
   const year  = p.year  ? parseInt(p.year,  10) : null;

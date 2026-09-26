@@ -12,6 +12,7 @@
 import Link from 'next/link';
 import WpDbLink from '@/components/WpDbLink';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,7 @@ function classTags(mask: number): string {
 }
 
 export default async function AdminSpellsPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const { data, error } = await sb.rpc('guild_held_spell_needs', { p_guild_id: 'wolfpack' });
   const rows = (data ?? []) as HeldSpell[];

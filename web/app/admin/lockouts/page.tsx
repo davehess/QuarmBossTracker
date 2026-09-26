@@ -36,6 +36,7 @@
 // lockout." A kill row never overwrites a live /sll row.
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { isCurrentEraName, currentEraNames } from '@/lib/eras';
@@ -113,6 +114,7 @@ function Section({
 }
 
 export default async function LockoutsPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const tz = await userTz();
   // Only lockouts that are still BINDING — an expired one is history, and the

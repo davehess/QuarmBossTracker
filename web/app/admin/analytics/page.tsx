@@ -1,7 +1,7 @@
 // /admin/analytics — which pages are getting the most use (the guild lead
 // 2026-06-24). Sourced from page_views, logged by middleware.ts on every
 // authenticated GET (admin pages skipped so officer scrolling doesn't dominate
-// the numbers). Officer-only via the parent admin/layout.tsx gate.
+// the numbers). Officer-only: requireOfficer() first, like every admin page.
 //
 // Three views:
 //   1. Top normalized routes (e.g. /character/[name]/quests = all chars)
@@ -11,6 +11,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,6 +27,7 @@ type ViewRow = {
 };
 
 export default async function AdminAnalyticsPage({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
+  await requireOfficer();
   const { range } = await searchParams;
   const chosen = RANGES.find(r => r.label === range) ?? RANGES[1];   // default 7d
   const sinceIso = new Date(Date.now() - chosen.days * 24 * 60 * 60 * 1000).toISOString();

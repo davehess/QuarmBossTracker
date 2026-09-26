@@ -29,7 +29,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
@@ -375,6 +375,7 @@ export default async function AdminAttendancePage({
 }: {
   searchParams: Promise<{ targets?: string; threshold?: string; show?: string }>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const raidSize = '60-man';
   // DB targets are the source of truth; ?targets= URL param overrides for

@@ -5,6 +5,7 @@
 import Link from 'next/link';
 
 import { loadAdminQueue, type QueueCategory } from '@/lib/admin-queue';
+import { requireOfficer } from '@/lib/officer';
 
 export const dynamic = 'force-dynamic';
 
@@ -80,6 +81,7 @@ function Section({ cat }: { cat: QueueCategory }) {
 }
 
 export default async function AdminQueuePage() {
+  await requireOfficer();
   const { total, categories } = await loadAdminQueue();
 
   return (

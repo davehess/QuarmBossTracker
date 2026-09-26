@@ -20,7 +20,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
@@ -329,6 +329,7 @@ export default async function AdminMembersPage({
 }: {
   searchParams: Promise<{ tab?: Tab }>;
 }) {
+  await requireOfficer();
   const { tab: tabRaw } = await searchParams;
   const tab: Tab = (['active','visitor','unlinked','silent','recent','all'] as const).includes(tabRaw as Tab) ? (tabRaw as Tab) : 'active';
   const demoMode = getDemoMode();

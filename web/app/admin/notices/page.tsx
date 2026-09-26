@@ -12,7 +12,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic';
@@ -66,6 +66,7 @@ async function deactivateNotice(formData: FormData) {
 }
 
 export default async function NoticesAdminPage() {
+  await requireOfficer();
   const { data } = await supabaseAdmin()
     .from('mimic_notices')
     .select('*')

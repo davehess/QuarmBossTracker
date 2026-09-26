@@ -17,7 +17,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic';
@@ -120,6 +120,7 @@ export default async function AdminQuarmyPage({
 }: {
   searchParams: Promise<{ msg?: string; show?: string }>;
 }) {
+  await requireOfficer();
   const { msg, show } = await searchParams;
   const showInactive = show === 'all';
   const chars = await loadCharacters();

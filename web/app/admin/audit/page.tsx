@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +72,7 @@ export default async function AdminAuditPage({
 }: {
   searchParams: Promise<Params>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const days = Math.max(1, Math.min(365, parseInt(p.days || '30', 10) || 30));
   const rows = await loadAudit(p);

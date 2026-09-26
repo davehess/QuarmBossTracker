@@ -13,6 +13,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
@@ -137,6 +138,7 @@ async function load(): Promise<Row[]> {
 }
 
 export default async function AdminReadinessPage() {
+  await requireOfficer();
   const rows = await load();
 
   // Sort: MR failures first (actionable), then met-with-snapshot, then

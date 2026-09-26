@@ -12,8 +12,9 @@
 //     actively swinging, not one parked). Surfaced for review; not auto-actioned.
 //     ⚠ Describe this only as characters. Keep the naming literal.
 //
-// Auth + officer gate handled by /admin/layout.tsx.
+// Officer-only: requireOfficer() first, like every admin page.
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { userTz } from '@/lib/timezone';
 import { fmtTime, dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { classifyEncounter, clearClassification } from '@/app/parses/actions';
@@ -122,6 +123,7 @@ async function loadOffHours() {
 }
 
 export default async function AnomaliesPage() {
+  await requireOfficer();
   const { encs, chars } = await load();
   const off = await loadOffHours();
   const tz = await userTz();
