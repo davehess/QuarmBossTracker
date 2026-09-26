@@ -2690,6 +2690,35 @@ are `deeps-pit*.gif`.
 pet credit, no-guild spellings, two relays of one death) and checks the write comes before the
 post loop. Five deliberate breaks, all caught.
 
+## 47. /about gets pictures: two layouts on beta (2026-09-26)
+
+**The guild lead:** *"https://wolfpack.quest/about could use some updating, possibly some generated
+images and assets so it's not just blocks of text"*.
+
+**What "generated" could honestly mean here:** there is no image model in a session. So the
+pictures are made from the platform itself:
+- figures drawn in the overlays' own look: the boss board, a log line being filtered on your PC,
+  a merged parse card, the follow-you log folder, a raid night's ticks and bid windows, and the
+  week's deploy freeze;
+- a real render of the Melody Dirge board;
+- ten of the Zeal tag marks;
+- the landing page's wolf.
+Every name in them is from the invented set, because /about is public and gets shared outside the
+guild.
+
+**Two layouts, beta `f2db9423`** (with no `?v=` the page is still the old one):
+- **B, `b.wolfpack.quest/about?v=b` (Illustrated):** the story as it was, each chapter opening
+  with its picture.
+- **C, `b.wolfpack.quest/about?v=c` (Tour):** pictures first with one line each, and the long
+  text folded under "The long version".
+
+**Facts refreshed in both:** "five months" (was "six weeks"), 4,000+ tests in 290+ files (was
+1,372 in 84), 240-odd migrations (was 189), and an eighth chapter for Zeal marks and PvP fights.
+The old page still carries the stale numbers until one layout graduates.
+
+**Next:** the guild lead picks B or C. It then graduates to main, the other layout and the old page
+are deleted, and the roadmap gets an entry.
+
 
 
 
