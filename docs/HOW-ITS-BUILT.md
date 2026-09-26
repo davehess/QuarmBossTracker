@@ -183,6 +183,16 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ## Bot features
 
+### PvP deaths and fights (bot 3.1.152, 2026-09-26)
+- `pvp_deaths`: every death the PvP broadcast reports, whoever is on either side, written by
+  `_pvpDeathRow()` in `POST /api/agent/pvp` before the post loop. Keyed victim + minute.
+  Backfilled 30 days from the relay's `who_observations` rows.
+- `pvp_fights(p_since, p_wave_gap, p_join_gap, p_limit)`: waves (deaths ≤3 min apart, 2+ deaths,
+  a player kill), joined into fights under 20 min apart. Returns deaths by guild and the top
+  killers per fight.
+- `pvp_kills` is unchanged and still feeds the leaderboard (Wolf Pack on one side only).
+- Tests: `test/pvp-deaths.test.js`. Decision: `DECISIONS-2026-09-21.md` §46.
+
 ### Corpse DM: die, and Discord tells you where your corpse is (bot 3.1.151 · agent 3.7.21 beta, 2026-09-26)
 - **Agent:** `_corpseNoteLine` runs on the live tail only.
   - At "You died." it notes Zeal's zone and loc for that character, from data no more

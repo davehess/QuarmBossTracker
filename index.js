@@ -4975,6 +4975,43 @@ function _isPvpDupe(b) {
   return false;
 }
 
+// One pvp_deaths row per death the PvP broadcast reports, whoever is on either side: the fight
+// history on /pvp (DECISIONS-2026-09-21.md §46). Null for a boss kill (no victim guild) or anything
+// that is not a death. The key is victim + MINUTE: two relays of one death can disagree by a second
+// or two, and nobody dies twice in one minute.
+function _pvpDeathRow(b, guildId, discordId, petOwners) {
+  if (!b || !b.victim) return null;
+  const npc = b.killType === 'npc';
+  if (!npc && !(b.killType === 'pvp' && b.victimGuild != null)) return null;
+  const at = b.ts ? new Date(b.ts) : new Date();
+  if (isNaN(at.getTime())) return null;
+  const real = (g) => {
+    const s = typeof g === 'string' ? g.trim() : '';
+    return s && s !== '<>' && !/^<?null>?$/i.test(s) ? s : null;
+  };
+  let killer = b.killer || null;
+  let petName = null;
+  if (killer && !npc) {
+    const owners = petOwnerEntries((petOwners || {})[String(killer).toLowerCase()]);
+    if (owners.length > 0) { petName = killer; killer = owners[owners.length - 1].o; }
+  }
+  return {
+    guild_id:      guildId,
+    victim:        b.victim,
+    victim_guild:  real(b.victimGuild),
+    killer,
+    killer_guild:  npc ? null : real(b.killerGuild),
+    killer_is_npc: npc,
+    pet_name:      petName,
+    zone:          b.zone || null,
+    died_at:       at.toISOString(),
+    source:        b.backfill ? 'log_backfill' : 'pvp_channel',
+    raw_text:      String(b.text || '').slice(0, 300),
+    dedup_key:     `${guildId}|${String(b.victim).toLowerCase()}|${at.toISOString().slice(0, 16)}`,
+    uploaded_by_discord_id: discordId || null,
+  };
+}
+
 // Note: earlier versions had a rate-limited "@PVP fyi-ping" on non-WP
 // deaths plus a raid-window suppressor. Per a member's feedback ("don't like
 // getting a ping every kill"), all non-WP-involvement events now post
@@ -5092,6 +5129,24 @@ async function _handleAgentPvp(req, res) {
     } catch (err) {
       console.warn('[pvp-relay] supabase mirror failed:', err?.message);
     }
+  }
+
+  // Every death, any guilds, before the post loop: a post dedup or a missing channel must not drop one.
+  // One row per key per batch, since an upsert cannot touch the same row twice.
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const deathRows = new Map();
+    for (const b of broadcasts) {
+      const row = _pvpDeathRow(b, guildId, identity.discord_id, _petOwners);
+      if (row) deathRows.set(row.dedup_key, row);
+    }
+    if (deathRows.size > 0 && supabase.isEnabled()) {
+      supabase.upsert('pvp_deaths', [...deathRows.values()], 'dedup_key')
+        .catch(err => console.warn('[pvp-relay] pvp_deaths upsert failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[pvp-relay] pvp_deaths wrap failed:', err?.message);
   }
 
   for (const b of broadcasts) {
