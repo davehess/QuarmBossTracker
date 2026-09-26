@@ -13,14 +13,15 @@
 //
 // It MIRRORS the control plane; it does not own it. Writes go through the same
 // overlay_tuning read-modify-write /admin/overlays and the bot's flag-override
-// endpoint use, so all three surfaces agree. Officer gating is inherited from
-// web/app/admin/layout.tsx — no new gate.
+// endpoint use, so all three surfaces agree. Officer-only: requireOfficer()
+// first, like every admin page.
 //
 // Reads are deliberately cheap: nine max()/count() probes plus one same-origin
 // health fetch. Nothing here is cached, because a cached health board is a lie.
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import {
   buildSignals, sortSignals, overallState, driftFromTuning, driftAges,
   inRaidWindow, verNum, type Signal, type SignalState,
@@ -245,6 +246,7 @@ function RunbookCard({ rb, hot }: { rb: Runbook; hot: boolean }) {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default async function OfficerConsolePage() {
+  await requireOfficer();
   const [f, site] = await Promise.all([loadFacts(), loadSiteHealth()]);
 
   const drift = driftFromTuning(f.tuning);

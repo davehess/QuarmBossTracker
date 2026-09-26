@@ -23,6 +23,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import {
   computeCompGaps, ARCHETYPE_LABEL, type CompTemplate, type CompGaps,
 } from '@/lib/comp';
@@ -95,6 +96,7 @@ export default async function AdminSignupsPage({
 }: {
   searchParams: Promise<{ event?: string; days?: string; template?: string }>;
 }) {
+  await requireOfficer();
   const params = await searchParams;
   const lookbackDays = Math.max(1, Math.min(60, parseInt(params.days || '14', 10) || 14));
   const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();

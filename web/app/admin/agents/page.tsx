@@ -14,6 +14,7 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 
 export const dynamic = 'force-dynamic';
 
@@ -525,6 +526,7 @@ function fmtTs(iso: string | null): string {
 }
 
 export default async function AdminAgentsPage() {
+  await requireOfficer();
   const [{ stats, backfills, roster, members }, mimicReleases] = await Promise.all([
     loadData(),
     loadMimicReleases(),

@@ -16,7 +16,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic';
@@ -275,6 +275,7 @@ async function saveClassSets(formData: FormData) {
 }
 
 export default async function OverlayTuningPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const { data } = await sb
     .from('overlay_tuning')

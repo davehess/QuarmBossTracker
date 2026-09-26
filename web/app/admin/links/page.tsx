@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
@@ -487,6 +487,7 @@ export default async function AdminLinksPage({
 }: {
   searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string; sitok?: string; sifor?: string; sierr?: string }>;
 }) {
+  await requireOfficer();
   const { show, mlok, mlerr, sitok, sifor, sierr } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';

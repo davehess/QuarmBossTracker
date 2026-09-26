@@ -7,7 +7,9 @@
 // officer who signs out and back in gets access immediately.
 
 import { cache } from 'react';
+import { redirect } from 'next/navigation';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { supabaseServer } from './supabase-server';
 
 function _officerNames() {
   return (process.env.OFFICER_ROLE_NAMES || 'Officer,Pack Leader')
@@ -48,3 +50,14 @@ export const isOfficer = cache(async (userId: string | null | undefined): Promis
     return false;
   }
 });
+
+// The officer gate for an /admin page: call it FIRST in the page, before it
+// loads anything. The /admin layout's own check is not enough on its own —
+// Next renders a page without waiting on its layout, so a page that relies on
+// the layout alone can still load (and send) its data. Returns the user's id.
+export async function requireOfficer(): Promise<string> {
+  const { data: { user } } = await supabaseServer().auth.getUser();
+  if (!user) redirect('/auth/signin?next=/admin');
+  if (!(await isOfficer(user.id))) redirect('/?error=admin_required');
+  return user.id;
+}

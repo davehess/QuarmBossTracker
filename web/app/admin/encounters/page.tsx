@@ -28,7 +28,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic';
@@ -482,6 +482,7 @@ export default async function AdminEncountersPage({
 }: {
   searchParams: Promise<{ days?: string; show?: string }>;
 }) {
+  await requireOfficer();
   const { days: daysParam, show } = await searchParams;
   const days = Math.max(1, Math.min(90, parseInt(daysParam || '7', 10) || 7));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);

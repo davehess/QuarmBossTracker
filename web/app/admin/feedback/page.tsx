@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
 export const dynamic = 'force-dynamic';
@@ -92,6 +92,7 @@ export default async function AdminFeedbackPage({
 }: {
   searchParams: Promise<Params>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const admin = supabaseAdmin();
   let q: any = admin
