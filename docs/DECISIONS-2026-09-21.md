@@ -120,6 +120,7 @@ is ephemeral. It is a desktop-session job.
 | **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` `1f866c4`. A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
 | **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
 | **Security audit before a public guild-logo page** | **2026-09-26 (§36).** Web + bot + database audited; the most severe finding reproduced locally first. Two fixes live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents get only the tuning keys their role needs). **Findings are in the guild lead's private report, not here.** Logo page: gallery + Discord intake first; no outsider sign-in until the membership fixes land | the guild lead: rotate the credential named in the report; check the Supabase Auth settings it lists; pick the fix order. Session: membership gate (web + database) next, then the logo gallery |
+| **Private briefing doc (read-aloud status + private decisions)** | **2026-09-26 (§37).** A private claude.ai doc, "Wolf Pack — private briefing", found by title in the guild lead's artifact list. It holds the read-aloud status, the waiting-on-you list, private decisions and the private audit report. Link never committed | Every session with the docs connector: rewrite its Read aloud section when you finish. The guild lead: try asking Claude in the phone app to read it |
 | **Mimic 3.0 = the overlay engine, with an alpha channel** | **2026-09-26 (§36).** One transparent freeform view combining every overlay, later screen-aware layout. Alpha channel planned: its own updater channel + opt-in, pruned alpha releases, the workflow on the branch | build the alpha channel when 3.0 work starts |
 | **Clicky charge counters on the HUD** | **2026-09-26 (§36).** From a zeal-suggestions thread (last-charge warning). Quarmy export count + observed clicks → charges left, as a HUD builder part | session: next after the security follow-ups |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
@@ -2289,6 +2290,29 @@ data flow gets disclosed; a way in does not.
   last-charge warning (`/protect expendable`). The Quarmy export's per-item count,
   merged with the clicks the agent sees, gives charges left.
   - Queued, not built.
+
+## 37. A private briefing doc for read-aloud status and private decisions (2026-09-26)
+
+**The guild lead** (while driving, after asking for the status to be read back):
+*"a secure place for the outputs … and for the decisions … so that we can more
+easily turn that over for text to speech to tell me what the current status is
+without exposing all of the decisions publicly"*.
+
+**The call:**
+- The home is a **private claude.ai doc**, titled "Wolf Pack — private briefing".
+  It is not a repo file, because the repo is public.
+- **What it holds:**
+  - a Read aloud status, rewritten at the end of each session's work;
+  - the Waiting on you list;
+  - private decisions;
+  - one tab per private audit report. The September 26 audit report is its
+    first tab.
+- **This file stays the default** for every decision that isn't sensitive. A
+  private call gets a pointer here only when other sessions need to know about it.
+- **Where it landed:** CLAUDE.md, under the "decisions get written down" rule.
+  - Sessions find the doc by its title. Its link is never committed.
+  - **Untested:** whether Claude in the phone app can open the doc by voice
+    request. The fallback is the phone's own read-aloud on the open doc.
 
 
 
