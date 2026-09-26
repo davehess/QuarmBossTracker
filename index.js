@@ -10777,6 +10777,16 @@ function _withChannelSpecs(values) {
   if (off) out.officer_channel_spec = off; else delete out.officer_channel_spec;
   return out;
 }
+// What an agent is SENT of the tuning map. The officer channel goes only to an
+// officer's session — the agent's own officer check decides what it joins, but
+// the response is what the caller receives. The hide-main list is applied here
+// on the bot and is never sent at all.
+function _tuningForAgent(tune, identity) {
+  const out = { ...(tune || {}) };
+  if (!(identity && identity.is_officer)) delete out.officer_channel_spec;
+  delete out.hide_main_names;
+  return out;
+}
 // ── The tuning map every agent-facing path reads ────────────────────────────
 async function _overlayTuningMap() {
   await _refreshOverlayTuningCache();
@@ -11903,7 +11913,7 @@ async function _handleAgentOverlayTuning(req, res) {
   if (!identity) return;
   const [tuning, notices, classSets] = await Promise.all([_overlayTuningMap(), _activeNotices(), _overlayClassSets()]);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ tuning, notices, class_sets: classSets, raid_hold: _raidHoldNow(tuning) }));
+  return res.end(JSON.stringify({ tuning: _tuningForAgent(tuning, identity), notices, class_sets: classSets, raid_hold: _raidHoldNow(tuning) }));
 }
 
 // POST /api/agent/crash_report — opt-in EQ client crash telemetry (agent
@@ -17514,7 +17524,7 @@ async function _handleAgentPoll(req, res) {
 
   // tuning — 60s cache; version-gated so an unchanged blob costs a few bytes.
   if (_pollStreamDecision('tuning', want, tune, null, null) === 'send') {
-    const bundle = await _tuningBundleFor(tune);
+    const bundle = await _tuningBundleFor(_tuningForAgent(tune, identity));
     const dec = _pollStreamDecision('tuning', want, tune, url.searchParams.get('tuning_ver'), bundle.version);
     out.streams.tuning = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
   }
