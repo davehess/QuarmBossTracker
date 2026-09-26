@@ -2492,6 +2492,52 @@ good if we zone out and zone back in and most people didn't"*.
 - **Test:** `test/who-target-card.test.js`, five deliberate breaks, all caught. The
   screenshots of both states went to the guild lead.
 
+## 43. When a character dies, Discord DMs the owner the zone and corpse /loc (2026-09-26)
+
+**The guild lead:** *"when a character dies we should discord message them to send them their
+corpse coordinates and what zone they were in. we have all of that detail"*.
+
+**Built:** bot 3.1.151 on main, and agent 3.7.21 on beta. Only beta agents send it for now.
+- **Agent (`_corpseNoteLine`, on the live tail only, so a backfill never DMs):**
+  - At your own "You died.", it notes the zone and position Zeal has for that character
+    right then. That is where the corpse lies; the move to the home point comes seconds
+    later.
+  - It sends once the death is confirmed real: "You are bleeding to death!" or "Returning
+    to home point", which a feign never prints. The confirmation must come within 60 s.
+  - It uses the durable queue, as upload kind `corpse`.
+  - Zeal data more than 30 s old counts as unknown. The DM then says the position is
+    unknown rather than quoting an old one.
+- **Bot (`POST /api/agent/corpse`):** the same owner rules as the tell relay.
+  - The owner is the character's `discord_id`, or its family root's.
+  - **The uploading Mimic must own the character**, so nobody can aim a corpse DM at
+    someone else.
+  - A re-sent death is DMed only once, and each owner gets at most 6 an hour.
+  - `flag_shed_corpse=1` turns it off.
+- **The DM reads:** "💀 **Aldenmar** died in **Plane of Sky** 9:42 PM (5 minutes ago).
+  Corpse at `/loc` **1234, -568, 89**". The time is a Discord timestamp, so it shows in
+  each reader's own time zone.
+
+**Coordinates, settled from Zeal's source, because this repo had it both ways:**
+- `zone_map.cpp` notes "Position is y,x,z".
+- Zeal's own `/loc noprint` prints `Position.x, .y, .z`.
+- So the pipe's x, y, z are already the numbers `/loc` shows, in that order.
+- The agent dashboard's Position line shows Zeal's `y` first, labelled "Y". That is
+  backwards, and it is flagged as a separate small fix, not changed here.
+
+**Left for the guild lead:**
+- **An off switch per person.** Today it is only officer-wide (`flag_shed_corpse`).
+  The tells relay has a toggle on /me; the same could go next to it.
+- **Deaths that get rezzed still DM**, since a rez is not visible to the agent at the
+  moment of death. The cap keeps a bad raid night to 6.
+
+**Tests:**
+- `test/corpse-dm.test.js` runs the bot handler: owner match, family root, a mismatched
+  uploader, no linked account, a bad name, duplicate, the cap, and mentions suppressed.
+  Six deliberate breaks, all caught.
+- `test/corpse-dm-agent.test.js` (on beta) runs the agent side: confirmed, feign or
+  unconfirmed, the position at death not at home point, another character, the 60 s
+  window, and stale Zeal. Five breaks, all caught.
+
 
 
 

@@ -183,6 +183,23 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 
 ## Bot features
 
+### Corpse DM: die, and Discord tells you where your corpse is (bot 3.1.151 · agent 3.7.21 beta, 2026-09-26)
+- **Agent:** `_corpseNoteLine` runs on the live tail only.
+  - At "You died." it notes Zeal's zone and loc for that character, from data no more
+    than 30 s old.
+  - Once "You are bleeding to death!" or "Returning to home point" confirms the death
+    (within 60 s), it queues upload kind `corpse`.
+- **Bot:** `POST /api/agent/corpse` → `_handleAgentCorpse`.
+  - It finds the owner from `characters.discord_id`, else the family root's.
+  - It runs the tells identity gate: the uploading Mimic must own the character.
+  - Each death is sent once, capped at 6 per owner per hour, with the DM sent after the
+    ack.
+  - `_corpseDmText` quotes Zeal's x, y, z, which are the numbers `/loc` prints (Zeal
+    `zone_map.cpp`: "Position is y,x,z").
+  - It is sheddable: `flag_shed_corpse`.
+- **Tests:** `test/corpse-dm.test.js` and `test/corpse-dm-agent.test.js`.
+  DECISIONS-2026-09-21 §43.
+
 ### Reporter fleet: one account, several installs, one slot (bot 3.1.102)
 
 The fleet registry keys on discord_id, so a second install on one account used
