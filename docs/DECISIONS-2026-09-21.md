@@ -2472,6 +2472,26 @@ good if we zone out and zone back in and most people didn't"*.
 - **Players** are restored by name since §40. That covers both the ones who stayed and
   the ones who zoned too.
 
+## 42. /who overlay: a Zek only mode (2026-09-26, agent 3.7.20 beta)
+
+**The guild lead:** *"Show me a Zek only mode on the Who tab"*, then *"who overlay"*.
+
+**Built (beta `6df10cac`):**
+- **The toggle:** a `ZEK` button in the overlay's title bar, lit in the ZEK flag's red
+  when on.
+  - **On:** Current and Recently gone show just the Zek players, and the header reads
+    "Zek N of M". The Target card stays whoever it is. With none, it says "No Zek in
+    your last /who".
+  - It is remembered on that machine, and it has the hover handshake, like every
+    clickable control on a locked overlay.
+- **"Zek" is what the bot already means by it:** the guild named Zek, or an unguilded
+  player the bot inferred belongs to it (who_directory's `ever_zek_guild` /
+  `ever_inferred_zek`).
+- **A fix that came with it:** every row now carries its Zek flag. Before, only an /anon
+  row did, so a player showing `<Zek>` in /who was not flagged red.
+- **Test:** `test/who-target-card.test.js`, five deliberate breaks, all caught. The
+  screenshots of both states went to the guild lead.
+
 
 
 
