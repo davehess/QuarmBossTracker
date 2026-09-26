@@ -1,7 +1,8 @@
 # Every `/tag` shape, to try in game
 
-*2026-09-25, for the `test-all` build (`1f866c4`): Bandolier + tag shapes (`3c02f65`) + tag
-persistence + corpse tags (`aa975e1`). Each line below is one command to paste into EQ chat.
+*2026-09-25, for the `test-all` build (`e742081` since 2026-09-26): Bandolier + tag shapes
+(`3c02f65`) + tag persistence + corpse tags (`aa975e1`) + tag pictures (`ac5d177`). Each line
+below is one command to paste into EQ chat.
 **Each tag's text is the key you typed, then the name**, so what you see names the command.*
 
 ## Build it
@@ -205,6 +206,34 @@ Wolf Pack, Europa and Loot & Some Fun show the wolf, € and $.
    The match must be the whole text, which is why step 2 has no key prefix in its
    label. A tag the mob had while alive never makes `/tag target` pick its body.
 
+## Pictures (new: the `tag-icon-files` branch, 2026-09-26)
+
+Setup: make the folder `A:\EQ\uifiles\zeal\tagicons` and copy in the three test files.
+- `UP.png` and `UP2.tga` are in `../zeal-tag-icon-files/test-pictures/`.
+- `EUR.png` (Europa's shield) was sent to you privately. It is another guild's logo, so it
+  is not in the public repo.
+
+1. `/tag icons` lists **EUR, UP, UP2** and prints the folder path.
+2. `/tag local ^IUP^IUP Orientation`: a flat card above the name. **The arrow and "UP" point
+   up, red is on the left and blue on the right.** Walk all the way round the mob: it keeps
+   facing you and never reads backwards or upside down. If it does, tell me which way.
+3. `/tag local ^IUP2^IUP2 TGA`: the same card, loaded from the `.tga` file.
+4. `/tag local ^IEUR^IEUR Europa`: **Europa's shield replaces the built-in € icon.** Only
+   the shield shows, with no black box around it.
+5. Rename `EUR.png` to `EUR.off`, run `/tag icons`, and tag again with
+   `/tag local ^IEUR^IEUR Europa`: the **built-in €** is back. Rename it back and run
+   `/tag icons` again.
+6. Stand where the mob is far away: the picture shrinks with distance like the text, and
+   stays behind walls.
+7. Put a picture on two mobs and a shape on a third: all three draw. Line them up so one
+   picture sits in front of another mob's name: the see-through parts of the picture never
+   blank out what is behind them.
+8. Copy any JPG into the folder as `JPG.png`, run `/tag icons`, then
+   `/tag local ^IJPG^IJPG Refused`: chat says "Tag picture skipped" **once**, and the tag
+   shows a white arrow. Delete the file afterwards.
+9. Known gap: **a picture tag does not survive a relog yet.** After a relog it comes back
+   as the built-in shape, or a white arrow. The saved-tags file predates pictures.
+
 ## Things that should NOT change
 
 | Command | Expected |
@@ -228,7 +257,8 @@ Wolf Pack, Europa and Loot & Some Fun show the wolf, € and $.
 - **Many at once:** tag five or six mobs with different shapes. Every shape draws and
   none flickers.
 - **On a client without this build:** a banner shows as a blue arrow, `^WP^` as a white
-  arrow, and an icon (`^IMAY^`) as text only.
+  arrow, and an icon (`^IMAY^`) or picture (`^IUP^`) as text only.
+- **Prettyprint for a picture:** `/tag rsay ^IUP^x` reads "… (Picture UP)".
 
 ## Still refused: a target whose model is not drawn
 

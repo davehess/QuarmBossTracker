@@ -115,9 +115,10 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
-| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); in `test-all` `1f866c4` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
-| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `1f866c4` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
-| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` `1f866c4`. A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
+| **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); in `test-all` (`e742081` now) | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
+| **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `e742081` (now with tag pictures, §38) | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
+| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` (`e742081` now). A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
+| **Zeal: guild logos as tag pictures from a folder (branch; built, not yet in game)** | **2026-09-26 (§38).** Branch `tag-icon-files` on the fork (`ac5d177`), in `test-all` `e742081`: `uifiles/zeal/tagicons/<name>.png` (or `.tga`) shows as `^I<name>^`, like target rings; a picture beats the built-in icon with the same code; files checked before decoding (PNG/TGA header, ≤512 px, ≤1 MB); `/tag icons` lists and reloads. Draw path not compiled here; logic tested + mutation-checked | the guild lead: rebuild `test-all`, run TRY-IN-GAME → "Pictures" (the UP card first: it catches a mirrored quad); decide on the reply to the requesting guild and whether the gallery hands out picture files; open the PR (`docs/upstream/zeal-tag-icon-files/`) |
 | **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
 | **Security audit before a public guild-logo page** | **2026-09-26 (§36).** Web + bot + database audited; the most severe finding reproduced locally first. Two fixes live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents get only the tuning keys their role needs). **Findings are in the guild lead's private report, not here.** Logo page: gallery + Discord intake first; no outsider sign-in until the membership fixes land | the guild lead: rotate the credential named in the report; check the Supabase Auth settings it lists; pick the fix order. Session: membership gate (web + database) next, then the logo gallery |
 | **Private briefing doc (read-aloud status + private decisions)** | **2026-09-26 (§37).** A private claude.ai doc, "Wolf Pack — private briefing", found by title in the guild lead's artifact list. It holds the read-aloud status, the waiting-on-you list, private decisions and the private audit report. Link never committed | Every session with the docs connector: rewrite its Read aloud section when you finish. The guild lead: try asking Claude in the phone app to read it |
@@ -2313,6 +2314,57 @@ without exposing all of the decisions publicly"*.
   - Sessions find the doc by its title. Its link is never committed.
   - **Untested:** whether Claude in the phone app can open the doc by voice
     request. The fallback is the phone's own read-aloud on the open doc.
+
+## 38. Guild logos become tag pictures you drop in a folder, like target rings (2026-09-26)
+
+**The ask.** Another guild's leader sent their painted shield logo. They wrote *"This
+graphic is probably too complex to make into one of those"*, but asked anyway.
+
+**The guild lead:** *"requests are coming in, probably best to have a preset and treat
+them like the target rings where you can add some"*.
+
+**The call:**
+- The 30 built-in marks stay as the presets.
+- New marks are **picture files** that anyone can add, the way target ring textures work:
+  - `uifiles/zeal/tagicons/<name>.png` or `.tga`, used as `^I<name>^`;
+  - no code change and no Zeal release per guild.
+- A picture takes over from a built-in icon with the same code.
+
+**Why pictures, not shape files** (both costed in the PR doc):
+- **The requests are painted art.** A detailed shield cannot become an extruded shape
+  without being redrawn.
+- **Shape files would need tracing per guild.** A file format for outlines is also a
+  contract that is painful to change once guilds hold files.
+- **Pictures cost one textured-quad path, once.** It is modelled on the target ring and
+  the 3-D nameplate text.
+
+**Built:** branch `tag-icon-files` on the fork (`ac5d177`), merged into `test-all`
+(`e742081`).
+- It is not compiled here: the draw path needs the Windows build.
+- The key parser, folder scan and file-header check are tested off-client with g++ and
+  mutation-checked (8 of 8 breaks caught).
+- PR text, patch and harness: `docs/upstream/zeal-tag-icon-files/`.
+- In-game steps: `TRY-IN-GAME.md` → "Pictures".
+- A picture is checked before it is decoded:
+  - PNG or true-colour TGA, recognised by its header;
+  - at most 512 pixels a side;
+  - at most 1 MB.
+
+**Consequences:**
+- **Only players who have the file see the picture.** Everyone else sees the guild's
+  built-in shape, or just the text. Tag messages are unchanged.
+- **Nobody outside our own build sees any of this until the Zeal maintainers merge
+  it.** Any reply to the requesting guild has to say so.
+- **The logo page (§36) gets simpler.** The public gallery can offer each guild's picture
+  as a download, still with no upload on our site.
+  - Our step is offline: remove the background, crop, and cap the size.
+  - Installing a pack through Mimic is a later option. It is not built.
+- **Other guilds' art stays out of this public repo.** The test copy of the requesting
+  guild's shield went to the guild lead privately. Only our own orientation card
+  (`test-pictures/UP.png`, `UP2.tga`) is committed.
+- **Known gap:** a picture tag comes back as its fallback shape after a relog. The
+  tag-persistence file stores the shape colour, not the picture name. It is a small
+  follow-up once both branches land.
 
 
 
