@@ -16,6 +16,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
 import WindowPicker from '@/components/WindowPicker';
+import { FightCards, FightTable } from './Fights';
+import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -264,6 +266,18 @@ async function loadHotZones(): Promise<HotZone[]> {
     .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
 }
 
+// Fights from every PvP death (pvp_fights, DECISIONS-2026-09-21.md §46). Beta variants only for now.
+async function loadFights(): Promise<PvpFightRow[]> {
+  const { data, error } = await supabaseAdmin().rpc('pvp_fights', {
+    p_since: new Date(Date.now() - 30 * 86400000).toISOString(),
+    p_wave_gap: '3 minutes',
+    p_join_gap: '20 minutes',
+    p_limit: 15,
+  });
+  if (error) console.warn('[pvp] pvp_fights failed:', error.message);
+  return (data ?? []) as PvpFightRow[];
+}
+
 function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   const diff = new Date(toIso).getTime() - fromMs;
   const abs  = Math.abs(diff);
@@ -280,7 +294,7 @@ function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
 export default async function PvpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string; w?: string }>;
+  searchParams: Promise<{ sort?: string; w?: string; v?: string }>;
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
@@ -296,11 +310,13 @@ export default async function PvpPage({
   const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers, quakeAt, hotZones] = await Promise.all([
+  const variant = sp?.v === 'b' || sp?.v === 'c' ? sp.v : null;
+  const [{ rows, error }, bossTimers, quakeAt, hotZones, fights] = await Promise.all([
     loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
+    variant ? loadFights() : Promise.resolve([] as PvpFightRow[]),
   ]);
   if (error) {
     return (
@@ -400,6 +416,9 @@ export default async function PvpPage({
           </table>
         )}
       </section>
+
+      {variant === 'b' && <FightCards fights={fights} tz={tz} />}
+      {variant === 'c' && <FightTable fights={fights} tz={tz} />}
 
       {/* Next earthquake — a quake repops every PvP mob, so it sits directly
           above the boss timers (it resets all of them). Live countdown. */}
