@@ -245,6 +245,22 @@ SessionStart and prints the open-items table + doc index + live versions, and
 files with citations. Both are only as good as the writing discipline above —
 **the reading half was never the weak link.**
 
+**Private material goes to the private briefing, not the repo (guild lead,
+2026-09-26).** *"a secure place for the outputs … and for the decisions … turn
+that over for text to speech to tell me what the current status is without
+exposing all of the decisions publicly."* A claude.ai doc titled **"Wolf Pack —
+private briefing"** (find it by title in the guild lead's artifact list; the repo
+never carries its link) holds:
+- a **Read aloud** status, rewritten by every session that has the docs connector
+  when it finishes, in spoken sentences with no tables or code names;
+- the **Waiting on you** list;
+- **private decisions**: security findings, anything naming a way in, where
+  credentials live, member-specific details;
+- each private audit report, in a tab of its own.
+
+Everything else still goes in the public DECISIONS file. A private call gets a
+one-line public pointer only when other sessions need to know that it exists.
+
 ### Working rule — deployment decisions write to the self-host epic
 **Every design or infrastructure decision that changes how the platform is
 deployed, what it stores, or what it costs to run gets a line in
