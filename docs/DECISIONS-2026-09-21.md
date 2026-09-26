@@ -118,6 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed); in `test-all` `1f866c4` | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; built, not yet in game)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `1f866c4` | the guild lead: rebuild `test-all`, run `docs/upstream/zeal-tag-shapes/TRY-IN-GAME.md`, correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
 | **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` `1f866c4`. A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
+| **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
 | **Quests vs inventory sharing split · keys for every keyed zone** | **2026-09-25 (§24).** Keys: live — five door-derived keyed zones, quest rewards excluded, 168 ms per page. Split: **live, web 1.8.8**; the 11 characters with the old combined switch keep public quest pages and their inventory pages went private (the guild lead's call) | optional: catalog quests for the Charasis + Sleeper's keys; a guild-wide "who can enter" keys view on the sweep |
 | **Agent stalled mid-fight (guild lead's, Emperor Ssraeshza)** | **Cause found + fixed on beta, agent 3.7.17 (§23 follow-up).** Cross-flush recursion: two peer trackers flushed each other until the stack overflowed (4,656 levels), swallowed by a bare catch. Reset-before-propagate + a real test; three earlier cascades in the same logs. Server not flooded | (1) the guild lead: take the beta build, confirm no `[cross-flush]` storms next raid; (2) graduate to stable — the stable agent 3.7.16 has the same bug (the guild lead's call); (3) optional, still open: a hang watchdog in Mimic |
 | **Privacy audit + statement rewrite** | **2026-09-25 (§21).** `/privacy` + `docs/PRIVACY.md` rewritten to what the code does today (web 1.8.5, main after the raid freeze). Two public-executable SECURITY DEFINER functions revoked live. Security findings deliberately not written into this public repo | the guild lead's calls: (1) live status + raid roster — honour both exclusion switches, raid-only, guild members only? (2) Mimic's inert Tells radio — remove or wire up, and fix its "never upload / encrypted" copy (`apps/mimic/settings.html` ~220); (3) a retention schedule — `page_views`, chat, tells, the archive's forever copy; (4) inventory sharing split from "Quests: public", and officer inventory access kept (now disclosed) or removed; (5) `exclude_inventory` honoured on `/inventory` + `/spells` and purging on set; (6) member mirror drops people who left, Mimic tokens expire; (7) which Discord channels Visitor/Applicant roles can read; (8) Vercel toolbar off for Preview; (9) security headers + `poweredByHeader: false`; (10) whether the Supabase MCP stays auto-allowed; (11) the feedback log filter drops by default; (12) names still in `/ai`, `/bards`, the `/mimic/mini` mocks, and the SUNO default in `index.js` + `.env.example`. **Once any of these ships, update `/privacy` in the same change** |
@@ -2171,6 +2172,59 @@ yet).
 **Not compiled with MSVC here.** The corpse change touches only `nameplate.cpp/.h`,
 which needs the DirectX headers. It was reviewed and formatted but not compiled.
 `test-all` is the first real build of it.
+
+## 35. HUD tracking arrows — eight round the ring, the tracked mob's direction lit (2026-09-26, agent 3.7.18 beta)
+
+**Where it came from:** a member, in a Discord DM to the guild lead, with a mockup of
+eight yellow arrows round the HUD: *"for tracking. Ahead, Head and to right/left,
+behind left/right behind you? you think thats too much?"* The guild lead: *"YES omg
+great idea"*, then to this session: *"let's get to work"*.
+
+**The data is the client's own tracking lines**, from eqstr_us.txt. It was checked in
+two independent copies of the file (a Trilogy-era `eqstr_en.txt` and an archived
+`eqstr_us.txt`); the EQMac server source only defines the IDs, so the client prints
+them itself:
+- 12040 `You begin tracking %1.`
+- 12676 `%1 is straight ahead.` · 12677 `%1 is ahead and to the %2.` · 12678 `%1 is
+  to the %2.` · 12679 `%1 is behind and to the %2.` · 12680 `%1 is behind you.` —
+  with %2 = 12674 `right` / 12675 `left`.
+- 12681 `You have lost your tracking target.` · 12499 `You have lost or do not have a
+  tracking target.`
+
+**Not yet seen in a real log.** Quarm's client is expected to print these words, and
+community posts quote the same shape ("Gorenaire is ahead and to the left"). If the
+live wording differs, the parser table `_ME_TRACK_DIRS` is the one place to change.
+
+**Decisions taken while building (the guild lead to overrule):**
+- **Guard against /emote.** A player can emote "Bob is behind you." So a direction
+  line counts only for the mob named by "You begin tracking", or when the character
+  is a Ranger, Druid or Bard.
+- **How long a direction lasts.** It is kept 5 minutes after its line, because the
+  client speaks when the direction changes, so silence is not a lost track. It dims
+  after 15 s on the HUD, and a zone change or either "lost" line clears it.
+- **Where the arrows sit.** The diagonals are in the square's corners, as in the
+  mockup. The four others sit INSIDE the ring (inner end at r 110), because the edge
+  is taken at 12, 3, 6 and 9 o'clock:
+  - the target's target on top;
+  - the HP and mana labels at the sides;
+  - the always-visible ✥ Box HUD ✕ row underneath.
+
+  A Playwright render measured the result. The first try put all eight at the edge
+  and collided at all four; inside, "behind" ends 4 units above your resists at the
+  default size.
+- **Builder options.** A new ⚙ section, Tracking: on/off, "Arrows drawn: all | lit",
+  and a size slider. All eight is the default, matching the mockup.
+- **No rotation between lines, yet.** Zeal sends our own heading, so the arrow could
+  turn as you turn. But which way EQ's heading counts is not pinned down, and a wrong
+  sign would swing the arrow the wrong way. Left out until it can be checked in game
+  (turn left, watch the number).
+
+**Checks:**
+- 5 agent tests and 4 HUD render tests.
+- Mutations of the class gate, the zone drop and the lit-only option were each
+  caught.
+- The full suite passed (4,045 tests); lint and check:dashboard are clean.
+- Beta `fe43d0b8` (Mimic builds as 2.7.2-beta.N); roadmap entry with Web 1.8.9.
 
 
 

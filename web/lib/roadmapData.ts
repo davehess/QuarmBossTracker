@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'hud-tracking-2026-09-26',
+    title: 'Agent 3.7.18',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.18 · Web 1.8.9',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Tracking on the HUD: eight arrows round the ring, and the one toward the mob you are tracking lights up.',
+    features: [
+      {
+        name: 'Tracking arrows',
+        blurb: 'Rangers, druids and bards tracking a mob see the game’s own direction on the HUD: straight ahead, ahead and to the left or right, to the side, behind and to the side, or behind you. The matching arrow lights gold. A member’s idea.',
+      },
+      {
+        name: 'Your choice in the builder',
+        blurb: 'The HUD’s ⚙ builder has a new Tracking section: show all eight arrows with the lit one bright, or only the lit one, and make them bigger or smaller.',
+      },
+      {
+        name: 'Old directions dim',
+        blurb: 'The game only says a new direction when it changes, so one it hasn’t repeated for 15 seconds dims: you may have turned since. Losing the track or changing zone clears it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1.8.8-2026-09-25',
     title: 'Web 1.8.8',
     version: 'Web 1.8.8',

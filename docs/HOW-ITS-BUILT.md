@@ -2965,6 +2965,24 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `hudWidthFactor()` + `reshapeForHits()` widen the window by `LANE_EXT` a side
   (also with the builder open, and on a character switch). Tests:
   `test/me-overlay.test.js` ("numbers outside the ring").
+- **HUD: tracking arrows (agent 3.7.18, Mimic 2.7.2 beta, 2026-09-26)**. A
+  member's idea: eight arrows round the ring, the tracked mob's direction lit.
+  - Agent (`packages/wolfpack-logsync/index.js`, Me block): `_meNoteTrack` is
+    called first thing in `_meNoteRawLine`, on the raw line.
+  - It reads the client's own lines, eqstr_us.txt 12040 ("You begin tracking
+    %1."), 12676–12680 (the directions, side word from 12674/12675), and 12681 /
+    12499 (lost).
+  - Direction lines count only for the mob named by "You begin tracking" or from
+    a Ranger, Druid or Bard, which guards against a player's /emote.
+  - State: `_meTrack`, kept 5 minutes and dropped on a zone change.
+  - `/api/me` carries `track {name, angle, age_ms}`.
+  - HUD (`apps/mimic/me.html`): `trackArrows()`. Diagonals sit at r 208 in the
+    corners; the cardinals sit inside the ring (inner end at r 110), because the
+    edge is taken there.
+  - Builder: `HUD_PARTS` → Tracking (`track`, `trackShow` all|lit), with a size
+    slider.
+  - Tests: `test/me-hud-timers.test.js` ("tracking") and
+    `test/me-overlay.test.js` ("tracking: …").
 - **One-time Discord posts** — pattern: a function in `index.js` latched in
   `bot_kv` (`kvLatch.shouldRunOnce`, fail-closed), e.g. `_announceMimic271Once`
   (#raid-chat) and `_announceInventorySplitOnce` (#wlfpck-general). Tests
