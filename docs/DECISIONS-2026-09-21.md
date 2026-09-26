@@ -2443,6 +2443,35 @@ character name is unique on the server.
 - **Steps to try in game:** TRY-IN-GAME → "Tagged players keep their tags"; the PR
   test plan, steps 9–11.
 
+## 41. /who overlay: the player you click goes on top, guild under the name; tags when you alone zone (2026-09-26)
+
+**The guild lead**, raiding alongside Dungeons and Dragons and other guilds: *"add guild
+under the player's name when we know it. When we click on them put them at the top of
+the /who overlay"*. Then: *"If we can persist the tags per name per spawnid that would be
+good if we zone out and zone back in and most people didn't"*.
+
+**The /who overlay (agent 3.7.19, beta `f087f5c3`):**
+- The player you target (click on in game, or in the raid window) gets a **Target
+  card at the top**.
+  - Their name, class and level show on the first line.
+  - **Their guild shows on its own line underneath**, like a nameplate.
+  - They are taken out of the lists below.
+- **Sources, in order:** this session's /who, then /who history from the bot, then the
+  raid roster's class. So an /anon raider or one you never /who'd still gets a card.
+  - A history value is in italics.
+  - The card appears even before any /who.
+- **A pet never gets a card:** a card needs a /who row, history or a raid class.
+- **The EverQuest raid window itself cannot show guilds.** It is the client's own
+  window. The card is where the guild goes.
+- **Considered and not built:** a guild line under every row of the list. It doubles
+  each row's height, so half as many raiders fit. It is one CSS rule if wanted.
+
+**Tags when you zone and others don't:** no change needed; it already works.
+- **NPCs** have been restored by zone, spawn id and name since §28. A mob that
+  stayed put keeps its id, so its tag comes back when you return.
+- **Players** are restored by name since §40. That covers both the ones who stayed and
+  the ones who zoned too.
+
 
 
 
