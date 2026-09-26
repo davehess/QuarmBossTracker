@@ -7416,7 +7416,8 @@ function buildWhoSnapshot() {
       for (const [k, v] of whoData) { const tt = Date.parse(v.observedAt || 0) || 0; if (maxObs - tt <= 8000) currentNames.add(k); }
     }
   }
-  if (!currentNames || !currentNames.size) return null;
+  const target = _whoTargetPlayer();
+  if ((!currentNames || !currentNames.size) && !target) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
   const current = [], gone = [], lookupNeeded = [];
   // Enrich a row from the bot's who-lookup cache. Anon rows get de-anon'd
@@ -7440,11 +7441,12 @@ function buildWhoSnapshot() {
     if (!fresh) lookupNeeded.push(v.name);            // resolve enrichment for every row
   };
   for (const [k, v] of whoData) {
+    if (target && k === target.key) continue;   // Shown on top instead.
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
-    if (currentNames.has(k)) {
+    if (currentNames && currentNames.has(k)) {
       enrich(entry, v, k);
       current.push(entry);
     } else {
@@ -7459,6 +7461,42 @@ function buildWhoSnapshot() {
     current,
     recentGone: gone.slice(0, 30),
     capturedAt: _whoRun ? _whoRun.startedAt : now,
+    target,
+  };
+}
+
+// The player you are targeting, for the top of the /who overlay (the guild lead, 2026-09-26, in a raid
+// shared with other guilds: "add guild under the player's name when we know it. When we click on them
+// put them at the top of the /who overlay"). Same sources as Target Info's player line (_targetPlayerInfo):
+// this session's /who first, then /who history from the bot, so a raider you never /who'd still gets a
+// card, and an /anon one gets the guild history last saw. Null for an NPC or no target.
+function _whoTargetPlayer() {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return null;
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId)) || null;
+  const pl = _targetPlayerInfo(st, selfChar, cached);
+  if (!pl) return null;
+  const key = pl.name.toLowerCase();
+  const who = whoData.get(key) || null;
+  const hist = (_whoLookupCache.get(key) || {}).data || null;
+  // Target Info counts any name the catalog lacks as a player, which takes in pets. Here a card needs
+  // something we actually know: a /who row, /who history, or a class from the raid roster.
+  if (!who && !hist && !pl.class) return null;
+  const liveGuild = who && !who.anonymous ? who.guild : null;
+  return {
+    key,
+    name: pl.name,
+    class: pl.class, class_src: pl.class_src,
+    level: pl.level, level_src: pl.level_src,
+    guild: pl.guild, guild_src: liveGuild ? 'who' : (pl.guild ? 'history' : null),
+    anonymous: pl.anonymous,
+    gm: !!(who && who.gm),
+    zek: !!(hist && hist.is_zek),
+    main: (hist && hist.main) || null,
+    mimic: !!(hist && hist.mimic),
   };
 }
 

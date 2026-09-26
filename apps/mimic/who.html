@@ -58,6 +58,13 @@
   .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
   .gone .r{opacity:0.85}
+  /* The player you are targeting, pinned on top with their guild UNDER the name (like a nameplate) —
+     the guild lead, 2026-09-26, in a raid shared with other guilds. Italic when the guild or class comes
+     from /who history rather than a live /who. */
+  .tgt .rowlist{border-left:2px solid #d29922}
+  .tgt .r .nm{color:#f2ede1}
+  .tgt .guildline{font-size:11px;color:#6e9bd6;text-shadow:0 1px 2px #000;line-height:1.35}
+  .tgt .guildline.deanon{font-style:italic}
   /* #160 "recently gone" collapse — the +N more / show fewer toggle row. State
      lives in a JS var (_goneExpanded) read by the 500ms render loop, not DOM. */
   .gone .gone-toggle{font-size:10px;color:#7ee7c7;cursor:pointer;padding:2px 2px 0;
@@ -328,20 +335,50 @@
   var _goneExpanded = false;
   var _lastWho = null;
 
+  // The targeted player's card: name, 🐺 / (main) / flags, class + level columns, then the guild on its
+  // own line under the name when we know it. The agent has already taken them out of the lists below.
+  function targetHtml(t){
+    var left = '<span class="nm">' + esc(t.name || '?') + '</span>';
+    if (t.mimic) left += '<span class="wolf" title="Running Mimic">🐺</span>';
+    if (t.main)  left += '<span class="main">(' + esc(t.main) + ')</span>';
+    if (t.anonymous) left += '<span class="flag anon">anon</span>';
+    if (t.gm)        left += '<span class="flag gm">GM</span>';
+    if (t.zek)       left += '<span class="flag zek">ZEK</span>';
+    var col = '<span class="klass' + (t.class_src === 'history' ? ' deanon' : '') + '">' + esc(t.class || '') + '</span>';
+    col    += '<span class="lvl'   + (t.level_src === 'history' ? ' deanon' : '') + '">' + (t.level ? 'L' + t.level : '') + '</span>';
+    var h = '<div class="sec tgt"><div class="sec-h">Target</div><div class="rowlist">';
+    h += '<div class="r' + (t.zek ? ' zek' : '') + '"><span class="left">' + left + '</span>' + col + '</div>';
+    if (t.guild) {
+      var fromHistory = t.guild_src === 'history';
+      h += '<div class="guildline' + (fromHistory ? ' deanon' : '') + '"'
+        + (fromHistory ? ' title="From /who history: the last guild anyone saw"' : '') + '>&lt;'
+        + esc(t.guild) + '&gt;</div>';
+    }
+    return h + '</div></div>';
+  }
+  function safeTarget(t){
+    try { return t ? targetHtml(t) : ''; }
+    catch (err) { return ''; }
+  }
+
   // Build + paint the /who body from a whoSnapshot. Extracted from tick() so the
   // collapse toggle can re-render immediately from _lastWho without waiting for
   // the next poll. Keeps the byte-stability guard so unchanged HTML never
   // repaints (no flicker / lost hover).
   function renderWho(w){
     _lastWho = w;
-    if (!w || !Array.isArray(w.current) || !w.current.length) {
+    var hasList = !!(w && Array.isArray(w.current) && w.current.length);
+    var tgt = w ? safeTarget(w.target) : '';
+    if (!hasList && !tgt) {
       bodyEl.innerHTML = ''; bodyEl.__wpHtml = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return;
     }
-    emptyEl.style.display = 'none';
-    var h = '';
-    h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
-    for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
-    h += '</div></div>';
+    emptyEl.style.display = hasList ? 'none' : 'block';
+    var h = tgt;
+    if (hasList) {
+      h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
+      for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
+      h += '</div></div>';
+    }
     if (Array.isArray(w.recentGone) && w.recentGone.length) {
       var gone = w.recentGone;
       var total = gone.length;
