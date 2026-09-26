@@ -2109,6 +2109,28 @@ holds it in memory.
 
 ## Web features
 
+- **Zeal tag icons gallery (`/zeal-icons`, on `beta` as a preview, 2026-09-26)**:
+  - **What it is:** a PUBLIC page for other guilds. It shows every guild's banner and
+    icon with click-to-copy keys (`^BEUR^`, `^IEUR^`), the symbols, badges and paws, and
+    picture files to download (`public/zeal/tagicons`, e.g. Europa's shield as
+    `EUR.png`/`EUR.tga`). Logos come in through Discord; the page takes no uploads.
+  - **Layouts:** two on offer until the guild lead picks.
+    - A (no `?v=`): one catalogue page, with an anchor per guild.
+    - B (`?v=b`): a guild index, plus a page per guild at `/zeal-icons/<code>`.
+  - **Code:** `web/app/zeal-icons/`, with a shared `parts.tsx` and a `CopyKey` client
+    button. The data is `web/lib/zealIcons.ts`, mirroring `kGuilds` in the fork's
+    `tag_shapes.cpp`.
+  - **Images:** `public/zeal/marks` (121 PNGs), rendered from the real meshes by
+    `docs/upstream/zeal-tag-shapes/preview/export_marks.py`. Provenance is in
+    `public/zeal/PROVENANCE.txt`.
+  - **Link previews:** `lib/pageMeta.ts` names the gallery and each guild.
+  - **Test:** `test/zeal-icons-page.test.js` checks that the page stays public and inert,
+    that every named image exists, and that every hosted picture passes Zeal's own checks
+    (header, 512 px, 1 MB, file name = key).
+  - **Adding a guild:** add it to `kGuilds` and to `zealIcons.ts`, then re-run the export.
+  - **Adding a picture:** tidy the logo offline (transparent background, 512 px or less),
+    drop it in `public/zeal/tagicons`, and list it under the guild. The test refuses a
+    file Zeal would refuse. DECISIONS-2026-09-21 §38–§39.
 - **Mimic mini-mode review — the guild votes (`web/app/mimic/mini/*`, catalog in `web/lib/miniReview.ts`, web 1.7.31, 2026-09-11)** — member page; one overlay at a time, full mode left, three minis right, one vote per member per overlay (changeable), feedback thread per overlay with the author's pick beside each note. The catalog (9 overlays × 3 options, four-number costs, real cast) is pure TS so the server actions and `test/mimic-mini-review.test.js` validate through the SAME functions. Mocks (`mocks.tsx` + `mocks.module.css`) are pure functions of a 20s scenario clock and the Zeal toggle; `MiniReview.tsx` drives them at 10 fps via rAF and freezes under `prefers-reduced-motion`. Writes are service-role through `actions.ts`; tables `overlay_design_votes` (PK overlay+user) and `overlay_design_feedback`, RLS on, authenticated read. Deep links are `#tank` … `#buff`. The ballot (one row per `wolfpack_members.is_member`, merged accounts excluded; your row votes with A/B/C buttons) and the plain-text voter list under each option are the "spot for each person" (guild lead 2026-09-11). The ground-rules block (bar style, ▭ / 📌 menu rows, Ctrl+Shift+M) is the framework every pick shares; nothing in Mimic is built until the picks land.
 - **Item catalog for the wishlist picker (`/api/agent/item-catalog` +
   `item_catalog_droppable` view, bot 3.1.98)** — every item any catalogued NPC
