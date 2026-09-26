@@ -1,0 +1,1011 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dirge Tactical Nuke — Wolf Pack Mimic</title>
+<meta name="description" content="The Melody overlay’s DIRGE TACTICAL NUKE board for bards: check off the pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds.">
+<meta property="og:title" content="Dirge Tactical Nuke">
+<meta property="og:description" content="The Melody overlay’s DIRGE TACTICAL NUKE board for bards: check off the pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds.">
+<meta property="og:image" content="https://wolfpack.quest/mimic/dirge-card.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.ico">
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#c9d1d9;--dim:#8b949e;--red:#f85149;--gold:#d29922;--blue:#58a6ff}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font-family:"Cascadia Code",Consolas,ui-monospace,monospace;font-size:13px}
+.page{max-width:780px;margin:0 auto;padding-block:16px 28px;padding-inline:16px;display:flex;flex-direction:column;gap:14px}
+.crumbs{display:flex;gap:14px;flex-wrap:wrap;font-size:12px}
+.crumbs a{color:var(--blue);text-decoration:none}
+.crumbs a:hover{text-decoration:underline}
+h1{font-size:18px;margin:0;letter-spacing:0.04em;text-wrap:balance}
+h1 b{color:var(--red)}
+.lede{margin:0;color:var(--dim);line-height:1.5;max-width:65ch}
+.stage{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:660px){.stage{grid-template-columns:1fr}}
+.scene{border-radius:8px;border:1px solid var(--line);padding:14px 10px;min-height:380px;
+  background:radial-gradient(ellipse at 50% 20%,rgba(120,130,110,0.25),transparent 60%),
+    repeating-linear-gradient(90deg,#1b1f1c 0 58px,#151816 58px 60px),
+    repeating-linear-gradient(0deg,#1b1f1c 0 28px,#131614 28px 30px)}
+.ov{max-width:320px;position:relative}
+ol{margin:0;padding-left:26px;display:flex;flex-direction:column;gap:2px;line-height:1.35}
+ol li::marker{color:var(--dim)}
+ol li.now::marker{color:var(--red)}
+ol button{font:inherit;color:var(--dim);background:none;border:0;padding:3px 4px;margin:0 -4px;text-align:left;
+  cursor:pointer;border-radius:4px;width:100%}
+ol button:hover{background:var(--panel);color:var(--text)}
+ol button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+ol li.done button{color:#9aa3ad}
+ol li.now button{color:#fff}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.bar button{font:inherit;font-size:12px;color:var(--text);background:var(--panel);border:1px solid var(--line);
+  border-radius:6px;padding:5px 12px;cursor:pointer}
+.bar button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.clock{color:var(--dim);font-variant-numeric:tabular-nums}
+.notes{color:var(--dim);line-height:1.5;border-top:1px solid var(--line);padding-top:10px;max-width:70ch;margin:0}
+.notes b{color:var(--text)}
+.notes a{color:var(--blue)}
+
+  /* --bg-alpha: card-surface alpha, driven by slider via main → preload
+     'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
+  :root{ --bg-alpha:0.78; }
+  .ov{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+  /* text-shadow: the same dark edge the other overlays give their text, so the names stay readable over
+     bright ground (the guild lead, 2026-09-26: "really hard to see"). */
+  #wrap{background:rgb(14 17 22 / var(--bg-alpha));border:1px solid rgba(163,113,247,0.45);
+    border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px);
+    position:relative;text-shadow:0 1px 2px #000}
+  .title{font-size:11px;color:#a371f7;letter-spacing:0.1em;
+    text-transform:uppercase;display:flex;gap:6px;align-items:center}
+  .conn{font-size:10px}
+  .conn.ok{color:#56d364}
+  .conn.bad{color:#f87171}
+  /* Empty state: deliberately NO background — feedback was that the "box of
+     text" framing of "no bard songs yet" was hard to read. Now reads as
+     plain dimmed text under the title. */
+  .empty{color:#6b7280;font-size:10px;margin-top:6px;font-style:italic}
+  /* "Now casting: X" — Zeal-driven, real-time. Pulled from label 134. */
+  .nowcast{font-size:10px;color:#c9d1d9;margin-top:4px;font-variant-numeric:tabular-nums}
+  .nowcast .lbl{color:#6b7280}
+  .nowcast .spell{color:#f6c365;font-weight:600}
+  /* Bard utility-buff strip — persistent (shows "off" when buff absent).
+     Sits BELOW the songs dashed separator and ABOVE "now casting", per
+     user requirement. */
+  .bardbuffs{margin-top:6px;padding-top:5px;border-top:1px dashed rgba(110,118,129,0.30);
+    display:flex;flex-direction:column;gap:2px}
+  .bardbuffs .util-row{display:grid;grid-template-columns:14px 1fr auto;gap:6px;align-items:baseline;
+    font-size:11px;color:#c9d1d9}
+  .bardbuffs .util-cast{color:#a371f7;font-size:10px;text-align:center;animation:utilpulse 1.2s ease-in-out infinite}
+  .bardbuffs .util-cast.off{opacity:0.18;animation:none}
+  @keyframes utilpulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .bardbuffs .util-lbl{color:#d2a8ff;font-weight:600}   /* The lighter purple of the song chips: #a371f7 was lost on grass. */
+  .bardbuffs .util-t{font-variant-numeric:tabular-nums;color:#7ee787;padding:0 5px;
+    border-radius:3px;background:rgba(126,231,135,0.10);border:1px solid rgba(126,231,135,0.22)}
+  .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
+  .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
+  .bardbuffs .util-t.off{color:#8b949e;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
+  /* Cast-progress bar for a utility row. Same left-to-right fill as the top
+     song row's .row.casting, just sized for the compact strip. Painted only
+     when this utility is the currently-cast spell (Zeal label 134 match). */
+  .bardbuffs .util-row.casting{background:linear-gradient(to right,
+    rgba(163,113,247,0.45) 0%, rgba(163,113,247,0.45) var(--p,0%),
+    rgba(163,113,247,0.10) var(--p,0%), rgba(163,113,247,0.10) 100%);
+    border-radius:3px;padding:1px 4px;margin:0 -4px}
+  /* Per-character melody block. */
+  .mel{margin-top:6px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)}
+  .mel:first-of-type{border-top:none;padding-top:0;margin-top:4px}
+  .mel .who{font-size:10px;color:#c9d1d9;font-weight:600;display:flex;
+    justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:3px}
+  .mel .who .since{color:#6b7280;font-size:9px;font-weight:normal}
+  /* Each song row: [icon] [name] [cast bar]. Vertical stack, cast-order. */
+  .songs{display:flex;flex-direction:column;gap:2px}
+  .row{display:grid;grid-template-columns:16px 1fr auto;gap:6px;align-items:center;
+    font-size:13px;line-height:1.45;padding:3px 5px;border-radius:3px;
+    background:rgba(255,255,255,0.03)}
+  /* Buff-window timer chip — only present for songs whose effect is
+     visible in Zeal's buff slots (Amplification, Harmonize, Resonance,
+     Niv's / Breath of Harmony, etc.). MM:SS countdown. */
+  .row .timer{font-variant-numeric:tabular-nums;font-size:10px;
+    color:#7ee787;background:rgba(126,231,135,0.10);padding:0 5px;
+    border-radius:3px;border:1px solid rgba(126,231,135,0.22)}
+  .row .cnt{font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums;
+    margin-right:4px;letter-spacing:0.02em}
+  /* PBAOE mob-counter chip — sits right after the song name. hits/12 (the
+     Quarm AE cap); .full = a perfect 12-mob swarm pulse, lit green. Damage
+     for the pulse rides the same chip when the song is a damaging one. */
+  .row .name .aoe{display:inline-block;margin-left:6px;font-size:10px;
+    font-variant-numeric:tabular-nums;color:#d2a8ff;background:rgba(163,113,247,0.12);
+    padding:0 5px;border-radius:3px;border:1px solid rgba(163,113,247,0.28);vertical-align:middle}
+  .row .name .aoe.full{color:#7ee787;background:rgba(126,231,135,0.12);border-color:rgba(126,231,135,0.35);font-weight:600}
+  .row .timer.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
+  .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
+  .row .icon{display:flex;align-items:center;justify-content:center;
+    width:16px;height:16px;font-size:12px;color:#8b949e}
+  .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  /* Casting row — fills the row background left→right as the cast progresses,
+     giving the "arrow getting closer" effect the user asked for. */
+  .row.casting{background:linear-gradient(to right,
+    rgba(163,113,247,0.55) 0%, rgba(163,113,247,0.55) var(--p,0%),
+    rgba(163,113,247,0.10) var(--p,0%), rgba(163,113,247,0.10) 100%);
+    color:#fff;border:1px solid rgba(163,113,247,0.4)}
+  .row.casting .icon{color:#fff;animation:pulse 1.2s ease-in-out infinite}
+  .row.casting .name{color:#fff;font-weight:600}
+  /* Completed-this-cycle row — song landed, waiting for the next twist to
+     come around. Green check; subtle so the casting row dominates. */
+  .row.done .icon{color:#56d364}
+  .row.done .name{color:#9aa3ad}
+  /* Stopped — bard stopped singing. The last casting row freezes here with a
+     ⏹ so they can see "I'd resume on this one". */
+  .row.stopped{background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.4)}
+  .row.stopped .icon{color:#f85149}
+  .row.stopped .name{color:#f6c365;font-weight:600}
+  /* Queued / upcoming — bog-standard play arrow. */
+  .row.queued .icon{color:#a371f7;opacity:0.85}
+  .row.queued .name{color:#c9d1d9}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.92)}}
+
+  /* dirge-board:css:start — the DIRGE TACTICAL NUKE board (the guild lead, 2026-09-26). The switch sits
+     in the title bar, clear of the ✕ gutter; the steps are the pre-buffs in singing order; the board
+     slides out when they are all checked. Red here means the nuke itself, as the guild lead asked. */
+  .dsw{display:none;margin-left:auto;margin-right:24px;align-items:center;gap:4px;padding:0;border:0;
+    background:none;font:inherit;font-size:9px;letter-spacing:0.08em;color:#8b949e;cursor:pointer}
+  body.has-bard .dsw{display:inline-flex}
+  .dsw i{position:relative;width:18px;height:10px;border-radius:5px;background:#30363d;transition:background .15s}
+  .dsw i::after{content:'';position:absolute;left:1px;top:1px;width:8px;height:8px;border-radius:50%;
+    background:#8b949e;transition:transform .15s,background .15s}
+  .dsw.on{color:#f85149}
+  .dsw.on i{background:rgba(248,81,73,0.35)}
+  .dsw.on i::after{transform:translateX(8px);background:#f85149}
+  /* The current Dirge count, up by the switch (the guild lead: "Show the total number of current Dirge
+     on the top with the toggle"). */
+  .dsw b{font-size:11px;color:#f85149;font-variant-numeric:tabular-nums;margin-right:2px}
+  .dsw b:empty{display:none}
+  #dirge{display:none;margin-top:6px}
+  #dirge.show{display:block}
+  body.dirge-on #wrap{padding-bottom:24px}
+  /* The steps, in the order the guild lead sings them. Numbered because the order is the point. */
+  .dl{display:grid;grid-auto-flow:column;grid-template-rows:repeat(3,auto);grid-template-columns:auto 1fr;
+    gap:2px 6px;font-size:9.5px;letter-spacing:-0.01em}
+  .dl span{display:flex;gap:4px;align-items:baseline;color:#6e7681;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl span i{font-style:normal;width:11px;text-align:center;border:1px solid #30363d;border-radius:2px;
+    font-size:8px;line-height:10px;flex:none}
+  .dl span.on{color:#c9d1d9}
+  .dl span.on i{color:#0d1117;background:#56d364;border-color:#56d364}
+  .dl span.warn{color:#ffa657}
+  .dl span.warn i{border-color:rgba(255,166,87,0.7)}
+  .db-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.2,.8,.2,1)}
+  #dirge.open .db-wrap{grid-template-rows:1fr}
+  .db-clip{overflow:hidden;min-height:0}
+  /* The board: gunmetal, like a panel off military kit. */
+  .db{margin-top:6px;padding:8px 8px 6px;border-radius:6px;border:1px solid #3a4048;
+    background:linear-gradient(#262b31,#15181c);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07);
+    transform:translateY(-105%);transition:transform .38s cubic-bezier(.25,1.35,.4,1)}
+  #dirge.open .db{transform:translateY(0);animation:dbflash .9s ease-out .3s 1}
+  @keyframes dbflash{0%{border-color:#f85149;box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#3a4048}}
+  .db-row{display:flex;gap:10px;align-items:center}
+  /* The keyswitch under a flip-up plastic cover. The cover lifts when every step is checked; the key
+     turns when Puretone lands. */
+  .dk{position:relative;flex:none;width:54px;display:flex;flex-direction:column;align-items:center;gap:3px}
+  .dk svg{width:44px;height:44px;display:block}
+  .dk .key{transform-origin:22px 22px;transition:transform .45s cubic-bezier(.3,1.6,.5,1) .1s}
+  .dk.turned .key{transform:rotate(90deg)}
+  .dk .plate{stroke:#6e7681;transition:stroke .3s}
+  .dk.turned .plate{stroke:#d29922}
+  .dk .cover{position:absolute;left:2px;top:-2px;width:50px;height:50px;border-radius:5px;
+    border:1px solid rgba(255,140,130,0.55);
+    background:linear-gradient(160deg,rgba(255,120,110,0.42),rgba(190,40,40,0.22) 60%,rgba(120,20,20,0.3));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);transform-origin:50% 0;
+    transition:transform .45s cubic-bezier(.3,1.3,.5,1) .35s,opacity .45s .35s}
+  .dk.uncovered .cover{transform:perspective(140px) rotateX(-118deg);opacity:0.35}
+  .dk .kl{font-size:8px;letter-spacing:0.08em;color:#8b949e;text-align:center;line-height:1.25;
+    font-variant-numeric:tabular-nums}
+  .dk.turned .kl{color:#d29922}
+  /* One button per Dirge the player's full mana holds; the ones current mana holds are lit. They stay
+     hidden behind a shutter until the key turns, then pop in one after another. */
+  .bank{flex:1;display:flex;flex-wrap:wrap;gap:6px;align-content:center;min-height:52px;position:relative}
+  .bank .shut{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:8px;letter-spacing:0.14em;color:#6e7681;border:1px dashed #3a4048;border-radius:4px;
+    transition:opacity .25s}
+  .dk.turned ~ .bank .shut{opacity:0;pointer-events:none}
+  #dirge-btns{display:contents}
+  .bank b{--sweep:0;position:relative;width:30px;height:30px;border-radius:50%;flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;
+    text-shadow:0 1px 1px rgba(0,0,0,0.7);
+    background:radial-gradient(circle at 35% 30%,#ff9b93,#f85149 40%,#b62324 75%,#5c0f13);
+    box-shadow:0 3px 0 #4a0c10,0 4px 6px rgba(0,0,0,0.6);
+    opacity:0;transform:scale(0.4);transition:transform .08s,box-shadow .08s,filter .25s}
+  .dk.turned ~ .bank b{animation:bpop .35s cubic-bezier(.3,1.6,.5,1) forwards;animation-delay:calc(var(--i) * 70ms + .45s)}
+  @keyframes bpop{to{opacity:1;transform:scale(1)}}
+  .bank b.spent{filter:grayscale(1) brightness(0.45)}
+  .bank b.firing{transform:translateY(3px) !important;box-shadow:0 0 0 #4a0c10,0 1px 3px rgba(0,0,0,0.6)}
+  .bank b.firing::before{content:'';position:absolute;inset:-4px;border-radius:50%;z-index:-1;
+    background:conic-gradient(#ffa657 calc(var(--sweep) * 1turn),transparent 0)}
+  /* The labelmaker strip, stuck on underneath. */
+  .dtape{display:block;width:max-content;margin:8px auto 0;padding:2px 9px;border-radius:2px;
+    background:linear-gradient(#1b1d1f,#0b0c0d);color:#f2f2f2;transform:rotate(-1.2deg);
+    font:700 9px/1.5 "Courier New",Courier,monospace;letter-spacing:0.2em;text-transform:uppercase;
+    text-shadow:0 1px 0 rgba(255,255,255,0.25),0 -1px 0 #000;
+    box-shadow:0 1px 2px rgba(0,0,0,0.8),inset 0 1px 0 rgba(255,255,255,0.12)}
+  /* The Disc key, bottom right of the window: up when Puretone is ready, down on the disc timer. */
+  #dirge-disc{display:none;position:absolute;right:6px;bottom:5px;padding:1px 6px;border-radius:3px;
+    font-size:9px;letter-spacing:0.08em;font-variant-numeric:tabular-nums;color:#8b949e;
+    border:1px solid #3a4048;border-bottom-width:2px;background:#15181c}
+  body.dirge-on #dirge-disc{display:block}
+  #dirge-disc.up{color:#56d364;border-color:rgba(86,211,100,0.6)}
+  #dirge-disc.on{color:#d29922;border-color:rgba(210,153,34,0.7)}
+  #dirge-disc.down{color:#f85149;border-color:rgba(248,81,73,0.5);border-bottom-width:1px;transform:translateY(1px)}
+  @media (prefers-reduced-motion: reduce){#dirge *,.dsw *{transition:none !important;animation:none !important}
+    .dk.turned ~ .bank b{opacity:1;transform:none}}
+  /* dirge-board:css:end */
+
+  /* ✥ move + ✕ hide corner squares */
+  #move-btn,#hide-btn{position:absolute;top:6px;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;opacity:0.45;transition:opacity .12s;z-index:60}
+  #move-btn{left:6px;cursor:move}
+  #hide-btn{right:6px;cursor:pointer}
+  #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  #drag-controls{display:none;position:absolute;top:4px;left:4px;gap:4px;z-index:50}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked #wrap{border-color:rgba(163,113,247,0.95);
+    box-shadow:0 0 0 1px rgba(163,113,247,0.6);margin-top:32px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;
+    justify-content:center;background:rgba(163,113,247,0.92);color:#fff;
+    border:1px solid rgba(255,255,255,0.4);border-radius:4px;font-size:13px;
+    line-height:1;cursor:move;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,0.4)}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;align-items:center;gap:8px;margin:0 4px;padding:4px 8px;
+    background:rgba(214,153,34,0.92);color:#222;font-size:10px;border-radius:0 0 6px 6px;
+    -webkit-app-region:no-drag;font-weight:600}
+  body.setup #setupbar{display:flex}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+
+</style>
+</head>
+<body>
+<div class="page">
+  <nav class="crumbs"><a href="/">← wolfpack.quest</a><a href="/mimic/beta">Get the Mimic beta</a></nav>
+  <h1>🎶 Melody · <b>DIRGE TACTICAL NUKE</b></h1>
+  <p class="lede">The real Melody overlay code on a scripted fight. Check off the steps in order; with all six checked the board slides out and the cover over the key lifts. Pop Puretone and the key turns, and one button pops in for every Dirge your mana holds. Click any step to jump to it.</p>
+  <div class="stage">
+    <div class="scene"><div class="ov">
+  <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
+  <button id="hide-btn" title="Hide this overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Setup</span><span>opacity</span>
+    <input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" />
+    <span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span><button type="button" id="dirge-sw" class="dsw" title="DIRGE TACTICAL NUKE: checks off your pre-buffs, and slides out when you are set. The number is the Dirges your mana holds now."><b id="dirge-top"></b>DIRGE <i></i></button></div>
+    <div id="list"></div>
+    <!-- dirge-board:html:start -->
+    <div id="dirge">
+      <div class="dl" id="dirge-lamps"></div>
+      <div class="db-wrap"><div class="db-clip"><div class="db">
+        <div class="db-row">
+          <div class="dk" id="dirge-key" title="Puretone Discipline: the key. The cover lifts when every step is checked; the key turns when you pop Puretone.">
+            <svg viewBox="0 0 44 44" aria-hidden="true">
+              <circle class="plate" cx="22" cy="22" r="20" fill="#0d1117" stroke-width="2"/>
+              <path d="M22 5v4M39 22h-4" stroke="#6e7681" stroke-width="2"/>
+              <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="#d29922"/><circle cx="22" cy="14" r="2.4" fill="#0d1117"/></g>
+            </svg>
+            <div class="cover"></div>
+            <div class="kl" id="dirge-kl">PURETONE</div>
+          </div>
+          <div class="bank" id="dirge-bank" title="Denon`s Desperate Dirge, 800 mana each: one button per Dirge your full mana holds, lit while your mana holds it. The ring fills while you sing it.">
+            <span class="shut">TURN KEY</span><span id="dirge-btns"></span>
+          </div>
+        </div>
+        <span class="dtape">Dirge Team 6 · Tactical Nuke</span>
+      </div></div></div>
+    </div>
+    <div id="dirge-disc" title="Discipline timer: up when Puretone is ready, down while it recharges.">DISC</div>
+    <!-- dirge-board:html:end -->
+    <div class="empty" id="empty">no bard songs yet — start singing.</div>
+  </div>
+</div></div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <ol id="steps">
+        <li data-a="0.5"><button type="button">Harmonize (the Shadowsong Cloak click)</button></li>
+        <li data-a="1"><button type="button">Selo’s Accelerating Chorus, 2:00 or more left</button></li>
+        <li data-a="4"><button type="button">Guardian Rhythms</button></li>
+        <li data-a="7"><button type="button">Psalm of Mystic Shielding</button></li>
+        <li data-a="10.2"><button type="button">Niv’s: the Breath of Harmony click</button></li>
+        <li data-a="11"><button type="button">Amplification, last</button></li>
+        <li data-a="14"><button type="button">All six checked: the board slides out and the cover lifts</button></li>
+        <li data-a="16.5"><button type="button">Pop Puretone: the key turns and the Dirges pop in</button></li>
+        <li data-a="18"><button type="button">Sing a Dirge: the top button fills, then goes dark</button></li>
+        <li data-a="33"><button type="button">Out of mana: all five spent</button></li>
+      </ol>
+      <div class="bar"><button type="button" id="replay">Replay</button><span class="clock" id="clock"></span></div>
+    </div>
+  </div>
+  <p class="notes">On the <a href="/mimic/beta">Mimic beta</a> now: turn on Melody, flip its <b>DIRGE</b> switch, and the number beside it is how many Dirges your mana holds right now. The <b>DISC</b> key in the bottom right is up when Puretone is ready and down while it recharges. Full mana at 4,000 is five buttons; each one goes dark as its 800 mana is spent.</p>
+</div>
+<script>
+var LOOP = 40, T0 = Date.now();
+var CASTS = [
+  { n: 'Harmonize', a: 0.5, b: 0.8 },
+  { n: 'Selo`s Accelerating Chorus', a: 1, b: 4 },
+  { n: 'Guardian Rhythms', a: 4, b: 7, row: 0 },
+  { n: 'Psalm of Mystic Shielding', a: 7, b: 10, row: 1 },
+  { n: 'Breath of Harmony', a: 10.2, b: 10.6 },
+  { n: 'Amplification', a: 11, b: 14 },
+];
+var PURETONE_AT = 16.5, MANA_MAX = 4000;
+for (var i = 0; i < 5; i++) CASTS.push({ n: 'Denon`s Desperate Dirge', a: 18 + 3 * i, b: 21 + 3 * i, row: 2, dirge: true });
+function demoT(){ return ((Date.now() - T0) / 1000) % LOOP; }
+function doneBy(name, t){ return CASTS.some(function(c){ return c.n === name && t >= c.b; }); }
+function demoState(){
+  var t = demoT(), now = Date.now(), base = now - t * 1000;
+  var cur = null, last = CASTS[0], lastRow = 0;
+  CASTS.forEach(function(c){ if (t >= c.a) { last = c; if (c.row != null) lastRow = c.row; } if (t >= c.a && t < c.b) cur = c; });
+  var dirges = CASTS.filter(function(c){ return c.dirge && t >= c.b; }).length;
+  var order = [{ name: 'Guardian Rhythms' }, { name: 'Psalm of Mystic Shielding' }];
+  if (t >= 18) order.push({ name: 'Denon`s Desperate Dirge' });
+  var pure = t >= PURETONE_AT;
+  var obs = function(on, secs){ return on ? { observed: true, remaining_secs: secs == null ? null : Math.round(secs) } : null; };
+  return {
+    activeCharacter: 'Brackwyn',
+    bardMelody: { brackwyn: {
+      character: 'brackwyn', isBard: true, kind: 'song', order: order,
+      currentPos: Math.min(lastRow, order.length - 1),
+      castStartedAt: base + last.a * 1000, lastChangeAt: base + last.a * 1000,
+      cycleLength: order.length, nowCasting: cur ? cur.n : null, melodyActive: true,
+      bardBuffs: {
+        amplification: obs(doneBy('Amplification', t)),
+        harmonize: obs(doneBy('Harmonize', t), 720 - (t - 0.8)),
+        resonance: null,
+        accelerating_chorus: obs(doneBy('Selo`s Accelerating Chorus', t), 150 - (t - 4)),
+        nivs: obs(doneBy('Breath of Harmony', t)), natures: null,
+        casting: { amplification: !!cur && cur.n === 'Amplification', harmonize_resonance: !!cur && cur.n === 'Harmonize',
+          accelerating_chorus: !!cur && /Selo/.test(cur.n), nivs: !!cur && /Breath/.test(cur.n), natures: false },
+        dirge: {
+          guardian: doneBy('Guardian Rhythms', t), psalm: doneBy('Psalm of Mystic Shielding', t), nivs_harmonic: false,
+          puretone: { active: pure, remaining_secs: pure ? 240 - (t - PURETONE_AT) : null, ready: !pure, ready_in_secs: null },
+          mana_cur: MANA_MAX - 800 * dirges, mana_max: MANA_MAX, dirge_mana: 800, dirge_cast_ms: 3000,
+        },
+      },
+    } },
+  };
+}
+window.fetch = function(){ return Promise.resolve({ json: function(){ return Promise.resolve(demoState()); } }); };
+try { localStorage.setItem('wp:melody:dirge', '1'); } catch (e) {}
+</script>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  // Subscribe to Mimic status pushes so the tray's "Bard only" toggle
+  // takes effect in real time without needing an overlay reload. Falls
+  // back to the localStorage value when no status has arrived yet.
+  var _mimicMelodyBardOnly = null;
+  // "Show song damage" — per-hit + kite-total chips on AE songs. Tray toggle
+  // (default ON); rides the same status push as the bard-only flag.
+  var _mimicMelodyDmgTotals = null;
+  if (window.mimic && window.mimic.onStatus) {
+    window.mimic.onStatus(function(s){
+      if (s && typeof s.melodyBardOnly === 'boolean') {
+        _mimicMelodyBardOnly = s.melodyBardOnly;
+        try { localStorage.setItem('wp.melodyBardOnly', s.melodyBardOnly ? '1' : '0'); } catch (e) {}
+      }
+      if (s && typeof s.melodyDmgTotals === 'boolean') {
+        _mimicMelodyDmgTotals = s.melodyDmgTotals;
+        try { localStorage.setItem('wp.melodyDmgTotals', s.melodyDmgTotals ? '1' : '0'); } catch (e) {}
+      }
+    });
+  }
+  if (window.mimic && window.mimic.getStatus) {
+    window.mimic.getStatus().then(function(s){
+      if (s && typeof s.melodyBardOnly === 'boolean') _mimicMelodyBardOnly = s.melodyBardOnly;
+      if (s && typeof s.melodyDmgTotals === 'boolean') _mimicMelodyDmgTotals = s.melodyDmgTotals;
+    }).catch(function(){});
+  }
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  // Lock + drag wiring — same handshake as the other overlays.
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _isDragging = false;
+  function _beginDrag(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    _isDragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_isDragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    // Right-click ✥ → shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){
+    if (_isDragging) {
+      _isDragging = false;
+      try { window.mimic.overlayDragEnd(); } catch (err) {}
+      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
+    }
+  });
+  window.addEventListener('blur', function(){ if (_isDragging) { _isDragging = false; try { window.mimic.overlayDragEnd(); } catch (err) {} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.78;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function fmtElapsed(ms){
+    var s = Math.max(0, Math.floor(ms/1000));
+    var m = Math.floor(s/60); var r = s - m*60;
+    return m + ':' + String(r).padStart(2,'0');
+  }
+  // Compact damage totals so the kite chip stays narrow: 842 → 842,
+  // 12480 → 12.5k, 184620 → 185k.
+  function fmtDmg(n){
+    n = Math.round(n || 0);
+    if (n >= 100000) return Math.round(n/1000) + 'k';
+    if (n >= 10000)  return (n/1000).toFixed(1).replace(/\.0$/,'') + 'k';
+    return String(n);
+  }
+  // Trim leading possessive prefix so chips fit ("Selo`s Accelerando" → "Accelerando").
+  function shortSongName(name){
+    if (!name) return '';
+    return String(name).replace(/^(?:Selo[`']s|Solon[`']s|Tarew[`']s|Tuyen[`']s|Denon[`']s|McVaxius[`']s|Niv[`']s|Anthem de|Brusco[`']s|Angstlich[`']s|Cassindra[`']s|Kelin[`']s|Largo[`']s|Jonthan[`']s)\s+/i, '');
+  }
+
+  // Tell main.js to resize the window to fit the rendered content.
+  var _lastReqH = 0;
+  // extra: height about to appear (the DIRGE board sliding out), so the window grows before the slide.
+  function _requestAutoHeight(extra) {
+    try {
+      var wrap = document.getElementById('wrap');
+      if (!wrap || !window.mimic || !window.mimic.overlayAutoHeight) return;
+      var h = Math.ceil(wrap.scrollHeight + 8 + (extra || 0));
+      if (h !== _lastReqH) { _lastReqH = h; window.mimic.overlayAutoHeight(h); }
+    } catch (e) {}
+  }
+
+  // Cast-time defaults per row kind, used when the spell-catalog lookup
+  // hasn't given us a per-entry cast_ms. Bard songs are flat 3s by design;
+  // generic spell-default is 4s as a "bar at least animates" fallback.
+  // Long-cast clickies (Blood Orchid Katana → 8s Spirit of Wolf, Voice of
+  // the Serpent → 12s Amplification, etc.) pass through as entry.cast_ms
+  // from the agent (sourced from eqemu_spells.cast_time).
+  var SONG_CAST_MS  = 3000;
+  var SPELL_CAST_MS = 4000;
+  function castMsForEntry(entry, stateKind){
+    if (entry && typeof entry.cast_ms === 'number' && entry.cast_ms > 0) return entry.cast_ms;
+    var kind = (entry && entry.kind) || stateKind || 'song';
+    return kind === 'spell' ? SPELL_CAST_MS : SONG_CAST_MS;
+  }
+  // After cast finishes, the previous slot is "done" until either the next
+  // cast fires OR this much time elapses without a new cast — at which point
+  // the row freezes as ⏹ so the user can see where to resume.
+  var STOP_AFTER_MS = 5000;
+  // Hard age-out for a character we still see after the agent SHOULD have
+  // dropped it (the agent's melody idle window is 30s). Anything idle past
+  // this is a stale cache / leaked state — clear it so no frozen
+  // "stopped N ago" card (with the buff-duration chip masquerading in the
+  // cast view) lingers on screen. Live rows never reach this threshold. (#116)
+  var STALE_DROP_MS = 45000;
+
+  // dirge-board:js:start
+  // The DIRGE TACTICAL NUKE board (the guild lead, 2026-09-26). dirgeView is the pure part; paintDirge
+  // only flips classes and text on nodes outside #list, so a repaint of the songs never restarts the slide,
+  // the cover or the key.
+  // The steps, in the guild lead's order: "Make it Harmonize instead of Resonance, and do that first, then
+  // Selo's, then your resists, Niv's Harmonic is a Breath of Harmony Clicky", then Amplification last.
+  //  - Harmonize: Resonance up instead reads amber, since Harmonize is the stronger click (+9 vs +6).
+  //  - Selo`s lasts 25 ticks (2:30) at most, so the first ask of 3:00 could never be met; 2:00 left means
+  //    it was sung in the last 30 seconds (DECISIONS-2026-09-21.md §45).
+  //  - Niv`s: the Breath of Harmony click lands Niv`s Melody of Preservation in the item data, and the
+  //    song is Niv`s Harmonic, so either buff checks the step.
+  // The Dirge: 800 mana, a 3 s sing, and no recast or recovery in the spell data or on PQDI (spell 742).
+  var DIRGE_SELO_MIN_SECS = 120;
+  var DIRGE_MAX_BUTTONS = 12;
+  var _dirgeOn = false;
+  try { _dirgeOn = localStorage.getItem('wp:melody:dirge') === '1'; } catch (e) {}
+  function fmtSecs(secs){ var s = Math.max(0, Math.round(secs || 0)); return Math.floor(s/60) + ':' + String(s % 60).padStart(2,'0'); }
+  function dirgeView(bb, now, castAt){
+    var d = (bb && bb.dirge) || {};
+    var pt = d.puretone || {};
+    var sel = bb && bb.accelerating_chorus;
+    var selSecs = sel && typeof sel.remaining_secs === 'number' ? sel.remaining_secs : null;
+    var steps = [
+      { label: 'Harmonize', on: !!(bb && bb.harmonize), warn: !!(bb && bb.resonance),
+        title: bb && bb.resonance ? 'Resonance is up: Harmonize is the stronger click' : 'Harmonize (Shadowsong Cloak)' },
+      { label: 'Selo`s Chorus', on: selSecs != null && selSecs >= DIRGE_SELO_MIN_SECS, warn: !!sel,
+        title: 'Selo`s Accelerating Chorus with ' + fmtSecs(DIRGE_SELO_MIN_SECS) + ' or more left' + (selSecs != null ? ' (' + fmtSecs(selSecs) + ' now)' : '') },
+      { label: 'Guardian Rhythms', on: !!d.guardian, title: 'Guardian Rhythms' },
+      { label: 'Psalm of Mystic Shielding', on: !!d.psalm, title: 'Psalm of Mystic Shielding' },
+      { label: 'Niv`s (Breath of Harmony)', on: !!(d.nivs_harmonic || (bb && bb.nivs)), title: 'Niv`s Harmonic, or the Breath of Harmony click' },
+      { label: 'Amplification', on: !!(bb && bb.amplification), title: 'Amplification, last' },
+    ];
+    var set = steps.every(function(s){ return s.on; });
+    var turned = !!pt.active;
+    var per = d.dirge_mana || 800;
+    var count = typeof d.mana_cur === 'number' ? Math.floor(d.mana_cur / per) : null;
+    var total = typeof d.mana_max === 'number' ? Math.floor(d.mana_max / per) : count;
+    if (total != null && count != null) total = Math.max(total, count);
+    if (total != null) total = Math.min(total, DIRGE_MAX_BUTTONS);
+    var sweep = castAt ? Math.min(1, (now - castAt) / (d.dirge_cast_ms || 3000)) : 0;
+    var firing = sweep > 0 && sweep < 1;
+    return {
+      steps: steps,
+      // Out once every step is checked; it stays out while Puretone is up, even as the songs fade mid-nuke.
+      open: turned || set,
+      uncovered: turned || set,
+      turned: turned,
+      keyLabel: turned ? 'PURETONE ' + fmtSecs(pt.remaining_secs) : (pt.ready ? 'PURETONE READY' : 'PURETONE ' + fmtSecs(pt.ready_in_secs)),
+      disc: pt.active ? { cls: 'on', text: 'DISC ● ' + fmtSecs(pt.remaining_secs) }
+          : pt.ready ? { cls: 'up', text: 'DISC ▲ UP' }
+          : { cls: 'down', text: 'DISC ▼ ' + fmtSecs(pt.ready_in_secs) },
+      count: count,
+      total: total,
+      // The Dirge being sung is the top lit button; it goes dark when the mana for it is spent.
+      firingButton: firing && count ? count : null,
+      sweep: sweep,
+    };
+  }
+  var _dirgeCastAt = 0, _dirgeOpen = null;
+  function paintDirge(st, now){
+    var bb = st && st.isBard ? st.bardBuffs : null;
+    var box = document.getElementById('dirge');
+    document.body.classList.toggle('has-bard', !!bb);
+    document.body.classList.toggle('dirge-on', !!bb && _dirgeOn);
+    document.getElementById('dirge-sw').classList.toggle('on', _dirgeOn);
+    var top = document.getElementById('dirge-top');
+    if (!bb || !_dirgeOn) { box.className = ''; top.textContent = ''; _dirgeOpen = null; _dirgeCastAt = 0; return; }
+    // The ring fills while Zeal says you are singing the Dirge; a Dirge sung straight after another
+    // keeps the same label, so the ring starts over every cast length.
+    var castMs = (bb.dirge && bb.dirge.dirge_cast_ms) || 3000;
+    if (!/desperate dirge/i.test(String(st.nowCasting || ''))) _dirgeCastAt = 0;
+    else if (!_dirgeCastAt) _dirgeCastAt = now;
+    else while (now - _dirgeCastAt >= castMs) _dirgeCastAt += castMs;
+    var v = dirgeView(bb, now, _dirgeCastAt);
+    top.textContent = v.count == null ? '' : '×' + v.count;
+    var steps = v.steps.map(function(s, i){
+      return '<span class="' + (s.on ? 'on' : (s.warn ? 'warn' : '')) + '" title="' + esc(s.title) + '"><i>'
+        + (s.on ? '✓' : i + 1) + '</i>' + esc(s.label) + '</span>';
+    }).join('');
+    var le = document.getElementById('dirge-lamps');
+    if (le.__h !== steps) { le.innerHTML = steps; le.__h = steps; }
+    box.className = 'show' + (v.open ? ' open' : '');
+    document.getElementById('dirge-key').className = 'dk' + (v.uncovered ? ' uncovered' : '') + (v.turned ? ' turned' : '');
+    document.getElementById('dirge-kl').textContent = v.keyLabel;
+    var disc = document.getElementById('dirge-disc');
+    disc.className = v.disc.cls;
+    disc.textContent = v.disc.text;
+    var btns = document.getElementById('dirge-btns');
+    var n = v.total || 0;
+    if (btns.__n !== n) {
+      var h = '';
+      for (var bi = 1; bi <= n; bi++) h += '<b style="--i:' + (bi - 1) + '">' + bi + '</b>';
+      btns.innerHTML = h;
+      btns.__n = n;
+    }
+    var bs = btns.children;
+    for (var bj = 0; bj < bs.length; bj++) {
+      var num = bj + 1;
+      var cls = (v.count != null && num > v.count ? 'spent' : '') + (num === v.firingButton ? ' firing' : '');
+      if (bs[bj].className !== cls) bs[bj].className = cls;
+      if (num === v.firingButton) bs[bj].style.setProperty('--sweep', v.sweep.toFixed(3));
+    }
+    if (_dirgeOpen !== v.open) {
+      _dirgeOpen = v.open;
+      var db = box.querySelector('.db');
+      _requestAutoHeight(v.open && db ? db.offsetHeight + 8 : 0);
+      setTimeout(function(){ _requestAutoHeight(); }, 450);
+    }
+  }
+  var _dsw = document.getElementById('dirge-sw');
+  _dsw.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+  _dsw.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  _dsw.addEventListener('click', function(){
+    _dirgeOn = !_dirgeOn;
+    try { localStorage.setItem('wp:melody:dirge', _dirgeOn ? '1' : '0'); } catch (e) {}
+  });
+  // dirge-board:js:end
+
+  var listEl = document.getElementById('list');
+  var emptyEl = document.getElementById('empty');
+
+  async function tick(){
+    try {
+      // Fetch/paint decoupled (2026-07-07 review): this tick runs at 150ms so
+      // the cast bar animates, but the FULL /api/state fetch (the dashboard-
+      // sized blob) only refreshes every 600ms — was ~6.6 req/s of the
+      // heaviest endpoint the agent serves.
+      var _nowMs = Date.now();
+      if (!window.__wpMelState || _nowMs - (window.__wpMelAt || 0) >= 600) {
+        // Fetch isolated from paint (#116): a transient agent/EQ hiccup must
+        // NOT freeze the overlay. On failure we keep the last state and still
+        // run the render below, so the stale-entry age-out can clear a frozen
+        // card (and its runaway "stopped N ago" counter) instead of leaving it
+        // — and its lone red stopped-row frame — on screen indefinitely.
+        try {
+          const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+          window.__wpMelState = await r.json();
+          window.__wpMelAt = _nowMs;
+          var _cOk = document.getElementById('conn'); _cOk.className = 'conn ok'; _cOk.textContent = '●';
+        } catch (fe) {
+          var _cBad = document.getElementById('conn'); _cBad.className = 'conn bad'; _cBad.textContent = '○';
+        }
+      }
+      const s = window.__wpMelState;
+      if (!s) { emptyEl.style.display = 'block'; return; }
+      const now = Date.now();
+      const melodyByChar = s.bardMelody || {};
+      // Show only the active EQ window's character so switching windows
+      // doesn't pile up rotations from every alt at once. When the agent
+      // doesn't have an active signal yet, show everything (initial boot).
+      const active = s.activeCharacter ? String(s.activeCharacter).toLowerCase() : null;
+      var keys = active
+        ? Object.keys(melodyByChar).filter(function(k){ return k.toLowerCase() === active; })
+        : Object.keys(melodyByChar);
+      // "Melody on bard only" — when the user has enabled the bard-only
+      // toggle (persisted in localStorage), suppress the entire overlay
+      // payload when no rendered character is actually a Bard. Druid /
+      // mage / etc. melodies are still tracked by the agent, just hidden
+      // here so a non-bard player doesn't get a spell-cast HUD they
+      // didn't ask for. Mirrors the per-overlay opt-in pattern.
+      var bardOnly = false;
+      try { bardOnly = localStorage.getItem('wp.melodyBardOnly') === '1'; } catch (e) {}
+      if (typeof _mimicMelodyBardOnly === 'boolean') bardOnly = _mimicMelodyBardOnly;
+      // Song-damage chips (per-hit + kite total) — default ON; tray toggle.
+      var showDmg = true;
+      try { showDmg = localStorage.getItem('wp.melodyDmgTotals') !== '0'; } catch (e) {}
+      if (typeof _mimicMelodyDmgTotals === 'boolean') showDmg = _mimicMelodyDmgTotals;
+      if (bardOnly) {
+        keys = keys.filter(function(k){
+          var st = melodyByChar[k];
+          return st && st.isBard;
+        });
+      }
+      // Title swap: when none of the rendered characters are bards, the
+      // overlay is a generic spell-casting tracker. Update the header so
+      // the user isn't told "Melody" when no melody is running.
+      var anyBard = keys.some(function(k){ return melodyByChar[k] && melodyByChar[k].isBard; });
+      var titleEl = document.getElementById('titleLbl');
+      if (titleEl) {
+        titleEl.textContent = anyBard ? '🎶 Melody' : '🔮 Spell Casting';
+      }
+      // Empty-state copy follows the same swap.
+      var emptyEl0 = document.getElementById('empty');
+      if (emptyEl0) {
+        emptyEl0.textContent = anyBard
+          ? 'no bard songs yet — start singing.'
+          : 'no casts yet — start a spell to populate the tracker.';
+      }
+      var html = '';
+      for (var ki = 0; ki < keys.length; ki++) {
+        var k = keys[ki];
+        var st = melodyByChar[k];
+        if (!st) continue;
+        // Age-out (#116): the agent drops a melody after ~30s idle, so a
+        // character we still see idle well past that is a stale leftover
+        // (frozen cache after an agent/EQ hiccup, or a leaked state). Skip it
+        // instead of rendering a frozen "stopped N ago" card. A live row —
+        // casting, just-cast, or a bard mid-melody — always carries a fresh
+        // lastChangeAt and never trips this.
+        var _lastChange = st.lastChangeAt || st.castStartedAt || now;
+        if ((now - _lastChange) > STALE_DROP_MS) continue;
+        var hasOrder = Array.isArray(st.order) && st.order.length > 0;
+        // "Playing melody…" placeholder: when /melody started but Zeal hasn't
+        // delivered a per-song name yet, render an active-state placeholder
+        // so the user sees the tracker IS aware. nowCasting (Zeal label 134)
+        // shows up below if a cast is in flight.
+        if (!hasOrder) {
+          if (st.melodyActive) {
+            var since = st.melodyStartedAt ? Math.max(0, Math.round((now - st.melodyStartedAt)/1000)) : 0;
+            var nowCastingHtml2 = '';
+            if (st.nowCasting) nowCastingHtml2 = '<div class="nowcast">↻ <span class="lbl">now casting:</span> <span class="spell">' + esc(shortSongName(st.nowCasting)) + '</span></div>';
+            html += '<div class="mel"><div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">playing melody · ' + since + 's</span></div>'
+                  + '<div class="empty">waiting for first song name from Zeal…</div>' + nowCastingHtml2 + '</div>';
+          }
+          continue;
+        }
+
+        var castStartedAt = st.castStartedAt || st.lastChangeAt || now;
+        var sinceCast = now - castStartedAt;
+        var sinceChange = now - (st.lastChangeAt || castStartedAt);
+        var currentPos = (typeof st.currentPos === 'number') ? st.currentPos : -1;
+        // Cast time uses the per-entry cast_ms when the agent supplied one
+        // (from eqemu_spells.cast_time — handles long-cast clickies like
+        // Blood Orchid Katana → 8s SoW correctly), else the row-kind default.
+        var curEntry = currentPos >= 0 ? st.order[currentPos] : null;
+        var castMs   = castMsForEntry(curEntry, st.kind);
+        // curKind was read below but never defined, so the label between casts threw and the whole
+        // repaint stopped (found 2026-09-26 building the DIRGE board).
+        var curKind  = (curEntry && curEntry.kind) || st.kind || 'song';
+
+        // Three states for currentPos:
+        //   casting → sinceCast < castMs → bar fills 0→100%
+        //   done    → cast finished, awaiting next twist
+        //   stopped → no cast in STOP_AFTER_MS → freeze as ⏹
+        // castInterrupted: user clicked their current song to stop it mid-
+        // cast. Agent ages castStartedAt + raises this flag so we render
+        // the row as stopped immediately (instead of filling the bar as if
+        // the cast finished).
+        var isCasting = !st.castInterrupted && sinceCast < castMs;
+        var isStopped = st.castInterrupted || (!isCasting && sinceChange >= STOP_AFTER_MS);
+
+        var castPct = isCasting ? Math.max(0, Math.min(100, (sinceCast / castMs) * 100)) : 100;
+
+        var sinceLabel;
+        if (isStopped)      sinceLabel = 'stopped ' + fmtElapsed(sinceChange) + ' ago';
+        else if (isCasting) sinceLabel = 'casting ' + Math.max(0, ((castMs - sinceCast)/1000)).toFixed(1) + 's';
+        else                sinceLabel = (st.cycleLength > 0 ? (st.cycleLength + '-' + (curKind === 'spell' ? 'spell' : 'song') + ' melody') : 'building melody…');
+
+        var rowsHtml = '';
+        for (var i = 0; i < st.order.length; i++) {
+          // Order entries are objects: { name, remaining_secs?, remaining_ticks?, buff_name? }
+          // The agent enriches each song with its buff-window duration when
+          // the song's effect is visible in Zeal's buff slots. Backwards-
+          // compatible: if order[i] is a bare string (old payload), wrap it.
+          var entry = st.order[i];
+          if (typeof entry === 'string') entry = { name: entry };
+          var name = entry.name;
+          var rowClass = 'row';
+          var icon = '▶';
+          var styleAttr = '';
+          if (i === currentPos) {
+            // If the live Zeal cast label is a UTILITY song (Amp / Niv\`s /
+            // Selo\`s etc.) then THIS top-row rotation entry isn't the song
+            // actually in flight — the cast bar belongs on the bardBuffs
+            // strip below. Compare the slugged names so backtick vs
+            // apostrophe vs spacing don't fight us.
+            var _topSlug = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var _castSlug = String(st.nowCasting || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+            var topIsTheCast = !_castSlug || _topSlug === _castSlug
+              || _topSlug.indexOf(_castSlug) >= 0 || _castSlug.indexOf(_topSlug) >= 0;
+            if (isCasting && topIsTheCast) {
+              rowClass += ' casting';
+              icon = '▶';
+              styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
+            } else if (isStopped) {
+              rowClass += ' stopped';
+              icon = '⏹';
+            } else if (isCasting) {
+              // Cast in progress but the cast label points at a utility,
+              // not this rotation entry → render this row as queued so the
+              // bar doesn't fight the strip below.
+              rowClass += ' queued';
+            } else {
+              rowClass += ' done';
+              icon = '✓';
+            }
+          } else {
+            rowClass += ' queued';
+          }
+          // Buff-window timer chip — present only when the song's effect is
+          // tickdown'ing in the buff window. Color tiers mirror the web
+          // BuffChip: low ≤6m amber, crit ≤2m red.
+          var timerHtml = '';
+          if (typeof entry.remaining_secs === 'number' && entry.remaining_secs > 0) {
+            var rs = entry.remaining_secs;
+            var mm = Math.floor(rs / 60), ss = rs - mm*60;
+            var t = mm + ':' + String(ss).padStart(2,'0');
+            var tier = rs <= 120 ? 'crit' : (rs <= 360 ? 'low' : '');
+            var titleExtra = entry.buff_name && entry.buff_name.toLowerCase() !== name.toLowerCase()
+              ? ' · landed as "' + entry.buff_name + '"' : '';
+            timerHtml = '<span class="timer ' + tier + '" title="Buff window: ' + esc(t) + ' remaining' + esc(titleExtra) + '">' + t + '</span>';
+          }
+          // Cast-count badge: how many times this character has cast this
+          // particular song/spell THIS SESSION. Surfaces rotation depth
+          // without forcing the user into the Info tab. Pulled from the
+          // top-level stats.castCounts map, character-scoped.
+          var castN = (s.castCounts && k && s.castCounts[String(k)] && s.castCounts[String(k)][name]) || 0;
+          // castCounts keys are case-sensitive — also try the original
+          // character casing from melodyByChar (we lower-cased it for the
+          // active filter, but castCounts may have either).
+          if (!castN && s.castCounts) {
+            for (var cck in s.castCounts) {
+              if (cck.toLowerCase() === k && s.castCounts[cck][name]) {
+                castN = s.castCounts[cck][name]; break;
+              }
+            }
+          }
+          var countHtml = castN > 0
+            ? '<span class="cnt" title="Cast ' + castN + ' time(s) this session">×' + castN + '</span>'
+            : '';
+          // PBAOE mob-counter chip — how many entities the last pulse of this
+          // song hit, out of Quarm's 12-target AE cap. 12/12 = full swarm
+          // (anything beyond the cap warps to the bard instead of being hit),
+          // lit green. When the song deals damage the pulse total rides the
+          // chip; per-mob detail lives in the tooltip. Songs without a fresh
+          // pulse (or whose landing text the agent can't count) show nothing.
+          var AOE_CAP = 12;
+          var aoeHits = (typeof entry.aoe_hits === 'number' && entry.aoe_hits > 0) ? entry.aoe_hits
+                      : (entry.aoe_dmg && entry.aoe_dmg.n > 0 ? entry.aoe_dmg.n : 0);
+          var aoeHtml = '';
+          if (aoeHits > 0) {
+            var full = aoeHits >= AOE_CAP;
+            var d = entry.aoe_dmg;
+            var kite = entry.aoe_kite;
+            // Chip: ⚔hits/12 · <per-hit>ea · Σ<kite total>. Per-hit is what
+            // the song hits each mob for THIS pulse; Σ is the running total
+            // for the current kite (agent resets it after 30s quiet).
+            var dmgChip = '';
+            var dmgTip  = '';
+            if (showDmg && d && d.total > 0) {
+              var per = d.min === d.max ? String(d.max) : (d.min + '–' + d.max);
+              dmgChip = ' · ' + per + 'ea';
+              dmgTip = '\nLast pulse: ' + d.total + ' total — ' + d.n + ' mob(s) at ' + per + ' each';
+            }
+            if (showDmg && kite && kite.total > 0) {
+              dmgChip += ' · Σ' + fmtDmg(kite.total);
+              dmgTip += '\nThis kite: ' + kite.total + ' total over ' + kite.pulses + ' pulse(s)'
+                      + (kite.secs > 0 ? ' · ' + fmtElapsed(kite.secs * 1000) : '');
+            }
+            var tip = 'Last pulse hit ' + aoeHits + ' of the ' + AOE_CAP + '-target AE cap'
+                    + (full ? ' — FULL SWARM (extra mobs are warping to you)' : '')
+                    + dmgTip;
+            aoeHtml = '<span class="aoe' + (full ? ' full' : '') + '" title="' + esc(tip) + '">⚔' + aoeHits + '/' + AOE_CAP + esc(dmgChip) + '</span>';
+          }
+          rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
+                    +   '<span class="icon">' + icon + '</span>'
+                    +   '<span class="name">' + esc(shortSongName(name)) + aoeHtml + '</span>'
+                    +   countHtml
+                    +   timerHtml
+                    + '</div>';
+        }
+
+        // "Now casting: X" — pulled from Zeal label 134 in real time, so it
+        // updates immediately when the cast bar starts (no log-line lag). Only
+        // shows while a cast is in flight; otherwise omitted.
+        var nowCastingHtml = '';
+        if (st.nowCasting) {
+          nowCastingHtml = '<div class="nowcast">↻ <span class="lbl">now casting:</span> <span class="spell">' + esc(shortSongName(st.nowCasting)) + '</span></div>';
+        }
+        // Bard utility-buff strip — Amplification (Voice of the Serpent clicky)
+        // + Resonance / Harmonize (Shadowsong Cloak clicky). Static rows at
+        // the bottom showing remaining time OR "off". Only rendered when the
+        // character is a bard (state.kind === 'song' → bardBuffs object set
+        // server-side). Harmonize wins over Resonance when both exist (Quarm
+        // mechanics: Harmonize replaces Resonance for bards that have it).
+        var bardBuffsHtml = '';
+        if (st.bardBuffs) {
+          var casting = st.bardBuffs.casting || {};
+          // When a strip row shows OFF, surface the raw Zeal buff-slot names
+          // in the tooltip so we can see exactly what Zeal is reporting and
+          // fix the alias list if a label changed. Limited to 8 names so the
+          // tooltip stays readable; full list is on /api/state.bardMelody.
+          // Two debug streams: `buffSlotsDebug` is the recognized buff-window
+          // names (slots 45-59 / 135-140), `buffsRawDebug` is every labeled
+          // Type-1 payload Zeal sends (#id:value(ticks)) — useful when a buff
+          // lands in a slot ID Mimic doesn't currently promote into `buffs[]`.
+          var rawSlotsHint = '';
+          if (Array.isArray(st.buffSlotsDebug) && st.buffSlotsDebug.length) {
+            rawSlotsHint = '\n\nZeal buff slots seen: ' + st.buffSlotsDebug.slice(0, 8).join(' · ');
+          }
+          if (Array.isArray(st.buffsRawDebug) && st.buffsRawDebug.length) {
+            rawSlotsHint += '\n\nRaw Zeal labels: ' + st.buffsRawDebug.slice(0, 12).join(' · ');
+          }
+          function _utilRow(label, info, isCasting, clickyHint) {
+            var castIcon = isCasting ? '<span class="util-cast">▶</span>' : '<span class="util-cast off">▶</span>';
+            // Three states for the time chip:
+            //   off    — no buff observed (info null)
+            //   on     — buff observed but no tick count (info.observed, no remaining_secs)
+            //   M:SS   — full countdown (info.remaining_secs > 0)
+            var t = '<span class="util-t off">off</span>';
+            if (info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0) {
+              var rs = info.remaining_secs;
+              var mm = Math.floor(rs / 60), ss = rs - mm*60;
+              var tStr = mm + ':' + String(ss).padStart(2,'0');
+              var tier = rs <= 30 ? 'crit' : (rs <= 120 ? 'low' : '');
+              t = '<span class="util-t ' + tier + '">' + tStr + '</span>';
+            } else if (info && info.observed) {
+              // Buff matched but tick count missing — render "on" so the
+              // user knows it's up, no countdown available.
+              t = '<span class="util-t">on</span>';
+            }
+            // OFF rows get the raw Zeal-slot dump appended so a misnamed
+            // buff is diagnosable on hover. Active rows keep the clean hint.
+            var hint = info && typeof info.remaining_secs === 'number' && info.remaining_secs > 0
+              ? clickyHint
+              : clickyHint + rawSlotsHint;
+            // When this utility row IS the current cast (▶ active), paint a
+            // left-to-right progress bar across it — mirrors the top song
+            // row's cast-fill behavior. User feedback: the progress bar
+            // was previously stuck on the top row even when a utility from
+            // the bottom strip was being cast.
+            var classes = 'util-row' + (isCasting ? ' casting' : '');
+            var styleAttr = '';
+            if (isCasting && typeof castPct === 'number') {
+              styleAttr = ' style="--p:' + castPct.toFixed(1) + '%"';
+            }
+            return '<div class="' + classes + '" title="' + esc(hint) + '"' + styleAttr + '>'
+                 + castIcon
+                 + '<span class="util-lbl">' + label + '</span>' + t + '</div>';
+          }
+          var harmonizeOrResonance = st.bardBuffs.harmonize
+            ? _utilRow('Harmonize',   st.bardBuffs.harmonize, !!casting.harmonize_resonance, 'From Shadowsong Cloak — replaces Resonance')
+            : _utilRow('Resonance',   st.bardBuffs.resonance, !!casting.harmonize_resonance, 'From Voice of the Serpent');
+          bardBuffsHtml = '<div class="bardbuffs">'
+                        + _utilRow('Amplification',          st.bardBuffs.amplification,        !!casting.amplification,       'Bard self-buff')
+                        + harmonizeOrResonance
+                        + _utilRow("Selo`s Accel. Chorus",   st.bardBuffs.accelerating_chorus,  !!casting.accelerating_chorus, 'Group-wide haste utility')
+                        + _utilRow("Niv`s Melody",           st.bardBuffs.nivs,                 !!casting.nivs,                'Niv`s Melody of Preservation → Breath of Harmony')
+                        + _utilRow("Nature`s Melody",        st.bardBuffs.natures,              !!casting.natures,             'Nature`s Melody')
+                        + '</div>';
+        }
+        html += '<div class="mel">'
+              + '<div class="who"><span>' + esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</span><span class="since">' + esc(sinceLabel) + '</span></div>'
+              + '<div class="songs">' + rowsHtml + '</div>'
+              + bardBuffsHtml
+              + nowCastingHtml
+              + '</div>';
+      }
+      var _boardSt = null;
+      for (var bi = 0; bi < keys.length && !_boardSt; bi++) {
+        var bst = melodyByChar[keys[bi]];
+        if (bst && bst.isBard && bst.bardBuffs) _boardSt = bst;
+      }
+      paintDirge(_boardSt, now);
+      if (listEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
+        listEl.innerHTML = html;
+        listEl.__wpHtml = html;
+        _requestAutoHeight();
+      }
+      emptyEl.style.display = html ? 'none' : 'block';
+    } catch (e) {
+      var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
+    }
+  }
+  // Tick fast so the cast-progress bar animates smoothly (every ~100ms).
+  tick(); setInterval(tick, 150);
+</script>
+<script>
+(function(){
+  var steps = [].slice.call(document.querySelectorAll('#steps li'));
+  function seek(a){ T0 = Date.now() - a * 1000; window.__wpMelState = null; }
+  function paint(){
+    var t = demoT();
+    document.getElementById('clock').textContent = t.toFixed(1) + ' s of ' + LOOP;
+    var nowIdx = -1;
+    steps.forEach(function(li, i){ if (t >= parseFloat(li.getAttribute('data-a'))) nowIdx = i; });
+    steps.forEach(function(li, i){ li.className = i === nowIdx ? 'now' : (i < nowIdx ? 'done' : ''); });
+  }
+  steps.forEach(function(li){
+    li.querySelector('button').addEventListener('click', function(){ seek(parseFloat(li.getAttribute('data-a'))); paint(); });
+  });
+  setInterval(paint, 100); paint();
+  document.getElementById('replay').addEventListener('click', function(){ seek(0); });
+})();
+</script>
+</body></html>

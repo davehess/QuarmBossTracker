@@ -72,4 +72,9 @@ module.exports = {
       },
     ];
   },
+  // /mimic/dirge: the Dirge Tactical Nuke demo, a static page built by scripts/build-dirge-demo.js
+  // (it runs the real overlay script, which a React page would not execute).
+  async rewrites() {
+    return [{ source: '/mimic/dirge', destination: '/mimic/dirge.html' }];
+  },
 };

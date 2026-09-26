@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'dirge-nuke-2026-09-26',
     title: 'Agent 3.7.22',
-    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.17',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.18',
     date: '2026-09-26',
     channel: 'beta',
     headline: 'Bards get the DIRGE TACTICAL NUKE board on the Melody overlay.',
@@ -50,7 +50,7 @@ export const releases: Release[] = [
       },
       {
         name: 'Turn the key, one button per Dirge',
-        blurb: 'Pop Puretone Discipline and the key turns, revealing a numbered button for every Dirge your mana holds, 800 each. Each one fills while you sing it and goes dark when its mana is spent. The count sits by the switch, and a DISC key in the corner shows when Puretone is up.',
+        blurb: 'Pop Puretone Discipline and the key turns, revealing a numbered button for every Dirge your mana holds, 800 each. Each one fills while you sing it and goes dark when its mana is spent. The count sits by the switch, and a DISC key in the corner shows when Puretone is up. Watch it run at wolfpack.quest/mimic/dirge.',
       },
     ],
     fixes: [

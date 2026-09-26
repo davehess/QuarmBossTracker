@@ -2624,6 +2624,12 @@ Keyturn under a little plastic cover … Underneath put in 'Dirge Team 6 Tactica
   - preview steps you can click to jump to.
 - The single big NUKE button and the lamp chips are gone.
 
+**Public demo (web 1.8.18):** the guild lead: *"throw this up on wolfpack.quest and i'll use it. I
+want to place it in Discord."* It is at **wolfpack.quest/mimic/dirge**, public (it reads nothing and
+names no real player), with a large Discord card. Link previews can now carry a picture, per page,
+through `pageMeta.ts`. The page is a snapshot of beta's board, built by
+`scripts/build-dirge-demo.js`; rebuild it when the board changes.
+
 ## 46. PvP: every death stored, grouped into fights; the alliance night in Vex Thal (2026-09-26)
 
 **The guild lead**, the morning after an alliance of Dungeons and Dragons, Wolf Pack, Freedom and
