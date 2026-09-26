@@ -743,3 +743,70 @@ describe('no mana for warriors, rogues and monks', () => {
     expect(load({ zeal: zeal('Shadow Knight') })._serializeMeState().no_mana).toBe(false);
   });
 });
+
+// Tracking arrows (a member's idea, 2026-09-25; the guild lead: "YES"). The lines
+// are the client's own, from eqstr_us.txt 12040, 12499, 12674-12681 — checked in
+// two independent copies of the file.
+describe('tracking — the client\'s direction lines', () => {
+  const zeal = (cls, extra = {}) => ({ Aldenmar: { charInfo: [{ id: 3, value: cls }], gauges: [], updatedAt: clock, zone: 22, ...extra } });
+  // Zeal keeps streaming while you track: the character stays the active one.
+  const track = (h) => { h._zealState.Aldenmar.updatedAt = clock; return h._serializeMeState().track; };
+
+  it('lights each of the eight directions, clockwise from straight ahead', () => {
+    const h = load({ zeal: zeal('Ranger') });
+    for (const [text, angle] of [['is straight ahead.', 0], ['is ahead and to the right.', 45], ['is to the right.', 90],
+      ['is behind and to the right.', 135], ['is behind you.', 180], ['is behind and to the left.', 225],
+      ['is to the left.', 270], ['is ahead and to the left.', 315]]) {
+      say(h, 'Aldenmar', 'a scouting kobold ' + text);
+      expect(track(h)).toMatchObject({ name: 'a scouting kobold', angle });
+    }
+  });
+
+  it('"You begin tracking" names the mob before any direction; either "lost" line clears it', () => {
+    const h = load({ zeal: zeal('Druid') });
+    expect(track(h)).toBeNull();
+    say(h, 'Aldenmar', 'You begin tracking Gorenaire.');
+    expect(track(h)).toMatchObject({ name: 'Gorenaire', angle: null });
+    say(h, 'Aldenmar', 'Gorenaire is behind you.');
+    expect(track(h)).toMatchObject({ name: 'Gorenaire', angle: 180 });
+    say(h, 'Aldenmar', 'You have lost your tracking target.');
+    expect(track(h)).toBeNull();
+    say(h, 'Aldenmar', 'Gorenaire is to the left.');
+    expect(track(h)).toMatchObject({ angle: 270 });
+    say(h, 'Aldenmar', 'You have lost or do not have a tracking target.');
+    expect(track(h)).toBeNull();
+  });
+
+  it('a player\'s /emote in the same shape lights nothing for a class that cannot track', () => {
+    const h = load({ zeal: zeal('Cleric') });
+    say(h, 'Aldenmar', 'Brackwyn is behind you.');
+    expect(track(h)).toBeNull();
+    // …but the mob named by "You begin tracking" is followed, whatever the class reads as.
+    say(h, 'Aldenmar', 'You begin tracking a forest wolf.');
+    say(h, 'Aldenmar', 'a forest wolf is ahead and to the left.');
+    expect(track(h)).toMatchObject({ name: 'a forest wolf', angle: 315 });
+    say(h, 'Aldenmar', 'Brackwyn is behind you.');
+    expect(track(h)).toMatchObject({ name: 'a forest wolf', angle: 315 });
+  });
+
+  it('a direction reports its age and stays five minutes; a new zone drops it', () => {
+    const h = load({ zeal: zeal('Bard') });
+    say(h, 'Aldenmar', 'a forest wolf is to the right.');
+    clock += 60_000;
+    expect(track(h)).toMatchObject({ angle: 90, age_ms: 60_000 });
+    clock += 4 * 60_000 + 1;
+    expect(track(h)).toBeNull();
+    say(h, 'Aldenmar', 'a forest wolf is to the right.');
+    expect(track(h)).toMatchObject({ angle: 90 });
+    h._zealState.Aldenmar.zone = 23;
+    expect(track(h)).toBeNull();
+  });
+
+  it('a tracking line is not taken for anything else on the HUD', () => {
+    const h = load({ zeal: zeal('Ranger') });
+    say(h, 'Aldenmar', 'You begin tracking a gnoll.');
+    const s = h._serializeMeState();
+    expect(s.cooldowns.every(c => c.seen === false)).toBe(true);
+    expect(s.swing).toBeFalsy();
+  });
+});

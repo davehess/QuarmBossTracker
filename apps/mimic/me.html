@@ -654,7 +654,35 @@
       .map(function(f){ return esc(f.label) + ' ' + focusValue(f); })[0] || null;
     var r = s.resists || {};
     d.res = (r.mr != null || r.fr != null) ? [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']] : null;
+    if (s.track) d.track = { name: s.track.name, angle: s.track.angle, age: (s.track.age_ms || 0) + dt };
     return d;
+  }
+  // Tracking (a member's idea, 2026-09-25: "Ahead, Ahead and to right/left,
+  // behind left/right behind you"; the guild lead: "YES"): eight arrows round the
+  // ring, one for each direction the game's tracking lines name, the latest lit.
+  // The diagonals sit out in the square's corners, where the ring leaves room.
+  // The square's edge is taken at the other four (the target's target on top,
+  // HP and mana labels at the sides, the ✥ Box HUD ✕ row under the ring), so
+  // those four sit INSIDE the ring instead, their inner end on the edge of the
+  // clear middle (r 110), under the target's lines and above the resists. The
+  // game only speaks when the direction changes, so a direction older than
+  // 15 s dims — you may have turned since. The builder shows all eight, or only
+  // the lit one.
+  var TRACK_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315];
+  var TRACK_FRESH_MS = 15000;
+  function trackArrows(t, litOnly, W, k){
+    var out = '';
+    TRACK_ANGLES.forEach(function(a){
+      var lit = t.angle === a;
+      if (!lit && litOnly) return;
+      var pt = P(a % 90 ? 208 : 110 + 7 * k, a);
+      var style = lit
+        ? 'fill="rgba(210,153,34,0.35)" stroke="var(--gold)" stroke-width="' + f1((1.4 * W + 0.6) / k) + '"' + (t.age > TRACK_FRESH_MS ? ' opacity="0.45"' : '')
+        : 'fill="none" stroke="rgba(201,209,217,0.22)" stroke-width="' + f1((W + 0.4) / k) + '"';
+      out += '<path class="trk' + (lit ? ' lit' : '') + '" transform="translate(' + f1(pt[0]) + ' ' + f1(pt[1]) + ') rotate(' + a + ') scale(' + f1(k) + ')"'
+        + ' d="M0 -8 L6 -1 L2.5 -1 L2.5 7 L-2.5 7 L-2.5 -1 L-6 -1 Z" ' + style + ' stroke-linejoin="round"/>';
+    });
+    return out;
   }
   function resTspans(res){
     return res.map(function(x, i){ return (i ? ' ' : '') + '<tspan fill="' + EL_COLOR[x[2]] + '">' + x[0] + '<tspan font-weight="700">' + (x[1] == null ? '—' : x[1]) + '</tspan></tspan>'; }).join('');
@@ -730,6 +758,7 @@
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
       ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
+    ['Tracking', [['track', 'Arrows toward what you track'], ['trackShow', 'Arrows drawn', ['all', 'lit']]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
   // Line weight (the guild lead, round four: "Everything feels very bold, we
@@ -738,12 +767,13 @@
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
-    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin', sizes: {} };
+    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
+    track: 1, trackShow: 'all', sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'resists'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'resists', 'track'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -1165,6 +1195,7 @@
         + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5 * Math.min(1.2, sz('ds')), 'var(--orange)', 'middle', 700);
     }
     if (p.resists && d.res) h += ringLabel('hrs', 136, 146, 214, resTspans(d.res), 8 * sz('resists'), true);
+    if (p.track && d.track) h += trackArrows(d.track, p.trackShow === 'lit', W, sz('track'));
     return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
   }
 

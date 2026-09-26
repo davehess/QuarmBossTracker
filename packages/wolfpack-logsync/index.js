@@ -13032,6 +13032,68 @@ function _meTimersSave() {
 // "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
 // (EnragedDurationTimer), so an entry with no end line expires after 12 s.
 const _meEnraged = new Map();   // mobLower → until
+
+// TRACKING — the HUD's eight arrows (a member's idea, 2026-09-25: "for tracking.
+// Ahead, Ahead and to right/left, behind left/right behind you"; the guild lead:
+// "YES"). A ranger, druid or bard tracking a mob gets the client's own lines,
+// relative to the way they face (eqstr_us.txt 12676-12680, the side word from
+// 12674/12675):
+//   "%1 is straight ahead."   "%1 is ahead and to the %2."   "%1 is to the %2."
+//   "%1 is behind and to the %2."   "%1 is behind you."
+// with "You begin tracking %1." (12040) before them and "You have lost your
+// tracking target." (12681) or "You have lost or do not have a tracking
+// target." (12499) at the end. Angles run clockwise from straight ahead, like
+// the ring's. A player's /emote can print the same shape ("Bob is behind
+// you."), so a direction line counts only for the mob you began tracking, or
+// from a class that can track.
+const _ME_TRACK_DIRS = [
+  [' is straight ahead.', 0], [' is ahead and to the right.', 45], [' is to the right.', 90],
+  [' is behind and to the right.', 135], [' is behind you.', 180], [' is behind and to the left.', 225],
+  [' is to the left.', 270], [' is ahead and to the left.', 315],
+];
+const _ME_TRACKERS = /^(Ranger|Druid|Bard)$/;
+// How long a direction is shown after its line. The client prints a new line
+// as the direction changes, so a quiet minute is not a lost track; the HUD
+// dims an old direction rather than dropping it.
+const _ME_TRACK_KEEP_MS = 5 * 60_000;
+const _meTrack = new Map();   // charLower → { name, angle (null = no direction yet), at, zone }
+function _meNoteTrack(msg, line, cl, now) {
+  if (msg === 'You have lost your tracking target.' || msg === 'You have lost or do not have a tracking target.') {
+    _meTrack.delete(cl);
+    return true;
+  }
+  const zst = _meZealFor(cl);
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : now;
+  if (msg.startsWith('You begin tracking ') && msg.endsWith('.')) {
+    _meTrack.set(cl, { name: msg.slice('You begin tracking '.length, -1), angle: null, at, zone: zst ? zst.zone : null });
+    return true;
+  }
+  if (!msg.endsWith('.') || msg.indexOf(' is ') === -1) return false;
+  for (const [suffix, angle] of _ME_TRACK_DIRS) {
+    if (msg.length <= suffix.length || !msg.endsWith(suffix)) continue;
+    const name = msg.slice(0, -suffix.length);
+    const cur = _meTrack.get(cl);
+    const who = whoData.get(cl);
+    const tracker = _ME_TRACKERS.test(normalizeClass((zst && _meLabel(zst, 3)) || (who && who.class) || _raidClassByName.get(cl) || '') || '');
+    if (!(cur && cur.name.toLowerCase() === name.toLowerCase()) && !tracker) return false;
+    _meTrack.set(cl, { name, angle, at, zone: zst ? zst.zone : null });
+    return true;
+  }
+  return false;
+}
+// What the HUD draws: the tracked mob and its last direction, or null once
+// the track is lost, stale, or left behind in another zone.
+function _meTrackFor(cl, st, now) {
+  const t = _meTrack.get(cl);
+  if (!t) return null;
+  if (now - t.at > _ME_TRACK_KEEP_MS || (t.zone != null && st && st.zone != null && t.zone !== st.zone)) {
+    _meTrack.delete(cl);
+    return null;
+  }
+  return { name: t.name, angle: t.angle, age_ms: Math.max(0, now - t.at) };
+}
+
 // One raw-line hook for all of the above. Live tail only; every branch is a
 // prefix or exact-text test, so a line that is none of these costs almost
 // nothing.
@@ -13042,6 +13104,7 @@ function _meNoteRawLine(line, character) {
   const msg = line.slice(at + 2).trimEnd();
   const now = Date.now();
   const cl = String(character).toLowerCase();
+  if (_meNoteTrack(msg, line, cl, now)) return;
   _meTimersLoad();   // before any write, so a restored timer is not overwritten by a stale file
   // A death closes that mob's damage total on the HUD (_meMobTallies).
   if (msg.indexOf(' slain') !== -1 || msg.endsWith(' died.')) {
@@ -13455,6 +13518,7 @@ function _serializeMeState() {
       pr: _meNum(_meLabel(st, 12)), dr: _meNum(_meLabel(st, 13)),
     },
     blind: !!(blind && blind.active),
+    track: _meTrackFor(cl, st, now),
   };
 }
 

@@ -966,6 +966,69 @@ describe('the HUD — rounds, damage shield, builder', () => {
     expect(R.renderHud(one)).toContain('class="w-thin"');          // a bad saved value falls back
     reset();
   });
+
+  // Tracking (a member's idea, 2026-09-25: "Ahead, Ahead and to right/left,
+  // behind left/right behind you"; the guild lead: "YES").
+  const arrows = (h) => [...h.matchAll(/<path class="trk( lit)?" transform="translate\(([\d.]+) ([\d.]+)\) rotate\((\d+)\) scale\(([\d.]+)\)"[^>]*\/>/g)]
+    .map(m => ({ lit: !!m[1], x: +m[2], y: +m[3], a: +m[4], k: +m[5], dim: /opacity="0\.45"/.test(m[0]) }));
+  const tracking = (angle, age = 0) => s([], { track: { name: 'a scouting kobold', angle, age_ms: age } });
+
+  it('tracking: eight arrows round the ring, the latest direction lit', () => {
+    reset();
+    const a = arrows(R.renderHud(tracking(45)));
+    expect(a.map(x => x.a)).toEqual([0, 45, 90, 135, 180, 225, 270, 315]);
+    expect(a.filter(x => x.lit).map(x => x.a)).toEqual([45]);
+    const lit = a.find(x => x.lit);                     // "ahead and to the right": up and right of the middle
+    expect(lit.x).toBeGreaterThan(300);
+    expect(lit.y).toBeLessThan(100);
+    const behind = arrows(R.renderHud(tracking(180))).find(x => x.lit);
+    expect(behind.x).toBeCloseTo(200, 5);
+    expect(behind.y).toBeGreaterThan(300);              // straight below the middle
+  });
+
+  it('tracking: only the lit arrow when the builder says so; nothing when off, or when not tracking', () => {
+    reset();
+    R.hudParts.trackShow = 'lit';
+    expect(arrows(R.renderHud(tracking(270))).map(x => [x.a, x.lit])).toEqual([[270, true]]);
+    expect(arrows(R.renderHud(tracking(null)))).toEqual([]);          // begun, no direction yet
+    R.hudParts.track = 0;
+    expect(arrows(R.renderHud(tracking(270)))).toEqual([]);
+    reset();
+    expect(arrows(R.renderHud(s([])))).toEqual([]);
+    const begun = arrows(R.renderHud(tracking(null)));                // all eight, none lit
+    expect([begun.length, begun.filter(x => x.lit).length]).toEqual([8, 0]);
+  });
+
+  it('tracking: a direction older than 15 s dims — you may have turned since', () => {
+    reset();
+    const lit = (age) => arrows(R.renderHud(tracking(180, age))).find(x => x.lit);
+    expect(lit(14_000).dim).toBe(false);
+    expect(lit(16_000).dim).toBe(true);
+  });
+
+  // The edge is taken at 12, 3, 6 and 9 o'clock (the target's target, the HP and
+  // mana labels, the ✥ Box HUD ✕ row), so those four sit inside the ring; none
+  // may reach into the clear middle (r 110), and none may leave the square.
+  it('tracking: every arrow stays in the square and out of the middle, at every size', () => {
+    for (const k of [0.7, 1, 1.6]) {
+      reset();
+      R.hudParts.sizes = { track: k };
+      const a = arrows(R.renderHud(tracking(0)));
+      expect(a).toHaveLength(8);
+      for (const x of a) {
+        expect(x.k).toBeCloseTo(k, 5);
+        const r = Math.hypot(x.x - 200, x.y - 200);
+        expect(r - 7 * x.k).toBeGreaterThanOrEqual(110 - 1e-6);   // the shaft's end, 7 units in
+        const rad = x.a * Math.PI / 180, reach = r + 8 * x.k;       // the tip, 8 units out
+        for (const v of [200 + reach * Math.sin(rad), 200 - reach * Math.cos(rad)]) {
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(400);
+        }
+        if (x.a % 90 === 0) expect(reach).toBeLessThan(140);       // the four inside the ring stay under its labels
+      }
+    }
+    reset();
+  });
 });
 
 describe('the in-game picker', () => {
