@@ -2600,6 +2600,53 @@ connection dot went red until the next cast. It is also on stable. One line defi
 **Landed:** beta `611b145b`. `test/melody-dirge-board.test.js` covers both halves; seven
 deliberate breaks, all caught.
 
+## 46. PvP: every death stored, grouped into fights; the alliance night in Vex Thal (2026-09-26)
+
+**The guild lead**, the morning after an alliance of Dungeons and Dragons, Wolf Pack, Freedom and
+one Squirrels of War fought the Zeks in Vex Thal: a full list of assists for everyone in the
+alliance; the /who overlay with every Zek at their peak; the videos and clips on the PvP page; and
+*"Lets start combining PVP encounters into history. 2+ deaths nearby constitutes encounters I
+think."*
+
+**What the data could and could not see that night** (read from the database; the numbers went to
+the guild lead in chat):
+- `pvp_kills` holds a kill only when Wolf Pack is on one side. An alliance-vs-Zek night was mostly
+  missing from it.
+- **Assists are only ever a Wolf Pack character's, and only when its own agent was running.**
+  `_checkPvpAssist` credits the uploader's own character (or pet) for damage in the 120 s before a
+  broadcast death, and the bot drops any assister not on our roster. Nobody else's assists, and
+  no PvP damage totals, exist anywhere. Widening that is a design question, not a query: an agent
+  can see other players' melee on a target in its own log, but not their spells.
+- /who showed the Zek side at its peak at 05:46 UTC (35 of 70 in zone). Their wipe was
+  06:03:37–06:05:07 UTC, 12 Zek deaths in 90 seconds.
+- Death broadcasts carry no location. "Nearby" can only mean the same zone, close in time.
+- Aside, not changed: the agent's `_isZekGuild` reads only "Zek", while the database's Zek checks
+  read "Zek" or "Rise of Zek". One Zek player has worn both tags.
+
+**Built (bot 3.1.152 on main, migration `20260926085942_pvp_deaths_and_fights`):**
+- **`pvp_deaths`**: every death the PvP broadcast reports, any guilds, player kills and deaths to
+  NPCs alike. It is written from `POST /api/agent/pvp` before the Discord post loop, so a post
+  dedup or a missing channel cannot drop one. Its key is victim + minute, because two agents'
+  relays of one death can differ by a second or two. Boss kills are not deaths.
+- **Backfilled 30 days** (1,301 deaths). Wolf Pack kills come from `pvp_kills`. The rest is
+  rebuilt from the `who_observations` rows the relay writes for each broadcast: victim row, then
+  killer row, in one upsert, so the killer's id is the victim's + 1 (checked 9 of 9 against
+  `pvp_assists.raw_text`). `source` says how each row was recovered. A killer the relay never
+  stored (a death to an NPC) is left null.
+- **`pvp_fights()`** groups deaths in two steps:
+  - a **wave** is deaths in one zone each within 3 minutes of the last, with 2+ deaths and at
+    least one player kill, so an NPC raid wipe is not a PvP fight;
+  - a **fight** joins waves less than 20 minutes apart.
+  3 minutes is where the gaps between player kills thin out. At 3 minutes alone the Vex Thal
+  night was 19 pieces; with the 20-minute join it is five fights, the largest 04:49–06:05 UTC
+  with 56 deaths (36 Zek). "Zek" is Zek or Rise of Zek, as the database reads it.
+
+**Next:** the fights and the night's videos and clips on /pvp, on beta first (the UI rule).
+
+**Tests:** `test/pvp-deaths.test.js` runs the row builder (player kill, death to an NPC, boss kill,
+pet credit, no-guild spellings, two relays of one death) and checks the write comes before the
+post loop. Five deliberate breaks, all caught.
+
 
 
 

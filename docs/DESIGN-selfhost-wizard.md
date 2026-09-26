@@ -474,6 +474,14 @@ and the same never-refetch guarantee.
   defaults**; an on-prem deployment can keep raw snapshots forever for the price
   of disk.
 
+### PvP deaths (2026-09-26)
+- **Every PvP death broadcast is stored, whoever is on either side** (`pvp_deaths`), so
+  /pvp can group fights between other guilds as well as ours. It is about 1,300 rows a
+  month on Project Quarm, a few MB a year, with no pruning.
+- It only exists on a PvP server. A guild on a blue server has no broadcasts, and the
+  wizard can leave the PvP pieces out entirely.
+- `pvp_kills` (Wolf Pack on one side) stays as it is; the leaderboard reads it.
+
 ## 4. Open questions for whoever builds it
 
 - **What does the wizard run as?** A CLI in the repo, a page in the local web
