@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'overlay-background-2026-09-26',
+    title: 'Mimic 2.7.2-beta',
+    version: 'Mimic 2.7.2-beta · Web 1.8.14',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'The Background button on your overlays works again, and Melody is easier to read over bright ground.',
+    features: [
+      {
+        name: 'Melody, readable on grass',
+        blurb: 'The Amplification, Resonance, Selo’s, Niv’s and Nature’s Melody lines have a dark edge and a lighter colour, so they stand out over bright zones.',
+      },
+    ],
+    fixes: [
+      'Turning an overlay’s Background on now puts a dark plate behind it. Before, it only changed the tint and stayed see-through.',
+    ],
+  },
+  {
     key: 'corpse-dm-2026-09-26',
     title: 'Bot 3.1.151 · Agent 3.7.21',
     version: 'Bot 3.1.151 · Mimic 2.7.2-beta · Agent 3.7.21 · Web 1.8.13',

@@ -2538,6 +2538,32 @@ corpse coordinates and what zone they were in. we have all of that detail"*.
   unconfirmed, the position at death not at home point, another character, the 60 s
   window, and stale Zeal. Five breaks, all caught.
 
+## 44. "Background: ON" is a near-opaque plate; Melody's bard strip gets readable (2026-09-26)
+
+**The guild lead**, with a screenshot of Melody over bright grass: *"Really hard to see this
+bandolier and the background doesn't work"*. "Bandolier" was read as Melody's bard buff
+strip (Amplification, Resonance, Selo's, Niv's, Nature's Melody), the part of that
+screenshot that was unreadable.
+
+**Why the Background did nothing (every overlay, not just Melody):**
+- The backdrop rule in `apps/mimic/preload.js` painted `rgb(8 10 14 / var(--bg-alpha,0.92))`.
+  Every overlay defines `--bg-alpha`, so the 0.92 fallback never applied.
+- Since the plate moved onto `#wrap` (July, so it hugs the content), it paints the card
+  itself. Turning it on only swapped the card's tint at the same see-through level.
+- Measured in Chromium with the card at 0.45: ON was 0.45 before, 0.92 after. OFF is 0.45
+  both ways.
+
+**The call:** Background ON means a plate you can read through grass: at least 0.92, and a
+higher card alpha still wins. With the backdrop on, the Background slider can only make it
+darker; with it off, the slider works as before.
+
+**Melody:** a 1px dark text edge on the card (the other overlays already have one), the
+strip's labels in the lighter song-chip purple, and the grey "off" chips a step lighter.
+
+**Landed:** beta `08d4e892` (Mimic files only, so no agent bump; the beta build picks it
+up). `test/overlay-opacity-and-mini-dashboard.test.js` checks the rule; putting the old
+rule back fails it.
+
 
 
 
