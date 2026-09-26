@@ -20,6 +20,14 @@
         ],
         "createdAt": "2026-09-22T21:09:53.564Z",
         "reason": "Domain-appropriate motion, plus a measured no-op. These are HP/mana/buff bars: the thing being animated IS a length, which is the rule's own sanctioned-exception category. Measured 2026-09-22: the panel already rebuilds via innerHTML and forces a synchronous layout via scrollHeight every 500ms, so the bars' contribution is a rounding error and converting to scaleX would change no perceivable frame while touching five overlays' call sites. The guild lead confirmed the Tank overlay's equivalent bar transition is load-bearing information ('the HP bar's transition pre/post heal is important to know where it will land the tank'), so a blanket family-wide conversion was explicitly abandoned rather than deferred. Revisit only if someone reports real overlay stutter."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "web/app/pvp/page.tsx"
+        ],
+        "createdAt": "2026-09-26T09:08:55.546Z"
       }
     ]
   }
