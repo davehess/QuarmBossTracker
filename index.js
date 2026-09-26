@@ -10825,6 +10825,7 @@ const _SHED_KINDS = new Set([
   'live_state', 'raid_roster', 'casting', 'threat_snapshot',   // original four (ephemeral)
   'buff_casts', 'pvp', 'pvp_assists', 'fun_event',             // redundant / re-derivable
   'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
+  'corpse',                                                    // the corpse DM's off switch
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
@@ -17904,6 +17905,97 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
   } catch { /* non-fatal */ }
 }
 
+// ── POST /api/agent/corpse — DM a character's owner where their corpse lies ──────────────────────────
+// The guild lead, 2026-09-26: "when a character dies we should discord message them to send them their
+// corpse coordinates and what zone they were in. we have all of that detail". The dying character's own
+// agent sends it once the death is confirmed real: {character, died_at, zone_id, zone, loc:{x,y,z}}, with
+// loc already in the order /loc prints. Same owner rules as tells: the uploading Mimic must own the
+// character (or its family root), so no one can aim a corpse DM at someone else. flag_shed_corpse=1
+// turns the whole thing off.
+const _corpseDmSeen = new Map();    // `${character}|${died_at}` → ms: a queue retry never DMs twice
+const _corpseDmRecent = new Map();  // owner discord id → [ms]: a cap per hour, for a bad night
+const CORPSE_DM_MAX_PER_HOUR = 6;
+
+function _corpseDmText({ character, zone, loc, diedAtMs }) {
+  const unix = Math.floor(diedAtMs / 1000);
+  const where = zone ? ` in **${zone}**` : '';
+  const lines = [`💀 **${character}** died${where} <t:${unix}:t> (<t:${unix}:R>).`];
+  if (loc) {
+    lines.push(`Corpse at \`/loc\` **${Math.round(loc.x)}, ${Math.round(loc.y)}, ${Math.round(loc.z)}**`);
+  } else {
+    lines.push('Corpse position unknown: Zeal was not sending your location.');
+  }
+  return lines.join('\n');
+}
+
+async function _handleAgentCorpse(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => { body += chunk; if (body.length > 16 * 1024) { req.destroy(); resolve(); } });
+    req.on('end', resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const done = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const character = String(payload?.character || '').trim();
+  if (!/^[A-Za-z]{2,32}$/.test(character)) return done(400, { error: 'bad character' });
+  const diedRaw = new Date(payload?.died_at || Date.now());
+  const diedAtMs = isNaN(diedRaw.getTime()) ? Date.now() : diedRaw.getTime();
+  const zone = typeof payload?.zone === 'string' ? payload.zone.trim().slice(0, 64) : '';
+  const l = payload?.loc;
+  const loc = l && [l.x, l.y, l.z].every(v => Number.isFinite(Number(v)))
+    ? { x: Number(l.x), y: Number(l.y), z: Number(l.z) } : null;
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return done(200, { ok: true, dm: false, note: 'supabase disabled' });
+  // Owner: the character's discord_id, else its family root's (alts are often unlinked).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,main_name&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscordId = charRow?.discord_id || null;
+  if (charRow && !ownerDiscordId && charRow.main_name && charRow.main_name !== charRow.name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscordId = (Array.isArray(rootRows) && rootRows[0]?.discord_id) || null;
+  }
+  if (!ownerDiscordId) return done(200, { ok: true, dm: false, note: 'character has no linked discord account' });
+  const uploaderDiscordId = identity && identity.discord_id ? String(identity.discord_id) : null;
+  if (!uploaderDiscordId || String(ownerDiscordId) !== uploaderDiscordId) {
+    return done(403, { error: 'character owner does not match the authenticated uploader', code: 'owner_mismatch' });
+  }
+
+  const now = Date.now();
+  const key = `${character.toLowerCase()}|${diedAtMs}`;
+  for (const [k, at] of _corpseDmSeen) if (now - at > 6 * 3600 * 1000) _corpseDmSeen.delete(k);
+  if (_corpseDmSeen.has(key)) return done(200, { ok: true, dm: false, duplicate: true });
+  const recent = (_corpseDmRecent.get(ownerDiscordId) || []).filter(t => now - t < 3600 * 1000);
+  if (recent.length >= CORPSE_DM_MAX_PER_HOUR) return done(200, { ok: true, dm: false, capped: true });
+  _corpseDmSeen.set(key, now);
+  recent.push(now);
+  _corpseDmRecent.set(ownerDiscordId, recent);
+  done(200, { ok: true, dm: true });
+
+  // After the ack: the agent never waits on Discord.
+  try {
+    const user = await client.users.fetch(ownerDiscordId).catch(() => null);
+    if (!user) return;
+    await user.send({
+      content: _corpseDmText({ character: charRow.name || character, zone, loc, diedAtMs }),
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+  } catch (err) { console.warn('[corpse] DM failed:', err?.message); }
+}
+
 // Assemble pending backfill requests for a character list. Shared by the
 // standalone GET /backfill-requests and the multiplexed GET /poll (#106).
 async function _backfillRequestsFor(characters) {
@@ -20012,6 +20104,16 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[server-panel] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/corpse') {
+    if (await _isShedded('corpse', res)) return;
+    try { return await _handleAgentCorpse(req, res); }
+    catch (err) {
+      console.error('[corpse] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
     }
   }
 

@@ -37,6 +37,25 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'corpse-dm-2026-09-26',
+    title: 'Bot 3.1.151 · Agent 3.7.21',
+    version: 'Bot 3.1.151 · Mimic 2.7.2-beta · Agent 3.7.21 · Web 1.8.13',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Die, and Discord tells you where your corpse is.',
+    features: [
+      {
+        name: 'Your corpse, by DM',
+        blurb: 'When your character dies, Mimic sends you a Discord DM: the zone, the time, and your corpse’s location in the numbers /loc shows. It waits until the death is real, so a feign never sends one.',
+      },
+      {
+        name: 'Only yours, never a flood',
+        blurb: 'It comes from your own Mimic and only for your own characters, and at most six an hour. Beta Mimic first.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'who-target-2026-09-26',
     title: 'Agent 3.7.19 – 3.7.20',
     version: 'Mimic 2.7.2-beta · Agent 3.7.20 · Web 1.8.12',

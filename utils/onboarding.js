@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.151': [
+    '**Where did I die?** When your character dies, Mimic sends you a Discord DM with the zone, the time, and your corpse’s location in the numbers /loc shows. It comes from your own Mimic, only for your own characters, and at most six an hour. Beta Mimic first.',
+  ],
   '3.1.143': [
     '**Extended Target stops stacking old tags.** During a trash clear every mob gets tagged “KILL”, and the tags of mobs you had already killed piled up under the row — six “▲ KILL” chips for one live mob. Each different tag now shows once. And when your Zeal knows which mob you are targeting, its tag now sits on that mob’s own row.',
   ],
