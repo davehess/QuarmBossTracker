@@ -1588,6 +1588,26 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### Melody: the DIRGE NUKE board (agent 3.7.22, beta, 2026-09-26)
+The guild lead: a switch and a red DIRGE NUKE button that appears once a bard is set for
+the biggest Dirge: pre-buffs up, Amplification last, Puretone ready.
+- **Overlay** (`apps/mimic/melody.html`, between the `dirge-board` markers):
+  - A `DIRGE` switch in the title bar, bards only, kept in `localStorage`
+    `wp:melody:dirge`.
+  - Lamps: Guardian Rhythms, Psalm of Mystic Shielding, Selo's with 2:00+ left, Niv's
+    Harmonic, Resonance/Harmonize, Amplification, Puretone ready.
+  - With every lamp lit the board slides out. It stays out while Puretone is up.
+  - The Puretone key turns when Puretone lands. NUKE's ring fills over the 3 s sing while
+    Zeal shows the Dirge being cast. The count is mana ÷ 800, rounded down.
+  - `dirgeView()` is pure; `paintDirge()` touches only nodes outside `#list`, so the song
+    repaint never restarts the slide.
+- **Agent:** `_dirgeInfo()` adds `bardBuffs.dirge`:
+  - the three pre-buffs by exact name;
+  - Puretone up (buff window, or the disc line inside 240 s) or ready (the shared disc
+    timer from `_meDisc`);
+  - mana.
+- Tests: `test/melody-dirge-board.test.js`. Decision: `DECISIONS-2026-09-21.md` §45.
+
 ### /who overlay: the player you target goes on top, guild under the name (agent 3.7.19, beta, 2026-09-26)
 The guild lead, in a raid shared with other guilds: *"add guild under the player's
 name when we know it. When we click on them put them at the top of the /who
