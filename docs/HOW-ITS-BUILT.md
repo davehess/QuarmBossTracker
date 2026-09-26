@@ -1602,19 +1602,23 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
-### Melody: the DIRGE NUKE board (agent 3.7.22, beta, 2026-09-26)
-The guild lead: a switch and a red DIRGE NUKE button that appears once a bard is set for
-the biggest Dirge: pre-buffs up, Amplification last, Puretone ready.
+### Melody: the DIRGE TACTICAL NUKE board (agent 3.7.22, beta, 2026-09-26)
+The guild lead: a board that comes out once a bard is set for the biggest Dirges (pre-buffs
+up, Amplification last), a Puretone key, and a button for every Dirge the mana holds.
 - **Overlay** (`apps/mimic/melody.html`, between the `dirge-board` markers):
   - A `DIRGE` switch in the title bar, bards only, kept in `localStorage`
-    `wp:melody:dirge`.
-  - Lamps: Guardian Rhythms, Psalm of Mystic Shielding, Selo's with 2:00+ left, Niv's
-    Harmonic, Resonance/Harmonize, Amplification, Puretone ready.
-  - With every lamp lit the board slides out. It stays out while Puretone is up.
-  - The Puretone key turns when Puretone lands. NUKE's ring fills over the 3 s sing while
-    Zeal shows the Dirge being cast. The count is mana ÷ 800, rounded down.
+    `wp:melody:dirge`, with the current Dirge count beside it.
+  - Six numbered steps in singing order: Harmonize, Selo's (2:00+), Guardian Rhythms, Psalm of
+    Mystic Shielding, Niv's (Breath of Harmony or Niv's Harmonic), Amplification.
+  - All six checked: the board slides out and the plastic cover over the key flips up. It
+    stays out while Puretone is up.
+  - Puretone turns the key and reveals `floor(max mana ÷ 800)` numbered buttons. Current mana
+    lights them; the top lit one is pressed with its ring filling while Zeal shows the Dirge
+    being sung.
+  - A DISC key bottom right (up, down with time left, or lit while Puretone runs), and the
+    "Dirge Team 6 · Tactical Nuke" labelmaker strip under the board.
   - `dirgeView()` is pure; `paintDirge()` touches only nodes outside `#list`, so the song
-    repaint never restarts the slide.
+    repaint never restarts the slide, the cover or the key.
 - **Agent:** `_dirgeInfo()` adds `bardBuffs.dirge`:
   - the three pre-buffs by exact name;
   - Puretone up (buff window, or the disc line inside 240 s) or ready (the shared disc

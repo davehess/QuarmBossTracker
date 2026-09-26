@@ -39,18 +39,18 @@ export const releases: Release[] = [
   {
     key: 'dirge-nuke-2026-09-26',
     title: 'Agent 3.7.22',
-    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.15',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.17',
     date: '2026-09-26',
     channel: 'beta',
-    headline: 'Bards get a DIRGE NUKE button on the Melody overlay.',
+    headline: 'Bards get the DIRGE TACTICAL NUKE board on the Melody overlay.',
     features: [
       {
-        name: 'Get set, then nuke',
-        blurb: 'Flip the DIRGE switch on Melody and lamps show your pre-buffs: Guardian Rhythms, Psalm of Mystic Shielding, Selo’s, Niv’s Harmonic, Resonance or Harmonize, Amplification and Puretone. When they are all lit, a control board slides out.',
+        name: 'Get set, in order',
+        blurb: 'Flip the DIRGE switch on Melody and six steps check off as you sing them: Harmonize, Selo’s, Guardian Rhythms, Psalm of Mystic Shielding, Niv’s (Breath of Harmony) and Amplification last. When they are all checked, the control board slides out and the cover over the key flips up.',
       },
       {
-        name: 'Turn the key, press the button',
-        blurb: 'Pop Puretone Discipline and the key turns. The red NUKE button fills while you sing each Dirge, and the big number is how many Dirges your mana has left.',
+        name: 'Turn the key, one button per Dirge',
+        blurb: 'Pop Puretone Discipline and the key turns, revealing a numbered button for every Dirge your mana holds, 800 each. Each one fills while you sing it and goes dark when its mana is spent. The count sits by the switch, and a DISC key in the corner shows when Puretone is up.',
       },
     ],
     fixes: [
