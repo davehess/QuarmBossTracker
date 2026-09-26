@@ -6,6 +6,8 @@
 // pages). Add an entry when adding a member-facing route; unknown paths fall
 // back to the site default.
 
+import { guildByCode } from './zealIcons';
+
 export const SITE_NAME = 'WolfPack.quest';
 export const DEFAULT_DESCRIPTION =
   'Guild-wide build planner, parse history, and loadout library for Project Quarm.';
@@ -34,6 +36,7 @@ const STATIC_META: Record<string, { title: string; description: string }> = {
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
+  '/zeal-icons':   { title: 'Zeal tag icons', description: 'Guild banners and icons for Zeal /tag — the keys to type, and picture files to download.' },
 };
 
 export function metaForPath(rawPath: string): { title: string; description: string } {
@@ -50,6 +53,11 @@ export function metaForPath(rawPath: string): { title: string; description: stri
   if (m) {
     const name = decodeURIComponent(m[1]);
     return { title: `${name} — Boss`, description: `Kill history, spawn timers, and drops for ${name}.` };
+  }
+  m = path.match(/^\/zeal-icons\/([^/]+)$/);
+  const guild = m ? guildByCode(decodeURIComponent(m[1])) : undefined;
+  if (guild) {
+    return { title: `${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.` };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     return { title: 'Parse Breakdown', description: 'Per-player damage, abilities, and boss-kill comparison for one encounter.' };
