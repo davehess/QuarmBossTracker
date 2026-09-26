@@ -2641,7 +2641,20 @@ the guild lead in chat):
   night was 19 pieces; with the 20-minute join it is five fights, the largest 04:49–06:05 UTC
   with 56 deaths (36 Zek). "Zek" is Zek or Rise of Zek, as the database reads it.
 
-**Next:** the fights and the night's videos and clips on /pvp, on beta first (the UI rule).
+**On /pvp, beta only, two layouts for the guild lead to pick** (beta `fd1d7299`; with no `?v=` the
+page is what production shows):
+- **B, `b.wolfpack.quest/pvp?v=b`:** every fight is a card (zone, start, length, waves, deaths with
+  the Zek share as a bar, deaths by guild, top killers), and a night's videos and clips open on its
+  biggest fight.
+- **C, `b.wolfpack.quest/pvp?v=c`:** a compact table of fights, and the film in its own gallery.
+- The film lives in `web/lib/pvpMedia.ts`: two YouTube videos and four Medal clips, with our own
+  captions (two of the clips' own titles are crude) and credits by role, plus a link to a member's
+  channel. The guild lead's two screenshots join it when re-sent; pictures sent mid-task never
+  reached the session's disk.
+
+**Also fixed on main (web 1.8.16):** the /pvp trophy wall's caption, alt text and file names said
+"boxers". Your rule is no boxing wording anywhere public, so they now say "a group", and the files
+are `deeps-pit*.gif`.
 
 **Tests:** `test/pvp-deaths.test.js` runs the row builder (player kill, death to an NPC, boss kill,
 pet credit, no-guild spellings, two relays of one death) and checks the write comes before the

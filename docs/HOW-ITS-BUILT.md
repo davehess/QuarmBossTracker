@@ -191,7 +191,11 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   a player kill), joined into fights under 20 min apart. Returns deaths by guild and the top
   killers per fight.
 - `pvp_kills` is unchanged and still feeds the leaderboard (Wolf Pack on one side only).
-- Tests: `test/pvp-deaths.test.js`. Decision: `DECISIONS-2026-09-21.md` §46.
+- **Web (beta only until picked):** `web/app/pvp/Fights.tsx`, shown on `/pvp?v=b` (cards) or
+  `?v=c` (table + film gallery). The fight film is `web/lib/pvpMedia.ts`; `nightForFight()` hangs a
+  night's media on the biggest fight in its zone and window.
+- Tests: `test/pvp-deaths.test.js`, `test/pvp-fights-page.test.js` (beta). Decision:
+  `DECISIONS-2026-09-21.md` §46.
 
 ### Corpse DM: die, and Discord tells you where your corpse is (bot 3.1.151 · agent 3.7.21 beta, 2026-09-26)
 - **Agent:** `_corpseNoteLine` runs on the live tail only.
