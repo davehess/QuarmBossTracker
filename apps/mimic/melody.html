@@ -100,6 +100,65 @@
   .row.queued .name{color:#c9d1d9}
   @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.92)}}
 
+  /* dirge-board:css:start — the DIRGE NUKE board (the guild lead, 2026-09-26). The switch sits in the
+     title bar, clear of the ✕ gutter; the lamps are the pre-buffs; the board slides out when they are
+     all lit and Puretone is ready. Red here means the nuke itself, as the guild lead asked. */
+  .dsw{display:none;margin-left:auto;margin-right:24px;align-items:center;gap:4px;padding:0;border:0;
+    background:none;font:inherit;font-size:9px;letter-spacing:0.08em;color:#8b949e;cursor:pointer}
+  body.has-bard .dsw{display:inline-flex}
+  .dsw i{position:relative;width:18px;height:10px;border-radius:5px;background:#30363d;transition:background .15s}
+  .dsw i::after{content:'';position:absolute;left:1px;top:1px;width:8px;height:8px;border-radius:50%;
+    background:#8b949e;transition:transform .15s,background .15s}
+  .dsw.on{color:#f85149}
+  .dsw.on i{background:rgba(248,81,73,0.35)}
+  .dsw.on i::after{transform:translateX(8px);background:#f85149}
+  #dirge{display:none;margin-top:6px}
+  #dirge.show{display:block}
+  .dl{display:flex;flex-wrap:wrap;gap:3px}
+  .dl span{font-size:9px;letter-spacing:0.06em;padding:1px 4px;border-radius:3px;color:#6e7681;
+    border:1px solid #30363d;background:rgba(0,0,0,0.3)}
+  .dl span.on{color:#56d364;border-color:rgba(86,211,100,0.5);background:rgba(86,211,100,0.12)}
+  .dl span.warn{color:#ffa657;border-color:rgba(255,166,87,0.5)}
+  .db-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.2,.8,.2,1)}
+  #dirge.open .db-wrap{grid-template-rows:1fr}
+  .db-clip{overflow:hidden;min-height:0}
+  .db{margin-top:6px;display:grid;grid-template-columns:60px 1fr 62px;align-items:center;gap:8px;
+    padding:8px;border-radius:6px;border:1px solid #30363d;
+    background:linear-gradient(#1c2129,#101318);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
+    transform:translateY(-105%);transition:transform .38s cubic-bezier(.25,1.35,.4,1)}
+  #dirge.open .db{transform:translateY(0);animation:dbflash .9s ease-out .3s 1}
+  @keyframes dbflash{0%{border-color:#f85149;box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#30363d}}
+  .dk{display:flex;flex-direction:column;align-items:center;gap:3px}
+  .dk svg{width:44px;height:44px;display:block}
+  .dk .key{transform-origin:22px 22px;transition:transform .45s cubic-bezier(.3,1.6,.5,1)}
+  .dk.turned .key{transform:rotate(90deg)}
+  .dk .plate{stroke:#6e7681;transition:stroke .3s}
+  .dk.turned .plate{stroke:#d29922}
+  .dk .kl{font-size:8px;letter-spacing:0.08em;color:#8b949e;text-align:center;line-height:1.25;
+    font-variant-numeric:tabular-nums}
+  .dk.turned .kl{color:#d29922}
+  .nk{position:relative;width:72px;height:72px;justify-self:center;--sweep:0}
+  .nk .ring{position:absolute;inset:0;border-radius:50%;border:1px solid #30363d;
+    background:conic-gradient(#ffa657 calc(var(--sweep) * 1turn), #1a0c0d 0)}
+  .nk .dome{position:absolute;inset:6px;border-radius:50%;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-size:9px;font-weight:800;letter-spacing:0.08em;
+    line-height:1.15;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,0.7);
+    background:radial-gradient(circle at 35% 30%,#ff9b93,#f85149 38%,#b62324 72%,#5c0f13);
+    box-shadow:0 4px 0 #4a0c10,0 6px 10px rgba(0,0,0,0.6);
+    transition:transform .08s,box-shadow .08s,filter .25s}
+  .nk.locked .dome,.nk.oom .dome{filter:grayscale(0.7) brightness(0.5)}
+  .nk.firing .dome{transform:translateY(4px);box-shadow:0 0 0 #4a0c10,0 2px 4px rgba(0,0,0,0.6)}
+  .nk .cover{position:absolute;inset:2px;border-radius:50%;border:1px solid rgba(201,209,217,0.45);
+    background:linear-gradient(rgba(201,209,217,0.30),rgba(201,209,217,0.06));transform-origin:50% 0;
+    transition:transform .45s cubic-bezier(.3,1.3,.5,1),opacity .45s}
+  .nk:not(.locked) .cover{transform:perspective(160px) rotateX(-115deg);opacity:0.25}
+  .dc{text-align:right;font-variant-numeric:tabular-nums}
+  .dc b{display:block;font-size:24px;line-height:1;color:#f85149}
+  .dc.oom b{color:#6e7681}
+  .dc small{display:block;font-size:8px;letter-spacing:0.08em;color:#8b949e;margin-top:2px}
+  @media (prefers-reduced-motion: reduce){#dirge *,.dsw *{transition:none !important;animation:none !important}}
+  /* dirge-board:css:end */
+
   /* ✥ move + ✕ hide corner squares */
   #move-btn,#hide-btn{position:absolute;top:6px;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -138,8 +197,27 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span><button type="button" id="dirge-sw" class="dsw" title="DIRGE NUKE board: lights up your pre-buffs, and slides out when you are set">DIRGE <i></i></button></div>
     <div id="list"></div>
+    <!-- dirge-board:html:start -->
+    <div id="dirge">
+      <div class="dl" id="dirge-lamps"></div>
+      <div class="db-wrap"><div class="db-clip"><div class="db">
+        <div class="dk" id="dirge-key" title="Puretone Discipline: the key. It turns when you pop it.">
+          <svg viewBox="0 0 44 44" aria-hidden="true">
+            <circle class="plate" cx="22" cy="22" r="20" fill="#0d1117" stroke-width="2"/>
+            <path d="M22 5v4M39 22h-4" stroke="#6e7681" stroke-width="2"/>
+            <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="#d29922"/><circle cx="22" cy="14" r="2.4" fill="#0d1117"/></g>
+          </svg>
+          <div class="kl" id="dirge-kl">PURETONE</div>
+        </div>
+        <div class="nk locked" id="dirge-nuke" title="Denon`s Desperate Dirge: the ring fills while you sing it">
+          <div class="ring"></div><div class="dome"><span>DIRGE</span><span>NUKE</span></div><div class="cover"></div>
+        </div>
+        <div class="dc" id="dirge-count"><b>×0</b><small>DIRGES</small><small class="mana"></small></div>
+      </div></div></div>
+    </div>
+    <!-- dirge-board:html:end -->
     <div class="empty" id="empty">no bard songs yet — start singing.</div>
   </div>
 <script>
@@ -251,11 +329,12 @@
 
   // Tell main.js to resize the window to fit the rendered content.
   var _lastReqH = 0;
-  function _requestAutoHeight() {
+  // extra: height about to appear (the DIRGE board sliding out), so the window grows before the slide.
+  function _requestAutoHeight(extra) {
     try {
       var wrap = document.getElementById('wrap');
       if (!wrap || !window.mimic || !window.mimic.overlayAutoHeight) return;
-      var h = Math.ceil(wrap.scrollHeight + 8);
+      var h = Math.ceil(wrap.scrollHeight + 8 + (extra || 0));
       if (h !== _lastReqH) { _lastReqH = h; window.mimic.overlayAutoHeight(h); }
     } catch (e) {}
   }
@@ -283,6 +362,91 @@
   // "stopped N ago" card (with the buff-duration chip masquerading in the
   // cast view) lingers on screen. Live rows never reach this threshold. (#116)
   var STALE_DROP_MS = 45000;
+
+  // dirge-board:js:start
+  // The DIRGE NUKE board (the guild lead, 2026-09-26). dirgeView is the pure part; paintDirge only flips
+  // classes and text on nodes outside #list, so a repaint of the songs never restarts the slide or the key.
+  // Selo`s lasts 25 ticks (2:30) at most, so the asked-for 3:00 can never be met; 2:00 left means it was
+  // sung in the last 30 seconds (DECISIONS-2026-09-21.md §45).
+  var DIRGE_SELO_MIN_SECS = 120;
+  var _dirgeOn = false;
+  try { _dirgeOn = localStorage.getItem('wp:melody:dirge') === '1'; } catch (e) {}
+  function fmtSecs(secs){ var s = Math.max(0, Math.round(secs || 0)); return Math.floor(s/60) + ':' + String(s % 60).padStart(2,'0'); }
+  function dirgeView(bb, now, castAt){
+    var d = (bb && bb.dirge) || {};
+    var pt = d.puretone || {};
+    var sel = bb && bb.accelerating_chorus;
+    var selSecs = sel && typeof sel.remaining_secs === 'number' ? sel.remaining_secs : null;
+    var lamps = [
+      { label: 'GR',   title: 'Guardian Rhythms', on: !!d.guardian },
+      { label: 'PSM',  title: 'Psalm of Mystic Shielding', on: !!d.psalm },
+      { label: 'SELO', title: 'Selo`s Accelerating Chorus with ' + fmtSecs(DIRGE_SELO_MIN_SECS) + ' or more left',
+        on: selSecs != null && selSecs >= DIRGE_SELO_MIN_SECS, warn: !!sel },
+      { label: 'NIV',  title: 'Niv`s Harmonic', on: !!d.nivs_harmonic },
+      { label: bb && bb.harmonize ? 'HAR' : 'RES', title: 'Resonance or Harmonize', on: !!(bb && (bb.harmonize || bb.resonance)) },
+      { label: 'AMP',  title: 'Amplification', on: !!(bb && bb.amplification) },
+      { label: 'PT',   title: pt.active ? 'Puretone is up' : (pt.ready ? 'Puretone Discipline is ready' : 'Puretone Discipline ready in ' + fmtSecs(pt.ready_in_secs)),
+        on: !!(pt.active || pt.ready), warn: true },
+    ];
+    var turned = !!pt.active;
+    var count = typeof d.mana_cur === 'number' ? Math.floor(d.mana_cur / (d.dirge_mana || 800)) : null;
+    var sweep = castAt ? Math.min(1, (now - castAt) / (d.dirge_cast_ms || 3000)) : 0;
+    return {
+      lamps: lamps,
+      // Out once every lamp is lit; it stays out while Puretone is up, even as the songs fade mid-nuke.
+      open: turned || lamps.every(function(l){ return l.on; }),
+      turned: turned,
+      keyLabel: turned ? 'PURETONE ' + fmtSecs(pt.remaining_secs) : (pt.ready ? 'PURETONE READY' : 'PURETONE ' + fmtSecs(pt.ready_in_secs)),
+      count: count,
+      mana: typeof d.mana_cur === 'number' ? d.mana_cur : null,
+      firing: sweep > 0 && sweep < 1,
+      sweep: sweep,
+    };
+  }
+  var _dirgeCastAt = 0, _dirgeOpen = null;
+  function paintDirge(st, now){
+    var bb = st && st.isBard ? st.bardBuffs : null;
+    var box = document.getElementById('dirge');
+    document.body.classList.toggle('has-bard', !!bb);
+    document.getElementById('dirge-sw').classList.toggle('on', _dirgeOn);
+    if (!bb || !_dirgeOn) { box.className = ''; _dirgeOpen = null; _dirgeCastAt = 0; return; }
+    // The ring fills while Zeal says you are singing the Dirge; a Dirge sung straight after another
+    // keeps the same label, so the ring starts over every cast length.
+    var castMs = (bb.dirge && bb.dirge.dirge_cast_ms) || 3000;
+    if (!/desperate dirge/i.test(String(st.nowCasting || ''))) _dirgeCastAt = 0;
+    else if (!_dirgeCastAt) _dirgeCastAt = now;
+    else while (now - _dirgeCastAt >= castMs) _dirgeCastAt += castMs;
+    var v = dirgeView(bb, now, _dirgeCastAt);
+    var lamps = v.lamps.map(function(l){
+      return '<span class="' + (l.on ? 'on' : (l.warn ? 'warn' : '')) + '" title="' + esc(l.title) + '">' + esc(l.label) + '</span>';
+    }).join('');
+    var le = document.getElementById('dirge-lamps');
+    if (le.__h !== lamps) { le.innerHTML = lamps; le.__h = lamps; }
+    box.className = 'show' + (v.open ? ' open' : '');
+    document.getElementById('dirge-key').className = 'dk' + (v.turned ? ' turned' : '');
+    document.getElementById('dirge-kl').textContent = v.keyLabel;
+    var nk = document.getElementById('dirge-nuke');
+    nk.className = 'nk' + (v.turned ? '' : ' locked') + (v.count === 0 ? ' oom' : '') + (v.firing ? ' firing' : '');
+    nk.style.setProperty('--sweep', v.firing ? v.sweep.toFixed(3) : '0');
+    var dc = document.getElementById('dirge-count');
+    dc.className = 'dc' + (v.count === 0 ? ' oom' : '');
+    dc.querySelector('b').textContent = v.count == null ? '×?' : '×' + v.count;
+    dc.querySelector('.mana').textContent = v.mana == null ? '' : v.mana.toLocaleString() + ' mana';
+    if (_dirgeOpen !== v.open) {
+      _dirgeOpen = v.open;
+      var db = box.querySelector('.db');
+      _requestAutoHeight(v.open && db ? db.offsetHeight + 8 : 0);
+      setTimeout(function(){ _requestAutoHeight(); }, 450);
+    }
+  }
+  var _dsw = document.getElementById('dirge-sw');
+  _dsw.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+  _dsw.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  _dsw.addEventListener('click', function(){
+    _dirgeOn = !_dirgeOn;
+    try { localStorage.setItem('wp:melody:dirge', _dirgeOn ? '1' : '0'); } catch (e) {}
+  });
+  // dirge-board:js:end
 
   var listEl = document.getElementById('list');
   var emptyEl = document.getElementById('empty');
@@ -392,6 +556,9 @@
         // Blood Orchid Katana → 8s SoW correctly), else the row-kind default.
         var curEntry = currentPos >= 0 ? st.order[currentPos] : null;
         var castMs   = castMsForEntry(curEntry, st.kind);
+        // curKind was read below but never defined, so the label between casts threw and the whole
+        // repaint stopped (found 2026-09-26 building the DIRGE board).
+        var curKind  = (curEntry && curEntry.kind) || st.kind || 'song';
 
         // Three states for currentPos:
         //   casting → sinceCast < castMs → bar fills 0→100%
@@ -611,6 +778,12 @@
               + nowCastingHtml
               + '</div>';
       }
+      var _boardSt = null;
+      for (var bi = 0; bi < keys.length && !_boardSt; bi++) {
+        var bst = melodyByChar[keys[bi]];
+        if (bst && bst.isBard && bst.bardBuffs) _boardSt = bst;
+      }
+      paintDirge(_boardSt, now);
       if (listEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
         listEl.innerHTML = html;
         listEl.__wpHtml = html;

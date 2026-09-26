@@ -13073,6 +13073,41 @@ function _meDisc(cl, now) {
   return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
 }
 
+// The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
+// pre-buffs it waits for that the bard strip does not carry, Puretone
+// Discipline (up now, or ready by the shared disc timer), and mana for the
+// Denon`s Desperate Dirge count (800 a cast, 3 s, eqemu_spells 742).
+// EXACT names only: the strip's first-word fallback would take any "Psalm of …"
+// for Psalm of Mystic Shielding and Niv`s Melody for Niv`s Harmonic.
+const DIRGE_MANA = 800;
+const DIRGE_CAST_MS = 3000;
+const PURETONE_SECS = 240;   // 40 ticks (eqemu_spells 4586)
+function _dirgeInfo(cl, zealSt, buffs, now) {
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const find = (name) => (buffs || []).find(b => b && b.name && slug(b.name.trim()) === slug(name)) || null;
+  const pure = find('Puretone Discipline');
+  const act = _meDiscs.get(cl) || null;
+  let active = !!pure;
+  let remaining = pure && pure.ticks > 0 ? pure.ticks * 6 : null;
+  if (!pure && act && act.name === 'Puretone' && now - act.at < PURETONE_SECS * 1000) {
+    active = true;
+    remaining = Math.ceil((act.at + PURETONE_SECS * 1000 - now) / 1000);
+  }
+  const disc = _meDisc(cl, now);
+  const readyIn = disc && disc.ms_left > 0 ? Math.ceil(disc.ms_left / 1000) : 0;
+  return {
+    guardian:      !!find('Guardian Rhythms'),
+    psalm:         !!find('Psalm of Mystic Shielding'),
+    nivs_harmonic: !!find('Niv`s Harmonic'),
+    // A disc timer never seen reads as ready: the board is a reminder, not a gate.
+    puretone: { active, remaining_secs: remaining, ready: !active && readyIn === 0, ready_in_secs: readyIn || null },
+    mana_cur: zealSt && zealSt.self_mana_cur != null ? zealSt.self_mana_cur : null,
+    mana_max: zealSt && zealSt.self_mana_max != null ? zealSt.self_mana_max : null,
+    dirge_mana: DIRGE_MANA,
+    dirge_cast_ms: DIRGE_CAST_MS,
+  };
+}
+
 // The long timers survive an agent restart — a Mimic update restarts the agent,
 // and a 20-minute discipline, a 72-minute Lay on Hands or a 5-minute Mend
 // cannot be read back out of a log we no longer tail. Kept in
@@ -15405,6 +15440,7 @@ function _serializeForDashboard() {
           accelerating_chorus: _info(accBuff),
           nivs:          _info(nivBuff),
           natures:       _info(natBuff),
+          dirge:         _dirgeInfo(k, zealSt, zealBuffs.concat(rawDebugBuffs), now),
           // Per-row cast indicators — true when the Zeal currentCasting label
           // matches this buff's spell name. Drives a pulsing ▶ next to the
           // row in the overlay so the bard sees which utility is in flight.
