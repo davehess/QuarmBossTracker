@@ -10477,6 +10477,7 @@ function _endpointForKind(kind, botUrl) {
     case 'rez_dismiss':     return base + '/rez-dismiss';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
+    case 'corpse':          return base + '/corpse';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
@@ -11764,6 +11765,49 @@ function _clearDeath(name) {
   // needs-rez board (defined below): HP above zero after a death is exactly
   // the "enter the zone with about 20% health" moment.
   if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
+}
+
+// ── Corpse DM (the guild lead, 2026-09-26: "when a character dies we should discord message them to send
+// them their corpse coordinates and what zone they were in. we have all of that detail") ──────────────
+// Only the dying character's own client can say it, and it has everything: "You died." in its log, and
+// the character's position and zone from Zeal at that moment, which is where the corpse lies (the move
+// to the home point comes seconds later). Sent once the death is confirmed real ("You are bleeding to
+// death!" or "Returning to home point", which a feign never prints), then the bot DMs the owner.
+// Zeal's loc {x,y,z} is already in /loc order: Zeal notes "Position is y,x,z" (zone_map.cpp) and its own
+// "/loc noprint" prints x, y, z, so the DM quotes x, y, z as the numbers /loc shows.
+const _CORPSE_CONFIRM_WINDOW_MS = 60 * 1000;
+const _CORPSE_ZEAL_FRESH_MS = 30 * 1000;
+let _corpsePending = null;   // { character, died_at, at, zone_id, zone, loc }
+function _corpseNoteLine(line, character) {
+  if (!character || typeof line !== 'string') return;
+  const now = Date.now();
+  if (/\]\s+You died\./i.test(line)) {
+    const cl = String(character).toLowerCase();
+    let st = null;
+    for (const ch of Object.keys(_zealState)) { if (String(ch).toLowerCase() === cl) { st = _zealState[ch]; break; } }
+    const fresh = !!(st && (now - (st.updatedAt || 0)) <= _CORPSE_ZEAL_FRESH_MS);
+    const zoneId = fresh && Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+    const loc = fresh && st.loc && [st.loc.x, st.loc.y, st.loc.z].every(v => Number.isFinite(Number(v)))
+      ? { x: Number(st.loc.x), y: Number(st.loc.y), z: Number(st.loc.z) } : null;
+    const ts = parseEqTimestamp(line);
+    _corpsePending = {
+      character: String(character), at: now,
+      died_at: (ts ? ts : new Date(now)).toISOString(),
+      zone_id: zoneId, zone: zoneId != null ? _zoneName(zoneId) : null, loc,
+    };
+    return;
+  }
+  if (_corpsePending && (/\]\s+You are bleeding to death!/i.test(line)
+      || /\]\s+Returning to home point, please wait/i.test(line))) {
+    const p = _corpsePending;
+    _corpsePending = null;
+    if (now - p.at > _CORPSE_CONFIRM_WINDOW_MS) return;              // A stale death: not this one.
+    if (String(p.character).toLowerCase() !== String(character).toLowerCase()) return;
+    enqueueUpload('corpse', {
+      agent_version: AGENT_VERSION, character: p.character, died_at: p.died_at,
+      zone_id: p.zone_id, zone: p.zone, loc: p.loc,
+    });
+  }
 }
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
 // an un-cleared entry would tombstone someone for the rest of the night, which
@@ -41841,6 +41885,9 @@ async function main() {
         // Taunt, discipline activations, and enrage start/end. Raw line for
         // the same reason — misses and disc texts match no keep pattern.
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
+        // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
+        // log never DMs anyone).
+        try { _corpseNoteLine(line, b.character); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
