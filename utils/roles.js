@@ -25,6 +25,16 @@ function hasOfficerRole(member) {
   return member.roles.cache.some((r) => roles.includes(r.name));
 }
 
+// The /who lookups (/who, /whois, /whoall and their Show Family button) are the guild's own: history
+// that unmasks anonymous players, Zek flags, and which character is whose alt. Anyone in the Discord
+// server could run them before (the guild lead, 2026-09-26: "we shouldnt just give away our secret
+// weapon … end users should ultimately decide on if their characters are linked outside of the
+// guild"). No member in the interaction (a DM, say) is not a member.
+function isGuildMember(interaction) {
+  return !!(interaction && interaction.member && interaction.member.roles && hasAllowedRole(interaction.member));
+}
+const MEMBERS_ONLY = '❌ That lookup is for Wolf Pack members.';
+
 function allowedRolesList() {
   return getAllowedRoles().map((r) => `**${r}**`).join(', ');
 }
@@ -33,4 +43,4 @@ function officerRolesList() {
   return getOfficerRoles().map((r) => `**${r}**`).join(', ');
 }
 
-module.exports = { getAllowedRoles, getOfficerRoles, hasAllowedRole, hasOfficerRole, allowedRolesList, officerRolesList };
+module.exports = { getAllowedRoles, getOfficerRoles, hasAllowedRole, hasOfficerRole, allowedRolesList, officerRolesList, isGuildMember, MEMBERS_ONLY };
