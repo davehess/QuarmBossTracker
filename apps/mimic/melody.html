@@ -6,9 +6,11 @@
   :root{ --bg-alpha:0.78; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#e6edf3;user-select:none}
+  /* text-shadow: the same dark edge the other overlays give their text, so the names stay readable over
+     bright ground (the guild lead, 2026-09-26: "really hard to see"). */
   #wrap{background:rgb(14 17 22 / var(--bg-alpha));border:1px solid rgba(163,113,247,0.45);
     border-radius:8px;margin:4px;padding:8px 10px;backdrop-filter:blur(2px);
-    position:relative}
+    position:relative;text-shadow:0 1px 2px #000}
   .title{font-size:11px;color:#a371f7;letter-spacing:0.1em;
     text-transform:uppercase;display:flex;gap:6px;align-items:center}
   .conn{font-size:10px}
@@ -32,12 +34,12 @@
   .bardbuffs .util-cast{color:#a371f7;font-size:10px;text-align:center;animation:utilpulse 1.2s ease-in-out infinite}
   .bardbuffs .util-cast.off{opacity:0.18;animation:none}
   @keyframes utilpulse{0%,100%{opacity:1}50%{opacity:0.4}}
-  .bardbuffs .util-lbl{color:#a371f7;font-weight:600}
+  .bardbuffs .util-lbl{color:#d2a8ff;font-weight:600}   /* The lighter purple of the song chips: #a371f7 was lost on grass. */
   .bardbuffs .util-t{font-variant-numeric:tabular-nums;color:#7ee787;padding:0 5px;
     border-radius:3px;background:rgba(126,231,135,0.10);border:1px solid rgba(126,231,135,0.22)}
   .bardbuffs .util-t.low{color:#f0883e;background:rgba(240,136,62,0.10);border-color:rgba(240,136,62,0.30)}
   .bardbuffs .util-t.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
-  .bardbuffs .util-t.off{color:#6b7280;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
+  .bardbuffs .util-t.off{color:#8b949e;background:rgba(110,118,129,0.10);border-color:rgba(110,118,129,0.25);font-style:italic}
   /* Cast-progress bar for a utility row. Same left-to-right fill as the top
      song row's .row.casting, just sized for the compact strip. Painted only
      when this utility is the currently-cast spell (Zeal label 134 match). */

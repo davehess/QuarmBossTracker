@@ -256,10 +256,14 @@ try { ipcRenderer.invoke('get-config').then(function (c) { if (c) _wpMuted = !!c
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+    // The backdrop is a near-OPAQUE plate: at least 0.92, or the card alpha if that is set higher. It used
+    // to take the card alpha itself (var(--bg-alpha,0.92)), and every overlay defines --bg-alpha, so the
+    // 0.92 never applied and "Background: ON" only darkened the tint at the same see-through level
+    // (the guild lead, 2026-09-26, on Melody over bright grass: "the background doesn't work").
+    st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92)) !important;border-radius:8px}'
       // (on <body> itself, so the opacity fade of its children cannot reach
       // it — the overlay's opacity is folded into the alpha instead)
-      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / calc(var(--bg-alpha,0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
