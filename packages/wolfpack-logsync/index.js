@@ -20120,10 +20120,12 @@ function renderZealExplorer(s) {
       : '<span class="dim" style="font-size:10px" title="Run /pipeverbose on in EQ to stream raid/group HP + zone">· verbose off (/pipeverbose on for raid HP)</span>';
     h += '<div style="margin-top:8px">' + dot + ' <b>' + esc(c.character) + '</b>'
        + (c.zone_name ? ' <span class="dim">· ' + esc(c.zone_name) + '</span>' : '') + ' ' + vbadge + '</div>';
-    // Position — Zeal player payload (loc {x,y,z} + heading). EQ /loc prints
-    // Y, X, Z, so we show that order (transposed from the raw Zeal x/y/z).
+    // Position — Zeal player payload (loc {x,y,z} + heading). The pipe's x, y, z
+    // are already the /loc numbers in /loc order: Zeal's Position is y,x,z
+    // (zone_map.cpp), and its /loc noprint prints Position.x, .y, .z to
+    // reproduce the client's line (DECISIONS-2026-09-21 §43). Do not transpose.
     if (c.loc && (c.loc.x != null || c.loc.y != null)) {
-      var locStr = 'Y ' + Math.round(c.loc.y) + ', X ' + Math.round(c.loc.x) + ', Z ' + Math.round(c.loc.z)
+      var locStr = '/loc ' + Math.round(c.loc.x) + ', ' + Math.round(c.loc.y) + ', ' + Math.round(c.loc.z)
         + (c.heading != null ? ' · heading ' + Math.round(c.heading) : '');
       h += grp(k + '|pos', 'Position', null, '<div style="margin-top:2px" class="dim">' + esc(locStr) + '</div>');
     }
