@@ -1587,6 +1587,13 @@ overlay."*
   the lists: the name line, then `<Guild>` on its own line, in italics when it
   comes from history. It shows even before any /who.
 - **Test:** `test/who-target-card.test.js`.
+- **Zek only mode (agent 3.7.20):**
+  - A `ZEK` toggle in the title bar filters both lists to Zek players with
+    `listsFor(w, zekOnly)`. The header reads "Zek N of M", and the Target card is kept.
+  - The setting lives in `localStorage` `wp:who:zekOnly` and has the hover handshake.
+  - Every row now carries `zek`, from its live guild being Zek (`_isZekGuild`) or
+    from who-lookup's `is_zek`. Before, only /anon rows had it, through
+    `known.is_zek`.
 
 ### Extended Target: the spot for Zeal's target of target (agent 3.6.40 · beta 2.6.8-beta.3, 2026-09-12)
 Consumer side of the drafted upstream change (`docs/zeal-tot-pipe.patch`): the

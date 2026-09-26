@@ -38,12 +38,16 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'who-target-2026-09-26',
-    title: 'Agent 3.7.19',
-    version: 'Mimic 2.7.2-beta · Agent 3.7.19 · Web 1.8.11',
+    title: 'Agent 3.7.19 – 3.7.20',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.20 · Web 1.8.12',
     date: '2026-09-26',
     channel: 'beta',
-    headline: 'Click a player and they go to the top of the /who overlay, with their guild under their name.',
+    headline: 'Click a player and they go to the top of the /who overlay, with their guild under their name. And a Zek only mode.',
     features: [
+      {
+        name: 'Zek only',
+        blurb: 'A ZEK button on the /who overlay shows just the Zek players in your /who, and how many out of the total. Click it again for everyone. It remembers your choice.',
+      },
       {
         name: 'Who is that?',
         blurb: 'Target any player and the /who overlay puts them on top: name, class and level, and their guild on the line underneath. Handy in a raid shared with other guilds.',
@@ -53,7 +57,9 @@ export const releases: Release[] = [
         blurb: 'If their /who hides it, the guild and class come from the last time anyone saw them, shown in italics so you know it is history. It works before you have run a /who at all.',
       },
     ],
-    fixes: [],
+    fixes: [
+      'A player showing <Zek> in /who is now flagged ZEK like an /anon one, not only when they hide it.',
+    ],
   },
   {
     key: 'hud-tracking-2026-09-26',
