@@ -100,9 +100,9 @@
   .row.queued .name{color:#c9d1d9}
   @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.65;transform:scale(0.92)}}
 
-  /* dirge-board:css:start — the DIRGE NUKE board (the guild lead, 2026-09-26). The switch sits in the
-     title bar, clear of the ✕ gutter; the lamps are the pre-buffs; the board slides out when they are
-     all lit and Puretone is ready. Red here means the nuke itself, as the guild lead asked. */
+  /* dirge-board:css:start — the DIRGE TACTICAL NUKE board (the guild lead, 2026-09-26). The switch sits
+     in the title bar, clear of the ✕ gutter; the steps are the pre-buffs in singing order; the board
+     slides out when they are all checked. Red here means the nuke itself, as the guild lead asked. */
   .dsw{display:none;margin-left:auto;margin-right:24px;align-items:center;gap:4px;padding:0;border:0;
     background:none;font:inherit;font-size:9px;letter-spacing:0.08em;color:#8b949e;cursor:pointer}
   body.has-bard .dsw{display:inline-flex}
@@ -112,51 +112,86 @@
   .dsw.on{color:#f85149}
   .dsw.on i{background:rgba(248,81,73,0.35)}
   .dsw.on i::after{transform:translateX(8px);background:#f85149}
+  /* The current Dirge count, up by the switch (the guild lead: "Show the total number of current Dirge
+     on the top with the toggle"). */
+  .dsw b{font-size:11px;color:#f85149;font-variant-numeric:tabular-nums;margin-right:2px}
+  .dsw b:empty{display:none}
   #dirge{display:none;margin-top:6px}
   #dirge.show{display:block}
-  .dl{display:flex;flex-wrap:wrap;gap:3px}
-  .dl span{font-size:9px;letter-spacing:0.06em;padding:1px 4px;border-radius:3px;color:#6e7681;
-    border:1px solid #30363d;background:rgba(0,0,0,0.3)}
-  .dl span.on{color:#56d364;border-color:rgba(86,211,100,0.5);background:rgba(86,211,100,0.12)}
-  .dl span.warn{color:#ffa657;border-color:rgba(255,166,87,0.5)}
+  body.dirge-on #wrap{padding-bottom:24px}
+  /* The steps, in the order the guild lead sings them. Numbered because the order is the point. */
+  .dl{display:grid;grid-auto-flow:column;grid-template-rows:repeat(3,auto);grid-template-columns:auto 1fr;
+    gap:2px 6px;font-size:9.5px;letter-spacing:-0.01em}
+  .dl span{display:flex;gap:4px;align-items:baseline;color:#6e7681;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl span i{font-style:normal;width:11px;text-align:center;border:1px solid #30363d;border-radius:2px;
+    font-size:8px;line-height:10px;flex:none}
+  .dl span.on{color:#c9d1d9}
+  .dl span.on i{color:#0d1117;background:#56d364;border-color:#56d364}
+  .dl span.warn{color:#ffa657}
+  .dl span.warn i{border-color:rgba(255,166,87,0.7)}
   .db-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s cubic-bezier(.2,.8,.2,1)}
   #dirge.open .db-wrap{grid-template-rows:1fr}
   .db-clip{overflow:hidden;min-height:0}
-  .db{margin-top:6px;display:grid;grid-template-columns:60px 1fr 62px;align-items:center;gap:8px;
-    padding:8px;border-radius:6px;border:1px solid #30363d;
-    background:linear-gradient(#1c2129,#101318);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06);
+  /* The board: gunmetal, like a panel off military kit. */
+  .db{margin-top:6px;padding:8px 8px 6px;border-radius:6px;border:1px solid #3a4048;
+    background:linear-gradient(#262b31,#15181c);box-shadow:inset 0 1px 0 rgba(255,255,255,0.07);
     transform:translateY(-105%);transition:transform .38s cubic-bezier(.25,1.35,.4,1)}
   #dirge.open .db{transform:translateY(0);animation:dbflash .9s ease-out .3s 1}
-  @keyframes dbflash{0%{border-color:#f85149;box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#30363d}}
-  .dk{display:flex;flex-direction:column;align-items:center;gap:3px}
+  @keyframes dbflash{0%{border-color:#f85149;box-shadow:0 0 12px rgba(248,81,73,0.55)}100%{border-color:#3a4048}}
+  .db-row{display:flex;gap:10px;align-items:center}
+  /* The keyswitch under a flip-up plastic cover. The cover lifts when every step is checked; the key
+     turns when Puretone lands. */
+  .dk{position:relative;flex:none;width:54px;display:flex;flex-direction:column;align-items:center;gap:3px}
   .dk svg{width:44px;height:44px;display:block}
-  .dk .key{transform-origin:22px 22px;transition:transform .45s cubic-bezier(.3,1.6,.5,1)}
+  .dk .key{transform-origin:22px 22px;transition:transform .45s cubic-bezier(.3,1.6,.5,1) .1s}
   .dk.turned .key{transform:rotate(90deg)}
   .dk .plate{stroke:#6e7681;transition:stroke .3s}
   .dk.turned .plate{stroke:#d29922}
+  .dk .cover{position:absolute;left:2px;top:-2px;width:50px;height:50px;border-radius:5px;
+    border:1px solid rgba(255,140,130,0.55);
+    background:linear-gradient(160deg,rgba(255,120,110,0.42),rgba(190,40,40,0.22) 60%,rgba(120,20,20,0.3));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,0.35);transform-origin:50% 0;
+    transition:transform .45s cubic-bezier(.3,1.3,.5,1) .35s,opacity .45s .35s}
+  .dk.uncovered .cover{transform:perspective(140px) rotateX(-118deg);opacity:0.35}
   .dk .kl{font-size:8px;letter-spacing:0.08em;color:#8b949e;text-align:center;line-height:1.25;
     font-variant-numeric:tabular-nums}
   .dk.turned .kl{color:#d29922}
-  .nk{position:relative;width:72px;height:72px;justify-self:center;--sweep:0}
-  .nk .ring{position:absolute;inset:0;border-radius:50%;border:1px solid #30363d;
-    background:conic-gradient(#ffa657 calc(var(--sweep) * 1turn), #1a0c0d 0)}
-  .nk .dome{position:absolute;inset:6px;border-radius:50%;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;font-size:9px;font-weight:800;letter-spacing:0.08em;
-    line-height:1.15;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,0.7);
-    background:radial-gradient(circle at 35% 30%,#ff9b93,#f85149 38%,#b62324 72%,#5c0f13);
-    box-shadow:0 4px 0 #4a0c10,0 6px 10px rgba(0,0,0,0.6);
-    transition:transform .08s,box-shadow .08s,filter .25s}
-  .nk.locked .dome,.nk.oom .dome{filter:grayscale(0.7) brightness(0.5)}
-  .nk.firing .dome{transform:translateY(4px);box-shadow:0 0 0 #4a0c10,0 2px 4px rgba(0,0,0,0.6)}
-  .nk .cover{position:absolute;inset:2px;border-radius:50%;border:1px solid rgba(201,209,217,0.45);
-    background:linear-gradient(rgba(201,209,217,0.30),rgba(201,209,217,0.06));transform-origin:50% 0;
-    transition:transform .45s cubic-bezier(.3,1.3,.5,1),opacity .45s}
-  .nk:not(.locked) .cover{transform:perspective(160px) rotateX(-115deg);opacity:0.25}
-  .dc{text-align:right;font-variant-numeric:tabular-nums}
-  .dc b{display:block;font-size:24px;line-height:1;color:#f85149}
-  .dc.oom b{color:#6e7681}
-  .dc small{display:block;font-size:8px;letter-spacing:0.08em;color:#8b949e;margin-top:2px}
-  @media (prefers-reduced-motion: reduce){#dirge *,.dsw *{transition:none !important;animation:none !important}}
+  /* One button per Dirge the player's full mana holds; the ones current mana holds are lit. They stay
+     hidden behind a shutter until the key turns, then pop in one after another. */
+  .bank{flex:1;display:flex;flex-wrap:wrap;gap:6px;align-content:center;min-height:52px;position:relative}
+  .bank .shut{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:8px;letter-spacing:0.14em;color:#6e7681;border:1px dashed #3a4048;border-radius:4px;
+    transition:opacity .25s}
+  .dk.turned ~ .bank .shut{opacity:0;pointer-events:none}
+  #dirge-btns{display:contents}
+  .bank b{--sweep:0;position:relative;width:30px;height:30px;border-radius:50%;flex:none;
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#fff;
+    text-shadow:0 1px 1px rgba(0,0,0,0.7);
+    background:radial-gradient(circle at 35% 30%,#ff9b93,#f85149 40%,#b62324 75%,#5c0f13);
+    box-shadow:0 3px 0 #4a0c10,0 4px 6px rgba(0,0,0,0.6);
+    opacity:0;transform:scale(0.4);transition:transform .08s,box-shadow .08s,filter .25s}
+  .dk.turned ~ .bank b{animation:bpop .35s cubic-bezier(.3,1.6,.5,1) forwards;animation-delay:calc(var(--i) * 70ms + .45s)}
+  @keyframes bpop{to{opacity:1;transform:scale(1)}}
+  .bank b.spent{filter:grayscale(1) brightness(0.45)}
+  .bank b.firing{transform:translateY(3px) !important;box-shadow:0 0 0 #4a0c10,0 1px 3px rgba(0,0,0,0.6)}
+  .bank b.firing::before{content:'';position:absolute;inset:-4px;border-radius:50%;z-index:-1;
+    background:conic-gradient(#ffa657 calc(var(--sweep) * 1turn),transparent 0)}
+  /* The labelmaker strip, stuck on underneath. */
+  .dtape{display:block;width:max-content;margin:8px auto 0;padding:2px 9px;border-radius:2px;
+    background:linear-gradient(#1b1d1f,#0b0c0d);color:#f2f2f2;transform:rotate(-1.2deg);
+    font:700 9px/1.5 "Courier New",Courier,monospace;letter-spacing:0.2em;text-transform:uppercase;
+    text-shadow:0 1px 0 rgba(255,255,255,0.25),0 -1px 0 #000;
+    box-shadow:0 1px 2px rgba(0,0,0,0.8),inset 0 1px 0 rgba(255,255,255,0.12)}
+  /* The Disc key, bottom right of the window: up when Puretone is ready, down on the disc timer. */
+  #dirge-disc{display:none;position:absolute;right:6px;bottom:5px;padding:1px 6px;border-radius:3px;
+    font-size:9px;letter-spacing:0.08em;font-variant-numeric:tabular-nums;color:#8b949e;
+    border:1px solid #3a4048;border-bottom-width:2px;background:#15181c}
+  body.dirge-on #dirge-disc{display:block}
+  #dirge-disc.up{color:#56d364;border-color:rgba(86,211,100,0.6)}
+  #dirge-disc.on{color:#d29922;border-color:rgba(210,153,34,0.7)}
+  #dirge-disc.down{color:#f85149;border-color:rgba(248,81,73,0.5);border-bottom-width:1px;transform:translateY(1px)}
+  @media (prefers-reduced-motion: reduce){#dirge *,.dsw *{transition:none !important;animation:none !important}
+    .dk.turned ~ .bank b{opacity:1;transform:none}}
   /* dirge-board:css:end */
 
   /* ✥ move + ✕ hide corner squares */
@@ -197,26 +232,30 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span><button type="button" id="dirge-sw" class="dsw" title="DIRGE NUKE board: lights up your pre-buffs, and slides out when you are set">DIRGE <i></i></button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="titleLbl">🎶 Melody</span><button type="button" id="dirge-sw" class="dsw" title="DIRGE TACTICAL NUKE: checks off your pre-buffs, and slides out when you are set. The number is the Dirges your mana holds now."><b id="dirge-top"></b>DIRGE <i></i></button></div>
     <div id="list"></div>
     <!-- dirge-board:html:start -->
     <div id="dirge">
       <div class="dl" id="dirge-lamps"></div>
       <div class="db-wrap"><div class="db-clip"><div class="db">
-        <div class="dk" id="dirge-key" title="Puretone Discipline: the key. It turns when you pop it.">
-          <svg viewBox="0 0 44 44" aria-hidden="true">
-            <circle class="plate" cx="22" cy="22" r="20" fill="#0d1117" stroke-width="2"/>
-            <path d="M22 5v4M39 22h-4" stroke="#6e7681" stroke-width="2"/>
-            <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="#d29922"/><circle cx="22" cy="14" r="2.4" fill="#0d1117"/></g>
-          </svg>
-          <div class="kl" id="dirge-kl">PURETONE</div>
+        <div class="db-row">
+          <div class="dk" id="dirge-key" title="Puretone Discipline: the key. The cover lifts when every step is checked; the key turns when you pop Puretone.">
+            <svg viewBox="0 0 44 44" aria-hidden="true">
+              <circle class="plate" cx="22" cy="22" r="20" fill="#0d1117" stroke-width="2"/>
+              <path d="M22 5v4M39 22h-4" stroke="#6e7681" stroke-width="2"/>
+              <g class="key"><rect x="17" y="8" width="10" height="28" rx="5" fill="#d29922"/><circle cx="22" cy="14" r="2.4" fill="#0d1117"/></g>
+            </svg>
+            <div class="cover"></div>
+            <div class="kl" id="dirge-kl">PURETONE</div>
+          </div>
+          <div class="bank" id="dirge-bank" title="Denon`s Desperate Dirge, 800 mana each: one button per Dirge your full mana holds, lit while your mana holds it. The ring fills while you sing it.">
+            <span class="shut">TURN KEY</span><span id="dirge-btns"></span>
+          </div>
         </div>
-        <div class="nk locked" id="dirge-nuke" title="Denon`s Desperate Dirge: the ring fills while you sing it">
-          <div class="ring"></div><div class="dome"><span>DIRGE</span><span>NUKE</span></div><div class="cover"></div>
-        </div>
-        <div class="dc" id="dirge-count"><b>×0</b><small>DIRGES</small><small class="mana"></small></div>
+        <span class="dtape">Dirge Team 6 · Tactical Nuke</span>
       </div></div></div>
     </div>
+    <div id="dirge-disc" title="Discipline timer: up when Puretone is ready, down while it recharges.">DISC</div>
     <!-- dirge-board:html:end -->
     <div class="empty" id="empty">no bard songs yet — start singing.</div>
   </div>
@@ -364,11 +403,19 @@
   var STALE_DROP_MS = 45000;
 
   // dirge-board:js:start
-  // The DIRGE NUKE board (the guild lead, 2026-09-26). dirgeView is the pure part; paintDirge only flips
-  // classes and text on nodes outside #list, so a repaint of the songs never restarts the slide or the key.
-  // Selo`s lasts 25 ticks (2:30) at most, so the asked-for 3:00 can never be met; 2:00 left means it was
-  // sung in the last 30 seconds (DECISIONS-2026-09-21.md §45).
+  // The DIRGE TACTICAL NUKE board (the guild lead, 2026-09-26). dirgeView is the pure part; paintDirge
+  // only flips classes and text on nodes outside #list, so a repaint of the songs never restarts the slide,
+  // the cover or the key.
+  // The steps, in the guild lead's order: "Make it Harmonize instead of Resonance, and do that first, then
+  // Selo's, then your resists, Niv's Harmonic is a Breath of Harmony Clicky", then Amplification last.
+  //  - Harmonize: Resonance up instead reads amber, since Harmonize is the stronger click (+9 vs +6).
+  //  - Selo`s lasts 25 ticks (2:30) at most, so the first ask of 3:00 could never be met; 2:00 left means
+  //    it was sung in the last 30 seconds (DECISIONS-2026-09-21.md §45).
+  //  - Niv`s: the Breath of Harmony click lands Niv`s Melody of Preservation in the item data, and the
+  //    song is Niv`s Harmonic, so either buff checks the step.
+  // The Dirge: 800 mana, a 3 s sing, and no recast or recovery in the spell data or on PQDI (spell 742).
   var DIRGE_SELO_MIN_SECS = 120;
+  var DIRGE_MAX_BUTTONS = 12;
   var _dirgeOn = false;
   try { _dirgeOn = localStorage.getItem('wp:melody:dirge') === '1'; } catch (e) {}
   function fmtSecs(secs){ var s = Math.max(0, Math.round(secs || 0)); return Math.floor(s/60) + ':' + String(s % 60).padStart(2,'0'); }
@@ -377,29 +424,39 @@
     var pt = d.puretone || {};
     var sel = bb && bb.accelerating_chorus;
     var selSecs = sel && typeof sel.remaining_secs === 'number' ? sel.remaining_secs : null;
-    var lamps = [
-      { label: 'GR',   title: 'Guardian Rhythms', on: !!d.guardian },
-      { label: 'PSM',  title: 'Psalm of Mystic Shielding', on: !!d.psalm },
-      { label: 'SELO', title: 'Selo`s Accelerating Chorus with ' + fmtSecs(DIRGE_SELO_MIN_SECS) + ' or more left',
-        on: selSecs != null && selSecs >= DIRGE_SELO_MIN_SECS, warn: !!sel },
-      { label: 'NIV',  title: 'Niv`s Harmonic', on: !!d.nivs_harmonic },
-      { label: bb && bb.harmonize ? 'HAR' : 'RES', title: 'Resonance or Harmonize', on: !!(bb && (bb.harmonize || bb.resonance)) },
-      { label: 'AMP',  title: 'Amplification', on: !!(bb && bb.amplification) },
-      { label: 'PT',   title: pt.active ? 'Puretone is up' : (pt.ready ? 'Puretone Discipline is ready' : 'Puretone Discipline ready in ' + fmtSecs(pt.ready_in_secs)),
-        on: !!(pt.active || pt.ready), warn: true },
+    var steps = [
+      { label: 'Harmonize', on: !!(bb && bb.harmonize), warn: !!(bb && bb.resonance),
+        title: bb && bb.resonance ? 'Resonance is up: Harmonize is the stronger click' : 'Harmonize (Shadowsong Cloak)' },
+      { label: 'Selo`s Chorus', on: selSecs != null && selSecs >= DIRGE_SELO_MIN_SECS, warn: !!sel,
+        title: 'Selo`s Accelerating Chorus with ' + fmtSecs(DIRGE_SELO_MIN_SECS) + ' or more left' + (selSecs != null ? ' (' + fmtSecs(selSecs) + ' now)' : '') },
+      { label: 'Guardian Rhythms', on: !!d.guardian, title: 'Guardian Rhythms' },
+      { label: 'Psalm of Mystic Shielding', on: !!d.psalm, title: 'Psalm of Mystic Shielding' },
+      { label: 'Niv`s (Breath of Harmony)', on: !!(d.nivs_harmonic || (bb && bb.nivs)), title: 'Niv`s Harmonic, or the Breath of Harmony click' },
+      { label: 'Amplification', on: !!(bb && bb.amplification), title: 'Amplification, last' },
     ];
+    var set = steps.every(function(s){ return s.on; });
     var turned = !!pt.active;
-    var count = typeof d.mana_cur === 'number' ? Math.floor(d.mana_cur / (d.dirge_mana || 800)) : null;
+    var per = d.dirge_mana || 800;
+    var count = typeof d.mana_cur === 'number' ? Math.floor(d.mana_cur / per) : null;
+    var total = typeof d.mana_max === 'number' ? Math.floor(d.mana_max / per) : count;
+    if (total != null && count != null) total = Math.max(total, count);
+    if (total != null) total = Math.min(total, DIRGE_MAX_BUTTONS);
     var sweep = castAt ? Math.min(1, (now - castAt) / (d.dirge_cast_ms || 3000)) : 0;
+    var firing = sweep > 0 && sweep < 1;
     return {
-      lamps: lamps,
-      // Out once every lamp is lit; it stays out while Puretone is up, even as the songs fade mid-nuke.
-      open: turned || lamps.every(function(l){ return l.on; }),
+      steps: steps,
+      // Out once every step is checked; it stays out while Puretone is up, even as the songs fade mid-nuke.
+      open: turned || set,
+      uncovered: turned || set,
       turned: turned,
       keyLabel: turned ? 'PURETONE ' + fmtSecs(pt.remaining_secs) : (pt.ready ? 'PURETONE READY' : 'PURETONE ' + fmtSecs(pt.ready_in_secs)),
+      disc: pt.active ? { cls: 'on', text: 'DISC ● ' + fmtSecs(pt.remaining_secs) }
+          : pt.ready ? { cls: 'up', text: 'DISC ▲ UP' }
+          : { cls: 'down', text: 'DISC ▼ ' + fmtSecs(pt.ready_in_secs) },
       count: count,
-      mana: typeof d.mana_cur === 'number' ? d.mana_cur : null,
-      firing: sweep > 0 && sweep < 1,
+      total: total,
+      // The Dirge being sung is the top lit button; it goes dark when the mana for it is spent.
+      firingButton: firing && count ? count : null,
       sweep: sweep,
     };
   }
@@ -408,8 +465,10 @@
     var bb = st && st.isBard ? st.bardBuffs : null;
     var box = document.getElementById('dirge');
     document.body.classList.toggle('has-bard', !!bb);
+    document.body.classList.toggle('dirge-on', !!bb && _dirgeOn);
     document.getElementById('dirge-sw').classList.toggle('on', _dirgeOn);
-    if (!bb || !_dirgeOn) { box.className = ''; _dirgeOpen = null; _dirgeCastAt = 0; return; }
+    var top = document.getElementById('dirge-top');
+    if (!bb || !_dirgeOn) { box.className = ''; top.textContent = ''; _dirgeOpen = null; _dirgeCastAt = 0; return; }
     // The ring fills while Zeal says you are singing the Dirge; a Dirge sung straight after another
     // keeps the same label, so the ring starts over every cast length.
     var castMs = (bb.dirge && bb.dirge.dirge_cast_ms) || 3000;
@@ -417,21 +476,34 @@
     else if (!_dirgeCastAt) _dirgeCastAt = now;
     else while (now - _dirgeCastAt >= castMs) _dirgeCastAt += castMs;
     var v = dirgeView(bb, now, _dirgeCastAt);
-    var lamps = v.lamps.map(function(l){
-      return '<span class="' + (l.on ? 'on' : (l.warn ? 'warn' : '')) + '" title="' + esc(l.title) + '">' + esc(l.label) + '</span>';
+    top.textContent = v.count == null ? '' : '×' + v.count;
+    var steps = v.steps.map(function(s, i){
+      return '<span class="' + (s.on ? 'on' : (s.warn ? 'warn' : '')) + '" title="' + esc(s.title) + '"><i>'
+        + (s.on ? '✓' : i + 1) + '</i>' + esc(s.label) + '</span>';
     }).join('');
     var le = document.getElementById('dirge-lamps');
-    if (le.__h !== lamps) { le.innerHTML = lamps; le.__h = lamps; }
+    if (le.__h !== steps) { le.innerHTML = steps; le.__h = steps; }
     box.className = 'show' + (v.open ? ' open' : '');
-    document.getElementById('dirge-key').className = 'dk' + (v.turned ? ' turned' : '');
+    document.getElementById('dirge-key').className = 'dk' + (v.uncovered ? ' uncovered' : '') + (v.turned ? ' turned' : '');
     document.getElementById('dirge-kl').textContent = v.keyLabel;
-    var nk = document.getElementById('dirge-nuke');
-    nk.className = 'nk' + (v.turned ? '' : ' locked') + (v.count === 0 ? ' oom' : '') + (v.firing ? ' firing' : '');
-    nk.style.setProperty('--sweep', v.firing ? v.sweep.toFixed(3) : '0');
-    var dc = document.getElementById('dirge-count');
-    dc.className = 'dc' + (v.count === 0 ? ' oom' : '');
-    dc.querySelector('b').textContent = v.count == null ? '×?' : '×' + v.count;
-    dc.querySelector('.mana').textContent = v.mana == null ? '' : v.mana.toLocaleString() + ' mana';
+    var disc = document.getElementById('dirge-disc');
+    disc.className = v.disc.cls;
+    disc.textContent = v.disc.text;
+    var btns = document.getElementById('dirge-btns');
+    var n = v.total || 0;
+    if (btns.__n !== n) {
+      var h = '';
+      for (var bi = 1; bi <= n; bi++) h += '<b style="--i:' + (bi - 1) + '">' + bi + '</b>';
+      btns.innerHTML = h;
+      btns.__n = n;
+    }
+    var bs = btns.children;
+    for (var bj = 0; bj < bs.length; bj++) {
+      var num = bj + 1;
+      var cls = (v.count != null && num > v.count ? 'spent' : '') + (num === v.firingButton ? ' firing' : '');
+      if (bs[bj].className !== cls) bs[bj].className = cls;
+      if (num === v.firingButton) bs[bj].style.setProperty('--sweep', v.sweep.toFixed(3));
+    }
     if (_dirgeOpen !== v.open) {
       _dirgeOpen = v.open;
       var db = box.querySelector('.db');

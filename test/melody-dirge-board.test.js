@@ -1,8 +1,10 @@
-// The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): "a little switch and a red
-// button that says DIRGE NUKE on it when amplification and resonance/harmonize and Puretone is
-// available … As soon as Amplification flips on as the last item, the control board slides out …
-// shows the Puretone Key (that turns if you do it) and then the NUKE button that has a cooldown on it
-// for recast and HOW MANY Dirges you can do (mana divided by 800)".
+// The DIRGE TACTICAL NUKE board on the Melody overlay (the guild lead, 2026-09-26): "a little switch and
+// a red button that says DIRGE NUKE on it … As soon as Amplification flips on as the last item, the
+// control board slides out … shows the Puretone Key (that turns if you do it)", then round two: "Make it
+// Harmonize instead of Resonance, and do that first, then Selo's, then your resists, Niv's Harmonic is
+// a Breath of Harmony Clicky … have the Keyturn under a little plastic cover that gets uncovered when all
+// of the other steps are checked … revealling all of the available dirges per the player (each with a
+// seperate button based on how much total mana the player could have vs have now."
 //
 // Run: npx vitest run test/melody-dirge-board.test.js
 
@@ -68,47 +70,76 @@ describe('agent: what the board waits for', () => {
   });
 });
 
-const bb = (over) => Object.assign({
-  amplification: { observed: true }, resonance: { observed: true }, harmonize: null,
-  accelerating_chorus: { observed: true, remaining_secs: 140 },
-  dirge: { guardian: true, psalm: true, nivs_harmonic: true, puretone: { active: false, ready: true },
-    mana_cur: 4300, dirge_mana: 800, dirge_cast_ms: 3000 },
+const bb = (over, dirge) => Object.assign({
+  amplification: { observed: true }, harmonize: { observed: true }, resonance: null,
+  accelerating_chorus: { observed: true, remaining_secs: 140 }, nivs: null,
+  dirge: Object.assign({ guardian: true, psalm: true, nivs_harmonic: true, puretone: { active: false, ready: true },
+    mana_cur: 4000, mana_max: 4000, dirge_mana: 800, dirge_cast_ms: 3000 }, dirge),
 }, over);
 
-describe('overlay: the lamps, the slide-out, the key and the count', () => {
-  it('every lamp lit → the board is out; Amplification missing → it is not', () => {
-    const v = view.dirgeView(bb(), 0, 0);
-    expect(v.lamps.map(l => l.label)).toEqual(['GR', 'PSM', 'SELO', 'NIV', 'RES', 'AMP', 'PT']);
-    expect(v.open).toBe(true);
-    expect(view.dirgeView(bb({ amplification: null }), 0, 0).open).toBe(false);
-    expect(view.dirgeView(bb({ resonance: null, harmonize: { observed: true } }), 0, 0).lamps[4]).toMatchObject({ label: 'HAR', on: true });
+describe('overlay: the steps, the cover, the key', () => {
+  it('the steps are the real songs, in the order they are sung, Amplification last', () => {
+    expect(view.dirgeView(bb(), 0, 0).steps.map(s => s.label)).toEqual([
+      'Harmonize', 'Selo`s Chorus', 'Guardian Rhythms', 'Psalm of Mystic Shielding', 'Niv`s (Breath of Harmony)', 'Amplification']);
   });
 
-  it('Selo`s needs 2:00 left (it lasts 2:30 at most), and short of that the lamp is amber, not lit', () => {
+  it('every step checked → the board is out and the cover lifts; Amplification missing → neither', () => {
+    expect(view.dirgeView(bb(), 0, 0)).toMatchObject({ open: true, uncovered: true, turned: false });
+    expect(view.dirgeView(bb({ amplification: null }), 0, 0)).toMatchObject({ open: false, uncovered: false });
+  });
+
+  it('Harmonize, not Resonance: Resonance alone reads amber and does not check the step', () => {
+    const v = view.dirgeView(bb({ harmonize: null, resonance: { observed: true } }), 0, 0);
+    expect(v.steps[0]).toMatchObject({ on: false, warn: true });
+    expect(v.open).toBe(false);
+  });
+
+  it('Niv`s: the Breath of Harmony click (Niv`s Melody of Preservation) or Niv`s Harmonic, either one', () => {
+    expect(view.dirgeView(bb({ nivs: { observed: true } }, { nivs_harmonic: false }), 0, 0).steps[4].on).toBe(true);
+    expect(view.dirgeView(bb({ nivs: null }, { nivs_harmonic: true }), 0, 0).steps[4].on).toBe(true);
+    expect(view.dirgeView(bb({ nivs: null }, { nivs_harmonic: false }), 0, 0).steps[4].on).toBe(false);
+  });
+
+  it('Selo`s needs 2:00 left (it lasts 2:30 at most); short of that the step is amber', () => {
     expect(view.DIRGE_SELO_MIN_SECS).toBe(120);
     const low = view.dirgeView(bb({ accelerating_chorus: { observed: true, remaining_secs: 119 } }), 0, 0);
-    expect(low.lamps[2]).toMatchObject({ on: false, warn: true });
+    expect(low.steps[1]).toMatchObject({ on: false, warn: true });
     expect(low.open).toBe(false);
   });
 
-  it('Puretone on cooldown keeps it in; once Puretone is up the board stays out as the songs fade', () => {
-    const cd = bb();
-    cd.dirge = Object.assign({}, cd.dirge, { puretone: { active: false, ready: false, ready_in_secs: 125 } });
-    const v = view.dirgeView(cd, 0, 0);
-    expect(v).toMatchObject({ open: false, turned: false, keyLabel: 'PURETONE 2:05' });
-    const up = bb({ amplification: null, resonance: null, accelerating_chorus: null });
-    up.dirge = Object.assign({}, up.dirge, { guardian: false, puretone: { active: true, remaining_secs: 236 } });
-    expect(view.dirgeView(up, 0, 0)).toMatchObject({ open: true, turned: true, keyLabel: 'PURETONE 3:56' });
+  it('the key turns on Puretone, and the board stays out as the songs fade mid-nuke', () => {
+    const up = bb({ amplification: null, harmonize: null, accelerating_chorus: null },
+      { guardian: false, puretone: { active: true, remaining_secs: 236 } });
+    expect(view.dirgeView(up, 0, 0)).toMatchObject({ open: true, uncovered: true, turned: true, keyLabel: 'PURETONE 3:56' });
   });
 
-  it('the count is mana ÷ 800, rounded down; the ring fills over the 3 s sing', () => {
-    expect(view.dirgeView(bb(), 0, 0).count).toBe(5);
-    const oom = bb(); oom.dirge = Object.assign({}, oom.dirge, { mana_cur: 799 });
-    expect(view.dirgeView(oom, 0, 0).count).toBe(0);
-    const none = bb(); none.dirge = Object.assign({}, none.dirge, { mana_cur: null });
-    expect(view.dirgeView(none, 0, 0).count).toBe(null);
-    expect(view.dirgeView(bb(), 11500, 10000)).toMatchObject({ firing: true, sweep: 0.5 });
-    expect(view.dirgeView(bb(), 13000, 10000).firing).toBe(false);
+  it('the Disc key: up when Puretone is ready, down with the time left, lit while it runs', () => {
+    expect(view.dirgeView(bb(), 0, 0).disc).toEqual({ cls: 'up', text: 'DISC ▲ UP' });
+    expect(view.dirgeView(bb({}, { puretone: { active: false, ready: false, ready_in_secs: 125 } }), 0, 0).disc)
+      .toEqual({ cls: 'down', text: 'DISC ▼ 2:05' });
+    expect(view.dirgeView(bb({}, { puretone: { active: true, remaining_secs: 61 } }), 0, 0).disc)
+      .toEqual({ cls: 'on', text: 'DISC ● 1:01' });
+  });
+});
+
+describe('overlay: one button per Dirge', () => {
+  it('full mana at 4,000 max is five buttons, all lit; spent mana darkens from the top', () => {
+    expect(view.dirgeView(bb(), 0, 0)).toMatchObject({ total: 5, count: 5 });
+    expect(view.dirgeView(bb({}, { mana_cur: 1700 }), 0, 0)).toMatchObject({ total: 5, count: 2 });
+    expect(view.dirgeView(bb({}, { mana_cur: 799 }), 0, 0)).toMatchObject({ total: 5, count: 0 });
+  });
+
+  it('no max known: as many buttons as current mana holds; never more than twelve', () => {
+    expect(view.dirgeView(bb({}, { mana_max: null, mana_cur: 2500 }), 0, 0)).toMatchObject({ total: 3, count: 3 });
+    expect(view.dirgeView(bb({}, { mana_max: 20000, mana_cur: 20000 }), 0, 0).total).toBe(12);
+    expect(view.dirgeView(bb({}, { mana_max: null, mana_cur: null }), 0, 0)).toMatchObject({ total: null, count: null });
+  });
+
+  it('the Dirge being sung is the top lit button, and its ring fills over the 3 s sing', () => {
+    const v = view.dirgeView(bb({}, { mana_cur: 2400 }), 11500, 10000);
+    expect(v).toMatchObject({ count: 3, firingButton: 3, sweep: 0.5 });
+    expect(view.dirgeView(bb({}, { mana_cur: 2400 }), 13000, 10000).firingButton).toBe(null);
+    expect(view.dirgeView(bb({}, { mana_cur: 2400 }), 0, 0).firingButton).toBe(null);
   });
 });
 
@@ -119,6 +150,13 @@ describe('overlay: wiring', () => {
     expect(js).toMatch(/_dsw\.addEventListener\('mouseenter', function\(\)\{ try \{ window\.mimic\.overlayHoverInteractive\(true\)/);
     expect(js).toMatch(/localStorage\.setItem\('wp:melody:dirge'/);
     expect(s).toContain('paintDirge(_boardSt, now);');
+  });
+  it('the count sits by the switch; the Disc key, the bank and the label are on the board', () => {
+    const js = stripJs(sliceBlock(melody, '// dirge-board:js:start', '// dirge-board:js:end'));
+    expect(js).toContain("top.textContent = v.count == null ? '' : '×' + v.count;");
+    expect(melody).toContain('<b id="dirge-top"></b>DIRGE <i></i></button>');
+    for (const id of ['id="dirge-disc"', 'id="dirge-btns"', 'id="dirge-key"', 'class="cover"']) expect(melody).toContain(id);
+    expect(melody).toContain('<span class="dtape">Dirge Team 6 · Tactical Nuke</span>');
   });
   it('the label between casts no longer reads an undefined name (it stopped every repaint)', () => {
     const def = s.indexOf('var curKind  = (curEntry && curEntry.kind) || st.kind');
