@@ -94,6 +94,53 @@ describe('the player you target goes on top, with their guild when we know it', 
   });
 });
 
+describe('Zek only mode (the guild lead, 2026-09-26: "a Zek only mode")', () => {
+  it('every row carries its Zek flag: the live guild, or history, /anon or not', () => {
+    const { buildWhoSnapshot } = load({
+      who: [row('Ozzar', { class: 'Rogue', level: 60, guild: 'Zek' }),
+            row('Vessk', { class: 'Wizard', level: 60, guild: 'Deathbringers' }),
+            row('Quillon', { anonymous: true }),
+            row('Corvale', { class: 'Cleric', level: 60, guild: 'Wolf Pack' })],
+      whoRun: ['ozzar', 'vessk', 'quillon', 'corvale'],
+      history: { vessk: { is_zek: true }, quillon: { class: 'Necromancer', is_zek: true }, corvale: { is_zek: false } },
+    });
+    const byName = Object.fromEntries(buildWhoSnapshot().current.map(r => [r.name, r]));
+    expect(byName.Ozzar.zek).toBe(true);     // <Zek> on the live row.
+    expect(byName.Vessk.zek).toBe(true);     // Not /anon, but history says Zek (inferred, or an old guild).
+    expect(byName.Quillon.zek).toBe(true);   // /anon, history says Zek.
+    expect(byName.Corvale.zek).toBeUndefined();
+  });
+
+  it('a target in the Zek guild is flagged on the card', () => {
+    const { buildWhoSnapshot } = load({ target: 'Ozzar', who: [row('Ozzar', { class: 'Rogue', level: 60, guild: 'Zek' })], whoRun: ['ozzar'] });
+    expect(buildWhoSnapshot().target.zek).toBe(true);
+  });
+
+  const html = readSource(path.join(ROOT, 'apps', 'mimic', 'who.html'));
+  const { isZek, listsFor } = evalBlock(
+    sliceBlock(html, 'function isZek(p){', '}') + '\n' + sliceBlock(html, 'function listsFor(w, zekOnly){', '\n  }'),
+    ['isZek', 'listsFor']);
+  const snap = {
+    current: [{ name: 'Ozzar', zek: true }, { name: 'Corvale' }, { name: 'Quillon', known: { is_zek: true } }],
+    recentGone: [{ name: 'Vessk', zek: true }, { name: 'Nyssara' }],
+  };
+
+  it('the overlay keeps only Zek rows in both lists, and still knows the full count', () => {
+    const on = listsFor(snap, true);
+    expect(on.current.map(r => r.name)).toEqual(['Ozzar', 'Quillon']);
+    expect(on.gone.map(r => r.name)).toEqual(['Vessk']);
+    expect(on.total).toBe(3);   // "Zek 2 of 3".
+    const off = listsFor(snap, false);
+    expect(off.current).toHaveLength(3);
+    expect(off.gone).toHaveLength(2);
+  });
+
+  it('copes with no /who yet', () => {
+    expect(listsFor(null, true)).toEqual({ current: [], gone: [], total: 0 });
+    expect(isZek(null)).toBe(false);
+  });
+});
+
 describe('the overlay draws the guild under the name', () => {
   const html = readSource(path.join(ROOT, 'apps', 'mimic', 'who.html'));
   const esc = sliceBlock(html, 'function esc(s){', '}); }');

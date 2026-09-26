@@ -7437,6 +7437,7 @@ function buildWhoSnapshot() {
     if (data) {
       if (data.main)  entry.main  = data.main;        // #111 main-in-parens
       if (data.mimic) entry.mimic = true;             // #111 wolf icon
+      if (data.is_zek) entry.zek = true;              // Zek by history (their guild, or the bot's inference)
     }
     if (!fresh) lookupNeeded.push(v.name);            // resolve enrichment for every row
   };
@@ -7446,6 +7447,9 @@ function buildWhoSnapshot() {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
+    // Every row carries its Zek flag, for the overlay's Zek only mode (the guild lead, 2026-09-26).
+    // Before, only an /anon row did (through entry.known), so a player showing <Zek> went unflagged.
+    if (_isZekGuild(v.guild)) entry.zek = true;
     if (currentNames && currentNames.has(k)) {
       enrich(entry, v, k);
       current.push(entry);
@@ -7463,6 +7467,11 @@ function buildWhoSnapshot() {
     capturedAt: _whoRun ? _whoRun.startedAt : now,
     target,
   };
+}
+
+// The Zek guild, as the bot's who_directory reads it (guild_name = 'Zek').
+function _isZekGuild(guild) {
+  return /^zek$/i.test(String(guild || '').trim());
 }
 
 // The player you are targeting, for the top of the /who overlay (the guild lead, 2026-09-26, in a raid
@@ -7494,7 +7503,7 @@ function _whoTargetPlayer() {
     guild: pl.guild, guild_src: liveGuild ? 'who' : (pl.guild ? 'history' : null),
     anonymous: pl.anonymous,
     gm: !!(who && who.gm),
-    zek: !!(hist && hist.is_zek),
+    zek: !!(hist && hist.is_zek) || _isZekGuild(pl.guild),
     main: (hist && hist.main) || null,
     mimic: !!(hist && hist.mimic),
   };

@@ -15,6 +15,12 @@
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  /* Zek only toggle (the guild lead, 2026-09-26). Lit in the ZEK flag's red when on. */
+  .zekbtn{font-family:inherit;font-size:9px;font-weight:bold;letter-spacing:0.5px;padding:0 5px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:14px}
+  .zekbtn:hover{color:#ff7b72;border-color:#ff7b72}
+  .zekbtn.on{background:#3d1d1d;color:#ff7b72;border-color:#ff7b72}
+  .nozek{font-size:11px;color:#8b949e;text-shadow:0 1px 2px #000;padding:1px 0}
   .sec{margin-bottom:6px}
   .sec-h{font-size:10px;color:#8b949e;letter-spacing:0.5px;margin:3px 0 2px;text-transform:uppercase}
   .sec-h .n{color:#7ee7c7}
@@ -111,7 +117,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span><button id="zek-btn" class="zekbtn" aria-pressed="false" title="Zek only: show just the players known to be Zek">ZEK</button></div>
     <div id="body"></div>
     <div id="empty">run <b>/who</b> in game</div>
   </div>
@@ -206,7 +212,7 @@
   }
 
   function rowHtml(p, gone){
-    var zek = !!(p.known && p.known.is_zek);
+    var zek = isZek(p);
     var cls = 'r' + (zek ? ' zek' : '');
     // De-anon fallback: when the LIVE row is anon (class/level/guild null),
     // fill in from who history so the columns still render. Mark those values
@@ -335,6 +341,36 @@
   var _goneExpanded = false;
   var _lastWho = null;
 
+  // Zek only (the guild lead, 2026-09-26: "a Zek only mode"): both lists show just the players known
+  // to be Zek, by their guild or inferred by the bot. The Target card stays whoever it is. Remembered
+  // on this machine.
+  function isZek(p){ return !!(p && (p.zek || (p.known && p.known.is_zek))); }
+  function listsFor(w, zekOnly){
+    var cur  = (w && Array.isArray(w.current)) ? w.current : [];
+    var gone = (w && Array.isArray(w.recentGone)) ? w.recentGone : [];
+    if (!zekOnly) return { current: cur, gone: gone, total: cur.length };
+    return { current: cur.filter(isZek), gone: gone.filter(isZek), total: cur.length };
+  }
+  var _zekOnly = false;
+  try { _zekOnly = localStorage.getItem('wp:who:zekOnly') === '1'; } catch (e) {}
+  var zekBtn = document.getElementById('zek-btn');
+  function _paintZekBtn(){
+    if (!zekBtn) return;
+    zekBtn.classList.toggle('on', _zekOnly);
+    zekBtn.setAttribute('aria-pressed', _zekOnly ? 'true' : 'false');
+  }
+  _paintZekBtn();
+  if (zekBtn) {
+    zekBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    zekBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    zekBtn.addEventListener('click', function(){
+      _zekOnly = !_zekOnly;
+      try { localStorage.setItem('wp:who:zekOnly', _zekOnly ? '1' : '0'); } catch (e) {}
+      _paintZekBtn();
+      renderWho(_lastWho);
+    });
+  }
+
   // The targeted player's card: name, 🐺 / (main) / flags, class + level columns, then the guild on its
   // own line under the name when we know it. The agent has already taken them out of the lists below.
   function targetHtml(t){
@@ -373,14 +409,19 @@
       bodyEl.innerHTML = ''; bodyEl.__wpHtml = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return;
     }
     emptyEl.style.display = hasList ? 'none' : 'block';
+    var lists = listsFor(w, _zekOnly);
     var h = tgt;
     if (hasList) {
-      h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
-      for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
+      var head = _zekOnly
+        ? 'Zek <span class="n">' + lists.current.length + '</span> of ' + lists.total
+        : 'Current <span class="n">' + lists.total + '</span>';
+      h += '<div class="sec"><div class="sec-h">' + head + ' · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
+      if (!lists.current.length) h += '<div class="nozek">No Zek in your last /who</div>';
+      for (var i=0;i<lists.current.length;i++) h += safeRow(lists.current[i], false);
       h += '</div></div>';
     }
-    if (Array.isArray(w.recentGone) && w.recentGone.length) {
-      var gone = w.recentGone;
+    if (lists.gone.length) {
+      var gone = lists.gone;
       var total = gone.length;
       var collapsed = !_goneExpanded && total > GONE_CAP;
       var shown = collapsed ? GONE_CAP : total;
