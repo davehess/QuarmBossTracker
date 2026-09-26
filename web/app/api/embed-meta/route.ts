@@ -20,9 +20,11 @@ function escHtml(s: string): string {
 
 export async function GET(req: NextRequest) {
   const path = req.nextUrl.searchParams.get('path') || '/';
-  const { title, description } = metaForPath(path);
+  const { title, description, image } = metaForPath(path);
   const fullTitle = title === SITE_NAME ? title : `${title} — ${SITE_NAME}`;
   const url = `https://wolfpack.quest${path}`;
+  // A page with a picture gets the big card; the rest keep the small one.
+  const img = image ? `https://wolfpack.quest${image}` : null;
   const html = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -32,8 +34,10 @@ export async function GET(req: NextRequest) {
 <meta property="og:title" content="${escHtml(fullTitle)}">
 <meta property="og:description" content="${escHtml(description)}">
 <meta property="og:url" content="${escHtml(url)}">
-<meta property="og:type" content="website">
-<meta name="twitter:card" content="summary">
+<meta property="og:type" content="website">${img ? `
+<meta property="og:image" content="${escHtml(img)}">
+<meta name="twitter:image" content="${escHtml(img)}">` : ''}
+<meta name="twitter:card" content="${img ? 'summary_large_image' : 'summary'}">
 <meta name="twitter:title" content="${escHtml(fullTitle)}">
 <meta name="twitter:description" content="${escHtml(description)}">
 </head><body>${escHtml(fullTitle)} — ${escHtml(description)}</body></html>`;

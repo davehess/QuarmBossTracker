@@ -10,7 +10,10 @@ export const SITE_NAME = 'WolfPack.quest';
 export const DEFAULT_DESCRIPTION =
   'Guild-wide build planner, parse history, and loadout library for Project Quarm.';
 
-const STATIC_META: Record<string, { title: string; description: string }> = {
+// image: an optional picture for the card (a path under web/public), for pages meant to be posted.
+type PageMeta = { title: string; description: string; image?: string };
+
+const STATIC_META: Record<string, PageMeta> = {
   '/':             { title: 'WolfPack.quest', description: DEFAULT_DESCRIPTION },
   '/pop':          { title: 'PoP Flags (Preview)', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
   '/roster':       { title: 'Raid Roster', description: 'Typical raiders by role and class — 60-day raid attendance from DKP ticks, tanks/healers/DPS grouped, notable alts called out.' },
@@ -31,12 +34,13 @@ const STATIC_META: Record<string, { title: string; description: string }> = {
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },
   '/raid':         { title: 'Live Raid', description: 'The raid right now — who’s in, groups, HP, and buffs, live from Zeal.' },
   '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS HUD, triggers, buff queue, and log sync for Project Quarm.' },
+  '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
 };
 
-export function metaForPath(rawPath: string): { title: string; description: string } {
+export function metaForPath(rawPath: string): PageMeta {
   const path = (rawPath || '/').replace(/\/+$/, '') || '/';
   const hit = STATIC_META[path];
   if (hit) return hit;

@@ -1619,6 +1619,13 @@ up, Amplification last), a Puretone key, and a button for every Dirge the mana h
     "Dirge Team 6 · Tactical Nuke" labelmaker strip under the board.
   - `dirgeView()` is pure; `paintDirge()` touches only nodes outside `#list`, so the song
     repaint never restarts the slide, the cover or the key.
+- **Public demo, wolfpack.quest/mimic/dirge** (for posting in Discord):
+  - `web/public/mimic/dirge.html` is the real board on a scripted fight. A rewrite in
+    `web/next.config.js` serves it at `/mimic/dirge`.
+  - It is built by `node scripts/build-dirge-demo.js <melody.html with the board>`. Rebuild it
+    when the board changes; the script refuses a `melody.html` without the board.
+  - The Discord card is `dirge-card.png`. `pageMeta.ts` entries can now carry an `image`, which
+    `/api/embed-meta` sends as a large card.
 - **Agent:** `_dirgeInfo()` adds `bardBuffs.dirge`:
   - the three pre-buffs by exact name;
   - Puretone up (buff window, or the disc line inside 240 s) or ready (the shared disc
