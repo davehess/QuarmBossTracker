@@ -2600,6 +2600,30 @@ connection dot went red until the next cast. It is also on stable. One line defi
 **Landed:** beta `611b145b`. `test/melody-dirge-board.test.js` covers both halves; seven
 deliberate breaks, all caught.
 
+**Round two, the same morning (beta `bb40c989`, now "DIRGE TACTICAL NUKE").** The guild lead:
+*"Make it Harmonize instead of Resonance, and do that first, then Selo's, then your resists, Niv's
+Harmonic is a Breath of Harmony Clicky … put each of the Dirges as its own button and have the
+Keyturn under a little plastic cover … Underneath put in 'Dirge Team 6 Tactical Nuke'"*.
+- **Steps**, numbered and in singing order: Harmonize, Selo's (2:00+), Guardian Rhythms, Psalm of
+  Mystic Shielding, Niv's (Breath of Harmony), Amplification.
+  - Resonance alone reads amber: the guild lead asked for Harmonize "instead of".
+  - The Niv's step checks on either buff. In `eqemu_items` the Breath of Harmony item (5156)
+    clicks Niv's Melody of Preservation (748), not Niv's Harmonic (1763).
+- **Cover and key:** with all six checked, a plastic cover over the key flips up. Puretone turns
+  the key, and the Dirge buttons pop in.
+- **One button per Dirge:** `floor(max mana ÷ 800)` buttons (up to 12), numbered. The ones current
+  mana holds are lit, and the one being sung is the top lit button, its ring filling.
+- **Recast:** the guild lead believes Dirges have a small recast delay. Our spell catalog and PQDI
+  both give spell 742 a 0.0 s recast and 0.0 s recovery, so the only wait shown is the 3 s sing.
+  That stays open until someone measures one in game.
+- **Also asked for:**
+  - the current Dirge count by the switch;
+  - a DISC key in the bottom right: up (ready), down with the time left, or lit while Puretone
+    runs;
+  - the "Dirge Team 6 · Tactical Nuke" labelmaker strip under the board;
+  - preview steps you can click to jump to.
+- The single big NUKE button and the lamp chips are gone.
+
 ## 46. PvP: every death stored, grouped into fights; the alliance night in Vex Thal (2026-09-26)
 
 **The guild lead**, the morning after an alliance of Dungeons and Dragons, Wolf Pack, Freedom and
