@@ -2719,6 +2719,42 @@ The old page still carries the stale numbers until one layout graduates.
 **Next:** the guild lead picks B or C. It then graduates to main, the other layout and the old page
 are deleted, and the roadmap gets an entry.
 
+## 48. The alliance gate in front of /who (2026-09-26)
+
+**The guild lead:** *"I mentioned an alliance gate in front of the /who overlay and page. we
+shouldnt just give away our secret weapon. admins can choose to submit who observations, but end
+users should ultimately decide on if their characters are linked outside of the guild"*.
+
+**The policy.** It extends §8.6–§8.7 of `DECISIONS-2026-09-18.md`, which covered other guilds'
+own deployments, to our own site.
+- **The secret weapon stays ours.** That means /who history that fills in anonymous players, the
+  Zek flags built from it, and which character is whose alt. Members get it; nobody else gets it
+  by default.
+- **Allies get in only through an alliance grant**, issued by our officers to an allied guild.
+  What a grant shows is limited: what the game itself shows in /who, and no filling-in of
+  anonymous players from our history.
+- **Guild-level: admins choose whether their guild submits /who observations** to what the
+  alliance can see. Off until an admin turns it on.
+- **Person-level: each player decides whether their characters are linked outside the guild.**
+  That is a switch on /me, off by default, and never an officer's or a guild's choice for them.
+  An ally sees a main/alt link only for characters whose owner turned it on.
+
+**Done now (bot 3.1.153):** the Discord `/who`, `/whois` and `/whoall` lookups, their autocomplete
+and the Show Family button answer members only (`isGuildMember()` in `utils/roles.js`). Anyone
+else gets one line saying the lookup is for members.
+`test/who-commands-members-only.test.js`: four deliberate breaks, all caught. The first
+autocomplete test passed with its gate removed, because the test roster was empty; it now fails if
+the command reads anything before refusing.
+
+**Build order, the rest waiting on the guild lead:**
+1. **The member gate on the /who page, its database tables and the Mimic /who lookup**, so every
+   /who surface checks membership at the moment of use, not just at sign-in. This is part of the
+   membership fix already planned (private briefing), and waits on the guild lead's fix order.
+2. **The ally tier:** the alliance grant, the guild-level submit switch, and the per-person link
+   switch on /me.
+
+Private specifics (how each surface was reachable) are in the private briefing, not here.
+
 
 
 

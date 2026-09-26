@@ -267,7 +267,7 @@ const {
 const {
   postKillUpdate, postOrUpdateExpansionBoard,
 } = require('./utils/killops');
-const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
+const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
@@ -2454,6 +2454,8 @@ async function handleOnbShowFull(interaction) {
 }
 
 async function handleWhoFamily(interaction) {
+  // Members only, like /who itself: a forwarded button must not show a family to anyone else.
+  if (!isGuildMember(interaction)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: MEMBERS_ONLY });
   const name = interaction.customId.replace('who_family:', '');
   const { buildWhoallEmbed } = require('./commands/whoall');
   const embed = buildWhoallEmbed(name);
