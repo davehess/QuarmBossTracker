@@ -13,6 +13,7 @@
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { queueItems } from '@/lib/roadmapData';
+import { storeShots } from '@/lib/feedbackShots';
 
 const VALID_KEYS = new Set(queueItems.map((q) => q.key));
 
@@ -75,6 +76,7 @@ export async function toggleRoadmapVote(itemKey: string): Promise<{
 export async function submitRoadmapEvidence(input: {
   itemKey: string;
   content: string;
+  screenshots?: string[];
 }): Promise<{ ok: boolean; error?: string }> {
   const item = queueItems.find((q) => q.key === input.itemKey);
   if (!item) return { ok: false, error: 'Unknown item.' };
@@ -99,14 +101,18 @@ export async function submitRoadmapEvidence(input: {
     name = pack?.nickname || pack?.global_name || null;
   } catch { /* name stays null */ }
 
+  // Screenshots (2026-09-26): a pack member's only, same rule as /feedback.
+  const shotPaths = discordId ? await storeShots(admin, input.screenshots, 'roadmap') : [];
+
   const { error } = await admin.from('feedback').insert([{
     submitter_discord_id: discordId,
     submitter_name:       name || 'web (member)',
     category:             'other',
     message:              `[roadmap ${item.num} — ${item.title}] ${content}`,
     // discord_msg_id NULL → the bot's web-feedback relay posts it into the
-    // #feedback thread and backfills the link, same as /feedback.
+    // #feedback thread (screenshots attached) and backfills the link.
     status:               'new',
+    ...(shotPaths.length ? { screenshot_paths: shotPaths } : {}),
   }]);
   if (error) return { ok: false, error: 'Could not save — please try again.' };
   return { ok: true };

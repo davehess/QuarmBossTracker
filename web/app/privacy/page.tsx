@@ -96,7 +96,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-09-25 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-09-26 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -338,6 +338,12 @@ export default function PrivacyPage() {
           recent lines go with it, after Mimic removes tells, group chat, officer chat and custom
           channels. The filter isn&apos;t perfect — guild and raid chat stay in, and some chat can slip
           through when Zeal&apos;s short-chat format is on — so <B>read the preview before you send</B>.
+        </p>
+        <p>
+          <B>Screenshots</B> (up to three) are stored in a private folder that only the officers&apos;
+          inbox can open, and posted to the same Discord thread. Mimic&apos;s 📸 photographs your whole
+          screen, which can include chat windows or anything else open, so you see each one first and
+          choose which to send. On the website, screenshots need you signed in as a pack member.
         </p>
       </Section>
 

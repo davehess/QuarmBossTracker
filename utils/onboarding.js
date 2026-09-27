@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.154': [
+    '**Feedback takes screenshots.** Add up to three pictures to feedback or a roadmap suggestion on the website (📷 or paste with Ctrl+V; sign in first), and a screenshot on `/feedback` in Discord is kept for good now instead of expiring. Mimic’s 📸 button follows on the beta.',
+  ],
   '3.1.151': [
     '**Where did I die?** When your character dies, Mimic sends you a Discord DM with the zone, the time, and your corpse’s location in the numbers /loc shows. It comes from your own Mimic, only for your own characters, and at most six an hour. Beta Mimic first.',
   ],

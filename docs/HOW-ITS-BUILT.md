@@ -754,6 +754,25 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
+The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
+One column, `feedback.screenshot_paths` (text[]), and one PRIVATE Storage bucket,
+`feedback-screenshots` (no policies, so service role only; migration `20260927003234`).
+- **Bot**: `utils/feedbackShots.js` sniffs the bytes (JPEG/PNG/WebP, ≤5 MB, ≤3),
+  uploads, downloads, and turns images into Discord attachments. Used by
+  `_handleAgentFeedback` (Mimic/Parser; `screenshots: [dataURL…]`; body cap 16 MB),
+  `relayWebFeedback` (attaches stored images) and `commands/feedback.js` (copies the
+  Discord attachment instead of linking its expiring CDN URL).
+- **Web**: `web/lib/feedbackShots.ts` (same checks; `storeShots`), and
+  `web/components/ScreenshotPicker.tsx` (📷 plus Ctrl+V paste inside the wrapped area,
+  shrinks to ≤1600 px JPEG in the browser). Used by `/feedback` and the roadmap's
+  "submit here", **signed-in pack members only**. `/admin/feedback` shows
+  thumbnails through `createSignedUrls(…, 3600)`. `experimental.serverActions.bodySizeLimit`
+  is `4mb` in `web/next.config.js`.
+- ⚠ The agent route now stamps `discord_msg_id` after posting. Before, the
+  web-feedback relay re-posted every Mimic report a minute later.
+Tests: `test/feedback-ingest.test.js` (bot, mutation-checked), `test/feedback-screenshots-web.test.js`.
+
 ### Cross-Mimic trigger relay: scope gate (bot 3.1.111 · fixed and tightened in 3.1.125)
 The relay had **no scope of any kind** — every guild-trigger fire from any raider
 ran on every other Mimic within 15s, gated only by an 8s dedup and a staleness

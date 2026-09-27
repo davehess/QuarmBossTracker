@@ -14,6 +14,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { SHOT_BUCKET } from '@/lib/feedbackShots';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +33,7 @@ type FeedbackRow = {
   addressed_by: string | null;
   addressed_at: string | null;
   notes: string | null;
+  screenshot_paths: string[] | null;
 };
 
 async function actionAssertOfficer() {
@@ -97,13 +99,22 @@ export default async function AdminFeedbackPage({
   const admin = supabaseAdmin();
   let q: any = admin
     .from('feedback')
-    .select('id, submitted_at, submitter_discord_id, submitter_name, category, message, discord_msg_id, discord_msg_link, status, acked_by, acked_at, addressed_by, addressed_at, notes')
+    .select('id, submitted_at, submitter_discord_id, submitter_name, category, message, discord_msg_id, discord_msg_link, status, acked_by, acked_at, addressed_by, addressed_at, notes, screenshot_paths')
     .order('submitted_at', { ascending: false })
     .limit(300);
   if (p.status && p.status !== 'all') q = q.eq('status', p.status);
   if (p.category)                     q = q.eq('category', p.category);
   const { data } = await q;
   const rows = (data ?? []) as FeedbackRow[];
+
+  // Screenshots (2026-09-26) live in a private bucket; this officer-only page
+  // hands out one-hour signed links for the ones on screen.
+  const shotPaths = rows.flatMap(r => r.screenshot_paths ?? []);
+  const shotUrl = new Map<string, string>();
+  if (shotPaths.length) {
+    const { data: signed } = await admin.storage.from(SHOT_BUCKET).createSignedUrls(shotPaths, 3600);
+    for (const s of signed ?? []) if (s.path && s.signedUrl) shotUrl.set(s.path, s.signedUrl);
+  }
 
   // Category list — derived from the rows themselves for the filter dropdown
   const cats = Array.from(new Set(rows.map(r => r.category).filter(Boolean) as string[])).sort();
@@ -181,6 +192,21 @@ export default async function AdminFeedbackPage({
                   </div>
                 </div>
                 <div className="text-sm text-text whitespace-pre-wrap break-words">{r.message}</div>
+                {(r.screenshot_paths ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {(r.screenshot_paths ?? []).map((pth, i) => {
+                      const url = shotUrl.get(pth);
+                      return url ? (
+                        <a key={pth} href={url} target="_blank" rel="noreferrer" title="Open full size">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- short-lived signed URL, not an optimisable asset */}
+                          <img src={url} alt={`Screenshot ${i + 1}`} className="h-24 w-auto max-w-[220px] object-cover rounded border border-border hover:border-blue" />
+                        </a>
+                      ) : (
+                        <span key={pth} className="text-[11px] text-dim">screenshot {i + 1} unavailable</span>
+                      );
+                    })}
+                  </div>
+                )}
                 {r.notes && (
                   <div className="text-xs text-dim mt-2 border-l-2 border-border pl-2">
                     <span className="text-orange">notes: </span>{r.notes}

@@ -44,6 +44,12 @@ module.exports = {
   env: {
     NEXT_PUBLIC_IS_BETA: IS_BETA ? '1' : '',
   },
+  // Feedback screenshots (2026-09-26): up to three ~0.5 MB JPEGs ride a server
+  // action as base64. Next's default is 1 MB; Vercel's own request cap is about
+  // 4.5 MB, so this stays under it.
+  experimental: {
+    serverActions: { bodySizeLimit: '4mb' },
+  },
   images: {
     remotePatterns: [
       { protocol: 'https', hostname: 'www.pqdi.cc' },

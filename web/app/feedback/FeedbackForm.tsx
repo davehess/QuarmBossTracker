@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { submitFeedback } from './actions';
+import ScreenshotPicker from '@/components/ScreenshotPicker';
 
 const CATS: { value: string; label: string; hint: string }[] = [
   { value: 'bug',    label: '🐞 Bug / something broke', hint: "What happened, and what you expected." },
@@ -15,16 +16,28 @@ export default function FeedbackForm({ signedInAs }: { signedInAs: string | null
   const [message, setMessage]   = useState('');
   const [state, setState]       = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
   const [err, setErr]           = useState('');
+  const [shots, setShots]       = useState<string[]>([]);
 
   const hint = CATS.find(c => c.value === category)?.hint || '';
 
   const submit = async () => {
     if (!message.trim()) { setErr('Please write something first.'); setState('error'); return; }
     setState('sending'); setErr('');
-    const r = await submitFeedback({ category, message });
-    if (r.ok) { setState('done'); setMessage(''); }
+    const r = await submitFeedback({ category, message, screenshots: signedInAs ? shots : [] });
+    if (r.ok) { setState('done'); setMessage(''); setShots([]); }
     else { setErr(r.error || 'Something went wrong.'); setState('error'); }
   };
+
+  const box = (
+    <textarea
+      value={message}
+      onChange={e => { setMessage(e.target.value); if (state === 'error') setState('idle'); }}
+      placeholder={hint}
+      rows={6}
+      maxLength={4000}
+      className="w-full bg-bg border border-border rounded p-3 text-sm text-text focus:outline-none focus:border-blue resize-y"
+    />
+  );
 
   if (state === 'done') {
     return (
@@ -55,14 +68,9 @@ export default function FeedbackForm({ signedInAs }: { signedInAs: string | null
       </div>
 
       <div>
-        <textarea
-          value={message}
-          onChange={e => { setMessage(e.target.value); if (state === 'error') setState('idle'); }}
-          placeholder={hint}
-          rows={6}
-          maxLength={4000}
-          className="w-full bg-bg border border-border rounded p-3 text-sm text-text focus:outline-none focus:border-blue resize-y"
-        />
+        {signedInAs
+          ? <ScreenshotPicker value={shots} onChange={setShots}>{box}</ScreenshotPicker>
+          : <>{box}<div className="text-[11px] text-dim mt-1">Sign in to attach screenshots.</div></>}
         <div className="flex items-center justify-between mt-1">
           <span className="text-[11px] text-dim">{hint}</span>
           <span className="text-[11px] text-dim">{message.length}/4000</span>

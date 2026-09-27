@@ -80,14 +80,24 @@ module.exports = {
       .setFooter({ text: `uid:${interaction.user.id}` })
       .setTimestamp();
 
+    // An image is copied, not linked (2026-09-26): the interaction's CDN link is signed and
+    // expires, and the officer page on wolfpack.quest needs its own copy. So the bytes ride along
+    // as this post's attachment and go to the private feedback-screenshots bucket.
+    const shotsMod = require('../utils/feedbackShots');
+    let shot = null;
     if (screenshot) {
-      const isImage = screenshot.contentType?.startsWith('image/');
-      if (isImage) {
-        embed.setImage(screenshot.url);
-      } else {
-        embed.addFields({ name: '📎 Attachment', value: `[${screenshot.name}](${screenshot.url})`, inline: false });
+      if (screenshot.contentType?.startsWith('image/') && (screenshot.size || 0) <= shotsMod.MAX_BYTES) {
+        try {
+          const res = await fetch(screenshot.url, { signal: AbortSignal.timeout(15_000) });
+          const buf = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+          const mime = shotsMod.sniffImage(buf);
+          if (mime) shot = { buf, mime };
+        } catch (err) { console.warn('[feedback] screenshot fetch failed:', err?.message); }
       }
+      if (!shot) embed.addFields({ name: '📎 Attachment', value: `[${screenshot.name}](${screenshot.url})`, inline: false });
     }
+    const files = shot ? shotsMod.discordFiles([shot]) : [];
+    if (files.length) embed.setImage(`attachment://${files[0].name}`);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(ButtonStyle.Primary),
@@ -96,7 +106,8 @@ module.exports = {
 
     try {
       const thread = await interaction.client.channels.fetch(threadId);
-      const sent   = await thread.send({ embeds: [embed], components: [row] });
+      const sent   = await thread.send({ embeds: [embed], components: [row], files });
+      const shotPaths = shot ? await shotsMod.uploadShots([shot], 'discord') : [];
 
       // Mirror to Supabase feedback table for the /admin/feedback search UI.
       // Discord thread remains the primary surface; this is just for search /
@@ -115,6 +126,7 @@ module.exports = {
             message,
             discord_msg_id:       sent.id,
             discord_msg_link:     msgLink,
+            ...(shotPaths.length ? { screenshot_paths: shotPaths } : {}),
           }]).catch(err => console.warn('[feedback] supabase mirror failed:', err?.message));
         }
       } catch (err) {

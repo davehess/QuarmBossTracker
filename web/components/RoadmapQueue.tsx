@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { getRoadmapVotes, toggleRoadmapVote, submitRoadmapEvidence } from '@/app/roadmap/actions';
+import ScreenshotPicker from '@/components/ScreenshotPicker';
 import type { QueueItem } from '@/lib/roadmapData';
 
 const EFFORT_ORDER = ['quick', 'medium', 'large'] as const;
@@ -146,13 +147,14 @@ function QueueCard({ item, count, voted, busy, signedIn, onVote, showEffort }: {
   const [text, setText]       = useState('');
   const [sending, setSending] = useState(false);
   const [result, setResult]   = useState<string | null>(null);
+  const [shots, setShots]     = useState<string[]>([]);
 
   const submit = async () => {
     setSending(true);
     setResult(null);
     try {
-      const r = await submitRoadmapEvidence({ itemKey: item.key, content: text });
-      if (r.ok) { setResult('✓ Sent to the officers — thank you!'); setText(''); }
+      const r = await submitRoadmapEvidence({ itemKey: item.key, content: text, screenshots: shots });
+      if (r.ok) { setResult('✓ Sent to the officers — thank you!'); setText(''); setShots([]); }
       else setResult(r.error || 'Could not send.');
     } catch {
       setResult('Could not send — try again.');
@@ -205,15 +207,17 @@ function QueueCard({ item, count, voted, busy, signedIn, onVote, showEffort }: {
         </button>
         {open && (
           <div className="mt-2 space-y-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={3}
-              placeholder={item.needs
-                ? 'Paste it verbatim — timestamps and all.'
-                : 'Log lines, observations, screenshots-worth-of-text — whatever helps.'}
-              className="w-full bg-bg border border-border rounded p-2 text-xs text-text placeholder:text-dim/60"
-            />
+            <ScreenshotPicker value={shots} onChange={setShots} compact>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={3}
+                placeholder={item.needs
+                  ? 'Paste it verbatim — timestamps and all.'
+                  : 'Log lines, observations — whatever helps. Screenshots go below.'}
+                className="w-full bg-bg border border-border rounded p-2 text-xs text-text placeholder:text-dim/60"
+              />
+            </ScreenshotPicker>
             <div className="flex items-center gap-2">
               <button
                 type="button"

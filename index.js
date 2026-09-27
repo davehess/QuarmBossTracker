@@ -17190,10 +17190,11 @@ async function _handleAgentFeedback(req, res) {
   const chunks = []; let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
-    // Generous vs the other ingest routes because a log excerpt rides along.
-    // The agent caps its slice at 512KB; this is that plus headroom, and a
+    // Generous vs the other ingest routes because a log excerpt rides along
+    // (the agent caps its slice at 512KB) and up to three screenshots, which
+    // the client shrinks to ~1 MB JPEGs (5 MB each is the hard cap below). A
     // report bigger than this is malformed rather than thorough.
-    if (total > 1024 * 1024) { res.writeHead(413); return res.end(JSON.stringify({ error: 'payload too large' })); }
+    if (total > 16 * 1024 * 1024) { res.writeHead(413); return res.end(JSON.stringify({ error: 'payload too large' })); }
     chunks.push(chunk);
   }
   let p;
@@ -17222,6 +17223,13 @@ async function _handleAgentFeedback(req, res) {
     log_meta:             (p?.log_meta && typeof p.log_meta === 'object') ? p.log_meta : null,
   };
 
+  // Screenshots (the guild lead, 2026-09-26). Anything that is not a real
+  // JPEG/PNG/WebP is dropped by decodeShots; the rest go to the private bucket.
+  const shotsMod = require('./utils/feedbackShots');
+  const shots = shotsMod.decodeShots(p?.screenshots);
+  const shotPaths = shots.length ? await shotsMod.uploadShots(shots, 'mimic') : [];
+  if (shotPaths.length) row.screenshot_paths = shotPaths;
+
   let saved = null;
   if (supabase.isEnabled()) {
     saved = await supabase.insert('feedback', [row])
@@ -17230,7 +17238,7 @@ async function _handleAgentFeedback(req, res) {
 
   // Tell the officers, post-ack — a slow Discord must never fail the submit.
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, stored: !!saved }));
+  res.end(JSON.stringify({ ok: true, stored: !!saved, screenshots: shotPaths.length }));
 
   const threadId = process.env.FEEDBACK_THREAD_ID;
   if (!threadId) return;
@@ -17245,10 +17253,21 @@ async function _handleAgentFeedback(req, res) {
         `${m.removed ? ` (${m.removed} private lines removed)` : ''}` +
         `${m.truncated ? ' \u2014 truncated' : ''}`
       : '';
-    await ch.send(
-      `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
-      `>>> ${message.slice(0, 1500)}${attached}`
-    );
+    const sent = await ch.send({
+      content:
+        `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
+        `>>> ${message.slice(0, 1500)}${attached}`,
+      files: shotsMod.discordFiles(shots),
+    });
+    // Stamp the post on the row. Without it relayWebFeedback (which posts every
+    // row with no discord_msg_id) posted this report a second time a minute
+    // later, as an embed with no log or screenshots.
+    const id = Array.isArray(saved) && saved[0] && saved[0].id;
+    if (id && sent?.id) {
+      const link = sent.guildId ? `https://discord.com/channels/${sent.guildId}/${threadId}/${sent.id}` : null;
+      await supabase.update('feedback', `id=eq.${encodeURIComponent(id)}`, { discord_msg_id: sent.id, discord_msg_link: link })
+        .catch(err => console.warn('[feedback] stamp failed:', err?.message));
+    }
   } catch (err) { console.warn('[feedback] discord post failed:', err?.message); }
 }
 
@@ -17659,7 +17678,7 @@ async function relayWebFeedback(readyClient) {
   try {
     rows = await supabase.select(
       'feedback',
-      'discord_msg_id=is.null&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at',
+      'discord_msg_id=is.null&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
     );
   } catch { return; }
   if (!Array.isArray(rows) || rows.length === 0) return;
@@ -17682,7 +17701,16 @@ async function relayWebFeedback(readyClient) {
         new ButtonBuilder().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(ButtonStyle.Danger),
       );
-      const sent    = await thread.send({ embeds: [embed], components: [row] });
+      // Screenshots from the web form ride along as real attachments; the first
+      // one is also the embed's picture.
+      const shotBufs = [];
+      for (const pth of (Array.isArray(r.screenshot_paths) ? r.screenshot_paths : []).slice(0, 3)) {
+        const buf = await require('./utils/feedbackShots').downloadShot(pth);
+        if (buf) shotBufs.push(buf);
+      }
+      const files = require('./utils/feedbackShots').discordFiles(shotBufs);
+      if (files.length) embed.setImage(`attachment://${files[0].name}`);
+      const sent    = await thread.send({ embeds: [embed], components: [row], files });
       const guildId = sent?.guildId;
       const msgLink = guildId ? `https://discord.com/channels/${guildId}/${threadId}/${sent.id}` : null;
       // Stamp id/link so this row won't be picked up again. If this update
