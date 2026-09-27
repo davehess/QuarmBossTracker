@@ -3364,7 +3364,10 @@ function targetBuffsFor(targetLower, wantId) {
     // Fades on the mob's own tick when that is known (_entityTickFadeAt);
     // the naive landed + ticks × 6 s otherwise. A timer-less entry keeps
     // counting up from its landing so the linger rules below still apply.
-    const fade = _entityTickFadeAt(b.landed_at || now, b.dur_ticks, _mobTickFor(targetLower, now));
+    // typeof-guarded like the other helpers: the source-slice tests lift this
+    // function out of the file without its neighbours.
+    const fade = (typeof _entityTickFadeAt === 'function' && typeof _mobTickFor === 'function')
+      ? _entityTickFadeAt(b.landed_at || now, b.dur_ticks, _mobTickFor(targetLower, now)) : null;
     let rem = fade ? (fade.at - now) / 1000 : durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
     // HoTs (regen category) and short effects (stuns, procs — catalog duration

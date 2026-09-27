@@ -45,7 +45,7 @@ describe('where it is used', () => {
     expect(s).toMatch(/tick_snapped: fade\.snapped/);
   });
   it('Target Info\'s rows on a mob do too, and keep the linger rules for timer-less entries', () => {
-    expect(s).toMatch(/const fade = _entityTickFadeAt\(b\.landed_at \|\| now, b\.dur_ticks, _mobTickFor\(targetLower, now\)\);\s*let rem = fade \? \(fade\.at - now\) \/ 1000 : durSecs - \(now - \(b\.landed_at \|\| now\)\) \/ 1000;/);
+    expect(s).toMatch(/\? _entityTickFadeAt\(b\.landed_at \|\| now, b\.dur_ticks, _mobTickFor\(targetLower, now\)\) : null;\s*let rem = fade \? \(fade\.at - now\) \/ 1000 : durSecs - \(now - \(b\.landed_at \|\| now\)\) \/ 1000;/);
     expect(s).toMatch(/tick_snapped: !!\(fade && fade\.snapped\)/);
   });
 });
