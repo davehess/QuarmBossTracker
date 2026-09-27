@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Feedback + suggestions take screenshots** | **2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20. Mimic's 📸 capture is next on beta | session: the Mimic 📸 button; then the guild lead tries one from each surface |
+| **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. The co-leader is on stable 2.7.1 | the guild lead: move the co-leader to beta, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
+| **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
 | **Charm overlay: server tick + mob tick** | **On beta, agent 3.7.25 (§50).** Mob tick learned from DoT ticks + log breaks; "learning" until known | the co-leader: charm with a DoT up (or let one break) and check the M countdown against the next break |
 | **EQLogParser-style timer bars + trigger fixes for the guild's co-leader** | **On beta, agent 3.7.24 (§49).** Recharm tick, lull timers and your-spells-on-mobs as filled bars in the trigger window (Suggested → Timer bars); an instant "Your charm broke" alert. Fixed: "Rampage on you" never fired, unticked triggers still fired, `{c}` personal triggers dead after a restart, saves stripped EQLogParser warnings, the Charm overlay's mob-tick countdown stuck | the guild lead: (1) the co-leader is on STABLE 2.7.1 — switch them to beta, or cut a stable; (2) all trigger countdowns as filled bars, yes or no; (3) paste the Discord answer from this session |
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
@@ -2872,6 +2873,42 @@ again a minute later as an embed by the web-feedback relay (it posts every row w
 
 **Noticed, not changed:** `/feedback` says "(Officers only)" in its description but anyone can run
 it.
+
+**Mimic half shipped (agent 3.7.26, `v2.7.2-beta.15`):**
+- The dashboard feedback card has 📸 "Screenshot my screen" (Mimic only): the dashboard hides for
+  the shot, and every display is captured.
+- With one monitor, the shot is attached for review. With several, nothing is attached until the
+  reporter picks a screen.
+- 📎 attach and Ctrl+V paste work in any browser, so Parser and the tray route get them too.
+
+## 52. The co-leader's feedback batch, the /who window, Settings drafts (2026-09-26, agent 3.7.27 beta)
+
+The guild's co-leader filed seven Mimic feedback reports in 25 minutes (00:22–00:47 UTC) and followed
+up in Discord. They are on **stable 2.7.1**, so none of this reaches them until they switch to beta or a
+stable is cut.
+
+| Report | What was wrong | Shipped |
+|---|---|---|
+| "/who window … a certain modifiable size … scroll down it" | It sized itself to the zone | `v2.7.2-beta.16`: fixed height with a drag grip (double-click = fit), a scrolling list, CLASS/GUILD filter chips like the tracking window, sort (seen/name/class/level/guild) — the guild lead: *"treat it like the in game tracking with filters for guilds or classes"* |
+| "Feedback should include a copy/paste for snips" | — | `beta.15`: Ctrl+V into the feedback card (§51) |
+| "right clicking it [the tray] does nothing … no exit, no nothing" | The tray menu was rebuilt on every status push and every change of "active character". Active means whichever Zeal stream reported last, so it can change several times a second, and on Windows replacing the context menu closes the open one | `beta.17`: right-click builds the menu then pops it up, so nothing replaces it; a fallback menu with Quit if the build fails; **⏻ Quit on the dashboard** (tray ↔ dashboard parity) |
+| "i closed mimic with task manager and it seems none of settings were saved" | `saveConfig` wrote in place and runs often (auto-sizing overlays persist bounds). A kill mid-write tore the file, and a torn file loaded as all defaults | `beta.17`: atomic write (.tmp → rename), a last-good `.bak`, and loading falls back to it |
+| Charm break TTS "about a second off … ONe of the only reasons for me to continue using eqlogparser" | Log read every 500 ms, then a 700 ms overlay poll behind a 400 ms cache; the Charm window added a 1.5 s kill guard | `beta.17`: 150 ms reads while a log is active; a long-poll that speaks a trigger the moment it fires; kill guard 600 ms |
+| "server tick … broken out … as a standalone timer" | Only on the HUD | `beta.17`: a Server tick timer bar (Suggested → Timer bars) |
+| HUD builder: "mana or endurance … separated to be either or" | — | **not yet**, queued with the half-circle mini HUD |
+
+**Settings drafts (the guild lead: *"saving potential settings changes as drafts as people start
+making changes, and give them a reminder to save before exiting the page"*), `beta.17`:**
+- Every edit that Save would send is kept as a local draft, never the token.
+- The next open brings the draft back with Save / Discard.
+- Closing with unsaved edits asks: Save and close / Close without saving / Keep editing.
+- Quitting Mimic closes Settings without asking (Electron would otherwise cancel the quit); the
+  draft is already on disk.
+
+**Flagged, not changed:** the "active character" flip-flop itself. Besides the tray, it re-applies
+per-character overlay layouts on every flip when that feature is on. The right fix is focus-based
+(which game window is in front), not "last Zeal report". That touches core behaviour, so it is its own
+piece of work.
 
 
 
