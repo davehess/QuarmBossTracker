@@ -133,6 +133,109 @@ describe('charm mob-tick anchor is not reset by the Zeal "still alive" poll', ()
   });
 });
 
+describe('mob tick: learned from DoT ticks and log breaks, not from the charm landing', () => {
+  // A mob whose tick falls 400 ms into a second. The agent reads the log
+  // ~300 ms after each line is written.
+  const T0 = Date.UTC(2026, 8, 26, 22, 0, 0) + 400;
+  const sec = (ms) => Math.floor(ms / 1000) * 1000;
+  const stamp = (ms) => '[Sat Sep 26 ' + new Date(sec(ms)).toISOString().slice(11, 19) + ' 2026] ';
+  const dot = (ms, src) => stamp(ms) + 'A soriz skeleton has taken 24 damage from ' + (src || 'your Chant of Frost') + '.';
+  const cd = (a, b) => { const d = (((a - b) % 6000) + 6000) % 6000; return Math.min(d, 6000 - d); };   // distance on the 6s cycle
+  beforeEach(() => { agent._mobTicks.clear(); agent._dotLastHit.clear(); });
+
+  it('one DoT hit says nothing; the next one a tick later is a tick', () => {
+    expect(agent._noteDotTickLine(dot(T0), sec(T0), T0 + 300)).toBe(null);
+    const t = agent._noteDotTickLine(dot(T0 + 6000), sec(T0 + 6000), T0 + 6300);
+    expect(t).not.toBe(null);
+    expect(t.src).toBe('dot');
+  });
+  it('hits that are not a whole number of ticks apart are ignored', () => {
+    agent._noteDotTickLine(dot(T0), sec(T0), T0 + 300);
+    expect(agent._noteDotTickLine(dot(T0 + 9000), sec(T0 + 9000), T0 + 9300)).toBe(null);
+  });
+  it('different sources are separate streams', () => {
+    agent._noteDotTickLine(dot(T0), sec(T0), T0 + 300);
+    expect(agent._noteDotTickLine(dot(T0 + 6000, "Aldenmar's Venom of the Snake"), sec(T0 + 6000), T0 + 6300)).toBe(null);
+  });
+  it('several ticks narrow the estimate, and the real tick stays inside it', () => {
+    // The agent reads the log every ~500 ms, so how long after the write a line
+    // is read varies; the earliest read is what bounds the tick from above.
+    const lags = [450, 120, 300, 60, 380, 200];
+    let first = null;
+    lags.forEach((lag, k) => {
+      const t = agent._noteDotTickLine(dot(T0 + k * 6000), sec(T0 + k * 6000), T0 + k * 6000 + lag);
+      if (t && first == null) first = t.half;
+    });
+    const t = agent._mobTickFor('a soriz skeleton', T0 + 36000);
+    expect(cd(t.at, T0)).toBeLessThanOrEqual(t.half);
+    expect(t.half).toBeLessThan(first);
+    expect(t.half).toBeLessThanOrEqual(250);
+  });
+  it('one stray observation does not knock out a good estimate; two agreeing ones do', () => {
+    for (let k = 0; k < 4; k++) agent._noteMobTick('a soriz skeleton', sec(T0 + k * 6000), T0 + k * 6000 + 300, 'dot');
+    const good = agent._mobTickFor('a soriz skeleton', T0).at;
+    const stray = T0 + 30000 + 3000;                                           // half a tick off
+    agent._noteMobTick('a soriz skeleton', sec(stray), stray + 300, 'dot');
+    expect(agent._mobTickFor('a soriz skeleton', stray).at).toBe(good);
+    agent._noteMobTick('a soriz skeleton', sec(stray + 6000), stray + 6300, 'break');
+    const moved = agent._mobTickFor('a soriz skeleton', stray + 6000).at;
+    expect(cd(good, T0)).toBeLessThanOrEqual(500);
+    expect(cd(moved, stray)).toBeLessThanOrEqual(700);
+  });
+  it('a backfilled line (read long after it was written) is not a live observation', () => {
+    expect(agent._noteMobTick('a soriz skeleton', sec(T0), T0 + 5 * 60_000, 'break')).toBe(null);
+  });
+  it('a death clears it, so the next spawn learns its own', () => {
+    agent._noteMobTick('a soriz skeleton', sec(T0), T0 + 300, 'break');
+    agent._clearNameObservations('a soriz skeleton');
+    expect(agent._mobTickFor('a soriz skeleton', T0)).toBe(null);
+  });
+  it('a log charm break teaches that mob\'s tick', () => {
+    const b = new agent.EncounterBuilder({ character: ME, onFlush: () => {} });
+    agent._bumpCharmTick('a fear touched drolvarg', ME, 'land', Date.now() - 20000);
+    const now = Date.now();
+    b.add({ ts: new Date(sec(now)).toISOString(), type: 'charm_break', pet: 'a fear touched drolvarg' });
+    const t = agent._mobTickFor('a fear touched drolvarg', now);
+    expect(t && t.src).toBe('break');
+  });
+  it('the live tail feeds every line to the DoT tick learner', () => {
+    // main()'s tail loop cannot be driven from a test; the call is checked on
+    // comment-stripped source instead.
+    expect(stripJs(readSource(AGENT_INDEX))).toMatch(/try \{ _noteDotTickLine\(line, ts \? ts\.getTime\(\) : NaN, Date\.now\(\)\); \} catch/);
+  });
+  it('the server tick comes from the owner\'s Zeal gauge 24', () => {
+    const now = Date.now();
+    agent._setZealStateForTest(ME, { updatedAt: now, gauges: [{ slot: 24, hp_pct: 50, text: '3' }] });
+    const at = agent._serverTickAtFor(ME.toLowerCase(), now);
+    agent._setZealStateForTest(ME, null);
+    expect(at - now).toBe(3000);
+    expect(agent._serverTickAtFor('Nobody', now)).toBe(null);
+  });
+});
+
+describe('charm overlay: two tick rows', () => {
+  const charm = readSource(path.join(ROOT, 'apps', 'mimic', 'charm.html'));
+  const block = sliceBlock(charm, "  var TICK_SRV = '#58a6ff'", '\n\n  // Per-charm session memory');
+  const h = new Function('function esc(s){ return String(s); }\n' + block + '\nreturn { tickLeft, tickRowsHtml };')();
+  it('counts each clock down from its own tick', () => {
+    const now = 1_000_000;
+    expect(h.tickLeft(now + 2500, now)).toBe(2500);
+    expect(h.tickLeft(now - 1000, now)).toBe(5000);
+    expect(h.tickLeft(null, now)).toBe(null);
+  });
+  it('shows both, and says "learning" instead of guessing an unknown mob tick', () => {
+    const now = 1_000_000;
+    const known = h.tickRowsHtml({ server_tick_at: now + 3200, mob_tick_at: now + 1400, mob_tick_half_ms: 150, mob_tick_src: 'break' }, now);
+    expect(known).toMatch(/server<\/span><span class="tv">3\.2s/);
+    expect(known).toMatch(/mob<\/span><span class="tv">1\.4s/);
+    const unknown = h.tickRowsHtml({ server_tick_at: now + 3200, mob_tick_at: null }, now);
+    expect(unknown).toMatch(/mob<\/span><span class="tv">—<\/span><span class="tn">learning/);
+  });
+  it('the old landing-anchored countdown is gone', () => {
+    expect(stripJs(charm)).not.toMatch(/next mob tick/);
+  });
+});
+
 describe('timer bars', () => {
   const on = (...ids) => agent._setPersonalTriggersForTest(ids.map(compiledFromTemplate));
 
@@ -140,11 +243,15 @@ describe('timer bars', () => {
     agent._bumpCharmTick('a fear touched drolvarg', ME, 'land', Date.now() - 8000);
     expect(agent._builtinTimerRows(Date.now())).toEqual([]);
   });
-  it('Recharm tick counts down the 6s mob tick from the land, pinned, as a cycle', () => {
+  it('Recharm tick waits for the mob\'s learned tick, then counts it down, pinned, as a cycle', () => {
     const now = Date.now();
+    agent._mobTicks.clear();
     agent._bumpCharmTick('a fear touched drolvarg', ME, 'land', now - 8000);
     agent._bumpCharmTick('a mud golem', 'Torvahk', 'land', now - 8000);          // not ours
     on('timer_recharm_tick');
+    expect(agent._builtinTimerRows(now)).toEqual([]);                            // the landing says nothing about the tick
+    agent._mobTicks.set('a fear touched drolvarg', { at: now - 2000, half: 150, n: 3, seen_at: now - 2000, src: 'break', cand: null });
+    agent._mobTicks.set('a mud golem', { at: now - 2000, half: 150, n: 3, seen_at: now - 2000, src: 'dot', cand: null });
     const rows = agent._builtinTimerRows(now);
     expect(rows.map(r => r.target)).toEqual(['a fear touched drolvarg']);
     expect(rows[0].remaining_ms).toBe(4000);

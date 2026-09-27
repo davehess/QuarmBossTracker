@@ -156,10 +156,14 @@ describe('charm mini — two rows per charm', () => {
     const state = { activeCharacter: 'Aldenmar', charmPets: [pet(), pet({ key: 'aldenmar:gnoll', pet: 'a gnoll', is_active: false, broke_at: NOW - 5000 })] };
     const full = (await bootCharm(state)).byId.list.innerHTML;
     // Non-vacuous: full mode draws every one of these for the same data.
-    for (const s of ['BROKE', 'class="tickbar"', 'next mob tick', 'remove-broken', 'class="dismiss"']) expect(full).toContain(s);
+    // (Full mode's tick rows replaced its one "next mob tick" line, 2026-09-26.)
+    for (const s of ['BROKE', 'class="tickbar"', 'class="ticks"', 'remove-broken', 'class="dismiss"']) expect(full).toContain(s);
 
     const out = (await bootCharm(state, { mini: true })).byId.list.innerHTML;
-    for (const s of ['BROKE', 'tickbar', 'next mob tick', 'remove-broken', 'dismiss', 'tick ']) expect(out).not.toContain(s);
+    for (const s of ['BROKE', 'tickbar', 'class="ticks"', 'remove-broken', 'dismiss', 'tick ']) expect(out).not.toContain(s);
+    // Server and mob tick ride row two (no Zeal, nothing learned in this fixture).
+    expect(out).toContain('>S —</span>');
+    expect(out).toContain('>M ?</span>');
     const broken = out.slice(out.indexOf('data-key="aldenmar:gnoll"'));
     expect(broken).toContain('style="color:#f85149">⏳ 0:00 recharm</span>');
     expect(broken).toContain('<i style="width:0.0%;background:#f85149">');

@@ -1541,6 +1541,99 @@ const PET_LINGER_MS = 5 * 60 * 1000;
 // class + duration to the session, driving the duration bar + class-aware warn.
 let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
 const PENDING_CHARM_WINDOW_MS = 12_000;
+
+// ── Mob tick learner (the guild lead, 2026-09-26) ───────────────────────────
+// "charm overlay needs both server and mob tick on them (they're different,
+// and we can tell because of the interval the mob sees a DOT land it's
+// non-initial damage typically. same thing for when a charm breaks, that
+// indicates the mob tick."
+// Every NPC runs its own 6s tick, set when it spawned; the server tick Zeal
+// shows (gauge 24, _meTick) is a different clock. Two log lines land ON a
+// mob's tick:
+//   · a DoT's repeating damage, "<mob> has taken N damage from …", when the
+//     same source hit the same mob a whole number of ticks earlier. The
+//     interval is what separates a tick from a first, cast-time hit;
+//   · a charm break read from the log (not the Zeal pet-slot break, which is
+//     only noticed after a 6s grace).
+// Log lines are stamped to the second, so one observation says only "a tick
+// fell in this second". Intersecting those windows narrows the phase to a
+// fraction of a second. One observation that disagrees with the estimate is
+// held as a candidate and wins only when a second one agrees with it, so a
+// stray hit cannot knock out a good estimate. Keyed by name like the other
+// per-name trackers; a death clears it (_clearNameObservations).
+const MOB_TICK_MS = 6000;
+const MOB_TICK_MIN_HALF_MS = 150;            // never claim better than ±150 ms
+const MOB_TICK_MAX_AGE_MS = 30 * 60 * 1000;
+const _mobTicks = new Map();                 // nameLower → { at, half, n, seen_at, src, cand }
+function _tickWindowMeet(a, b) {             // two {at, half} windows on the 6s cycle → their overlap, or null
+  const n = Math.round((a.at - b.at) / MOB_TICK_MS);
+  const bAt = b.at + n * MOB_TICK_MS;
+  const lo = Math.max(a.at - a.half, bAt - b.half), hi = Math.min(a.at + a.half, bAt + b.half);
+  if (lo > hi) return null;
+  return { at: (lo + hi) / 2, half: Math.max(MOB_TICK_MIN_HALF_MS, (hi - lo) / 2) };
+}
+function _noteMobTick(name, secMs, readMs, src) {
+  if (!name || !Number.isFinite(secMs)) return null;
+  const read = Number.isFinite(readMs) ? readMs : secMs + 1000;
+  if (read - secMs > 60_000) return null;    // a backfilled line says nothing about a live mob
+  const hi = Math.max(secMs + 2 * MOB_TICK_MIN_HALF_MS, Math.min(secMs + 1000, read));
+  const obs = { at: (secMs + hi) / 2, half: (hi - secMs) / 2 };
+  const k = String(name).toLowerCase().trim();
+  const prev = _mobTicks.get(k);
+  let next;
+  if (!prev || secMs - prev.seen_at > MOB_TICK_MAX_AGE_MS) {
+    next = { ...obs, n: 1, cand: null };
+  } else {
+    const met = _tickWindowMeet(obs, prev);
+    if (met) next = { ...met, n: prev.n + 1, cand: null };
+    else {
+      const withCand = prev.cand ? _tickWindowMeet(obs, prev.cand) : null;
+      next = withCand ? { ...withCand, n: 2, cand: null }
+                      : { at: prev.at, half: prev.half, n: prev.n, cand: obs };
+    }
+  }
+  next.seen_at = secMs;
+  next.src = (next.cand && prev) ? prev.src : src;
+  _mobTicks.set(k, next);
+  if (_mobTicks.size > 300) _mobTicks.delete(_mobTicks.keys().next().value);
+  return next;
+}
+function _mobTickFor(name, now) {
+  const t = name ? _mobTicks.get(String(name).toLowerCase().trim()) : null;
+  if (!t || (now || Date.now()) - t.seen_at > MOB_TICK_MAX_AGE_MS) return null;
+  return t;
+}
+const _DOT_TICK_RX = /\]\s+(.+?)\s+has\s+taken\s+\d+(?:\s+points?\s+of)?\s+damage(?:\s+from\s+(.+?))?\.\s*$/i;
+const _dotLastHit = new Map();               // 'mob|source' → second-stamp ms of its last damage line
+function _noteDotTickLine(line, secMs, readMs) {
+  if (!line || line.indexOf(' has taken ') < 0 || !Number.isFinite(secMs)) return null;   // hot path: cheap reject
+  const m = _DOT_TICK_RX.exec(line);
+  if (!m) return null;
+  const mob = m[1].trim();
+  const key = mob.toLowerCase() + '|' + String(m[2] || '').toLowerCase().trim();
+  const prev = _dotLastHit.get(key);
+  _dotLastHit.delete(key);
+  _dotLastHit.set(key, secMs);
+  if (_dotLastHit.size > 500) _dotLastHit.delete(_dotLastHit.keys().next().value);
+  if (prev == null) return null;
+  const gap = secMs - prev;
+  if (gap < MOB_TICK_MS - 1000 || gap > 5 * MOB_TICK_MS + 1000) return null;
+  const off = gap % MOB_TICK_MS;
+  if (off > 1000 && off < MOB_TICK_MS - 1000) return null;   // not a whole number of ticks apart
+  return _noteMobTick(mob, secMs, readMs, 'dot');
+}
+// The owner's server tick as an absolute time of a tick boundary, from their
+// Zeal gauge 24 — null when that character is not streaming Zeal.
+function _serverTickAtFor(owner, now) {
+  if (!owner) return null;
+  const want = String(owner).toLowerCase();
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== want) continue;
+    const t = _meTick(_zealState[ch], now);
+    return t ? now + t.ms_left : null;
+  }
+  return null;
+}
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   // Second half of the vision-eye choke point (see _isVisionEyePet). Every
@@ -8395,6 +8488,8 @@ class EncounterBuilder {
       // whatever cased name the tick tracker already knows for this pet
       // (self-only '__SELF__' form resolved above), else the lowercase key.
       _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
+      // The same line is a mob-tick observation for that mob (_noteMobTick).
+      try { _noteMobTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, Date.parse(event.ts), Date.now(), 'break'); } catch { /* never block the break */ }
       return;
     }
 
@@ -14997,6 +15092,8 @@ function _serializeForDashboard() {
         // whatever pet they currently have — for a charmer that's the charm.
         const rep = ownerLower ? _petHealthByOwner.get(ownerLower) : null;
         const petBuffs = ownerLower ? petBuffsForOwner(ownerLower) : [];
+        const tNow = Date.now();
+        const mt = _mobTickFor(info.pet, tNow);
         arr.push({
           key,
           pet: info.pet,
@@ -15014,6 +15111,15 @@ function _serializeForDashboard() {
           pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : (rep ? rep.hp_pct : null),
           pet_buffs:     petBuffs.length ? petBuffs : null,
           pet_health_observed_at: rep ? rep.last_seen_at : null,
+          // Two different 6s clocks (the guild lead, 2026-09-26), each as the
+          // absolute time of one tick so the overlay counts down on its own
+          // clock between polls. null = not known: no Zeal for the server tick;
+          // no DoT tick or log break seen on this mob yet for the mob tick.
+          server_tick_at:   _serverTickAtFor(info.owner, tNow),
+          mob_tick_at:      mt ? Math.round(mt.at) : null,
+          mob_tick_half_ms: mt ? Math.round(mt.half) : null,
+          mob_tick_n:       mt ? mt.n : 0,
+          mob_tick_src:     mt ? mt.src : null,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
@@ -35363,7 +35469,7 @@ const SUGGESTED_TRIGGERS = [
   //    `builtin_timer` names the source _builtinTimerRows reads; the row has no
   //    pattern and no gauge condition, so no evaluator ever fires it — ticking
   //    it on only switches the bars on. No TTS: a bar is something you look at.
-  { id: 'timer_recharm_tick', category: 'timer', label: 'Recharm tick (6s mob tick on your charmed pet)',
+  { id: 'timer_recharm_tick', category: 'timer', label: 'Recharm tick (your charmed pet\'s 6s mob tick — shows once a DoT tick or a break has revealed it)',
     builtin_timer: 'recharm_tick', no_tts: true },
   { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
     builtin_timer: 'lull', no_tts: true },
@@ -37126,6 +37232,7 @@ function _clearNameObservations(nameLower) {
   try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
   try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
   try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
+  try { _mobTicks.delete(nameLower); } catch { /* */ }   // the next spawn has its own tick
 }
 // Tail-loop death hook. Closes the slain name's oldest open track; on K→0 (the
 // last/only instance died) clears its stale observation buckets (the sequential
@@ -39477,11 +39584,13 @@ function _builtinTimerRows(now) {
   if (on.has('recharm_tick')) {
     for (const [k, c] of _charmTickTracker) {
       if (!c || !c.is_active || !c.owner || !mine.has(String(c.owner).toLowerCase())) continue;
-      // A charmed mob re-rolls the charm on its OWN 6s tick. The land (or the
-      // last break) is the anchor we have — the one the charm overlay counts from.
-      const anchor = Number(c.last_tick_at || c.started_at) || now;
-      const into = ((now - anchor) % 6000 + 6000) % 6000;
-      push({ id: 'bt|recharm|' + k + '|' + (c.started_at || anchor), name: c.pet + ' - Recharm tick',
+      // A charmed mob re-rolls the charm on its OWN 6s tick, learned from DoT
+      // ticks and log breaks (_noteMobTick). No row until it is known: the
+      // charm landing says nothing about where that tick falls.
+      const mt = _mobTickFor(c.pet, now);
+      if (!mt) continue;
+      const into = ((now - mt.at) % 6000 + 6000) % 6000;
+      push({ id: 'bt|recharm|' + k + '|' + (c.started_at || 0), name: c.pet + ' - Recharm tick',
              target: c.pet, effect: 'Recharm tick', remaining_ms: 6000 - into, duration_sec: 6,
              cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
     }
@@ -42092,6 +42201,9 @@ async function main() {
         if (triggerVisibleLine(line, dropPatterns)) {
           try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
         }
+        // A DoT's repeating damage lands on the mob's own 6s tick — the charm
+        // overlay's "mob tick" (_noteDotTickLine).
+        try { _noteDotTickLine(line, ts ? ts.getTime() : NaN, Date.now()); } catch {}
         // Callout-replay (#98): capture raid-wide events that aren't combat
         // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
         try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
@@ -42253,6 +42365,8 @@ module.exports = {
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
   _bumpCharmTick, _reconcileGaugeCharms,
+  _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
+  _clearNameObservations,
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
