@@ -5928,6 +5928,8 @@ async function _handleAgentBossKill(req, res) {
             );
           }
         });
+        // The one-time Vex Thal celebration rides the same kill, right after.
+        discordJobs.push(() => _announceVexThalClearedOnce(kill).catch(err => console.warn('[vt-cleared]', err?.message)));
       }
       set++;
     } else {
@@ -11649,6 +11651,71 @@ async function _announceOptinPvpOnce() {
     _announceOptinPvpOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
       .catch(err => console.warn('[optin-pvp-announce]', err?.message));
   }, 5 * 60_000);
+}
+
+// ── Vex Thal cleared: the one-time celebration on the Aten Ha Ra kill ────────
+// The guild lead, 2026-09-27: "a one time celebration for all miMIC users after
+// tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid." The
+// Mimic side is a guild trigger on her death line (flash + voice + fanfare, no
+// deploy). This is the Discord side: one embed in #raid-chat the moment the
+// kill relays, latched in bot_kv. The film's link is read from the tuning map
+// (`celebration_video_url`, /admin/overlays), so it can be added before or
+// after the kill without a deploy; until then the embed says it is coming.
+const _VT_CLEARED_KV_KEY = 'announce_vex_thal_cleared';
+const _VT_NPC_ID = 158436;   // eqemu_npc_types: Aten Ha Ra (not the Kaas Thox pair)
+async function _announceVexThalClearedOnce(kill) {
+  const name = String((kill && kill.boss) || '').trim().toLowerCase();
+  if (name !== 'aten ha ra') return 'not-her';
+  if (String((kill && kill.guild) || '').trim() !== WP_GUILD_NAME) return 'not-us';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_VT_CLEARED_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[vt-cleared] latch unreadable — NOT posting'); return 'unknown'; }
+    return 'latched';
+  }
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) { console.log('[vt-cleared] no #raid-chat channel — skipping'); return 'no-channel'; }
+  // Her kills before tonight: confirmed fights that started more than two hours
+  // ago, so tonight's own parse never counts itself. Decoration; null when unread.
+  let prior = null;
+  try {
+    const before = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const r = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=eq.${_VT_NPC_ID}&duration_sec=gt.120&ended_at=not.is.null`
+      + `&started_at=lt.${encodeURIComponent(before)}&select=id&limit=1000`);
+    if (Array.isArray(r)) prior = r.length;
+  } catch { /* the count is decoration */ }
+  let video = null;
+  try {
+    const tune = await _overlayTuningMap();
+    const v = tune && tune.celebration_video_url;
+    if (v && /^https:\/\/\S+$/.test(String(v).trim())) video = String(v).trim();
+  } catch { /* no link yet */ }
+  const { EmbedBuilder } = require('discord.js');
+  const embed = new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🐺 VEX THAL CLEARED — Aten Ha Ra is down')
+    .setDescription([
+      `**${kill.character}** and the raid put her down in ${kill.zone || 'Vex Thal'} — the last scheduled Vex Thal raid.`,
+      prior != null ? `That is Wolf Pack's Aten Ha Ra kill number **${prior + 1}** since the first, on February 27.` : null,
+      '',
+      video ? `🎬 **The film:** ${video}` : '🎬 The film is in the works — it lands in this channel when it is cut.',
+      'Mimic users: the flash and the fanfare you just got was the guild trigger. Howl.',
+    ].filter(l => l != null).join('\n'))
+    .setFooter({ text: 'One-time celebration' });
+  const posted = await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[vt-cleared] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _VT_CLEARED_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id, killer: kill.character }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[vt-cleared] posted to #raid-chat:', posted.id);
+  return 'posted';
 }
 
 // ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────

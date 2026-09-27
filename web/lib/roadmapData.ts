@@ -39,10 +39,14 @@ export const releases: Release[] = [
   {
     key: 'mimic-2-7-2-2026-09-27',
     title: 'Mimic 2.7.2',
-    version: 'Mimic 2.7.2 · Agent 3.7.31 · Bot 3.1.157 · Web 1.8.27',
+    version: 'Mimic 2.7.2 · Agent 3.7.31 · Bot 3.1.158 · Web 1.8.28',
     date: '2026-09-27',
     headline: 'Stable: PvP credit for guildmates, the Tick overlay, timer bars, the /who window, screenshots in feedback.',
     features: [
+      {
+        name: 'For Sunday night',
+        blurb: 'Mimic has a small surprise ready for the last scheduled Vex Thal raid. You will know it when it happens.',
+      },
       {
         name: 'PvP assists for guildmates who don’t run Mimic',
         blurb: 'If anyone running Mimic sees a guildmate hit, slow, snare, root, mez or DoT a player who then dies to someone else, that guildmate gets the assist. Four minutes, not two. Re-run a log in Opt-in Logs and past nights count too; #pvp gets one note per parse, never a flood.',

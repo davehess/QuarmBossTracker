@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **The Vex Thal celebration (Sunday 2026-09-28)** | **Armed 2026-09-27 (§58).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes, speaks and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the kill count (bot 3.1.158, latched in `bot_kv`). The film is not made yet — its link goes in the tuning key `celebration_video_url` and out as a Mimic Mail | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
 | **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
 | **Tick overlay (was Zeal health)** | **Stable in 2.7.2 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials |
@@ -3232,6 +3233,58 @@ in every push chain. Recorded because the fleet hot-swaps the agent from the bet
   `_serverTicksNow`; migrations `20260927040000`, `20260927040100`.
 - Tests: `announce-optin-pvp` (4), `pvp-flag-state` (4), `entity-tick-fade` (8, 6 of 6 mutants
   killed), `pvp-fight-sizes` (5, 2 of 2 mutants killed).
+
+## 58. A one-time celebration for every Mimic user on the Aten Ha Ra kill (2026-09-27, bot 3.1.158, web 1.8.28)
+
+**The ask (the guild lead):** *"how can I create a one time celebration for all miMIC users after
+tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid. I have some ideas about an
+animated anime style video of our raiders all attacking her, with crash cuts on each player and
+their name tag and the things they typically do during a fight against her."*
+
+### The call: no build, three existing channels
+Sunday's raid is 20 hours away and every Mimic on the fleet already polls three things that can
+carry a one-off. Nothing new ships to Mimic; the celebration is DATA on surfaces that exist.
+
+| Moment | Channel | What happens | Where it is set |
+|---|---|---|---|
+| The kill line | **guild trigger** `fdf89cd5-dae7-4cb6-971e-275efe35c202` (`Vex Thal cleared — Aten Ha Ra`) | every Mimic in the zone: a 12 s flash *"🐺 ATEN HA RA IS DOWN — VEX THAL CLEARED"*, the spoken line *"Aten Ha Ra is dead. Vex Thal is cleared. Wolf Pack."*, and a 3.4 s brass fanfare | inserted directly in `guild_triggers` (served live by `_guildTriggersFor`; reaches every agent within the 2-min poll). Pattern `^\[.+?\]\s+Aten Ha Ra has been slain by`, cooldown 3600 s |
+| The relay of that kill | **bot one-shot** `_announceVexThalClearedOnce` on `/api/agent/bosskill` | one embed in #raid-chat: who landed it, *"Wolf Pack's Aten Ha Ra kill number N since the first, on February 27"* (N from `encounters`, npc 158436, confirmed kills > 2 min that started more than two hours ago — so tonight's own parse is not counted twice), the film link if set, else *"the film is in the works"* | `bot_kv` latch `announce_vex_thal_cleared`, fail-closed like the other announcers; only for `boss = Aten Ha Ra` (the Kaas Thox pair share the name and are excluded) and `guild = Wolf Pack`; pings nobody |
+| The film, whenever it is cut | **tuning key** `celebration_video_url` + **Mimic Mail** | the embed prints the link only if it is `https://…`; a Mimic Mail from /admin/notices puts the ✉ dot on every Mimic ≥1.6 | `/admin/overlays` tuning editor; `/admin/notices` |
+
+The sound is `web/public/sounds/vex-thal-cleared.wav` — synthesized (a C-major brass arpeggio into
+a held chord; no licensing question), 300 KB, served from `wolfpack.quest`. Guild triggers already
+carry a `sound` URL and Mimic plays it with `new Audio(url)`, so this is the first guild-wide use of
+a feature that has been there since triggers v2. The TTS passes the #136 allow-list because
+"dead" matches its death category — checked, not assumed.
+
+**Why the trigger fires only in the zone:** guild triggers match the local log, and the kill line
+is zone-wide. Raiders not in Vex Thal get the Discord embed, not the flash — which is right.
+
+**Deliberately not done:** no Mimic release (nothing would reach the fleet in time, and the
+stable just cut is what everyone is on); no confetti/animation in an overlay (a one-night effect
+is not worth a permanent code path in the trigger window); no name on the roadmap entry before
+the kill (a teaser line only — *"You will know it when it happens"*).
+
+### The film — services, not a prompt
+The shot list (style bible, per-raider shot cards with class, race and what each one is seen
+doing in the Aten Ha Ra parses, prompt lines) is **private** — it names members — and went to
+the guild lead as a file, not into the repo. The service answer, in short: Gemini/Veo for the
+handful of hero shots (its 3/day cap fits four establishing beats); a credit-pack service
+(Kling, Runway, Hailuo) for crash-cut volume via image-to-video from consistent stills; stills
+from one image model with a locked style prefix; **name tags and cuts in an editor (CapCut /
+DaVinci), never generated** — text in generated video is the one thing none of them do
+reliably. Host unlisted on YouTube; the link goes in the two places above.
+
+### After the raid
+1. **Disable trigger `fdf89cd5…`** on /admin/triggers (the 1-hour cooldown stops a double fire on
+   the night; the disable stops a fire on a later Vex Thal kill).
+2. Paste the film link into `celebration_video_url`; send the Mimic Mail; add the real roadmap line.
+3. The bot one-shot stays latched forever in `bot_kv`; the code can be removed in a later tidy.
+
+### Where
+- Bot: `_announceVexThalClearedOnce` + the hook after the next-spawn line in `_handleAgentBossKill`.
+- Test: `test/announce-vex-thal-cleared.test.js` (5, running the real function against fakes).
+- Sound: `web/public/sounds/vex-thal-cleared.wav`; generator kept out of the repo (scratchpad).
 
 
 
