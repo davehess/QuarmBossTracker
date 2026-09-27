@@ -57,7 +57,19 @@ export type PvpFightRow = {
   rest_deaths: number;
   deaths_by_guild: Record<string, number> | null;
   top_killers: { killer: string; guild: string | null; kills: number }[] | null;
+  // Who was on the field (migration 20260927040000): a floor, counted from the dead, their killers,
+  // the assisters and /who in the zone. Absent from an older database.
+  zek_players?: number | null;
+  ally_players?: number | null;
+  players_by_guild?: Record<string, number> | null;
 };
+
+// "Zek 14 v 21 allies", from a fight's field counts; null when the database did not send them.
+export function fightSides(f: PvpFightRow): { zek: number; allies: number; byGuild: [string, number][] } | null {
+  if (f.zek_players == null || f.ally_players == null) return null;
+  const byGuild = Object.entries(f.players_by_guild ?? {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return { zek: f.zek_players, allies: f.ally_players, byGuild };
+}
 
 // The fight each night's film belongs to: the biggest fight in its zone inside its window.
 export function nightForFight(fight: PvpFightRow, fights: PvpFightRow[], nights = PVP_NIGHTS): PvpNight | null {

@@ -4,9 +4,29 @@
 //   C (?v=c): the fights as a compact table, and the film in a gallery of its own.
 import { fmtShort } from '@/lib/timezone';
 import {
-  PVP_CHANNEL, PVP_NIGHTS, medalEmbed, medalPage, nightForFight, youtubeEmbed, youtubeWatch,
+  PVP_CHANNEL, PVP_NIGHTS, fightSides, medalEmbed, medalPage, nightForFight, youtubeEmbed, youtubeWatch,
   type PvpFightRow, type PvpMediaItem, type PvpNight,
 } from '@/lib/pvpMedia';
+
+// "On the field: Zek 14 v 21 allies", with the guilds behind the allies. A floor, and the card says so
+// (the guild lead, 2026-09-27: "try to figure out fight sizes for opponents vs allies").
+function Sides({ f }: { f: PvpFightRow }) {
+  const s = fightSides(f);
+  if (!s) return null;
+  const others = s.byGuild.filter(([g]) => !/^(zek|rise of zek)$/i.test(g));
+  return (
+    <p className="text-xs mt-1 leading-relaxed" title="Everyone a Wolf Pack log saw: the dead, their killers, the assisters, and /who in the zone. At least this many.">
+      <span className="text-dim">On the field: </span>
+      <span className="text-red tabular-nums">Zek {s.zek}</span>
+      <span className="text-dim"> v </span>
+      <span className="text-text tabular-nums">{s.allies} allies</span>
+      {others.length > 0 && (
+        <span className="text-dim"> ({others.map(([g, n]) => `${g} ${n}`).join(' · ')})</span>
+      )}
+      <span className="text-dim"> · at least</span>
+    </p>
+  );
+}
 
 const mins = (a: string, b: string) => Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 60000));
 const length = (a: string, b: string) => {
@@ -141,6 +161,7 @@ export function FightCards({ fights, tz }: { fights: PvpFightRow[]; tz: string }
                   <span className="text-xs text-dim">deaths · <span className="text-red">Zek {f.zek_deaths}</span> · everyone else {f.rest_deaths}</span>
                 </div>
                 <div className="mt-1.5"><SplitBar f={f} /></div>
+                <Sides f={f} />
                 <p className="text-xs mt-2 leading-relaxed">
                   <span className="text-dim">Deaths by guild: </span>
                   {guildsByDeaths(f).map(([g, n], i) => (
@@ -183,6 +204,7 @@ export function FightTable({ fights, tz }: { fights: PvpFightRow[]; tz: string }
                   <th className="py-1 pr-3 text-right">Length</th>
                   <th className="py-1 pr-3 text-right">Deaths</th>
                   <th className="py-1 pr-3 text-right">Zek</th>
+                  <th className="py-1 pr-3 text-right" title="On the field, Zek v allies: at least this many">Sides</th>
                   <th className="py-1 pr-3">Top killer</th>
                 </tr>
               </thead>
@@ -196,6 +218,7 @@ export function FightTable({ fights, tz }: { fights: PvpFightRow[]; tz: string }
                       <td className="py-1 pr-3 text-right text-dim tabular-nums">{length(f.started_at, f.ended_at)}</td>
                       <td className="py-1 pr-3 text-right text-text tabular-nums">{f.deaths}</td>
                       <td className="py-1 pr-3 text-right text-red tabular-nums">{f.zek_deaths}</td>
+                      <td className="py-1 pr-3 text-right tabular-nums whitespace-nowrap">{(() => { const s = fightSides(f); return s ? <><span className="text-red">{s.zek}</span><span className="text-dim"> v </span><span className="text-text">{s.allies}</span></> : <span className="text-dim">—</span>; })()}</td>
                       <td className="py-1 pr-3 text-dim">{top ? <><span className="text-text">{top.killer}</span> {top.kills}</> : '—'}</td>
                     </tr>
                   );

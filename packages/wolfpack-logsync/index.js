@@ -1603,6 +1603,21 @@ function _mobTickFor(name, now) {
   if (!t || (now || Date.now()) - t.seen_at > MOB_TICK_MAX_AGE_MS) return null;
   return t;
 }
+// A buff or debuff wears off on its ENTITY's tick, not the server tick Zeal
+// shows (the guild lead, 2026-09-27: "debuffs and buffs wear off on entity's
+// ticks, which do not correspond with the server ticks..rather with when an
+// entity spawned"). The server counts a buff's ticks down once per beat of the
+// mob's own 6 s timer, started at spawn, so a buff of N ticks fades on the Nth
+// of that mob's beats after it landed: anywhere up to 6 s EARLIER than the
+// naive landed + N × 6 s. With the mob's tick known (_mobTickFor) that beat is
+// computable and `snapped` says so; without it the naive estimate stands.
+function _entityTickFadeAt(landedMs, durTicks, tick) {
+  const n = Number(durTicks) || 0;
+  if (!(n > 0) || !Number.isFinite(landedMs)) return null;
+  if (!tick || !Number.isFinite(tick.at)) return { at: landedMs + n * MOB_TICK_MS, snapped: false };
+  const first = tick.at + (Math.floor((landedMs - tick.at) / MOB_TICK_MS) + 1) * MOB_TICK_MS;   // the first beat after landing
+  return { at: first + (n - 1) * MOB_TICK_MS, snapped: true, half: tick.half };
+}
 const _DOT_TICK_RX = /\]\s+(.+?)\s+has\s+taken\s+\d+(?:\s+points?\s+of)?\s+damage(?:\s+from\s+(.+?))?\.\s*$/i;
 const _dotLastHit = new Map();               // 'mob|source' → second-stamp ms of its last damage line
 function _noteDotTickLine(line, secMs, readMs) {
@@ -3346,7 +3361,11 @@ function targetBuffsFor(targetLower, wantId) {
     // filtering against changes every time the user swaps target.
     if (wantId != null && b && b.target_id != null && Number(b.target_id) !== Number(wantId)) continue;
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+    // Fades on the mob's own tick when that is known (_entityTickFadeAt);
+    // the naive landed + ticks × 6 s otherwise. A timer-less entry keeps
+    // counting up from its landing so the linger rules below still apply.
+    const fade = _entityTickFadeAt(b.landed_at || now, b.dur_ticks, _mobTickFor(targetLower, now));
+    let rem = fade ? (fade.at - now) / 1000 : durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
     // HoTs (regen category) and short effects (stuns, procs — catalog duration
     // under 60s) get a 6s (one-tick) linger; everything else gets the 5-min
@@ -3378,6 +3397,7 @@ function targetBuffsFor(targetLower, wantId) {
       pacified: _isPacifySpell(b.name),
       pacify_ae: _isAePacify(b.name),
       unconfirmed: !!(b && b.unconfirmed),
+      tick_snapped: !!(fade && fade.snapped),
       owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
@@ -39994,14 +40014,17 @@ function _builtinTimerRows(now) {
         const by = b && (b.cast_by || b.owner);
         if (!by || !mine.has(String(by).toLowerCase()) || b.worn_off_at) continue;
         const totalSec = (Number(b.dur_ticks) || 0) * 6;
-        const remMs = (Number(b.landed_at) || 0) + totalSec * 1000 - now;
+        const mob = b.target_name || tk;
+        // On the mob's own tick when it is known (a DoT ticking on it, or a
+        // charm break, teaches it); the naive estimate otherwise.
+        const fade = _entityTickFadeAt(Number(b.landed_at) || 0, b.dur_ticks, _mobTickFor(mob, now));
+        const remMs = fade ? fade.at - now : 0;
         if (!(remMs > 0)) continue;
         const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
         if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
-        const mob = b.target_name || tk;
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
-               target: mob, effect: b.name + (b.unconfirmed ? '?' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb' });
+               target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped });
       }
     }
   }
