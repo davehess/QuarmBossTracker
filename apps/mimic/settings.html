@@ -58,9 +58,17 @@
     transition:opacity .18s ease-out,transform .18s ease-out;
   }
   #save.show{opacity:1;transform:translateY(0);pointer-events:auto}
+  /* Drafts + the before-closing reminder (2026-09-26). Pinned above the floating Save. */
+  #draftBar{position:fixed;left:14px;right:14px;bottom:64px;z-index:90;display:none;align-items:center;
+    gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:6px;background:#161b22;border:1px solid #d29922;
+    color:#c9d1d9;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,0.55)}
+  #draftBar.show{display:flex}
+  #draftBar .msg{flex:1 1 220px}
+  #draftBar button{font-size:12px}
 </style></head>
 <body>
   <div id="toast" class="toast"></div>
+  <div id="draftBar" role="status"></div>
   <h1 style="display:flex;align-items:center;gap:10px"><img src="assets/icon-256.png" alt="" style="width:34px;height:34px;border-radius:8px"><span>mi<span style="letter-spacing:0.5px">MIC</span> Settings</span></h1>
   <div class="sub">Stored locally in your user profile. Mimic brings its own Node runtime — nothing else to install.</div>
   <div style="margin:8px 0 2px">
@@ -677,6 +685,9 @@
     // any earlier would record a half-filled form as "clean" and leave the
     // button showing on a window nobody had touched.
     _markClean();
+    // A draft left from last time (closed without saving, or Mimic quit) comes
+    // back on top of what is saved, with a bar to keep or discard it.
+    _offerDraft();
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
@@ -735,7 +746,108 @@
     const sig = _settingsSig();
     const dirty = _cleanSig !== null && sig !== null && sig !== _cleanSig;
     btn.classList.toggle('show', dirty || _saveBusy);
+    _saveDraftSoon();
   }
+
+  // ── Drafts, and a reminder before closing (the guild lead, 2026-09-26: "can
+  // we start saving potential settings changes as drafts as people start making
+  // changes, and give them a reminder to save before exiting the page?") ──────
+  // Every edit Save would send is kept as a draft in this window's storage as
+  // it happens — never the token, which is a credential — and offered back the
+  // next time Settings opens. Closing with unsaved edits asks first. Quitting
+  // Mimic closes this window without asking (main.js before-quit), which is
+  // safe because the draft is already written.
+  const DRAFT_KEY = 'wp:settings:draft';
+  let _draftTimer = null;
+  let _allowClose = false;
+  function _saveDraftSoon(){
+    if (_draftTimer) clearTimeout(_draftTimer);
+    _draftTimer = setTimeout(_saveDraftNow, 250);
+  }
+  function _saveDraftNow(){
+    _draftTimer = null;
+    if (_cleanSig === null) return;          // form not loaded yet: nothing to compare
+    const sig = _settingsSig();
+    if (sig === null) return;
+    try {
+      if (sig === _cleanSig) { localStorage.removeItem(DRAFT_KEY); return; }
+      const form = JSON.parse(sig);
+      delete form.tokenTyped;
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: Date.now(), form }));
+    } catch (e) { /* storage unavailable: the close reminder still works */ }
+  }
+  function _readDraft(){
+    try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return d && d.form ? d : null; }
+    catch (e) { return null; }
+  }
+  function _applyDraft(f){
+    if (Array.isArray(f.eqPaths)) {
+      const want = f.eqPaths.map(_norm);
+      _checkedFound = new Set(_foundCandidates.map(c => _norm(c.path)).filter(p => want.includes(p)));
+      _manualFolders = f.eqPaths.filter(p => !_foundCandidates.some(c => _norm(c.path) === _norm(p)));
+    }
+    if (Array.isArray(f.eqPathsExcluded)) _excludedFound = new Set(f.eqPathsExcluded);
+    try { _renderFolderPicker(); } catch (e) {}
+    if (typeof f.botUrl === 'string') document.getElementById('botUrl').value = f.botUrl;
+    const radio = document.querySelector('input[name=tells][value="' + String(f.tellsMode || 'off').replace(/"/g, '') + '"]');
+    if (radio) radio.checked = true;
+    for (const id of ['quietMode', 'hideOverlays', 'showHud', 'enableTriggerTts', 'overlaysUnlocked',
+                      'autoStart', 'hideOverlaysWhenEqDown', 'zealAutoCheck']) {
+      if (typeof f[id] === 'boolean') document.getElementById(id).checked = f[id];
+    }
+    _refreshDirty();
+  }
+  function _agoText(at){
+    const m = Math.round((Date.now() - (at || Date.now())) / 60000);
+    return m < 1 ? 'just now' : (m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago');
+  }
+  function _showBar(kind, at){
+    const bar = document.getElementById('draftBar');
+    if (!bar) return;
+    if (!kind) { bar.classList.remove('show'); bar.innerHTML = ''; return; }
+    bar.innerHTML = kind === 'draft'
+      ? '<span class="msg">↺ Your unsaved changes from ' + _agoText(at) + ' are back. Save them, or discard them to keep what is saved.</span>'
+        + '<button type="button" data-draft="save">Save</button><button type="button" data-draft="discard">Discard them</button>'
+      : '<span class="msg">You have unsaved changes.</span>'
+        + '<button type="button" data-draft="saveclose">Save and close</button>'
+        + '<button type="button" data-draft="close">Close without saving</button>'
+        + '<button type="button" data-draft="keep">Keep editing</button>';
+    bar.classList.add('show');
+  }
+  // Offer a leftover draft once the saved settings are on screen (end of load()).
+  function _offerDraft(){
+    const d = _readDraft();
+    if (!d) return;
+    _applyDraft(d.form);
+    if (_settingsSig() === _cleanSig) { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} return; }
+    _showBar('draft', d.at);
+  }
+  document.getElementById('draftBar').addEventListener('click', async (e) => {
+    const act = e.target && e.target.getAttribute && e.target.getAttribute('data-draft');
+    if (!act) return;
+    if (act === 'keep') { _showBar(null); return; }
+    if (act === 'discard' || act === 'close') {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (err) {}
+      _showBar(null);
+      if (act === 'close') { _allowClose = true; window.close(); return; }
+      await load();                               // back to what is saved
+      return;
+    }
+    if (act === 'save' || act === 'saveclose') {
+      _showBar(null);
+      await document.getElementById('save').onclick();
+      if (act === 'saveclose' && _settingsSig() === _cleanSig) { _allowClose = true; window.close(); }
+    }
+  });
+  // Electron cancels the close quietly when this returns a value; the bar asks.
+  window.addEventListener('beforeunload', (e) => {
+    if (_allowClose || _cleanSig === null || _settingsSig() === _cleanSig) return;
+    _saveDraftNow();
+    _showBar('closing');
+    e.preventDefault();
+    e.returnValue = false;
+    return false;
+  });
   function _markClean(){ _cleanSig = _settingsSig(); _refreshDirty(); }
   // Capture phase so this still fires for controls the folder picker re-renders
   // after load, and on BOTH events because a checkbox reports `change` while a

@@ -65,7 +65,14 @@ describe('opacity: the whole overlay, and its background, as two settings', () =
     for (const id of ['#setupbar', '#move-btn', '#hide-btn', '#drag-controls', '#wpResizeMenu']) expect(css).toContain(':not(' + id + ')');
     expect(stripJs(preload)).toMatch(/ipcRenderer\.on\('content-alpha', function \(_e, v\) \{[\s\S]*?setProperty\('--wp-content-alpha'/);
     // an overlay whose backdrop is on <body> itself folds the fade into its alpha
-    expect(preload).toContain('calc(var(--bg-alpha,0.92) * var(--wp-content-alpha,1))');
+    expect(preload).toContain('calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))');
+  });
+
+  it('Background ON is a near-opaque plate whatever the card alpha is (it used to BE the card alpha)', () => {
+    // Every overlay defines --bg-alpha, so var(--bg-alpha,0.92) alone never reached 0.92 and the
+    // backdrop only darkened the tint at the same see-through level (the guild lead, 2026-09-26).
+    expect(preload).toContain('body.wp-backdrop #wrap{background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92)) !important');
+    expect(preload).not.toContain('rgb(8 10 14 / var(--bg-alpha,0.92))');
   });
 });
 
@@ -103,8 +110,10 @@ describe('the HUD ring is not dockable', () => {
     expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')");
   });
   it('a HUD that was docked gets its own window back — as undocking it would have', () => {
+    // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.
     const load = (raw) => new Function('fs', 'CONFIG_FILE', 'defaultConfig',
-      sliceBlock(mainRaw, 'function loadConfig() {', '\n}\n') + '\nreturn loadConfig();')(
+      sliceBlock(mainRaw, 'function _readConfigRaw() {', '\n}\n') + '\n'
+      + sliceBlock(mainRaw, 'function loadConfig() {', '\n}\n') + '\nreturn loadConfig();')(
       { readFileSync: () => JSON.stringify(raw) }, () => 'x', () => ({}));
     const was = load({ dockedOverlays: ['mobinfo', 'me'], dockedPrev: { me: true, mobinfo: false }, showMe: false });
     expect(was.dockedOverlays).toEqual(['mobinfo']);

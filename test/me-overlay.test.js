@@ -579,6 +579,43 @@ describe('the three HUDs', () => {
     for (const it of its) expect(it.anchor).toBe('start');           // upright text, placed by its measured width
   });
 
+  // The guild lead, 2026-09-25: "add an option for the HUD to have damage numbers
+  // outside the circle." Builder: Hits → Numbers inside/outside. Mirrored: your
+  // hits START flush against the outside of the ring on the right, hits on you
+  // END flush against it on the left — never over the ring or its labels, never
+  // past the widened window (LANE_EXT a side).
+  it('numbers outside the ring: mirrored, clear of the ring, inside the widened window', () => {
+    const part = R.HUD_PARTS.flatMap(g => g[1]).find(it => it[0] === 'hitsSide');
+    expect(part && part[2]).toEqual(['inside', 'outside']);
+    expect(R.HUD_DEFAULTS.hitsSide).toBe('inside');
+    const at = 1_790_000_000_000;
+    const feed = [0, 3, 6, 9, 12].flatMap(sec => [45, 51, 88, 120, 77, 64].map(n => ({ dir: 'out', amount: n, kind: 'melee', name: 'punch', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })))
+      .concat([0, 3, 6].map(sec => ({ dir: 'in', amount: 169, kind: 'melee', name: 'hits', other: 'a gnoll', at: at - sec * 1000, age_ms: sec * 1000 })));
+    Object.assign(R.hudParts, R.HUD_DEFAULTS, { hitsSide: 'outside' });
+    try {
+      const its = R.hudLanes(R.hudData(Object.assign({}, base, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed } })), R.hudParts).items;
+      const lines = (id) => {
+        const by = {};
+        for (const it of its.filter(x => x.lane === id)) (by[it.y] = by[it.y] || []).push(it);
+        return Object.values(by).map(row => ({ y: row[0].y, size: row[0].size, x0: Math.min(...row.map(i => i.x)), x1: Math.max(...row.map(i => i.x + i.text.length * 0.6 * i.size)) }));
+      };
+      const outs = lines('hout'), ins = lines('hin');
+      expect(outs.length).toBeGreaterThan(2);
+      expect(ins.length).toBeGreaterThan(1);
+      for (const l of outs) expect(l.x0).toBeCloseTo(R.laneSpan(R.HIT_LANES.hout, l.y, l.size).outer, 3);   // flush left, on the ring's side
+      for (const l of ins) expect(l.x1).toBeCloseTo(R.laneSpan(R.HIT_LANES.hin, l.y, l.size).outer, 3);    // flush right, on the ring's side
+      for (const l of outs.concat(ins)) {
+        const near = l.x0 > 200 ? l.x0 : l.x1;                      // the end nearest the ring
+        const dy = Math.min(Math.abs(l.y - 200), Math.abs(l.y - l.size - 200));
+        expect(Math.hypot(near - 200, dy)).toBeGreaterThanOrEqual(196.9);   // r 197: past the ring and its health/mana labels
+        expect(l.x0).toBeGreaterThanOrEqual(-120 - 0.01);
+        expect(l.x1).toBeLessThanOrEqual(520 + 0.01);
+      }
+    } finally {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS);
+    }
+  });
+
   it('a class cooldown never used this session is unknown ("—"), never "ready"', () => {
     const s2 = Object.assign({}, base, { cooldowns: [{ key: 'fd', label: 'Feign Death', ms_left: null, total_ms: null, est: true, seen: false }] });
     for (const fn of Object.values(HUDS)) {
@@ -929,6 +966,69 @@ describe('the HUD — rounds, damage shield, builder', () => {
     expect(R.renderHud(one)).toContain('class="w-thin"');          // a bad saved value falls back
     reset();
   });
+
+  // Tracking (a member's idea, 2026-09-25: "Ahead, Ahead and to right/left,
+  // behind left/right behind you"; the guild lead: "YES").
+  const arrows = (h) => [...h.matchAll(/<path class="trk( lit)?" transform="translate\(([\d.]+) ([\d.]+)\) rotate\((\d+)\) scale\(([\d.]+)\)"[^>]*\/>/g)]
+    .map(m => ({ lit: !!m[1], x: +m[2], y: +m[3], a: +m[4], k: +m[5], dim: /opacity="0\.45"/.test(m[0]) }));
+  const tracking = (angle, age = 0) => s([], { track: { name: 'a scouting kobold', angle, age_ms: age } });
+
+  it('tracking: eight arrows round the ring, the latest direction lit', () => {
+    reset();
+    const a = arrows(R.renderHud(tracking(45)));
+    expect(a.map(x => x.a)).toEqual([0, 45, 90, 135, 180, 225, 270, 315]);
+    expect(a.filter(x => x.lit).map(x => x.a)).toEqual([45]);
+    const lit = a.find(x => x.lit);                     // "ahead and to the right": up and right of the middle
+    expect(lit.x).toBeGreaterThan(300);
+    expect(lit.y).toBeLessThan(100);
+    const behind = arrows(R.renderHud(tracking(180))).find(x => x.lit);
+    expect(behind.x).toBeCloseTo(200, 5);
+    expect(behind.y).toBeGreaterThan(300);              // straight below the middle
+  });
+
+  it('tracking: only the lit arrow when the builder says so; nothing when off, or when not tracking', () => {
+    reset();
+    R.hudParts.trackShow = 'lit';
+    expect(arrows(R.renderHud(tracking(270))).map(x => [x.a, x.lit])).toEqual([[270, true]]);
+    expect(arrows(R.renderHud(tracking(null)))).toEqual([]);          // begun, no direction yet
+    R.hudParts.track = 0;
+    expect(arrows(R.renderHud(tracking(270)))).toEqual([]);
+    reset();
+    expect(arrows(R.renderHud(s([])))).toEqual([]);
+    const begun = arrows(R.renderHud(tracking(null)));                // all eight, none lit
+    expect([begun.length, begun.filter(x => x.lit).length]).toEqual([8, 0]);
+  });
+
+  it('tracking: a direction older than 15 s dims — you may have turned since', () => {
+    reset();
+    const lit = (age) => arrows(R.renderHud(tracking(180, age))).find(x => x.lit);
+    expect(lit(14_000).dim).toBe(false);
+    expect(lit(16_000).dim).toBe(true);
+  });
+
+  // The edge is taken at 12, 3, 6 and 9 o'clock (the target's target, the HP and
+  // mana labels, the ✥ Box HUD ✕ row), so those four sit inside the ring; none
+  // may reach into the clear middle (r 110), and none may leave the square.
+  it('tracking: every arrow stays in the square and out of the middle, at every size', () => {
+    for (const k of [0.7, 1, 1.6]) {
+      reset();
+      R.hudParts.sizes = { track: k };
+      const a = arrows(R.renderHud(tracking(0)));
+      expect(a).toHaveLength(8);
+      for (const x of a) {
+        expect(x.k).toBeCloseTo(k, 5);
+        const r = Math.hypot(x.x - 200, x.y - 200);
+        expect(r - 7 * x.k).toBeGreaterThanOrEqual(110 - 1e-6);   // the shaft's end, 7 units in
+        const rad = x.a * Math.PI / 180, reach = r + 8 * x.k;       // the tip, 8 units out
+        for (const v of [200 + reach * Math.sin(rad), 200 - reach * Math.cos(rad)]) {
+          expect(v).toBeGreaterThanOrEqual(0);
+          expect(v).toBeLessThanOrEqual(400);
+        }
+        if (x.a % 90 === 0) expect(reach).toBeLessThan(140);       // the four inside the ring stay under its labels
+      }
+    }
+    reset();
+  });
 });
 
 describe('the in-game picker', () => {
@@ -964,16 +1064,21 @@ describe('the in-game picker', () => {
     const px = (expr, v) => new Function('return ' + expr.replace(/var\(--([\w-]+)\)/g, (_, n) => v[n])
       .replace(/calc\(/g, '(').replace(/px/g, ''))();
     const pkW = +decl('body.hud', '--pk-w').replace('px', '');
-    for (const v of [{ 'ring-w': 420, 'ring-x': 0, 'pk-w': pkW }, { 'ring-w': 420, 'ring-x': 300, 'pk-w': pkW }]) {   // alone; builder open on the left
+    // alone; builder open on the left; and the numbers OUTSIDE the ring, where
+    // the window is 1.6× as wide as it is tall (2026-09-25) — the row still
+    // centres on the ring and sits on the window's height, not its width.
+    for (const v of [{ 'ring-w': 420, 'ring-h': 420, 'ring-x': 0, 'pk-w': pkW }, { 'ring-w': 420, 'ring-h': 420, 'ring-x': 300, 'pk-w': pkW },
+      { 'ring-w': 672, 'ring-h': 420, 'ring-x': 0, 'pk-w': pkW }]) {
       const T = 'body.hud .title,body.hud.building .title', MV = 'body.hud #move-btn,body.hud.setup #move-btn', HD = 'body.hud #hide-btn,body.hud.setup #hide-btn';
       const mv = px(decl(MV, 'left'), v), pk = px(decl(T, 'left'), v), hd = px(decl(HD, 'left'), v);
       const top = px(decl(MV, 'top'), v), ptop = px(decl(T, 'top'), v);
-      expect(pk + pkW / 2).toBeCloseTo(v['ring-x'] + 210, 5);                     // centred on the ring
+      const cx = v['ring-x'] + v['ring-w'] / 2, H = v['ring-h'];
+      expect(pk + pkW / 2).toBeCloseTo(cx, 5);                                     // centred on the ring
       expect(pk - (mv + 18)).toBeGreaterThanOrEqual(0); expect(pk - (mv + 18)).toBeLessThanOrEqual(6);   // ✥ right beside it
       expect(hd - (pk + pkW)).toBeGreaterThanOrEqual(0); expect(hd - (pk + pkW)).toBeLessThanOrEqual(6); // ✕ right beside it
-      expect(top + 18).toBeLessThanOrEqual(420); expect(ptop + 16).toBeLessThanOrEqual(420);             // inside the square
+      expect(top + 18).toBeLessThanOrEqual(H); expect(ptop + 16).toBeLessThanOrEqual(H);                 // inside the window
       // below the tick / swing labels: their baseline (r 187, glyphs inward) at the row's outer edge
-      const s = 420 / 400, dx = (v['ring-x'] + 210 - mv) / s;
+      const s = H / 400, dx = (cx - mv) / s;
       expect(top / s).toBeGreaterThan(200 + Math.sqrt(187 * 187 - dx * dx));
     }
     expect(css).toMatch(/body\.hud \.title \.conn,body\.hud \.title \.nm,body\.hud \.title \.cl,body\.hud \.title \.sp\{display:none\}/);
@@ -1034,8 +1139,9 @@ describe('the in-game picker', () => {
     expect(body).toContain('paintLanes(isHud(style) && s && s.character ? hudLanes(hudData(s), hudParts) : null, hudParts.weight)');
     expect(meHtml).toContain('<svg id="hudlanes"');
   });
-  it('a HUD makes the window a centred square — the ring is the bounds', () => {
-    expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: side, height: side, center: true \}\)/);
+  it('a HUD makes the window a centred square — the ring is the bounds (wider only for numbers outside it)', () => {
+    expect(body).toMatch(/var side = Math\.round\(Math\.min\(screen\.availWidth, screen\.availHeight\) \* 0\.5\);\s*setBounds\(\{ width: Math\.round\(side \* hudWidthFactor\(\)\), height: side, center: true \}\)/);
+    expect(body).toMatch(/return p && p\.hitsSide === 'outside' \? \(400 \+ 2 \* LANE_EXT\) \/ 400 : 1;/);
   });
   it('is clickable on a locked (click-through) overlay — the hover handshake', () => {
     expect(body).toContain("picker.addEventListener('mouseenter', hoverOn)");

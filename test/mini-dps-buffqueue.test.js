@@ -193,7 +193,9 @@ describe('DPS mini: the page', () => {
 
   it('the tab strip, the row counter, the column header and History\'s fight list hide in mini', () => {
     const m = markupOf(dpsHtml);
-    expect(m).toContain('<span class="rowcfg wp-mini-hide">');
+    // The row counter and History share one column since 2026-09-25; the
+    // column hides, and the counter inside it.
+    expect(m).toMatch(/<span class="ctlstack wp-mini-hide">\s*<span class="rowcfg">/);
     expect(m).toContain('<span class="tabs wp-mini-hide">');
     expect(m).toContain('<div id="colhdr" class="colhdr wp-mini-hide"');
     const css = cssOf(dpsHtml);

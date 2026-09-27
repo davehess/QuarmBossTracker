@@ -1541,6 +1541,115 @@ const PET_LINGER_MS = 5 * 60 * 1000;
 // class + duration to the session, driving the duration bar + class-aware warn.
 let _pendingCharmSpell = null;   // { cls, dur, owner, ts } | null
 const PENDING_CHARM_WINDOW_MS = 12_000;
+
+// ── Mob tick learner (the guild lead, 2026-09-26) ───────────────────────────
+// "charm overlay needs both server and mob tick on them (they're different,
+// and we can tell because of the interval the mob sees a DOT land it's
+// non-initial damage typically. same thing for when a charm breaks, that
+// indicates the mob tick."
+// Every NPC runs its own 6s tick, set when it spawned; the server tick Zeal
+// shows (gauge 24, _meTick) is a different clock. Two log lines land ON a
+// mob's tick:
+//   · a DoT's repeating damage, "<mob> has taken N damage from …", when the
+//     same source hit the same mob a whole number of ticks earlier. The
+//     interval is what separates a tick from a first, cast-time hit;
+//   · a charm break read from the log (not the Zeal pet-slot break, which is
+//     only noticed after a 6s grace).
+// Log lines are stamped to the second, so one observation says only "a tick
+// fell in this second". Intersecting those windows narrows the phase to a
+// fraction of a second. One observation that disagrees with the estimate is
+// held as a candidate and wins only when a second one agrees with it, so a
+// stray hit cannot knock out a good estimate. Keyed by name like the other
+// per-name trackers; a death clears it (_clearNameObservations).
+const MOB_TICK_MS = 6000;
+const MOB_TICK_MIN_HALF_MS = 150;            // never claim better than ±150 ms
+const MOB_TICK_MAX_AGE_MS = 30 * 60 * 1000;
+const _mobTicks = new Map();                 // nameLower → { at, half, n, seen_at, src, cand }
+function _tickWindowMeet(a, b) {             // two {at, half} windows on the 6s cycle → their overlap, or null
+  const n = Math.round((a.at - b.at) / MOB_TICK_MS);
+  const bAt = b.at + n * MOB_TICK_MS;
+  const lo = Math.max(a.at - a.half, bAt - b.half), hi = Math.min(a.at + a.half, bAt + b.half);
+  if (lo > hi) return null;
+  return { at: (lo + hi) / 2, half: Math.max(MOB_TICK_MIN_HALF_MS, (hi - lo) / 2) };
+}
+function _noteMobTick(name, secMs, readMs, src) {
+  if (!name || !Number.isFinite(secMs)) return null;
+  const read = Number.isFinite(readMs) ? readMs : secMs + 1000;
+  if (read - secMs > 60_000) return null;    // a backfilled line says nothing about a live mob
+  const hi = Math.max(secMs + 2 * MOB_TICK_MIN_HALF_MS, Math.min(secMs + 1000, read));
+  const obs = { at: (secMs + hi) / 2, half: (hi - secMs) / 2 };
+  const k = String(name).toLowerCase().trim();
+  const prev = _mobTicks.get(k);
+  let next;
+  if (!prev || secMs - prev.seen_at > MOB_TICK_MAX_AGE_MS) {
+    next = { ...obs, n: 1, cand: null };
+  } else {
+    const met = _tickWindowMeet(obs, prev);
+    if (met) next = { ...met, n: prev.n + 1, cand: null };
+    else {
+      const withCand = prev.cand ? _tickWindowMeet(obs, prev.cand) : null;
+      next = withCand ? { ...withCand, n: 2, cand: null }
+                      : { at: prev.at, half: prev.half, n: prev.n, cand: obs };
+    }
+  }
+  next.seen_at = secMs;
+  next.src = (next.cand && prev) ? prev.src : src;
+  _mobTicks.set(k, next);
+  if (_mobTicks.size > 300) _mobTicks.delete(_mobTicks.keys().next().value);
+  return next;
+}
+function _mobTickFor(name, now) {
+  const t = name ? _mobTicks.get(String(name).toLowerCase().trim()) : null;
+  if (!t || (now || Date.now()) - t.seen_at > MOB_TICK_MAX_AGE_MS) return null;
+  return t;
+}
+const _DOT_TICK_RX = /\]\s+(.+?)\s+has\s+taken\s+\d+(?:\s+points?\s+of)?\s+damage(?:\s+from\s+(.+?))?\.\s*$/i;
+const _dotLastHit = new Map();               // 'mob|source' → second-stamp ms of its last damage line
+function _noteDotTickLine(line, secMs, readMs) {
+  if (!line || line.indexOf(' has taken ') < 0 || !Number.isFinite(secMs)) return null;   // hot path: cheap reject
+  const m = _DOT_TICK_RX.exec(line);
+  if (!m) return null;
+  const mob = m[1].trim();
+  const key = mob.toLowerCase() + '|' + String(m[2] || '').toLowerCase().trim();
+  const prev = _dotLastHit.get(key);
+  _dotLastHit.delete(key);
+  _dotLastHit.set(key, secMs);
+  if (_dotLastHit.size > 500) _dotLastHit.delete(_dotLastHit.keys().next().value);
+  if (prev == null) return null;
+  const gap = secMs - prev;
+  if (gap < MOB_TICK_MS - 1000 || gap > 5 * MOB_TICK_MS + 1000) return null;
+  const off = gap % MOB_TICK_MS;
+  if (off > 1000 && off < MOB_TICK_MS - 1000) return null;   // not a whole number of ticks apart
+  return _noteMobTick(mob, secMs, readMs, 'dot');
+}
+// The owner's server tick as an absolute time of a tick boundary, from their
+// Zeal gauge 24 — null when that character is not streaming Zeal.
+function _serverTickAtFor(owner, now) {
+  if (!owner) return null;
+  const want = String(owner).toLowerCase();
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== want) continue;
+    const t = _meTick(_zealState[ch], now);
+    return t ? now + t.ms_left : null;
+  }
+  return null;
+}
+// Every character that streamed Zeal in the last minute, with one of its
+// server-tick boundaries — the Tick overlay's rows (the co-leader, 2026-09-27:
+// the HUD's server tick "would be even better if it could be broken out …
+// as a standalone timer"). One row per character rather than "the active
+// one", which flips with whichever Zeal stream reported last. Sorted by name
+// so the rows never swap places.
+function _serverTicksNow(now) {
+  const out = [];
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || !(now - (st.updatedAt || 0) < 60_000)) continue;
+    const t = _meTick(st, now);
+    if (t) out.push({ character: ch, at: now + t.ms_left });
+  }
+  return out.sort((a, b) => a.character.localeCompare(b.character));
+}
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   // Second half of the vision-eye choke point (see _isVisionEyePet). Every
@@ -1735,6 +1844,7 @@ function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
     dur_ticks: durTicks,
     landed_at: landedAt,
     owner: owner ? String(owner) : null,
+    target_name: String(pet),
     is_charm_spell: true,
   });
   _savePetStateSoon();
@@ -1857,10 +1967,13 @@ function _reconcileGaugeCharms() {
       // Already active — clear any stale pending entry so a re-charm after
       // a break still requires its own two-frame debounce.
       _pendingGaugeCharms.get(ownerLower)?.delete(k);
-      // Refresh last_tick_at as a "still alive" signal from the gauge — keeps
-      // the break detector below from firing during a long gap between actual
-      // 6s mob ticks (e.g. between encounters).
-      cur.last_tick_at = now;
+      // "Still alive" signal from the gauge — keeps the break detector below
+      // from firing during a long gap between actual 6s mob ticks. Its own
+      // field: this used to overwrite last_tick_at, which is also the anchor
+      // of the 6s mob-tick countdown, so every poll reset "next mob tick" to
+      // ~6s and the countdown never visibly ran (a bard, 2026-09-26: "i didnt
+      // see it on the regular or mini").
+      cur.last_seen_at = now;
     }
   }
   // Drop pending entries whose pet is no longer in slot 16 (transient pulse).
@@ -1889,7 +2002,7 @@ function _reconcileGaugeCharms() {
     // clears a 3.5-4s recast with ~2s of headroom, and halves the lag on the
     // case that actually matters. If false "charm break" calls reappear during
     // routine cycling, this is the number to raise.
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 6000) {
+    if ((!set || !set.has(k)) && (now - (info.last_seen_at || info.last_tick_at || 0)) > 6000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
@@ -3200,6 +3313,11 @@ function recordTargetBuffLanding(bcEvt) {
     // effect list the moment one landing was unprovable, which is most of them.
     // Scoping happens at READ time in targetBuffsFor(), where null fails open.
     target_id: Number.isFinite(bcEvt.target_id) ? bcEvt.target_id : null,
+    // Ours, when we can prove it (the caster's own log matched the cast), so
+    // the timer-bar switches show only your spells. Deliberately not `owner`:
+    // Mob Info prints an owner in brackets, which is for charm and pacify rows.
+    cast_by: (bcEvt._selfCast && bcEvt.observer) ? String(bcEvt.observer) : null,
+    target_name: String(bcEvt.target),
   });
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
@@ -3460,6 +3578,7 @@ function _synthesizePacifyLanding(spellName, character, atMs) {
     dur_ticks: durTicks,
     landed_at: atMs,
     target_id: _provableTargetId(character, target),
+    target_name: String(target),
     owner: String(character),
     // ⚠ We never saw this land, and for Harmony we CANNOT: it is resist_type 0
     // (unresistable, so the resist line never fires) yet it still fails against
@@ -7416,7 +7535,8 @@ function buildWhoSnapshot() {
       for (const [k, v] of whoData) { const tt = Date.parse(v.observedAt || 0) || 0; if (maxObs - tt <= 8000) currentNames.add(k); }
     }
   }
-  if (!currentNames || !currentNames.size) return null;
+  const target = _whoTargetPlayer();
+  if ((!currentNames || !currentNames.size) && !target) return null;
   const RECENT_GONE_MS = 30 * 60 * 1000;
   const current = [], gone = [], lookupNeeded = [];
   // Enrich a row from the bot's who-lookup cache. Anon rows get de-anon'd
@@ -7436,15 +7556,20 @@ function buildWhoSnapshot() {
     if (data) {
       if (data.main)  entry.main  = data.main;        // #111 main-in-parens
       if (data.mimic) entry.mimic = true;             // #111 wolf icon
+      if (data.is_zek) entry.zek = true;              // Zek by history (their guild, or the bot's inference)
     }
     if (!fresh) lookupNeeded.push(v.name);            // resolve enrichment for every row
   };
   for (const [k, v] of whoData) {
+    if (target && k === target.key) continue;   // Shown on top instead.
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
     };
-    if (currentNames.has(k)) {
+    // Every row carries its Zek flag, for the overlay's Zek only mode (the guild lead, 2026-09-26).
+    // Before, only an /anon row did (through entry.known), so a player showing <Zek> went unflagged.
+    if (_isZekGuild(v.guild)) entry.zek = true;
+    if (currentNames && currentNames.has(k)) {
       enrich(entry, v, k);
       current.push(entry);
     } else {
@@ -7459,6 +7584,47 @@ function buildWhoSnapshot() {
     current,
     recentGone: gone.slice(0, 30),
     capturedAt: _whoRun ? _whoRun.startedAt : now,
+    target,
+  };
+}
+
+// The Zek guild, as the bot's who_directory reads it (guild_name = 'Zek').
+function _isZekGuild(guild) {
+  return /^zek$/i.test(String(guild || '').trim());
+}
+
+// The player you are targeting, for the top of the /who overlay (the guild lead, 2026-09-26, in a raid
+// shared with other guilds: "add guild under the player's name when we know it. When we click on them
+// put them at the top of the /who overlay"). Same sources as Target Info's player line (_targetPlayerInfo):
+// this session's /who first, then /who history from the bot, so a raider you never /who'd still gets a
+// card, and an /anon one gets the guild history last saw. Null for an NPC or no target.
+function _whoTargetPlayer() {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return null;
+  let selfChar = '';
+  for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  const cached = _mobInfoByName.get(_mobInfoCacheKey(st.target_name, zoneId)) || null;
+  const pl = _targetPlayerInfo(st, selfChar, cached);
+  if (!pl) return null;
+  const key = pl.name.toLowerCase();
+  const who = whoData.get(key) || null;
+  const hist = (_whoLookupCache.get(key) || {}).data || null;
+  // Target Info counts any name the catalog lacks as a player, which takes in pets. Here a card needs
+  // something we actually know: a /who row, /who history, or a class from the raid roster.
+  if (!who && !hist && !pl.class) return null;
+  const liveGuild = who && !who.anonymous ? who.guild : null;
+  return {
+    key,
+    name: pl.name,
+    class: pl.class, class_src: pl.class_src,
+    level: pl.level, level_src: pl.level_src,
+    guild: pl.guild, guild_src: liveGuild ? 'who' : (pl.guild ? 'history' : null),
+    anonymous: pl.anonymous,
+    gm: !!(who && who.gm),
+    zek: !!(hist && hist.is_zek) || _isZekGuild(pl.guild),
+    main: (hist && hist.main) || null,
+    mimic: !!(hist && hist.mimic),
   };
 }
 
@@ -7566,6 +7732,11 @@ const DS_PAIR_WINDOW_MS = 1000;
 // above the tank's known DS buffs than this is a proc or a spell, not a shield.
 const DS_UNLISTED_SLACK = 30;
 
+// PvP assist window: a hit or a debuff on a player this long before their
+// death counts as an assist. 30 s → 120 s on 2026-06-21, → 4 min on 2026-09-27
+// (the guild lead: "expand the timeframe to 4 minutes").
+const PVP_ASSIST_WINDOW_MS = 240_000;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -7612,12 +7783,15 @@ class EncounterBuilder {
     // the hit WAS a shield is decided in _settleDsPending. Per-encounter,
     // cleared on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
-    // PvP assist correlation — uploader's outbound damage to player names,
-    // rolling 30s window. When a PvP death broadcast names one of these
-    // victims and the killing blow wasn't ours, we emit an assist event.
-    // Per-builder (per-encounter); cross-fight assists are intentionally
-    // missed since 30s comfortably covers any real engagement → death pair.
-    this._pvpDamageWindow = new Map();   // victim.toLowerCase() → { tsMs, lineSample }
+    // PvP assist evidence, per victim: everyone this log SAW hit or debuff a
+    // player — our own character and any other player (a pet's work counts for
+    // its owner). When a PvP death broadcast names the victim, everyone in here
+    // inside PVP_ASSIST_WINDOW_MS except the killer is an assist. The bot keeps
+    // only names on the guild roster, so this can hold anyone.
+    this._pvpAssistWindow = new Map();   // victimLower → Map(assisterLower → { name, tsMs, kinds[] })
+    this._pvpStampCount   = 0;           // prune cadence
+    this._pvpCastStarts   = [];          // other players' "<X> begins to cast a spell." { caster, atMs, used }
+    this._pvpSelfCasts    = [];          // this log's "You begin casting <Spell>." { spellLower, atMs, used }
     // Held DS candidate — an anonymous non-melee hit that landed within a
     // second of the mob connecting on a player. It has NOT been added yet:
     // add() parks it here and returns, and _settleDsPending re-adds it once
@@ -8156,45 +8330,136 @@ class EncounterBuilder {
     try { return _knownDsPerHitFor(name); } catch { return 0; }
   }
 
-  // Given a PvP broadcast (from parsePvpBroadcast), check whether the
-  // uploader had recently damaged the named victim AND someone else landed
-  // the killing blow. Returns an assist event object suitable for the
-  // pvp_assists table, or null. Consumes the damage-window entry on a match
-  // so a single damage burst doesn't generate multiple assists from one
-  // back-to-back kill chain. The window is 30s, matching the offline audit.
-  _checkPvpAssist(pvpBcast, opts) {
-    if (!pvpBcast || !pvpBcast.victim) return null;
-    if (pvpBcast.killType !== 'pvp' && pvpBcast.killType !== 'npc') return null;
+  // Given a PvP broadcast (from parsePvpBroadcast), return one assist row per
+  // player this log saw hit or debuff the victim inside PVP_ASSIST_WINDOW_MS,
+  // except the killer (a kill is not an assist). Rows for the pvp_assists
+  // table; [] when nobody qualifies. The victim's evidence is used up either
+  // way, so one burst never credits a second death.
+  //
+  // Guildmates, not just ourselves (the guild lead, 2026-09-27: "credit
+  // assists to guildmates our agents see"): a raider without Mimic still gets
+  // credit when anyone running it saw their work. The bot drops names not on
+  // the roster and merges the same assist reported by several raiders.
+  _checkPvpAssists(pvpBcast, opts) {
+    if (!pvpBcast || !pvpBcast.victim) return [];
+    if (pvpBcast.killType !== 'pvp' && pvpBcast.killType !== 'npc') return [];
     const victimLower = String(pvpBcast.victim).toLowerCase();
-    const wd = this._pvpDamageWindow.get(victimLower);
-    if (!wd) return null;
+    const per = this._pvpAssistWindow.get(victimLower);
+    if (!per) return [];
+    this._pvpAssistWindow.delete(victimLower);
     const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
-    const gapMs = evTsMs - wd.tsMs;
-    // Window widened 30s → 120s on 2026-06-21 (the guild lead — Interlude
-    // tar-goo death, multiple Wolf Pack characters had damaged him in
-    // the fight but the broadcast landed after a regroup pause; every
-    // 30s window had already expired). Two minutes covers a typical
-    // disengage-and-finish scenario (target runs, ports, dies in a
-    // hazard) while still being short enough that a damage burst from
-    // an unrelated earlier fight doesn't masquerade as an assist.
-    if (gapMs < 0 || gapMs > 120_000) return null;
-    // Don't credit ourselves an "assist" on our own kill — that's a kill.
     const killerLower = pvpBcast.killer ? String(pvpBcast.killer).toLowerCase() : '';
-    const meLower = String(this.character || '').toLowerCase();
-    if (meLower && killerLower === meLower) return null;
-    this._pvpDamageWindow.delete(victimLower);   // consume — one assist per damage burst
-    return {
-      assister:      this.character,
-      victim:        pvpBcast.victim,
-      victim_guild:  pvpBcast.victimGuild || null,
-      killer:        pvpBcast.killer || null,
-      killer_is_npc: pvpBcast.killType === 'npc',
-      zone:          pvpBcast.zone || null,
-      killed_at:     pvpBcast.ts,
-      gap_seconds:   Math.round(gapMs / 1000),
-      raw_text:      (pvpBcast.text || '').slice(0, 500),
-      source:        (opts && opts.source) || 'live_agent',
-    };
+    const out = [];
+    for (const [assisterLower, e] of per) {
+      const gapMs = evTsMs - e.tsMs;
+      if (gapMs < 0 || gapMs > PVP_ASSIST_WINDOW_MS) continue;
+      if (assisterLower === killerLower || assisterLower === victimLower) continue;
+      out.push({
+        assister:      e.name,
+        victim:        pvpBcast.victim,
+        victim_guild:  pvpBcast.victimGuild || null,
+        killer:        pvpBcast.killer || null,
+        killer_is_npc: pvpBcast.killType === 'npc',
+        zone:          pvpBcast.zone || null,
+        killed_at:     pvpBcast.ts,
+        gap_seconds:   Math.round(gapMs / 1000),
+        evidence:      e.kinds.join('+'),   // 'damage', 'spell' or 'damage+spell'
+        raw_text:      (pvpBcast.text || '').slice(0, 500),
+        source:        (opts && opts.source) || 'live_agent',
+      });
+    }
+    return out;
+  }
+
+  // Record that `assister` hit ('damage') or debuffed ('spell') `victim`.
+  _pvpStamp(victim, assister, tsMs, kind) {
+    const vk = String(victim).toLowerCase();
+    let per = this._pvpAssistWindow.get(vk);
+    if (!per) { per = new Map(); this._pvpAssistWindow.set(vk, per); }
+    const ak = String(assister).toLowerCase();
+    const prev = per.get(ak);
+    const kinds = prev ? (prev.kinds.includes(kind) ? prev.kinds : prev.kinds.concat(kind)) : [kind];
+    per.set(ak, { name: prev ? prev.name : String(assister), tsMs: Math.max(tsMs, prev ? prev.tsMs : 0), kinds });
+    // Every player's hits on every single-word name land here, most of them
+    // mobs that never die in a PvP broadcast — so drop what has aged out.
+    if (++this._pvpStampCount % 256 === 0) {
+      for (const [v, m] of this._pvpAssistWindow) {
+        for (const [a, x] of m) if (tsMs - x.tsMs > PVP_ASSIST_WINDOW_MS) m.delete(a);
+        if (!m.size) this._pvpAssistWindow.delete(v);
+      }
+    }
+  }
+
+  // Spell evidence from a RAW log line (the guild lead, 2026-09-27: "attribute
+  // when a guild member has cast non-damage on those characters … make sure
+  // all of this can be parsed through opt-in logs"). The live tail and the
+  // opt-in-log backfill both hand every line here, before shouldKeep drops the
+  // landing lines, so both paths credit the same assists.
+  //
+  // A landing line never names its caster ("Velisblacksword yawns."), so:
+  //   · one of OUR casts of that spell, begun up to 12 s earlier → us;
+  //   · else the player whose "<X> begins to cast a spell." started closest to
+  //     the spell's cast time before the landing (±1.5 s, or ±35% for long
+  //     casts — spell haste), each start used once; nobody fits → nobody.
+  // Timed detrimental spells only (the parseDebuffLanding index): slows,
+  // snares, roots, mez, Tash/Malo, DoTs.
+  _pvpAssistLine(line) {
+    if (!line || line.length < 30) return;
+    const ts = parseEqTimestamp(line);
+    const tsMs = ts ? ts.getTime() : Date.now();
+    if (line.indexOf('begins to cast a spell') !== -1) {
+      const m = line.match(_OTHER_CAST_RX);
+      if (m) this._pvpNoteCast(this._pvpCastStarts, { caster: m[1], atMs: tsMs });
+      return;
+    }
+    if (line.indexOf('You begin') !== -1) {
+      const m = line.match(_CAST_BEGIN_RX);
+      if (m) this._pvpNoteCast(this._pvpSelfCasts, { spellLower: m[1].trim().toLowerCase(), atMs: tsMs });
+      return;
+    }
+    const dl = this._pvpParseLanding(line);
+    if (!dl || !dl.target || !_looksLikePlayerName(dl.target)) return;
+    if (this.character && dl.target.toLowerCase() === String(this.character).toLowerCase()) return;
+    const caster = this._pvpCasterFor(dl, tsMs);
+    if (caster) this._pvpStamp(dl.target, caster, tsMs, 'spell');
+  }
+  _pvpNoteCast(arr, entry) {
+    arr.push(entry);
+    while (arr.length > 200 || (arr.length && entry.atMs - arr[0].atMs > 15_000)) arr.shift();
+  }
+  // Seams for tests: the landing index and cast times come from the catalog.
+  _pvpParseLanding(line) { return parseDebuffLanding(line, this.character); }
+  _pvpCastMs(spellLower) {
+    const e = _spellByNameLower.get(spellLower);
+    const ms = e ? Number(e.cast_ms) : NaN;
+    return Number.isFinite(ms) ? ms : NaN;
+  }
+  _pvpCasterFor(dl, landMs) {
+    const family = (dl.family && dl.family.length ? dl.family : [dl.spell_name])
+      .filter(Boolean).map(s => String(s).toLowerCase());
+    for (let i = this._pvpSelfCasts.length - 1; i >= 0; i--) {
+      const c = this._pvpSelfCasts[i];
+      const lead = landMs - c.atMs;
+      if (c.used || lead < 0 || lead > 12_000 || !family.includes(c.spellLower)) continue;
+      c.used = true;
+      return this.character || null;
+    }
+    const times = family.map(n => this._pvpCastMs(n)).filter(Number.isFinite);
+    const targetLower = String(dl.target).toLowerCase();
+    let best = null, bestMiss = Infinity;
+    for (const c of this._pvpCastStarts) {
+      const lead = landMs - c.atMs;
+      if (c.used || lead < 0 || lead > 12_000 || c.caster.toLowerCase() === targetLower) continue;
+      // How far outside the tolerance this start is (≤ 0 = fits). With no
+      // cast time known, the nearest start inside 7 s.
+      const miss = times.length
+        ? Math.min(...times.map(ms => Math.abs(lead - ms) - Math.max(1500, 0.35 * ms)))
+        : lead - 7000;
+      if (miss <= 0 && miss < bestMiss) { best = c; bestMiss = miss; }
+    }
+    if (!best) return null;
+    best.used = true;
+    return best.caster;
   }
 
   add(event) {
@@ -8338,6 +8603,8 @@ class EncounterBuilder {
       // whatever cased name the tick tracker already knows for this pet
       // (self-only '__SELF__' form resolved above), else the lowercase key.
       _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
+      // The same line is a mob-tick observation for that mob (_noteMobTick).
+      try { _noteMobTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, Date.parse(event.ts), Date.now(), 'break'); } catch { /* never block the break */ }
       return;
     }
 
@@ -8583,15 +8850,15 @@ class EncounterBuilder {
         }
       }
 
-      // 3) PvP assist window: uploader's outbound damage to a plausible
-      // player name (single Capitalized word, not "YOU"). Stamps a sliding
-      // window keyed by victim.toLowerCase() so the next PvP death broadcast
-      // naming the same victim within 120s can correlate (handled outside
-      // the builder, in the tail/backfill driver). Self-damage to mobs /
-      // heals are skipped automatically — _isMob/_isPlayer already excluded
-      // them.
+      // 3) PvP assist window: damage to a plausible player name (single
+      // Capitalized word, not "YOU"), stamped under the victim so the next PvP
+      // death broadcast naming them inside PVP_ASSIST_WINDOW_MS can credit
+      // everyone on it (handled outside the builder, in the tail/backfill
+      // driver). Since 2026-09-27 that is ANY player we saw hit them, not only
+      // us — a pet's hit counts for its owner (petLeaders, the charm trackers,
+      // or a "<Owner>`s warder" name) — and the bot keeps only roster names.
       //
-      // "Outbound" includes:
+      // "Outbound" (credited to this log's character) includes:
       //   • event.attacker === null            ("You slash X" form)
       //   • event.attacker === this.character  (named-self melee form)
       //   • event.attacker is one of OUR PETS  (necro/mage/beastlord pet,
@@ -8612,13 +8879,17 @@ class EncounterBuilder {
       const isMineOutbound = (event.attacker === null)
         || (event.attacker === this.character)
         || _isMyPet;
-      if (isMineOutbound && _isPlayer(def)
+      const _warder   = /^([A-Z][a-z]+)`s warder$/.exec(att);
+      const _assister = isMineOutbound ? this.character
+        : _petOwner ? String(_petOwner)
+        : _warder ? _warder[1]
+        : (/^[A-Z][a-z]+$/.test(att) && att !== 'You') ? att
+        : null;
+      if (_assister && _isPlayer(def)
           && def !== 'YOU' && def !== 'You'
-          && def !== this.character) {
-        this._pvpDamageWindow.set(def.toLowerCase(), {
-          tsMs,
-          line: event._line || (event.ability ? `${event.ability} for ${event.amount}` : ''),
-        });
+          && def !== this.character
+          && String(_assister).toLowerCase() !== def.toLowerCase()) {
+        this._pvpStamp(def, _assister, tsMs, 'damage');
       }
 
       // 2) DS candidate: anonymous non-melee hit on a mob that connected on a
@@ -10038,6 +10309,26 @@ class EncounterBuilder {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
     _recordFightHistory(stats.currentEncounterThreat);
+    // Mirror to the per-character map so the 2-min stale window applies
+    // independently per character (a player's other character can
+    // still be mid-fight while this one wraps up).
+    if (this.character && stats.currentEncounterThreatByChar) {
+      const k = String(this.character).toLowerCase();
+      if (stats.currentEncounterThreatByChar[k]) {
+        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
+      }
+    }
+    // Reset BEFORE closing peers (the guild lead's agent stall, 2026-09-25).
+    // With the reset after the loop, the peer's own flush found THIS builder
+    // still open (>= 10 events, same boss) and flushed it back: A → B → A → B
+    // until the stack overflowed, each level re-running a whole boss flush and
+    // re-queuing its upload — thousands of times per kill, blocking the agent
+    // for over a minute (Emperor Ssraeshza: 4,656 levels). The catch below
+    // swallowed the RangeError, so it never showed as an error. Reset first
+    // and a peer's loop sees nothing to close here, so it ends at one level.
+    const flushedBoss      = this.bossName;
+    const flushedLastEvent = this.lastEvent;
+    this.reset();
     // Cross-builder flush propagation. If this Mimic install is tailing more
     // than one character's log (several watched logs on one machine), peer builders
     // watching the SAME fight should close along with us — if their own log
@@ -10048,9 +10339,9 @@ class EncounterBuilder {
     // matches, AND (c) its lastEvent is within the same fight window. The
     // peer's own flush() handles the upload + onFlush callback exactly as
     // if it had seen the death event in its log.
-    if (this.bossName) {
-      const peerBossLower = String(this.bossName).toLowerCase();
-      const myEndedAtMs   = this.lastEvent ? Date.parse(this.lastEvent) : Date.now();
+    if (flushedBoss) {
+      const peerBossLower = String(flushedBoss).toLowerCase();
+      const myEndedAtMs   = flushedLastEvent ? Date.parse(flushedLastEvent) : Date.now();
       for (const peer of _liveBuilders) {
         if (peer === this) continue;
         if (!peer.events || peer.events.length < 10) continue;
@@ -10075,22 +10366,14 @@ class EncounterBuilder {
         if (peerTop !== peerBossLower) continue;
         try {
           if (!_dashboardEnabled) {
-            console.log(`[cross-flush] ${peer.character}'s fight on ${this.bossName} ended via peer ${this.character}`);
+            console.log(`[cross-flush] ${peer.character}'s fight on ${flushedBoss} ended via peer ${this.character}`);
           }
           peer.flush();
-        } catch (e) { void e; }
+        } catch (e) {
+          console.warn(`[cross-flush] closing ${peer.character}'s fight failed: ${e && e.message}`);
+        }
       }
     }
-    // Mirror to the per-character map so the 2-min stale window applies
-    // independently per character (a player's other character can
-    // still be mid-fight while this one wraps up).
-    if (this.character && stats.currentEncounterThreatByChar) {
-      const k = String(this.character).toLowerCase();
-      if (stats.currentEncounterThreatByChar[k]) {
-        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
-      }
-    }
-    this.reset();
   }
 }
 
@@ -10404,6 +10687,7 @@ function _endpointForKind(kind, botUrl) {
     case 'chat':            return base + '/chat';
     case 'pvp':             return base + '/pvp';
     case 'pvp_assists':     return base + '/pvp_assists';
+    case 'optin_summary':   return base + '/optin_summary';
     case 'bosskill':        return base + '/bosskill';
     case 'hatekill':        return base + '/hatekill';
     case 'lockout':         return base + '/lockout';
@@ -10418,6 +10702,7 @@ function _endpointForKind(kind, botUrl) {
     case 'rez_dismiss':     return base + '/rez-dismiss';
     case 'buff_cast':       return base + '/buff_casts';
     case 'tells':           return base + '/tells';
+    case 'corpse':          return base + '/corpse';
     case 'threat_snapshot': return base + '/threat-snapshot';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
@@ -11706,6 +11991,49 @@ function _clearDeath(name) {
   // the "enter the zone with about 20% health" moment.
   if (wasDead) { try { noteRezDone(k); } catch (e) { void e; } }
 }
+
+// ── Corpse DM (the guild lead, 2026-09-26: "when a character dies we should discord message them to send
+// them their corpse coordinates and what zone they were in. we have all of that detail") ──────────────
+// Only the dying character's own client can say it, and it has everything: "You died." in its log, and
+// the character's position and zone from Zeal at that moment, which is where the corpse lies (the move
+// to the home point comes seconds later). Sent once the death is confirmed real ("You are bleeding to
+// death!" or "Returning to home point", which a feign never prints), then the bot DMs the owner.
+// Zeal's loc {x,y,z} is already in /loc order: Zeal notes "Position is y,x,z" (zone_map.cpp) and its own
+// "/loc noprint" prints x, y, z, so the DM quotes x, y, z as the numbers /loc shows.
+const _CORPSE_CONFIRM_WINDOW_MS = 60 * 1000;
+const _CORPSE_ZEAL_FRESH_MS = 30 * 1000;
+let _corpsePending = null;   // { character, died_at, at, zone_id, zone, loc }
+function _corpseNoteLine(line, character) {
+  if (!character || typeof line !== 'string') return;
+  const now = Date.now();
+  if (/\]\s+You died\./i.test(line)) {
+    const cl = String(character).toLowerCase();
+    let st = null;
+    for (const ch of Object.keys(_zealState)) { if (String(ch).toLowerCase() === cl) { st = _zealState[ch]; break; } }
+    const fresh = !!(st && (now - (st.updatedAt || 0)) <= _CORPSE_ZEAL_FRESH_MS);
+    const zoneId = fresh && Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+    const loc = fresh && st.loc && [st.loc.x, st.loc.y, st.loc.z].every(v => Number.isFinite(Number(v)))
+      ? { x: Number(st.loc.x), y: Number(st.loc.y), z: Number(st.loc.z) } : null;
+    const ts = parseEqTimestamp(line);
+    _corpsePending = {
+      character: String(character), at: now,
+      died_at: (ts ? ts : new Date(now)).toISOString(),
+      zone_id: zoneId, zone: zoneId != null ? _zoneName(zoneId) : null, loc,
+    };
+    return;
+  }
+  if (_corpsePending && (/\]\s+You are bleeding to death!/i.test(line)
+      || /\]\s+Returning to home point, please wait/i.test(line))) {
+    const p = _corpsePending;
+    _corpsePending = null;
+    if (now - p.at > _CORPSE_CONFIRM_WINDOW_MS) return;              // A stale death: not this one.
+    if (String(p.character).toLowerCase() !== String(character).toLowerCase()) return;
+    enqueueUpload('corpse', {
+      agent_version: AGENT_VERSION, character: p.character, died_at: p.died_at,
+      zone_id: p.zone_id, zone: p.zone, loc: p.loc,
+    });
+  }
+}
 // Deliberately forgets a death after DEAD_FORGET_MS. We do not see every rez —
 // an un-cleared entry would tombstone someone for the rest of the night, which
 // is a worse failure than briefly missing a corpse.
@@ -12627,8 +12955,9 @@ function _meTick(st, now) {
 // is the one-line ask). If a Zeal build ever sends 34, it wins. Until then
 // the delay is learned from your own weapon swings — lines that land
 // together are one round, round-to-round is the delay, and the next round is
-// predicted from the last. The log is read every 500 ms and stamped to the
-// second, so this is about ±0.5 s and says `source: 'log', est: true`.
+// predicted from the last. The log is stamped to the second (and read every
+// 150 ms while active, tailFile), so this is about ±0.5 s and says
+// `source: 'log', est: true`.
 //
 // Main hand vs off hand: when both land in one round the server swings the
 // primary first (Client::Process), so a round with two DIFFERENT verbs names
@@ -12970,6 +13299,41 @@ function _meDisc(cl, now) {
   return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
 }
 
+// The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
+// pre-buffs it waits for that the bard strip does not carry, Puretone
+// Discipline (up now, or ready by the shared disc timer), and mana for the
+// Denon`s Desperate Dirge count (800 a cast, 3 s, eqemu_spells 742).
+// EXACT names only: the strip's first-word fallback would take any "Psalm of …"
+// for Psalm of Mystic Shielding and Niv`s Melody for Niv`s Harmonic.
+const DIRGE_MANA = 800;
+const DIRGE_CAST_MS = 3000;
+const PURETONE_SECS = 240;   // 40 ticks (eqemu_spells 4586)
+function _dirgeInfo(cl, zealSt, buffs, now) {
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const find = (name) => (buffs || []).find(b => b && b.name && slug(b.name.trim()) === slug(name)) || null;
+  const pure = find('Puretone Discipline');
+  const act = _meDiscs.get(cl) || null;
+  let active = !!pure;
+  let remaining = pure && pure.ticks > 0 ? pure.ticks * 6 : null;
+  if (!pure && act && act.name === 'Puretone' && now - act.at < PURETONE_SECS * 1000) {
+    active = true;
+    remaining = Math.ceil((act.at + PURETONE_SECS * 1000 - now) / 1000);
+  }
+  const disc = _meDisc(cl, now);
+  const readyIn = disc && disc.ms_left > 0 ? Math.ceil(disc.ms_left / 1000) : 0;
+  return {
+    guardian:      !!find('Guardian Rhythms'),
+    psalm:         !!find('Psalm of Mystic Shielding'),
+    nivs_harmonic: !!find('Niv`s Harmonic'),
+    // A disc timer never seen reads as ready: the board is a reminder, not a gate.
+    puretone: { active, remaining_secs: remaining, ready: !active && readyIn === 0, ready_in_secs: readyIn || null },
+    mana_cur: zealSt && zealSt.self_mana_cur != null ? zealSt.self_mana_cur : null,
+    mana_max: zealSt && zealSt.self_mana_max != null ? zealSt.self_mana_max : null,
+    dirge_mana: DIRGE_MANA,
+    dirge_cast_ms: DIRGE_CAST_MS,
+  };
+}
+
 // The long timers survive an agent restart — a Mimic update restarts the agent,
 // and a 20-minute discipline, a 72-minute Lay on Hands or a 5-minute Mend
 // cannot be read back out of a log we no longer tail. Kept in
@@ -13020,6 +13384,68 @@ function _meTimersSave() {
 // "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
 // (EnragedDurationTimer), so an entry with no end line expires after 12 s.
 const _meEnraged = new Map();   // mobLower → until
+
+// TRACKING — the HUD's eight arrows (a member's idea, 2026-09-25: "for tracking.
+// Ahead, Ahead and to right/left, behind left/right behind you"; the guild lead:
+// "YES"). A ranger, druid or bard tracking a mob gets the client's own lines,
+// relative to the way they face (eqstr_us.txt 12676-12680, the side word from
+// 12674/12675):
+//   "%1 is straight ahead."   "%1 is ahead and to the %2."   "%1 is to the %2."
+//   "%1 is behind and to the %2."   "%1 is behind you."
+// with "You begin tracking %1." (12040) before them and "You have lost your
+// tracking target." (12681) or "You have lost or do not have a tracking
+// target." (12499) at the end. Angles run clockwise from straight ahead, like
+// the ring's. A player's /emote can print the same shape ("Bob is behind
+// you."), so a direction line counts only for the mob you began tracking, or
+// from a class that can track.
+const _ME_TRACK_DIRS = [
+  [' is straight ahead.', 0], [' is ahead and to the right.', 45], [' is to the right.', 90],
+  [' is behind and to the right.', 135], [' is behind you.', 180], [' is behind and to the left.', 225],
+  [' is to the left.', 270], [' is ahead and to the left.', 315],
+];
+const _ME_TRACKERS = /^(Ranger|Druid|Bard)$/;
+// How long a direction is shown after its line. The client prints a new line
+// as the direction changes, so a quiet minute is not a lost track; the HUD
+// dims an old direction rather than dropping it.
+const _ME_TRACK_KEEP_MS = 5 * 60_000;
+const _meTrack = new Map();   // charLower → { name, angle (null = no direction yet), at, zone }
+function _meNoteTrack(msg, line, cl, now) {
+  if (msg === 'You have lost your tracking target.' || msg === 'You have lost or do not have a tracking target.') {
+    _meTrack.delete(cl);
+    return true;
+  }
+  const zst = _meZealFor(cl);
+  const ts = parseEqTimestamp(line);
+  const at = ts ? ts.getTime() : now;
+  if (msg.startsWith('You begin tracking ') && msg.endsWith('.')) {
+    _meTrack.set(cl, { name: msg.slice('You begin tracking '.length, -1), angle: null, at, zone: zst ? zst.zone : null });
+    return true;
+  }
+  if (!msg.endsWith('.') || msg.indexOf(' is ') === -1) return false;
+  for (const [suffix, angle] of _ME_TRACK_DIRS) {
+    if (msg.length <= suffix.length || !msg.endsWith(suffix)) continue;
+    const name = msg.slice(0, -suffix.length);
+    const cur = _meTrack.get(cl);
+    const who = whoData.get(cl);
+    const tracker = _ME_TRACKERS.test(normalizeClass((zst && _meLabel(zst, 3)) || (who && who.class) || _raidClassByName.get(cl) || '') || '');
+    if (!(cur && cur.name.toLowerCase() === name.toLowerCase()) && !tracker) return false;
+    _meTrack.set(cl, { name, angle, at, zone: zst ? zst.zone : null });
+    return true;
+  }
+  return false;
+}
+// What the HUD draws: the tracked mob and its last direction, or null once
+// the track is lost, stale, or left behind in another zone.
+function _meTrackFor(cl, st, now) {
+  const t = _meTrack.get(cl);
+  if (!t) return null;
+  if (now - t.at > _ME_TRACK_KEEP_MS || (t.zone != null && st && st.zone != null && t.zone !== st.zone)) {
+    _meTrack.delete(cl);
+    return null;
+  }
+  return { name: t.name, angle: t.angle, age_ms: Math.max(0, now - t.at) };
+}
+
 // One raw-line hook for all of the above. Live tail only; every branch is a
 // prefix or exact-text test, so a line that is none of these costs almost
 // nothing.
@@ -13030,6 +13456,7 @@ function _meNoteRawLine(line, character) {
   const msg = line.slice(at + 2).trimEnd();
   const now = Date.now();
   const cl = String(character).toLowerCase();
+  if (_meNoteTrack(msg, line, cl, now)) return;
   _meTimersLoad();   // before any write, so a restored timer is not overwritten by a stale file
   // A death closes that mob's damage total on the HUD (_meMobTallies).
   if (msg.indexOf(' slain') !== -1 || msg.endsWith(' died.')) {
@@ -13443,6 +13870,7 @@ function _serializeMeState() {
       pr: _meNum(_meLabel(st, 12)), dr: _meNum(_meLabel(st, 13)),
     },
     blind: !!(blind && blind.active),
+    track: _meTrackFor(cl, st, now),
   };
 }
 
@@ -14682,6 +15110,8 @@ function _serializeForDashboard() {
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
+    // Tick overlay: one server-tick boundary per character streaming Zeal.
+    serverTicks: _serverTicksNow(Date.now()),
     // This machine's measured clock offset vs the bot, from the heartbeat's
     // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
     // dashboard can show the drift and, after a Windows time resync, prove the
@@ -14785,6 +15215,8 @@ function _serializeForDashboard() {
         // whatever pet they currently have — for a charmer that's the charm.
         const rep = ownerLower ? _petHealthByOwner.get(ownerLower) : null;
         const petBuffs = ownerLower ? petBuffsForOwner(ownerLower) : [];
+        const tNow = Date.now();
+        const mt = _mobTickFor(info.pet, tNow);
         arr.push({
           key,
           pet: info.pet,
@@ -14802,6 +15234,15 @@ function _serializeForDashboard() {
           pet_hp_pct:    lp && lp.hp_pct != null ? lp.hp_pct : (rep ? rep.hp_pct : null),
           pet_buffs:     petBuffs.length ? petBuffs : null,
           pet_health_observed_at: rep ? rep.last_seen_at : null,
+          // Two different 6s clocks (the guild lead, 2026-09-26), each as the
+          // absolute time of one tick so the overlay counts down on its own
+          // clock between polls. null = not known: no Zeal for the server tick;
+          // no DoT tick or log break seen on this mob yet for the mob tick.
+          server_tick_at:   _serverTickAtFor(info.owner, tNow),
+          mob_tick_at:      mt ? Math.round(mt.at) : null,
+          mob_tick_half_ms: mt ? Math.round(mt.half) : null,
+          mob_tick_n:       mt ? mt.n : 0,
+          mob_tick_src:     mt ? mt.src : null,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
@@ -15238,6 +15679,7 @@ function _serializeForDashboard() {
           accelerating_chorus: _info(accBuff),
           nivs:          _info(nivBuff),
           natures:       _info(natBuff),
+          dirge:         _dirgeInfo(k, zealSt, zealBuffs.concat(rawDebugBuffs), now),
           // Per-row cast indicators — true when the Zeal currentCasting label
           // matches this buff's spell name. Drives a pulsing ▶ next to the
           // row in the overlay so the bard sees which utility is in flight.
@@ -15485,31 +15927,9 @@ function _serializeForDashboard() {
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
     // into the shape it expects. WITHOUT this the overlay saw nothing and never
-    // spoke — the cause of "I've never heard a TTS trigger".
-    recentTriggerFires: _activeOverlays.map(function(o){
-      return {
-        ts:      o.firedAt || o.shownAt || 0,
-        text:    o.text,
-        tts:     o.tts || o.text,
-        trigger: o.trigger,
-        // #207 — so a dismissal of a sticky callout is attributed to the
-        // trigger, not to its (interpolated, per-fire) text.
-        trigger_id: o.trigger_id || null,
-        scope:   o.scope,
-        test:    !!o.test,
-        sound:   o.sound || null,
-        sticky:  !!o.sticky,
-        rehearsal: !!o.rehearsal,
-        replay:  !!o.replay,
-        // #136 raid callout allow-list muted this fire — triggers.html flashes
-        // it but does not speak it.
-        mute:    !!o.mute,
-        // The inverse: speak it but do NOT flash it or ask for a timing vote.
-        // Set by the damage-taken alert, whose cadence would otherwise camp the
-        // shared centre flash and clobber other callouts on it.
-        audioOnly: !!o.audioOnly,
-      };
-    }),
+    // spoke — the cause of "I've never heard a TTS trigger". Same shape as the
+    // /api/fires/wait long-poll (_fireForWeb).
+    recentTriggerFires: _activeOverlays.map(_fireForWeb),
     activeTimers:        _activeTimersSnapshot(),
     // #207 callout dismissal counters (in-memory, this session). Local proof
     // that a ✕ was recorded — the durable half rides the trigger_feedback
@@ -15841,7 +16261,7 @@ body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
 <div id="wpTopBar">
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : ''}<span id="wpTopRight">
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')}<span id="wpTopRight">
     <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
@@ -15901,7 +16321,12 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
     <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
+    <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
+         the tray menu will not open (a raider then ended Mimic from Task Manager and lost settings).
+         Mimic only; shown by wpShowQuit below. -->
+    <button id="wpQuitBtn" class="wp-gear" style="display:none" title="Quit Wolf Pack Mimic (saves everything and closes the overlays)" onclick="if (confirm('Quit Wolf Pack Mimic?')) { try { window.mimic.quitApp(); } catch (e) { void e; } }">⏻ Quit</button>
   </div>
+  <script>(function wpShowQuit(){ try { if (window.mimic && window.mimic.quitApp) document.getElementById('wpQuitBtn').style.display = ''; } catch (e) { void e; } })();</script>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
@@ -16094,6 +16519,17 @@ function renderFeedback(s) {
     + '<textarea id="wpFbText" rows="4" maxlength="4000" placeholder="What happened, or what would you like?" '
     +   'style="width:100%;margin-top:8px;background:#0d1117;color:var(--text);border:1px solid var(--border);'
     +   'border-radius:6px;padding:8px;font-family:inherit;font-size:12px"></textarea>'
+    // Screenshots (the guild lead, 2026-09-26: "feedback and suggestion needs to be able to take
+    // screenshots..top priority"). 📸 only inside Mimic (it photographs your screens); 📎 and
+    // Ctrl+V work in any browser. Nothing is attached until it shows as a thumbnail here.
+    + '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    +   '<button type="button" id="wpFbSnap" style="display:none" title="Photograph your screen (this window hides for the shot) — you choose what gets sent">📸 Screenshot my screen</button>'
+    +   '<button type="button" id="wpFbPick">📎 Add a picture</button>'
+    +   '<span class="dim" style="font-size:11px">or paste one (Ctrl+V) · up to 3 · you see each one before it sends</span>'
+    +   '<input type="file" id="wpFbFile" accept="image/png,image/jpeg,image/webp" multiple style="display:none">'
+    + '</div>'
+    + '<div id="wpFbCands" style="margin-top:6px"></div>'
+    + '<div id="wpFbShots" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"></div>'
     + '<div id="wpFbAttachRow" style="margin-top:8px;display:none;align-items:center;gap:8px;flex-wrap:wrap">'
     +   '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
     +     '<input type="checkbox" id="wpFbAttach"> Attach a slice of my EverQuest log</label>'
@@ -16116,6 +16552,85 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
+// than one monitor, the captured screens still waiting to be picked.
+var _wpFbShots = [];
+var _wpFbCands = [];
+var WP_FB_MAX_SHOTS = 3;
+// Shrink to ≤1920 px on the long edge and re-encode as JPEG, so three fit one
+// report. The bot re-checks every byte; this is for size, not trust.
+function _wpFbShrink(src) {
+  return new Promise(function (resolve) {
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var k = Math.min(1, 1920 / Math.max(img.naturalWidth, img.naturalHeight, 1));
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k));
+        c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.82));
+      } catch (e) { resolve(null); }
+    };
+    img.onerror = function () { resolve(null); };
+    img.src = src;
+  });
+}
+function _wpFbFileToUrl(file) {
+  return new Promise(function (resolve) {
+    if (!file || !/^image\\//.test(file.type || '')) return resolve(null);
+    var fr = new FileReader();
+    fr.onload = function () { resolve(String(fr.result || '')); };
+    fr.onerror = function () { resolve(null); };
+    fr.readAsDataURL(file);
+  });
+}
+async function _wpFbAddShots(srcs) {
+  for (var i = 0; i < srcs.length && _wpFbShots.length < WP_FB_MAX_SHOTS; i++) {
+    var small = srcs[i] ? await _wpFbShrink(srcs[i]) : null;
+    if (small) _wpFbShots.push(small);
+  }
+  _wpFbRenderShots();
+}
+function _wpFbRenderShots() {
+  var el = document.getElementById('wpFbShots');
+  if (el) {
+    el.innerHTML = _wpFbShots.map(function (src, i) {
+      return '<span style="position:relative;display:inline-block">'
+        + '<img src="' + src + '" alt="Screenshot ' + (i + 1) + '" style="height:84px;max-width:200px;object-fit:cover;border:1px solid var(--border);border-radius:4px">'
+        + '<button type="button" class="wp-fb-unshot" data-i="' + i + '" title="Don’t send this one" '
+        +   'style="position:absolute;top:-7px;right:-7px;width:20px;height:20px;padding:0;border-radius:50%;font-size:11px;line-height:1">✕</button>'
+        + '</span>';
+    }).join('');
+  }
+  var c = document.getElementById('wpFbCands');
+  if (c) {
+    c.innerHTML = !_wpFbCands.length ? '' :
+      '<div class="dim" style="font-size:11px;margin-bottom:4px">You have ' + _wpFbCands.length + ' screens — click the one(s) to attach:</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + _wpFbCands.map(function (s, i) {
+          return '<button type="button" class="wp-fb-cand" data-i="' + i + '" title="Attach ' + esc(s.name || '') + '" '
+            + 'style="padding:2px;background:none;border:1px dashed var(--border);border-radius:4px;cursor:pointer">'
+            + '<img src="' + s.dataUrl + '" alt="' + esc(s.name || 'Screen') + '" style="height:70px;max-width:180px;object-fit:cover;display:block">'
+            + '<span class="dim" style="font-size:10px">' + esc(s.name || ('Screen ' + (i + 1))) + '</span></button>';
+        }).join('')
+      + '</div>';
+  }
+  var full = _wpFbShots.length >= WP_FB_MAX_SHOTS;
+  var snap = document.getElementById('wpFbSnap'), pick = document.getElementById('wpFbPick');
+  if (snap) snap.disabled = full;
+  if (pick) pick.disabled = full;
+}
+async function _wpFbSnap() {
+  var msg = document.getElementById('wpFbMsg');
+  if (!(window.mimic && window.mimic.captureScreens)) return;
+  if (msg) msg.textContent = 'taking the screenshot…';
+  var shots = [];
+  try { shots = (await window.mimic.captureScreens()) || []; } catch (e) { shots = []; }
+  if (msg) msg.textContent = shots.length ? '' : '✕ could not take a screenshot';
+  if (shots.length === 1) { _wpFbCands = []; await _wpFbAddShots([shots[0].dataUrl]); }
+  else { _wpFbCands = shots; _wpFbRenderShots(); }   // several monitors: the reporter picks
+}
 function _wpFbSetKind(k) {
   _wpFbKind = (k === 'idea') ? 'idea' : 'bug';
   var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
@@ -16173,11 +16688,43 @@ function _wpFbWire() {
   if (!root) return;
   _wpFbSetKind('bug');
   _wpFbSetMin(_wpFbMin);
+  var snapBtn = document.getElementById('wpFbSnap');
+  if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
+  var fileIn = document.getElementById('wpFbFile');
+  if (fileIn) fileIn.addEventListener('change', async function () {
+    var urls = [];
+    for (var i = 0; i < fileIn.files.length; i++) urls.push(await _wpFbFileToUrl(fileIn.files[i]));
+    fileIn.value = '';
+    await _wpFbAddShots(urls);
+  });
+  var fbText = document.getElementById('wpFbText');
+  if (fbText) fbText.addEventListener('paste', async function (e) {
+    var files = [];
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    for (var i = 0; i < items.length; i++) if (/^image\\//.test(items[i].type || '')) files.push(items[i]);
+    if (!files.length) return;
+    e.preventDefault();
+    var urls = [];
+    for (var j = 0; j < files.length; j++) urls.push(await _wpFbFileToUrl(files[j]));
+    await _wpFbAddShots(urls);
+  });
   root.addEventListener('click', async function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
     var kind = t.closest('.wp-fb-kind');
     if (kind) { _wpFbSetKind(kind.getAttribute('data-kind')); return; }
+    if (t.id === 'wpFbSnap') { _wpFbSnap(); return; }
+    if (t.id === 'wpFbPick') { if (fileIn) fileIn.click(); return; }
+    var un = t.closest('.wp-fb-unshot');
+    if (un) { _wpFbShots.splice(parseInt(un.getAttribute('data-i'), 10), 1); _wpFbRenderShots(); return; }
+    var cand = t.closest('.wp-fb-cand');
+    if (cand) {
+      var ci = parseInt(cand.getAttribute('data-i'), 10);
+      var picked = _wpFbCands[ci];
+      _wpFbCands.splice(ci, 1);
+      if (picked) await _wpFbAddShots([picked.dataUrl]); else _wpFbRenderShots();
+      return;
+    }
     var min = t.closest('.wp-fb-min');
     if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
     if (t.id === 'wpFbSend') { _wpFbSend(); return; }
@@ -16212,6 +16759,7 @@ async function _wpFbSend() {
       body: JSON.stringify({
         category: _wpFbKind, message: text,
         attach_log: !!(cb && cb.checked && _wpFbKind === 'bug'), minutes: _wpFbMin,
+        screenshots: _wpFbShots.slice(0, WP_FB_MAX_SHOTS),
       }),
     });
     var j = await r.json();
@@ -16219,9 +16767,13 @@ async function _wpFbSend() {
       if (ta) ta.value = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
+      _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
       var span = document.getElementById('wpFbMins');
       if (span) span.style.display = 'none';
-      if (msg) msg.textContent = '✓ sent' + (j.attached_lines ? ' with ' + j.attached_lines + ' log lines' : '') + ' — thank you';
+      var extras = [];
+      if (j.attached_lines) extras.push(j.attached_lines + ' log lines');
+      if (j.attached_shots) extras.push(j.attached_shots + ' screenshot' + (j.attached_shots === 1 ? '' : 's'));
+      if (msg) msg.textContent = '✓ sent' + (extras.length ? ' with ' + extras.join(' and ') : '') + ' — thank you';
     } else if (msg) {
       msg.textContent = '✕ ' + ((j && j.reason) || 'could not send');
     }
@@ -18970,7 +19522,7 @@ var WP_OVERLAY_ROWS = [
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
-  ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
+  ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
@@ -19917,10 +20469,12 @@ function renderZealExplorer(s) {
       : '<span class="dim" style="font-size:10px" title="Run /pipeverbose on in EQ to stream raid/group HP + zone">· verbose off (/pipeverbose on for raid HP)</span>';
     h += '<div style="margin-top:8px">' + dot + ' <b>' + esc(c.character) + '</b>'
        + (c.zone_name ? ' <span class="dim">· ' + esc(c.zone_name) + '</span>' : '') + ' ' + vbadge + '</div>';
-    // Position — Zeal player payload (loc {x,y,z} + heading). EQ /loc prints
-    // Y, X, Z, so we show that order (transposed from the raw Zeal x/y/z).
+    // Position — Zeal player payload (loc {x,y,z} + heading). The pipe's x, y, z
+    // are already the /loc numbers in /loc order: Zeal's Position is y,x,z
+    // (zone_map.cpp), and its /loc noprint prints Position.x, .y, .z to
+    // reproduce the client's line (DECISIONS-2026-09-21 §43). Do not transpose.
     if (c.loc && (c.loc.x != null || c.loc.y != null)) {
-      var locStr = 'Y ' + Math.round(c.loc.y) + ', X ' + Math.round(c.loc.x) + ', Z ' + Math.round(c.loc.z)
+      var locStr = '/loc ' + Math.round(c.loc.x) + ', ' + Math.round(c.loc.y) + ', ' + Math.round(c.loc.z)
         + (c.heading != null ? ' · heading ' + Math.round(c.heading) : '');
       h += grp(k + '|pos', 'Position', null, '<div style="margin-top:2px" class="dim">' + esc(locStr) + '</div>');
     }
@@ -22281,6 +22835,41 @@ refresh(); setInterval(refresh, 2000);
     }).catch(function () { rb.disabled = false; });
   };
 })();
+// ⤴ beta next to Check for update — the stable-build counterpart of ↩ stable,
+// and the dashboard half of the tray's "Receive beta updates" (same shell
+// function behind both). Stays hidden until the shell answers, so an older
+// Mimic without the bridge, or a dev build with no updater, never shows a
+// button that does nothing. Re-read on focus: the tray can flip it too.
+(function () {
+  var jb = document.getElementById('wpJoinBeta');
+  var m = window.mimic;
+  if (!jb || !(m && m.getBetaChannel && m.setBetaChannel)) return;
+  function paint(optedIn) {
+    jb.dataset.on = optedIn ? '1' : '';
+    jb.textContent = optedIn ? '✓ beta on next restart' : '⤴ beta';
+    jb.style.color = optedIn ? '#3fb950' : '#8b949e';
+    jb.title = optedIn
+      ? 'Joined the beta — the newest beta installs on your next restart. Click to go back to stable updates only.'
+      : 'Get beta builds of Mimic — Mimic confirms before doing anything';
+  }
+  function read() {
+    m.getBetaChannel().then(function (st) {
+      if (!st || !st.available) { jb.style.display = 'none'; return; }
+      paint(!!st.optedIn);
+      jb.style.display = '';
+    }).catch(function () { /* keep whatever is showing */ });
+  }
+  jb.onclick = function () {
+    var join = !jb.dataset.on;
+    jb.disabled = true;
+    m.setBetaChannel(join).then(function (accepted) {
+      jb.disabled = false;
+      if (accepted) paint(join);
+    }).catch(function () { jb.disabled = false; });
+  };
+  read();
+  window.addEventListener('focus', read);
+})();
 // 🎫 DKP tick controls — slot click runs a dry-run preview; Confirm submits.
 function _dkpTickPlayers(source) {
   var s = window.__wpLastState || {};
@@ -24494,6 +25083,10 @@ async function dismissTopDamage(key) {
       payload = r.ok ? await r.json() : null;
     } catch (e) { void e; }
     const triggers = payload && payload.triggers ? payload.triggers : [];
+    // The Suggested panel shows a template as ON while its personal copy exists, so it must redraw with
+    // this list: a copy deleted here stayed ON there, and unticking it only looked like nothing
+    // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
     if (triggers.length === 0) {
       listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
@@ -24811,6 +25404,8 @@ async function dismissTopDamage(key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: next }),
     });
+    // A suggested row ticked off here must read OFF in the Suggested panel too.
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
   }
   async function onAdd() {
     var name = (document.getElementById('trigNewName') || {}).value || '';
@@ -25087,7 +25682,7 @@ async function dismissTopDamage(key) {
       mount();
     }
   }
-  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); }, refreshList: function(){ return fetchAndRenderList(); } };
 })();
 
 // ── 🎯 Suggested triggers panel ─────────────────────────────────────────────
@@ -25099,15 +25694,17 @@ async function dismissTopDamage(key) {
   var listEl = null;
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
-                   self:'#d2a8ff', utility:'#79c0ff' })[cat] || '#8b949e';
+                   self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + t.overlay_text + '</span></div></td>'
-         + '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + (t.no_tts
+           ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
   }
   function groupHtml(category, label, items){
@@ -25128,9 +25725,10 @@ async function dismissTopDamage(key) {
       var j = await r.json();
       var triggers = (j && j.triggers) || [];
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
-      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[] };
+      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
       var html = '';
+      html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
@@ -25148,13 +25746,16 @@ async function dismissTopDamage(key) {
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
-          fetchAndRender();   // refresh so tts checkbox enabled-state syncs
+          // The personal list holds the copy this created or removed; its redraw redraws this panel too.
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
+          else fetchAndRender();
         });
         if (tts) tts.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, tts: tts.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
         });
       });
     } catch (e) {
@@ -25173,7 +25774,7 @@ async function dismissTopDamage(key) {
     if (!n) { mounted = false; return; }
     if (n !== listEl) { mounted = false; mount(); }
   }
-  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); }, refresh: function(){ return fetchAndRender(); } };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
@@ -26624,7 +27225,9 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify({ ...slice, text: head, preview_lines: head ? head.split('\n').length : 0 }));
       }
       if (req.url === '/api/feedback-send' && req.method === 'POST') {
-        const body = await _readBody(req, 8 * 1024);
+        // 16 MB: up to three screenshots ride along now (2026-09-26). The
+        // card shrinks each to a ≤1920 px JPEG, so a real report is far under.
+        const body = await _readBody(req, 16 * 1024 * 1024);
         let p = null; try { p = JSON.parse(body); } catch { p = null; }
         const message = String((p && p.message) || '').trim();
         if (message.length < 10) {
@@ -26641,6 +27244,11 @@ function startWebDashboard(port) {
           const built = buildFeedbackLogSlice(p.minutes || 30, Date.now());
           if (built.ok) slice = built;
         }
+        // Screenshots the reporter chose on the card. Passed through as image
+        // data URLs; the bot checks every byte (utils/feedbackShots.js).
+        const screenshots = (p && Array.isArray(p.screenshots) ? p.screenshots : [])
+          .filter(s => typeof s === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(s) && s.length <= 7_200_000)
+          .slice(0, 3);
         const payload = {
           agent_version: AGENT_VERSION,
           category:      (p && p.category === 'bug') ? 'bug' : 'idea',
@@ -26657,6 +27265,7 @@ function startWebDashboard(port) {
               from: slice.from, to: slice.to, character: slice.character,
             },
           } : {}),
+          ...(screenshots.length ? { screenshots } : {}),
         };
         const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/feedback');
         try {
@@ -26672,6 +27281,7 @@ function startWebDashboard(port) {
             ok,
             reason: ok ? null : ((j && j.error) || ('bot said ' + r.status)),
             attached_lines: slice ? slice.lines : 0,
+            attached_shots: (j && Number.isFinite(j.screenshots)) ? j.screenshots : 0,
           }));
         } catch (err) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -27576,6 +28186,7 @@ function startWebDashboard(port) {
             tts_default: !!tpl.tts_default,
             zeal_condition: tpl.zeal_condition || null,
             cooldown_seconds: tpl.cooldown_seconds || 0,
+            no_tts:    !!tpl.no_tts,   // timer bars: the dashboard draws no 🔊 box
             // User-state slice
             enabled:    !!(row && row.enabled),
             tts:        _suggestedHasTts(row),
@@ -27655,7 +28266,8 @@ function startWebDashboard(port) {
               value: Math.max(0, Math.min(100, Number(t.zeal_condition.value))),
             };
           }
-          if (!hasPattern && !zealCond) continue;
+          const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
+          if (!hasPattern && !zealCond && !builtinTimer) continue;
           // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
           const row = {
             id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
@@ -27678,6 +28290,13 @@ function startWebDashboard(port) {
               duration_ms: Math.max(500, Math.min(60000, parseInt(t.overlay_ms, 10) || 5000)),
             }],
           };
+          if (builtinTimer) { row.builtin_timer = builtinTimer; row.actions = []; }
+          // Every save from the dashboard sends the WHOLE list back through
+          // here, and this rebuild used to keep only the fields above — so
+          // ticking any one row off quietly stripped the countdown warnings,
+          // end text, bar colour and pin from every EQLogParser import in the
+          // list. Carry the fields _startTimer and _compileExcludes read.
+          for (const k of PERSONAL_CARRY_FIELDS) if (t[k] != null) row[k] = t[k];
           try { compiled.push(_compilePersonalTrigger(row)); }
           catch (err) { errors.push({ name: row.name, error: err.message }); }
         }
@@ -27812,6 +28431,17 @@ function startWebDashboard(port) {
       // actionable (#129 — a raider must see every auction to bid on it), and
       // "clear the countdown clutter" must not silently cost someone an item.
       // They keep their own per-chip ✕.
+      // GET /api/fires/wait?after=<ts> — the trigger overlay's long-poll: the
+      // fires newer than `after`, answered the moment one happens (or [] after
+      // 20 s). See _waitForFires.
+      if (req.url && req.url.startsWith('/api/fires/wait') && req.method === 'GET') {
+        let after = 0;
+        try { after = Number(new URL(req.url, 'http://127.0.0.1').searchParams.get('after')) || 0; } catch { after = 0; }
+        const fires = await _waitForFires(after, 20_000);
+        if (res.writableEnded || res.destroyed) return;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({ fires }));
+      }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
@@ -27825,14 +28455,18 @@ function startWebDashboard(port) {
             cancelled++;
             _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
           }
+          try { for (const r of _builtinTimerRows(Date.now())) { _builtinTimerHidden.add(r.id); cancelled++; } }
+          catch { /* best effort */ }
           scheduleRender();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: true, cancelled }));
         }
         const id = String(payload?.id || '');
         const row = id ? _activeTimers.get(id) : null;
-        const ok = id ? _cancelTimer(id) : false;
-        if (ok) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+        let ok = id ? _cancelTimer(id) : false;
+        // A timer-bar row is rebuilt every snapshot — hide that instance.
+        if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
+        if (ok && row) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
         if (ok && id.startsWith('loot|')) {
           const sig = id.slice('loot|'.length);
           _lootAuctions.delete(sig);
@@ -29958,6 +30592,8 @@ function runOptinBackfill(files, opts = {}) {
   // /who-type events. The existing 5s ticker flushes whoData on growth, so the
   // bot's who_observations populates without any new endpoint.
   const whoOnly = !!opts.whoOnly;
+  const runStartedAt = new Date().toISOString();
+  const runJobs = [];
 
   log(`Starting ${whoOnly ? '/who-only rescan' : 'backfill'} on ${files.length} file(s)${whoOnly ? ' (fast path)' : ' — chat + combat + /who'}...`);
 
@@ -30026,7 +30662,7 @@ function runOptinBackfill(files, opts = {}) {
       },
     });
 
-    (async () => {
+    runJobs.push((async () => {
       const stored    = _optinState.progress[f.path];
       // /who-only rescan ALWAYS starts at 0 — the existing bytePos only matters
       // for chat/combat completion; we're walking the whole file for /who rows
@@ -30080,6 +30716,10 @@ function runOptinBackfill(files, opts = {}) {
             // id. A backfilled landing has no knowable spawn; null is the truth.
             const bcEvt = parseBuffLanding(line, f.character);
             if (bcEvt) buffCastBuffer.push(bcEvt);
+            // PvP assist spell evidence (cast starts + debuff landings) — the
+            // same hook the live tail runs, so a replayed night credits exactly
+            // what live play would have. Before shouldKeep, which drops landings.
+            try { builder._pvpAssistLine(line); } catch (e) { void e; }
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -30087,16 +30727,16 @@ function runOptinBackfill(files, opts = {}) {
             if (pvpBcast) {
               pvpBatch.push({ ...pvpBcast, backfill: true });
               if (pvpBatch.length >= 200) flushPvp(true).catch(() => {});
-              // Assist correlation — same builder.add() that runs below also
-              // stamps the damage window, so by the time a kill broadcast
-              // lands here the recent self-damage to that victim is already
+              // Assist correlation — builder.add() below stamps the damage
+              // evidence and _pvpAssistLine above the spell evidence, so by the
+              // time a kill broadcast lands here everyone on the victim is
               // recorded. Tag source 'log_backfill' so the bot can distinguish
               // historical assists from live ones.
               try {
-                const assist = builder && builder._checkPvpAssist
-                  ? builder._checkPvpAssist(pvpBcast, { source: 'log_backfill' })
-                  : null;
-                if (assist) pvpAssistBuffer.push(assist);
+                const assists = builder && builder._checkPvpAssists
+                  ? builder._checkPvpAssists(pvpBcast, { source: 'log_backfill' })
+                  : [];
+                for (const a of assists) pvpAssistBuffer.push(a);
               } catch (e) { void e; }
             }
 
@@ -30195,7 +30835,22 @@ function runOptinBackfill(files, opts = {}) {
       _activeBackfills.delete(f.path);
       onStatus(status);
       scheduleRender();
-    })();
+    })());
+  }
+
+  // One PvP note per run, not one per old kill (the guild lead, 2026-09-27:
+  // "when parsing through old logs make sure we're not posting in the channels
+  // for it each time … a note in pvp that the @user's opt-in log parse found N
+  // new pvp kills and assists and total them out per guildie"). When every
+  // file of this run has finished (or paused), push out the assists still
+  // buffered and tell the bot; it counts what the run added and posts once.
+  // Queued as backfill, so it drains behind the run's own uploads.
+  if (!whoOnly && runJobs.length > 0) {
+    Promise.allSettled(runJobs).then(() => {
+      if (pvpAssistBuffer.length > 0) uploadPvpAssists(pvpAssistBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun });
+      if (dryRun) return;
+      enqueueUpload('optin_summary', { agent_version: AGENT_VERSION, backfill: true, started_at: runStartedAt });
+    }).catch(() => {});
   }
 }
 
@@ -32759,7 +33414,12 @@ function uploadPvpAssists(assists, { botUrl, token, dryRun }) {
       console.log(`[pvp-assist] ${a.assister} → ${a.victim} (killed by ${a.killer || '?'}${a.killer_is_npc ? ' [npc]' : ''}, ${a.gap_seconds}s gap)`);
     return Promise.resolve();
   }
-  enqueueUpload('pvp_assists', { agent_version: AGENT_VERSION, assists });
+  // 200 per POST: the bot refuses a body over 256 KB (413, which the queue
+  // treats as permanent), and since guildmates count, one replayed log can
+  // hold thousands of assists (raw_text alone is up to 500 chars each).
+  for (let i = 0; i < assists.length; i += 200) {
+    enqueueUpload('pvp_assists', { agent_version: AGENT_VERSION, assists: assists.slice(i, i + 200) });
+  }
   return Promise.resolve();
 }
 
@@ -34848,8 +35508,10 @@ function loadPersonalTriggers() {
     const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.triggers) ? raw.triggers : []);
     const compiled = [];
     const drops = [];
+    let migrated = 0;
     for (const t of arr) {
       try {
+        if (_migrateRetiredSuggestedPattern(t)) migrated++;
         // Reuse the shared compile path so pure-Zeal triggers (no pattern)
         // load with _regex=null instead of a match-everything regex.
         compiled.push(_compilePersonalTrigger(t));
@@ -34864,10 +35526,40 @@ function loadPersonalTriggers() {
     }
     _personalTriggerDrops = drops;
     _personalTriggers = compiled;
-    console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`);
+    _personalCharsKey = _watchedCharacters().join('|');
+    if (migrated) savePersonalTriggers();
+    console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`
+                + (migrated ? ` (${migrated} suggested pattern${migrated === 1 ? '' : 's'} updated)` : ''));
   } catch (err) {
     console.warn('[personal-triggers] load failed:', err.message);
   }
+}
+function _migrateRetiredSuggestedPattern(t) {
+  const id = (t && typeof t.id === 'string' && t.id.startsWith('suggested:')) ? t.id.slice('suggested:'.length) : null;
+  const dead = id ? SUGGESTED_RETIRED_PATTERNS[id] : null;
+  if (!dead || !dead.includes(t.pattern)) return false;
+  const tpl = SUGGESTED_TRIGGERS.find(x => x.id === id);
+  if (!tpl || !tpl.pattern) return false;
+  t.pattern = tpl.pattern;
+  return true;
+}
+
+// {c} binds when a pattern COMPILES, and loadPersonalTriggers runs before the
+// log scan fills stats.watchedLogs — so a personal {c} trigger compiled with
+// the token left literal (unmatchable) and stayed silent until it was saved
+// again. Guild triggers escaped this only because their first poll waits 12s.
+// Recompile once the watched set is known, and again if it ever changes.
+let _personalCharsKey = null;
+function _recompilePersonalTriggersForChars() {
+  const key = _watchedCharacters().join('|');
+  if (key === _personalCharsKey) return false;
+  _personalCharsKey = key;
+  _personalTriggers = _personalTriggers.map(t => {
+    const { _regex, _endRegex, _scope, _conditions, _aliases, _excludes, ...raw } = t;
+    void _regex; void _endRegex; void _scope; void _conditions; void _aliases; void _excludes;
+    try { return _compilePersonalTrigger(raw); } catch { return t; }
+  });
+  return true;
 }
 
 // Persist personal triggers to disk. Stripping the compiled _regex (a RegExp
@@ -34910,7 +35602,7 @@ function _serializePersonalTriggers() {
     //     pattern)" in the dashboard.
     // A trigger is valid if it has something to fire on: a compiled pattern or
     // a gauge condition. The genuinely-broken ones are reported via `dropped`.
-    return { ...rest, valid: !!_regex || !!t.zeal_condition };
+    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer };
   });
 }
 
@@ -35017,6 +35709,16 @@ const SUGGESTED_TRIGGERS = [
     pattern: '^You feel (?:calm|charmed)\\.',
     overlay_text: 'MEZZED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
+  // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
+  // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
+  // guard, and only speaks while that overlay is open. This fires on the log
+  // line itself — bards get it too (test/fixtures/golden/raid-pull.log) — so
+  // it is the instant call for someone who runs no Charm overlay (a bard,
+  // 2026-09-26: "the 'charm break' is a few seconds late").
+  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (instant — instead of the Charm overlay\'s call)',
+    pattern: 'Your charm spell has worn off\\.',
+    overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
   { id: 'self_feared', category: 'self', label: 'You are feared',
     pattern: '^You are afraid\\.',
     overlay_text: 'FEARED!', overlay_color: 'red', overlay_ms: 4000,
@@ -35027,8 +35729,14 @@ const SUGGESTED_TRIGGERS = [
     tts_default: false, cooldown_seconds: 5 },
 
   // ── Mob threats — bystander-visible boss callouts.
+  // EQ names the target in the third person even when it is you: "Lord of Ire
+  // goes on a RAMPAGE against Fenrisk!" (test/fixtures/golden/raid-pull.log).
+  // This used to read `rampages? on you`, which appears in no log — a bard
+  // ticked it on, heard nothing, and reasonably concluded it was broken
+  // (2026-09-26). {c} is the watched characters; SUGGESTED_RETIRED_PATTERNS
+  // rewrites a row saved with the old text.
   { id: 'mob_rampage', category: 'mob', label: 'Rampage on you',
-    pattern: '\\brampages?\\s+on\\s+(?:you|YOU)\\b',
+    pattern: '\\bgoes on a RAMPAGE against {c}!',
     overlay_text: 'RAMPAGE ON YOU', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 2 },
   // EQ prints "<mob> has become ENRAGED." — this used to read `begins to enrage`,
@@ -35067,7 +35775,40 @@ const SUGGESTED_TRIGGERS = [
     zeal_condition: { field: 'self_hp_pct', op: '<=', value: 30 },
     overlay_text: 'LOW HP', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 15 },
+
+  // ── Timer bars — EQLogParser-style countdown rows in the trigger overlay,
+  //    built by the agent from what it already tracks rather than from a log
+  //    pattern (a bard, 2026-09-26: "the only thing i need to get is the
+  //    recharm tick count down timer … and i could get rid of eqlogparser").
+  //    `builtin_timer` names the source _builtinTimerRows reads; the row has no
+  //    pattern and no gauge condition, so no evaluator ever fires it — ticking
+  //    it on only switches the bars on. No TTS: a bar is something you look at.
+  { id: 'timer_recharm_tick', category: 'timer', label: 'Recharm tick (your charmed pet\'s 6s mob tick — shows once a DoT tick or a break has revealed it)',
+    builtin_timer: 'recharm_tick', no_tts: true },
+  { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
+    builtin_timer: 'lull', no_tts: true },
+  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
+    builtin_timer: 'my_spells', no_tts: true },
+  // The co-leader again, 2026-09-26: "The server tick function within the HUD
+  // thing is awesome, but would be even better if it could be broken out … as a
+  // standalone timer". The same Zeal gauge-24 tick the HUD draws, as a bar.
+  { id: 'timer_server_tick', category: 'timer', label: 'Server tick (the 6s tick from Zeal, like the HUD\'s)',
+    builtin_timer: 'server_tick', no_tts: true },
 ];
+
+const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
+// Fields a personal row carries beyond the core shape the POST rebuild writes
+// (EQLogParser imports set the first three; guild-parity rows the rest).
+const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
+  'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
+  'display_threshold_sec', 'exclude_patterns'];
+// Saved suggested rows keep the pattern they were created with, so a template
+// fix never reached anyone who had already ticked it. A pattern listed here is
+// one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
+// exact matches move — a pattern the user edited by hand is theirs.
+const SUGGESTED_RETIRED_PATTERNS = {
+  mob_rampage: ['\\brampages?\\s+on\\s+(?:you|YOU)\\b'],
+};
 
 // Convert a SUGGESTED_TRIGGERS template into a personal-trigger row (the
 // shape /api/personal-triggers stores). The synthetic id "suggested:<id>"
@@ -35077,6 +35818,13 @@ const SUGGESTED_TRIGGERS = [
 // the pattern / overlay text by hand on the Personal panel if they want.
 function _templateToPersonalRow(tpl, opts) {
   const o = opts || {};
+  if (tpl.builtin_timer) {
+    // A switch, not a trigger: nothing to match and nothing to say.
+    return { id: 'suggested:' + tpl.id, name: tpl.label, pattern: '', pattern_flags: 'i',
+             use_regex: true, enabled: true, cooldown_seconds: 0, timer_duration_sec: 0,
+             end_early_pattern: null, end_use_regex: true, zeal_condition: null,
+             builtin_timer: tpl.builtin_timer, actions: [] };
+  }
   const wantTts = o.tts != null ? !!o.tts : !!tpl.tts_default;
   const action = {
     type: 'text_overlay',
@@ -35279,6 +36027,66 @@ const _activeOverlays = [];
 function _pushOverlay(o) {
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
+  _wakeFireWaitersSoon();
+}
+
+// One fire, in the shape triggers.html reads — for /api/state's
+// recentTriggerFires and the /api/fires/wait long-poll alike.
+function _fireForWeb(o) {
+  return {
+    ts:      o.firedAt || o.shownAt || 0,
+    text:    o.text,
+    tts:     o.tts || o.text,
+    trigger: o.trigger,
+    // #207 — so a dismissal of a sticky callout is attributed to the
+    // trigger, not to its (interpolated, per-fire) text.
+    trigger_id: o.trigger_id || null,
+    scope:   o.scope,
+    test:    !!o.test,
+    sound:   o.sound || null,
+    sticky:  !!o.sticky,
+    rehearsal: !!o.rehearsal,
+    replay:  !!o.replay,
+    // #136 raid callout allow-list muted this fire — triggers.html flashes
+    // it but does not speak it.
+    mute:    !!o.mute,
+    // The inverse: speak it but do NOT flash it or ask for a timing vote.
+    // Set by the damage-taken alert, whose cadence would otherwise camp the
+    // shared centre flash and clobber other callouts on it.
+    audioOnly: !!o.audioOnly,
+  };
+}
+
+// Fires the moment they happen (the guild's co-leader, 2026-09-26: the charm
+// break "seems to be about a second off. this is ONe of the only reasons for me
+// to continue using eqlogparser"). The trigger overlay used to see a fire only
+// on its next 700 ms /api/state poll, behind that route's 400 ms cache: about
+// 0.8 s on average after the line was read, 1.6 s at worst. It now also holds
+// GET /api/fires/wait open, and _pushOverlay answers it straight away. Wakes are
+// batched per tick so a burst of fires answers once.
+const _fireWaiters = new Set();
+let _fireWakeQueued = false;
+function _wakeFireWaitersSoon() {
+  if (_fireWakeQueued || !_fireWaiters.size) return;
+  _fireWakeQueued = true;
+  setImmediate(() => {
+    _fireWakeQueued = false;
+    const ws = [..._fireWaiters];
+    _fireWaiters.clear();
+    for (const w of ws) { try { w(); } catch { /* one bad waiter never stops the rest */ } }
+  });
+}
+// Fires newer than `after`, waiting up to maxMs for one to happen.
+async function _waitForFires(after, maxMs) {
+  const pick = () => _activeOverlays.map(_fireForWeb).filter(f => f.ts > after);
+  const now = pick();
+  if (now.length || !(maxMs > 0)) return now;
+  await new Promise(resolve => {
+    const t = setTimeout(done, maxMs);
+    function done() { clearTimeout(t); _fireWaiters.delete(done); resolve(); }
+    _fireWaiters.add(done);
+  });
+  return pick();
 }
 
 // Rampage callouts — "who is on rampage". The agent already parses
@@ -36803,6 +37611,7 @@ function _clearNameObservations(nameLower) {
   try { _buffLandingsByTarget.delete(nameLower); } catch { /* */ }
   try { _slowsByTarget.delete(nameLower); _slowCalloutState.delete(nameLower); } catch { /* */ }
   try { _extMobHpHist.delete(nameLower); _extMobResetAt.delete(nameLower); } catch { /* */ }
+  try { _mobTicks.delete(nameLower); } catch { /* */ }   // the next spawn has its own tick
 }
 // Tail-loop death hook. Closes the slain name's oldest open track; on K→0 (the
 // last/only instance died) clears its stale observation buckets (the sequential
@@ -38480,6 +39289,7 @@ function _evaluateZealConditions(character, tsMs) {
   if (!state) return;
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   for (const t of all) {
+    if (t.enabled === false) continue;   // unticked on the dashboard = off (see evaluateTriggersAgainstLine)
     const cond = t.zeal_condition;
     if (!cond || !cond.field || !cond.op || cond.value == null) continue;
     const fv = _zealFieldValue(state, cond.field);
@@ -39126,6 +39936,79 @@ function _calloutFeedbackSnapshot() {
   };
 }
 
+// ── Timer bars from state the agent already tracks (the 'timer' Suggested
+// switches). They are NOT in _activeTimers: each snapshot rebuilds them from
+// the charm tracker and the target landings, so there is nothing to arm, expire
+// or cancel. A ✕ hides that one instance; the id carries the land time, so the
+// next charm or recast shows again.
+const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short DoT refreshes
+const _builtinTimerHidden = new Set();
+function _builtinTimerKindsOn() {
+  const on = new Set();
+  for (const t of _personalTriggers) if (t && t.builtin_timer && t.enabled !== false) on.add(t.builtin_timer);
+  return on;
+}
+function _builtinTimerRows(now) {
+  const on = _builtinTimerKindsOn();
+  if (on.size === 0) { _builtinTimerHidden.clear(); return []; }
+  const mine = new Set(_watchedCharacters().map(c => String(c).toLowerCase()));
+  const rows = [];
+  const live = new Set();
+  const push = (row) => {
+    live.add(row.id);
+    if (_builtinTimerHidden.has(row.id)) return;
+    rows.push(Object.assign({ color: null, end_text: null, warning_ms: 0, warn_text: null,
+      warnings: [], pinned: false, scope: 'personal', kind: 'builtin', dismissible: true, test: false }, row));
+  };
+  if (on.has('recharm_tick')) {
+    for (const [k, c] of _charmTickTracker) {
+      if (!c || !c.is_active || !c.owner || !mine.has(String(c.owner).toLowerCase())) continue;
+      // A charmed mob re-rolls the charm on its OWN 6s tick, learned from DoT
+      // ticks and log breaks (_noteMobTick). No row until it is known: the
+      // charm landing says nothing about where that tick falls.
+      const mt = _mobTickFor(c.pet, now);
+      if (!mt) continue;
+      const into = ((now - mt.at) % 6000 + 6000) % 6000;
+      push({ id: 'bt|recharm|' + k + '|' + (c.started_at || 0), name: c.pet + ' - Recharm tick',
+             target: c.pet, effect: 'Recharm tick', remaining_ms: 6000 - into, duration_sec: 6,
+             cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
+    }
+  }
+  if (on.has('server_tick')) {
+    // The character whose Zeal reported last, the same rule as activeCharacter.
+    let best = null, bestTs = 0;
+    for (const ch of Object.keys(_zealState || {})) {
+      const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+      if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+    }
+    const at = best ? _serverTickAtFor(best, now) : null;
+    if (at != null) {
+      const left = ((at - now) % 6000 + 6000) % 6000 || 6000;
+      push({ id: 'bt|servertick', name: 'Server tick', target: null, effect: 'Server tick',
+             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true });
+    }
+  }
+  if (on.has('lull') || on.has('my_spells')) {
+    for (const [tk, mp] of _buffLandingsByTarget) {
+      for (const [sk, b] of mp) {
+        const by = b && (b.cast_by || b.owner);
+        if (!by || !mine.has(String(by).toLowerCase()) || b.worn_off_at) continue;
+        const totalSec = (Number(b.dur_ticks) || 0) * 6;
+        const remMs = (Number(b.landed_at) || 0) + totalSec * 1000 - now;
+        if (!(remMs > 0)) continue;
+        const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
+        if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
+        const mob = b.target_name || tk;
+        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
+               target: mob, effect: b.name + (b.unconfirmed ? '?' : ''),
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb' });
+      }
+    }
+  }
+  for (const id of _builtinTimerHidden) if (!live.has(id)) _builtinTimerHidden.delete(id);
+  return rows;
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
@@ -39165,6 +40048,8 @@ function _activeTimersSnapshot() {
       test:         t.test,
     });
   }
+  try { for (const r of _builtinTimerRows(now)) out.push(r); }
+  catch { /* a derived bar must never cost the trigger countdowns */ }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
   // Pinned rows float as a GROUP above unpinned, then soonest-first within
   // each — so a 3-minute boss-cadence bar stays on top instead of sinking
@@ -39550,6 +40435,11 @@ function evaluateTriggersAgainstLine(line, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   for (const t of all) {
+    // An unticked personal trigger stays in the list (the dashboard keeps the
+    // row so it can be ticked back on) and used to fire anyway — nothing on the
+    // fire path read `enabled` (a bard, 2026-09-26). Guild rows arrive already
+    // filtered by the bot, so this only ever skips a personal one.
+    if (t.enabled === false) continue;
     // End-early check runs FIRST so a single log line containing the end
     // phrase cancels the timer before the same line could (also) re-trigger
     // the start pattern. Per-target: if the end pattern matches and there
@@ -40060,6 +40950,7 @@ function _replayEvaluateLine(line, tsMs, ctx) {
   if (all.length === 0) return false;
   let firedAny = false;
   for (const t of all) {
+    if (t.enabled === false) continue;   // rehearsal must match live
     if (!t._regex) continue;   // gauge-condition triggers have no log line to replay
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
@@ -40387,7 +41278,13 @@ async function tailFile(logPath, onLine) {
     console.log(`[${path.basename(logPath)}] tailing from offset ${pos} (file size ${stat.size})`);
   }
 
-  setInterval(async () => {
+  // Read every 150 ms while the log is being written, 500 ms once it has been
+  // quiet for a minute (the guild's co-leader, 2026-09-26, on the charm-break
+  // call: "seems to be about a second off"). A fixed 500 ms put up to half a
+  // second between EQ writing a line and any trigger seeing it. Self-scheduling,
+  // so a slow read can never overlap the next one.
+  let lastGrowAt = 0;
+  const readNew = async () => {
     try {
       const s = await fs.promises.stat(logPath);
       if (s.size < pos) {
@@ -40397,6 +41294,7 @@ async function tailFile(logPath, onLine) {
         buf = '';
       }
       if (s.size > pos) {
+        lastGrowAt = Date.now();
         const fd = await fs.promises.open(logPath, 'r');
         const len = s.size - pos;
         const data = Buffer.alloc(len);
@@ -40411,7 +41309,12 @@ async function tailFile(logPath, onLine) {
     } catch (err) {
       console.warn(`[tail] ${err.message}`);
     }
-  }, 500);
+    setTimeout(readNew, _tailDelayMs(lastGrowAt, Date.now()));
+  };
+  setTimeout(readNew, 500);
+}
+function _tailDelayMs(lastGrowAt, now) {
+  return (now - lastGrowAt) < 60_000 ? 150 : 500;
 }
 
 // ── Log rotation (feedback: a member 2026-08-07) ────────────────────────────
@@ -41009,6 +41912,9 @@ async function main() {
       }),
     };
   });
+  // The watched characters are known now — re-bind {c} in personal triggers,
+  // which loaded before this list existed.
+  _recompilePersonalTriggersForChars();
 
   // Enable the dashboard if stdout is a TTY (terminal). When the agent runs
   // headless under the Windows scheduled task, stdout is redirected and we
@@ -41373,16 +42279,15 @@ async function main() {
             const hk = _pvpBcastToHateKill(pvpBcast);
             if (hk) hateKillBuffer.push(hk);
 
-            // Assist correlation: if the uploader was damaging this victim in
-            // the last 30s AND the killing blow was someone else (or an NPC),
-            // emit an assist row. cross-log dedup also applies — the same
-            // assist won't post twice when multiple of our logs witness the
-            // same death of someone we'd been swinging at.
+            // Assist correlation: one row per player this log saw hit or
+            // debuff the victim in the last 4 min, the killer excepted. The
+            // cross-log dedup also applies — the same assist won't post twice
+            // when several of our logs witness the same death.
             try {
-              const assist = b.builder && b.builder._checkPvpAssist
-                ? b.builder._checkPvpAssist(pvpBcast, { source: 'live_agent' })
-                : null;
-              if (assist) {
+              const assists = b.builder && b.builder._checkPvpAssists
+                ? b.builder._checkPvpAssists(pvpBcast, { source: 'live_agent' })
+                : [];
+              for (const assist of assists) {
                 const _aFp = 'assist|' + (assist.assister || '').toLowerCase() + '|' + _pvpFp;
                 if (!_crossLogDupe(_aFp)) pvpAssistBuffer.push(assist);
               }
@@ -41464,6 +42369,9 @@ async function main() {
         noteSongAoeLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
         if (!_sourceExcluded) noteHealLandLine(line);
+        // PvP assist spell evidence — cast starts + debuff landings on players.
+        // The opt-in-log backfill runs the same hook, so both credit alike.
+        if (!_sourceExcluded) { try { b.builder._pvpAssistLine(line); } catch (e) { void e; } }
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
         // NPC cast-starts + landings → "what did that mob just cast", and the
@@ -41700,6 +42608,9 @@ async function main() {
         if (triggerVisibleLine(line, dropPatterns)) {
           try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
         }
+        // A DoT's repeating damage lands on the mob's own 6s tick — the charm
+        // overlay's "mob tick" (_noteDotTickLine).
+        try { _noteDotTickLine(line, ts ? ts.getTime() : NaN, Date.now()); } catch {}
         // Callout-replay (#98): capture raid-wide events that aren't combat
         // events (ENRAGE) — dropped before parseEvent — onto the fight timeline.
         try { b.builder.noteRaidLine(line, ts ? ts.getTime() : Date.now()); } catch {}
@@ -41718,6 +42629,9 @@ async function main() {
         // Taunt, discipline activations, and enrage start/end. Raw line for
         // the same reason — misses and disc texts match no keep pattern.
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
+        // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
+        // log never DMs anyone).
+        try { _corpseNoteLine(line, b.character); } catch { void 0; }
 
         // ── Normal combat filter (gates parse + upload only) ────────────────
         if (!shouldKeep(line, dropPatterns, keepPatterns)) return;
@@ -41849,7 +42763,19 @@ module.exports = {
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
+  _getPersonalTriggersForTest: () => _personalTriggers,
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
+  // Timer bars + the bard's trigger fixes (2026-09-26) — exported so the tests
+  // drive the shipped code.
+  SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
+  _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
+  _recompilePersonalTriggersForChars, _evaluateZealConditions,
+  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
+  _bumpCharmTick, _reconcileGaugeCharms,
+  _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
+  _clearNameObservations,
+  _waitForFires, _pushOverlay, _tailDelayMs,
+  _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 

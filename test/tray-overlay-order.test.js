@@ -31,7 +31,7 @@ const built = () => [
   item('Casting tracker (melody on bards, spells otherwise)'),
   item('  ↳ Only show on bard characters'),
   item('  ↳ Show AE song damage (per hit + kite total)'),
-  item('Zeal health (diagnostic)'),
+  item('Tick timer (server + charm ticks, Zeal health)'),
   item('Threat meter'),
   item('Tank HUD (DS, buffs, DA, rampage)'),
   item('CH chain'),
@@ -64,9 +64,9 @@ describe('_sortOverlayMenuItems', () => {
       'Tank HUD (DS, buffs, DA, rampage)',
       'Target Info (target stats)',
       'Threat meter',
+      'Tick timer (server + charm ticks, Zeal health)',
       'Trigger alerts (TTS)',
       '/who (zone roster)',
-      'Zeal health (diagnostic)',
     ]);
   });
   it('keeps the Dock first and the controls below untouched', () => {

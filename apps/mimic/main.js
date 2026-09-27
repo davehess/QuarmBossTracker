@@ -21,7 +21,7 @@
 // Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification, desktopCapturer } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -283,9 +283,23 @@ function defaultConfig() {
     uiPackTags: {},
   };
 }
+// The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
+// it was before the latest write) and writes through `.tmp`, so a Mimic killed
+// mid-write still has something whole to come back to.
+function _readConfigRaw() {
+  const file = CONFIG_FILE();
+  for (const f of [file, file + '.bak', file + '.tmp']) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (raw && typeof raw === 'object') return raw;
+    } catch { /* missing or torn — try the next copy */ }
+  }
+  return null;
+}
 function loadConfig() {
   try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf8'));
+    const raw = _readConfigRaw();
+    if (!raw) return defaultConfig();
     // Migration: old `tellsEnabled` boolean → `tellsMode` string.
     if (raw.tellsEnabled !== undefined && raw.tellsMode === undefined) {
       raw.tellsMode = raw.tellsEnabled ? 'local' : 'off';
@@ -313,8 +327,26 @@ function loadConfig() {
   } catch { return defaultConfig(); }
 }
 function saveConfig(cfg) {
-  fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
-  fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg, null, 2));
+  const file = CONFIG_FILE();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Atomic (the guild's co-leader, 2026-09-26: "i closed mimic with task manager
+  // and it seems none of settings were saved"). This used to write the file in
+  // place, and it runs often — every overlay that sizes itself to its content
+  // fires 'resize', which persists bounds. A kill mid-write left a torn file
+  // that loadConfig could not parse, so EVERY setting fell back to its default.
+  // Now: write .tmp, keep the current file as .bak, then rename .tmp over it.
+  const text = JSON.stringify(cfg, null, 2);
+  try {
+    fs.writeFileSync(file + '.tmp', text);
+    // Back up the current file only if it is whole, so a torn one can never
+    // replace the good backup.
+    try { const cur = fs.readFileSync(file, 'utf8'); JSON.parse(cur); fs.writeFileSync(file + '.bak', cur); } catch { /* none yet, or torn */ }
+    fs.renameSync(file + '.tmp', file);
+  } catch {
+    // Windows can refuse the rename while something (antivirus) holds the file
+    // open; a direct write is still better than losing the change.
+    fs.writeFileSync(file, text);
+  }
   // Any config write can change where we should be looking for EverQuest
   // (eqPaths / eqPathsExcluded), so drop the memoized scans rather than trying
   // to detect which keys moved — config saves are rare user actions, and a
@@ -2234,7 +2266,7 @@ function startZealCapture() {
             // doesn't, Windows' pipe ACL blocks the connection (it connects
             // then instantly drops), so no data ever arrives — cost a member a
             // couple hours before "run Mimic as admin" fixed it (2026-07-05).
-            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Zeal health.',
+            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Tick timer, then click its 📡 Zeal line.',
           });
           n.on('click', () => {
             const cfg2 = loadConfig();
@@ -5080,19 +5112,20 @@ function applyMelodyVisibility() {
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
 }
 
-// Zeal health overlay — surfaces the live data-type tally from
-// /api/state.zeal so users can diagnose missing Zeal pipes (no buff
-// slot data → melody empty, no gauge data → charm tracker blank, etc.)
-// without having to read the agent log. Opt-in.
+// Tick overlay (key 'zeal' — was the Zeal health overlay; the key, flag,
+// file and saved bounds are kept so nobody's placement moves). A standalone
+// server-tick timer per character plus charmed mobs' own ticks (the
+// co-leader, 2026-09-27), with the Zeal pipe check and this PC's clock
+// offset one click down. Opt-in.
 function createZealHealthOverlay() {
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Zeal health overlay',
+    title: 'Wolf Pack miMIC — Tick overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Zeal health'),
+    webPreferences: _wpPrefs('Tick'),
   });
   zealWindow.setAlwaysOnTop(true, 'screen-saver');
   zealWindow.setVisibleOnAllWorkspaces(true);
@@ -5480,7 +5513,7 @@ const _DOCK_CATALOG = [
   { key: 'melody',    label: 'Melody',         file: 'melody.html',       flag: 'showMelody' },
   { key: 'threat',    label: 'Threat',         file: 'threatmeter.html',  flag: 'showThreat' },
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
-  { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
+  { key: 'zeal',      label: 'Tick',           file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
   // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
   // file is only the offline fallback. `agentPath` makes the PANE resolve the
@@ -6251,7 +6284,39 @@ function makeTrayIcon() {
   }
   tray = new Tray(img);
   tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
-  buildTrayMenu();
+  // Right-click builds the menu THEN and pops it up (the guild's co-leader,
+  // 2026-09-26: "right clicking it does nothing for some reason. no exit, no
+  // nothing" — so they ended Mimic from Task Manager and lost their settings).
+  // It used to be a setContextMenu menu, rebuilt on every pushStatus and on
+  // every change of active character — "active" is whichever Zeal stream
+  // reported last, so it can change several times a second. On Windows,
+  // replacing the context menu
+  // closes the one on screen, so it died before it could be used. A popped-up
+  // menu is never replaced while open. And if building the full menu ever
+  // throws, a short menu with Quit still comes up instead of nothing.
+  if (process.platform !== 'linux') {
+    tray.on('right-click', () => {
+      try { buildTrayMenu(); } catch (err) { appendAgentLog(`[tray] menu failed to build: ${err && err.message}\n`); }
+      try { tray.popUpContextMenu(_trayMenu || _trayFallbackMenu()); }
+      catch (err) { appendAgentLog(`[tray] menu failed to open: ${err && err.message}\n`); }
+    });
+  }
+  try { buildTrayMenu(); } catch (err) { appendAgentLog(`[tray] menu failed to build: ${err && err.message}\n`); }
+}
+let _trayMenu = null;
+function _quitMimic() {
+  quitting = true;
+  if (agentProc) { try { agentProc.kill(); } catch {} }
+  app.quit();
+}
+function _trayFallbackMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Open Wolf Pack Mimic', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { label: 'Settings…', click: () => { try { openSettings(); } catch {} } },
+    { label: 'Restart agent', click: () => { if (agentProc) { try { agentProc.kill(); } catch {} } } },
+    { type: 'separator' },
+    { label: 'Quit Mimic', click: _quitMimic },
+  ]);
 }
 
 // The Overlays submenu's overlay entries, alphabetical (a member, 2026-09-23:
@@ -6350,7 +6415,7 @@ function buildTrayMenu() {
         const cfg = loadConfig(); cfg.melodyDmgTotals = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
-    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.hideOverlays && !_dockedNow.includes('zeal'), click: (mi) => {
+    { label: 'Tick timer (server + charm ticks, Zeal health)', type: 'checkbox', checked: s.showZeal, enabled: !s.hideOverlays && !_dockedNow.includes('zeal'), click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
         if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -6490,18 +6555,7 @@ function buildTrayMenu() {
     type: 'checkbox',
     checked: loadConfig().betaChannel === true,
     enabled: !!autoUpdater,
-    click: (mi) => {
-      const cfg = loadConfig();
-      cfg.betaChannel = !!mi.checked;
-      if (cfg.betaChannel) delete cfg.forceStable;   // re-opting into betas lifts a stable pin
-      saveConfig(cfg);
-      if (autoUpdater) {
-        _applyUpdaterChannel();
-        appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} — checking…\n`);
-        safeCheckForUpdates(true);
-      }
-      pushStatus();
-    },
+    click: (mi) => setBetaChannel(!!mi.checked, 'tray'),
   };
   // Revert-to-stable — only offered while the beta track is actually in
   // effect (beta build or opt-in, and not already pinned to stable).
@@ -6621,9 +6675,12 @@ function buildTrayMenu() {
       } },
     updateItem,
     { label: 'Settings…', click: openSettings },
-    { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
+    { label: 'Quit Mimic', click: _quitMimic },
   ]);
-  tray.setContextMenu(menu);
+  _trayMenu = menu;
+  // Windows/macOS pop this up on right-click (see createTray). Linux trays have
+  // no right-click event, so there it stays a context menu.
+  if (process.platform === 'linux') tray.setContextMenu(menu);
   tray.setToolTip(tooltipFor(s));
 }
 
@@ -6907,6 +6964,24 @@ async function revertToStable(source) {
   appendAgentLog(`[updater] revert to stable requested (${source || 'unknown'}) — pinning channel to stable and checking…\n`);
   _applyUpdaterChannel();
   safeCheckForUpdates(true);
+  pushStatus();
+}
+
+// Join / leave the beta channel — the tray's "Receive beta updates" checkbox
+// and the dashboard's ⤴ beta button (next to Check for update) both land
+// here, so the two can never disagree (tray ↔ dashboard parity, 2026-08-19;
+// the dashboard half asked for by the guild lead, 2026-09-27, after a stable
+// user's tray menu would not open and the tray was the only way in).
+function setBetaChannel(on, source) {
+  const cfg = loadConfig();
+  cfg.betaChannel = !!on;
+  if (cfg.betaChannel) delete cfg.forceStable;   // re-opting into betas lifts a stable pin
+  saveConfig(cfg);
+  if (autoUpdater) {
+    _applyUpdaterChannel();
+    appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} (${source || 'unknown'}) — checking…\n`);
+    safeCheckForUpdates(true);
+  }
   pushStatus();
 }
 
@@ -8514,8 +8589,40 @@ ipcMain.handle('open-dashboard', () => {
   navigateToDashboard('renderer-open-dashboard');
   return true;
 });
+// 📸 Feedback screenshots (the guild lead, 2026-09-26: "feedback and suggestion
+// needs to be able to take screenshots..top priority"). Captures every display as
+// the player sees it — EQ, overlays and all — with the asking window (the
+// dashboard) faded out for the instant so it is not in its own shot. Returns
+// JPEG data URLs no wider than 1920 px. Nothing is saved or sent from here: the
+// feedback card shows each shot and the player chooses what goes.
+ipcMain.handle('capture-screens', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const live = win && !win.isDestroyed();
+  const prevOpacity = live ? win.getOpacity() : 1;
+  try {
+    if (live) win.setOpacity(0);
+    await new Promise(r => setTimeout(r, 250));   // let the compositor drop the faded window
+    const displays = screen.getAllDisplays();
+    const maxW = Math.max(1, ...displays.map(d => Math.round(d.size.width * d.scaleFactor)));
+    const maxH = Math.max(1, ...displays.map(d => Math.round(d.size.height * d.scaleFactor)));
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxW, height: maxH } });
+    return sources.map((s, i) => {
+      let img = s.thumbnail;
+      if (!img || img.isEmpty()) return null;
+      if (img.getSize().width > 1920) img = img.resize({ width: 1920, quality: 'good' });
+      return { name: s.name || ('Screen ' + (i + 1)), dataUrl: 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64') };
+    }).filter(Boolean);
+  } catch (err) {
+    appendAgentLog(`[mimic] screenshot failed: ${err && err.message}\n`);
+    return [];
+  } finally {
+    if (live && !win.isDestroyed()) win.setOpacity(prevOpacity);
+  }
+});
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });
+// Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
+ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
@@ -9398,6 +9505,30 @@ ipcMain.handle('revert-to-stable', async () => {
   if (res.response === 0) { await revertToStable('dashboard'); return true; }
   return false;
 });
+// ⤴ beta from the dashboard (next to Check for update, stable builds only) —
+// the dashboard half of the tray's "Receive beta updates". Same shape as
+// revert-to-stable: the confirm lives here, the work is setBetaChannel().
+ipcMain.handle('get-beta-channel', () => ({
+  optedIn:   loadConfig().betaChannel === true,
+  available: !!autoUpdater,
+}));
+ipcMain.handle('set-beta-channel', async (_e, on) => {
+  const join = !!on;
+  const res = await dialog.showMessageBox({
+    type: 'question',
+    buttons: [join ? 'Join the beta' : 'Leave the beta', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Wolf Pack miMIC — beta updates',
+    message: join ? 'Get beta builds of Mimic?' : 'Go back to stable updates only?',
+    detail: join
+      ? 'Mimic will download the newest beta and install it on your next restart. Betas get fixes and new features first, and now and then a new bug. Your settings, overlays, and login are untouched. You can go back any time with ↩ stable at the top of the dashboard.'
+      : 'New betas stop coming. If a beta has already finished downloading it still installs on your next restart — use ↩ stable at the top of the dashboard after that to come back.',
+  });
+  if (res.response !== 0) return false;
+  setBetaChannel(join, 'dashboard');
+  return true;
+});
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
@@ -9528,7 +9659,7 @@ function _windowLabelsByPid() {
   const NAMES = {
     dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
-    who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
+    who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
     command: 'Command center', popraid: 'PoP raids', me: 'HUD',
   };
@@ -9707,6 +9838,10 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { /* stay alive in tray */ });
 app.on('before-quit', () => {
   quitting = true;
+  // Settings asks before closing with unsaved edits (a beforeunload), and in
+  // Electron that would also cancel the QUIT. Its draft is already on disk, so
+  // close it without asking; the next open offers the draft back.
+  try { if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy(); } catch {}
   _stopEqPolling();
   try { const { globalShortcut } = require('electron'); globalShortcut.unregisterAll(); } catch {}
   if (agentProc) { try { agentProc.kill(); } catch {} }
