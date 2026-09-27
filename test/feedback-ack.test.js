@@ -128,3 +128,22 @@ describe('the one-time backfill of posts that went out with no buttons', () => {
     expect(stripJs(bot)).toMatch(/setTimeout\(\(\) => _backfillMimicFeedbackButtonsOnce\(readyClient\)/);
   });
 });
+
+describe('the web relay does not post a Mimic report its own route is still posting', () => {
+  // The guild lead, 2026-09-27: "double posted in the feedback channel". The Mimic route stamps
+  // discord_msg_id only after its upload; the relay grabbed the row in that window.
+  it('relays web rows at once and client rows only after 5 minutes unstamped', async () => {
+    const relay = sliceBlock(bot, 'async function relayWebFeedback(readyClient) {', '\n}\n');
+    const selects = [];
+    const supabase = { isEnabled: () => true, select: async (t, q) => { selects.push(q); return []; } };
+    const NOW = Date.parse('2026-09-27T12:40:00Z');
+    const RealDate = Date;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('require', 'process', 'Date', relay + '\nreturn relayWebFeedback;')(
+      (m) => (m === './utils/supabase' ? supabase : {}), { env: { FEEDBACK_THREAD_ID: 'T' } },
+      class extends RealDate { constructor(...a) { super(...(a.length ? a : [NOW])); } static now() { return NOW; } });
+    await fn({ channels: { fetch: async () => null } });
+    expect(selects).toHaveLength(1);
+    expect(decodeURIComponent(selects[0])).toContain('discord_msg_id=is.null&or=(client.is.null,submitted_at.lt.2026-09-27T12:35:00.000Z)');
+  });
+});
