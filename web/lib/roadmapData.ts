@@ -37,6 +37,40 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-2-2026-09-27',
+    title: 'Mimic 2.7.2',
+    version: 'Mimic 2.7.2 · Agent 3.7.31 · Bot 3.1.157 · Web 1.8.27',
+    date: '2026-09-27',
+    headline: 'Stable: PvP credit for guildmates, the Tick overlay, timer bars, the /who window, screenshots in feedback.',
+    features: [
+      {
+        name: 'PvP assists for guildmates who don’t run Mimic',
+        blurb: 'If anyone running Mimic sees a guildmate hit, slow, snare, root, mez or DoT a player who then dies to someone else, that guildmate gets the assist. Four minutes, not two. Re-run a log in Opt-in Logs and past nights count too; #pvp gets one note per parse, never a flood.',
+      },
+      {
+        name: 'Tick overlay',
+        blurb: 'The server tick in its own window, one countdown per character, plus your charmed mob’s own tick. Bars or dials. It replaces Zeal health, which sits one click down along with how far your PC’s clock is off.',
+      },
+      {
+        name: 'Timer bars in the trigger window',
+        blurb: 'Recharm tick, Pacify/Calm, your own spells on mobs, the Server tick — EQLogParser style. Triggers → Suggested → Timer bars.',
+      },
+      {
+        name: '/who window, feedback screenshots, Settings drafts',
+        blurb: 'The /who window keeps its size, scrolls, filters by class or guild and sorts. Feedback takes 📸 or pasted pictures. Settings keeps a draft and asks before closing unsaved. A ⤴ beta button next to Check for update; ⏻ Quit on the dashboard.',
+      },
+      {
+        name: 'On the site',
+        blurb: '/pvp gets a Day window and a “Following Discord now” list of who is PvP-flagged. The beta fight pages show fight sizes: Zek v allies, by guild.',
+      },
+    ],
+    fixes: [
+      'Right-clicking the tray icon sometimes did nothing; ending Mimic from Task Manager could wipe your settings.',
+      '“Rampage on you” never fired; unticked triggers still fired; trigger alerts spoke late.',
+      'A mid-fight stall at the end of a fight; the mob-tick countdown stuck on the Charm window.',
+    ],
+  },
+  {
     key: 'tick-overlay-2026-09-27',
     title: 'Agent 3.7.31',
     version: 'Agent 3.7.31 · Web 1.8.25',

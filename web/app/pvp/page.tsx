@@ -264,6 +264,31 @@ async function loadHotZones(): Promise<HotZone[]> {
     .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
 }
 
+// Who follows Discord right now: the latest #togglepvp line each character's own Mimic saw
+// ("You are now player kill and follow the ways of Discord." / "You now follow the ways of Order."),
+// through the pvp_flag_state view (migration 20260927040100). Self-only lines, so only characters
+// running Mimic have a state. The guild lead, 2026-09-27: "start looking for the messages when
+// people #togglepvp in game and follow the way of discord vs order".
+type Flagged = { character: string; since: string };
+async function loadFlagged(): Promise<Flagged[]> {
+  const { data, error } = await supabaseAdmin()
+    .from('pvp_flag_state')
+    .select('character, since')
+    .eq('guild_id', 'wolfpack')
+    .eq('discord', true)
+    .order('since', { ascending: false })
+    .limit(200);
+  if (error) { console.warn('[pvp] pvp_flag_state failed:', error.message); return []; }
+  return (data ?? []) as Flagged[];
+}
+function fmtAgo(iso: string, fromMs: number = Date.now()): string {
+  const m = Math.max(0, Math.round((fromMs - Date.parse(iso)) / 60000));
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   const diff = new Date(toIso).getTime() - fromMs;
   const abs  = Math.abs(diff);
@@ -296,11 +321,12 @@ export default async function PvpPage({
   const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers, quakeAt, hotZones] = await Promise.all([
+  const [{ rows, error }, bossTimers, quakeAt, hotZones, flagged] = await Promise.all([
     loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
+    loadFlagged(),
   ]);
   if (error) {
     return (
@@ -332,6 +358,24 @@ export default async function PvpPage({
           <Link href="/pvp/hate" className="text-blue hover:underline">Plane of Hate tracker →</Link>
         </div>
       </section>
+
+      {flagged.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-lg text-gold flex items-center gap-2"><span aria-hidden>⚔️</span><span>Following Discord now</span></h3>
+          <p className="text-xs text-dim mt-1">
+            PvP-flagged, from the last <code>#togglepvp</code> their own Mimic saw. Order is the peaceful side. Only characters running Mimic show here.
+          </p>
+          <p className="text-sm mt-2 leading-relaxed">
+            {flagged.map((f, i) => (
+              <span key={f.character}>
+                {i > 0 && <span className="text-dim"> · </span>}
+                <Link href={`/pvp/${encodeURIComponent(f.character)}`} className="text-text hover:underline">{f.character}</Link>
+                <span className="text-dim text-xs"> {fmtAgo(f.since)}</span>
+              </span>
+            ))}
+          </p>
+        </section>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-4">
         {rows.length === 0 ? (

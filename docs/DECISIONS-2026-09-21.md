@@ -114,7 +114,9 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Tick overlay (was Zeal health)** | **On beta, agent 3.7.31 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials (the other goes when a stable is cut) |
+| **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
+| **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
+| **Tick overlay (was Zeal health)** | **Stable in 2.7.2 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials |
 | **PvP assists for guildmates our agents see** | **Bot 3.1.156 on main; agent 3.7.30 on beta (§54, §55).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way. **§55:** an opt-in parse posts ONE #pvp note (@you, N new kills + assists, per guildmate) and nothing per old event; replayed kills no longer double. **The 23 duplicate kill rows were deleted 2026-09-27 (§56)** | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs; the note lands in #pvp ~90 s after it finishes. Assists from raiders on stable arrive when a stable is cut |
 | **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
@@ -3119,6 +3121,117 @@ past that; 5 s is also where the agent warns. Clicking it opens:
   - `test/tick-overlay.test.js`: 10 tests, 11 of 11 mutants killed.
   - `test/tray-overlay-order.test.js` follows the label.
 - Both layouts were rendered in Chromium with sample data. That caught the bar rows not lining up.
+
+## 57. Stable 2.7.2; the #pvp note; a Day window; fight sizes; who follows Discord; buffs on the entity's tick; the overlay catalog and the 3.0 plan (2026-09-27)
+
+**The calls (the guild lead, one message):** *"do those and move us up to a new patch release. make a
+note in the PVP channel for people to run their opt in logs to get historical credit on pvp kills
+and assists. also add in a 24hr filter for pvp, and try to figure out fight sizes for opponents vs
+allies when a fight happens in pvp. start looking for the messages when people #togglepvp in game
+and follow the way of discord vs order. don't forget about server ticks. debuffs and buffs wear off
+on entity's ticks, which do not correspond with the server ticks..rather with when an entity
+spawned. every component of the overlays … need to be cataloged in a master overlay design doc and
+then prepared for an open overlay builder system that I want to develop for a 3.0 release for
+mimic … start a full life cycle research and planning cycle … ideal to complete before October 1st."*
+And the follow-up: *"this can be an extension of the UI builder, but it needs to be a lot smarter …
+elements should have displayed sample data … build out overlays on the fly … snap to other windows
+inside the EQ client from native or zeal … adaptivity to a specific character's abilities, clickies,
+levels."*
+
+### Stable Mimic 2.7.2 (agent 3.7.31) — `7f82926d`, the tip of its own push
+- File-level promotion from beta `07a4765c`: `apps/mimic/`, `packages/wolfpack-logsync/` and their
+  tests. Beta.15–.21 all ship: guildmate PvP assists + the one-note parse, the Tick overlay, timer
+  bars, the /who window, feedback screenshots, the DIRGE board, HUD tracking arrows, the corpse DM,
+  Settings drafts, the ⤴ beta and ⏻ Quit buttons, the tray and config fixes.
+- **Four beta-only web tests were left behind** (`about-figures`, `pvp-fights-page`, `tradeskills`,
+  `zeal-icons-page`): they test web variants that exist only on beta. The first promotion attempt
+  pulled them in and went red; the rule for next time is `--diff-filter=AM` on the test list and
+  then drop any test whose subject is a beta-only web file.
+- Beta re-parked at **2.7.3** (agent 3.7.32, then 3.7.33 — see the slip below).
+
+### The #pvp note (bot 3.1.157)
+`_announceOptinPvpOnce`: the 2.7.1 raid-chat card's shape — bot_kv latch (fail-closed), a wait for
+the **stable v2.7.2 release to carry its .exe**, one embed to the PvP thread/channel, pinging nobody.
+It waits for 2.7.2 because guildmate assists and the one-note parse reach stable users only in that
+build; a note before it would send people to a catch-up that still floods or credits only themselves.
+
+### A Day window on /pvp (web 1.8.26)
+The picker already knew `1d`; /pvp now offers it.
+
+### Fight sizes (migration `20260927040000`, applied)
+- `pvp_fights` returns `zek_players`, `ally_players`, `players_by_guild`.
+- "On the field" = everyone a Wolf Pack log saw: the dead and their killers (`pvp_deaths`), the
+  assisters (`pvp_assists`, ±3 min round the fight), everyone `/who` listed in the zone from 4 min
+  before the first death to 1 min after the last. One row per name, best guild any source gave.
+- Sides: Zek and Rise of Zek are the opponents (the death split's rule); any other guild is an ally;
+  no guild or /anon is listed by guild but on neither side.
+- **It is a floor.** A /who nobody typed, an anon player, a raider whose log never uploaded — all
+  missing. /who's short zone names ("vexthal") don't match the broadcast's long name and are left
+  out. The cards and table say "at least".
+- Drawn on the beta fight cards ("On the field: Zek 14 v 21 allies (Wolf Pack 9 · …) · at least")
+  and the table's Sides column. The default page is unchanged until the layout pick (§46).
+
+### Who follows Discord (migration `20260927040100`, applied)
+- **The toggle lines were already parsed** — since 2025-02, `parsePvpFlag`: *"You are now player
+  kill and follow the ways of Discord."* → `pvp_flag_on`; *"You now follow the ways of Order."* →
+  `pvp_flag_off`. So "Discord" is the PvP-enabled alignment and "Order" the peaceful one, and the
+  data was 1,498 toggles across 115 characters waiting to be read.
+- `pvp_flag_state` (a `security_invoker` view) is the latest line per character. `/pvp` lists
+  "Following Discord now" with how long ago, only when someone is. Measured tonight: 22 characters
+  following Discord, 5 of them toggled in the last week.
+- ⚠ Self-only lines, so only characters running Mimic have a state. A guildmate without Mimic is
+  invisible here; their flag shows only when a fight names them.
+
+### Buffs and debuffs fade on the entity's own tick (agent 3.7.32/3.7.33 beta)
+- The rule, in the guild lead's words: *"debuffs and buffs wear off on entity's ticks, which do not
+  correspond with the server ticks..rather with when an entity spawned."* The server counts a buff's
+  ticks down once per beat of the mob's own 6 s timer, started at spawn; the "server tick" Zeal
+  shows (gauge 24) is the *player's* own beat, not the mob's.
+- `_entityTickFadeAt(landedMs, durTicks, tick)`: an N-tick buff fades on the Nth of the mob's beats
+  after it landed — the first beat strictly after landing, then N−1 more. That is up to 6 s earlier
+  than the naive landed + N × 6 s. With no learned tick the naive estimate stands and `snapped` is
+  false.
+- Used by the trigger window's spell timer bars (a ⏱ after the effect when snapped) and Target
+  Info's buff/debuff rows (`tick_snapped`). The mob-tick learner (§50) feeds it: a DoT ticking on
+  the mob, or a charm break.
+- **Not yet:** six more expiry sites still use landed + N × 6 s (pet buffs, the slow tracker, the
+  buff timeline, the target-buff relay rows), and **other raiders' buffs** — each player's own beat
+  is their gauge 24, which their agent has and could relay in the live-state upload so the buff
+  queue and Extended Target snap too. Both are queued in STATUS.
+- "Don't forget about server ticks" is read two ways and both are done: the Tick overlay is in the
+  stable, and the entity-tick rule now governs mob timers.
+
+### The slip: 3.7.32 went out red
+`npm test | grep …` reports grep's exit status, not the suite's, so the beta push chain did not stop
+on six failing tests (`pacify-tracking`, which slices `targetBuffsFor` alone and met the new helper
+calls as a ReferenceError). Fixed in 3.7.33 minutes later with the repo's `typeof` guard; behaviour
+in the running agent never changed. **Rule:** `set -o pipefail` (or test the suite's own exit code)
+in every push chain. Recorded because the fleet hot-swaps the agent from the beta ref.
+
+### The catalog and the 3.0 plan
+- `docs/DESIGN-overlay-catalog.md` — every overlay's identity, data sources down to the Zeal pipe
+  type, outputs, surfaces, dependencies, raid impact, persisted state and caveats; the shared
+  machinery; **twelve findings** the sweep turned up (the two that matter: the DPS HUD and Threat
+  meter never know who "you" are, and the active-character flip-flop); and the data contract a
+  builder needs.
+- `docs/DESIGN-mimic-3.0-overlay-builder.md` — requirements R1–R10 from the ask; what exists to
+  build on (UI Studio, the HUD's parts builder, panel overlays, the dock, auto-arrange, the ini
+  reader, the character knowledge already on the platform); **the access question** with four
+  options costed the guild lead's way (ini files now; a Win32 window-geometry helper next; a Zeal
+  "ui windows" pipe message as the standing upstream ask; screen capture only as a one-shot
+  self-check, never for layout); the spec → signal → part architecture with sample data per
+  signal; six phases sized at **21–34 sessions**; risks; and seven questions for the guild lead.
+- **October 1:** the full 3.0 is not achievable in four days, one of them a raid night. What is:
+  **3.0-alpha.1** — the alpha channel, the signal registry with sample data, the two identity fixes,
+  and the first builder canvas (EQ's windows and Mimic's overlays together, snapping, per-resolution
+  save, fake numbers while arranging). The plan says so plainly rather than promising the rest.
+
+### Where
+- Stable: `7f82926d` on main; beta re-park `d48a258e`, fix `3.7.33`.
+- Bot: `_announceOptinPvpOnce`; web: `loadFlagged`, the Day window; agent: `_entityTickFadeAt`,
+  `_serverTicksNow`; migrations `20260927040000`, `20260927040100`.
+- Tests: `announce-optin-pvp` (4), `pvp-flag-state` (4), `entity-tick-fade` (8, 6 of 6 mutants
+  killed), `pvp-fight-sizes` (5, 2 of 2 mutants killed).
 
 
 

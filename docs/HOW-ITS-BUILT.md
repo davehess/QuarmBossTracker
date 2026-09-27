@@ -784,6 +784,18 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 `test/dashboard-join-beta.test.js`.
 
+### Entity ticks: buffs fade on the mob's own beat (agent 3.7.32, §57)
+- Every NPC counts buff ticks on its own 6 s timer, started at spawn — not the server tick Zeal
+  shows (gauge 24, which is the *player's* own beat). `_noteMobTick` learns a mob's beat from DoT
+  ticks and charm breaks; `_entityTickFadeAt(landedMs, durTicks, tick)` puts an N-tick buff's fade on
+  the Nth beat after it landed (up to 6 s earlier than landed + N × 6 s) and says `snapped`.
+- Used by the trigger window's spell timer bars (`tick_snapped`, a ⏱ on the effect) and Target
+  Info's buff/debuff rows. Not yet: pet buffs, the slow tracker, the buff timeline, other raiders'
+  buffs (their gauge-24 beat is not relayed).
+- The Tick overlay (§56) shows the beats themselves. Test: `test/entity-tick-fade.test.js`.
+- The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
+  `docs/DESIGN-mimic-3.0-overlay-builder.md`.
+
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
 One column, `feedback.screenshot_paths` (text[]), and one PRIVATE Storage bucket,
@@ -1230,6 +1242,17 @@ Backfilled (`--since`) kills record but never post/predict.
 - The bot keeps only `characters`-roster names, then `_pvpUnseen` / `_pvpNeighbours` drop a report of
   an assist another witness already stored (same assister and victim within ±30 s). A kill replayed from
   an old log goes through the same check on the killer (§55).
+
+**Fight sizes** (§57, migration `20260927040000`): `pvp_fights` returns `zek_players`, `ally_players`
+and `players_by_guild` — everyone a Wolf Pack log saw on the field (the dead, their killers, the
+assisters ±3 min, /who in the zone from 4 min before to 1 min after), one row per name with the best
+guild any source gave; Zek/Rise of Zek are the opponents, other guilds allies, no guild on neither
+side. A floor. `fightSides()` in `web/lib/pvpMedia.ts`; drawn on the beta fight cards and table.
+
+**Who follows Discord** (§57, migration `20260927040100`): the `pvp_flag_state` view is the latest
+`pvp_flag_on` / `pvp_flag_off` fun_event per character (the agent's `parsePvpFlag`: "You are now
+player kill and follow the ways of Discord." / "You now follow the ways of Order."); `/pvp` lists the
+flagged with `loadFlagged()`. Self-only lines, so only characters running Mimic.
 
 **Opt-in log parses post one note** (§55, agent 3.7.30 / bot 3.1.156):
 - A replayed log never posts per event: the relay, boss timers, fight cards and the 🪶 assist note all
