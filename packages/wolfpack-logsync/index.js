@@ -7716,6 +7716,11 @@ const DS_PAIR_WINDOW_MS = 1000;
 // above the tank's known DS buffs than this is a proc or a spell, not a shield.
 const DS_UNLISTED_SLACK = 30;
 
+// PvP assist window: a hit or a debuff on a player this long before their
+// death counts as an assist. 30 s → 120 s on 2026-06-21, → 4 min on 2026-09-27
+// (the guild lead: "expand the timeframe to 4 minutes").
+const PVP_ASSIST_WINDOW_MS = 240_000;
+
 class EncounterBuilder {
   constructor({ character, onFlush, silent = false }) {
     this.character  = character;
@@ -7762,12 +7767,15 @@ class EncounterBuilder {
     // the hit WAS a shield is decided in _settleDsPending. Per-encounter,
     // cleared on reset since mob identities don't carry across encounters.
     this._lastIncomingHit = new Map();   // mob.toLowerCase() → { tank, tsMs }
-    // PvP assist correlation — uploader's outbound damage to player names,
-    // rolling 30s window. When a PvP death broadcast names one of these
-    // victims and the killing blow wasn't ours, we emit an assist event.
-    // Per-builder (per-encounter); cross-fight assists are intentionally
-    // missed since 30s comfortably covers any real engagement → death pair.
-    this._pvpDamageWindow = new Map();   // victim.toLowerCase() → { tsMs, lineSample }
+    // PvP assist evidence, per victim: everyone this log SAW hit or debuff a
+    // player — our own character and any other player (a pet's work counts for
+    // its owner). When a PvP death broadcast names the victim, everyone in here
+    // inside PVP_ASSIST_WINDOW_MS except the killer is an assist. The bot keeps
+    // only names on the guild roster, so this can hold anyone.
+    this._pvpAssistWindow = new Map();   // victimLower → Map(assisterLower → { name, tsMs, kinds[] })
+    this._pvpStampCount   = 0;           // prune cadence
+    this._pvpCastStarts   = [];          // other players' "<X> begins to cast a spell." { caster, atMs, used }
+    this._pvpSelfCasts    = [];          // this log's "You begin casting <Spell>." { spellLower, atMs, used }
     // Held DS candidate — an anonymous non-melee hit that landed within a
     // second of the mob connecting on a player. It has NOT been added yet:
     // add() parks it here and returns, and _settleDsPending re-adds it once
@@ -8306,45 +8314,136 @@ class EncounterBuilder {
     try { return _knownDsPerHitFor(name); } catch { return 0; }
   }
 
-  // Given a PvP broadcast (from parsePvpBroadcast), check whether the
-  // uploader had recently damaged the named victim AND someone else landed
-  // the killing blow. Returns an assist event object suitable for the
-  // pvp_assists table, or null. Consumes the damage-window entry on a match
-  // so a single damage burst doesn't generate multiple assists from one
-  // back-to-back kill chain. The window is 30s, matching the offline audit.
-  _checkPvpAssist(pvpBcast, opts) {
-    if (!pvpBcast || !pvpBcast.victim) return null;
-    if (pvpBcast.killType !== 'pvp' && pvpBcast.killType !== 'npc') return null;
+  // Given a PvP broadcast (from parsePvpBroadcast), return one assist row per
+  // player this log saw hit or debuff the victim inside PVP_ASSIST_WINDOW_MS,
+  // except the killer (a kill is not an assist). Rows for the pvp_assists
+  // table; [] when nobody qualifies. The victim's evidence is used up either
+  // way, so one burst never credits a second death.
+  //
+  // Guildmates, not just ourselves (the guild lead, 2026-09-27: "credit
+  // assists to guildmates our agents see"): a raider without Mimic still gets
+  // credit when anyone running it saw their work. The bot drops names not on
+  // the roster and merges the same assist reported by several raiders.
+  _checkPvpAssists(pvpBcast, opts) {
+    if (!pvpBcast || !pvpBcast.victim) return [];
+    if (pvpBcast.killType !== 'pvp' && pvpBcast.killType !== 'npc') return [];
     const victimLower = String(pvpBcast.victim).toLowerCase();
-    const wd = this._pvpDamageWindow.get(victimLower);
-    if (!wd) return null;
+    const per = this._pvpAssistWindow.get(victimLower);
+    if (!per) return [];
+    this._pvpAssistWindow.delete(victimLower);
     const evTsMs = Date.parse(pvpBcast.ts) || Date.now();
-    const gapMs = evTsMs - wd.tsMs;
-    // Window widened 30s → 120s on 2026-06-21 (the guild lead — Interlude
-    // tar-goo death, multiple Wolf Pack characters had damaged him in
-    // the fight but the broadcast landed after a regroup pause; every
-    // 30s window had already expired). Two minutes covers a typical
-    // disengage-and-finish scenario (target runs, ports, dies in a
-    // hazard) while still being short enough that a damage burst from
-    // an unrelated earlier fight doesn't masquerade as an assist.
-    if (gapMs < 0 || gapMs > 120_000) return null;
-    // Don't credit ourselves an "assist" on our own kill — that's a kill.
     const killerLower = pvpBcast.killer ? String(pvpBcast.killer).toLowerCase() : '';
-    const meLower = String(this.character || '').toLowerCase();
-    if (meLower && killerLower === meLower) return null;
-    this._pvpDamageWindow.delete(victimLower);   // consume — one assist per damage burst
-    return {
-      assister:      this.character,
-      victim:        pvpBcast.victim,
-      victim_guild:  pvpBcast.victimGuild || null,
-      killer:        pvpBcast.killer || null,
-      killer_is_npc: pvpBcast.killType === 'npc',
-      zone:          pvpBcast.zone || null,
-      killed_at:     pvpBcast.ts,
-      gap_seconds:   Math.round(gapMs / 1000),
-      raw_text:      (pvpBcast.text || '').slice(0, 500),
-      source:        (opts && opts.source) || 'live_agent',
-    };
+    const out = [];
+    for (const [assisterLower, e] of per) {
+      const gapMs = evTsMs - e.tsMs;
+      if (gapMs < 0 || gapMs > PVP_ASSIST_WINDOW_MS) continue;
+      if (assisterLower === killerLower || assisterLower === victimLower) continue;
+      out.push({
+        assister:      e.name,
+        victim:        pvpBcast.victim,
+        victim_guild:  pvpBcast.victimGuild || null,
+        killer:        pvpBcast.killer || null,
+        killer_is_npc: pvpBcast.killType === 'npc',
+        zone:          pvpBcast.zone || null,
+        killed_at:     pvpBcast.ts,
+        gap_seconds:   Math.round(gapMs / 1000),
+        evidence:      e.kinds.join('+'),   // 'damage', 'spell' or 'damage+spell'
+        raw_text:      (pvpBcast.text || '').slice(0, 500),
+        source:        (opts && opts.source) || 'live_agent',
+      });
+    }
+    return out;
+  }
+
+  // Record that `assister` hit ('damage') or debuffed ('spell') `victim`.
+  _pvpStamp(victim, assister, tsMs, kind) {
+    const vk = String(victim).toLowerCase();
+    let per = this._pvpAssistWindow.get(vk);
+    if (!per) { per = new Map(); this._pvpAssistWindow.set(vk, per); }
+    const ak = String(assister).toLowerCase();
+    const prev = per.get(ak);
+    const kinds = prev ? (prev.kinds.includes(kind) ? prev.kinds : prev.kinds.concat(kind)) : [kind];
+    per.set(ak, { name: prev ? prev.name : String(assister), tsMs: Math.max(tsMs, prev ? prev.tsMs : 0), kinds });
+    // Every player's hits on every single-word name land here, most of them
+    // mobs that never die in a PvP broadcast — so drop what has aged out.
+    if (++this._pvpStampCount % 256 === 0) {
+      for (const [v, m] of this._pvpAssistWindow) {
+        for (const [a, x] of m) if (tsMs - x.tsMs > PVP_ASSIST_WINDOW_MS) m.delete(a);
+        if (!m.size) this._pvpAssistWindow.delete(v);
+      }
+    }
+  }
+
+  // Spell evidence from a RAW log line (the guild lead, 2026-09-27: "attribute
+  // when a guild member has cast non-damage on those characters … make sure
+  // all of this can be parsed through opt-in logs"). The live tail and the
+  // opt-in-log backfill both hand every line here, before shouldKeep drops the
+  // landing lines, so both paths credit the same assists.
+  //
+  // A landing line never names its caster ("Velisblacksword yawns."), so:
+  //   · one of OUR casts of that spell, begun up to 12 s earlier → us;
+  //   · else the player whose "<X> begins to cast a spell." started closest to
+  //     the spell's cast time before the landing (±1.5 s, or ±35% for long
+  //     casts — spell haste), each start used once; nobody fits → nobody.
+  // Timed detrimental spells only (the parseDebuffLanding index): slows,
+  // snares, roots, mez, Tash/Malo, DoTs.
+  _pvpAssistLine(line) {
+    if (!line || line.length < 30) return;
+    const ts = parseEqTimestamp(line);
+    const tsMs = ts ? ts.getTime() : Date.now();
+    if (line.indexOf('begins to cast a spell') !== -1) {
+      const m = line.match(_OTHER_CAST_RX);
+      if (m) this._pvpNoteCast(this._pvpCastStarts, { caster: m[1], atMs: tsMs });
+      return;
+    }
+    if (line.indexOf('You begin') !== -1) {
+      const m = line.match(_CAST_BEGIN_RX);
+      if (m) this._pvpNoteCast(this._pvpSelfCasts, { spellLower: m[1].trim().toLowerCase(), atMs: tsMs });
+      return;
+    }
+    const dl = this._pvpParseLanding(line);
+    if (!dl || !dl.target || !_looksLikePlayerName(dl.target)) return;
+    if (this.character && dl.target.toLowerCase() === String(this.character).toLowerCase()) return;
+    const caster = this._pvpCasterFor(dl, tsMs);
+    if (caster) this._pvpStamp(dl.target, caster, tsMs, 'spell');
+  }
+  _pvpNoteCast(arr, entry) {
+    arr.push(entry);
+    while (arr.length > 200 || (arr.length && entry.atMs - arr[0].atMs > 15_000)) arr.shift();
+  }
+  // Seams for tests: the landing index and cast times come from the catalog.
+  _pvpParseLanding(line) { return parseDebuffLanding(line, this.character); }
+  _pvpCastMs(spellLower) {
+    const e = _spellByNameLower.get(spellLower);
+    const ms = e ? Number(e.cast_ms) : NaN;
+    return Number.isFinite(ms) ? ms : NaN;
+  }
+  _pvpCasterFor(dl, landMs) {
+    const family = (dl.family && dl.family.length ? dl.family : [dl.spell_name])
+      .filter(Boolean).map(s => String(s).toLowerCase());
+    for (let i = this._pvpSelfCasts.length - 1; i >= 0; i--) {
+      const c = this._pvpSelfCasts[i];
+      const lead = landMs - c.atMs;
+      if (c.used || lead < 0 || lead > 12_000 || !family.includes(c.spellLower)) continue;
+      c.used = true;
+      return this.character || null;
+    }
+    const times = family.map(n => this._pvpCastMs(n)).filter(Number.isFinite);
+    const targetLower = String(dl.target).toLowerCase();
+    let best = null, bestMiss = Infinity;
+    for (const c of this._pvpCastStarts) {
+      const lead = landMs - c.atMs;
+      if (c.used || lead < 0 || lead > 12_000 || c.caster.toLowerCase() === targetLower) continue;
+      // How far outside the tolerance this start is (≤ 0 = fits). With no
+      // cast time known, the nearest start inside 7 s.
+      const miss = times.length
+        ? Math.min(...times.map(ms => Math.abs(lead - ms) - Math.max(1500, 0.35 * ms)))
+        : lead - 7000;
+      if (miss <= 0 && miss < bestMiss) { best = c; bestMiss = miss; }
+    }
+    if (!best) return null;
+    best.used = true;
+    return best.caster;
   }
 
   add(event) {
@@ -8735,15 +8834,15 @@ class EncounterBuilder {
         }
       }
 
-      // 3) PvP assist window: uploader's outbound damage to a plausible
-      // player name (single Capitalized word, not "YOU"). Stamps a sliding
-      // window keyed by victim.toLowerCase() so the next PvP death broadcast
-      // naming the same victim within 120s can correlate (handled outside
-      // the builder, in the tail/backfill driver). Self-damage to mobs /
-      // heals are skipped automatically — _isMob/_isPlayer already excluded
-      // them.
+      // 3) PvP assist window: damage to a plausible player name (single
+      // Capitalized word, not "YOU"), stamped under the victim so the next PvP
+      // death broadcast naming them inside PVP_ASSIST_WINDOW_MS can credit
+      // everyone on it (handled outside the builder, in the tail/backfill
+      // driver). Since 2026-09-27 that is ANY player we saw hit them, not only
+      // us — a pet's hit counts for its owner (petLeaders, the charm trackers,
+      // or a "<Owner>`s warder" name) — and the bot keeps only roster names.
       //
-      // "Outbound" includes:
+      // "Outbound" (credited to this log's character) includes:
       //   • event.attacker === null            ("You slash X" form)
       //   • event.attacker === this.character  (named-self melee form)
       //   • event.attacker is one of OUR PETS  (necro/mage/beastlord pet,
@@ -8764,13 +8863,17 @@ class EncounterBuilder {
       const isMineOutbound = (event.attacker === null)
         || (event.attacker === this.character)
         || _isMyPet;
-      if (isMineOutbound && _isPlayer(def)
+      const _warder   = /^([A-Z][a-z]+)`s warder$/.exec(att);
+      const _assister = isMineOutbound ? this.character
+        : _petOwner ? String(_petOwner)
+        : _warder ? _warder[1]
+        : (/^[A-Z][a-z]+$/.test(att) && att !== 'You') ? att
+        : null;
+      if (_assister && _isPlayer(def)
           && def !== 'YOU' && def !== 'You'
-          && def !== this.character) {
-        this._pvpDamageWindow.set(def.toLowerCase(), {
-          tsMs,
-          line: event._line || (event.ability ? `${event.ability} for ${event.amount}` : ''),
-        });
+          && def !== this.character
+          && String(_assister).toLowerCase() !== def.toLowerCase()) {
+        this._pvpStamp(def, _assister, tsMs, 'damage');
       }
 
       // 2) DS candidate: anonymous non-melee hit on a mob that connected on a
@@ -30592,6 +30695,10 @@ function runOptinBackfill(files, opts = {}) {
             // id. A backfilled landing has no knowable spawn; null is the truth.
             const bcEvt = parseBuffLanding(line, f.character);
             if (bcEvt) buffCastBuffer.push(bcEvt);
+            // PvP assist spell evidence (cast starts + debuff landings) — the
+            // same hook the live tail runs, so a replayed night credits exactly
+            // what live play would have. Before shouldKeep, which drops landings.
+            try { builder._pvpAssistLine(line); } catch (e) { void e; }
 
             // PvP kill broadcasts — record to the ledger from history, but
             // flagged backfill so the bot won't re-post them to Discord.
@@ -30599,16 +30706,16 @@ function runOptinBackfill(files, opts = {}) {
             if (pvpBcast) {
               pvpBatch.push({ ...pvpBcast, backfill: true });
               if (pvpBatch.length >= 200) flushPvp(true).catch(() => {});
-              // Assist correlation — same builder.add() that runs below also
-              // stamps the damage window, so by the time a kill broadcast
-              // lands here the recent self-damage to that victim is already
+              // Assist correlation — builder.add() below stamps the damage
+              // evidence and _pvpAssistLine above the spell evidence, so by the
+              // time a kill broadcast lands here everyone on the victim is
               // recorded. Tag source 'log_backfill' so the bot can distinguish
               // historical assists from live ones.
               try {
-                const assist = builder && builder._checkPvpAssist
-                  ? builder._checkPvpAssist(pvpBcast, { source: 'log_backfill' })
-                  : null;
-                if (assist) pvpAssistBuffer.push(assist);
+                const assists = builder && builder._checkPvpAssists
+                  ? builder._checkPvpAssists(pvpBcast, { source: 'log_backfill' })
+                  : [];
+                for (const a of assists) pvpAssistBuffer.push(a);
               } catch (e) { void e; }
             }
 
@@ -33271,7 +33378,12 @@ function uploadPvpAssists(assists, { botUrl, token, dryRun }) {
       console.log(`[pvp-assist] ${a.assister} → ${a.victim} (killed by ${a.killer || '?'}${a.killer_is_npc ? ' [npc]' : ''}, ${a.gap_seconds}s gap)`);
     return Promise.resolve();
   }
-  enqueueUpload('pvp_assists', { agent_version: AGENT_VERSION, assists });
+  // 200 per POST: the bot refuses a body over 256 KB (413, which the queue
+  // treats as permanent), and since guildmates count, one replayed log can
+  // hold thousands of assists (raw_text alone is up to 500 chars each).
+  for (let i = 0; i < assists.length; i += 200) {
+    enqueueUpload('pvp_assists', { agent_version: AGENT_VERSION, assists: assists.slice(i, i + 200) });
+  }
   return Promise.resolve();
 }
 
@@ -42131,16 +42243,15 @@ async function main() {
             const hk = _pvpBcastToHateKill(pvpBcast);
             if (hk) hateKillBuffer.push(hk);
 
-            // Assist correlation: if the uploader was damaging this victim in
-            // the last 30s AND the killing blow was someone else (or an NPC),
-            // emit an assist row. cross-log dedup also applies — the same
-            // assist won't post twice when multiple of our logs witness the
-            // same death of someone we'd been swinging at.
+            // Assist correlation: one row per player this log saw hit or
+            // debuff the victim in the last 4 min, the killer excepted. The
+            // cross-log dedup also applies — the same assist won't post twice
+            // when several of our logs witness the same death.
             try {
-              const assist = b.builder && b.builder._checkPvpAssist
-                ? b.builder._checkPvpAssist(pvpBcast, { source: 'live_agent' })
-                : null;
-              if (assist) {
+              const assists = b.builder && b.builder._checkPvpAssists
+                ? b.builder._checkPvpAssists(pvpBcast, { source: 'live_agent' })
+                : [];
+              for (const assist of assists) {
                 const _aFp = 'assist|' + (assist.assister || '').toLowerCase() + '|' + _pvpFp;
                 if (!_crossLogDupe(_aFp)) pvpAssistBuffer.push(assist);
               }
@@ -42222,6 +42333,9 @@ async function main() {
         noteSongAoeLine(line, b.character);
         // Public CH landings ("X is completely healed.") → heal-attribution ring.
         if (!_sourceExcluded) noteHealLandLine(line);
+        // PvP assist spell evidence — cast starts + debuff landings on players.
+        // The opt-in-log backfill runs the same hook, so both credit alike.
+        if (!_sourceExcluded) { try { b.builder._pvpAssistLine(line); } catch (e) { void e; } }
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
         // NPC cast-starts + landings → "what did that mob just cast", and the
