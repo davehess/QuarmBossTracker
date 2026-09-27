@@ -102,6 +102,8 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Mimic feedback can be acknowledged from Discord (bot 3.1.160, 2026-09-27).** Mimic's reports were plain posts with no buttons, so nobody could ack them. They now carry 📬 Acknowledge / ❌ Not Implementing like web reports; the handlers work on plain posts (submitter and category from the feedback row), DM the reporter on ack, mark the first line of the post, and move the row to `acked` / `addressed` so `/admin/feedback` agrees. The 11 open Mimic reports got the buttons once at boot (bot_kv latch). `DECISIONS-2026-09-21.md` §59.
+- **⏳ The Vex Thal celebration, armed for tonight, Sunday 2026-09-27 (bot 3.1.159, web 1.8.28).** On the Aten Ha Ra kill line every Mimic in the zone flashes two lines — the congratulations and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, `/sounds/vex-thal-cleared.wav`); the bot posts one latched embed to #raid-chat with the same lines computed live. The film posts itself: paste its link into the `celebration_video_url` tuning key and the bot puts the video in #raid-chat within a minute (after the kill embed, once). **After the raid: disable the trigger.** `DECISIONS-2026-09-21.md` §58, §58a.
 - **⏳ Zeal: tags survive a crash, relog or character switch; tags from other zones ignored (branch `tag-persistence` on the guild lead's fork, not built yet, 2026-09-25).** Tags were memory-only and matched by spawn id alone. Now saved per character by zone + spawn id + name and restored; received tags must match the name. **2026-09-26:** players are saved by name instead (their spawn id changes each zone-in), so a tagged player keeps the tag through their zoning, zoning with you, a camp or a death (`9a3fd09`, in `test-all` `d32bed1`). `docs/upstream/zeal-tag-persistence/`, `DECISIONS-2026-09-21.md` §28, §40.
 - **✅ Agent freeze at the end of a boss fight — fixed on beta, agent 3.7.17 (2026-09-25; stable still carries it).** Peer trackers flushed each other recursively until the stack overflowed (the guild lead's Emperor Ssraeshza stall, and three earlier cascades that went unnoticed). Reset before propagating; `test/cross-flush-no-recursion.test.js`. `DECISIONS-2026-09-21.md` §23.
 - **⏳ Agent: empty upload queue reported as "corrupt" at every boot (2026-09-25, found in passing).** Zero-byte queue file → loader's legacy `JSON.parse('')` → moved aside as `.corrupt-*`. Harmless but noisy; one-line fix in `_loadQueueFromDisk` (treat an empty buffer as an empty queue). §23.
@@ -119,6 +121,34 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ /about with pictures, two layouts on beta (`f2db9423`, 2026-09-26).** `b.wolfpack.quest/about?v=b` (Illustrated: each chapter opens with a figure) and `?v=c` (Tour: pictures first, text folded). Figures drawn in overlay chrome with invented names, a real Melody render, Zeal marks, the wolf; facts refreshed (five months, 4,000+ tests, 240-odd migrations, a chapter for Zeal marks and PvP fights). Open: the guild lead picks B or C. `DECISIONS-2026-09-21.md` §47.
 - **⏳ PvP fight history: every death stored, grouped into fights (bot 3.1.152, migration `20260926085942`, 2026-09-26).** `pvp_deaths` takes every PvP death broadcast, any guilds (`pvp_kills` only has Wolf Pack on one side), backfilled 30 days from the relay rows. `pvp_fights()` groups them: waves of deaths 3 min apart with a player kill, joined when under 20 min apart. **On beta (`fd1d7299`): /pvp?v=b (fight cards, the night's film on its biggest fight) and /pvp?v=c (fights table + a film gallery)**, with the Vex Thal videos and Medal clips. Open: the guild lead picks B or C, then it graduates to main with a roadmap entry; re-send the two screenshots; assists are only our own agents' (see §46). `DECISIONS-2026-09-21.md` §46.
 - **⏳ Mimic: the DIRGE TACTICAL NUKE board on Melody (agent 3.7.22 on beta `611b145b`; round two `bb40c989`, 2026-09-26).** A DIRGE switch with the current Dirge count; six numbered steps in singing order (Harmonize, Selo's 2:00+, Guardian Rhythms, Psalm of Mystic Shielding, Niv's / Breath of Harmony, Amplification). All checked → the board slides out and the cover over the key lifts; Puretone turns the key and reveals one numbered button per Dirge the max mana holds (800 each), lit by current mana, the one being sung filling. DISC key bottom right; "Dirge Team 6 · Tactical Nuke" label. **Public demo for Discord: wolfpack.quest/mimic/dirge** (web 1.8.18). Also fixes the between-casts repaint that froze the Melody list (on stable too). Open: the guild lead to confirm Selo's 2:00 (3:00 is past its 2:30 max), measure the Dirge recast in game if there is one (data says 0.0 s), and try it on a bard. `DECISIONS-2026-09-21.md` §45.
+- **⏳ Mimic 3.0 — the open overlay builder (planned 2026-09-27).** `docs/DESIGN-overlay-catalog.md`
+  is the inventory of every overlay (data sources, outputs, surfaces, dependencies, raid impact) and
+  `docs/DESIGN-mimic-3.0-overlay-builder.md` the plan: requirements R1–R10, the four access options
+  costed, the spec/signal/part architecture, six phases sized at 21–34 sessions, and the October 1
+  answer (alpha.1 yes, full 3.0 no). Waiting on the guild lead's seven answers (plan §8).
+  `DECISIONS-2026-09-21.md` §57.
+- **⏳ Findings the overlay catalog turned up (2026-09-27, not yet fixed).** Twelve, listed in the
+  catalog's §3. The two that matter most: the DPS HUD and Threat meter never know who "you" are
+  (`/api/state` sends none of the keys they read, so the highlight and the always-show-YOU row never
+  happen), and the active-character flip-flop (§52). Then: Tank's CH urgency colour reads the local
+  HP; Command Center rez dismissals are not applied from other clients and `hpValText` lacks the HP
+  floor; PoP raids' Setup THIS uses the wrong key; the dock has no bounds key; Pets is `pets` vs
+  `pet`; display changes snap back only eight windows; charProfiles carry no positions; two stale
+  headers; UI Studio hard-codes port 7779; the Charm window can be throttled in the background.
+- **✅ Stable Mimic 2.7.2 (2026-09-27, agent 3.7.31; bot 3.1.157, web 1.8.27).** Beta.15–.21
+  promoted. Beta re-parked at 2.7.3 (agent 3.7.32). The one-time #pvp note posts once the installer
+  is on the release. `DECISIONS-2026-09-21.md` §57.
+- **⏳ PvP: fight sizes, who follows Discord, a Day window (2026-09-27).**
+  - `pvp_fights` now says who was on the field per side (Zek v allies) and per guild, a floor from
+    the dead, their killers, the assisters and /who. Shown on the beta fight cards and table.
+  - `/pvp` lists who follows Discord now (PvP-flagged), from the toggle lines the agent has parsed
+    since 2025-02; self-only lines, so only Mimic characters.
+  - Open: a side count for fights where nobody typed /who is just the dead and the killers.
+- **⏳ Buffs and debuffs fade on the entity's own tick (agent 3.7.32 on beta, 2026-09-27).**
+  `_entityTickFadeAt` snaps a timer to the mob's learned beat; the trigger window's spell bars and
+  Target Info's rows use it. Open: six more expiry sites (pet buffs, the slow tracker, the buff
+  timeline) still use landed + N × 6 s; players' own ticks (gauge 24) are not yet relayed for
+  buffs on other raiders. `DECISIONS-2026-09-21.md` §57.
 - **⏳ Tick overlay, formerly Zeal health (agent 3.7.31 on beta, 2026-09-27).**
   - The co-leader's standalone server tick: one countdown per character on Zeal, plus a charmed mob's
     own tick.

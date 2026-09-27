@@ -114,7 +114,10 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Tick overlay (was Zeal health)** | **On beta, agent 3.7.31 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials (the other goes when a stable is cut) |
+| **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
+| **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
+| **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
+| **Tick overlay (was Zeal health)** | **Stable in 2.7.2 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials |
 | **PvP assists for guildmates our agents see** | **Bot 3.1.156 on main; agent 3.7.30 on beta (§54, §55).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way. **§55:** an opt-in parse posts ONE #pvp note (@you, N new kills + assists, per guildmate) and nothing per old event; replayed kills no longer double. **The 23 duplicate kill rows were deleted 2026-09-27 (§56)** | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs; the note lands in #pvp ~90 s after it finishes. Assists from raiders on stable arrive when a stable is cut |
 | **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
@@ -3119,6 +3122,225 @@ past that; 5 s is also where the agent warns. Clicking it opens:
   - `test/tick-overlay.test.js`: 10 tests, 11 of 11 mutants killed.
   - `test/tray-overlay-order.test.js` follows the label.
 - Both layouts were rendered in Chromium with sample data. That caught the bar rows not lining up.
+
+## 57. Stable 2.7.2; the #pvp note; a Day window; fight sizes; who follows Discord; buffs on the entity's tick; the overlay catalog and the 3.0 plan (2026-09-27)
+
+**The calls (the guild lead, one message):** *"do those and move us up to a new patch release. make a
+note in the PVP channel for people to run their opt in logs to get historical credit on pvp kills
+and assists. also add in a 24hr filter for pvp, and try to figure out fight sizes for opponents vs
+allies when a fight happens in pvp. start looking for the messages when people #togglepvp in game
+and follow the way of discord vs order. don't forget about server ticks. debuffs and buffs wear off
+on entity's ticks, which do not correspond with the server ticks..rather with when an entity
+spawned. every component of the overlays … need to be cataloged in a master overlay design doc and
+then prepared for an open overlay builder system that I want to develop for a 3.0 release for
+mimic … start a full life cycle research and planning cycle … ideal to complete before October 1st."*
+And the follow-up: *"this can be an extension of the UI builder, but it needs to be a lot smarter …
+elements should have displayed sample data … build out overlays on the fly … snap to other windows
+inside the EQ client from native or zeal … adaptivity to a specific character's abilities, clickies,
+levels."*
+
+### Stable Mimic 2.7.2 (agent 3.7.31) — `7f82926d`, the tip of its own push
+- File-level promotion from beta `07a4765c`: `apps/mimic/`, `packages/wolfpack-logsync/` and their
+  tests. Beta.15–.21 all ship: guildmate PvP assists + the one-note parse, the Tick overlay, timer
+  bars, the /who window, feedback screenshots, the DIRGE board, HUD tracking arrows, the corpse DM,
+  Settings drafts, the ⤴ beta and ⏻ Quit buttons, the tray and config fixes.
+- **Four beta-only web tests were left behind** (`about-figures`, `pvp-fights-page`, `tradeskills`,
+  `zeal-icons-page`): they test web variants that exist only on beta. The first promotion attempt
+  pulled them in and went red; the rule for next time is `--diff-filter=AM` on the test list and
+  then drop any test whose subject is a beta-only web file.
+- Beta re-parked at **2.7.3** (agent 3.7.32, then 3.7.33 — see the slip below).
+
+### The #pvp note (bot 3.1.157)
+`_announceOptinPvpOnce`: the 2.7.1 raid-chat card's shape — bot_kv latch (fail-closed), a wait for
+the **stable v2.7.2 release to carry its .exe**, one embed to the PvP thread/channel, pinging nobody.
+It waits for 2.7.2 because guildmate assists and the one-note parse reach stable users only in that
+build; a note before it would send people to a catch-up that still floods or credits only themselves.
+
+### A Day window on /pvp (web 1.8.26)
+The picker already knew `1d`; /pvp now offers it.
+
+### Fight sizes (migration `20260927040000`, applied)
+- `pvp_fights` returns `zek_players`, `ally_players`, `players_by_guild`.
+- "On the field" = everyone a Wolf Pack log saw: the dead and their killers (`pvp_deaths`), the
+  assisters (`pvp_assists`, ±3 min round the fight), everyone `/who` listed in the zone from 4 min
+  before the first death to 1 min after the last. One row per name, best guild any source gave.
+- Sides: Zek and Rise of Zek are the opponents (the death split's rule); any other guild is an ally;
+  no guild or /anon is listed by guild but on neither side.
+- **It is a floor.** A /who nobody typed, an anon player, a raider whose log never uploaded — all
+  missing. /who's short zone names ("vexthal") don't match the broadcast's long name and are left
+  out. The cards and table say "at least".
+- Drawn on the beta fight cards ("On the field: Zek 14 v 21 allies (Wolf Pack 9 · …) · at least")
+  and the table's Sides column. The default page is unchanged until the layout pick (§46).
+
+### Who follows Discord (migration `20260927040100`, applied)
+- **The toggle lines were already parsed** — since 2025-02, `parsePvpFlag`: *"You are now player
+  kill and follow the ways of Discord."* → `pvp_flag_on`; *"You now follow the ways of Order."* →
+  `pvp_flag_off`. So "Discord" is the PvP-enabled alignment and "Order" the peaceful one, and the
+  data was 1,498 toggles across 115 characters waiting to be read.
+- `pvp_flag_state` (a `security_invoker` view) is the latest line per character. `/pvp` lists
+  "Following Discord now" with how long ago, only when someone is. Measured tonight: 22 characters
+  following Discord, 5 of them toggled in the last week.
+- ⚠ Self-only lines, so only characters running Mimic have a state. A guildmate without Mimic is
+  invisible here; their flag shows only when a fight names them.
+
+### Buffs and debuffs fade on the entity's own tick (agent 3.7.32/3.7.33 beta)
+- The rule, in the guild lead's words: *"debuffs and buffs wear off on entity's ticks, which do not
+  correspond with the server ticks..rather with when an entity spawned."* The server counts a buff's
+  ticks down once per beat of the mob's own 6 s timer, started at spawn; the "server tick" Zeal
+  shows (gauge 24) is the *player's* own beat, not the mob's.
+- `_entityTickFadeAt(landedMs, durTicks, tick)`: an N-tick buff fades on the Nth of the mob's beats
+  after it landed — the first beat strictly after landing, then N−1 more. That is up to 6 s earlier
+  than the naive landed + N × 6 s. With no learned tick the naive estimate stands and `snapped` is
+  false.
+- Used by the trigger window's spell timer bars (a ⏱ after the effect when snapped) and Target
+  Info's buff/debuff rows (`tick_snapped`). The mob-tick learner (§50) feeds it: a DoT ticking on
+  the mob, or a charm break.
+- **Not yet:** six more expiry sites still use landed + N × 6 s (pet buffs, the slow tracker, the
+  buff timeline, the target-buff relay rows), and **other raiders' buffs** — each player's own beat
+  is their gauge 24, which their agent has and could relay in the live-state upload so the buff
+  queue and Extended Target snap too. Both are queued in STATUS.
+- "Don't forget about server ticks" is read two ways and both are done: the Tick overlay is in the
+  stable, and the entity-tick rule now governs mob timers.
+
+### The slip: 3.7.32 went out red
+`npm test | grep …` reports grep's exit status, not the suite's, so the beta push chain did not stop
+on six failing tests (`pacify-tracking`, which slices `targetBuffsFor` alone and met the new helper
+calls as a ReferenceError). Fixed in 3.7.33 minutes later with the repo's `typeof` guard; behaviour
+in the running agent never changed. **Rule:** `set -o pipefail` (or test the suite's own exit code)
+in every push chain. Recorded because the fleet hot-swaps the agent from the beta ref.
+
+### The catalog and the 3.0 plan
+- `docs/DESIGN-overlay-catalog.md` — every overlay's identity, data sources down to the Zeal pipe
+  type, outputs, surfaces, dependencies, raid impact, persisted state and caveats; the shared
+  machinery; **twelve findings** the sweep turned up (the two that matter: the DPS HUD and Threat
+  meter never know who "you" are, and the active-character flip-flop); and the data contract a
+  builder needs.
+- `docs/DESIGN-mimic-3.0-overlay-builder.md` — requirements R1–R10 from the ask; what exists to
+  build on (UI Studio, the HUD's parts builder, panel overlays, the dock, auto-arrange, the ini
+  reader, the character knowledge already on the platform); **the access question** with four
+  options costed the guild lead's way (ini files now; a Win32 window-geometry helper next; a Zeal
+  "ui windows" pipe message as the standing upstream ask; screen capture only as a one-shot
+  self-check, never for layout); the spec → signal → part architecture with sample data per
+  signal; six phases sized at **21–34 sessions**; risks; and seven questions for the guild lead.
+- **October 1:** the full 3.0 is not achievable in four days, one of them a raid night. What is:
+  **3.0-alpha.1** — the alpha channel, the signal registry with sample data, the two identity fixes,
+  and the first builder canvas (EQ's windows and Mimic's overlays together, snapping, per-resolution
+  save, fake numbers while arranging). The plan says so plainly rather than promising the rest.
+
+### Where
+- Stable: `7f82926d` on main; beta re-park `d48a258e`, fix `3.7.33`.
+- Bot: `_announceOptinPvpOnce`; web: `loadFlagged`, the Day window; agent: `_entityTickFadeAt`,
+  `_serverTicksNow`; migrations `20260927040000`, `20260927040100`.
+- Tests: `announce-optin-pvp` (4), `pvp-flag-state` (4), `entity-tick-fade` (8, 6 of 6 mutants
+  killed), `pvp-fight-sizes` (5, 2 of 2 mutants killed).
+
+## 58. A one-time celebration for every Mimic user on the Aten Ha Ra kill (2026-09-27, bot 3.1.158, web 1.8.28)
+
+**The ask (the guild lead):** *"how can I create a one time celebration for all miMIC users after
+tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid. I have some ideas about an
+animated anime style video of our raiders all attacking her, with crash cuts on each player and
+their name tag and the things they typically do during a fight against her."*
+
+### The call: no build, three existing channels
+Sunday's raid is 20 hours away and every Mimic on the fleet already polls three things that can
+carry a one-off. Nothing new ships to Mimic; the celebration is DATA on surfaces that exist.
+
+| Moment | Channel | What happens | Where it is set |
+|---|---|---|---|
+| The kill line | **guild trigger** `fdf89cd5-dae7-4cb6-971e-275efe35c202` (`Vex Thal cleared — Aten Ha Ra`) | every Mimic in the zone: a 12 s flash *"🐺 ATEN HA RA IS DOWN — VEX THAL CLEARED"*, the spoken line *"Aten Ha Ra is dead. Vex Thal is cleared. Wolf Pack."*, and a 3.4 s brass fanfare | inserted directly in `guild_triggers` (served live by `_guildTriggersFor`; reaches every agent within the 2-min poll). Pattern `^\[.+?\]\s+Aten Ha Ra has been slain by`, cooldown 3600 s |
+| The relay of that kill | **bot one-shot** `_announceVexThalClearedOnce` on `/api/agent/bosskill` | one embed in #raid-chat: who landed it, *"Wolf Pack's Aten Ha Ra kill number N since the first, on February 27"* (N from `encounters`, npc 158436, confirmed kills > 2 min that started more than two hours ago — so tonight's own parse is not counted twice), the film link if set, else *"the film is in the works"* | `bot_kv` latch `announce_vex_thal_cleared`, fail-closed like the other announcers; only for `boss = Aten Ha Ra` (the Kaas Thox pair share the name and are excluded) and `guild = Wolf Pack`; pings nobody |
+| The film, whenever it is cut | **tuning key** `celebration_video_url` + **Mimic Mail** | the embed prints the link only if it is `https://…`; a Mimic Mail from /admin/notices puts the ✉ dot on every Mimic ≥1.6 | `/admin/overlays` tuning editor; `/admin/notices` |
+
+The sound is `web/public/sounds/vex-thal-cleared.wav` — synthesized (a C-major brass arpeggio into
+a held chord; no licensing question), 300 KB, served from `wolfpack.quest`. Guild triggers already
+carry a `sound` URL and Mimic plays it with `new Audio(url)`, so this is the first guild-wide use of
+a feature that has been there since triggers v2. The TTS passes the #136 allow-list because
+"dead" matches its death category — checked, not assumed.
+
+**Why the trigger fires only in the zone:** guild triggers match the local log, and the kill line
+is zone-wide. Raiders not in Vex Thal get the Discord embed, not the flash — which is right.
+
+**Deliberately not done:** no Mimic release (nothing would reach the fleet in time, and the
+stable just cut is what everyone is on); no confetti/animation in an overlay (a one-night effect
+is not worth a permanent code path in the trigger window); no name on the roadmap entry before
+the kill (a teaser line only — *"You will know it when it happens"*).
+
+### The film — services, not a prompt
+The shot list (style bible, per-raider shot cards with class, race and what each one is seen
+doing in the Aten Ha Ra parses, prompt lines) is **private** — it names members — and went to
+the guild lead as a file, not into the repo. The service answer, in short: Gemini/Veo for the
+handful of hero shots (its 3/day cap fits four establishing beats); a credit-pack service
+(Kling, Runway, Hailuo) for crash-cut volume via image-to-video from consistent stills; stills
+from one image model with a locked style prefix; **name tags and cuts in an editor (CapCut /
+DaVinci), never generated** — text in generated video is the one thing none of them do
+reliably. Host unlisted on YouTube; the link goes in the two places above.
+
+### After the raid
+1. **Disable trigger `fdf89cd5…`** on /admin/triggers (the 1-hour cooldown stops a double fire on
+   the night; the disable stops a fire on a later Vex Thal kill).
+2. Paste the film link into `celebration_video_url`; send the Mimic Mail; add the real roadmap line.
+3. The bot one-shot stays latched forever in `bot_kv`; the code can be removed in a later tidy.
+
+### Where
+- Bot: `_announceVexThalClearedOnce` + the hook after the next-spawn line in `_handleAgentBossKill`.
+- Test: `test/announce-vex-thal-cleared.test.js` (5, running the real function against fakes).
+- Sound: `web/public/sounds/vex-thal-cleared.wav`; generator kept out of the repo (scratchpad).
+
+### 58a. Reworded the same night, and the film posts itself (bot 3.1.159)
+**The guild lead:** *"perhaps it's best to flash 'congrats Wolf Pack on the last Aten Ha Ra of
+Luclin!' 'The guild has done approximately N damage to Aten Ha Ra since <First kill>' and post the
+video into discord."*
+
+- **The flash is two chips** (two `text_overlay` actions on the same trigger — the agent renders
+  every action, so both show at once, both spoken in turn): the congratulations, then *"The guild
+  has done approximately 22.6 million damage to Aten Ha Ra since February 26."* The number is
+  baked into the trigger text because a trigger cannot compute; it is the parsed total of her
+  19 confirmed kills (`encounters.total_damage`, cross-checked against `encounter_players` to
+  within 50 points), and "approximately" is the honest word — partial parses make it a floor. The
+  first kill was 2026-02-27 02:41 UTC, which is **February 26 in Eastern time**, so the text says
+  the 26th; §58's "February 27" above was the UTC date.
+- **The embed computes the same two lines live** (`_vtBigNumber`, `_vtKillDate` in New York time)
+  from the confirmed kills that started more than two hours ago, and adds the kill number.
+- **"Post the video into discord" is automatic.** The link lives in `celebration_video_url`
+  (/admin/overlays). If it is set when she dies, the kill embed carries it as message CONTENT so
+  Discord unfurls the player (a link inside an embed's text does not unfurl). If it arrives
+  later, `_announceVexThalFilmOnce` polls the tuning map once a minute and posts the video once,
+  after the kill embed exists (never before — the film is a follow-up, not a spoiler), latched in
+  `bot_kv` `announce_vex_thal_film`; the interval clears itself once posted. Fail-closed on an
+  unreadable latch, like every announcer.
+- **The film brief was rewritten** as an anime opening built class by class, mains only (alts
+  collapsed onto their mains from `characters.main_name`; names not in the character table dropped),
+  with the two character sheets the guild lead gave. Private file, sent again; not in the repo.
+- Test file grown to 10 (the poller's states, the content-vs-embed rule, the rounding, an empty
+  history reading as kill number 1 while an unreadable one prints no number).
+
+## 59. A member's Sunday-morning batch: feedback acks, the charm break, targeting the pet, timer order (2026-09-27)
+
+Relayed by the guild lead from the feedback thread and a DM with a member (an enchanter on
+Mimic 2.7.3-beta.2):
+
+- *"these feedback have no acknowledgement in discord"*
+- *"The 'charm break' TTS still feels slightly behind. like 1 or 2 seconds maybe ... not perfect
+  like eqlogparser, clock seems fine"* — and the guild lead: *"charm break needs to be as close to
+  instant as possible, like EQLogParser"*
+- *"It would be awesome if you could click target the pet from the charm tracker window"* — the
+  guild lead: *"I don't know if we can inject a target back into EQ, it would be neat if we could."*
+- *"he wants an option for reverse ordering on the timers"* (the timer bars grow upward from the
+  bottom; he wants the list to read top-down).
+
+### 59a. Feedback acknowledgement — built (bot 3.1.160, main)
+**Cause:** the Mimic route (`_handleAgentFeedback`) posted a plain message with no components. Only
+`/feedback` and web reports carried 📬 Acknowledge / ❌ Not Implementing, and their handlers read the
+submitter from an embed footer, so a plain post could not be acknowledged even with buttons.
+**Fix:** the Mimic post carries the same pair (`_feedbackRecvRow`); `handleFeedbackRecv` /
+`handleFeedbackClose` handle a plain post by looking the row up by its `discord_msg_id`, DM the
+reporter on ack, and write the status onto the post's FIRST line (everything after it is a `>>>`
+quote, so a trailing line would read as part of the report). Every button now also moves the row
+(`acked` + `acked_by/at`, or `addressed` + `addressed_by/at`) so `/admin/feedback` agrees with the
+thread — the embed path did not do this before either. The 11 Mimic reports still open got the
+buttons once at boot (`_backfillMimicFeedbackButtonsOnce`, bot_kv `feedback_mimic_buttons_backfill`,
+fail-closed, skips any post that already has buttons). Test `feedback-ack` (7, real functions,
+3 of 3 mutants caught).
 
 
 

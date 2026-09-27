@@ -474,6 +474,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 60_000;
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
   setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
+  setTimeout(() => _backfillMimicFeedbackButtonsOnce(readyClient)
+    .catch(err => console.warn('[feedback] button backfill:', err?.message)), 20_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -1540,6 +1542,44 @@ function _feedbackAckRow() {
   );
 }
 
+// The first pair a new report gets, same as the web relay's (the guild lead,
+// 2026-09-27: Mimic's posts had "no acknowledgement in discord" — they were
+// plain messages with no buttons at all).
+function _feedbackRecvRow() {
+  return new _ARB2().addComponents(
+    new _BB2().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(_BS2.Primary),
+    new _BB2().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(_BS2.Danger),
+  );
+}
+
+// Mimic's reports are plain posts (the log and screenshots ride as files), not
+// embeds, so their submitter and category live on the feedback row, found by the
+// message id the post was stamped with. Every button also moves that row on, so
+// the /admin/feedback inbox agrees with the thread.
+async function _feedbackRowForMsg(msgId) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled() || !msgId) return null;
+    const rows = await supabase.select('feedback',
+      `discord_msg_id=eq.${encodeURIComponent(msgId)}&select=id,submitter_discord_id,category&limit=1`);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch { return null; }
+}
+async function _feedbackRowUpdate(row, patch) {
+  if (!row?.id) return;
+  const supabase = require('./utils/supabase');
+  await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
+    .catch(err => console.warn('[feedback] status update failed:', err?.message));
+}
+// A plain post's status rides on its first line ("🐞 Bug from X via mimic 2.7.3
+// · 📬 Acknowledged by Y"); everything after it is a >>> quote, so a line added
+// at the end would read as part of the report.
+function _feedbackStatusContent(content, status) {
+  const lines = String(content || '').split('\n');
+  lines[0] = lines[0].replace(/ · (?:📬|✅|❌) .*$/u, '') + ' · ' + status;
+  return lines.join('\n').slice(0, 2000);
+}
+
 async function handleFeedbackRecv(interaction) {
   const { hasOfficerRole, officerRolesList: orl } = require('./utils/roles');
   if (!hasOfficerRole(interaction.member))
@@ -1548,7 +1588,19 @@ async function handleFeedbackRecv(interaction) {
   await interaction.deferUpdate();
   const msg   = interaction.message;
   const embed = msg.embeds[0];
-  if (!embed) return;
+  const reviewerName = interaction.member?.displayName || interaction.user.username;
+  const row = await _feedbackRowForMsg(msg.id);
+  await _feedbackRowUpdate(row, { status: 'acked', acked_by: reviewerName, acked_at: new Date().toISOString() });
+  if (!embed) {
+    if (row?.submitter_discord_id) {
+      try {
+        const user = await interaction.client.users.fetch(row.submitter_discord_id);
+        await user.send(`📬 Your ${row.category === 'bug' ? 'bug report' : 'idea'} from Mimic has been received by leadership. Thank you!`);
+      } catch { /* DMs may be closed */ }
+    }
+    await msg.edit({ content: _feedbackStatusContent(msg.content, `📬 Acknowledged by ${reviewerName}`), components: [_feedbackAckRow()] });
+    return;
+  }
 
   // Extract submitter user ID from footer (stored as "uid:<id>")
   const footerText = embed.footer?.text || '';
@@ -1578,12 +1630,17 @@ async function handleFeedbackClose(interaction, implemented) {
   await interaction.deferUpdate();
   const msg    = interaction.message;
   const embed  = msg.embeds[0];
-  if (!embed) return;
 
   const reviewer = interaction.member?.displayName || interaction.user.username;
   const statusVal = implemented
     ? `✅ Implemented by ${reviewer}`
     : `❌ Not implementing (${reviewer})`;
+  await _feedbackRowUpdate(await _feedbackRowForMsg(msg.id),
+    { status: 'addressed', addressed_by: reviewer, addressed_at: new Date().toISOString() });
+  if (!embed) {
+    await msg.edit({ content: _feedbackStatusContent(msg.content, statusVal), components: [] });
+    return;
+  }
 
   const updated = _EB2.from(embed)
     .setFields(...(embed.fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: statusVal, inline: false });
@@ -5928,6 +5985,8 @@ async function _handleAgentBossKill(req, res) {
             );
           }
         });
+        // The one-time Vex Thal celebration rides the same kill, right after.
+        discordJobs.push(() => _announceVexThalClearedOnce(kill).catch(err => console.warn('[vt-cleared]', err?.message)));
       }
       set++;
     } else {
@@ -11649,6 +11708,139 @@ async function _announceOptinPvpOnce() {
     _announceOptinPvpOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
       .catch(err => console.warn('[optin-pvp-announce]', err?.message));
   }, 5 * 60_000);
+}
+
+// ── Vex Thal cleared: the one-time celebration on the Aten Ha Ra kill ────────
+// The guild lead, 2026-09-27: "a one time celebration for all miMIC users after
+// tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid." The
+// Mimic side is a guild trigger on her death line (flash + voice + fanfare, no
+// deploy). This is the Discord side: one embed in #raid-chat the moment the
+// kill relays, latched in bot_kv. The film's link is read from the tuning map
+// (`celebration_video_url`, /admin/overlays), so it can be added before or
+// after the kill without a deploy; until then the embed says it is coming.
+// Wording (the guild lead, later the same night): "congrats Wolf Pack on the
+// last Aten Ha Ra of Luclin!" · "The guild has done approximately N damage to
+// Aten Ha Ra since <first kill>" · "post the video into discord" — so the link
+// rides the message CONTENT (Discord unfurls it), not the embed text, and a
+// once-a-minute poller posts it on its own when the link arrives after the kill.
+const _VT_CLEARED_KV_KEY = 'announce_vex_thal_cleared';
+const _VT_FILM_KV_KEY = 'announce_vex_thal_film';
+const _VT_NPC_ID = 158436;   // eqemu_npc_types: Aten Ha Ra (not the Kaas Thox pair)
+function _vtFilmUrl(tune) {
+  const s = String((tune && tune.celebration_video_url) || '').trim();
+  return /^https:\/\/\S+$/.test(s) ? s : null;
+}
+// 22642841 → "22.6 million"; the number is a parse total, so it is always "approximately".
+function _vtBigNumber(n) {
+  if (!(n > 0)) return null;
+  const f = (v) => v.toFixed(1).replace(/\.0$/, '');
+  if (n >= 1e9) return f(n / 1e9) + ' billion';
+  if (n >= 1e6) return f(n / 1e6) + ' million';
+  if (n >= 1e3) return Math.round(n / 1e3) + ' thousand';
+  return String(Math.round(n));
+}
+function _vtKillDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+}
+async function _announceVexThalClearedOnce(kill) {
+  const name = String((kill && kill.boss) || '').trim().toLowerCase();
+  if (name !== 'aten ha ra') return 'not-her';
+  if (String((kill && kill.guild) || '').trim() !== WP_GUILD_NAME) return 'not-us';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_VT_CLEARED_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[vt-cleared] latch unreadable — NOT posting'); return 'unknown'; }
+    return 'latched';
+  }
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) { console.log('[vt-cleared] no #raid-chat channel — skipping'); return 'no-channel'; }
+  // Her history before tonight: confirmed fights that started more than two
+  // hours ago, so tonight's own parse never counts itself. The damage is the
+  // sum of each fight's parsed total — a floor, hence "approximately". All of
+  // it is decoration; null when unread.
+  let prior = null, damage = null, first = null;
+  try {
+    const before = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const r = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=eq.${_VT_NPC_ID}&duration_sec=gt.120&ended_at=not.is.null`
+      + `&started_at=lt.${encodeURIComponent(before)}&select=id,started_at,total_damage&order=started_at.asc&limit=1000`);
+    if (Array.isArray(r)) {
+      prior = r.length;
+      damage = r.reduce((s, e) => s + (Number(e && e.total_damage) || 0), 0);
+      first = r.length ? _vtKillDate(r[0].started_at) : null;
+    }
+  } catch { /* the history is decoration */ }
+  let video = null;
+  try { video = _vtFilmUrl(await _overlayTuningMap()); } catch { /* no link yet */ }
+  const { EmbedBuilder } = require('discord.js');
+  const big = _vtBigNumber(damage);
+  const embed = new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🐺 Congrats Wolf Pack on the last Aten Ha Ra of Luclin!')
+    .setDescription([
+      `**${kill.character}** and the raid put her down in ${kill.zone || 'Vex Thal'} — the last scheduled Vex Thal raid.`,
+      big && first ? `The guild has done approximately **${big}** damage to Aten Ha Ra since the first kill on ${first}. Tonight was kill number **${prior + 1}**.`
+        : prior != null ? `Tonight was Wolf Pack's Aten Ha Ra kill number **${prior + 1}**.` : null,
+      '',
+      video ? '🎬 **The film** is below.' : '🎬 The film is in the works — it lands in this channel when it is cut.',
+      'Mimic users: the flash and the fanfare you just got was the guild trigger. Howl.',
+    ].filter(l => l != null).join('\n'))
+    .setFooter({ text: 'One-time celebration' });
+  const posted = await ch.send({ ...(video ? { content: video } : {}), embeds: [embed], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[vt-cleared] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  const now = new Date().toISOString();
+  const latches = [{ guild_id: guildId, key: _VT_CLEARED_KV_KEY, value: { posted_at: now, message_id: posted.id, killer: kill.character }, updated_at: now }];
+  // The link rode this message, so the film poller has nothing left to post.
+  if (video) latches.push({ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now });
+  await supabase.upsert('bot_kv', latches, 'guild_id,key');
+  console.log('[vt-cleared] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// The film, whenever it is cut: the guild lead pastes its link into
+// `celebration_video_url` and within a minute this posts it to #raid-chat, once
+// (the link in the content, so Discord unfurls the video). Only after the kill
+// embed exists — the film is a follow-up, never a spoiler — and only if that
+// embed did not already carry the link. Fail-closed on an unreadable latch.
+async function _announceVexThalFilmOnce() {
+  const video = _vtFilmUrl(await _overlayTuningMap().catch(() => null));
+  if (!video) return 'no-link';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=in.(${_VT_CLEARED_KV_KEY},${_VT_FILM_KV_KEY})&select=key,value`);
+  if (!Array.isArray(rows)) { console.warn('[vt-film] latch unreadable — NOT posting'); return 'unknown'; }
+  if (rows.some(r => r && r.key === _VT_FILM_KV_KEY)) return 'latched';
+  if (!rows.some(r => r && r.key === _VT_CLEARED_KV_KEY)) return 'waiting';
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) return 'no-channel';
+  const posted = await ch.send({
+    content: `🎬 **The film.** The last Aten Ha Ra of Luclin, as Wolf Pack fought her.\n${video}`,
+    allowedMentions: { parse: [] },
+  }).catch(err => { console.warn('[vt-film] post failed:', err?.message); return null; });
+  if (!posted) return 'failed';
+  const now = new Date().toISOString();
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now }],
+    'guild_id,key');
+  console.log('[vt-film] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// Every minute until the film has posted (the tuning read is the 60 s cache; the
+// latch read happens only once a link exists).
+{
+  const t = setInterval(() => {
+    _announceVexThalFilmOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[vt-film]', err?.message));
+  }, 60_000);
 }
 
 // ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────
@@ -17507,6 +17699,7 @@ async function _handleAgentFeedback(req, res) {
         `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
         `>>> ${message.slice(0, 1500)}${attached}`,
       files: shotsMod.discordFiles(shots),
+      components: [_feedbackRecvRow()],
     });
     // Stamp the post on the row. Without it relayWebFeedback (which posts every
     // row with no discord_msg_id) posted this report a second time a minute
@@ -17911,6 +18104,37 @@ async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, trig
     console.warn('[trigger-voice] handler error:', err?.message);
   }
   void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
+}
+
+// Mimic's reports went out with no buttons until 2026-09-27, so the ones still
+// open had no way to be acknowledged. Add the pair to each, once (latched in
+// bot_kv, fail-closed), skipping any post that already has buttons.
+const _FB_BUTTONS_BACKFILL_KEY = 'feedback_mimic_buttons_backfill';
+async function _backfillMimicFeedbackButtonsOnce(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const latch = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FB_BUTTONS_BACKFILL_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(latch)) return kvLatch.latchState(latch) === 'unknown' ? 'unknown' : 'latched';
+  const rows = await supabase.select('feedback',
+    'client=eq.mimic&status=eq.new&discord_msg_id=not.is.null&select=discord_msg_id&order=submitted_at.asc&limit=100');
+  if (!Array.isArray(rows)) return 'unknown';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return 'no-thread';
+  let added = 0;
+  for (const r of rows) {
+    const m = await thread.messages.fetch(r.discord_msg_id).catch(() => null);
+    if (!m || (m.components && m.components.length)) continue;
+    const ok = await m.edit({ components: [_feedbackRecvRow()] }).then(() => true).catch(() => false);
+    if (ok) added++;
+  }
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FB_BUTTONS_BACKFILL_KEY, value: { ran_at: new Date().toISOString(), added }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log(`[feedback] added buttons to ${added} Mimic report(s)`);
+  return 'done';
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
