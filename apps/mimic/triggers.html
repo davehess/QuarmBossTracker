@@ -165,6 +165,16 @@
     animation:timer-warn-pulse 0.5s ease-in-out infinite}
   .timer-row.warn .timer-remain{color:#ffae6e}
   .timer-row.warn .timer-bar{background:linear-gradient(to right,#ff8a65,#ff5252)}
+  /* EQLogParser-style filled bar (a bard, 2026-09-26: "something like this is
+     what im trying to find"). The bar IS the row's background, in the row's
+     own colour, draining to the left. Only rows that carry a bar_color draw
+     this way — today the agent's timer-bar switches (Recharm tick, lulls, your
+     spells on mobs); trigger countdowns keep the 2px strip above. */
+  .timer-row.fill{border-left-color:var(--fill)}
+  .timer-row.fill .timer-bar{top:0;height:auto;z-index:0;background:var(--fill);opacity:.55}
+  .timer-row.fill.warn .timer-bar{background:var(--fill)}
+  .timer-row.fill > span{position:relative;z-index:1}
+  .timer-row.fill .timer-remain{color:#fff}
   @keyframes timer-warn-pulse{
     0%,100%{box-shadow:0 0 0 0 rgba(255,138,101,0)}
     50%    {box-shadow:0 0 0 2px rgba(255,138,101,0.7), 0 0 12px rgba(255,82,82,0.6)}
@@ -897,6 +907,14 @@
                   : (t.warning_ms > 0 && t.warn_text
                       ? [{ at_ms: t.warning_ms, text: t.warn_text, tts: true }] : []);
       if (t.bar_color) n.bar_color = t.bar_color;
+      if (t.bar_color && n.fillColor !== t.bar_color && /^#[0-9a-f]{3,8}$/i.test(t.bar_color)){
+        n.fillColor = t.bar_color;
+        n.row.classList.add('fill');
+        n.row.style.setProperty('--fill', t.bar_color);
+      }
+      // A cyclic row (the 6s recharm tick) wraps in paintTimers instead of
+      // expiring and popping back in on the next poll.
+      n.cycle_ms = t.cycle_ms > 0 ? t.cycle_ms : 0;
       n.pinned = !!t.pinned;
     }
     // Drop any rows the server stopped reporting (ended early or cleared).
@@ -930,7 +948,11 @@
     const now = Date.now();
     let painted = 0;
     for (const [id, n] of timerNodes){
-      const remMs = n.ends_at_local - now;
+      let remMs = n.ends_at_local - now;
+      if (remMs <= 0 && n.cycle_ms > 0){
+        n.ends_at_local += Math.ceil(-remMs / n.cycle_ms + 1e-9) * n.cycle_ms;
+        remMs = n.ends_at_local - now;
+      }
       if (remMs <= 0){ n.row.remove(); timerNodes.delete(id); continue; }
       n.remain.textContent = fmtRemain(remMs);
       // Progress bar: width drops linearly from 100% at fire to 0% at expiry.
@@ -957,8 +979,9 @@
           fire({ text: w.text, tts: (w.tts === false ? null : w.text) });
         }
       }
-      // Last 5s → amber accent + background + pulse to drag the eye.
-      if (remMs < 5000) n.row.classList.add('warn');
+      // Last 5s → amber accent + background + pulse to drag the eye. Never on
+      // a cyclic row: a 6s cycle would pulse five seconds in every six.
+      if (remMs < 5000 && !n.cycle_ms) n.row.classList.add('warn');
       else              n.row.classList.remove('warn');
       painted++;
     }

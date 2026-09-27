@@ -8882,6 +8882,10 @@ async function dismissTopDamage(key) {
       payload = r.ok ? await r.json() : null;
     } catch (e) { void e; }
     const triggers = payload && payload.triggers ? payload.triggers : [];
+    // The Suggested panel shows a template as ON while its personal copy exists, so it must redraw with
+    // this list: a copy deleted here stayed ON there, and unticking it only looked like nothing
+    // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
     if (triggers.length === 0) {
       listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
@@ -9199,6 +9203,8 @@ async function dismissTopDamage(key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: next }),
     });
+    // A suggested row ticked off here must read OFF in the Suggested panel too.
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
   }
   async function onAdd() {
     var name = (document.getElementById('trigNewName') || {}).value || '';
@@ -9475,7 +9481,7 @@ async function dismissTopDamage(key) {
       mount();
     }
   }
-  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); }, refreshList: function(){ return fetchAndRenderList(); } };
 })();
 
 // ── 🎯 Suggested triggers panel ─────────────────────────────────────────────
@@ -9487,15 +9493,17 @@ async function dismissTopDamage(key) {
   var listEl = null;
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
-                   self:'#d2a8ff', utility:'#79c0ff' })[cat] || '#8b949e';
+                   self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + t.overlay_text + '</span></div></td>'
-         + '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + (t.no_tts
+           ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
   }
   function groupHtml(category, label, items){
@@ -9516,9 +9524,10 @@ async function dismissTopDamage(key) {
       var j = await r.json();
       var triggers = (j && j.triggers) || [];
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
-      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[] };
+      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
       var html = '';
+      html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
@@ -9536,13 +9545,16 @@ async function dismissTopDamage(key) {
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
-          fetchAndRender();   // refresh so tts checkbox enabled-state syncs
+          // The personal list holds the copy this created or removed; its redraw redraws this panel too.
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
+          else fetchAndRender();
         });
         if (tts) tts.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, tts: tts.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
         });
       });
     } catch (e) {
@@ -9561,7 +9573,7 @@ async function dismissTopDamage(key) {
     if (!n) { mounted = false; return; }
     if (n !== listEl) { mounted = false; mount(); }
   }
-  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); }, refresh: function(){ return fetchAndRender(); } };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────

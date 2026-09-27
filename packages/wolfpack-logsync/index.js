@@ -1735,6 +1735,7 @@ function _recordCharmSpellOnTarget(pet, owner, spellName, durSec) {
     dur_ticks: durTicks,
     landed_at: landedAt,
     owner: owner ? String(owner) : null,
+    target_name: String(pet),
     is_charm_spell: true,
   });
   _savePetStateSoon();
@@ -1857,10 +1858,13 @@ function _reconcileGaugeCharms() {
       // Already active — clear any stale pending entry so a re-charm after
       // a break still requires its own two-frame debounce.
       _pendingGaugeCharms.get(ownerLower)?.delete(k);
-      // Refresh last_tick_at as a "still alive" signal from the gauge — keeps
-      // the break detector below from firing during a long gap between actual
-      // 6s mob ticks (e.g. between encounters).
-      cur.last_tick_at = now;
+      // "Still alive" signal from the gauge — keeps the break detector below
+      // from firing during a long gap between actual 6s mob ticks. Its own
+      // field: this used to overwrite last_tick_at, which is also the anchor
+      // of the 6s mob-tick countdown, so every poll reset "next mob tick" to
+      // ~6s and the countdown never visibly ran (a bard, 2026-09-26: "i didnt
+      // see it on the regular or mini").
+      cur.last_seen_at = now;
     }
   }
   // Drop pending entries whose pet is no longer in slot 16 (transient pulse).
@@ -1889,7 +1893,7 @@ function _reconcileGaugeCharms() {
     // clears a 3.5-4s recast with ~2s of headroom, and halves the lag on the
     // case that actually matters. If false "charm break" calls reappear during
     // routine cycling, this is the number to raise.
-    if ((!set || !set.has(k)) && (now - (info.last_tick_at || 0)) > 6000) {
+    if ((!set || !set.has(k)) && (now - (info.last_seen_at || info.last_tick_at || 0)) > 6000) {
       _bumpCharmTick(info.pet, info.owner, 'break', now);     // gauge dropped → break (alert fires now)
     }
   }
@@ -3200,6 +3204,11 @@ function recordTargetBuffLanding(bcEvt) {
     // effect list the moment one landing was unprovable, which is most of them.
     // Scoping happens at READ time in targetBuffsFor(), where null fails open.
     target_id: Number.isFinite(bcEvt.target_id) ? bcEvt.target_id : null,
+    // Ours, when we can prove it (the caster's own log matched the cast), so
+    // the timer-bar switches show only your spells. Deliberately not `owner`:
+    // Mob Info prints an owner in brackets, which is for charm and pacify rows.
+    cast_by: (bcEvt._selfCast && bcEvt.observer) ? String(bcEvt.observer) : null,
+    target_name: String(bcEvt.target),
   });
   // Bound memory: keep the 400 most-recently-touched targets.
   if (_buffLandingsByTarget.size > 400) {
@@ -3460,6 +3469,7 @@ function _synthesizePacifyLanding(spellName, character, atMs) {
     dur_ticks: durTicks,
     landed_at: atMs,
     target_id: _provableTargetId(character, target),
+    target_name: String(target),
     owner: String(character),
     // ⚠ We never saw this land, and for Harmony we CANNOT: it is resist_type 0
     // (unresistable, so the resist line never fires) yet it still fails against
@@ -24699,6 +24709,10 @@ async function dismissTopDamage(key) {
       payload = r.ok ? await r.json() : null;
     } catch (e) { void e; }
     const triggers = payload && payload.triggers ? payload.triggers : [];
+    // The Suggested panel shows a template as ON while its personal copy exists, so it must redraw with
+    // this list: a copy deleted here stayed ON there, and unticking it only looked like nothing
+    // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
     if (triggers.length === 0) {
       listEl.innerHTML = '<div class="dim" style="font-size:12px;padding:6px 0">No personal triggers yet. Use the form below to add one. Patterns support .NET-style named groups: <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">(?&lt;name&gt;...)</code>; reference them in the overlay text as <code style="background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">{name}</code>.</div>';
       return;
@@ -25016,6 +25030,8 @@ async function dismissTopDamage(key) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: next }),
     });
+    // A suggested row ticked off here must read OFF in the Suggested panel too.
+    try { if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh(); } catch (e) { void e; }
   }
   async function onAdd() {
     var name = (document.getElementById('trigNewName') || {}).value || '';
@@ -25292,7 +25308,7 @@ async function dismissTopDamage(key) {
       mount();
     }
   }
-  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpTrigEditor = { mount: function(){ remountIfNeeded(); mount(); }, refreshList: function(){ return fetchAndRenderList(); } };
 })();
 
 // ── 🎯 Suggested triggers panel ─────────────────────────────────────────────
@@ -25304,15 +25320,17 @@ async function dismissTopDamage(key) {
   var listEl = null;
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
-                   self:'#d2a8ff', utility:'#79c0ff' })[cat] || '#8b949e';
+                   self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + t.overlay_text + '</span></div></td>'
-         + '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + (t.no_tts
+           ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
   }
   function groupHtml(category, label, items){
@@ -25333,9 +25351,10 @@ async function dismissTopDamage(key) {
       var j = await r.json();
       var triggers = (j && j.triggers) || [];
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
-      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[] };
+      var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
       var html = '';
+      html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
@@ -25353,13 +25372,16 @@ async function dismissTopDamage(key) {
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
-          fetchAndRender();   // refresh so tts checkbox enabled-state syncs
+          // The personal list holds the copy this created or removed; its redraw redraws this panel too.
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
+          else fetchAndRender();
         });
         if (tts) tts.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
           try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, tts: tts.checked }) }); }
           catch (e) {}
           tr.style.opacity = '1';
+          if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
         });
       });
     } catch (e) {
@@ -25378,7 +25400,7 @@ async function dismissTopDamage(key) {
     if (!n) { mounted = false; return; }
     if (n !== listEl) { mounted = false; mount(); }
   }
-  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); } };
+  window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); }, refresh: function(){ return fetchAndRender(); } };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
@@ -27781,6 +27803,7 @@ function startWebDashboard(port) {
             tts_default: !!tpl.tts_default,
             zeal_condition: tpl.zeal_condition || null,
             cooldown_seconds: tpl.cooldown_seconds || 0,
+            no_tts:    !!tpl.no_tts,   // timer bars: the dashboard draws no 🔊 box
             // User-state slice
             enabled:    !!(row && row.enabled),
             tts:        _suggestedHasTts(row),
@@ -27860,7 +27883,8 @@ function startWebDashboard(port) {
               value: Math.max(0, Math.min(100, Number(t.zeal_condition.value))),
             };
           }
-          if (!hasPattern && !zealCond) continue;
+          const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
+          if (!hasPattern && !zealCond && !builtinTimer) continue;
           // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
           const row = {
             id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
@@ -27883,6 +27907,13 @@ function startWebDashboard(port) {
               duration_ms: Math.max(500, Math.min(60000, parseInt(t.overlay_ms, 10) || 5000)),
             }],
           };
+          if (builtinTimer) { row.builtin_timer = builtinTimer; row.actions = []; }
+          // Every save from the dashboard sends the WHOLE list back through
+          // here, and this rebuild used to keep only the fields above — so
+          // ticking any one row off quietly stripped the countdown warnings,
+          // end text, bar colour and pin from every EQLogParser import in the
+          // list. Carry the fields _startTimer and _compileExcludes read.
+          for (const k of PERSONAL_CARRY_FIELDS) if (t[k] != null) row[k] = t[k];
           try { compiled.push(_compilePersonalTrigger(row)); }
           catch (err) { errors.push({ name: row.name, error: err.message }); }
         }
@@ -28030,14 +28061,18 @@ function startWebDashboard(port) {
             cancelled++;
             _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
           }
+          try { for (const r of _builtinTimerRows(Date.now())) { _builtinTimerHidden.add(r.id); cancelled++; } }
+          catch { /* best effort */ }
           scheduleRender();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ ok: true, cancelled }));
         }
         const id = String(payload?.id || '');
         const row = id ? _activeTimers.get(id) : null;
-        const ok = id ? _cancelTimer(id) : false;
-        if (ok) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+        let ok = id ? _cancelTimer(id) : false;
+        // A timer-bar row is rebuilt every snapshot — hide that instance.
+        if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
+        if (ok && row) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
         if (ok && id.startsWith('loot|')) {
           const sig = id.slice('loot|'.length);
           _lootAuctions.delete(sig);
@@ -35053,8 +35088,10 @@ function loadPersonalTriggers() {
     const arr = Array.isArray(raw) ? raw : (Array.isArray(raw.triggers) ? raw.triggers : []);
     const compiled = [];
     const drops = [];
+    let migrated = 0;
     for (const t of arr) {
       try {
+        if (_migrateRetiredSuggestedPattern(t)) migrated++;
         // Reuse the shared compile path so pure-Zeal triggers (no pattern)
         // load with _regex=null instead of a match-everything regex.
         compiled.push(_compilePersonalTrigger(t));
@@ -35069,10 +35106,40 @@ function loadPersonalTriggers() {
     }
     _personalTriggerDrops = drops;
     _personalTriggers = compiled;
-    console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`);
+    _personalCharsKey = _watchedCharacters().join('|');
+    if (migrated) savePersonalTriggers();
+    console.log(`[personal-triggers] loaded ${compiled.length} from ${p}`
+                + (migrated ? ` (${migrated} suggested pattern${migrated === 1 ? '' : 's'} updated)` : ''));
   } catch (err) {
     console.warn('[personal-triggers] load failed:', err.message);
   }
+}
+function _migrateRetiredSuggestedPattern(t) {
+  const id = (t && typeof t.id === 'string' && t.id.startsWith('suggested:')) ? t.id.slice('suggested:'.length) : null;
+  const dead = id ? SUGGESTED_RETIRED_PATTERNS[id] : null;
+  if (!dead || !dead.includes(t.pattern)) return false;
+  const tpl = SUGGESTED_TRIGGERS.find(x => x.id === id);
+  if (!tpl || !tpl.pattern) return false;
+  t.pattern = tpl.pattern;
+  return true;
+}
+
+// {c} binds when a pattern COMPILES, and loadPersonalTriggers runs before the
+// log scan fills stats.watchedLogs — so a personal {c} trigger compiled with
+// the token left literal (unmatchable) and stayed silent until it was saved
+// again. Guild triggers escaped this only because their first poll waits 12s.
+// Recompile once the watched set is known, and again if it ever changes.
+let _personalCharsKey = null;
+function _recompilePersonalTriggersForChars() {
+  const key = _watchedCharacters().join('|');
+  if (key === _personalCharsKey) return false;
+  _personalCharsKey = key;
+  _personalTriggers = _personalTriggers.map(t => {
+    const { _regex, _endRegex, _scope, _conditions, _aliases, _excludes, ...raw } = t;
+    void _regex; void _endRegex; void _scope; void _conditions; void _aliases; void _excludes;
+    try { return _compilePersonalTrigger(raw); } catch { return t; }
+  });
+  return true;
 }
 
 // Persist personal triggers to disk. Stripping the compiled _regex (a RegExp
@@ -35115,7 +35182,7 @@ function _serializePersonalTriggers() {
     //     pattern)" in the dashboard.
     // A trigger is valid if it has something to fire on: a compiled pattern or
     // a gauge condition. The genuinely-broken ones are reported via `dropped`.
-    return { ...rest, valid: !!_regex || !!t.zeal_condition };
+    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer };
   });
 }
 
@@ -35222,6 +35289,16 @@ const SUGGESTED_TRIGGERS = [
     pattern: '^You feel (?:calm|charmed)\\.',
     overlay_text: 'MEZZED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
+  // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
+  // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
+  // guard, and only speaks while that overlay is open. This fires on the log
+  // line itself — bards get it too (test/fixtures/golden/raid-pull.log) — so
+  // it is the instant call for someone who runs no Charm overlay (a bard,
+  // 2026-09-26: "the 'charm break' is a few seconds late").
+  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (instant — instead of the Charm overlay\'s call)',
+    pattern: 'Your charm spell has worn off\\.',
+    overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
   { id: 'self_feared', category: 'self', label: 'You are feared',
     pattern: '^You are afraid\\.',
     overlay_text: 'FEARED!', overlay_color: 'red', overlay_ms: 4000,
@@ -35232,8 +35309,14 @@ const SUGGESTED_TRIGGERS = [
     tts_default: false, cooldown_seconds: 5 },
 
   // ── Mob threats — bystander-visible boss callouts.
+  // EQ names the target in the third person even when it is you: "Lord of Ire
+  // goes on a RAMPAGE against Fenrisk!" (test/fixtures/golden/raid-pull.log).
+  // This used to read `rampages? on you`, which appears in no log — a bard
+  // ticked it on, heard nothing, and reasonably concluded it was broken
+  // (2026-09-26). {c} is the watched characters; SUGGESTED_RETIRED_PATTERNS
+  // rewrites a row saved with the old text.
   { id: 'mob_rampage', category: 'mob', label: 'Rampage on you',
-    pattern: '\\brampages?\\s+on\\s+(?:you|YOU)\\b',
+    pattern: '\\bgoes on a RAMPAGE against {c}!',
     overlay_text: 'RAMPAGE ON YOU', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 2 },
   // EQ prints "<mob> has become ENRAGED." — this used to read `begins to enrage`,
@@ -35272,7 +35355,35 @@ const SUGGESTED_TRIGGERS = [
     zeal_condition: { field: 'self_hp_pct', op: '<=', value: 30 },
     overlay_text: 'LOW HP', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 15 },
+
+  // ── Timer bars — EQLogParser-style countdown rows in the trigger overlay,
+  //    built by the agent from what it already tracks rather than from a log
+  //    pattern (a bard, 2026-09-26: "the only thing i need to get is the
+  //    recharm tick count down timer … and i could get rid of eqlogparser").
+  //    `builtin_timer` names the source _builtinTimerRows reads; the row has no
+  //    pattern and no gauge condition, so no evaluator ever fires it — ticking
+  //    it on only switches the bars on. No TTS: a bar is something you look at.
+  { id: 'timer_recharm_tick', category: 'timer', label: 'Recharm tick (6s mob tick on your charmed pet)',
+    builtin_timer: 'recharm_tick', no_tts: true },
+  { id: 'timer_lull', category: 'timer', label: 'Pacify / Calm / Harmony timers on mobs',
+    builtin_timer: 'lull', no_tts: true },
+  { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
+    builtin_timer: 'my_spells', no_tts: true },
 ];
+
+const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
+// Fields a personal row carries beyond the core shape the POST rebuild writes
+// (EQLogParser imports set the first three; guild-parity rows the rest).
+const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
+  'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
+  'display_threshold_sec', 'exclude_patterns'];
+// Saved suggested rows keep the pattern they were created with, so a template
+// fix never reached anyone who had already ticked it. A pattern listed here is
+// one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
+// exact matches move — a pattern the user edited by hand is theirs.
+const SUGGESTED_RETIRED_PATTERNS = {
+  mob_rampage: ['\\brampages?\\s+on\\s+(?:you|YOU)\\b'],
+};
 
 // Convert a SUGGESTED_TRIGGERS template into a personal-trigger row (the
 // shape /api/personal-triggers stores). The synthetic id "suggested:<id>"
@@ -35282,6 +35393,13 @@ const SUGGESTED_TRIGGERS = [
 // the pattern / overlay text by hand on the Personal panel if they want.
 function _templateToPersonalRow(tpl, opts) {
   const o = opts || {};
+  if (tpl.builtin_timer) {
+    // A switch, not a trigger: nothing to match and nothing to say.
+    return { id: 'suggested:' + tpl.id, name: tpl.label, pattern: '', pattern_flags: 'i',
+             use_regex: true, enabled: true, cooldown_seconds: 0, timer_duration_sec: 0,
+             end_early_pattern: null, end_use_regex: true, zeal_condition: null,
+             builtin_timer: tpl.builtin_timer, actions: [] };
+  }
   const wantTts = o.tts != null ? !!o.tts : !!tpl.tts_default;
   const action = {
     type: 'text_overlay',
@@ -38685,6 +38803,7 @@ function _evaluateZealConditions(character, tsMs) {
   if (!state) return;
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   for (const t of all) {
+    if (t.enabled === false) continue;   // unticked on the dashboard = off (see evaluateTriggersAgainstLine)
     const cond = t.zeal_condition;
     if (!cond || !cond.field || !cond.op || cond.value == null) continue;
     const fv = _zealFieldValue(state, cond.field);
@@ -39331,6 +39450,63 @@ function _calloutFeedbackSnapshot() {
   };
 }
 
+// ── Timer bars from state the agent already tracks (the 'timer' Suggested
+// switches). They are NOT in _activeTimers: each snapshot rebuilds them from
+// the charm tracker and the target landings, so there is nothing to arm, expire
+// or cancel. A ✕ hides that one instance; the id carries the land time, so the
+// next charm or recast shows again.
+const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short DoT refreshes
+const _builtinTimerHidden = new Set();
+function _builtinTimerKindsOn() {
+  const on = new Set();
+  for (const t of _personalTriggers) if (t && t.builtin_timer && t.enabled !== false) on.add(t.builtin_timer);
+  return on;
+}
+function _builtinTimerRows(now) {
+  const on = _builtinTimerKindsOn();
+  if (on.size === 0) { _builtinTimerHidden.clear(); return []; }
+  const mine = new Set(_watchedCharacters().map(c => String(c).toLowerCase()));
+  const rows = [];
+  const live = new Set();
+  const push = (row) => {
+    live.add(row.id);
+    if (_builtinTimerHidden.has(row.id)) return;
+    rows.push(Object.assign({ color: null, end_text: null, warning_ms: 0, warn_text: null,
+      warnings: [], pinned: false, scope: 'personal', kind: 'builtin', dismissible: true, test: false }, row));
+  };
+  if (on.has('recharm_tick')) {
+    for (const [k, c] of _charmTickTracker) {
+      if (!c || !c.is_active || !c.owner || !mine.has(String(c.owner).toLowerCase())) continue;
+      // A charmed mob re-rolls the charm on its OWN 6s tick. The land (or the
+      // last break) is the anchor we have — the one the charm overlay counts from.
+      const anchor = Number(c.last_tick_at || c.started_at) || now;
+      const into = ((now - anchor) % 6000 + 6000) % 6000;
+      push({ id: 'bt|recharm|' + k + '|' + (c.started_at || anchor), name: c.pet + ' - Recharm tick',
+             target: c.pet, effect: 'Recharm tick', remaining_ms: 6000 - into, duration_sec: 6,
+             cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
+    }
+  }
+  if (on.has('lull') || on.has('my_spells')) {
+    for (const [tk, mp] of _buffLandingsByTarget) {
+      for (const [sk, b] of mp) {
+        const by = b && (b.cast_by || b.owner);
+        if (!by || !mine.has(String(by).toLowerCase()) || b.worn_off_at) continue;
+        const totalSec = (Number(b.dur_ticks) || 0) * 6;
+        const remMs = (Number(b.landed_at) || 0) + totalSec * 1000 - now;
+        if (!(remMs > 0)) continue;
+        const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
+        if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
+        const mob = b.target_name || tk;
+        push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
+               target: mob, effect: b.name + (b.unconfirmed ? '?' : ''),
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb' });
+      }
+    }
+  }
+  for (const id of _builtinTimerHidden) if (!live.has(id)) _builtinTimerHidden.delete(id);
+  return rows;
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
@@ -39370,6 +39546,8 @@ function _activeTimersSnapshot() {
       test:         t.test,
     });
   }
+  try { for (const r of _builtinTimerRows(now)) out.push(r); }
+  catch { /* a derived bar must never cost the trigger countdowns */ }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
   // Pinned rows float as a GROUP above unpinned, then soonest-first within
   // each — so a 3-minute boss-cadence bar stays on top instead of sinking
@@ -39755,6 +39933,11 @@ function evaluateTriggersAgainstLine(line, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   for (const t of all) {
+    // An unticked personal trigger stays in the list (the dashboard keeps the
+    // row so it can be ticked back on) and used to fire anyway — nothing on the
+    // fire path read `enabled` (a bard, 2026-09-26). Guild rows arrive already
+    // filtered by the bot, so this only ever skips a personal one.
+    if (t.enabled === false) continue;
     // End-early check runs FIRST so a single log line containing the end
     // phrase cancels the timer before the same line could (also) re-trigger
     // the start pattern. Per-target: if the end pattern matches and there
@@ -40265,6 +40448,7 @@ function _replayEvaluateLine(line, tsMs, ctx) {
   if (all.length === 0) return false;
   let firedAny = false;
   for (const t of all) {
+    if (t.enabled === false) continue;   // rehearsal must match live
     if (!t._regex) continue;   // gauge-condition triggers have no log line to replay
     let m;
     try { m = t._regex.exec(line); } catch { continue; }
@@ -41214,6 +41398,9 @@ async function main() {
       }),
     };
   });
+  // The watched characters are known now — re-bind {c} in personal triggers,
+  // which loaded before this list existed.
+  _recompilePersonalTriggersForChars();
 
   // Enable the dashboard if stdout is a TTY (terminal). When the agent runs
   // headless under the Windows scheduled task, stdout is redirected and we
@@ -42057,7 +42244,16 @@ module.exports = {
   _setCurrentBossForTest: (name) => { stats.currentEncounterThreat = name ? { bossName: name } : null; },
   _getReplayStateForTest: () => _replayStateForWeb(),
   _setPersonalTriggersForTest: (arr) => { _personalTriggers = arr; },
+  _getPersonalTriggersForTest: () => _personalTriggers,
   _setWatchedLogsForTest: (arr) => { stats.watchedLogs = arr; },
+  // Timer bars + the bard's trigger fixes (2026-09-26) — exported so the tests
+  // drive the shipped code.
+  SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
+  _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
+  _recompilePersonalTriggersForChars, _evaluateZealConditions,
+  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
+  _bumpCharmTick, _reconcileGaugeCharms,
+  _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 
