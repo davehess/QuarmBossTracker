@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. The co-leader is on stable 2.7.1 | the guild lead: move the co-leader to beta, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
+| **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
 | **Charm overlay: server tick + mob tick** | **On beta, agent 3.7.25 (§50).** Mob tick learned from DoT ticks + log breaks; "learning" until known | the co-leader: charm with a DoT up (or let one break) and check the M countdown against the next break |
 | **EQLogParser-style timer bars + trigger fixes for the guild's co-leader** | **On beta, agent 3.7.24 (§49).** Recharm tick, lull timers and your-spells-on-mobs as filled bars in the trigger window (Suggested → Timer bars); an instant "Your charm broke" alert. Fixed: "Rampage on you" never fired, unticked triggers still fired, `{c}` personal triggers dead after a restart, saves stripped EQLogParser warnings, the Charm overlay's mob-tick countdown stuck | the guild lead: (1) the co-leader is on STABLE 2.7.1 — switch them to beta, or cut a stable; (2) all trigger countdowns as filled bars, yes or no; (3) paste the Discord answer from this session |
@@ -2909,6 +2909,39 @@ making changes, and give them a reminder to save before exiting the page"*), `be
 per-character overlay layouts on every flip when that feature is on. The right fix is focus-based
 (which game window is in front), not "last Zeal report". That touches core behaviour, so it is its own
 piece of work.
+
+## 53. ⤴ beta on the dashboard, next to Check for update (2026-09-27, agent 3.7.28, `v2.7.2-beta.18`)
+
+**The call (the guild lead):** *"put the move to beta on the dashboard next to check for updates"*.
+
+**Why:** the only way into the beta channel was the tray's "Receive beta updates". The co-leader is on
+stable 2.7.1, and on that build the tray menu is the thing that would not open (§52). This is the tray ↔
+dashboard parity rule (2026-08-19) applied to the one updater control that was tray-only.
+
+**What shipped:**
+- A small **⤴ beta** button right after "↻ Check for update", styled like the beta build's ↩ stable.
+- It shows on **stable Mimic builds only**. Beta builds keep BETA + ↩ stable; the standalone parser
+  gets neither.
+- It stays hidden until the shell answers. An older Mimic without the bridge, or a dev build with no
+  updater, never shows a button that does nothing.
+- Click → Mimic's own confirm → join. The button then reads "✓ beta on next restart" and a second click
+  offers to leave.
+- The tray checkbox and the button call the same `setBetaChannel(on, source)` in `main.js`. The tray's
+  old click body moved there unchanged, so the two cannot drift.
+
+**⚠ It does not reach anyone already on stable 2.7.1.** The button lives in the build, and a stable
+user gets the next build only when a stable is cut. So the co-leader still needs one of these:
+- the `v2.7.2-beta.18` installer from the releases page (it installs over stable and keeps settings);
+- the tray, if it opens for them once;
+- or a stable cut.
+
+After that, the button is always there.
+
+**Where:**
+- `apps/mimic/main.js`: `setBetaChannel`, plus the `get-beta-channel` / `set-beta-channel` IPC.
+- `preload.js`: the bridge.
+- `dashboard.html`: the header `{{WP:…}}` else-arm and the `wpJoinBeta` wiring.
+- Tests: `test/dashboard-join-beta.test.js`, 14 tests; 8 of 8 mutants killed.
 
 
 
