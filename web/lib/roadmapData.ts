@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'feedback-screenshots-2026-09-26',
+    title: 'Bot 3.1.154',
+    version: 'Bot 3.1.154 · Web 1.8.20',
+    date: '2026-09-26',
+    headline: 'Feedback and suggestions take screenshots.',
+    features: [
+      {
+        name: 'Show us, don’t just tell us',
+        blurb: 'The feedback form and the roadmap’s “submit here” boxes take up to three screenshots: press 📷 or paste one with Ctrl+V. You need to be signed in. The officers see them in their inbox and in Discord.',
+      },
+      {
+        name: 'Discord /feedback keeps its picture',
+        blurb: 'A screenshot attached to /feedback in Discord is saved for good now. Before, its link stopped working after a while.',
+      },
+    ],
+    fixes: [
+      'Feedback sent from Mimic no longer shows up twice in the feedback thread.',
+    ],
+  },
+  {
     key: 'timer-bars-2026-09-26',
     title: 'Agent 3.7.24',
     version: 'Mimic 2.7.2-beta · Agent 3.7.24 · Web 1.8.19',

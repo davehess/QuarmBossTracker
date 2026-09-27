@@ -332,6 +332,16 @@ and the same never-refetch guarantee.
   standing preference, both default OFF), because today it is an environment
   variable and that is why 393 reports have exactly TWO uploaders.
   Design: `docs/DESIGN-crash-review.md`.
+- **2026-09-26 — feedback screenshots are the platform's FIRST object storage.**
+  A private Supabase Storage bucket, `feedback-screenshots` (5 MB per file,
+  JPEG/PNG/WebP, no policies, so service-role only; migration
+  `20260927003234`), paths in `feedback.screenshot_paths`. Up to three per report,
+  shrunk client-side to ≤1600 px (web) or ≤1920 px (Mimic) JPEGs, so a few hundred
+  KB each. The wizard has to create the bucket (a migration does it on Supabase;
+  an on-prem Postgres has no Storage API, so a self-hosted box needs either
+  Supabase Storage in its stack or a filesystem fallback in `utils/feedbackShots.js`,
+  which does not exist yet). Cost at our volume is negligible against Pro's
+  100 GB; there is no retention window, same as the feedback rows.
 
 ### Database
 - **The repo alone cannot build the schema** (2026-08-12): 182/193 migrations

@@ -201,6 +201,13 @@ tells, group chat, officer chat and custom channels. The filter isn't perfect �
 guild and raid chat stay in, and some chat can slip through when Zeal's
 short-chat format is on — so **read the preview before you send**.
 
+**Screenshots** (up to three, 2026-09-26) are stored in a private Supabase
+Storage bucket (`feedback-screenshots`, no public or member access; only the
+officers' inbox opens them, through one-hour signed links) and posted to the same
+Discord thread. Mimic's 📸 photographs the whole screen, which can include chat
+windows or anything else open, so each shot is shown first and the reporter
+chooses which to send. On the website, screenshots need a signed-in pack member.
+
 ## The website (wolfpack.quest)
 
 - **Signing in** uses Discord. We ask Discord who you are and which roles you
