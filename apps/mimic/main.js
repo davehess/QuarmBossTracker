@@ -2266,7 +2266,7 @@ function startZealCapture() {
             // doesn't, Windows' pipe ACL blocks the connection (it connects
             // then instantly drops), so no data ever arrives — cost a member a
             // couple hours before "run Mimic as admin" fixed it (2026-07-05).
-            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Zeal health.',
+            body:  'EQ is running but no Zeal data is flowing. #1 fix: if you run EQ as Administrator, run Mimic as Administrator too (right-click Mimic → Run as administrator). Otherwise open Zeal in-game → Settings → Pipes and enable all data types. Verify: Tray → Overlays → Tick timer, then click its 📡 Zeal line.',
           });
           n.on('click', () => {
             const cfg2 = loadConfig();
@@ -5112,19 +5112,20 @@ function applyMelodyVisibility() {
   if (shouldShow) melodyWindow.showInactive(); else melodyWindow.hide();
 }
 
-// Zeal health overlay — surfaces the live data-type tally from
-// /api/state.zeal so users can diagnose missing Zeal pipes (no buff
-// slot data → melody empty, no gauge data → charm tracker blank, etc.)
-// without having to read the agent log. Opt-in.
+// Tick overlay (key 'zeal' — was the Zeal health overlay; the key, flag,
+// file and saved bounds are kept so nobody's placement moves). A standalone
+// server-tick timer per character plus charmed mobs' own ticks (the
+// co-leader, 2026-09-27), with the Zeal pipe check and this PC's clock
+// offset one click down. Opt-in.
 function createZealHealthOverlay() {
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Zeal health overlay',
+    title: 'Wolf Pack miMIC — Tick overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 220, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Zeal health'),
+    webPreferences: _wpPrefs('Tick'),
   });
   zealWindow.setAlwaysOnTop(true, 'screen-saver');
   zealWindow.setVisibleOnAllWorkspaces(true);
@@ -5512,7 +5513,7 @@ const _DOCK_CATALOG = [
   { key: 'melody',    label: 'Melody',         file: 'melody.html',       flag: 'showMelody' },
   { key: 'threat',    label: 'Threat',         file: 'threatmeter.html',  flag: 'showThreat' },
   { key: 'exttarget', label: 'Extended Target', file: 'extarget.html',    flag: 'showExtTarget' },
-  { key: 'zeal',      label: 'Zeal health',    file: 'zealhealth.html',   flag: 'showZeal' },
+  { key: 'zeal',      label: 'Tick',           file: 'zealhealth.html',   flag: 'showZeal' },
   { key: 'popraid',   label: 'PoP raid',       file: 'popraid.html',      flag: 'showPopRaid' },
   // #65 serves this one from the AGENT so it rides agent hot-swaps; the bundled
   // file is only the offline fallback. `agentPath` makes the PANE resolve the
@@ -6414,7 +6415,7 @@ function buildTrayMenu() {
         const cfg = loadConfig(); cfg.melodyDmgTotals = mi.checked; saveConfig(cfg);
         pushStatus();
       } },
-    { label: 'Zeal health (diagnostic)', type: 'checkbox', checked: s.showZeal, enabled: !s.hideOverlays && !_dockedNow.includes('zeal'), click: (mi) => {
+    { label: 'Tick timer (server + charm ticks, Zeal health)', type: 'checkbox', checked: s.showZeal, enabled: !s.hideOverlays && !_dockedNow.includes('zeal'), click: (mi) => {
         const cfg = loadConfig(); cfg.showZeal = mi.checked; saveConfig(cfg);
         if (mi.checked && !zealWindow) createZealHealthOverlay(); else applyZealVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -9658,7 +9659,7 @@ function _windowLabelsByPid() {
   const NAMES = {
     dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
-    who: '/who', melody: 'Melody', zeal: 'Zeal health', threat: 'Threat meter',
+    who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
     command: 'Command center', popraid: 'PoP raids', me: 'HUD',
   };

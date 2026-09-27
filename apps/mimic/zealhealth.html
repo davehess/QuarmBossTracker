@@ -1,25 +1,70 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>zeal</title>
+<html lang="en"><head><meta charset="utf-8"><title>tick</title>
 <style>
-  /* Zeal Health overlay — diagnostic surface for the Zeal pipe. Half the
-     bug reports this session ("melody empty", "/who shows nothing", "pet
-     tracker blank") would have been instantly diagnosable from a panel
-     that says "you have type 1 + 2 flowing, no type 5 — enable raid
-     roster in Zeal settings". Reads /api/zeal_event tallies via /api/state. */
+  /* Tick overlay (key 'zeal', file kept so every saved position, size and
+     on/off survives). Was the Zeal health diagnostic; now the standalone
+     server-tick timer the co-leader asked for (2026-09-27: "The server tick
+     function within the HUD thing is awesome, but would be even better if it
+     could be broken out or customized to put somewhere else, as a standalone
+     timer"), with the Zeal health check and this PC's clock offset one click
+     down (the guild lead: "the zeal health info could still be accessible
+     there. could also display clock skew offset").
+     Two layouts to choose between on beta: bars and dials (▭ / ◯). */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden); text stays bright at every value. */
-  :root{ --bg-alpha:0.5; }
+  :root{ --bg-alpha:0.5; --srv:#58a6ff; --mob:#a371f7; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
-  #wrap{padding:6px 8px;min-width:240px;}
-  .title{display:flex;align-items:center;gap:8px;
+  #wrap{padding:6px 8px;min-width:180px}
+  .title{display:flex;align-items:center;gap:8px;padding-left:24px;padding-right:30px;
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
+  .title .grow{flex:1}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
-  .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:6px}
+  #layoutBtn{background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    border-radius:4px;font:inherit;font-size:11px;line-height:1;padding:2px 5px;cursor:pointer}
+  #layoutBtn:hover{color:#e6edf3;border-color:#8b949e}
+  .card{background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
+
+  /* Bars: seconds left, and a bar that drains toward the left. One grid for
+     all rows so every number and bar lines up. */
+  .bars{display:grid;grid-template-columns:auto 3.2em 1fr;align-items:center;column-gap:6px;
+    font-size:11px;line-height:1.6;text-shadow:0 1px 2px #000}
+  .tk{display:contents}
+  .tk .tl{color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:11em}
+  .tk.mob .tl{color:#d2b8ff}
+  .tk .tv{font-size:15px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+  .tk .bar{height:6px;border-radius:3px;background:rgba(255,255,255,0.12);overflow:hidden}
+  .tk .bar i{display:block;height:100%;width:0}
+  .tk.srv .tv{color:var(--srv)} .tk.srv .bar i{background:var(--srv)}
+  .tk.mob .tv{color:var(--mob)} .tk.mob .bar i{background:var(--mob)}
+  .tk .tn{grid-column:1 / -1;color:#6e7681;font-size:10px;line-height:1.2;margin-top:-2px}
+
+  /* Dials: one ring per tick, seconds in the middle. */
+  .dials{display:flex;flex-wrap:wrap;gap:8px}
+  .dl{display:flex;flex-direction:column;align-items:center;width:58px;text-shadow:0 1px 2px #000}
+  .dl svg{width:52px;height:52px;display:block}
+  .dl .ring-bg{fill:none;stroke:rgba(255,255,255,0.14);stroke-width:5}
+  .dl .ring{fill:none;stroke-width:5;stroke-linecap:round}
+  .dl.srv .ring{stroke:var(--srv)} .dl.mob .ring{stroke:var(--mob)}
+  .dl .num{font-size:15px;font-weight:700;dominant-baseline:central;text-anchor:middle;fill:#fff}
+  .dl .cap{font-size:10px;color:#c9d1d9;max-width:58px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dl.mob .cap{color:#d2b8ff}
+
+  #empty{color:rgba(255,255,255,0.55);font-size:11px;text-shadow:0 1px 2px #000;padding:2px 0}
+
+  /* Status line: Zeal + clock, click to open the detail. */
+  #status{display:flex;gap:10px;align-items:center;margin-top:5px;font-size:10px;
+    color:#9aa4ad;text-shadow:0 1px 2px #000;cursor:pointer}
+  #status:hover{color:#e6edf3}
+  #status .ok{color:#56d364} #status .warn{color:#ffa657} #status .bad{color:#f85149} #status .dim{color:#6e7681}
+  #status .arr::after{content:'▸'}
+  body.show-detail #status .arr::after{content:'▾'}
+  #detail{display:none;margin-top:5px}
+  body.show-detail #detail{display:block}
+  .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:4px}
   .pid b{color:#e6edf3;font-weight:600}
-  .types{display:flex;flex-direction:column;gap:2px;background:rgb(0 0 0 / var(--bg-alpha));
-    border-radius:5px;padding:5px 7px}
+  .types{display:flex;flex-direction:column;gap:2px}
   .row{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.5;
     text-shadow:0 1px 2px #000}
   .row .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
@@ -34,7 +79,9 @@
   .row.off .lbl,.row.off .desc{color:#6e7681}
   .hint{margin-top:6px;font-size:10px;color:#f0d264;text-shadow:0 1px 2px #000;line-height:1.4}
   .hint.ok{color:#56d364}
-  #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:3px 0}
+  .clock{margin-top:6px;font-size:10px;color:#c9d1d9;text-shadow:0 1px 2px #000;line-height:1.5}
+  .clock .muted{color:#6e7681}
+
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -64,21 +111,27 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
-  <button id="hide-btn" title="Hide the Zeal health overlay (turn back on from the tray → Overlays)">✕</button>
+  <button id="hide-btn" title="Hide the Tick overlay (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
-    <span>🛠 Zeal health</span>
+    <span>🛠 Tick</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>📡 Zeal health</span></div>
-    <div id="pid" class="pid">no EQ process detected</div>
-    <div id="types" class="types"></div>
-    <div id="hint" class="hint"></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>⏱ Tick</span><span class="grow"></span>
+      <button id="layoutBtn" title="Show as dials">◯</button></div>
+    <div id="ticks" class="card"></div>
+    <div id="status" title="Click for the Zeal health check and this PC's clock"></div>
+    <div id="detail" class="card">
+      <div id="pid" class="pid">no EQ process detected</div>
+      <div id="types" class="types"></div>
+      <div id="hint" class="hint"></div>
+      <div id="clock" class="clock"></div>
+    </div>
   </div>
 <script>
   let PORT = 7779;
@@ -91,10 +144,16 @@
   var lockBtn = document.getElementById('lock-btn');
   if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
 
+  // Every clickable control asks for mouse input on hover: a locked overlay is
+  // click-through, and without this the click lands in EQ instead.
+  function _hoverInteract(el){
+    if (!el) return;
+    el.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    el.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  }
   var hideBtn = document.getElementById('hide-btn');
   if (hideBtn) {
-    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
-    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    _hoverInteract(hideBtn);
     hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
   }
 
@@ -137,18 +196,48 @@
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
 
-  // Zeal data-type catalog. Each type Mimic understands has a human label
-  // + which overlays/features it powers + an expected-during-play flag.
-  // Severity: missing types that block major overlays glow RED; nice-to-have
-  // types that nothing critical needs glow yellow.
-  var TYPES = [
-    { id: 1, label: 'Label',  desc: 'Buff slots + casting label',         powers: 'Melody, bardBuffs', critical: true  },
-    { id: 2, label: 'Gauge',  desc: 'HP bars + target name + pet',         powers: 'Charm, Target Info, Pets', critical: true  },
-    { id: 3, label: 'Player', desc: 'Location + autoattack + zone',        powers: 'zone-aware logic',     critical: true  },
-    { id: 5, label: 'Raid',   desc: 'Raid roster',                         powers: 'join a raid', critical: false },
-    { id: 6, label: 'Group',  desc: 'Group composition',                   powers: '(reserved)',           critical: false },
-    { id: 0, label: 'Tick',   desc: 'Heartbeat',                           powers: 'liveness check',       critical: false },
-  ];
+  // ── Ticks ─────────────────────────────────────────────────────────────────
+  // The agent sends each tick as the time of one boundary; we count down on
+  // our own clock (same machine, same clock), so the 1 s poll never shows a
+  // stale number. null = not known.
+  var TICK_MS = 6000;
+  function tickLeft(at, now){
+    if (at == null) return null;
+    var d = (at - now) % TICK_MS;
+    return d <= 0 ? d + TICK_MS : d;
+  }
+  // One row per character streaming Zeal (server tick), then one per active
+  // charm (the mob's own tick — learned from DoT ticks or a break, "?" until
+  // then). A single character is just "Server tick".
+  function tickRows(s){
+    var rows = [];
+    var srv = Array.isArray(s && s.serverTicks) ? s.serverTicks : [];
+    for (var i = 0; i < srv.length; i++) {
+      var t = srv[i];
+      if (!t || !t.character) continue;
+      rows.push({ key: 's|' + t.character.toLowerCase(), kind: 'srv', at: t.at,
+                  label: srv.length === 1 ? 'Server tick' : t.character });
+    }
+    var pets = Array.isArray(s && s.charmPets) ? s.charmPets : [];
+    for (var j = 0; j < pets.length; j++) {
+      var p = pets[j];
+      if (!p || !p.is_active || !p.pet) continue;
+      rows.push({ key: 'm|' + String(p.pet).toLowerCase(), kind: 'mob', at: p.mob_tick_at == null ? null : p.mob_tick_at,
+                  label: p.pet, rough: p.mob_tick_half_ms != null && p.mob_tick_half_ms > 350,
+                  note: p.mob_tick_at == null ? 'learning — a DoT tick or a break shows it'
+                      : (p.mob_tick_src === 'break' ? 'mob tick, from a break' : 'mob tick, from DoT ticks') });
+    }
+    return rows;
+  }
+  // This PC's clock vs the Wolf Pack server. POSITIVE offset = this PC is
+  // BEHIND. Under a second is fine; past 5 s other raiders' relayed timers and
+  // deaths land visibly off (the agent warns at 5 s too).
+  function clockChip(ms){
+    if (ms == null || !isFinite(ms)) return { text: 'clock —', cls: 'dim' };
+    var a = Math.abs(ms), secs = (a / 1000).toFixed(a < 10000 ? 1 : 0);
+    var text = a < 100 ? 'clock in sync' : ('clock ' + secs + 's ' + (ms > 0 ? 'slow' : 'fast'));
+    return { text: text, cls: a < 1000 ? 'ok' : (a < 5000 ? 'warn' : 'bad') };
+  }
 
   function _requestAutoHeight(){
     if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
@@ -156,11 +245,103 @@
     try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
   }
 
+  var layout = 'bars';
+  try { if (localStorage.getItem('wp:tick:layout') === 'dials') layout = 'dials'; } catch (e) {}
+  try { if (localStorage.getItem('wp:tick:detail') === '1') document.body.classList.add('show-detail'); } catch (e) {}
+  var layoutBtn = document.getElementById('layoutBtn');
+  function _paintLayoutBtn(){ layoutBtn.textContent = layout === 'bars' ? '◯' : '▭'; layoutBtn.title = layout === 'bars' ? 'Show as dials' : 'Show as bars'; }
+  _paintLayoutBtn();
+  _hoverInteract(layoutBtn);
+  layoutBtn.addEventListener('click', function(){
+    layout = layout === 'bars' ? 'dials' : 'bars';
+    try { localStorage.setItem('wp:tick:layout', layout); } catch (e) {}
+    _paintLayoutBtn(); _rowsSig = null; renderTicks(); _requestAutoHeight();
+  });
+  var statusEl = document.getElementById('status');
+  _hoverInteract(statusEl);
+  statusEl.addEventListener('click', function(){
+    var on = !document.body.classList.contains('show-detail');
+    document.body.classList.toggle('show-detail', on);
+    try { localStorage.setItem('wp:tick:detail', on ? '1' : '0'); } catch (e) {}
+    _requestAutoHeight();
+  });
+
+  // Rows are rebuilt only when WHICH rows exist changes; the countdown itself
+  // just moves numbers and widths, ten times a second.
+  var _rows = [], _rowsSig = null, _haveZeal = false;
+  var ticksEl = document.getElementById('ticks');
+  var R = 22, C = 2 * Math.PI * R;
+  function renderTicks(){
+    var sig = layout + '|' + _haveZeal + '|' + _rows.map(function(r){ return r.key + (r.at == null ? '?' : ''); }).join(',');
+    if (sig !== _rowsSig) {
+      _rowsSig = sig;
+      var html = '';
+      if (!_rows.length) {
+        html = '<div id="empty">' + (_haveZeal ? 'waiting for the server tick from Zeal…' : 'needs Zeal — start EverQuest with Zeal loaded') + '</div>';
+      } else if (layout === 'bars') {
+        html = '<div class="bars">';
+        for (var i = 0; i < _rows.length; i++) {
+          var r = _rows[i];
+          // The mob-tick note shows while it is still being learned; once known
+          // it moves to the tooltip, so a steady overlay stays three columns.
+          html += '<div class="tk ' + r.kind + '" data-i="' + i + '"><span class="tl" title="' + esc(r.note || r.label) + '">' + esc(r.label) + '</span>'
+                + '<span class="tv">—</span><span class="bar"><i></i></span>'
+                + (r.note && r.at == null ? '<span class="tn">' + esc(r.note) + '</span>' : '') + '</div>';
+        }
+        html += '</div>';
+      } else {
+        html = '<div class="dials">';
+        for (var k = 0; k < _rows.length; k++) {
+          var d = _rows[k];
+          html += '<div class="dl ' + d.kind + '" data-i="' + k + '" title="' + esc(d.note || d.label) + '">'
+                + '<svg viewBox="0 0 52 52"><circle class="ring-bg" cx="26" cy="26" r="' + R + '"></circle>'
+                + '<circle class="ring" cx="26" cy="26" r="' + R + '" transform="rotate(-90 26 26)"'
+                + ' stroke-dasharray="' + C.toFixed(2) + '" stroke-dashoffset="' + C.toFixed(2) + '"></circle>'
+                + '<text class="num" x="26" y="26">—</text></svg>'
+                + '<span class="cap">' + esc(d.label) + '</span></div>';
+        }
+        html += '</div>';
+      }
+      ticksEl.innerHTML = html;
+      _requestAutoHeight();
+    }
+    var now = Date.now();
+    var els = ticksEl.querySelectorAll('[data-i]');
+    for (var n = 0; n < els.length; n++) {
+      var row = _rows[+els[n].getAttribute('data-i')];
+      if (!row) continue;
+      var left = tickLeft(row.at, now);
+      var txt = left == null ? '?' : (layout === 'bars' ? (row.rough ? '~' : '') + (left / 1000).toFixed(1) : String(Math.ceil(left / 1000)));
+      if (layout === 'bars') {
+        els[n].querySelector('.tv').textContent = txt;
+        els[n].querySelector('.bar i').style.width = left == null ? '0%' : ((left / TICK_MS) * 100).toFixed(1) + '%';
+      } else {
+        els[n].querySelector('.num').textContent = txt;
+        els[n].querySelector('.ring').setAttribute('stroke-dashoffset', left == null ? C.toFixed(2) : (C * (1 - left / TICK_MS)).toFixed(2));
+      }
+    }
+  }
+  setInterval(renderTicks, 100);
+
+  // ── Zeal health (the old overlay, now the detail panel) ───────────────────
+  // Zeal data-type catalog. Each type Mimic understands has a human label
+  // + which overlays/features it powers + an expected-during-play flag.
+  var TYPES = [
+    { id: 1, label: 'Label',  desc: 'Buff slots + casting label',         powers: 'Melody, bardBuffs', critical: true  },
+    { id: 2, label: 'Gauge',  desc: 'HP bars + target name + pet',         powers: 'Charm, Target Info, Pets, server tick', critical: true  },
+    { id: 3, label: 'Player', desc: 'Location + autoattack + zone',        powers: 'zone-aware logic',     critical: true  },
+    { id: 5, label: 'Raid',   desc: 'Raid roster',                         powers: 'join a raid', critical: false },
+    { id: 6, label: 'Group',  desc: 'Group composition',                   powers: '(reserved)',           critical: false },
+    { id: 0, label: 'Tick',   desc: 'Heartbeat',                           powers: 'liveness check',       critical: false },
+  ];
   var typesEl = document.getElementById('types');
   var pidEl   = document.getElementById('pid');
   var hintEl  = document.getElementById('hint');
+  var clockEl = document.getElementById('clock');
 
-  async function tick(){
+  function _secs(ms){ return (Math.abs(ms) / 1000).toFixed(Math.abs(ms) < 10000 ? 1 : 0) + ' s ' + (ms > 0 ? 'behind' : 'ahead of'); }
+
+  async function poll(){
     try {
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
       const s = await r.json();
@@ -172,17 +353,17 @@
       const total = z.total || 0;
       const pids = Array.isArray(z.connectedPids) ? z.connectedPids : [];
       const ageMs = lastEventAt ? (Date.now() - lastEventAt) : null;
+      _haveZeal = pids.length > 0;
+      _rows = tickRows(s);
+
       // PID summary — what EQ processes Mimic is reading from.
       if (pids.length === 0) {
         pidEl.innerHTML = '<b>no EQ process detected</b> — start EverQuest with Zeal loaded';
       } else {
         pidEl.innerHTML = pids.length + ' EQ ' + (pids.length === 1 ? 'process' : 'processes') + ' connected · pid ' + pids.map(esc).join(', ');
       }
-      // Build per-type rows. Severity:
-      //   ok    = count > 0 AND recent traffic (within 30s)
-      //   stale = count > 0 but no traffic in 30s+ → was flowing, now silent
-      //   off   = count === 0 (never seen this type)
-      //   warn  = optional type missing (count===0 but critical=false)
+      // Per-type rows. ok = traffic in the last 30 s; stale = was flowing,
+      // now silent; off = never seen this type.
       var html = '';
       var missingCritical = [];
       var missingOptional = [];
@@ -190,7 +371,7 @@
         var t = TYPES[i];
         var c = byType[String(t.id)] || byType[t.id] || 0;
         var sev;
-        if (c === 0) { sev = t.critical ? 'off' : 'off'; }
+        if (c === 0) { sev = 'off'; }
         else if (ageMs != null && ageMs > 30000) { sev = 'stale'; }
         else { sev = 'ok'; }
         if (c === 0 && t.critical)  missingCritical.push(t);
@@ -207,36 +388,51 @@
         typesEl.__wpHtml = html;
       }
 
-      // Hint: prioritize critical missing > optional missing > stale > all good.
-      var hintHtml = '';
-      var hintCls  = '';
+      // Hint: prioritize critical missing > stale > optional missing > all good.
+      var hintHtml = '', hintCls = '', zealCls = 'ok', zealTxt = 'Zeal ok';
       if (pids.length === 0) {
         // "No connected pipe" also covers the admin-mismatch case: if EQ runs
         // elevated and Mimic doesn't, the connect is refused/instantly dropped,
-        // so it LOOKS like EQ isn't running even when you're in-game. Call that
-        // out — it's the usual culprit for "says not running but I'm playing"
-        // (two members, 2026-07-05).
+        // so it LOOKS like EQ isn't running even when you're in-game (two
+        // members, 2026-07-05).
         hintHtml = 'EQ is not running (or Zeal isn`t loaded). Launch EverQuest and this fills in. '
                  + '<b>Already in-game?</b> The usual cause is an admin mismatch — if you run EQ as Administrator, '
                  + 'Mimic must run as Administrator too (right-click Mimic → <b>Run as administrator</b>).';
+        zealCls = 'dim'; zealTxt = 'Zeal not connected';
       } else if (missingCritical.length > 0) {
         hintHtml = '⚠ Critical types missing: ' + missingCritical.map(function(t){ return t.label; }).join(', ') + '. Open Zeal → Settings → Pipes and enable them.';
+        zealCls = 'bad'; zealTxt = 'Zeal: types missing';
       } else if (ageMs != null && ageMs > 30000) {
         hintHtml = '⚠ No Zeal traffic in ' + Math.round(ageMs/1000) + 's. Check the EQ window or Zeal HUD.';
+        zealCls = 'warn'; zealTxt = 'Zeal quiet ' + Math.round(ageMs/1000) + 's';
       } else if (missingOptional.length > 0) {
         hintHtml = 'Optional types missing: ' + missingOptional.map(function(t){ return t.label; }).join(', ') + '. Some features won`t work until enabled in Zeal.';
-        hintCls  = '';
       } else if (total > 0) {
         hintHtml = '✓ Zeal is healthy — ' + total + ' events received this session.';
         hintCls  = 'ok';
       }
       hintEl.className = 'hint' + (hintCls ? ' ' + hintCls : '');
-      hintEl.innerHTML = hintHtml;
+      if (hintEl.__wpHtml !== hintHtml) { hintEl.innerHTML = hintHtml; hintEl.__wpHtml = hintHtml; }
+
+      // Clock: vs the Wolf Pack server (what relayed timers are stamped
+      // against), and vs internet time when the agent could reach it.
+      var chip = clockChip(s.clockOffsetMs);
+      var clockHtml = s.clockOffsetMs == null
+        ? '<span class="muted">This PC\'s clock is measured once Mimic reaches the Wolf Pack server.</span>'
+        : 'This PC\'s clock is ' + _secs(s.clockOffsetMs) + ' the Wolf Pack server'
+          + (s.ntpOffsetMs != null ? ', ' + _secs(s.ntpOffsetMs) + ' internet time' : '') + '.'
+          + (Math.abs(s.clockOffsetMs) >= 1000 ? ' Other raiders\' relayed timers land that far off here. Fix: run <b>w32tm /resync</b> as administrator.' : '');
+      if (clockEl.__wpHtml !== clockHtml) { clockEl.innerHTML = clockHtml; clockEl.__wpHtml = clockHtml; }
+      var statusHtml = '<span class="' + zealCls + '">📡 ' + esc(zealTxt) + '</span>'
+                     + '<span class="' + chip.cls + '">⏱ ' + esc(chip.text) + '</span>'
+                     + '<span class="dim arr"></span>';
+      if (statusEl.__wpHtml !== statusHtml) { statusEl.innerHTML = statusHtml; statusEl.__wpHtml = statusHtml; }
+      renderTicks();
       _requestAutoHeight();
     } catch (e) {
       var c = document.getElementById('conn'); c.className = 'conn bad'; c.textContent = '○';
     }
   }
-  tick(); setInterval(tick, 1000);
+  poll(); setInterval(poll, 1000);
 </script>
 </body></html>

@@ -1634,6 +1634,22 @@ function _serverTickAtFor(owner, now) {
   }
   return null;
 }
+// Every character that streamed Zeal in the last minute, with one of its
+// server-tick boundaries — the Tick overlay's rows (the co-leader, 2026-09-27:
+// the HUD's server tick "would be even better if it could be broken out …
+// as a standalone timer"). One row per character rather than "the active
+// one", which flips with whichever Zeal stream reported last. Sorted by name
+// so the rows never swap places.
+function _serverTicksNow(now) {
+  const out = [];
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (!st || !(now - (st.updatedAt || 0) < 60_000)) continue;
+    const t = _meTick(st, now);
+    if (t) out.push({ character: ch, at: now + t.ms_left });
+  }
+  return out.sort((a, b) => a.character.localeCompare(b.character));
+}
 function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   if (!pet) return;
   // Second half of the vision-eye choke point (see _isVisionEyePet). Every
@@ -15094,6 +15110,8 @@ function _serializeForDashboard() {
     // Backup for when zeal.ini isn't reachable: a tag we SAW arrive already
     // rewritten by prettyprint (spawn id stripped at the source).
     zealTagPretty: _tagPrettyPrintSeen,
+    // Tick overlay: one server-tick boundary per character streaming Zeal.
+    serverTicks: _serverTicksNow(Date.now()),
     // This machine's measured clock offset vs the bot, from the heartbeat's
     // four-stamp NTP exchange. POSITIVE = this clock is BEHIND. Surfaced so the
     // dashboard can show the drift and, after a Windows time resync, prove the
@@ -19504,7 +19522,7 @@ var WP_OVERLAY_ROWS = [
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
-  ['zeal',    'Zeal health',         'Diagnostic — connected Zeal clients, last event time, sample by event type. Useful for confirming the Zeal pipe is healthy.'],
+  ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
