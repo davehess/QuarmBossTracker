@@ -43,6 +43,8 @@
      written over by it (docs/DESIGN-trigger-overlay-v2.md §3b). */
   #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px;
     margin-bottom:var(--timers-space,0px)}
+  /* Timers at the top (⇅): push the column DOWN off the stack instead. */
+  body.timers-topdown #alertcol{margin-bottom:0;margin-top:var(--timers-space,0px)}
   #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
   #feedback.show{visibility:visible}
   .fb-btn{
@@ -129,6 +131,15 @@
     /* Safety valve only — the row cap is the real bound. */
     max-height:calc(100vh - 42px);overflow-y:auto;overflow-x:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace}
+  /* ⇅ Timers start at the TOP (a member, 2026-09-27: "an option to start the
+     timers at the top, and go down with successive triggers to track, instead
+     of always starting at the bottom of window and growing up"). The stack
+     hangs off the top edge, below the ✥ / 🗑 / ✕ gutter, and reads down; the
+     "+N more" tail lands at the bottom. main.js turns grow-upward OFF for this
+     window when the option is switched on, so the top edge stays put on screen
+     and the first timer never moves as more arrive. */
+  body.timers-topdown #timers{top:34px;bottom:auto;flex-direction:column}
+  body.setup.timers-topdown #timers{top:58px}
   /* "+N more" overflow tail — dimmer than a real row so it reads as a count,
      not a countdown. Sits at the top of the stack (furthest from the anchor). */
   .timer-row.timer-more{justify-content:center;color:#8b949e;font-size:11px;
@@ -383,6 +394,13 @@
   }
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
+  // ⇅ Timers start at the top (right-click menu): the stack hangs off the top
+  // edge and reads down instead of rising from the bottom.
+  function applyTimersOrder(s){
+    document.body.classList.toggle('timers-topdown', !!(s && s.triggerTimersTopDown));
+  }
+  if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTimersOrder).catch(function(){});
+  if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTimersOrder);
 
   // #120 — report whether the speech engine actually PRODUCED audio, not just
   // that we asked it to. On a machine where Chromium's user-activation gate is
@@ -647,6 +665,9 @@
   }
 
   function fire(t){
+    // The instant charm break belongs to the Charm overlay, which speaks it
+    // (agent _pushCharmBreakInstant); here it would be a second voice.
+    if (t && t.charm) return;
     // Gate the whole alert (flash + speak + sound) on the user's preference —
     // when trigger alerts are off, this hidden window must stay silent rather
     // than narrate fires nobody can see. Mute is NOT checked here: under Mute

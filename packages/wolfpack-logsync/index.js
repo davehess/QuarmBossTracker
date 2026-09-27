@@ -8578,6 +8578,7 @@ class EncounterBuilder {
       // off." line names no pet at all. Resolve it to whichever open
       // session THIS character owns; an enchanter/charmer only ever has
       // one charm active at a time, so this is unambiguous.
+      const wasSelfLine = String(event.pet || '').toLowerCase() === '__self__';
       let petKey = String(event.pet || '').toLowerCase();
       let petDisplay = event.pet;
       if (petKey === '__self__') {
@@ -8628,6 +8629,12 @@ class EncounterBuilder {
       _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
       // The same line is a mob-tick observation for that mob (_noteMobTick).
       try { _noteMobTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, Date.parse(event.ts), Date.now(), 'break'); } catch { /* never block the break */ }
+      // The instant call, straight down the /api/fires/wait long-poll (see
+      // _pushCharmBreakInstant). Own charms only.
+      try {
+        const own = wasSelfLine || (!!ownerWas && String(ownerWas).toLowerCase() === String(this.character || '').toLowerCase());
+        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts));
+      } catch { /* never block the break */ }
       return;
     }
 
@@ -35738,7 +35745,7 @@ const SUGGESTED_TRIGGERS = [
   // line itself — bards get it too (test/fixtures/golden/raid-pull.log) — so
   // it is the instant call for someone who runs no Charm overlay (a bard,
   // 2026-09-26: "the 'charm break' is a few seconds late").
-  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (instant — instead of the Charm overlay\'s call)',
+  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (for anyone not running the Charm overlay, which now calls it instantly itself)',
     pattern: 'Your charm spell has worn off\\.',
     overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
@@ -36053,6 +36060,35 @@ function _pushOverlay(o) {
   _wakeFireWaitersSoon();
 }
 
+// The charm break, the moment its log line is read (the guild lead, 2026-09-27:
+// "charm break needs to be as close to instant as possible, like EQLogParser";
+// a member on 2.7.3-beta.2: "still feels slightly behind. like 1 or 2 seconds").
+// The Charm overlay's own call waited for its 500 ms /api/state poll, behind that
+// route's 400 ms cache, then a 600 ms kill guard, then speech start: 1–1.6 s. This
+// pushes a `charm` fire down the /api/fires/wait long-poll instead, which the Charm
+// overlay speaks at once (the trigger overlay skips it). No kill guard is needed:
+// the log line is the break itself — if the pet died first, its tracker entry is
+// already gone and there is no pet to resolve. Live lines only (a backfill replays
+// old breaks); once per pet per 4 s (the self line and a bystander line can both
+// arrive). When the "Your charm broke" suggested trigger is on with TTS, the
+// trigger overlay already says it, so the fire is marked charm_spoken and the
+// Charm overlay only uses it to skip its own late call.
+const _charmBreakInstantAt = new Map();
+function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) {
+  if (!own || !petKey) return false;
+  if (!(Number.isFinite(lineMs) && Math.abs(now - lineMs) < 15_000)) return false;
+  if (now - (_charmBreakInstantAt.get(petKey) || 0) < 4000) return false;
+  _charmBreakInstantAt.set(petKey, now);
+  const sug = typeof _findSuggestedRow === 'function' ? _findSuggestedRow('self_charm_broke') : null;
+  _pushOverlay({
+    text: 'CHARM BREAK', tts: 'charm break', trigger: 'charm break', color: 'red', duration_ms: 3000,
+    firedAt: now, shownAt: now,
+    charm: true, charm_key: petKey, charm_pet: petName || petKey,
+    charm_spoken: !!(sug && sug.enabled !== false && _suggestedHasTts(sug)),
+  });
+  return true;
+}
+
 // One fire, in the shape triggers.html reads — for /api/state's
 // recentTriggerFires and the /api/fires/wait long-poll alike.
 function _fireForWeb(o) {
@@ -36077,6 +36113,11 @@ function _fireForWeb(o) {
     // Set by the damage-taken alert, whose cadence would otherwise camp the
     // shared centre flash and clobber other callouts on it.
     audioOnly: !!o.audioOnly,
+    // The instant charm break (_pushCharmBreakInstant) — for the Charm overlay;
+    // triggers.html skips it.
+    charm:        !!o.charm,
+    charm_key:    o.charm_key || null,
+    charm_spoken: !!o.charm_spoken,
   };
 }
 

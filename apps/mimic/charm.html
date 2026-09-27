@@ -500,8 +500,9 @@
           // (i.e. the charmer killed it intentionally), we cancel.
           var t = setTimeout(function(){
             // If the pet is GONE from the tracker by now → intentional kill,
-            // stay silent. Otherwise → real unexpected break, speak.
-            if (trackedKeysNow().has(key)) speak('charm break');
+            // stay silent. Otherwise → real unexpected break, speak — unless
+            // the instant call (waitCharmFires) already said it.
+            if (trackedKeysNow().has(key) && !_instantCalled(key)) speak('charm break');
             pendingRecharm.delete(key);
           // 600 ms (was 1500, the guild's co-leader, 2026-09-26: "about a second
           // off"): long enough for one more 500 ms poll to see a pet that died
@@ -692,5 +693,43 @@
   // that is offline (tick drew nothing new).
   window.addEventListener('wp-mini-change', function(){ tick().then(_requestAutoHeight); });
   tick(); setInterval(tick, 500);
+
+  // The instant call (agent 3.7.34+; the guild lead, 2026-09-27: "charm break needs
+  // to be as close to instant as possible, like EQLogParser"). The agent pushes a
+  // `charm` fire down the same /api/fires/wait long-poll the trigger overlay uses,
+  // the moment it reads the break line, so this speaks without waiting for the
+  // 500 ms poll above or the 600 ms kill guard. The deferred call stays as the
+  // fallback for a break with no log line. An older agent never sends a charm
+  // fire, and nothing changes; one without the route answers 404 and this stops.
+  var _instantAt = new Map();   // pet key → when the instant call came
+  var _instantLastAt = 0;       // any pet — covers a key the tracker spells differently
+  function _instantCalled(key){
+    return Date.now() - Math.max(_instantAt.get(key) || 0, _instantLastAt) < 8000;
+  }
+  (async function waitCharmFires(){
+    var after = Date.now();
+    for (;;) {
+      var t0 = Date.now(), fresh = 0;
+      try {
+        const r = await fetch('http://127.0.0.1:'+PORT+'/api/fires/wait?after=' + encodeURIComponent(after), {cache:'no-store'});
+        if (r.status === 404) return;
+        const j = await r.json();
+        const fires = (j.fires || []).slice().sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+        for (const f of fires) {
+          if (!((f.ts||0) > after)) continue;
+          after = f.ts; fresh++;
+          if (!f.charm) continue;
+          _instantAt.set(f.charm_key || '', Date.now()); _instantLastAt = Date.now();
+          // The "Your charm broke" suggested trigger already said it in the
+          // trigger overlay — stay quiet, but still skip the late call.
+          if (!f.charm_spoken) speak('charm break');
+        }
+      } catch(e){ await new Promise(function(r){ setTimeout(r, 1000); }); continue; }
+      // The agent holds this request up to 20 s while nothing is new. An answer
+      // that comes back fast with nothing new (an agent shutting down, a stub)
+      // must not turn into a tight loop against the local agent.
+      if (!fresh && Date.now() - t0 < 250) await new Promise(function(r){ setTimeout(r, 250); });
+    }
+  })();
 </script>
 </body></html>

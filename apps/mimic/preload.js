@@ -428,6 +428,11 @@ function _buildOverlayMenu(onClose, state) {
   // (Extended Target etc.): the list grows UP instead of running off-screen.
   menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
     () => ipcRenderer.invoke('wp-growup-toggle')));
+  // Trigger overlay only: which edge the timer stack starts from.
+  if (st.key === 'trigger') {
+    menu.appendChild(mkItem('⇅ Timers start at: ' + (st.timersTopDown ? 'TOP (list grows down)' : 'bottom (list grows up)'), '#20374a',
+      () => ipcRenderer.invoke('wp-timers-order-toggle')));
+  }
   // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
   // → the three colour-blind ones
   // and applies to ALL overlays at once. Click repeatedly to step through.

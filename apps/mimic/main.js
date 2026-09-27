@@ -6108,6 +6108,7 @@ function currentStatus() {
     tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
+    triggerTimersTopDown: !!cfg.triggerTimersTopDown,
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
@@ -7591,6 +7592,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     growUp: _growUpSetting(cfg, key),
+    timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
     // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
     // the menu never offers a switch that would do nothing (see _MINI_KEYS).
@@ -7667,6 +7669,28 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
   return !!map[key];
+});
+// ⇅ Timers start at the top on the trigger overlay (a member, 2026-09-27: "start
+// the timers at the top, and go down with successive triggers to track, instead
+// of always starting at the bottom of window and growing up"). Off = the stack
+// rises from the bottom edge, as before; on = it hangs off the top edge and
+// reads down. The window's grow direction follows, or the auto-height would keep
+// the bottom edge fixed and walk the first timer up the screen as rows arrive:
+// on sets grow-upward OFF for this window, off clears the entry so the default
+// (up) returns. ⬆ Grow upward in the same menu still overrides afterwards.
+// triggers.html reads the flag from the status payload it already listens to,
+// so it re-renders without a reload.
+ipcMain.handle('wp-timers-order-toggle', () => {
+  const cfg = loadConfig();
+  cfg.triggerTimersTopDown = !cfg.triggerTimersTopDown;
+  const grow = (cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
+  if (cfg.triggerTimersTopDown) grow.trigger = false; else delete grow.trigger;
+  cfg.overlayGrowUp = grow;
+  saveConfig(cfg);
+  if (triggerWindow && !triggerWindow.isDestroyed()) {
+    triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
+  }
+  return cfg.triggerTimersTopDown;
 });
 ipcMain.handle('wp-backdrop-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
