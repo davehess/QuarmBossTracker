@@ -6554,18 +6554,7 @@ function buildTrayMenu() {
     type: 'checkbox',
     checked: loadConfig().betaChannel === true,
     enabled: !!autoUpdater,
-    click: (mi) => {
-      const cfg = loadConfig();
-      cfg.betaChannel = !!mi.checked;
-      if (cfg.betaChannel) delete cfg.forceStable;   // re-opting into betas lifts a stable pin
-      saveConfig(cfg);
-      if (autoUpdater) {
-        _applyUpdaterChannel();
-        appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} — checking…\n`);
-        safeCheckForUpdates(true);
-      }
-      pushStatus();
-    },
+    click: (mi) => setBetaChannel(!!mi.checked, 'tray'),
   };
   // Revert-to-stable — only offered while the beta track is actually in
   // effect (beta build or opt-in, and not already pinned to stable).
@@ -6974,6 +6963,24 @@ async function revertToStable(source) {
   appendAgentLog(`[updater] revert to stable requested (${source || 'unknown'}) — pinning channel to stable and checking…\n`);
   _applyUpdaterChannel();
   safeCheckForUpdates(true);
+  pushStatus();
+}
+
+// Join / leave the beta channel — the tray's "Receive beta updates" checkbox
+// and the dashboard's ⤴ beta button (next to Check for update) both land
+// here, so the two can never disagree (tray ↔ dashboard parity, 2026-08-19;
+// the dashboard half asked for by the guild lead, 2026-09-27, after a stable
+// user's tray menu would not open and the tray was the only way in).
+function setBetaChannel(on, source) {
+  const cfg = loadConfig();
+  cfg.betaChannel = !!on;
+  if (cfg.betaChannel) delete cfg.forceStable;   // re-opting into betas lifts a stable pin
+  saveConfig(cfg);
+  if (autoUpdater) {
+    _applyUpdaterChannel();
+    appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} (${source || 'unknown'}) — checking…\n`);
+    safeCheckForUpdates(true);
+  }
   pushStatus();
 }
 
@@ -9496,6 +9503,30 @@ ipcMain.handle('revert-to-stable', async () => {
   });
   if (res.response === 0) { await revertToStable('dashboard'); return true; }
   return false;
+});
+// ⤴ beta from the dashboard (next to Check for update, stable builds only) —
+// the dashboard half of the tray's "Receive beta updates". Same shape as
+// revert-to-stable: the confirm lives here, the work is setBetaChannel().
+ipcMain.handle('get-beta-channel', () => ({
+  optedIn:   loadConfig().betaChannel === true,
+  available: !!autoUpdater,
+}));
+ipcMain.handle('set-beta-channel', async (_e, on) => {
+  const join = !!on;
+  const res = await dialog.showMessageBox({
+    type: 'question',
+    buttons: [join ? 'Join the beta' : 'Leave the beta', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Wolf Pack miMIC — beta updates',
+    message: join ? 'Get beta builds of Mimic?' : 'Go back to stable updates only?',
+    detail: join
+      ? 'Mimic will download the newest beta and install it on your next restart. Betas get fixes and new features first, and now and then a new bug. Your settings, overlays, and login are untouched. You can go back any time with ↩ stable at the top of the dashboard.'
+      : 'New betas stop coming. If a beta has already finished downloading it still installs on your next restart — use ↩ stable at the top of the dashboard after that to come back.',
+  });
+  if (res.response !== 0) return false;
+  setBetaChannel(join, 'dashboard');
+  return true;
 });
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
