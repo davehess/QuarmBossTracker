@@ -38,8 +38,8 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'pvp-guildmate-assists-2026-09-27',
-    title: 'Agent 3.7.29',
-    version: 'Agent 3.7.29 · Bot 3.1.155 · Web 1.8.23',
+    title: 'Agent 3.7.30',
+    version: 'Agent 3.7.30 · Bot 3.1.156 · Web 1.8.24',
     date: '2026-09-27',
     channel: 'beta',
     headline: 'PvP assists count for guildmates who don’t run Mimic.',
@@ -60,9 +60,14 @@ export const releases: Release[] = [
         name: 'Old nights too',
         blurb: 'Re-run a log in Opt-in Logs and past PvP nights get the same credit.',
       },
+      {
+        name: 'One note per log, not a flood',
+        blurb: 'When your Opt-in Logs parse finishes, #pvp gets a single note: how many new kills and assists it found, totalled for each guildmate. Old kills never post one by one.',
+      },
     ],
     fixes: [
-      'The same assist seen by several raiders is counted once.',
+      'The same assist seen by several raiders is counted once, and posts once.',
+      'A kill replayed from an old log no longer counts twice when another raider already recorded it.',
     ],
   },
   {

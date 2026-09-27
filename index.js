@@ -5383,13 +5383,32 @@ async function _handleAgentPvp(req, res) {
   }
 
   // Persist the PvP kill ledger. Idempotent via dedup_key so multi-parser
-  // uploads of the same broadcast collapse to one row.
+  // uploads of the same broadcast collapse to one row. A kill replayed from an
+  // old log is also dropped when another raider already stored it a few
+  // seconds off (their clock) — see PVP_SAME_MS. Live kills are covered by
+  // _isPvpDupe; this also keeps the opt-in summary's "new kills" honest.
   if (pvpKillRows.length > 0) {
     try {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
-        await supabase.upsert('pvp_kills', pvpKillRows, 'dedup_key')
-          .catch(err => console.warn('[pvp-relay] pvp_kills upsert failed:', err?.message));
+        const replayed = pvpKillRows.filter(r => r.source === 'log_backfill');
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        const job = _pvpWriteQ.then(async () => {
+          let rows = pvpKillRows;
+          if (replayed.length) {
+            const near = await _pvpNeighbours(replayed, guildId, (q) => supabase.select('pvp_kills', q), 'killer')
+              .catch(() => null);
+            if (Array.isArray(near)) {
+              const keep = new Set(_pvpUnseen(replayed, near, 'killer'));
+              rows = pvpKillRows.filter(r => r.source !== 'log_backfill' || keep.has(r));
+            }
+          }
+          if (rows.length === 0) return null;
+          return supabase.upsert('pvp_kills', rows, 'dedup_key')
+            .catch(err => console.warn('[pvp-relay] pvp_kills upsert failed:', err?.message));
+        });
+        _pvpWriteQ = job.catch(() => {});
+        await job;
       }
     } catch (err) {
       console.warn('[pvp-relay] pvp_kills persist wrap failed:', err?.message);
@@ -5430,16 +5449,19 @@ async function _handleAgentPvp(req, res) {
 // dedup_key is per second, and the /pvp leaderboard counts rows, so that alone
 // would count one assist once per witness. Same assister + same victim within
 // ±30 s is one assist: nobody dies twice in that time.
-const PVP_ASSIST_SAME_MS = 30_000;
-let _pvpAssistWriteQ = Promise.resolve();
-function _pvpAssistUnseen(rows, existing) {
+// The same holds for a KILL replayed from an old log (`who` = 'killer'):
+// measured 2026-09-27, 23 duplicate pairs in 611 pvp_kills rows, every one
+// from a log catch-up, 1–4 s off a row another raider's Mimic had stored.
+const PVP_SAME_MS = 30_000;
+let _pvpWriteQ = Promise.resolve();
+function _pvpUnseen(rows, existing, who = 'assister') {
   const seen = existing.map(e => ({
-    a: String(e.assister || '').toLowerCase(), v: String(e.victim || '').toLowerCase(), t: Date.parse(e.killed_at),
+    a: String(e[who] || '').toLowerCase(), v: String(e.victim || '').toLowerCase(), t: Date.parse(e.killed_at),
   }));
   const out = [];
   for (const r of rows) {
-    const s = { a: r.assister.toLowerCase(), v: r.victim.toLowerCase(), t: Date.parse(r.killed_at) };
-    if (seen.some(x => x.a === s.a && x.v === s.v && Math.abs(x.t - s.t) <= PVP_ASSIST_SAME_MS)) continue;
+    const s = { a: String(r[who] || '').toLowerCase(), v: r.victim.toLowerCase(), t: Date.parse(r.killed_at) };
+    if (seen.some(x => x.a === s.a && x.v === s.v && Math.abs(x.t - s.t) <= PVP_SAME_MS)) continue;
     seen.push(s);   // and within this batch
     out.push(r);
   }
@@ -5449,7 +5471,7 @@ function _pvpAssistUnseen(rows, existing) {
 // asking for its own victims ±30 s. A replayed log's batch can span months,
 // and one query over that span would hit PostgREST's 1,000-row cap and miss
 // rows. null when any read fails.
-async function _pvpAssistNeighbours(rows, guildId, select) {
+async function _pvpNeighbours(rows, guildId, select, who = 'assister') {
   const sorted = rows.slice().sort((a, b) => Date.parse(a.killed_at) - Date.parse(b.killed_at));
   const found = [];
   for (let i = 0; i < sorted.length;) {
@@ -5458,11 +5480,11 @@ async function _pvpAssistNeighbours(rows, guildId, select) {
     while (j < sorted.length && Date.parse(sorted[j].killed_at) - t0 <= 600_000) j++;
     const part = sorted.slice(i, j);
     i = j;
-    const lo = new Date(t0 - PVP_ASSIST_SAME_MS).toISOString();
-    const hi = new Date(Date.parse(part[part.length - 1].killed_at) + PVP_ASSIST_SAME_MS).toISOString();
+    const lo = new Date(t0 - PVP_SAME_MS).toISOString();
+    const hi = new Date(Date.parse(part[part.length - 1].killed_at) + PVP_SAME_MS).toISOString();
     const victims = [...new Set(part.map(r => r.victim.replace(/[",()]/g, '')))];
     const got = await select(
-      `select=assister,victim,killed_at&guild_id=eq.${encodeURIComponent(guildId)}`
+      `select=${who},victim,killed_at&guild_id=eq.${encodeURIComponent(guildId)}`
       + `&victim=in.(${victims.map(v => '"' + encodeURIComponent(v) + '"').join(',')})`
       + `&killed_at=gte.${encodeURIComponent(lo)}&killed_at=lte.${encodeURIComponent(hi)}&limit=1000`);
     if (!Array.isArray(got)) return null;
@@ -5476,8 +5498,8 @@ async function _pvpAssistNeighbours(rows, guildId, select) {
 // tuple from what its log saw on the victim vs. a PvP death broadcast. Bot
 // validates the assister is on the WP roster, builds a dedup_key, drops a
 // report another witness already stored, and upserts to public.pvp_assists.
-// No Discord post — assists are a stat-only signal (no rally moment to
-// celebrate, no @PVP ping).
+// A LIVE assist posts one bundled 🪶 note per kill (no @PVP ping); a replayed
+// log's never posts — its run gets one summary (_postOptinPvpSummary).
 async function _handleAgentPvpAssists(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5591,16 +5613,16 @@ async function _handleAgentPvpAssists(req, res) {
   }
   // Read-then-write, one request at a time, so two witnesses uploading together
   // cannot both miss each other's row.
-  const job = _pvpAssistWriteQ.then(async () => {
-    const existing = await _pvpAssistNeighbours(rows, guildId, (q) => supabase.select('pvp_assists', q))
+  const job = _pvpWriteQ.then(async () => {
+    const existing = await _pvpNeighbours(rows, guildId, (q) => supabase.select('pvp_assists', q))
       .catch(() => null);
     // A failed read stores everything: the per-second dedup_key still holds.
-    const fresh = Array.isArray(existing) ? _pvpAssistUnseen(rows, existing) : rows;
+    const fresh = Array.isArray(existing) ? _pvpUnseen(rows, existing) : rows;
     if (fresh.length === 0) return [];
     return supabase.upsert('pvp_assists', fresh, 'dedup_key')
       .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
   });
-  _pvpAssistWriteQ = job.catch(() => {});
+  _pvpWriteQ = job.catch(() => {});
   const written = await job;
   const stored = Array.isArray(written) ? written.length : 0;
 
@@ -5657,13 +5679,18 @@ async function _handleAgentPvpAssists(req, res) {
 
   // Discord post — group by (victim, killed-at-second) so multiple assisters
   // on the same kill bundle into one message. Skip kills we've recently
-  // posted (10-min in-memory dedup) so an agent retry doesn't double-post.
-  // Goes to PVP_THREAD_ID / PVP_CHANNEL_ID like the kill broadcast.
+  // posted (10-min in-memory dedup, same victim ±30 s — several witnesses'
+  // clocks differ by seconds) so a retry or a second witness doesn't
+  // double-post. Goes to PVP_THREAD_ID / PVP_CHANNEL_ID like the kill broadcast.
+  // Only rows stored just now, and never a replayed log's: an opt-in parse
+  // gets ONE summary note instead (the guild lead, 2026-09-27: "make sure we're
+  // not posting in the channels for it each time") — _postOptinPvpSummary.
   try {
     const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
-    if (pvpTargetId && rows.length > 0) {
+    const postRows = (Array.isArray(written) ? written : []).filter(r => r && r.source !== 'log_backfill');
+    if (pvpTargetId && postRows.length > 0) {
       const groups = new Map();   // (victim|second) → { victim, victimGuild, zone, killer, killerIsNpc, killedAt, assisters[] }
-      for (const r of rows) {
+      for (const r of postRows) {
         const k = (r.victim.toLowerCase()) + '|' + r.killed_at.slice(0, 19);
         let g = groups.get(k);
         if (!g) {
@@ -5680,8 +5707,7 @@ async function _handleAgentPvpAssists(req, res) {
       if (ch) {
         for (const g of groups.values()) {
           if (g.assisters.length === 0) continue;
-          const dedupKey = (g.victim.toLowerCase()) + '|' + g.killedAt.slice(0, 19);
-          if (_recentPvpAssistPost(dedupKey)) continue;
+          if (_recentPvpAssistPost(g.victim.toLowerCase(), Date.parse(g.killedAt))) continue;
           // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Sorvane, Rethlan (3)
           //   killed by a member". Zone + killed-by lines included when known.
           const victimLine = g.victim + (g.victimGuild ? ` of <${g.victimGuild}>` : '');
@@ -5702,20 +5728,112 @@ async function _handleAgentPvpAssists(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, stored, dropped }));
 }
-// 10-min in-memory ring for assist-group dedup. Keys are
-// "victimLower|killedAtSecondIso" so an agent retry / a same-second double
-// upload doesn't double-post. Bounded at 500 entries to cap memory.
-const _recentPvpAssistPosts = new Map();   // key → expiresAt
-function _recentPvpAssistPost(key) {
+// 10-min in-memory ring for assist-group dedup: a victim posted within ±30 s
+// of this kill is this kill (an agent retry, or another witness whose clock
+// is a second or two off). Bounded at 500 victims to cap memory.
+const _recentPvpAssistPosts = new Map();   // victimLower → [{ t: killedAtMs, ex: expiresAt }]
+function _recentPvpAssistPost(victimLower, killedAtMs) {
   const now = Date.now();
-  for (const [k, ex] of _recentPvpAssistPosts) if (ex <= now) _recentPvpAssistPosts.delete(k);
-  if (_recentPvpAssistPosts.has(key)) return true;
-  if (_recentPvpAssistPosts.size > 500) {
+  for (const [k, list] of _recentPvpAssistPosts) {
+    const live = list.filter(e => e.ex > now);
+    if (live.length) _recentPvpAssistPosts.set(k, live); else _recentPvpAssistPosts.delete(k);
+  }
+  const list = _recentPvpAssistPosts.get(victimLower) || [];
+  if (list.some(e => Math.abs(e.t - killedAtMs) <= PVP_SAME_MS)) return true;
+  if (!_recentPvpAssistPosts.has(victimLower) && _recentPvpAssistPosts.size >= 500) {
     const oldest = _recentPvpAssistPosts.keys().next().value;
     if (oldest) _recentPvpAssistPosts.delete(oldest);
   }
-  _recentPvpAssistPosts.set(key, now + 10 * 60 * 1000);
+  list.push({ t: killedAtMs, ex: now + 10 * 60 * 1000 });
+  _recentPvpAssistPosts.set(victimLower, list);
   return false;
+}
+
+// ── Opt-in log parse → ONE PvP note (the guild lead, 2026-09-27) ────────────
+// "when parsing through old logs make sure we're not posting in the channels
+// for it each time. we can put in a note in pvp that the @user's opt-in log
+// parse found N new pvp kills and assists and total them out per guildie".
+// Replayed kills and assists never post one by one (the pvp relay and the
+// assist post both skip them); when a run ends the agent sends
+// POST /api/agent/optin_summary { started_at }, and after the run's last
+// uploads have had time to land we count what THIS uploader's replay added —
+// rows it inserted since the run began, source log_backfill — and post once.
+const _OPTIN_SUMMARY_SETTLE_MS = 90_000;
+const _OPTIN_SUMMARY_MAX_LINES = 30;
+function _optinPvpSummaryText(discordId, kills, assists) {
+  const per = new Map();
+  const bump = (name, k) => {
+    const key = String(name).toLowerCase();
+    const e = per.get(key) || { name: String(name), kills: 0, assists: 0 };
+    e[k]++;
+    per.set(key, e);
+  };
+  for (const r of kills) if (r && r.killer) bump(r.killer, 'kills');
+  for (const r of assists) if (r && r.assister) bump(r.assister, 'assists');
+  if (!per.size) return null;
+  const nk = kills.filter(r => r && r.killer).length, na = assists.filter(r => r && r.assister).length;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const day = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+  const times = [...kills, ...assists].map(r => Date.parse(r && r.killed_at)).filter(Number.isFinite);
+  const lo = times.length ? day(Math.min(...times)) : null, hi = times.length ? day(Math.max(...times)) : null;
+  const span = lo ? (lo === hi ? ` (${lo})` : ` (${lo} – ${hi})`) : '';
+  const rows = [...per.values()].sort((a, b) => (b.kills + b.assists) - (a.kills + a.assists) || a.name.localeCompare(b.name));
+  const lines = rows.slice(0, _OPTIN_SUMMARY_MAX_LINES).map(e => `• **${e.name}** — `
+    + [e.kills ? plural(e.kills, 'kill') : null, e.assists ? plural(e.assists, 'assist') : null].filter(Boolean).join(' · '));
+  if (rows.length > _OPTIN_SUMMARY_MAX_LINES) lines.push(`…and ${rows.length - _OPTIN_SUMMARY_MAX_LINES} more`);
+  return `📜 <@${discordId}>'s opt-in log parse found **${plural(nk, 'new PvP kill')}** and **${plural(na, 'new assist')}**${span}.\n`
+    + lines.join('\n');
+}
+async function _postOptinPvpSummary(discordId, startedMs) {
+  const supabase = require('./utils/supabase');
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  if (!supabase.isEnabled() || !pvpTargetId) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // 2 min of slack for the agent's clock running ahead of the database's.
+  const since = new Date(startedMs - 2 * 60_000).toISOString();
+  const base = `guild_id=eq.${encodeURIComponent(guildId)}&source=eq.log_backfill`
+    + `&uploaded_by_discord_id=eq.${encodeURIComponent(discordId)}&created_at=gte.${encodeURIComponent(since)}`;
+  const [kills, assists] = await Promise.all([
+    supabase.selectAllPaged('pvp_kills', `${base}&killer_guild=eq.${encodeURIComponent(WP_GUILD_NAME)}&select=killer,killed_at`, 'id'),
+    supabase.selectAllPaged('pvp_assists', `${base}&select=assister,killed_at`, 'id'),
+  ]);
+  // A failed read is not "found nothing" — post nothing rather than a wrong count.
+  if (!Array.isArray(kills) || !Array.isArray(assists)) return;
+  const content = _optinPvpSummaryText(discordId, kills, assists);
+  if (!content) return;
+  const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
+  if (ch && typeof ch.send === 'function') {
+    await ch.send({ content, allowedMentions: { users: [discordId] } })
+      .catch(err => console.warn('[optin-summary] post failed:', err?.message));
+  }
+}
+async function _handleAgentOptinSummary(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const startedMs = Date.parse(payload?.started_at);
+  const now = Date.now();
+  // A run can take hours on a big log; a week is plenty, and anything older
+  // or in the future is a bad clock, not a run.
+  if (!Number.isFinite(startedMs) || startedMs > now + 10 * 60_000 || now - startedMs > 7 * 86_400_000
+      || !/^\d{5,25}$/.test(String(identity.discord_id || ''))) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'started_at must be within the last 7 days' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, posting_in_ms: _OPTIN_SUMMARY_SETTLE_MS }));
+  const t = setTimeout(() => {
+    _postOptinPvpSummary(String(identity.discord_id), startedMs)
+      .catch(err => console.warn('[optin-summary] failed:', err?.message));
+  }, _OPTIN_SUMMARY_SETTLE_MS);
+  if (typeof t.unref === 'function') t.unref();
 }
 
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
@@ -20479,6 +20597,13 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // PVP broadcast relay — posts PvP kills/deaths to PVP_CHANNEL_ID
+  if (req.method === 'POST' && req.url === '/api/agent/optin_summary') {
+    try { return await _handleAgentOptinSummary(req, res); }
+    catch (err) {
+      console.error('[optin-summary] handler error:', err);
+      res.writeHead(500); return res.end();
+    }
+  }
   if (req.method === 'POST' && req.url === '/api/agent/pvp_assists') {
     if (await _isShedded('pvp_assists', res)) return;
     try { return await _handleAgentPvpAssists(req, res); }

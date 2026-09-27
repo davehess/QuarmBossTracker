@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PvP assists for guildmates our agents see** | **Bot 3.1.155 on main; agent 3.7.29 on beta (§54).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs to credit past nights (the 2026-09-25 one included). Assists from raiders on stable arrive when a stable is cut |
+| **PvP assists for guildmates our agents see** | **Bot 3.1.156 on main; agent 3.7.30 on beta (§54, §55).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way. **§55:** an opt-in parse posts ONE #pvp note (@you, N new kills + assists, per guildmate) and nothing per old event; replayed kills no longer double | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs; the note lands in #pvp ~90 s after it finishes. Say whether to delete the 23 duplicate kill rows already stored (§55). Assists from raiders on stable arrive when a stable is cut |
 | **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
 | **Charm overlay: server tick + mob tick** | **On beta, agent 3.7.25 (§50).** Mob tick learned from DoT ticks + log breaks; "learning" until known | the co-leader: charm with a DoT up (or let one break) and check the M countdown against the next break |
@@ -2994,10 +2994,70 @@ covers, including the one that started this.
 **Where:**
 - Agent: `PVP_ASSIST_WINDOW_MS`, `_checkPvpAssists`, `_pvpStamp`, `_pvpAssistLine`, `_pvpCasterFor`, the
   damage branch of `add()`, both line loops, and `uploadPvpAssists`.
-- Bot: `_pvpAssistUnseen`, `_pvpAssistNeighbours`, and `_handleAgentPvpAssists`.
+- Bot: `_pvpUnseen`, `_pvpNeighbours` (named `_pvpAssist…` until §55 put kills through them too), and
+  `_handleAgentPvpAssists`.
 - Tests:
   - `test/pvp-guildmate-assists.test.js`: 18 tests, 17 of 17 mutants killed.
   - `test/pvp-assist-witness-dedupe.test.js`: 7 tests, 7 of 7 mutants killed.
+
+## 55. An opt-in log parse posts ONE PvP note, never one per old event (2026-09-27, bot 3.1.156, agent 3.7.30 beta)
+
+**The call (the guild lead):** *"when parsing through old logs make sure we're not posting in the channels
+for it each time. we can put in a note in pvp that the @user's opt-in log parse found N new pvp kills and
+assists and total them out per guildie"*.
+
+**Audit: what a replayed log could post.** Every upload the opt-in backfill makes was checked against
+what the bot sends to Discord.
+- **Already silent:**
+  - PvP kills: the relay post and the boss auto-timer both skip `backfill`.
+  - Fight cards, session damage and boss timers: `isBackfill`.
+  - Deathrolls: rolls are captured live only, and the bot never announces a game older than 10 minutes.
+  - Fun events, faction, PoP flags, buff/debuff sightings and chat: none of their handlers post.
+- **One was not:** the assist handler posted a "🪶 Assist on <victim>" note for every assist group,
+  replayed or not — its header said it didn't. With §54 (guildmates count, Re-run replays a whole log),
+  one Re-run would have posted every PvP assist in the log. It now posts only rows stored just now that
+  came from live play. The post dedupe is "same victim ±30 s" (it was the exact second), so several
+  witnesses of one live kill make one note.
+
+**The note:**
+- When a run ends, meaning every file finished or paused, the agent flushes its buffered assists.
+- It then queues `POST /api/agent/optin_summary { started_at }` as backfill, so it drains behind the
+  run's own uploads.
+- 90 s later the bot counts what that uploader's replay inserted since the run began:
+  - `pvp_kills` with source `log_backfill` and a Wolf Pack killer;
+  - `pvp_assists` with source `log_backfill`.
+- It posts once to `PVP_THREAD_ID`/`PVP_CHANNEL_ID`: "📜 @you's opt-in log parse found **N new PvP
+  kills** and **M new assists** (first – last date)", then one line per guildmate, busiest first, capped
+  at 30 lines.
+- The mention reaches only the uploader.
+- Nothing new means no note, and a failed read also means no note (never a wrong count).
+- A /who-only rescan and a dry run send nothing.
+
+**Replayed kills no longer double.** Measured the same night: **23 duplicate pairs in 611 `pvp_kills`
+rows, every one from a log catch-up**. Each is 1–4 s off a row another raider's Mimic had stored,
+because `dedup_key` is per second on each machine's own clock. Replayed kills now go through the same
+±30 s check as assists (§54).
+- The helpers were renamed `_pvpUnseen` / `_pvpNeighbours` and take the name column.
+- Live kills are unchanged: `_isPvpDupe` already covers them.
+
+The 23 existing pairs are left in place. Deleting them is the guild lead's call.
+
+**Caught before shipping:** the kill check referenced `guildId`, which in the relay handler lives inside
+the per-broadcast loop.
+- At runtime that would have thrown inside the persist `try`, and every PvP kill would have silently
+  failed to store.
+- Lint (`no-undef`) caught it.
+- A test now runs the real persist block against a stub database, and fails with the fix removed.
+
+**Where:**
+- Bot: `_handleAgentOptinSummary`, `_postOptinPvpSummary`, `_optinPvpSummaryText`, the assist post
+  filter, `_recentPvpAssistPost`, and the pvp_kills persist block.
+- Agent: `runOptinBackfill` (`runJobs`, `runStartedAt`) and the `optin_summary` upload route.
+- Tests:
+  - `test/optin-pvp-summary.test.js`: 11 tests.
+  - `test/pvp-assist-witness-dedupe.test.js`: 12 tests.
+  - `test/optin-run-summary.test.js`: 5 tests.
+  - 21 of 21 mutants killed, plus the scope bug itself.
 
 
 
