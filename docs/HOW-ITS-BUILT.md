@@ -1974,7 +1974,10 @@ the DS card counts only shield hits the log named or the tank's known DS buffs
 vouch for — `_settleDsPending` in the agent, 3.6.41),
 Command Center (`command.html`), Extended Target (`extarget.html` — off-tank
 toggle, stale rows), Charm, Pet, Mob Info, Buff queue, /who, Melody,
-Zeal health, Settings, loading. Overlays poll the local agent
+Tick (`zealhealth.html`, key `zeal`, §56 — one server-tick row per character
+from `/api/state.serverTicks`, charm mob ticks from `charmPets`, bars or dials;
+the Zeal type check and `clockOffsetMs`/`ntpOffsetMs` behind its status line),
+Settings, loading. Overlays poll the local agent
 (`/api/state`, `/api/tank-state`, `/api/command-center`,
 `/api/extended-target`, `/api/buff-queue`) every ~1.5–2s.
 

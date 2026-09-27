@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PvP assists for guildmates our agents see** | **Bot 3.1.156 on main; agent 3.7.30 on beta (§54, §55).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way. **§55:** an opt-in parse posts ONE #pvp note (@you, N new kills + assists, per guildmate) and nothing per old event; replayed kills no longer double | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs; the note lands in #pvp ~90 s after it finishes. Say whether to delete the 23 duplicate kill rows already stored (§55). Assists from raiders on stable arrive when a stable is cut |
+| **Tick overlay (was Zeal health)** | **On beta, agent 3.7.31 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials (the other goes when a stable is cut) |
+| **PvP assists for guildmates our agents see** | **Bot 3.1.156 on main; agent 3.7.30 on beta (§54, §55).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way. **§55:** an opt-in parse posts ONE #pvp note (@you, N new kills + assists, per guildmate) and nothing per old event; replayed kills no longer double. **The 23 duplicate kill rows were deleted 2026-09-27 (§56)** | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs; the note lands in #pvp ~90 s after it finishes. Assists from raiders on stable arrive when a stable is cut |
 | **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
 | **Charm overlay: server tick + mob tick** | **On beta, agent 3.7.25 (§50).** Mob tick learned from DoT ticks + log breaks; "learning" until known | the co-leader: charm with a DoT up (or let one break) and check the M countdown against the next break |
@@ -3058,6 +3059,66 @@ the per-broadcast loop.
   - `test/pvp-assist-witness-dedupe.test.js`: 12 tests.
   - `test/optin-run-summary.test.js`: 5 tests.
   - 21 of 21 mutants killed, plus the scope bug itself.
+
+## 56. The duplicate kills deleted; the Zeal health overlay becomes the Tick overlay (2026-09-27, agent 3.7.31 beta)
+
+**Duplicate kills — the call (the guild lead):** *"yes delete the 23 duplicate kills"* (§55).
+- Checked first: each kill was stored exactly twice, and no `pvp_assists` row pointed at either copy.
+  (The FK is `ON DELETE SET NULL`, so a pointing assist would otherwise have lost its link.)
+- Kept: the row written when the kill happened, either the live `pvp_channel` row or the first
+  catch-up.
+- Deleted: the later catch-up copy.
+  - The DELETE also required `source = 'log_backfill'`, so a live row could not be removed by mistake.
+  - Ids: 393, 394, 402, 404, 405, 406, 414, 417, 419, 426, 436, 461, 462, 482, 483, 517, 518, 519,
+    535, 547, 606, 612, 619.
+- After: 0 duplicate pairs, 589 rows. §55's check stops new ones.
+
+**Tick overlay — the call (the guild lead):** *"let's change the zeal health overlay into the tick
+overlay request that [the co-leader] asked about. the zeal health info could still be accessible there.
+could also display clock skew offset"*.
+
+The co-leader's request, feedback 2026-09-27 00:32 UTC: *"The server tick function within the HUD thing
+is awesome, but would be even better if it could be broken out or customized to put somewhere else, as a
+standalone timer"*.
+
+**What shipped:**
+- `apps/mimic/zealhealth.html` is now the **Tick** overlay.
+  - Key `zeal`, flag `showZeal`, the file name and the saved bounds are unchanged, so anyone who had
+    Zeal health on finds Tick in the same spot.
+  - The labels were renamed: tray "Tick timer (server + charm ticks, Zeal health)", overlay list,
+    hotkey names, window title, dashboard Overlays row, and the no-Zeal notification.
+- **One server-tick row per character streaming Zeal**, from the new `/api/state.serverTicks`
+  (`_serverTicksNow`: gauge 24 via `_meTick`, sorted by name).
+  - Per character rather than "the active one", because that flips with whichever Zeal stream
+    reported last (the flip-flop flagged in §52). The countdown never jumps.
+- **A charmed mob's own tick** while a charm is active, from `charmPets.mob_tick_at`. It shows "?"
+  plus "learning" until a DoT tick or a break reveals it.
+- It counts down locally ten times a second from absolute tick times.
+- **Two layouts on beta** (the UI-options rule), switched with ◯/▭:
+  - **Bars:** one shared grid, a number plus a draining bar. Server is blue, the mob is purple.
+  - **Dials:** a ring per tick with whole seconds inside.
+
+**Status line:** "📡 Zeal ok · ⏱ clock 2.4s slow". The clock is green under 1 s, orange under 5 s, red
+past that; 5 s is also where the agent warns. Clicking it opens:
+- the old Zeal type table, pid line and admin-mismatch hint, unchanged;
+- the clock in words, against the Wolf Pack server (`clockOffsetMs`) and against internet time
+  (`ntpOffsetMs`), with the `w32tm /resync` fix.
+
+**The cost of the two layouts:**
+- Bars are CSS widths (cheapest to change).
+- Dials are one SVG `stroke-dashoffset` per tick (cheap too, but geometry to touch when resizing).
+- Both are rebuilt only when which rows exist changes.
+
+**Left for the pick:** whichever layout loses goes when a stable is cut.
+
+**Where:**
+- Agent: `_serverTicksNow` and the `serverTicks` field in `_serializeForDashboard`.
+- Mimic: `zealhealth.html`, plus the `main.js` labels.
+- The dashboard `WP_OVERLAY_ROWS` row.
+- Tests:
+  - `test/tick-overlay.test.js`: 10 tests, 11 of 11 mutants killed.
+  - `test/tray-overlay-order.test.js` follows the label.
+- Both layouts were rendered in Chromium with sample data. That caught the bar rows not lining up.
 
 
 

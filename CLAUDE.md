@@ -962,8 +962,9 @@ nothing else changed.
 
 Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
-tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal
-health (diagnostic), HUD (`me.html`, key `me` — the player's own panel, reads
+tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Tick
+(`zealhealth.html`, key `zeal` — server + charm ticks; the old Zeal health
+check and the clock offset sit behind its status line), HUD (`me.html`, key `me` — the player's own panel, reads
 `/api/me`; the HUD ring built from parts via its ⚙ builder, plus layouts A
 and C, on beta), plus
 Settings, UI Studio, loading.

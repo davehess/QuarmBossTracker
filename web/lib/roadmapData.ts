@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'tick-overlay-2026-09-27',
+    title: 'Agent 3.7.31',
+    version: 'Agent 3.7.31 · Web 1.8.25',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'The server tick gets its own window.',
+    features: [
+      {
+        name: 'Tick overlay',
+        blurb: 'The HUD’s server tick as a window you can put anywhere: one countdown per character on Zeal, plus your charmed mob’s own tick while you have a charm.',
+      },
+      {
+        name: 'Bars or dials',
+        blurb: 'Two looks to try on beta. Switch with the ◯ / ▭ button and tell us which one stays.',
+      },
+      {
+        name: 'Zeal health and your clock, one click down',
+        blurb: 'It replaces the Zeal health window. Click the 📡 line for the full Zeal check and how far your PC’s clock is off.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pvp-guildmate-assists-2026-09-27',
     title: 'Agent 3.7.30',
     version: 'Agent 3.7.30 · Bot 3.1.156 · Web 1.8.24',
