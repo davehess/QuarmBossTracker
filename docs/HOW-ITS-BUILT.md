@@ -766,7 +766,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **Alert speed**: `tailFile` reads every 150 ms while a log grew within the last minute (`_tailDelayMs`),
   otherwise 500 ms. `GET /api/fires/wait?after=<ts>` long-polls; `_pushOverlay` wakes it
   (`_wakeFireWaitersSoon`). `triggers.html` runs it beside its 700 ms tick, and both advance the same
-  `lastTs`. `_fireForWeb` is the one fire shape.
+  `lastTs`. `_fireForWeb` is the one fire shape. **Instant charm break (agent 3.7.34, beta):**
+  `_pushCharmBreakInstant` pushes a `charm: true` fire for the player's own charm on a live break
+  line; `charm.html`'s `waitCharmFires` long-polls the same route and speaks it (250 ms floor after a
+  fast empty answer), `triggers.html` `fire()` skips it, and the deferred Charm-overlay call is
+  skipped for 8 s after (`_instantCalled`). `DECISIONS-2026-09-21.md` §59c.
 - **Settings drafts** (`settings.html`): `wp:settings:draft` in localStorage, built from the same
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
@@ -2040,7 +2044,12 @@ default**, and every reader (resize path, chrome-menu checkbox, ⬆ toggle) goes
 through the one `_growUpSetting(cfg, key)` helper so an explicit choice wins in
 both directions. `--timers-space` (set from `measureWanted`) lifts the centred
 `#alertcol` clear of the stack — flex centring halves a bottom margin, hence
-twice the stack height.
+twice the stack height. **Opt-in top anchor (agent 3.7.34, beta):** right-click →
+"⇅ Timers start at: TOP" sets `cfg.triggerTimersTopDown`; `applyTimersOrder` adds
+`body.timers-topdown`, which hangs `#timers` off `top:34px` (58 in setup) reading
+down and moves `#alertcol`'s margin to the top. The `wp-timers-order-toggle` IPC
+also writes `overlayGrowUp.trigger = false` (deletes it when switched off), so the
+window keeps its top edge fixed. `DECISIONS-2026-09-21.md` §59d.
 
 **Two render invariants, applied to the server list before any DOM work.**
 `collapseTimers` keeps at most one row per `(mob, effect class)` — today only
