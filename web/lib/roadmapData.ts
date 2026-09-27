@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'coleader-batch-2026-09-26',
     title: 'Mimic 2.7.2-beta',
-    version: 'Mimic 2.7.2-beta · Agent 3.7.27 · Web 1.8.21',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.28 · Web 1.8.22',
     date: '2026-09-26',
     channel: 'beta',
     headline: 'The tray menu always opens, settings survive a force-close, and alerts speak sooner.',
@@ -63,6 +63,10 @@ export const releases: Release[] = [
       {
         name: 'Settings keeps a draft',
         blurb: 'What you change is kept as you go. Close without saving and it asks first; open it later and your changes come back.',
+      },
+      {
+        name: 'Join the beta from the dashboard',
+        blurb: 'A ⤴ beta button next to Check for update, no tray menu needed. Mimic asks first, and ↩ stable takes you back any time.',
       },
     ],
     fixes: [

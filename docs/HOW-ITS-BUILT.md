@@ -774,7 +774,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
 - **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
   scrolling `#body`, CLASS/GUILD chips (`whoFacet`/`whoFilterRows`), sort (`whoSortRows`), and one
   document-level hover owner (`_zoneOf`) so the wheel reaches the list.
-Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`.
+- **Beta channel from the dashboard** (agent 3.7.28, §53):
+  - A `wpJoinBeta` "⤴ beta" button follows the Check-for-update slot in the header. It is rendered
+    only for stable Mimic builds; beta builds show BETA + `wpRevertStable` instead.
+  - It unhides only after `window.mimic.getBetaChannel()` reports an updater, and re-reads on window
+    focus.
+  - The `set-beta-channel` IPC confirms first, then calls `setBetaChannel(on, source)`. That is the
+    same function the tray's "Receive beta updates" checkbox calls.
+Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
+`test/dashboard-join-beta.test.js`.
 
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
