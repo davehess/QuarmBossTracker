@@ -11580,6 +11580,77 @@ async function _announceMimic271Once() {
   }, 5 * 60_000);
 }
 
+// ── Opt-in logs → PvP credit: one-shot #pvp post (2026-09-27) ────────────────
+// The guild lead: "make a note in the PVP channel for people to run their opt
+// in logs to get historical credit on pvp kills and assists." Guildmate
+// assists (§54) and the one-note-per-parse summary (§55) reach stable users in
+// Mimic 2.7.2, so this waits for the v2.7.2 release to carry its installer,
+// exactly like the 2.7.1 card. One post ever; pings nobody.
+const _OPTINPVP_KV_KEY = 'announce_optin_pvp_credit';
+const _OPTINPVP_TAG = 'v2.7.2';
+function _optinPvpEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('📜 Your old PvP kills and assists can count now — run your Opt-in Logs')
+    .setDescription([
+      'Mimic 2.7.2 credits an assist to every guildmate it saw hit, slow, snare, root, mez or DoT a player who then died to someone else — even guildmates who never ran Mimic. A catch-up over your old logs credits the nights before today too.',
+      '',
+      '1. Update Mimic: accept the update prompt, or restart it.',
+      '2. Open the dashboard → **Opt-in Logs**, tick your characters, and press **Backfill**. A log you imported before wants **Re-run** instead.',
+      '3. When it finishes, this channel gets one note with what it found, totalled per guildmate. Never a flood.',
+      '',
+      'The leaderboard on wolfpack.quest/pvp updates as they land.',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.2 stable · one-time note' });
+}
+async function _announceOptinPvpOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_OPTINPVP_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[optin-pvp-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _OPTINPVP_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  const ready = !!(rel && rel.tag_name === _OPTINPVP_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+  if (!ready) return 'waiting';
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  let ch = pvpTargetId ? await client.channels.fetch(pvpTargetId).catch(() => null) : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'pvp' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[optin-pvp-announce] no #pvp channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_optinPvpEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[optin-pvp-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _OPTINPVP_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[optin-pvp-announce] posted to #pvp:', posted.id);
+  return 'posted';
+}
+// Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const t = setInterval(() => {
+    if (++tries > 144) { clearInterval(t); return; }
+    _announceOptinPvpOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[optin-pvp-announce]', err?.message));
+  }, 5 * 60_000);
+}
+
 // ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────
 // The guild lead: "post the inventory change to Wlfpck-general channel." Web
 // 1.8.8 split the one "Quests: public" switch into "Quest page" and "Inventory

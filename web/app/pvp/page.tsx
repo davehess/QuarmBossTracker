@@ -334,7 +334,7 @@ export default async function PvpPage({
         <h2 className="text-2xl text-gold flex items-center gap-3 flex-wrap">
           <span aria-hidden>⚔️</span>
           <span>PvP Kills</span>
-          <WindowPicker page="pvp" current={w.key} options={['7d', '30d', '90d', 'exp', 'life']} />
+          <WindowPicker page="pvp" current={w.key} options={['1d', '7d', '30d', '90d', 'exp', 'life']} />
         </h2>
         <p className="text-sm text-dim mt-2">
           Wolf Pack PvP kill leaderboard. Each row shows total kills and, in
