@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta |
 | **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
 | **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
@@ -3354,6 +3355,63 @@ only once it has sat unstamped for 5 minutes — which still rescues a Mimic rep
 failed. Test `feedback-ack` +1 (the query at a frozen clock; reverting the filter fails it).
 **The one duplicate:** acknowledge the "via web" embed (it is the one the row points to — DM +
 row write), then delete the plain Mimic post.
+
+### 59c. The charm break is called the moment the line is read (agent 3.7.34, beta)
+**Cause of the lag:** the Charm overlay's own call (`charm.html`) saw the break only on its 500 ms
+`/api/state` poll, behind the agent's 400 ms state cache, and then held a 600 ms guard to tell an
+intentional kill from a break. Worst case ~1.5 s after the line, which matches the member's "1 or 2
+seconds". EQLogParser speaks straight off the log line.
+**Fix:** the agent's `charm_break` handler calls `_pushCharmBreakInstant` for the player's OWN charm
+(a `__self__` line, or the owner is this character), only for a live line (within 15 s of now, so a
+backfill never speaks) and once per pet per 4 s (the self line and a bystander line both arrive). It
+pushes a `charm` fire down the existing `/api/fires/wait` long-poll — the same path the trigger
+overlay already uses, so no new route. The Charm overlay long-polls it and speaks; the trigger
+overlay's `fire()` skips `charm` fires so it is never said twice; the deferred call stays as the
+fallback for a break with no log line and is skipped when the instant one came (8 s). If the "Your
+charm broke" suggested trigger is on with speech, the fire carries `charm_spoken` and the Charm
+overlay stays quiet. **A trap it hit:** the overlay's long-poll had no floor between requests, so a
+stub `fetch` that answered at once spun a test worker at 100% CPU forever
+(`test/mini-popraid-charm`). It now waits 250 ms after a fast answer with nothing new. The trigger
+overlay's older `waitFires` loop has the same shape and no floor; the agent holds the request 20 s,
+so it is safe in practice, and it was left alone (minimal diff). Test `charm-break-instant`.
+
+### 59d. Trigger timers can start at the top (agent 3.7.34, beta)
+The member's own words, relayed by the guild lead: *"It would be nice if the trigger timer had an
+option to start the timers at the top, and go down with successive triggers to track, instead of
+always starting at the bottom of window and growing up."* Right-click the trigger overlay →
+**⇅ Timers start at: TOP**. On: `#timers` hangs off the top edge below the ✥/🗑/✕ gutter (34 px, 58 px
+in setup) and reads down, the centred callout column is pushed DOWN off the stack instead of up, and
+the window's ⬆ grow-upward is switched OFF for this overlay — without that, auto-height keeps the
+bottom edge fixed and walks the first timer up the screen as rows arrive. Off restores both (the
+grow entry is deleted so the default returns). The bottom-anchored default stays the default: it is
+the guild lead's 2026-08-10 call that the screen centre is reserved (v2 §3). One option, not
+variants: it is a small change inside an established overlay, and the member described exactly
+what they want. `cfg.triggerTimersTopDown`; test `charm-break-instant`.
+
+### 59e. Targeting the pet from the Charm window — not buildable from Mimic alone; a Zeal change
+*"It would be awesome if you could click target the pet from the charm tracker window"* / the guild
+lead: *"I don't know if we can inject a target back into EQ."*
+**What is true today** (read from the Zeal source, 2026-09-27):
+- **The pipe only goes one way.** `named_pipe.cpp` creates it `PIPE_ACCESS_OUTBOUND`: Zeal writes,
+  Mimic reads. There is no channel for Mimic to ask the client for anything.
+- **Zeal already has everything on the client side.** `Zeal::Game::get_pet()` returns the player's
+  pet entity (off `PetID`), and `Zeal::Game::set_target(Entity*)` targets an entity without the
+  `/target` range rules. A `/targetpet` command is a few lines in the commands registry.
+**Options, cheapest first:**
+1. **A `/targetpet` slash command in Zeal (fork).** No Mimic change; the member binds it to a social
+   hotkey. Build: an hour. Maintenance: none. Runtime: none. Change: easy. It does not give a click
+   in the Charm window, which is what was asked.
+2. **An inbound command channel in Zeal, one verb only** — a second pipe Zeal opens
+   `PIPE_ACCESS_INBOUND`, accepting exactly `target_pet` (and nothing that casts, moves or sends
+   text), which Mimic writes when the pet row is clicked. Build: a day (C++ + the Mimic bridge + the
+   click handshake). Maintenance: low, but it is our fork only — members on upstream Zeal do not get
+   it. Runtime: none. Change: every new verb is a new decision. **Its risk is policy, not code:**
+   anything outside the game driving the client is the category server rules are written about, so
+   it needs the guild lead's call and ideally a word with the server staff before it ships.
+3. **Keystroke injection** (Mimic sends a keypress into the EQ window). **Not recommended:** it
+   steals focus mid-fight, breaks under a remapped key, and is squarely automation.
+**Recommendation:** 1 now (it answers the need with no policy question), 2 only if the guild lead
+wants the click and is comfortable with the server question. Nothing built.
 
 
 

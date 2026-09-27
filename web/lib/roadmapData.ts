@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'charm-break-instant-2026-09-27',
+    title: 'Agent 3.7.34',
+    version: 'Agent 3.7.34 · Bot 3.1.161 · Web 1.8.29',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'Charm break is called the instant it happens.',
+    features: [
+      {
+        name: 'Instant charm break',
+        blurb: 'The Charm overlay calls “charm break” the moment the line hits your log, instead of up to a second or two later. Keep the Charm overlay on to hear it.',
+      },
+      {
+        name: 'Timers can start at the top',
+        blurb: 'Right-click the trigger overlay and pick “Timers start at: TOP”. New timers then stack downward from the top instead of rising from the bottom.',
+      },
+      {
+        name: 'Timers end on the mob’s own tick',
+        blurb: 'Once Mimic has learned a mob’s tick, from a DoT ticking on it or a charm break, its timers end on that beat. A ⏱ on the bar shows it.',
+      },
+      {
+        name: 'Feedback gets an answer',
+        blurb: 'Reports sent from Mimic can now be acknowledged by an officer in Discord, and you get a DM when one is.',
+      },
+    ],
+    fixes: [
+      'A report sent from Mimic could show up twice in the feedback channel.',
+    ],
+  },
+  {
     key: 'mimic-2-7-2-2026-09-27',
     title: 'Mimic 2.7.2',
     version: 'Mimic 2.7.2 · Agent 3.7.31 · Bot 3.1.158 · Web 1.8.28',
