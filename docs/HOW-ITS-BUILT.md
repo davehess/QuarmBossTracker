@@ -754,6 +754,28 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Mimic robustness: tray, config, alert speed, Settings drafts (agent 3.7.27, 2026-09-26)
+- **Tray** (`apps/mimic/main.js` createTray / buildTrayMenu): on Windows/macOS, right-click builds
+  the menu and `tray.popUpContextMenu` shows it; only Linux uses `setContextMenu`. ⚠ Do not go back to
+  `setContextMenu`: buildTrayMenu runs on every pushStatus and every active-character change, and
+  on Windows replacing a context menu closes the open one. `_trayFallbackMenu` (Open, Settings,
+  Restart agent, Quit) opens if the full build throws. `_quitMimic` is shared with the dashboard's
+  ⏻ Quit (`quit-app` IPC, `window.mimic.quitApp`).
+- **Config**: `saveConfig` writes `.tmp`, keeps `.bak` (only if the current file parses), then renames;
+  `_readConfigRaw` tries the file, then `.bak`, then `.tmp`. A torn file used to load as all defaults.
+- **Alert speed**: `tailFile` reads every 150 ms while a log grew within the last minute (`_tailDelayMs`),
+  otherwise 500 ms. `GET /api/fires/wait?after=<ts>` long-polls; `_pushOverlay` wakes it
+  (`_wakeFireWaitersSoon`). `triggers.html` runs it beside its 700 ms tick, and both advance the same
+  `lastTs`. `_fireForWeb` is the one fire shape.
+- **Settings drafts** (`settings.html`): `wp:settings:draft` in localStorage, built from the same
+  signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
+  a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
+  Electron a cancelled unload also cancels the quit.
+- **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
+  scrolling `#body`, CLASS/GUILD chips (`whoFacet`/`whoFilterRows`), sort (`whoSortRows`), and one
+  document-level hover owner (`_zoneOf`) so the wheel reaches the list.
+Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`.
+
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
 One column, `feedback.screenshot_paths` (text[]), and one PRIVATE Storage bucket,

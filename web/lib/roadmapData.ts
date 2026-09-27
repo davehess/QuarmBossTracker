@@ -37,6 +37,41 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'coleader-batch-2026-09-26',
+    title: 'Mimic 2.7.2-beta',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.27 · Web 1.8.21',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'The tray menu always opens, settings survive a force-close, and alerts speak sooner.',
+    features: [
+      {
+        name: 'A /who window you can size',
+        blurb: 'It keeps the height you give it and the list scrolls. Filter by class or guild like EQ’s tracking window, and sort by name, class, level or guild.',
+      },
+      {
+        name: 'Screenshots in feedback',
+        blurb: '📸 photographs your screen with EQ and your overlays, or paste a picture with Ctrl+V. You see each one before it sends.',
+      },
+      {
+        name: 'Two ticks on the Charm window',
+        blurb: 'The server tick and your charmed mob’s own tick, side by side. The mob’s is learned from a DoT ticking on it or a charm break.',
+      },
+      {
+        name: 'Server tick as a timer bar',
+        blurb: 'The HUD’s 6-second server tick as its own bar in the trigger window: Triggers, Suggested, Timer bars.',
+      },
+      {
+        name: 'Settings keeps a draft',
+        blurb: 'What you change is kept as you go. Close without saving and it asks first; open it later and your changes come back.',
+      },
+    ],
+    fixes: [
+      'Right-clicking the tray icon sometimes did nothing. It opens every time now, and the dashboard has a ⏻ Quit button too.',
+      'Ending Mimic from Task Manager could wipe all your settings. They survive now.',
+      'Trigger alerts, like “Your charm broke”, speak much sooner after the line hits your log.',
+    ],
+  },
+  {
     key: 'feedback-screenshots-2026-09-26',
     title: 'Bot 3.1.154',
     version: 'Bot 3.1.154 · Web 1.8.20',
