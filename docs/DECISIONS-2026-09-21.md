@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Vex Thal celebration (Sunday 2026-09-28)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
+| **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
 | **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
 | **Tick overlay (was Zeal health)** | **Stable in 2.7.2 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials |
@@ -3313,6 +3313,34 @@ video into discord."*
   with the two character sheets the guild lead gave. Private file, sent again; not in the repo.
 - Test file grown to 10 (the poller's states, the content-vs-embed rule, the rounding, an empty
   history reading as kill number 1 while an unreadable one prints no number).
+
+## 59. A member's Sunday-morning batch: feedback acks, the charm break, targeting the pet, timer order (2026-09-27)
+
+Relayed by the guild lead from the feedback thread and a DM with a member (an enchanter on
+Mimic 2.7.3-beta.2):
+
+- *"these feedback have no acknowledgement in discord"*
+- *"The 'charm break' TTS still feels slightly behind. like 1 or 2 seconds maybe ... not perfect
+  like eqlogparser, clock seems fine"* — and the guild lead: *"charm break needs to be as close to
+  instant as possible, like EQLogParser"*
+- *"It would be awesome if you could click target the pet from the charm tracker window"* — the
+  guild lead: *"I don't know if we can inject a target back into EQ, it would be neat if we could."*
+- *"he wants an option for reverse ordering on the timers"* (the timer bars grow upward from the
+  bottom; he wants the list to read top-down).
+
+### 59a. Feedback acknowledgement — built (bot 3.1.160, main)
+**Cause:** the Mimic route (`_handleAgentFeedback`) posted a plain message with no components. Only
+`/feedback` and web reports carried 📬 Acknowledge / ❌ Not Implementing, and their handlers read the
+submitter from an embed footer, so a plain post could not be acknowledged even with buttons.
+**Fix:** the Mimic post carries the same pair (`_feedbackRecvRow`); `handleFeedbackRecv` /
+`handleFeedbackClose` handle a plain post by looking the row up by its `discord_msg_id`, DM the
+reporter on ack, and write the status onto the post's FIRST line (everything after it is a `>>>`
+quote, so a trailing line would read as part of the report). Every button now also moves the row
+(`acked` + `acked_by/at`, or `addressed` + `addressed_by/at`) so `/admin/feedback` agrees with the
+thread — the embed path did not do this before either. The 11 Mimic reports still open got the
+buttons once at boot (`_backfillMimicFeedbackButtonsOnce`, bot_kv `feedback_mimic_buttons_backfill`,
+fail-closed, skips any post that already has buttons). Test `feedback-ack` (7, real functions,
+3 of 3 mutants caught).
 
 
 

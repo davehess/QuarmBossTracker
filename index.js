@@ -474,6 +474,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 60_000;
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
   setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
+  setTimeout(() => _backfillMimicFeedbackButtonsOnce(readyClient)
+    .catch(err => console.warn('[feedback] button backfill:', err?.message)), 20_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -1540,6 +1542,44 @@ function _feedbackAckRow() {
   );
 }
 
+// The first pair a new report gets, same as the web relay's (the guild lead,
+// 2026-09-27: Mimic's posts had "no acknowledgement in discord" — they were
+// plain messages with no buttons at all).
+function _feedbackRecvRow() {
+  return new _ARB2().addComponents(
+    new _BB2().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(_BS2.Primary),
+    new _BB2().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(_BS2.Danger),
+  );
+}
+
+// Mimic's reports are plain posts (the log and screenshots ride as files), not
+// embeds, so their submitter and category live on the feedback row, found by the
+// message id the post was stamped with. Every button also moves that row on, so
+// the /admin/feedback inbox agrees with the thread.
+async function _feedbackRowForMsg(msgId) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled() || !msgId) return null;
+    const rows = await supabase.select('feedback',
+      `discord_msg_id=eq.${encodeURIComponent(msgId)}&select=id,submitter_discord_id,category&limit=1`);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch { return null; }
+}
+async function _feedbackRowUpdate(row, patch) {
+  if (!row?.id) return;
+  const supabase = require('./utils/supabase');
+  await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
+    .catch(err => console.warn('[feedback] status update failed:', err?.message));
+}
+// A plain post's status rides on its first line ("🐞 Bug from X via mimic 2.7.3
+// · 📬 Acknowledged by Y"); everything after it is a >>> quote, so a line added
+// at the end would read as part of the report.
+function _feedbackStatusContent(content, status) {
+  const lines = String(content || '').split('\n');
+  lines[0] = lines[0].replace(/ · (?:📬|✅|❌) .*$/u, '') + ' · ' + status;
+  return lines.join('\n').slice(0, 2000);
+}
+
 async function handleFeedbackRecv(interaction) {
   const { hasOfficerRole, officerRolesList: orl } = require('./utils/roles');
   if (!hasOfficerRole(interaction.member))
@@ -1548,7 +1588,19 @@ async function handleFeedbackRecv(interaction) {
   await interaction.deferUpdate();
   const msg   = interaction.message;
   const embed = msg.embeds[0];
-  if (!embed) return;
+  const reviewerName = interaction.member?.displayName || interaction.user.username;
+  const row = await _feedbackRowForMsg(msg.id);
+  await _feedbackRowUpdate(row, { status: 'acked', acked_by: reviewerName, acked_at: new Date().toISOString() });
+  if (!embed) {
+    if (row?.submitter_discord_id) {
+      try {
+        const user = await interaction.client.users.fetch(row.submitter_discord_id);
+        await user.send(`📬 Your ${row.category === 'bug' ? 'bug report' : 'idea'} from Mimic has been received by leadership. Thank you!`);
+      } catch { /* DMs may be closed */ }
+    }
+    await msg.edit({ content: _feedbackStatusContent(msg.content, `📬 Acknowledged by ${reviewerName}`), components: [_feedbackAckRow()] });
+    return;
+  }
 
   // Extract submitter user ID from footer (stored as "uid:<id>")
   const footerText = embed.footer?.text || '';
@@ -1578,12 +1630,17 @@ async function handleFeedbackClose(interaction, implemented) {
   await interaction.deferUpdate();
   const msg    = interaction.message;
   const embed  = msg.embeds[0];
-  if (!embed) return;
 
   const reviewer = interaction.member?.displayName || interaction.user.username;
   const statusVal = implemented
     ? `✅ Implemented by ${reviewer}`
     : `❌ Not implementing (${reviewer})`;
+  await _feedbackRowUpdate(await _feedbackRowForMsg(msg.id),
+    { status: 'addressed', addressed_by: reviewer, addressed_at: new Date().toISOString() });
+  if (!embed) {
+    await msg.edit({ content: _feedbackStatusContent(msg.content, statusVal), components: [] });
+    return;
+  }
 
   const updated = _EB2.from(embed)
     .setFields(...(embed.fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: statusVal, inline: false });
@@ -17642,6 +17699,7 @@ async function _handleAgentFeedback(req, res) {
         `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
         `>>> ${message.slice(0, 1500)}${attached}`,
       files: shotsMod.discordFiles(shots),
+      components: [_feedbackRecvRow()],
     });
     // Stamp the post on the row. Without it relayWebFeedback (which posts every
     // row with no discord_msg_id) posted this report a second time a minute
@@ -18046,6 +18104,37 @@ async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, trig
     console.warn('[trigger-voice] handler error:', err?.message);
   }
   void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
+}
+
+// Mimic's reports went out with no buttons until 2026-09-27, so the ones still
+// open had no way to be acknowledged. Add the pair to each, once (latched in
+// bot_kv, fail-closed), skipping any post that already has buttons.
+const _FB_BUTTONS_BACKFILL_KEY = 'feedback_mimic_buttons_backfill';
+async function _backfillMimicFeedbackButtonsOnce(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const latch = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FB_BUTTONS_BACKFILL_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(latch)) return kvLatch.latchState(latch) === 'unknown' ? 'unknown' : 'latched';
+  const rows = await supabase.select('feedback',
+    'client=eq.mimic&status=eq.new&discord_msg_id=not.is.null&select=discord_msg_id&order=submitted_at.asc&limit=100');
+  if (!Array.isArray(rows)) return 'unknown';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return 'no-thread';
+  let added = 0;
+  for (const r of rows) {
+    const m = await thread.messages.fetch(r.discord_msg_id).catch(() => null);
+    if (!m || (m.components && m.components.length)) continue;
+    const ok = await m.edit({ components: [_feedbackRecvRow()] }).then(() => true).catch(() => false);
+    if (ok) added++;
+  }
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FB_BUTTONS_BACKFILL_KEY, value: { ran_at: new Date().toISOString(), added }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log(`[feedback] added buttons to ${added} Mimic report(s)`);
+  return 'done';
 }
 
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
