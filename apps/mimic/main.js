@@ -283,9 +283,23 @@ function defaultConfig() {
     uiPackTags: {},
   };
 }
+// The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
+// it was before the latest write) and writes through `.tmp`, so a Mimic killed
+// mid-write still has something whole to come back to.
+function _readConfigRaw() {
+  const file = CONFIG_FILE();
+  for (const f of [file, file + '.bak', file + '.tmp']) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(f, 'utf8'));
+      if (raw && typeof raw === 'object') return raw;
+    } catch { /* missing or torn — try the next copy */ }
+  }
+  return null;
+}
 function loadConfig() {
   try {
-    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf8'));
+    const raw = _readConfigRaw();
+    if (!raw) return defaultConfig();
     // Migration: old `tellsEnabled` boolean → `tellsMode` string.
     if (raw.tellsEnabled !== undefined && raw.tellsMode === undefined) {
       raw.tellsMode = raw.tellsEnabled ? 'local' : 'off';
@@ -313,8 +327,26 @@ function loadConfig() {
   } catch { return defaultConfig(); }
 }
 function saveConfig(cfg) {
-  fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });
-  fs.writeFileSync(CONFIG_FILE(), JSON.stringify(cfg, null, 2));
+  const file = CONFIG_FILE();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Atomic (the guild's co-leader, 2026-09-26: "i closed mimic with task manager
+  // and it seems none of settings were saved"). This used to write the file in
+  // place, and it runs often — every overlay that sizes itself to its content
+  // fires 'resize', which persists bounds. A kill mid-write left a torn file
+  // that loadConfig could not parse, so EVERY setting fell back to its default.
+  // Now: write .tmp, keep the current file as .bak, then rename .tmp over it.
+  const text = JSON.stringify(cfg, null, 2);
+  try {
+    fs.writeFileSync(file + '.tmp', text);
+    // Back up the current file only if it is whole, so a torn one can never
+    // replace the good backup.
+    try { const cur = fs.readFileSync(file, 'utf8'); JSON.parse(cur); fs.writeFileSync(file + '.bak', cur); } catch { /* none yet, or torn */ }
+    fs.renameSync(file + '.tmp', file);
+  } catch {
+    // Windows can refuse the rename while something (antivirus) holds the file
+    // open; a direct write is still better than losing the change.
+    fs.writeFileSync(file, text);
+  }
   // Any config write can change where we should be looking for EverQuest
   // (eqPaths / eqPathsExcluded), so drop the memoized scans rather than trying
   // to detect which keys moved — config saves are rare user actions, and a
@@ -6251,7 +6283,39 @@ function makeTrayIcon() {
   }
   tray = new Tray(img);
   tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
-  buildTrayMenu();
+  // Right-click builds the menu THEN and pops it up (the guild's co-leader,
+  // 2026-09-26: "right clicking it does nothing for some reason. no exit, no
+  // nothing" — so they ended Mimic from Task Manager and lost their settings).
+  // It used to be a setContextMenu menu, rebuilt on every pushStatus and on
+  // every change of active character — "active" is whichever Zeal stream
+  // reported last, so it can change several times a second. On Windows,
+  // replacing the context menu
+  // closes the one on screen, so it died before it could be used. A popped-up
+  // menu is never replaced while open. And if building the full menu ever
+  // throws, a short menu with Quit still comes up instead of nothing.
+  if (process.platform !== 'linux') {
+    tray.on('right-click', () => {
+      try { buildTrayMenu(); } catch (err) { appendAgentLog(`[tray] menu failed to build: ${err && err.message}\n`); }
+      try { tray.popUpContextMenu(_trayMenu || _trayFallbackMenu()); }
+      catch (err) { appendAgentLog(`[tray] menu failed to open: ${err && err.message}\n`); }
+    });
+  }
+  try { buildTrayMenu(); } catch (err) { appendAgentLog(`[tray] menu failed to build: ${err && err.message}\n`); }
+}
+let _trayMenu = null;
+function _quitMimic() {
+  quitting = true;
+  if (agentProc) { try { agentProc.kill(); } catch {} }
+  app.quit();
+}
+function _trayFallbackMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Open Wolf Pack Mimic', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    { label: 'Settings…', click: () => { try { openSettings(); } catch {} } },
+    { label: 'Restart agent', click: () => { if (agentProc) { try { agentProc.kill(); } catch {} } } },
+    { type: 'separator' },
+    { label: 'Quit Mimic', click: _quitMimic },
+  ]);
 }
 
 // The Overlays submenu's overlay entries, alphabetical (a member, 2026-09-23:
@@ -6621,9 +6685,12 @@ function buildTrayMenu() {
       } },
     updateItem,
     { label: 'Settings…', click: openSettings },
-    { label: 'Quit Mimic', click: () => { quitting = true; if (agentProc) { try { agentProc.kill(); } catch {} } app.quit(); } },
+    { label: 'Quit Mimic', click: _quitMimic },
   ]);
-  tray.setContextMenu(menu);
+  _trayMenu = menu;
+  // Windows/macOS pop this up on right-click (see createTray). Linux trays have
+  // no right-click event, so there it stays a context menu.
+  if (process.platform === 'linux') tray.setContextMenu(menu);
   tray.setToolTip(tooltipFor(s));
 }
 
@@ -8546,6 +8613,8 @@ ipcMain.handle('capture-screens', async (e) => {
 });
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });
+// Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
+ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
@@ -9737,6 +9806,10 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { /* stay alive in tray */ });
 app.on('before-quit', () => {
   quitting = true;
+  // Settings asks before closing with unsaved edits (a beforeunload), and in
+  // Electron that would also cancel the QUIT. Its draft is already on disk, so
+  // close it without asking; the next open offers the draft back.
+  try { if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy(); } catch {}
   _stopEqPolling();
   try { const { globalShortcut } = require('electron'); globalShortcut.unregisterAll(); } catch {}
   if (agentProc) { try { agentProc.kill(); } catch {} }

@@ -12835,8 +12835,9 @@ function _meTick(st, now) {
 // is the one-line ask). If a Zeal build ever sends 34, it wins. Until then
 // the delay is learned from your own weapon swings — lines that land
 // together are one round, round-to-round is the delay, and the next round is
-// predicted from the last. The log is read every 500 ms and stamped to the
-// second, so this is about ±0.5 s and says `source: 'log', est: true`.
+// predicted from the last. The log is stamped to the second (and read every
+// 150 ms while active, tailFile), so this is about ±0.5 s and says
+// `source: 'log', est: true`.
 //
 // Main hand vs off hand: when both land in one round the server swings the
 // primary first (Client::Process), so a round with two DIFFERENT verbs names
@@ -15804,31 +15805,9 @@ function _serializeForDashboard() {
     // Trigger fires for the Mimic trigger-alert overlay (triggers.html). It
     // dedupes on `ts` and speaks `tts || text`, so map the overlay ring buffer
     // into the shape it expects. WITHOUT this the overlay saw nothing and never
-    // spoke — the cause of "I've never heard a TTS trigger".
-    recentTriggerFires: _activeOverlays.map(function(o){
-      return {
-        ts:      o.firedAt || o.shownAt || 0,
-        text:    o.text,
-        tts:     o.tts || o.text,
-        trigger: o.trigger,
-        // #207 — so a dismissal of a sticky callout is attributed to the
-        // trigger, not to its (interpolated, per-fire) text.
-        trigger_id: o.trigger_id || null,
-        scope:   o.scope,
-        test:    !!o.test,
-        sound:   o.sound || null,
-        sticky:  !!o.sticky,
-        rehearsal: !!o.rehearsal,
-        replay:  !!o.replay,
-        // #136 raid callout allow-list muted this fire — triggers.html flashes
-        // it but does not speak it.
-        mute:    !!o.mute,
-        // The inverse: speak it but do NOT flash it or ask for a timing vote.
-        // Set by the damage-taken alert, whose cadence would otherwise camp the
-        // shared centre flash and clobber other callouts on it.
-        audioOnly: !!o.audioOnly,
-      };
-    }),
+    // spoke — the cause of "I've never heard a TTS trigger". Same shape as the
+    // /api/fires/wait long-poll (_fireForWeb).
+    recentTriggerFires: _activeOverlays.map(_fireForWeb),
     activeTimers:        _activeTimersSnapshot(),
     // #207 callout dismissal counters (in-memory, this session). Local proof
     // that a ✕ was recorded — the durable half rides the trigger_feedback
@@ -16220,7 +16199,12 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
     <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
+    <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
+         the tray menu will not open (a raider then ended Mimic from Task Manager and lost settings).
+         Mimic only; shown by wpShowQuit below. -->
+    <button id="wpQuitBtn" class="wp-gear" style="display:none" title="Quit Wolf Pack Mimic (saves everything and closes the overlays)" onclick="if (confirm('Quit Wolf Pack Mimic?')) { try { window.mimic.quitApp(); } catch (e) { void e; } }">⏻ Quit</button>
   </div>
+  <script>(function wpShowQuit(){ try { if (window.mimic && window.mimic.quitApp) document.getElementById('wpQuitBtn').style.display = ''; } catch (e) { void e; } })();</script>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <!-- .panes holds everything the rail sits beside. The nav KEEPS its class and
@@ -28290,6 +28274,17 @@ function startWebDashboard(port) {
       // actionable (#129 — a raider must see every auction to bid on it), and
       // "clear the countdown clutter" must not silently cost someone an item.
       // They keep their own per-chip ✕.
+      // GET /api/fires/wait?after=<ts> — the trigger overlay's long-poll: the
+      // fires newer than `after`, answered the moment one happens (or [] after
+      // 20 s). See _waitForFires.
+      if (req.url && req.url.startsWith('/api/fires/wait') && req.method === 'GET') {
+        let after = 0;
+        try { after = Number(new URL(req.url, 'http://127.0.0.1').searchParams.get('after')) || 0; } catch { after = 0; }
+        const fires = await _waitForFires(after, 20_000);
+        if (res.writableEnded || res.destroyed) return;
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({ fires }));
+      }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
@@ -35611,6 +35606,11 @@ const SUGGESTED_TRIGGERS = [
     builtin_timer: 'lull', no_tts: true },
   { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
     builtin_timer: 'my_spells', no_tts: true },
+  // The co-leader again, 2026-09-26: "The server tick function within the HUD
+  // thing is awesome, but would be even better if it could be broken out … as a
+  // standalone timer". The same Zeal gauge-24 tick the HUD draws, as a bar.
+  { id: 'timer_server_tick', category: 'timer', label: 'Server tick (the 6s tick from Zeal, like the HUD\'s)',
+    builtin_timer: 'server_tick', no_tts: true },
 ];
 
 const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
@@ -35844,6 +35844,66 @@ const _activeOverlays = [];
 function _pushOverlay(o) {
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
+  _wakeFireWaitersSoon();
+}
+
+// One fire, in the shape triggers.html reads — for /api/state's
+// recentTriggerFires and the /api/fires/wait long-poll alike.
+function _fireForWeb(o) {
+  return {
+    ts:      o.firedAt || o.shownAt || 0,
+    text:    o.text,
+    tts:     o.tts || o.text,
+    trigger: o.trigger,
+    // #207 — so a dismissal of a sticky callout is attributed to the
+    // trigger, not to its (interpolated, per-fire) text.
+    trigger_id: o.trigger_id || null,
+    scope:   o.scope,
+    test:    !!o.test,
+    sound:   o.sound || null,
+    sticky:  !!o.sticky,
+    rehearsal: !!o.rehearsal,
+    replay:  !!o.replay,
+    // #136 raid callout allow-list muted this fire — triggers.html flashes
+    // it but does not speak it.
+    mute:    !!o.mute,
+    // The inverse: speak it but do NOT flash it or ask for a timing vote.
+    // Set by the damage-taken alert, whose cadence would otherwise camp the
+    // shared centre flash and clobber other callouts on it.
+    audioOnly: !!o.audioOnly,
+  };
+}
+
+// Fires the moment they happen (the guild's co-leader, 2026-09-26: the charm
+// break "seems to be about a second off. this is ONe of the only reasons for me
+// to continue using eqlogparser"). The trigger overlay used to see a fire only
+// on its next 700 ms /api/state poll, behind that route's 400 ms cache: about
+// 0.8 s on average after the line was read, 1.6 s at worst. It now also holds
+// GET /api/fires/wait open, and _pushOverlay answers it straight away. Wakes are
+// batched per tick so a burst of fires answers once.
+const _fireWaiters = new Set();
+let _fireWakeQueued = false;
+function _wakeFireWaitersSoon() {
+  if (_fireWakeQueued || !_fireWaiters.size) return;
+  _fireWakeQueued = true;
+  setImmediate(() => {
+    _fireWakeQueued = false;
+    const ws = [..._fireWaiters];
+    _fireWaiters.clear();
+    for (const w of ws) { try { w(); } catch { /* one bad waiter never stops the rest */ } }
+  });
+}
+// Fires newer than `after`, waiting up to maxMs for one to happen.
+async function _waitForFires(after, maxMs) {
+  const pick = () => _activeOverlays.map(_fireForWeb).filter(f => f.ts > after);
+  const now = pick();
+  if (now.length || !(maxMs > 0)) return now;
+  await new Promise(resolve => {
+    const t = setTimeout(done, maxMs);
+    function done() { clearTimeout(t); _fireWaiters.delete(done); resolve(); }
+    _fireWaiters.add(done);
+  });
+  return pick();
 }
 
 // Rampage callouts — "who is on rampage". The agent already parses
@@ -39731,6 +39791,20 @@ function _builtinTimerRows(now) {
              cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
     }
   }
+  if (on.has('server_tick')) {
+    // The character whose Zeal reported last, the same rule as activeCharacter.
+    let best = null, bestTs = 0;
+    for (const ch of Object.keys(_zealState || {})) {
+      const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+      if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+    }
+    const at = best ? _serverTickAtFor(best, now) : null;
+    if (at != null) {
+      const left = ((at - now) % 6000 + 6000) % 6000 || 6000;
+      push({ id: 'bt|servertick', name: 'Server tick', target: null, effect: 'Server tick',
+             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true });
+    }
+  }
   if (on.has('lull') || on.has('my_spells')) {
     for (const [tk, mp] of _buffLandingsByTarget) {
       for (const [sk, b] of mp) {
@@ -41021,7 +41095,13 @@ async function tailFile(logPath, onLine) {
     console.log(`[${path.basename(logPath)}] tailing from offset ${pos} (file size ${stat.size})`);
   }
 
-  setInterval(async () => {
+  // Read every 150 ms while the log is being written, 500 ms once it has been
+  // quiet for a minute (the guild's co-leader, 2026-09-26, on the charm-break
+  // call: "seems to be about a second off"). A fixed 500 ms put up to half a
+  // second between EQ writing a line and any trigger seeing it. Self-scheduling,
+  // so a slow read can never overlap the next one.
+  let lastGrowAt = 0;
+  const readNew = async () => {
     try {
       const s = await fs.promises.stat(logPath);
       if (s.size < pos) {
@@ -41031,6 +41111,7 @@ async function tailFile(logPath, onLine) {
         buf = '';
       }
       if (s.size > pos) {
+        lastGrowAt = Date.now();
         const fd = await fs.promises.open(logPath, 'r');
         const len = s.size - pos;
         const data = Buffer.alloc(len);
@@ -41045,7 +41126,12 @@ async function tailFile(logPath, onLine) {
     } catch (err) {
       console.warn(`[tail] ${err.message}`);
     }
-  }, 500);
+    setTimeout(readNew, _tailDelayMs(lastGrowAt, Date.now()));
+  };
+  setTimeout(readNew, 500);
+}
+function _tailDelayMs(lastGrowAt, now) {
+  return (now - lastGrowAt) < 60_000 ? 150 : 500;
 }
 
 // ── Log rotation (feedback: a member 2026-08-07) ────────────────────────────
@@ -42503,6 +42589,7 @@ module.exports = {
   _bumpCharmTick, _reconcileGaugeCharms,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
+  _waitForFires, _pushOverlay, _tailDelayMs,
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };

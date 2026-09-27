@@ -1118,6 +1118,26 @@
     }catch(e){ /* agent not up yet */ }
   }
   tick(); setInterval(tick, 700);
+  // Fires the moment they happen (agent 3.7.27+): a long-poll the agent answers
+  // as soon as a trigger fires, instead of waiting for the next 700 ms tick
+  // (the guild's co-leader, 2026-09-26: the charm break "seems to be about a
+  // second off"). tick() still runs for the timers and as the fallback; both
+  // advance the same lastTs, so a fire is spoken once. An older agent answers
+  // 404 and this loop simply stops.
+  (async function waitFires(){
+    for (;;) {
+      if (!primed) { await new Promise(function(r){ setTimeout(r, 300); }); continue; }
+      try {
+        const r = await fetch('http://127.0.0.1:'+PORT+'/api/fires/wait?after=' + encodeURIComponent(lastTs), {cache:'no-store'});
+        if (r.status === 404) return;
+        const j = await r.json();
+        const fires = (j.fires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+        for (const f of fires){
+          if ((f.ts||0) > lastTs){ lastTs = f.ts; fire(f); }
+        }
+      } catch(e){ await new Promise(function(r){ setTimeout(r, 1000); }); }
+    }
+  })();
   // Independent paint loop @ 10Hz so the on-screen countdown text + bar
   // tween between server polls. Cheap — only touches DOM nodes that exist.
   setInterval(paintTimers, 100);

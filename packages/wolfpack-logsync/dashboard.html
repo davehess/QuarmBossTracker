@@ -287,7 +287,12 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div class="wp-rail-foot">
     <button id="wpTourBtn" class="wp-gear" title="Take the guided walkthrough of the dashboard — every stop is your own live data. Re-run any time." onclick="wpTourStart()">✨ Tour</button>
     <button id="wpFbBtn" class="wp-gear" title="Send a bug report or an idea to the officers — optionally with a slice of your log" onclick="wpOpenFeedback()">💬 Feedback</button>
+    <!-- ⏻ Quit (2026-09-26): the tray's Quit, here too — tray ↔ dashboard parity, and the way out when
+         the tray menu will not open (a raider then ended Mimic from Task Manager and lost settings).
+         Mimic only; shown by wpShowQuit below. -->
+    <button id="wpQuitBtn" class="wp-gear" style="display:none" title="Quit Wolf Pack Mimic (saves everything and closes the overlays)" onclick="if (confirm('Quit Wolf Pack Mimic?')) { try { window.mimic.quitApp(); } catch (e) { void e; } }">⏻ Quit</button>
   </div>
+  <script>(function wpShowQuit(){ try { if (window.mimic && window.mimic.quitApp) document.getElementById('wpQuitBtn').style.display = ''; } catch (e) { void e; } })();</script>
 </div>
 <div id="wpPanelMenu" class="wp-menu" style="display:none"></div>
 <!-- .panes holds everything the rail sits beside. The nav KEEPS its class and

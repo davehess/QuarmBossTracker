@@ -503,7 +503,11 @@
             // stay silent. Otherwise → real unexpected break, speak.
             if (trackedKeysNow().has(key)) speak('charm break');
             pendingRecharm.delete(key);
-          }, 1500);
+          // 600 ms (was 1500, the guild's co-leader, 2026-09-26: "about a second
+          // off"): long enough for one more 500 ms poll to see a pet that died
+          // rather than broke, and no longer. A pet that dies while charmed is
+          // gone from the tracker in the same log read, so that poll catches it.
+          }, 600);
           pendingRecharm.set(key, t);
           prevActive.delete(key);
         }

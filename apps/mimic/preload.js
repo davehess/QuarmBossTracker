@@ -588,6 +588,8 @@ contextBridge.exposeInMainWorld('mimic', {
   // came from the machine you are sitting at.
   machineName:         (() => { try { return require('os').hostname(); } catch { return ''; } })(),
   openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  // ⏻ Quit Mimic from the dashboard — the tray's Quit ('quit-app').
+  quitApp:             ()         => ipcRenderer.invoke('quit-app'),
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
   openResources:       ()         => ipcRenderer.invoke('open-resources'),
