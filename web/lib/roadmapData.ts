@@ -37,6 +37,40 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'timer-bars-2026-09-26',
+    title: 'Agent 3.7.24',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.24 · Web 1.8.19',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Timer bars like EQLogParser’s, right in the trigger alert window.',
+    features: [
+      {
+        name: 'Recharm tick',
+        blurb: 'A countdown to your charmed pet’s next break check, every 6 seconds, pinned at the bottom of the trigger window.',
+      },
+      {
+        name: 'Lull and spell timers',
+        blurb: 'Pacify, Calm and Harmony timers on the mobs you lulled. Optionally, a bar for every spell you land on a mob that lasts 30 seconds or more: Tash, slows, mez and the rest. Only your own casts.',
+      },
+      {
+        name: 'Turn them on',
+        blurb: 'Dashboard → Triggers → Suggested → Timer bars. Each one is a single tick box.',
+      },
+      {
+        name: 'Charm break, instantly',
+        blurb: 'A new Suggested alert, "Your charm broke", speaks the moment it happens, with no Charm window needed.',
+      },
+    ],
+    fixes: [
+      '"Rampage on you" never fired. It does now.',
+      'A personal trigger you untick or park now stays quiet.',
+      'Personal triggers that name your character now fire after Mimic restarts.',
+      'Saving your trigger list no longer strips the warnings from imported EQLogParser triggers.',
+      'Deleting a Suggested alert from your personal list no longer leaves it stuck on.',
+      'The Charm window’s "next mob tick" countdown counts down again.',
+    ],
+  },
+  {
     key: 'dirge-nuke-2026-09-26',
     title: 'Agent 3.7.22',
     version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.18',

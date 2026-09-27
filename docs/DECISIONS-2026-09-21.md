@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **EQLogParser-style timer bars + trigger fixes for the guild's co-leader** | **On beta, agent 3.7.24 (§49).** Recharm tick, lull timers and your-spells-on-mobs as filled bars in the trigger window (Suggested → Timer bars); an instant "Your charm broke" alert. Fixed: "Rampage on you" never fired, unticked triggers still fired, `{c}` personal triggers dead after a restart, saves stripped EQLogParser warnings, the Charm overlay's mob-tick countdown stuck | the guild lead: (1) the co-leader is on STABLE 2.7.1 — switch them to beta, or cut a stable; (2) all trigger countdowns as filled bars, yes or no; (3) paste the Discord answer from this session |
 | **Zeal: Bandolier chat filter (PR ready)** | **2026-09-25 (§26).** Branch `bandolier-chat-filter` on github.com/davehess/zeal; PR text + test plan in `docs/zeal-bandolier-filter-request.md`; both builds passed in game; **all** bandolier messages now go to the filter, failures in red (the guild lead's call) — `30a79bb` | the guild lead: open the PR upstream (compare link + paste-ready text in the doc). Next candidate: #213 (target level/class/race + loc on the pipe) |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed). **2026-09-26 (§40): players are now kept by name** (`9a3fd09`), so a tagged player keeps the tag through their zoning, a camp or a death; in `test-all` (`d32bed1` now) | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; rendered in game 2026-09-26, §39)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `d32bed1` (now with tag pictures §38 and player tags kept by name §40). **In game 2026-09-26:** every symbol, badge, lettered paw and all 30 guild icons draw correctly, including over other guilds' players | the guild lead: try the banners (`^B<code>^`, not in the screenshots yet), correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
@@ -2754,6 +2755,69 @@ the command reads anything before refusing.
    switch on /me.
 
 Private specifics (how each surface was reachable) are in the private briefing, not here.
+
+## 49. EQLogParser-style timer bars, and the trigger bugs a guild leader hit (2026-09-26, agent 3.7.24 beta)
+
+**Who and why.** The guild's other leader, a bard, is trying Mimic in place of EQLogParser. The guild lead: *"this is a huge deal for me..this is one of the two guild leaders
+buying into the platform"*. Their asks, from #bards:
+- *"the only thing i need to get is the recharm tick count down timer … and i could get rid of
+  eqlogparser i think"*, with screenshots of EQLogParser's timer window: "Recharm Tick", "PACIFY",
+  "CALM", "A Soriz Skeleton - Tashania" and a 60-minute "Ring 10";
+- *"are guild triggers something that happen no matter what? i dont need to copy to personal?"*;
+- *"i added 'rampage on you' to personal triggers, then deleted it … now i cant get it back"*;
+- *"i didnt see it on the regular or mini"*, and *"the 'charm break' is a few seconds late?"*.
+
+They run stable Mimic 2.7.1 / agent 3.7.16 (their last agent report says so), not beta, so none
+of this reaches them until they switch to beta or a stable is cut.
+
+**What shipped (agent 3.7.24, beta `7b6a0cc9`):**
+- **Timer bars.** A new "Timer bars" group in the dashboard's Suggested triggers, with three
+  switches:
+  - **Recharm tick:** a 6-second countdown to the charmed pet's next break check, counted from the
+    charm landing, pinned at the bottom;
+  - **Pacify / Calm / Harmony** on the mobs you lulled;
+  - **every spell you land on a mob** lasting 30 seconds or more.
+
+  Each row is built by the agent from what it already tracks, and only for your own casts. The
+  trigger overlay draws them as full-height filled bars, like EQLogParser's; trigger countdowns
+  keep the thin strip. They show in the trigger window, the "TTS box". That window has no mini
+  mode, so there is nothing to miss there.
+- **"Your charm broke"**, a Suggested alert on the log line "Your charm spell has worn off." Bards
+  get that line too. It speaks at once. The Charm overlay's own call waits out a 6-second grace on
+  the Zeal pet slot (so a recast does not false-alarm) plus a 1.5-second kill guard. That wait is
+  the "few seconds late".
+
+**Bugs found and fixed on the way:**
+1. **"Rampage on you" could never fire.** It matched "rampages on you", which no log contains. The
+   real line is "*<mob>* goes on a RAMPAGE against *<name>*!". A saved copy with the old text is
+   rewritten on load; a pattern someone edited by hand is left alone.
+2. **An unticked or "parked" personal trigger still fired.** Nothing on the fire path read
+   `enabled`. Guild triggers were fine, because the bot sends only enabled ones.
+3. **Personal triggers using `{c}` (your character) never fired after a restart.** They compiled
+   before the agent knew your character names. EQLogParser imports use `{C}` a lot, so this would
+   have hit the co-leader next.
+4. **Every dashboard save stripped warning times, end text and bar colour from EQLogParser
+   imports.** A save rebuilds the whole list from a fixed set of fields.
+5. **The Charm overlay's "next mob tick" countdown never counted down.** The "pet still there"
+   check overwrote the tick anchor on every poll. This is the likely "didn't see it on the regular
+   or mini": the countdown was on the Charm overlay but stuck near 6 seconds.
+6. **"Can't get it back"**: deleting the Suggested copy from the personal list left the Suggested
+   panel showing it ON. Unticking it then looked like nothing happened. Both panels now redraw
+   together.
+
+**Answers for the co-leader.** Guild triggers fire on their own; there is no need to copy them to
+personal. "Copy to personal" only makes an editable copy of your own. EQLogParser trigger packages
+import directly (Triggers → Import). A 60-minute timer like "Ring 10" is a personal trigger with
+a 3600-second timer.
+
+**Not done, offered:**
+- **All trigger countdowns as filled bars**, not just the timer-bar rows. It costs one CSS rule
+  and nothing more to maintain. It would change every raider's overlay, so it is the guild lead's
+  call.
+- **A separate timers window.** That is Mimic 3.0's overlay-engine work (§36), not a new overlay
+  now: a new window owes the whole overlay parity checklist.
+- **Same-name mobs share one bar.** Landings are keyed by mob name, so two "a soriz skeleton" with
+  Tash show one bar, the most recent.
 
 
 
