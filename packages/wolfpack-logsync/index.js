@@ -10671,6 +10671,7 @@ function _endpointForKind(kind, botUrl) {
     case 'chat':            return base + '/chat';
     case 'pvp':             return base + '/pvp';
     case 'pvp_assists':     return base + '/pvp_assists';
+    case 'optin_summary':   return base + '/optin_summary';
     case 'bosskill':        return base + '/bosskill';
     case 'hatekill':        return base + '/hatekill';
     case 'lockout':         return base + '/lockout';
@@ -30573,6 +30574,8 @@ function runOptinBackfill(files, opts = {}) {
   // /who-type events. The existing 5s ticker flushes whoData on growth, so the
   // bot's who_observations populates without any new endpoint.
   const whoOnly = !!opts.whoOnly;
+  const runStartedAt = new Date().toISOString();
+  const runJobs = [];
 
   log(`Starting ${whoOnly ? '/who-only rescan' : 'backfill'} on ${files.length} file(s)${whoOnly ? ' (fast path)' : ' — chat + combat + /who'}...`);
 
@@ -30641,7 +30644,7 @@ function runOptinBackfill(files, opts = {}) {
       },
     });
 
-    (async () => {
+    runJobs.push((async () => {
       const stored    = _optinState.progress[f.path];
       // /who-only rescan ALWAYS starts at 0 — the existing bytePos only matters
       // for chat/combat completion; we're walking the whole file for /who rows
@@ -30814,7 +30817,22 @@ function runOptinBackfill(files, opts = {}) {
       _activeBackfills.delete(f.path);
       onStatus(status);
       scheduleRender();
-    })();
+    })());
+  }
+
+  // One PvP note per run, not one per old kill (the guild lead, 2026-09-27:
+  // "when parsing through old logs make sure we're not posting in the channels
+  // for it each time … a note in pvp that the @user's opt-in log parse found N
+  // new pvp kills and assists and total them out per guildie"). When every
+  // file of this run has finished (or paused), push out the assists still
+  // buffered and tell the bot; it counts what the run added and posts once.
+  // Queued as backfill, so it drains behind the run's own uploads.
+  if (!whoOnly && runJobs.length > 0) {
+    Promise.allSettled(runJobs).then(() => {
+      if (pvpAssistBuffer.length > 0) uploadPvpAssists(pvpAssistBuffer.splice(0), _uploadOpts || { botUrl, token, dryRun });
+      if (dryRun) return;
+      enqueueUpload('optin_summary', { agent_version: AGENT_VERSION, backfill: true, started_at: runStartedAt });
+    }).catch(() => {});
   }
 }
 
