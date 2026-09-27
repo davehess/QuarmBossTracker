@@ -18147,11 +18147,20 @@ async function relayWebFeedback(readyClient) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
 
+  // A row sent by Mimic or the Parser (client set) is posted by its own route,
+  // which stamps discord_msg_id only after its Discord upload finishes — seconds,
+  // with screenshots. A relay pass in that window posted the same report twice,
+  // and the relay's stamp won, so acknowledging the real post found no row (the
+  // guild lead, 2026-09-27: "double posted in the feedback channel"). Web and
+  // /feedback rows (client null) still relay at once; a client row only after
+  // 5 minutes unstamped, i.e. when its own post failed.
+  const clientGraceIso = new Date(Date.now() - 5 * 60_000).toISOString();
   let rows;
   try {
     rows = await supabase.select(
       'feedback',
-      'discord_msg_id=is.null&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
+      `discord_msg_id=is.null&or=(client.is.null,submitted_at.lt.${encodeURIComponent(clientGraceIso)})` +
+      '&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
     );
   } catch { return; }
   if (!Array.isArray(rows) || rows.length === 0) return;

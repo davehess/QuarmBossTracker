@@ -3342,6 +3342,19 @@ buttons once at boot (`_backfillMimicFeedbackButtonsOnce`, bot_kv `feedback_mimi
 fail-closed, skips any post that already has buttons). Test `feedback-ack` (7, real functions,
 3 of 3 mutants caught).
 
+### 59b. The timers report posted twice — the web relay raced the Mimic route (bot 3.1.161, main)
+The guild lead: *"double posted in the feedback channel"* (the timers report, row `7ed3116b`,
+12:40 UTC). **Cause:** the Mimic route inserts the row, uploads to Discord, and only THEN stamps
+`discord_msg_id`. `relayWebFeedback` runs every 60 s and posts any row with `discord_msg_id IS
+NULL`, so a report that landed just before a relay tick was posted by both. The relay's stamp won,
+so the row points at the "via web" embed and the Mimic post is the orphan: acking the Mimic post
+marks it but finds no row, so no DM. (§51's "Mimic feedback posted twice" was a different cause —
+a retried upload.) **Fix:** the relay posts web rows (`client IS NULL`) at once, and a client row
+only once it has sat unstamped for 5 minutes — which still rescues a Mimic report whose own post
+failed. Test `feedback-ack` +1 (the query at a frozen clock; reverting the filter fails it).
+**The one duplicate:** acknowledge the "via web" embed (it is the one the row points to — DM +
+row write), then delete the plain Mimic post.
+
 
 
 
