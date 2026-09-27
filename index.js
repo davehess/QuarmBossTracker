@@ -5423,12 +5423,61 @@ async function _handleAgentPvp(req, res) {
   })();
 }
 
+// One assist, many witnesses (the guild lead, 2026-09-27: "credit assists to
+// guildmates our agents see"). Agent 3.7.29+ reports every player it saw hit
+// or debuff the victim, so each raider running Mimic reports the same
+// guildmate's assist — stamped off their own clock, a second or two apart.
+// dedup_key is per second, and the /pvp leaderboard counts rows, so that alone
+// would count one assist once per witness. Same assister + same victim within
+// ±30 s is one assist: nobody dies twice in that time.
+const PVP_ASSIST_SAME_MS = 30_000;
+let _pvpAssistWriteQ = Promise.resolve();
+function _pvpAssistUnseen(rows, existing) {
+  const seen = existing.map(e => ({
+    a: String(e.assister || '').toLowerCase(), v: String(e.victim || '').toLowerCase(), t: Date.parse(e.killed_at),
+  }));
+  const out = [];
+  for (const r of rows) {
+    const s = { a: r.assister.toLowerCase(), v: r.victim.toLowerCase(), t: Date.parse(r.killed_at) };
+    if (seen.some(x => x.a === s.a && x.v === s.v && Math.abs(x.t - s.t) <= PVP_ASSIST_SAME_MS)) continue;
+    seen.push(s);   // and within this batch
+    out.push(r);
+  }
+  return out;
+}
+// The stored rows near these, read per fight: clusters of ≤ 10 min, each
+// asking for its own victims ±30 s. A replayed log's batch can span months,
+// and one query over that span would hit PostgREST's 1,000-row cap and miss
+// rows. null when any read fails.
+async function _pvpAssistNeighbours(rows, guildId, select) {
+  const sorted = rows.slice().sort((a, b) => Date.parse(a.killed_at) - Date.parse(b.killed_at));
+  const found = [];
+  for (let i = 0; i < sorted.length;) {
+    const t0 = Date.parse(sorted[i].killed_at);
+    let j = i;
+    while (j < sorted.length && Date.parse(sorted[j].killed_at) - t0 <= 600_000) j++;
+    const part = sorted.slice(i, j);
+    i = j;
+    const lo = new Date(t0 - PVP_ASSIST_SAME_MS).toISOString();
+    const hi = new Date(Date.parse(part[part.length - 1].killed_at) + PVP_ASSIST_SAME_MS).toISOString();
+    const victims = [...new Set(part.map(r => r.victim.replace(/[",()]/g, '')))];
+    const got = await select(
+      `select=assister,victim,killed_at&guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&victim=in.(${victims.map(v => '"' + encodeURIComponent(v) + '"').join(',')})`
+      + `&killed_at=gte.${encodeURIComponent(lo)}&killed_at=lte.${encodeURIComponent(hi)}&limit=1000`);
+    if (!Array.isArray(got)) return null;
+    found.push(...got);
+  }
+  return found;
+}
+
 // POST /api/agent/pvp_assists — receive correlated assist events from the
 // agent. Agent has already computed the (assister, victim, killer, gap)
-// tuple from its own outbound damage window vs. a PvP death broadcast. Bot
-// validates the assister is on the WP roster, builds a dedup_key, and
-// upserts to public.pvp_assists. No Discord post — assists are a stat-only
-// signal (no rally moment to celebrate, no @PVP ping).
+// tuple from what its log saw on the victim vs. a PvP death broadcast. Bot
+// validates the assister is on the WP roster, builds a dedup_key, drops a
+// report another witness already stored, and upserts to public.pvp_assists.
+// No Discord post — assists are a stat-only signal (no rally moment to
+// celebrate, no @PVP ping).
 async function _handleAgentPvpAssists(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5540,8 +5589,19 @@ async function _handleAgentPvpAssists(req, res) {
   if (rows.length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, dropped }));
   }
-  const written = await supabase.upsert('pvp_assists', rows, 'dedup_key')
-    .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
+  // Read-then-write, one request at a time, so two witnesses uploading together
+  // cannot both miss each other's row.
+  const job = _pvpAssistWriteQ.then(async () => {
+    const existing = await _pvpAssistNeighbours(rows, guildId, (q) => supabase.select('pvp_assists', q))
+      .catch(() => null);
+    // A failed read stores everything: the per-second dedup_key still holds.
+    const fresh = Array.isArray(existing) ? _pvpAssistUnseen(rows, existing) : rows;
+    if (fresh.length === 0) return [];
+    return supabase.upsert('pvp_assists', fresh, 'dedup_key')
+      .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
+  });
+  _pvpAssistWriteQ = job.catch(() => {});
+  const written = await job;
   const stored = Array.isArray(written) ? written.length : 0;
 
   // Harvest assist rows into who_observations — same pattern as the main PvP

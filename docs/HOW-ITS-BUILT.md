@@ -1219,6 +1219,17 @@ prediction, quake handling (window opens "now", keeps kill history). Own-guild
 *instanced* kills post informationally and never tick the open-world timer.
 Backfilled (`--since`) kills record but never post/predict.
 
+**Assists** (§54, agent 3.7.29 / bot 3.1.155):
+- The agent's `EncounterBuilder` keeps, per victim, every player it saw hit them (a pet counts for its
+  owner) and every debuff that landed on them. Debuff landings are matched to a caster by cast timing
+  (`_pvpAssistLine` / `_pvpCasterFor`).
+- On a PvP death broadcast, `_checkPvpAssists` emits one row per player inside 4 minutes, the killer
+  excepted.
+- The live tail and the opt-in-log backfill run the same hooks; the backfill uploads 200 rows per
+  request.
+- The bot keeps only `characters`-roster names, then `_pvpAssistUnseen` / `_pvpAssistNeighbours` drop
+  a report of an assist another witness already stored (same assister and victim within ±30 s).
+
 ### Chat relay & historical chat
 Live `/gu`+`/rs` relay (`chat`) posts to Discord with fuzzy dedup (drunk-slur
 and censor-variant collapsing: same speaker + word count + ≥50% token match)
