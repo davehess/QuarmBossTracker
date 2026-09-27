@@ -11661,8 +11661,32 @@ async function _announceOptinPvpOnce() {
 // kill relays, latched in bot_kv. The film's link is read from the tuning map
 // (`celebration_video_url`, /admin/overlays), so it can be added before or
 // after the kill without a deploy; until then the embed says it is coming.
+// Wording (the guild lead, later the same night): "congrats Wolf Pack on the
+// last Aten Ha Ra of Luclin!" · "The guild has done approximately N damage to
+// Aten Ha Ra since <first kill>" · "post the video into discord" — so the link
+// rides the message CONTENT (Discord unfurls it), not the embed text, and a
+// once-a-minute poller posts it on its own when the link arrives after the kill.
 const _VT_CLEARED_KV_KEY = 'announce_vex_thal_cleared';
+const _VT_FILM_KV_KEY = 'announce_vex_thal_film';
 const _VT_NPC_ID = 158436;   // eqemu_npc_types: Aten Ha Ra (not the Kaas Thox pair)
+function _vtFilmUrl(tune) {
+  const s = String((tune && tune.celebration_video_url) || '').trim();
+  return /^https:\/\/\S+$/.test(s) ? s : null;
+}
+// 22642841 → "22.6 million"; the number is a parse total, so it is always "approximately".
+function _vtBigNumber(n) {
+  if (!(n > 0)) return null;
+  const f = (v) => v.toFixed(1).replace(/\.0$/, '');
+  if (n >= 1e9) return f(n / 1e9) + ' billion';
+  if (n >= 1e6) return f(n / 1e6) + ' million';
+  if (n >= 1e3) return Math.round(n / 1e3) + ' thousand';
+  return String(Math.round(n));
+}
+function _vtKillDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+}
 async function _announceVexThalClearedOnce(kill) {
   const name = String((kill && kill.boss) || '').trim().toLowerCase();
   if (name !== 'aten ha ra') return 'not-her';
@@ -11678,44 +11702,88 @@ async function _announceVexThalClearedOnce(kill) {
   const ch = process.env.RAID_CHAT_CHANNEL_ID
     ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
   if (!ch) { console.log('[vt-cleared] no #raid-chat channel — skipping'); return 'no-channel'; }
-  // Her kills before tonight: confirmed fights that started more than two hours
-  // ago, so tonight's own parse never counts itself. Decoration; null when unread.
-  let prior = null;
+  // Her history before tonight: confirmed fights that started more than two
+  // hours ago, so tonight's own parse never counts itself. The damage is the
+  // sum of each fight's parsed total — a floor, hence "approximately". All of
+  // it is decoration; null when unread.
+  let prior = null, damage = null, first = null;
   try {
     const before = new Date(Date.now() - 2 * 3600_000).toISOString();
     const r = await supabase.select('encounters',
       `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=eq.${_VT_NPC_ID}&duration_sec=gt.120&ended_at=not.is.null`
-      + `&started_at=lt.${encodeURIComponent(before)}&select=id&limit=1000`);
-    if (Array.isArray(r)) prior = r.length;
-  } catch { /* the count is decoration */ }
+      + `&started_at=lt.${encodeURIComponent(before)}&select=id,started_at,total_damage&order=started_at.asc&limit=1000`);
+    if (Array.isArray(r)) {
+      prior = r.length;
+      damage = r.reduce((s, e) => s + (Number(e && e.total_damage) || 0), 0);
+      first = r.length ? _vtKillDate(r[0].started_at) : null;
+    }
+  } catch { /* the history is decoration */ }
   let video = null;
-  try {
-    const tune = await _overlayTuningMap();
-    const v = tune && tune.celebration_video_url;
-    if (v && /^https:\/\/\S+$/.test(String(v).trim())) video = String(v).trim();
-  } catch { /* no link yet */ }
+  try { video = _vtFilmUrl(await _overlayTuningMap()); } catch { /* no link yet */ }
   const { EmbedBuilder } = require('discord.js');
+  const big = _vtBigNumber(damage);
   const embed = new EmbedBuilder()
     .setColor(0xd29922)
-    .setTitle('🐺 VEX THAL CLEARED — Aten Ha Ra is down')
+    .setTitle('🐺 Congrats Wolf Pack on the last Aten Ha Ra of Luclin!')
     .setDescription([
       `**${kill.character}** and the raid put her down in ${kill.zone || 'Vex Thal'} — the last scheduled Vex Thal raid.`,
-      prior != null ? `That is Wolf Pack's Aten Ha Ra kill number **${prior + 1}** since the first, on February 27.` : null,
+      big && first ? `The guild has done approximately **${big}** damage to Aten Ha Ra since the first kill on ${first}. Tonight was kill number **${prior + 1}**.`
+        : prior != null ? `Tonight was Wolf Pack's Aten Ha Ra kill number **${prior + 1}**.` : null,
       '',
-      video ? `🎬 **The film:** ${video}` : '🎬 The film is in the works — it lands in this channel when it is cut.',
+      video ? '🎬 **The film** is below.' : '🎬 The film is in the works — it lands in this channel when it is cut.',
       'Mimic users: the flash and the fanfare you just got was the guild trigger. Howl.',
     ].filter(l => l != null).join('\n'))
     .setFooter({ text: 'One-time celebration' });
-  const posted = await ch.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(err => {
+  const posted = await ch.send({ ...(video ? { content: video } : {}), embeds: [embed], allowedMentions: { parse: [] } }).catch(err => {
     console.warn('[vt-cleared] post failed:', err?.message);
     return null;
   });
   if (!posted) return 'failed';
-  await supabase.upsert('bot_kv',
-    [{ guild_id: guildId, key: _VT_CLEARED_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id, killer: kill.character }, updated_at: new Date().toISOString() }],
-    'guild_id,key');
+  const now = new Date().toISOString();
+  const latches = [{ guild_id: guildId, key: _VT_CLEARED_KV_KEY, value: { posted_at: now, message_id: posted.id, killer: kill.character }, updated_at: now }];
+  // The link rode this message, so the film poller has nothing left to post.
+  if (video) latches.push({ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now });
+  await supabase.upsert('bot_kv', latches, 'guild_id,key');
   console.log('[vt-cleared] posted to #raid-chat:', posted.id);
   return 'posted';
+}
+// The film, whenever it is cut: the guild lead pastes its link into
+// `celebration_video_url` and within a minute this posts it to #raid-chat, once
+// (the link in the content, so Discord unfurls the video). Only after the kill
+// embed exists — the film is a follow-up, never a spoiler — and only if that
+// embed did not already carry the link. Fail-closed on an unreadable latch.
+async function _announceVexThalFilmOnce() {
+  const video = _vtFilmUrl(await _overlayTuningMap().catch(() => null));
+  if (!video) return 'no-link';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=in.(${_VT_CLEARED_KV_KEY},${_VT_FILM_KV_KEY})&select=key,value`);
+  if (!Array.isArray(rows)) { console.warn('[vt-film] latch unreadable — NOT posting'); return 'unknown'; }
+  if (rows.some(r => r && r.key === _VT_FILM_KV_KEY)) return 'latched';
+  if (!rows.some(r => r && r.key === _VT_CLEARED_KV_KEY)) return 'waiting';
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) return 'no-channel';
+  const posted = await ch.send({
+    content: `🎬 **The film.** The last Aten Ha Ra of Luclin, as Wolf Pack fought her.\n${video}`,
+    allowedMentions: { parse: [] },
+  }).catch(err => { console.warn('[vt-film] post failed:', err?.message); return null; });
+  if (!posted) return 'failed';
+  const now = new Date().toISOString();
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now }],
+    'guild_id,key');
+  console.log('[vt-film] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// Every minute until the film has posted (the tuning read is the 60 s cache; the
+// latch read happens only once a link exists).
+{
+  const t = setInterval(() => {
+    _announceVexThalFilmOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[vt-film]', err?.message));
+  }, 60_000);
 }
 
 // ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────

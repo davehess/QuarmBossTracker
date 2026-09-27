@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Vex Thal celebration (Sunday 2026-09-28)** | **Armed 2026-09-27 (§58).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes, speaks and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the kill count (bot 3.1.158, latched in `bot_kv`). The film is not made yet — its link goes in the tuning key `celebration_video_url` and out as a Mimic Mail | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
+| **The Vex Thal celebration (Sunday 2026-09-28)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
 | **Stable Mimic 2.7.2** | **Cut 2026-09-27 (§57)**: everything from beta.15–.21 (agent 3.7.31). Beta re-parked at 2.7.3, agent 3.7.32 | the guild lead: pick bars or dials on the Tick overlay; the #pvp note posts itself once the installer is out |
 | **Tick overlay (was Zeal health)** | **Stable in 2.7.2 (§56).** A standalone server tick per character + charmed mobs' own ticks, bars or dials; the Zeal check and this PC's clock offset behind its status line | the guild lead + the co-leader: try both layouts, pick bars or dials |
@@ -3285,6 +3285,34 @@ reliably. Host unlisted on YouTube; the link goes in the two places above.
 - Bot: `_announceVexThalClearedOnce` + the hook after the next-spawn line in `_handleAgentBossKill`.
 - Test: `test/announce-vex-thal-cleared.test.js` (5, running the real function against fakes).
 - Sound: `web/public/sounds/vex-thal-cleared.wav`; generator kept out of the repo (scratchpad).
+
+### 58a. Reworded the same night, and the film posts itself (bot 3.1.159)
+**The guild lead:** *"perhaps it's best to flash 'congrats Wolf Pack on the last Aten Ha Ra of
+Luclin!' 'The guild has done approximately N damage to Aten Ha Ra since <First kill>' and post the
+video into discord."*
+
+- **The flash is two chips** (two `text_overlay` actions on the same trigger — the agent renders
+  every action, so both show at once, both spoken in turn): the congratulations, then *"The guild
+  has done approximately 22.6 million damage to Aten Ha Ra since February 26."* The number is
+  baked into the trigger text because a trigger cannot compute; it is the parsed total of her
+  19 confirmed kills (`encounters.total_damage`, cross-checked against `encounter_players` to
+  within 50 points), and "approximately" is the honest word — partial parses make it a floor. The
+  first kill was 2026-02-27 02:41 UTC, which is **February 26 in Eastern time**, so the text says
+  the 26th; §58's "February 27" above was the UTC date.
+- **The embed computes the same two lines live** (`_vtBigNumber`, `_vtKillDate` in New York time)
+  from the confirmed kills that started more than two hours ago, and adds the kill number.
+- **"Post the video into discord" is automatic.** The link lives in `celebration_video_url`
+  (/admin/overlays). If it is set when she dies, the kill embed carries it as message CONTENT so
+  Discord unfurls the player (a link inside an embed's text does not unfurl). If it arrives
+  later, `_announceVexThalFilmOnce` polls the tuning map once a minute and posts the video once,
+  after the kill embed exists (never before — the film is a follow-up, not a spoiler), latched in
+  `bot_kv` `announce_vex_thal_film`; the interval clears itself once posted. Fail-closed on an
+  unreadable latch, like every announcer.
+- **The film brief was rewritten** as an anime opening built class by class, mains only (alts
+  collapsed onto their mains from `characters.main_name`; names not in the character table dropped),
+  with the two character sheets the guild lead gave. Private file, sent again; not in the repo.
+- Test file grown to 10 (the poller's states, the content-vs-embed rule, the rounding, an empty
+  history reading as kill number 1 while an unreadable one prints no number).
 
 
 
