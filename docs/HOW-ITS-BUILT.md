@@ -1227,8 +1227,17 @@ Backfilled (`--since`) kills record but never post/predict.
   excepted.
 - The live tail and the opt-in-log backfill run the same hooks; the backfill uploads 200 rows per
   request.
-- The bot keeps only `characters`-roster names, then `_pvpAssistUnseen` / `_pvpAssistNeighbours` drop
-  a report of an assist another witness already stored (same assister and victim within ±30 s).
+- The bot keeps only `characters`-roster names, then `_pvpUnseen` / `_pvpNeighbours` drop a report of
+  an assist another witness already stored (same assister and victim within ±30 s). A kill replayed from
+  an old log goes through the same check on the killer (§55).
+
+**Opt-in log parses post one note** (§55, agent 3.7.30 / bot 3.1.156):
+- A replayed log never posts per event: the relay, boss timers, fight cards and the 🪶 assist note all
+  skip backfill.
+- When a run's files are all done, the agent queues `optin_summary { started_at }`.
+- 90 s later `_postOptinPvpSummary` counts the `log_backfill` kills (Wolf Pack killer) and assists that
+  uploader inserted since `started_at`, and posts one #pvp note: @uploader, the totals, and one line per
+  guildmate (`_optinPvpSummaryText`).
 
 ### Chat relay & historical chat
 Live `/gu`+`/rs` relay (`chat`) posts to Discord with fuzzy dedup (drunk-slur
