@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PvP assists for guildmates our agents see** | **Bot 3.1.155 on main; agent 3.7.29 on beta (§54).** Any player's hits or landed debuffs on the victim count; 4-minute window; the bot keeps roster names only and merges the same assist from several witnesses; opt-in logs credit the same way | the guild lead: update to the new beta, then Re-run your log in Opt-in Logs to credit past nights (the 2026-09-25 one included). Assists from raiders on stable arrive when a stable is cut |
 | **The co-leader's feedback batch + Settings drafts** | **On beta, `v2.7.2-beta.16/.17` (§52).** /who fixed height + filters; tray menu always opens + dashboard ⏻ Quit; settings survive a force-close; faster trigger speech; Server tick bar; Settings drafts + close reminder. **`beta.18` (§53): ⤴ beta button on the dashboard next to Check for update** (stable builds; same code as the tray). The co-leader is on stable 2.7.1, which does not have the button | the guild lead: send the co-leader the `v2.7.2-beta.18` installer, or cut a stable (your call). Session: HUD builder mana/endurance split + the half-circle mini HUD; later, the active-character flip-flop |
 | **Feedback + suggestions take screenshots** | **Done 2026-09-26 (§51).** Web `/feedback` + roadmap boxes (members, up to 3, 📷 or paste), Discord `/feedback` images kept, officer inbox thumbnails, bot relays images; private bucket. Bot 3.1.154, web 1.8.20; Mimic 📸 in `v2.7.2-beta.15` | the guild lead tries one from each surface |
 | **Charm overlay: server tick + mob tick** | **On beta, agent 3.7.25 (§50).** Mob tick learned from DoT ticks + log breaks; "learning" until known | the co-leader: charm with a DoT up (or let one break) and check the M countdown against the next break |
@@ -2942,6 +2943,61 @@ After that, the button is always there.
 - `preload.js`: the bridge.
 - `dashboard.html`: the header `{{WP:…}}` else-arm and the `wpJoinBeta` wiring.
 - Tests: `test/dashboard-join-beta.test.js`, 14 tests; 8 of 8 mutants killed.
+
+## 54. PvP assists: credit the guildmates our agents see, spells count, 4-minute window (2026-09-27, bot 3.1.155, agent 3.7.29 beta)
+
+**The call (the guild lead):** *"credit assists to guildmates our agents see. we should also attribute
+when a guild member has cast non-damage on those characters and expand the timeframe to 4 minutes..
+make sure all of this can be parsed through vis opt-in-logs"*.
+
+**Why:** two raiders had kills on the 2026-09-25 Vex Thal night but no assists. All 9 assists that night
+went to the one character whose agent was running. An assist came only from the assister's OWN log (their
+damage to the victim), so anyone not running Mimic could never get one, even when another raider's log
+showed them on the victim.
+
+**What counts now** (agent `EncounterBuilder`, identical in the live tail and the opt-in-log backfill):
+- **Any player's hits on the victim** that the log shows. A pet's hit counts for its owner
+  (`petLeaders`, the charm trackers, or a `<Owner>`s warder` name).
+- **Debuffs that land on the victim**: the timed detrimental spells in the `parseDebuffLanding` index
+  (slows, snares, roots, mez, Tash/Malo, DoTs). A landing never names its caster, so:
+  - our own cast of that spell, begun up to 12 s before, is ours;
+  - otherwise it goes to the player whose `<X> begins to cast a spell.` started closest to the spell's
+    cast time before the landing. The slack is ±1.5 s, or ±35% for long casts (spell haste). Each start is
+    used once, and if nobody's timing fits, nobody is credited.
+
+  ⚠ This is a timing match, not a fact the log states. It also needs the cast-start line, which a raider
+  sees only in range and with others' spell messages switched on.
+- **The window is 4 minutes** (it was 2).
+- **The killer never gets an assist** on their own kill. One death uses the evidence up.
+- **Instant spells are not covered.** Stuns and dispels have no entry in that index, and bard songs print
+  no cast-start line for anyone else.
+
+**Guildmates only, decided by the bot.** It already drops any assister not on the `characters` roster, so
+the agent reports everyone it saw and the roster decides. Alliance guilds' players are dropped there.
+
+**One assist, many witnesses (bot 3.1.155).** Every raider running Mimic now reports the same guildmate's
+assist, each stamped off their own clock a second or two apart. `dedup_key` is per second, and the /pvp
+leaderboard counts rows. So the bot:
+- drops a report when the same assister on the same victim is already stored within ±30 s;
+- reads those neighbours one fight at a time, in clusters of up to 10 minutes;
+- takes one upload at a time, so two witnesses posting together cannot both miss each other.
+
+A failed read stores everything, and the per-second key still holds.
+
+**Opt-in logs:** the catch-up path runs the same hook before `shouldKeep`, which would otherwise drop the
+landing lines. It also uploads assists 200 per request, because one replayed log can now hold thousands and
+the bot refuses a body over 256 KB.
+
+**Re-run** on a log in the Opt-in Logs tab replays it from the start. That credits every past PvP night it
+covers, including the one that started this.
+
+**Where:**
+- Agent: `PVP_ASSIST_WINDOW_MS`, `_checkPvpAssists`, `_pvpStamp`, `_pvpAssistLine`, `_pvpCasterFor`, the
+  damage branch of `add()`, both line loops, and `uploadPvpAssists`.
+- Bot: `_pvpAssistUnseen`, `_pvpAssistNeighbours`, and `_handleAgentPvpAssists`.
+- Tests:
+  - `test/pvp-guildmate-assists.test.js`: 18 tests, 17 of 17 mutants killed.
+  - `test/pvp-assist-witness-dedupe.test.js`: 7 tests, 7 of 7 mutants killed.
 
 
 

@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pvp-guildmate-assists-2026-09-27',
+    title: 'Agent 3.7.29',
+    version: 'Agent 3.7.29 · Bot 3.1.155 · Web 1.8.23',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'PvP assists count for guildmates who don’t run Mimic.',
+    features: [
+      {
+        name: 'Assists for everyone we see',
+        blurb: 'If anyone running Mimic sees a guildmate hit a player who then dies to someone else, that guildmate gets the assist. Before, only your own Mimic could give you one.',
+      },
+      {
+        name: 'Debuffs count',
+        blurb: 'A slow, snare, root, mez or DoT that lands on them counts too. Mimic works out who cast it from when each player started casting.',
+      },
+      {
+        name: 'Four minutes, not two',
+        blurb: 'Your hit or debuff counts if they die within 4 minutes of it.',
+      },
+      {
+        name: 'Old nights too',
+        blurb: 'Re-run a log in Opt-in Logs and past PvP nights get the same credit.',
+      },
+    ],
+    fixes: [
+      'The same assist seen by several raiders is counted once.',
+    ],
+  },
+  {
     key: 'coleader-batch-2026-09-26',
     title: 'Mimic 2.7.2-beta',
     version: 'Mimic 2.7.2-beta · Agent 3.7.28 · Web 1.8.22',
