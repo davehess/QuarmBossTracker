@@ -1361,6 +1361,27 @@ gitignored** — it is now, along with `logsync.queue.json`.
 Guarded by `test/personal-trigger-bulk.test.js` (source-sliced from the shipped
 agent, so a rename fails loudly rather than passing on a stale copy).
 
+### Timer bars — EQLogParser-style countdowns from tracked state (agent 3.7.24)
+
+The guild's co-leader, a bard, 2026-09-26: *"the only thing i need to get is the
+recharm tick count down timer … and i could get rid of eqlogparser"*.
+Three Suggested templates in the `timer` category (`timer_recharm_tick`,
+`timer_lull`, `timer_my_spells`) are switches, not triggers: the personal row
+carries `builtin_timer` and no pattern, so no evaluator fires it.
+`_builtinTimerRows()` (agent) rebuilds the rows on every `_activeTimersSnapshot()`
+from `_charmTickTracker` (own active charms → a `cycle_ms: 6000` row anchored on
+`last_tick_at`, pinned) and `_buffLandingsByTarget` (own casts only — `cast_by`
+on self-cast landings, `owner` on synthesized charm/pacify rows; lulls always,
+other spells ≥ 30 s). Ids carry the land time, so the overlay's ✕
+(`_builtinTimerHidden`) hides one instance and a recast shows again.
+`triggers.html` draws any row with a `bar_color` as a full-height filled bar
+(`.timer-row.fill`) and wraps a `cycle_ms` row instead of expiring it. Also here:
+`self_charm_broke` (instant "charm break" on the log line). Charm-tracker note:
+the Zeal "still in the pet slot" sighting is `last_seen_at`; `last_tick_at` is the
+mob-tick anchor only (they were one field, which froze the Charm overlay's
+countdown). Guarded by `test/timer-bars-and-trigger-fixes.test.js`.
+`DECISIONS-2026-09-21.md` §49.
+
 ### Divine Intervention is not invulnerability (agent 3.6.10)
 
 ⚠ `DA_SPELL_RX` listed **Divine Intervention**, so the Tank/Command cards
