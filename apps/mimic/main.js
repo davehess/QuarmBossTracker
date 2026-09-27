@@ -21,7 +21,7 @@
 // Not code-signed yet (SmartScreen will warn — "More info → Run anyway").
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog, screen, safeStorage, Notification, desktopCapturer } = require('electron');
 const path  = require('path');
 const fs    = require('fs');
 const net   = require('net');
@@ -8513,6 +8513,36 @@ ipcMain.handle('mark-onboarded', () => {
 ipcMain.handle('open-dashboard', () => {
   navigateToDashboard('renderer-open-dashboard');
   return true;
+});
+// 📸 Feedback screenshots (the guild lead, 2026-09-26: "feedback and suggestion
+// needs to be able to take screenshots..top priority"). Captures every display as
+// the player sees it — EQ, overlays and all — with the asking window (the
+// dashboard) faded out for the instant so it is not in its own shot. Returns
+// JPEG data URLs no wider than 1920 px. Nothing is saved or sent from here: the
+// feedback card shows each shot and the player chooses what goes.
+ipcMain.handle('capture-screens', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const live = win && !win.isDestroyed();
+  const prevOpacity = live ? win.getOpacity() : 1;
+  try {
+    if (live) win.setOpacity(0);
+    await new Promise(r => setTimeout(r, 250));   // let the compositor drop the faded window
+    const displays = screen.getAllDisplays();
+    const maxW = Math.max(1, ...displays.map(d => Math.round(d.size.width * d.scaleFactor)));
+    const maxH = Math.max(1, ...displays.map(d => Math.round(d.size.height * d.scaleFactor)));
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: maxW, height: maxH } });
+    return sources.map((s, i) => {
+      let img = s.thumbnail;
+      if (!img || img.isEmpty()) return null;
+      if (img.getSize().width > 1920) img = img.resize({ width: 1920, quality: 'good' });
+      return { name: s.name || ('Screen ' + (i + 1)), dataUrl: 'data:image/jpeg;base64,' + img.toJPEG(82).toString('base64') };
+    }).filter(Boolean);
+  } catch (err) {
+    appendAgentLog(`[mimic] screenshot failed: ${err && err.message}\n`);
+    return [];
+  } finally {
+    if (live && !win.isDestroyed()) win.setOpacity(prevOpacity);
+  }
 });
 // Gear icon on the dashboard opens the Settings window.
 ipcMain.handle('open-settings', () => { openSettings(); return true; });

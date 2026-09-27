@@ -480,6 +480,17 @@ function renderFeedback(s) {
     + '<textarea id="wpFbText" rows="4" maxlength="4000" placeholder="What happened, or what would you like?" '
     +   'style="width:100%;margin-top:8px;background:#0d1117;color:var(--text);border:1px solid var(--border);'
     +   'border-radius:6px;padding:8px;font-family:inherit;font-size:12px"></textarea>'
+    // Screenshots (the guild lead, 2026-09-26: "feedback and suggestion needs to be able to take
+    // screenshots..top priority"). 📸 only inside Mimic (it photographs your screens); 📎 and
+    // Ctrl+V work in any browser. Nothing is attached until it shows as a thumbnail here.
+    + '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    +   '<button type="button" id="wpFbSnap" style="display:none" title="Photograph your screen (this window hides for the shot) — you choose what gets sent">📸 Screenshot my screen</button>'
+    +   '<button type="button" id="wpFbPick">📎 Add a picture</button>'
+    +   '<span class="dim" style="font-size:11px">or paste one (Ctrl+V) · up to 3 · you see each one before it sends</span>'
+    +   '<input type="file" id="wpFbFile" accept="image/png,image/jpeg,image/webp" multiple style="display:none">'
+    + '</div>'
+    + '<div id="wpFbCands" style="margin-top:6px"></div>'
+    + '<div id="wpFbShots" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"></div>'
     + '<div id="wpFbAttachRow" style="margin-top:8px;display:none;align-items:center;gap:8px;flex-wrap:wrap">'
     +   '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">'
     +     '<input type="checkbox" id="wpFbAttach"> Attach a slice of my EverQuest log</label>'
@@ -502,6 +513,85 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
+// than one monitor, the captured screens still waiting to be picked.
+var _wpFbShots = [];
+var _wpFbCands = [];
+var WP_FB_MAX_SHOTS = 3;
+// Shrink to ≤1920 px on the long edge and re-encode as JPEG, so three fit one
+// report. The bot re-checks every byte; this is for size, not trust.
+function _wpFbShrink(src) {
+  return new Promise(function (resolve) {
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var k = Math.min(1, 1920 / Math.max(img.naturalWidth, img.naturalHeight, 1));
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k));
+        c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.82));
+      } catch (e) { resolve(null); }
+    };
+    img.onerror = function () { resolve(null); };
+    img.src = src;
+  });
+}
+function _wpFbFileToUrl(file) {
+  return new Promise(function (resolve) {
+    if (!file || !/^image\//.test(file.type || '')) return resolve(null);
+    var fr = new FileReader();
+    fr.onload = function () { resolve(String(fr.result || '')); };
+    fr.onerror = function () { resolve(null); };
+    fr.readAsDataURL(file);
+  });
+}
+async function _wpFbAddShots(srcs) {
+  for (var i = 0; i < srcs.length && _wpFbShots.length < WP_FB_MAX_SHOTS; i++) {
+    var small = srcs[i] ? await _wpFbShrink(srcs[i]) : null;
+    if (small) _wpFbShots.push(small);
+  }
+  _wpFbRenderShots();
+}
+function _wpFbRenderShots() {
+  var el = document.getElementById('wpFbShots');
+  if (el) {
+    el.innerHTML = _wpFbShots.map(function (src, i) {
+      return '<span style="position:relative;display:inline-block">'
+        + '<img src="' + src + '" alt="Screenshot ' + (i + 1) + '" style="height:84px;max-width:200px;object-fit:cover;border:1px solid var(--border);border-radius:4px">'
+        + '<button type="button" class="wp-fb-unshot" data-i="' + i + '" title="Don’t send this one" '
+        +   'style="position:absolute;top:-7px;right:-7px;width:20px;height:20px;padding:0;border-radius:50%;font-size:11px;line-height:1">✕</button>'
+        + '</span>';
+    }).join('');
+  }
+  var c = document.getElementById('wpFbCands');
+  if (c) {
+    c.innerHTML = !_wpFbCands.length ? '' :
+      '<div class="dim" style="font-size:11px;margin-bottom:4px">You have ' + _wpFbCands.length + ' screens — click the one(s) to attach:</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+      + _wpFbCands.map(function (s, i) {
+          return '<button type="button" class="wp-fb-cand" data-i="' + i + '" title="Attach ' + esc(s.name || '') + '" '
+            + 'style="padding:2px;background:none;border:1px dashed var(--border);border-radius:4px;cursor:pointer">'
+            + '<img src="' + s.dataUrl + '" alt="' + esc(s.name || 'Screen') + '" style="height:70px;max-width:180px;object-fit:cover;display:block">'
+            + '<span class="dim" style="font-size:10px">' + esc(s.name || ('Screen ' + (i + 1))) + '</span></button>';
+        }).join('')
+      + '</div>';
+  }
+  var full = _wpFbShots.length >= WP_FB_MAX_SHOTS;
+  var snap = document.getElementById('wpFbSnap'), pick = document.getElementById('wpFbPick');
+  if (snap) snap.disabled = full;
+  if (pick) pick.disabled = full;
+}
+async function _wpFbSnap() {
+  var msg = document.getElementById('wpFbMsg');
+  if (!(window.mimic && window.mimic.captureScreens)) return;
+  if (msg) msg.textContent = 'taking the screenshot…';
+  var shots = [];
+  try { shots = (await window.mimic.captureScreens()) || []; } catch (e) { shots = []; }
+  if (msg) msg.textContent = shots.length ? '' : '✕ could not take a screenshot';
+  if (shots.length === 1) { _wpFbCands = []; await _wpFbAddShots([shots[0].dataUrl]); }
+  else { _wpFbCands = shots; _wpFbRenderShots(); }   // several monitors: the reporter picks
+}
 function _wpFbSetKind(k) {
   _wpFbKind = (k === 'idea') ? 'idea' : 'bug';
   var b = document.getElementById('wpFbBug'), i = document.getElementById('wpFbIdea');
@@ -559,11 +649,43 @@ function _wpFbWire() {
   if (!root) return;
   _wpFbSetKind('bug');
   _wpFbSetMin(_wpFbMin);
+  var snapBtn = document.getElementById('wpFbSnap');
+  if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
+  var fileIn = document.getElementById('wpFbFile');
+  if (fileIn) fileIn.addEventListener('change', async function () {
+    var urls = [];
+    for (var i = 0; i < fileIn.files.length; i++) urls.push(await _wpFbFileToUrl(fileIn.files[i]));
+    fileIn.value = '';
+    await _wpFbAddShots(urls);
+  });
+  var fbText = document.getElementById('wpFbText');
+  if (fbText) fbText.addEventListener('paste', async function (e) {
+    var files = [];
+    var items = (e.clipboardData && e.clipboardData.files) || [];
+    for (var i = 0; i < items.length; i++) if (/^image\//.test(items[i].type || '')) files.push(items[i]);
+    if (!files.length) return;
+    e.preventDefault();
+    var urls = [];
+    for (var j = 0; j < files.length; j++) urls.push(await _wpFbFileToUrl(files[j]));
+    await _wpFbAddShots(urls);
+  });
   root.addEventListener('click', async function (e) {
     var t = e.target;
     if (!t || !t.closest) return;
     var kind = t.closest('.wp-fb-kind');
     if (kind) { _wpFbSetKind(kind.getAttribute('data-kind')); return; }
+    if (t.id === 'wpFbSnap') { _wpFbSnap(); return; }
+    if (t.id === 'wpFbPick') { if (fileIn) fileIn.click(); return; }
+    var un = t.closest('.wp-fb-unshot');
+    if (un) { _wpFbShots.splice(parseInt(un.getAttribute('data-i'), 10), 1); _wpFbRenderShots(); return; }
+    var cand = t.closest('.wp-fb-cand');
+    if (cand) {
+      var ci = parseInt(cand.getAttribute('data-i'), 10);
+      var picked = _wpFbCands[ci];
+      _wpFbCands.splice(ci, 1);
+      if (picked) await _wpFbAddShots([picked.dataUrl]); else _wpFbRenderShots();
+      return;
+    }
     var min = t.closest('.wp-fb-min');
     if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
     if (t.id === 'wpFbSend') { _wpFbSend(); return; }
@@ -598,6 +720,7 @@ async function _wpFbSend() {
       body: JSON.stringify({
         category: _wpFbKind, message: text,
         attach_log: !!(cb && cb.checked && _wpFbKind === 'bug'), minutes: _wpFbMin,
+        screenshots: _wpFbShots.slice(0, WP_FB_MAX_SHOTS),
       }),
     });
     var j = await r.json();
@@ -605,9 +728,13 @@ async function _wpFbSend() {
       if (ta) ta.value = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
+      _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
       var span = document.getElementById('wpFbMins');
       if (span) span.style.display = 'none';
-      if (msg) msg.textContent = '✓ sent' + (j.attached_lines ? ' with ' + j.attached_lines + ' log lines' : '') + ' — thank you';
+      var extras = [];
+      if (j.attached_lines) extras.push(j.attached_lines + ' log lines');
+      if (j.attached_shots) extras.push(j.attached_shots + ' screenshot' + (j.attached_shots === 1 ? '' : 's'));
+      if (msg) msg.textContent = '✓ sent' + (extras.length ? ' with ' + extras.join(' and ') : '') + ' — thank you';
     } else if (msg) {
       msg.textContent = '✕ ' + ((j && j.reason) || 'could not send');
     }

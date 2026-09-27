@@ -639,6 +639,9 @@ contextBridge.exposeInMainWorld('mimic', {
   hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
+  // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
+  // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
+  captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
   openZealCapture: ()     => ipcRenderer.invoke('open-zeal-capture'),
   // Zeal auto-updater (CoastalRedwood/Zeal). status is local-only; checkUpdate
