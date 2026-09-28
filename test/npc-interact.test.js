@@ -16,7 +16,7 @@ const TARERD = `function event_say(e)
 	if(e.message:findi("hail")) then
 		e.self:Say("I'm sorry " .. e.other:GetCleanName() .. ", I have neither the time nor the patience to chat right now.");
 	elseif(e.message:findi("pool")) then
-		e.self:Say("If you want to know about the pools then I need something [from you] first.");
+		e.self:Say("If you want to know about the pools then I need something [from you] first. Some are not even aware of what it is they are looking for.");
 	end
 end
 function event_trade(e)
@@ -31,6 +31,7 @@ const CATALOG = [
   { id: 202223, name: 'Vicar_Thiran', merchant_id: null },
   { id: 202194, name: 'Cavalier_Waut', merchant_id: 202194 },
   { id: 202400, name: 'a_sarnak_thiran', merchant_id: null },     // unnamed mob: never "next"
+  { id: 163082, name: 'Some', merchant_id: null },                 // a real NPC in Grieg's End
 ];
 
 function fakeSupabase(calls) {
@@ -82,6 +83,9 @@ describe('F/Q/V data for one NPC', () => {
     expect(n.script).toBe('poknowledge/Tarerd_Gahar.lua');
     expect(n.say.map((b) => b.keywords[0])).toEqual(['hail', 'pool']);
     expect(n.turnins).toEqual([{ inputs: [{ id: 22519, name: 'Sarnak Blood', qty: 1 }], outputs: [{ id: 15958, name: 'Note From Tarerd' }], exp: null }]);
+    // "Some are not even aware…" is a sentence, not the NPC called Some in Grieg's End (the guild
+    // lead, 2026-09-28: "Why does this mention Grief's end?"); "Thiran will give you…" still
+    // finds Vicar Thiran, by surname, in this zone.
     expect(n.next).toEqual([{ id: 202223, name: 'Vicar Thiran', zone_short: 'poknowledge', zone_long: 'The Plane of Knowledge', y: 121, x: -300 }]);
     expect(n.vendor).toEqual([]);   // not a merchant: the overlay hides Vendor
   });

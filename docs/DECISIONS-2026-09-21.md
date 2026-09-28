@@ -3820,6 +3820,12 @@ have sub-tabs underneath that."*
   was replaced every 500 ms, which would have wiped a chip's "copied" and the hover under the cursor.
 - **Not built, the one alternative:** a one-line "next step" strip on Stats for quest NPCs, with no tab
   switch. Cheaper to read mid-fight, but it can only show one keyword, and the ask was the full dialogue.
+- **Fix, bot 3.1.169:** Willamina's "Some are not even aware…" listed an NPC called Some in Grieg's End
+  under who to talk to next (the guild lead: *"Why does this mention Grief's end?"*). The catalog also
+  has NPCs named "One" and "Perhaps". A bare word the replies only capitalise at a sentence start is no
+  longer looked up catalog-wide; it can still match this zone's NPCs by surname ("Thiran will give you
+  the book" → Vicar Thiran). The agent caches an answer for 6 h, so Mimic shows the old list until it
+  restarts or the entry expires.
 
 ## 71. The PoP checklist shows Willamina's whole chain (2026-09-28, web 1.8.34)
 The guild lead: *"Willamina's quest needs Bolcen Tendag's section in it"*, then *"Follow the chain and

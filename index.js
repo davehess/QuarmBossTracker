@@ -15135,9 +15135,14 @@ async function _npcInteract(npcId) {
     if (!prev || (here && Math.floor(prev.id / 1000) !== zoneId)) byName.set(dn, row);
   };
   if (cands.length) {
+    // A bare word the replies only capitalise at a sentence start ("Some are not even aware…")
+    // is not looked up catalog-wide: there is an NPC called Some, in Grieg's End. It can still
+    // match this zone's NPCs by surname below.
+    const startOnly = qd.sentenceStartOnly(texts);
+    const wide = cands.filter((c) => c.includes(' ') || !startOnly.has(c.toLowerCase()));
     // 60 names per request keeps each URL a few KB; a long flag NPC yields a few hundred.
     const chunks = [];
-    for (let i = 0; i < Math.min(cands.length, 240); i += 60) chunks.push(cands.slice(i, i + 60));
+    for (let i = 0; i < Math.min(wide.length, 240); i += 60) chunks.push(wide.slice(i, i + 60));
     const found = await Promise.all(chunks.map((ch) => {
       const quoted = ch.flatMap((c) => { const u = c.replace(/ /g, '_'); return [u, '#' + u]; })
         .map((n) => `"${n.replace(/"/g, '')}"`).join(',');

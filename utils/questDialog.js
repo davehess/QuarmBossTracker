@@ -174,6 +174,23 @@ function nameCandidates(texts) {
   return [...out];
 }
 
+// Single words the replies only ever capitalise because they start a sentence. The catalog has
+// NPCs named "Some", "One" and "Perhaps", so Willamina's "Some are not even aware…" sent people
+// to Grieg's End (the guild lead, 2026-09-28: "Why does this mention Grief's end?"). Such a word
+// may still match an NPC in the same zone by surname ("Thiran will give you the book" → Vicar
+// Thiran), but never an NPC anywhere by that bare name. Lower-cased.
+function sentenceStartOnly(texts) {
+  const atStart = new Set(), midSentence = new Set();
+  for (const t of texts) {
+    for (const m of String(t || '').matchAll(/[A-Z][A-Za-z`'’-]+/g)) {
+      const before = String(t).slice(0, m.index).replace(/["'‘“(\s]+$/, '');
+      const w = m[0].toLowerCase().replace(/[’]/g, "'").replace(/'s$/, '');
+      (before === '' || /[.!?:]$/.test(before) ? atStart : midSentence).add(w);
+    }
+  }
+  return new Set([...atStart].filter((w) => !midSentence.has(w)));
+}
+
 // A catalog name ("#Chronographer_Muon") as players see it ("Chronographer Muon").
 const displayName = (n) => String(n || '').replace(/^#+/, '').replace(/_/g, ' ').trim();
 
@@ -181,4 +198,4 @@ const displayName = (n) => String(n || '').replace(/^#+/, '').replace(/_/g, ' ')
 // filenames cannot hold written as "-" (Seer_Mal_Nae`Shi → Seer_Mal_Nae-Shi.lua).
 const scriptPath = (zoneShort, npcName) => `${zoneShort}/${String(npcName).replace(/`/g, '-')}.lua`;
 
-module.exports = { parseDialog, tradeReplies, nameCandidates, displayName, scriptPath, _exprText, _replies };
+module.exports = { parseDialog, tradeReplies, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies };
