@@ -145,6 +145,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Missing spells: vendor links + 📍 `/map Y X` (web 1.8.32, main 2026-09-28).** Vendor and dropper
   names open `/db/npc/<id>`; each vendor copies its `/map` for that zone. `test/spell-sources.test.js`.
   `DECISIONS-2026-09-21.md` §67.
+- **🟡 UI pack options are checkboxes (Mimic beta, 2026-09-28).** None on by default; tick any mix; clashing
+  options grey out and name the shared window; the pack's own files are kept so an untick restores them;
+  updates keep your ticks. Fixes "Bank - Default layout" being lost to the pack's all-bags bank.
+  `test/ui-pack-options.test.js` (beta). `DECISIONS-2026-09-21.md` §68.
 - **✅ PoP board checked against the 2026-09-28 patch notes (bot 3.1.163, main).** Quarm 162 h, Mujaki
   "the Devourer", Avatar of Earth on the Rathe Council slot. Open: five 72 h bosses the notes do not
   name, and two missing bosses. `DECISIONS-2026-09-21.md` §63a.

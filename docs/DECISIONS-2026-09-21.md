@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
+| **UI pack options as checkboxes** | **On beta 2026-09-28 (§68).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | beta testers with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank; the guild lead: say when it should go to stable |
 | **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
 | **PoP checklist, `/pop/guide`** | **Live 2026-09-28 (§65, §65a, web 1.8.31).** 74 steps in EQProgression's order, Solo / Group / Raid and must-have; copy buttons for every `/say` and `/map Y X`; item cards on hover; ticks per character, recorded flags tick themselves | members: use it from launch; anyone: report a step Quarm does differently (the "verify at launch" rows first) |
 | **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
@@ -3740,6 +3741,35 @@ to each with a copy with /map <y><x>"*.
   `eqemu_spawnentry`. The two tables share `spawngroup_id` but have no key between them, so the call
   fails (PGRST200) and no boss guide shows a spawn point. Filed as a separate task; not changed here.
 - The copy button moved to `web/components/CopyChip.tsx`, shared by the checklist and this page.
+
+## 68. UI pack layout options become checkboxes (2026-09-28, Mimic beta)
+The guild lead: *"NIllipuss update with Default is not this, this adds a different bank"* (screenshots:
+✓ Applied "Hotbar + Bag 1 slots", the small default bank, and the huge all-bags bank), then *"Default
+should be no options, but you should be able to choose or remove multiple options. Resolve which ones
+have overlap and make it checkboxes."*
+- **What went wrong.** In Nillipuss 3.1 the pack's main `EQUI_BankWnd.xml` IS the all-bags bank (340
+  slots); `Options/Bank - Default layout` is the 40-slot one. The old dropdown could only add a layout and
+  never showed which were on, and an install or update wrote the all-bags bank back. The Hotbar message
+  was the dropdown's real value at the click (value and message are the same string); nothing mapped one
+  option to another.
+- **The call:** nothing on by default; tick any mix; a tick takes effect at once. Two options that change
+  the same file can't both be on, and the other box says which window they share. Two versions of one
+  option (Theme - Colors · Purple / Teal) are alternatives even where their files differ. Everything else
+  stacks.
+- **An option file identical to the pack's own file is ignored.** That was the one open policy question
+  from the diagnosis: QQ Layout ships the default hotbar, so it would otherwise clash with both hotbar
+  options for no reason. "Blue (default)" shows as what you already have.
+- **Restores need the pack's own files,** so Mimic keeps them in `uifiles/<pack>/.mimic-defaults/`, taken
+  from the release zip at install. A pack installed before this fetches them once from GitHub (the tag
+  Mimic installed, else the latest). Whether a box is on is read off the files, never a saved list, so
+  the boxes can't drift from what EQ loads. An update keeps the ticked options on.
+- Installs no longer write backup copies inside `Options/`: those copies were being applied as if they
+  were layout files. A file the member edited by hand is still backed up before an option replaces it.
+- Measured against the real 3.1 packs. 1080p clashes: Bank ↔ QQ, Horizontal Layouts ↔ Hotbar + Bag 1, Mana
+  Bar ↔ Mana Timer, and the theme versions. 1440p has more options that share the player/target and
+  inventory windows; the matrix is worked out from the files at run time, never written into the code.
+- **To get the normal bank back today on stable Mimic:** apply "Bank - Default layout" again, check that
+  the ✓ line names it, then `/reloadskin`.
 
 
 

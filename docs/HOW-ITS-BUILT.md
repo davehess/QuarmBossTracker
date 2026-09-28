@@ -2331,6 +2331,21 @@ mid-fight is far worse than tracking one extra client. Disowned paths ride the
 `app-metrics` payload as `eqIgnored` so Resource use can say which client it
 passed on. Tests: `test/eq-process-identity.test.js`.
 
+### Custom UI packs + their layout options (Settings → Custom UI packs)
+`apps/mimic/uiPacks.js` installs and updates the curated packs (Nillipuss
+1080p / 1440p) from their GitHub releases into `uifiles/<pack>/`. Since
+2026-09-28 (Mimic beta) the pack's `Options/` layouts are **checkboxes**: one
+per option and one per variant folder (`Theme - Colors/Purple`), none on after
+a fresh install, and they stack. Two that change the same file, or two versions
+of one option, can't both be on. An option file byte-identical to the pack's
+own is ignored. The pack's own copy of every file an option touches lives in
+`uifiles/<pack>/.mimic-defaults/` (from the release zip), which is what makes
+an untick restore it; whether a box is on is read off the files, not a saved
+list. An update keeps the ticked options on. IPC: `ui-packs-list`,
+`ui-pack-install`, `ui-pack-prepare` (fetches the defaults once for an older
+install), `ui-pack-set-options`. Tests: `test/ui-pack-options.test.js` (beta).
+`DECISIONS-2026-09-21.md` §68.
+
 ### Zeal update notice on the dashboard — 2026-08-04
 Mimic owns Zeal detection (`zealUpdater`, 12h check); the agent owns the
 dashboard. Mimic POSTs to the agent's `/api/zeal-update` and the agent folds it
