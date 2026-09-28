@@ -51,6 +51,7 @@ export default async function FilmPage({ searchParams }: { searchParams: { v?: s
         <p className="max-w-2xl text-sm text-dim">
           The Wolf Pack film: the four-armed queen, then every raider called by name, set to a song made for the kill.
         </p>
+        <Link href="/film/making" className="text-sm text-blue hover:underline">How it was made: the song, every name, every take →</Link>
       </header>
 
       {!takes.length && <p className="text-sm text-dim">The film is not set up yet.</p>}
