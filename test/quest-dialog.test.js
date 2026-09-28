@@ -113,8 +113,15 @@ describe('what to say', () => {
     const d = q.parseDialog(SEER);
     const unlock = d.find((b) => b.keywords[0] === 'unlock');
     expect(unlock.keywords).toEqual(['unlock', 'memories']);
+    expect(unlock.say).toBe('unlock memories');     // "and": a bare "unlock" does nothing
     expect(unlock.sit).toBe(true);
+    expect(d.find((b) => b.keywords[0] === 'hail').say).toBe('hail');
     expect(d.find((b) => b.keywords[0] === 'hail').sit).toBe(false);
+  });
+
+  it('an "or" branch needs one word only', () => {
+    const d = q.parseDialog('function event_say(e)\n\tif(e.message:findi("ship") or e.message:findi("boat")) then\n\t\te.self:Say("It sails at dawn.");\n\tend\nend\n');
+    expect(d[0].say).toBe('ship');
   });
 
   it('a script with no event_say has nothing to say', () => {
