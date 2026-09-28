@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61).** Film hosted on YouTube, played on `/film` from links kept in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page); pick the default or `?v=b` layout at b.wolfpack.quest/film; run the Drive importer (HQ raider clips added, §61a) before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips; the raider clips (members-only) are the next build |
+| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61); `/film/making` and a Gallery on every character page on beta 2026-09-28 (§62)**, backed by the private `guild-media` store (628 files, 98 characters). Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); pick layouts at b.wolfpack.quest: `/film` default or `?v=b`, `/film/making` default or `?v=b`, character Gallery default or `?g=b`; run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
+| **eqmimic.quest: Mimic without the Wolf Pack imagery** | **Open 2026-09-28 (§62a).** Everything is AGPL-3.0-or-later already; the installed fleet updates from this repo being public (GitHub releases + raw agent fetch), so a private repo would silently stop updates | the guild lead: decide licence and service model; then first steps are moving the update feeds off this repo and one brand config with Wolf Pack as the first tenant |
 | **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
 | **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta. **§59f:** the member's other eight reports are investigated and not yet built — the guild lead picks which fixes go into the next beta round |
 | **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
@@ -3512,6 +3513,66 @@ cuts went in; intermediates such as frame sheets, smoothed copies and card compo
 bucket now holds 676 objects, about 4.1 GB (PNG added to its allowed types). The importer now **books
 its own next run** on a one-minute timer when it pauses, and a script lock stops two runs overlapping. A
 mocked end-to-end run landed all 630 files, and a second run added nothing.
+
+## 62. Guild media: long-term storage per character; the making-of page and character galleries (2026-09-28, web on beta)
+The guild lead asked for everything behind the film on wolfpack.quest: *"with this process, all of the
+pronunciations, everything that went into making it."* Then, mid-build: *"we should have a gallery
+available for our players on their character pages, not to hold every picture in the world, but it
+would be cool to treat it like a longterm storage of that."* One store serves both.
+
+- **The store.** A private bucket, `guild-media`, and a table, `guild_media` (migration
+  `20260928045235`, applied via MCP and committed identically). One row per stored file: `collection`
+  (the film is `aten-ha-ra`), `section` (the step it came from), `character_name` (whose gallery it
+  belongs in; NULL for shots that are not one raider), `kind`, `path`, `thumb_path`, `title`, and `meta`
+  (the generation record: model, resolution, prompt). Neither the table nor the bucket has policies, so
+  anon and signed-in users can neither list nor read them. The web server reads with the service role
+  and signs links, the same shape as `feedback-screenshots`.
+- **What went in.** 628 files for 98 characters, 3.3 GB, plus a 480-wide thumbnail for each (1,256
+  objects in all). That is both rounds of stills with their tries, every animation take (the film's
+  take marked in `meta.used`), each raider's clean clip and the older clip with the song, the class,
+  opening, ending, transition and cold-open renders, the earlier cuts, the covers, and both takes at
+  720p. Two cuts over one 50 MB object were re-encoded to fit. The 1080p masters stay on YouTube and
+  Drive. Loaded with temporary anon insert grants (on storage, `guild_media` and one `bot_kv` key), each
+  revoked straight after and checked at zero.
+- **The film's facts are data.** bot_kv `film_making` holds, per raider, how the name was written for
+  the song, when each take sings it, and what the speech-to-text model heard. It also holds the lyric
+  sheet, the style prompt and the counts. The repo carries none of it: it names raiders.
+- **One auth check per page, not per picture.** Pages sign one batch of links per render and show a
+  first screenful per section; the rest of a section, or one raider's whole set, comes from
+  `/api/media` on a click. That route checks sign-in first and refuses a request with neither a section
+  nor a character. The viewer fetches a file's prompt only when "How it was made" is opened. The
+  per-picture alternative, a redirect route, would have cost two auth calls per thumbnail, and the
+  middleware notes why auth load matters (the 2026-07-13 incident).
+- **Pages, two layouts each, on beta.** `/film/making` defaults to the story, chapter by chapter; `?v=b`
+  is "find your raider". A character page shows a Gallery card under its header, only when the character
+  has media: by default the clip, action still and first picture large with the rest behind "All";
+  `?g=b` groups everything by source. `/film` links to the making-of.
+- **Not shown:** money. The per-file cost is in `meta` but no page renders it; whether the guild sees
+  the spend is the guild lead's call.
+- **Retention:** kept indefinitely, no pruning. That is the point of the store, and 3.3 GB sits well
+  inside Pro's 100 GB of storage. Recorded in `DESIGN-selfhost-wizard.md` §3.
+- **Not built yet:** uploads by players. The table is shaped for it (`collection`, `section`), but an
+  upload path needs the public-upload security audit that is already open for the guild-logo page first.
+
+### 62a. eqmimic.quest: Mimic without the Wolf Pack imagery (2026-09-28, open)
+The guild lead has acquired `eqmimic.quest` and wants Mimic available there without the Wolf Pack
+branding, and asked whether that means moving to a new, closed repository if it is offered as a service.
+**Open; the guild lead's call.** What any answer has to carry:
+- **Every package is already AGPL-3.0-or-later** (root, Mimic, agent, web). AGPL is the licence built for
+  this case: anyone who runs a modified copy as a network service must publish their source. It does not
+  stop the copyright holder running their own service. Nearly every commit is either the guild lead's or
+  made in their sessions, so relicensing future code is theirs to decide. Code already published under
+  AGPL stays AGPL for anyone who has it.
+- **The installed fleet updates from THIS repository being public.** Mimic's `electron-updater` publishes
+  to and reads from this repo's GitHub releases, and the bot serves agent hot-swaps from
+  `raw.githubusercontent.com/davehess/QuarmBossTracker/...`. Making this repo private would silently stop
+  updates for every installed Mimic. Moving the update feed (a public releases-only repo, or a feed on
+  eqmimic.quest) comes first, through one last release on the old feed that points clients at the new one.
+- **Groundwork that is not wasted either way:** one brand config for Mimic (name, icons, colours, default
+  server) with Wolf Pack as the first tenant; Mimic fully usable without a guild backend; eqmimic.quest on
+  the same Vercel project behind a host rewrite. This is the self-host wizard epic seen from the other
+  side.
+- The recommendation and the non-technical questions went to the guild lead in chat, not into this file.
 
 
 

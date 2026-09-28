@@ -2786,7 +2786,14 @@ holds it in memory.
   /who, /pvp, /boards, /boss, /character, /leaderboards, /loadouts, /bards,
   /fun, /planner, /feedback, /roadmap, /search, /film (the Aten Ha Ra film from
   YouTube: `web/app/film/page.tsx` + `web/lib/film.ts` + `web/components/LiteYouTube.tsx`,
-  links in bot_kv `film_youtube`, beta, DECISIONS §61).
+  links in bot_kv `film_youtube`, beta, DECISIONS §61), /film/making (how the film was made:
+  `web/app/film/making/page.tsx` + `RaiderFinder.tsx`, facts in bot_kv `film_making`, beta, §62).
+- **Guild media — long-term pictures and clips per character (§62, beta).** Private bucket
+  `guild-media` + table `guild_media` (migration `20260928045235`). Kernel `web/lib/guildMedia.ts`
+  (pure: sections, `parseFilmMaking`), server `web/lib/guildMediaLoad.ts` (one signed batch per call),
+  `GET /api/media` (members; a section, a character, or one file's prompt), viewer
+  `web/components/MediaGrid.tsx`, character-page card `web/components/CharacterGallery.tsx` (rendered from
+  `web/app/character/[name]/page.tsx`, `?g=b` alternative). Test: `test/guild-media.test.js`.
 - **/guide — the Wolf Pack Raid Guide (#81, phase 0)**. One page per boss,
   generated from our own history; `/guide` is the index *and* the authoring
   worklist (most-killed-but-unwritten first). Pure kernel
