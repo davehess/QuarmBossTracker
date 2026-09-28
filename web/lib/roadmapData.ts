@@ -66,20 +66,35 @@ export const releases: Release[] = [
     fixes: [],
   },
   {
-    key: 'mimic-fqv-uipack-2026-09-28',
-    title: 'Target Info F/Q/V',
-    version: 'Mimic beta · Agent 3.7.37 · Bot 3.1.166',
+    key: 'mimic-273-2026-09-28',
+    title: 'Mimic 2.7.3',
+    version: 'Mimic 2.7.3 · Agent 3.7.37 · Bot 3.1.168',
     date: '2026-09-28',
-    channel: 'beta',
     headline: 'Target an NPC and see what to say to it, what it wants, who to see next, and what it sells.',
     features: [
       {
         name: 'F/Q/V on Target Info',
-        blurb: 'The Factions tab is now F/Q/V: Faction, Quest and Vendor. Quest lists every word the NPC answers to with a /say button and its reply, the hand-in and its reward, and who to talk to next with a /map button. Vendor appears only for merchants and lists what they sell.',
+        blurb: 'The Factions tab is now F/Q/V: Faction, Quest and Vendor. Quest lists every word the NPC answers to with a /say button and its reply, the hand-in and its reward, and who to talk to next with a /map button. If the NPC only listens while you sit, it says so and gives you a /sit button. Vendor appears only for merchants and lists what they sell.',
       },
       {
         name: 'UI pack layouts are checkboxes',
         blurb: 'Custom UI packs start with nothing extra switched on. Tick any mix of the pack’s layouts; two that change the same window can’t both be on, and the box tells you which window. Unticking puts the pack’s own window back, and an update keeps your ticks.',
+      },
+      {
+        name: 'Rallos Zek kills count',
+        blurb: 'The new PvP kill message from the Planes of Power patch is read, so those kills reach #pvp and the kill boards like any other.',
+      },
+      {
+        name: 'Your row on the DPS meter',
+        blurb: 'Your own row always shows, even at zero, and stands out; every row has a thin bar against the top damage.',
+      },
+      {
+        name: 'Buffs and debuffs fade on the mob’s own tick',
+        blurb: 'Spells on a mob now run out on that mob’s tick, not the server’s, so the timers match what you see in game.',
+      },
+      {
+        name: 'Faster charm breaks and timers from the top',
+        blurb: 'A charm break is called the moment the line appears. Trigger countdowns can start at the top of the window: right-click the trigger overlay.',
       },
     ],
     fixes: [

@@ -114,11 +114,12 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
-| **Target Info F/Q/V (Faction · Quest · Vendor)** | **On beta 2026-09-28 (§70; bot 3.1.166 main, agent 3.7.37).** What to say with `/say` chips, the hand-in, who's next with `/map`, and a merchant's stock | beta testers: target a PoK quest NPC and a merchant and try the chips; the guild lead: say when it should go to stable |
+| **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
+| **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | anyone: paste the first "worthy conquest" line when one appears |
+| **Target Info F/Q/V (Faction · Quest · Vendor)** | **Stable in Mimic 2.7.3 (§70, §71a, §72; bot 3.1.168).** What to say with `/say` chips (every word a branch needs, "sit first" + `/sit` where the NPC checks), the hand-in, who's next with `/map`, a merchant's stock | the guild lead: forward/back through quest NPCs you targeted, as a tab or its own overlay (§72) |
 | **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.35).** Starts at Agrakath Theric with the book from Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
 | **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
-| **UI pack options as checkboxes** | **On beta 2026-09-28 (§68).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | beta testers with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank; the guild lead: say when it should go to stable |
+| **UI pack options as checkboxes** | **Stable in Mimic 2.7.3 (§68, §72).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | anyone with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank |
 | **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
 | **PoP checklist, `/pop/guide`** | **Live 2026-09-28 (§65, §65a, web 1.8.31).** 74 steps in EQProgression's order, Solo / Group / Raid and must-have; copy buttons for every `/say` and `/map Y X`; item cards on hover; ticks per character, recorded flags tick themselves | members: use it from launch; anyone: report a step Quarm does differently (the "verify at launch" rows first) |
 | **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
@@ -3853,7 +3854,35 @@ memory" means it worked and there was nothing new to unlock.
   steps that send you to her. A test holds that every Seer meditation/unlock line carries it, and that an
   unlock line says "memories".
 - **Target Info Quest:** `utils/questDialog.js` marks a branch `sit` when it checks `IsSitting()`, so any
-  NPC like her is flagged; the overlay's "sit first" tag rides the next beta.
+  NPC like her is flagged, and puts "sit first" + a `/sit` chip before the `/say`. Bot 3.1.168 also sends
+  `say`: every word a branch needs when its condition ANDs them ("unlock memories"), one word when it ORs
+  them. Before, the chip would have offered a bare `/say unlock`, which she ignores.
+
+## 72. Stable Mimic 2.7.3 (2026-09-28, agent 3.7.37)
+The guild lead: *"push all of this to main"*. File-level promotion from beta (`43f290af`):
+`apps/mimic/`, `packages/wolfpack-logsync/` and their seven tests (charm-break-instant, entity-tick-fade,
+mini-dps-buffqueue, pet-sheet, pvp-glory, target-info-fqv, ui-pack-options), byte-identical to beta. The
+beta-only web variants stay on beta, as at 2.7.2 (/about layouts, the item page's tradeskills, the /pvp
+fight pages, the Zeal marks gallery, and their tests). Full gate on the promoted tree: 330 test files,
+lint and the dashboard check clean. Beta re-parked at 2.7.4.
+- **In it:** F/Q/V on Target Info (§70, §71a), UI pack checkboxes (§68), Rallos Zek kill lines (§66), your
+  own row on the DPS meter, buffs fading on the mob's own tick, the instant charm break and top-down trigger
+  timers, and the #petstats parser (§63; nothing draws it yet).
+- **Open, the guild lead's pick:** *"we need to add a forward and backward button and keep history of who
+  we targetted that have quests so we can access the quests. Would this make more sense to have as its own
+  overlay?"* Two ways:
+  - **A. Inside Target Info's Quest sub-tab:** ◀ ▶ through the quest NPCs you have targeted.
+    Build: small (history list, a pinned view). Maintenance: low. Runtime: nothing new; the data is already
+    cached per NPC id. Change: the hard part. Target Info's header (name, HP, slow) must follow the live
+    target, so a pinned quest body under a different NPC's header reads wrong, and every other tab has to
+    respect the pin.
+  - **B. Its own Quests overlay (recommended):** it follows your target whenever that NPC has a quest, keeps
+    the history (◀ ▶ plus a recent list), and stays on the last quest NPC while you walk, fight or target
+    something else. Build: bigger, because a new overlay owes the full parity checklist (✕, ✥ drag +
+    right-click, hover handshake, Overlays-tab row, visibility, hide-all, tray + dashboard parity).
+    Maintenance: one more overlay in the parity audits. Runtime: one more small window reading data the
+    agent already caches. Change: easy, because it stands alone. Target Info keeps the Quest sub-tab as the
+    quick look.
 
 
 
