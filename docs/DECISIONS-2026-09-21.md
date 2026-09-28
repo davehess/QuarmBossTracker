@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61).** Film hosted on YouTube, played on `/film` from links kept in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page); pick the default or `?v=b` layout at b.wolfpack.quest/film; the raider clips (members-only) are the next build |
+| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61).** Film hosted on YouTube, played on `/film` from links kept in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page); pick the default or `?v=b` layout at b.wolfpack.quest/film; run the Drive importer (HQ raider clips added, §61a) before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips; the raider clips (members-only) are the next build |
 | **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
 | **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta. **§59f:** the member's other eight reports are investigated and not yet built — the guild lead picks which fixes go into the next beta round |
 | **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
@@ -3489,8 +3489,19 @@ bucket, `film-staging`, under a random 32-character path that is not written her
 cannot be listed without auth, so only the exact links reach anything. The anon upload policy existed
 only for the upload, scoped to that path, and was dropped straight after. The guild lead runs a Google Apps
 Script that pulls it all into the folder and rebuilds each film from its parts with a resumable upload.
-Deletion is scheduled for 2026-09-29 04:00 UTC. The same night Munnkie got a new clip, breaking his
-chains (Gemini still, LTX pro 6 s, about $0.61), which replaced his clip in the set.
+Deletion is scheduled for 2026-09-29 04:00 UTC. The same night one raider got a new clip, breaking their
+chains (Gemini still, LTX pro 6 s, about $0.61), which replaced their clip in the set.
+
+**The HQ raider clips (same night).** The guild lead found the clips blurry and smeared. The cause was
+our smoothing step, not the generator: 78 of the 104 renders were drawn on twos, and the pipeline had
+ffmpeg invent the missing frames (motion-compensated interpolation), which ghosted every fast move. The
+name card's punch-in zoom and the song sat on top of that. The clips were rebuilt straight from the
+generator's files: the video stream is copied untouched (720p; the one 1080p redo stays 1080p), with no
+card and no song. They went up in a new `Raider clips (HQ)` folder. The importer skips files already in
+Drive, so re-running it adds only these. Deletion moved to **2026-09-30 04:00 UTC**. **Rule: never
+interpolate hand-drawn animation.** On twos is how it is meant to move. A native-1080p re-render was
+tested on one raider ($0.48). Its lines are sharper, but it is a fresh take with new motion and some
+camera drift. All 78 would cost about $37; that is the guild lead's call.
 
 
 
