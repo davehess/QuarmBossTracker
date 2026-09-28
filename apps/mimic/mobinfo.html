@@ -668,7 +668,11 @@
         var lines = (b.replies || []).map(function(r, i){
           return '<div class="qsay' + (i ? ' alt' : '') + '" title="' + esc(r.text) + '">' + (r.kind === 'emote' ? '* ' : '') + esc(_clip(r.text, 220)) + '</div>';
         }).join('');
-        return '<div class="qrow"><div class="qline">' + _copyChip('/say ' + b.keywords[0]) + tags + '</div>' + lines + '</div>';
+        // Some NPCs answer only while you sit (the Seer; the guild lead, 2026-09-28: "i had to sit
+        // down first"). b.say joins every word a branch needs ("unlock memories"); older bots send
+        // only keywords.
+        var sit = b.sit ? '<span class="qtag gate" title="Answers only while you are sitting">sit first</span>' + _copyChip('/sit') : '';
+        return '<div class="qrow"><div class="qline">' + sit + _copyChip('/say ' + (b.say || b.keywords[0])) + tags + '</div>' + lines + '</div>';
       }).join('');
     }
     if (d.turnins && d.turnins.length) {

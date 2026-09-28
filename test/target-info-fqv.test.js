@@ -60,6 +60,20 @@ describe('F/Q/V', () => {
   });
 });
 
+describe('an NPC that only listens while you sit', () => {
+  it('puts "sit first" and a /sit chip before the whole phrase the branch needs', async () => {
+    const SEER = { id: 202006, say: [{ keywords: ['unlock', 'memories'], say: 'unlock memories', sit: true,
+      replies: [{ kind: 'message', text: 'Please, sit down for a moment.' }], gated: false, flag: false, hints: [] }],
+      trade: [], turnins: [], next: [], vendor: [] };
+    const f = load({ 202006: SEER });
+    f.renderFqv({ id: 202006 }); await settle(); await settle();
+    const out = f.renderFqv({ id: 202006 });
+    expect(out.indexOf('sit first')).toBeGreaterThan(-1);
+    expect(out.indexOf('data-copy="/sit"')).toBeLessThan(out.indexOf('data-copy="/say unlock memories"'));
+    expect(out).not.toContain('data-copy="/say unlock"');
+  });
+});
+
 describe('a locked overlay still takes the clicks', () => {
   const code = stripJs(html);
   it('the hover handshake covers the sub-tabs and chips', () => {
