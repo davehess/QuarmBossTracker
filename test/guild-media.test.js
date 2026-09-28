@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
-import { isCharacterName, isSection, clock, bySection, parseFilmMaking, downloadUrl, SECTIONS } from '../web/lib/guildMedia.ts';
+import { isCharacterName, isSection, clock, bySection, inGalleryOrder, parseFilmMaking, downloadUrl, SECTIONS } from '../web/lib/guildMedia.ts';
 
 const item = (id, section, extra = {}) => ({ id, section, character: null, kind: 'image', title: null, used: false, thumbUrl: null, url: null, name: 'f', ...extra });
 
@@ -38,6 +38,10 @@ describe('bySection', () => {
     expect(g.map((x) => x.key)).toEqual(['clip', 'first-still', 'take']);
     expect(g[2].items.map((i) => i.id)).toEqual([1, 3]);
     expect(SECTIONS[0].key).toBe('clip');
+  });
+  it('inGalleryOrder lists sections in gallery order, keeps the stored order inside each, and drops nothing', () => {
+    const list = [item(1, 'cold-open'), item(2, 'take'), item(3, 'clip'), item(4, 'take'), item(5, 'mystery'), item(6, 'first-still')];
+    expect(inGalleryOrder(list).map((i) => i.id)).toEqual([3, 6, 2, 4, 1, 5]);
   });
 });
 

@@ -4,13 +4,12 @@
 // already signed; "Show all" fetches the rest of that section or character from /api/media. The viewer
 // plays or shows the file, steps with the arrow keys, saves it, and fetches its prompt only when asked.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { downloadUrl, sectionLabel, type MediaItem } from '@/lib/guildMedia';
+import { downloadUrl, oneLabel, type MediaItem } from '@/lib/guildMedia';
 
 type Info = { prompt: string | null; model: string | null; resolution: string | null };
 
 export function caption(it: MediaItem, showCharacter: boolean): string {
-  const bits = [showCharacter ? it.character : null, it.title].filter(Boolean);
-  return bits.length ? bits.join(' · ') : sectionLabel(it.section);
+  return [showCharacter ? it.character : null, it.title || oneLabel(it.section)].filter(Boolean).join(' · ');
 }
 
 export default function MediaGrid({ initial, total, query, showCharacter = false, big = false }: {

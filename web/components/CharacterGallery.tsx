@@ -4,7 +4,7 @@
 //   b (?g=b)    — everything at once, grouped by where it came from.
 import Link from 'next/link';
 import MediaGrid from '@/components/MediaGrid';
-import { bySection, clock, isCharacterName } from '@/lib/guildMedia';
+import { bySection, clock, inGalleryOrder, isCharacterName } from '@/lib/guildMedia';
 import { loadFilmMaking, loadMedia } from '@/lib/guildMediaLoad';
 
 const HIGHLIGHT = ['clip', 'action-still', 'first-still'];
@@ -22,7 +22,7 @@ export default async function CharacterGallery({ name, layout }: { name: string;
     const pick = g.find((i) => i.used) || g[0];
     return pick ? [pick] : [];
   });
-  const rest = items.filter((i) => !highlights.includes(i));
+  const rest = inGalleryOrder(items.filter((i) => !highlights.includes(i)));
 
   return (
     <section className="grid gap-3 rounded-lg border border-border bg-panel p-4">

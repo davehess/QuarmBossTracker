@@ -4,7 +4,7 @@
 // whole journey (how the song says the name, where each take sings it, every picture and take) on a click.
 import { useMemo, useState } from 'react';
 import MediaGrid from '@/components/MediaGrid';
-import { clock, type FilmRaider, type MediaItem } from '@/lib/guildMedia';
+import { clock, inGalleryOrder, type FilmRaider, type MediaItem } from '@/lib/guildMedia';
 
 export type FinderRaider = FilmRaider & { thumbUrl: string | null };
 
@@ -30,7 +30,7 @@ export default function RaiderFinder({ raiders, youtube, takes }: {
       const r = await fetch(`/api/media?collection=aten-ha-ra&character=${encodeURIComponent(name)}`);
       if (!r.ok) throw new Error(String(r.status));
       const items = ((await r.json()) as { items: MediaItem[] }).items;
-      setMedia((m) => ({ ...m, [name]: items }));
+      setMedia((m) => ({ ...m, [name]: inGalleryOrder(items) }));
     } catch {
       setMedia((m) => ({ ...m, [name]: 'failed' }));
     }
