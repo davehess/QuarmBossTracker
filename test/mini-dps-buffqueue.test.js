@@ -216,6 +216,18 @@ describe('DPS mini: the page', () => {
     expect(m.el('deeps').innerHTML).toContain('<li class="mrow me">');           // mini keeps me too
   });
 
+  it('knows me by the keys /api/state really sends: activeCharacter, else the fight\'s uploader', async () => {
+    const byActive = fight('dmg'); delete byActive.character; byActive.activeCharacter = 'Rethlan';
+    const a = runPage(dpsHtml, { state: { current: byActive }, snap: 'deeps' });
+    await flush();
+    expect(a.el('deeps').innerHTML).toContain('<li class="pbrow me">');
+
+    const byUploader = fight('dmg'); delete byUploader.character; byUploader.currentEncounterThreat.uploader = 'Corvale';
+    const u = runPage(dpsHtml, { state: { current: byUploader }, snap: 'deeps' });
+    await flush();
+    expect(u.el('deeps').innerHTML.split('</li>').find(s => s.includes('class="pbrow me"'))).toContain('>Corvale<');
+  });
+
   it('with no fight at all there is no row of mine (the empty state stays empty)', async () => {
     const p = runPage(dpsHtml, { state: { current: { character: 'Vesmira' } }, snap: 'deeps' });
     await flush();

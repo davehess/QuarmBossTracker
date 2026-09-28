@@ -757,7 +757,12 @@
 
       const totalDmg = allRows.reduce((s, r) => s + r[1], 0);
       allRows.forEach(function(r, i){ r[4] = i + 1; });            // true rank
-      const me = s.character || s.uploaderCharacter || s.self || null;
+      // Who "you" are. /api/state names you as activeCharacter, and the live
+      // fight carries its uploader; the three older keys are never sent, so on
+      // them alone the highlight and your always-shown row never happened (the
+      // overlay catalog's finding 1, 2026-09-27). Kept last as fallbacks.
+      const me = s.activeCharacter || (s.currentEncounterThreat && s.currentEncounterThreat.uploader)
+        || s.character || s.uploaderCharacter || s.self || null;
       let rows = allRows.slice(0, ROW_LIMIT);
       // Always show YOU — if your row fell below the visible cutoff, append it
       // with its REAL rank so you can always see where you stand.
