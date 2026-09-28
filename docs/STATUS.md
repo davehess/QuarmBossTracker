@@ -128,16 +128,17 @@ next touch one rather than assuming a missing row means a missing doc.
   costed, the spec/signal/part architecture, six phases sized at 21–34 sessions, and the October 1
   answer (alpha.1 yes, full 3.0 no). Waiting on the guild lead's seven answers (plan §8).
   `DECISIONS-2026-09-21.md` §57.
-- **⏳ The Aten Ha Ra film on `/film` (2026-09-27, web on beta).** Film hosted on YouTube; `/film`
+- **✅ The Aten Ha Ra film on `/film` (web 1.8.30, main 2026-09-28).** Film hosted on YouTube; `/film`
   (members) plays both takes from links in bot_kv `film_youtube`, which are still empty until the guild
-  lead uploads and sends them. Two layouts for review (default / `?v=b`). `DECISIONS-2026-09-21.md` §61.
-- **⏳ Guild media: `/film/making` + a Gallery on character pages (2026-09-28, web on beta, migration
-  `20260928045235`).** Long-term, per-character storage in the private `guild-media` bucket, indexed by
-  `guild_media`; first filled with the film's 628 stills, takes, clips and outtakes for 98 characters.
-  `/film/making` tells how the film was made (every name as written for the song and when each take sings
-  it, from bot_kv `film_making`); `?v=b` is find-your-raider. Character pages show the Gallery under the
-  header (`?g=b` groups by source). Open: the guild lead picks layouts; player uploads wait on the public-
-  upload security audit. `DECISIONS-2026-09-21.md` §62.
+  lead uploads and sends them. `DECISIONS-2026-09-21.md` §61, §62b.
+- **✅ Guild media: `/film/making` + a Gallery on character pages (web 1.8.30 + bot 3.1.162, main
+  2026-09-28, migration `20260928045235`).** Long-term, per-character storage in the private `guild-media`
+  bucket, indexed by `guild_media`; first filled with the film's 628 stills, takes, clips and outtakes for
+  98 characters. `/film/making` opens with find-your-raider (search, class filter, one raider's whole set;
+  `?raider=<name>` deep-links), then the story, with every name as written for the song and when each take
+  sings it (bot_kv `film_making`). Character pages show the Gallery under the header. The bot posted one
+  card to #raid-chat. Open: player uploads wait on the public-upload security audit.
+  `DECISIONS-2026-09-21.md` §62, §62b.
 - **⏳ eqmimic.quest (2026-09-28, open).** Mimic without the Wolf Pack imagery. Before any repo change:
   move the update feeds off this public repo (the fleet updates from it). `DECISIONS-2026-09-21.md` §62a.
 - **⏳ Parked: a raid-say "Divine Intervention to < X >" should start that cleric's DI cooldown

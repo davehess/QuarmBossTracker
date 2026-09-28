@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61); `/film/making` and a Gallery on every character page on beta 2026-09-28 (§62)**, backed by the private `guild-media` store (628 files, 98 characters). Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); pick layouts at b.wolfpack.quest: `/film` default or `?v=b`, `/film/making` default or `?v=b`, character Gallery default or `?g=b`; run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
+| **The Aten Ha Ra film on wolfpack.quest** | **On main 2026-09-28 (web 1.8.30, bot 3.1.162; §61, §62, §62b):** `/film`, `/film/making` with find-your-raider on top, and a Gallery on every character page, backed by the private `guild-media` store (628 files, 98 characters). The bot posts one card to #raid-chat. Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
 | **eqmimic.quest: Mimic without the Wolf Pack imagery** | **Open 2026-09-28 (§62a).** Everything is AGPL-3.0-or-later already; the installed fleet updates from this repo being public (GitHub releases + raw agent fetch), so a private repo would silently stop updates | the guild lead: decide licence and service model; then first steps are moving the update feeds off this repo and one brand config with Wolf Pack as the first tenant |
 | **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
 | **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta. **§59f:** the member's other eight reports are investigated and not yet built — the guild lead picks which fixes go into the next beta round |
@@ -3564,7 +3564,23 @@ would be cool to treat it like a longterm storage of that."* One store serves bo
 - **Not built yet:** uploads by players. The table is shaped for it (`collection`, `section`), but an
   upload path needs the public-upload security audit that is already open for the guild-logo page first.
 
-### 62a. eqmimic.quest: Mimic without the Wolf Pack imagery (2026-09-28, open)
+### 62b. Graduated to main, with the filter on top and a #raid-chat card (2026-09-28, web 1.8.30, bot 3.1.162)
+The guild lead: *"push this up to main and send a link to the guild's raid-chat using this image as the
+'come look at the stuff' ... make sure people can filter just see specific characters at the top."* That
+is the layout call. `/film/making` now opens with the raider finder (search a name, pick a class, click a
+raider for their whole set), and the story follows. `?raider=<name>` opens on that raider, and each
+character's Gallery links there. The unpicked alternates (`/film?v=b`, `/film/making?v=b`, Gallery
+`?g=b`) were deleted on beta first, so beta and main carry byte-identical files and the main→beta sync
+has nothing to conflict on. This was a file-level promotion as always, plus the Film nav link, the
+page-meta entries, the roadmap entry and the version bumps.
+- **The card** is a bot one-shot, `_announceFilmMakingOnce`, in the shape of the 2.7.1 card: latched in
+  `bot_kv` (`announce_film_making_raid_chat`, fail-closed), pings nobody, links `/film/making`, and uses
+  the guild lead's picture. It waits until that picture answers 200 on wolfpack.quest, because it ships
+  in the same web deploy as the page, so the post can never beat the page. The first try is a minute
+  after boot, then every 5 minutes for up to 12 hours.
+- **The picture is public** at `web/public/film/making-of.jpg`: a drawing with no name on it, like the
+  covers. `/film/making` also unfurls with it when the link is pasted.
+
 The guild lead has acquired `eqmimic.quest` and wants Mimic available there without the Wolf Pack
 branding, and asked whether that means moving to a new, closed repository if it is offered as a service.
 **Open; the guild lead's call.** What any answer has to carry:

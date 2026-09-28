@@ -26,6 +26,8 @@ const STATIC_META: Record<string, PageMeta> = {
   '/pvp/server':   { title: 'Server PvP Top 10', description: 'Server-wide PvP kill leaders on Project Quarm.' },
   '/leaderboards': { title: 'Leaderboards', description: 'Top damage parses, raid attendance, and DKP spent — who’s been crushing it lately.' },
   '/fun':          { title: 'Fun Counters', description: 'The guild record book — running gags, counters, and trophies from the logs.' },
+  '/film':         { title: 'Aten Ha Ra', description: 'The Wolf Pack film of the Aten Ha Ra kill — every raider called by name, in two takes of the song.' },
+  '/film/making':  { title: 'How the film was made', description: 'The Aten Ha Ra film from the inside — find your raider, how every name is sung, every picture and animation take, and the outtakes.', image: '/film/making-of.jpg' },
   '/raidhistory':  { title: 'Raid History', description: 'Every raid night on one grid, coloured by how full the raid was — red at half, green at full — with the raid name and a link to each night’s review.' },
   '/rolls':        { title: 'Roll Nights', description: 'Off-night NBG loot rolls by raid night — every session, the winning roll, who actually looted each drop, and Hot Dice callouts.' },
   '/me':           { title: 'My Stats', description: 'Your characters, tells, buffs, and personal history — private to you.' },

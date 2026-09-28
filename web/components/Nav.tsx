@@ -36,6 +36,7 @@ export const GROUPS: Group[] = [
       { href: '/roster',       label: 'Roster' },
       { href: '/raidhistory',  label: 'Raid history' },
       { href: '/fun',          label: 'Fun' },
+      { href: '/film',         label: 'Film' },
     ],
   },
   {

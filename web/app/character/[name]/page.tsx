@@ -15,6 +15,7 @@ import { userTz } from '@/lib/timezone';
 import { eraForTimestamp } from '@/lib/eras';
 import { classDisplay } from '@/lib/class-titles';
 import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
+import CharacterGallery from '@/components/CharacterGallery';
 import {
   loadFamily,
   loadEraTimeline,
@@ -360,6 +361,9 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat label="Last raid"  value={attendance?.last_attended  ? new Date(attendance.last_attended).toLocaleDateString()  : '—'} />
         </div>
       </section>
+
+      {/* Gallery (2026-09-28): this character's pictures and clips; nothing renders without any. */}
+      <CharacterGallery name={displayName} />
 
       {/* All-character aggregate strip — only shown when there's more than one
           character. The first three stats are totals across every character;

@@ -37,6 +37,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'film-making-of-2026-09-28',
+    title: 'Web 1.8.30',
+    version: 'Web 1.8.30 · Bot 3.1.162',
+    date: '2026-09-28',
+    headline: 'How the Aten Ha Ra film was made, and a gallery on every character page.',
+    features: [
+      {
+        name: 'Find your raider',
+        blurb: 'The top of Stats → Film → “How it was made”: type a name or pick a class, click a raider, and see every picture and animation of them, how the song says their name and when each take sings it.',
+      },
+      {
+        name: 'The whole story',
+        blurb: 'Below that, chapter by chapter: the song and its lyric sheet, the first pictures, the action shots, every animation take, the four-armed queen, the classes, the rough cuts and the outtakes. Open anything to play it, save it, or read the prompt that made it.',
+      },
+      {
+        name: 'A gallery on your character page',
+        blurb: 'Your character’s pictures and clips now sit on their character page, kept for good. The film’s are in there already.',
+      },
+      {
+        name: 'The film page',
+        blurb: 'Both takes of the film, on Stats → Film. They play as soon as the YouTube links are in.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'charm-break-instant-2026-09-27',
     title: 'Agent 3.7.34',
     version: 'Agent 3.7.34 · Bot 3.1.161 · Web 1.8.29',
