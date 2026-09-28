@@ -14,8 +14,8 @@ const item = (id, section, extra = {}) => ({ id, section, character: null, kind:
 
 describe('input guards', () => {
   it('takes a character name only as letters, so a case-insensitive match can never become a wildcard', () => {
-    for (const s of ['Fittir', 'ab', 'SuperBloodWolf']) expect(isCharacterName(s)).toBe(true);
-    for (const s of ['', 'a', 'Fit tir', 'Fit%', 'Fit_', "Fit'r", '../etc', 'Fittir1', null, 42]) expect(isCharacterName(s)).toBe(false);
+    for (const s of ['Aldenmar', 'ab', 'NyssaraZarrin']) expect(isCharacterName(s)).toBe(true);
+    for (const s of ['', 'a', 'Ald enmar', 'Ald%', 'Ald_', "Ald'n", '../etc', 'Aldenmar1', null, 42]) expect(isCharacterName(s)).toBe(false);
   });
   it('knows its sections and nothing else', () => {
     expect(isSection('take')).toBe(true);
