@@ -2471,6 +2471,7 @@ function _savePetStateSoon() {
         // as petBuffLandings so the Mob Info overlay survives a restart too.
         buffLandingsByTarget: [..._buffLandingsByTarget.entries()].map(([k, v]) => [k, [...v.entries()]]),
         petStatsByOwner: [..._petStatsByOwner.entries()],
+        petSheetByOwner: [..._petSheetByOwner.entries()],
       };
       const out = JSON.stringify(data);
       fs.writeFileSync(PET_STATE_FILE + '.tmp', out);
@@ -2527,7 +2528,11 @@ function _loadPetStateFromDisk() {
       // Stats keep indefinitely (running performance picture across sessions).
       for (const [k, v] of raw.petStatsByOwner) _petStatsByOwner.set(k, v);
     }
-    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats`);
+    if (Array.isArray(raw.petSheetByOwner)) {
+      // #petstats sheets: a charmed mob's expires with the TTL, a summoned pet's keeps.
+      for (const [k, v] of raw.petSheetByOwner) if (_petSheetFresh(v, now)) _petSheetByOwner.set(k, v);
+    }
+    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats · ${_petSheetByOwner.size} sheets`);
   } catch (err) { console.warn('[pet-state] load failed:', err && err.message); }
 }
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
@@ -2574,6 +2579,103 @@ function applyPetHealthLine(line, character) {
     rep.last_seen_at = Date.now();
     _savePetStateSoon();
   }
+}
+
+// #petstats sheet — the Quarm server command (PoP patch, 2026-09). The owner
+// types #petstats and the server prints a block into THEIR log, one line each:
+//   -- Xibobab's Stats --
+//   HP: 4000 / 4000        AC: 180        ATK: 956
+//   Attack Damage: 19 - 78 (avg 48.5)     Attack Delay: 2800 ms (2.80s)
+//   Melee DPS: 17.3
+//   Resists: Magic 35 Fire 35 Cold 35 Poison 15 Disease 15
+//   -- Equipped Inventory --
+//   Ear 1: (Empty) … Ammo: (Empty)        (21 slot lines, Ammo last)
+// The numbers are the pet's CURRENT values, so a Tashed charm pet reads its
+// lowered magic resist — the charm-break risk the Charm window wants.
+// Haste: the catalog carries no NPC attack delay, so haste is measured against
+// the SLOWEST delay seen for this pet (base_delay_ms). A pet first read while
+// slowed over-states its later haste; the fields say "observed", not "true".
+// LOCAL ONLY, like the rest of the pet state — never uploaded.
+const _petSheetByOwner = new Map();   // ownerLower → sheet
+const _petSheetOpen = new Map();      // ownerLower → { sheet, last_line_at } while a block is being read
+const PET_SHEET_GAP_MS = 3000;        // a line more than 3s after the last one closes the block
+const _PET_SHEET_SLOTS = ['Ear 1', 'Head', 'Face', 'Ear 2', 'Neck', 'Shoulders', 'Arms', 'Back',
+  'Wrist 1', 'Wrist 2', 'Range', 'Hands', 'Primary', 'Secondary', 'Finger 1', 'Finger 2',
+  'Chest', 'Legs', 'Feet', 'Waist', 'Ammo'];
+const _PET_SHEET_SLOT_RX = new RegExp('^(' + _PET_SHEET_SLOTS.map(s => s.replace(/ /g, '\\s+')).join('|') + '):\\s*(.*)$', 'i');
+
+// A common-name pet ("a lava crawler") is a charmed mob — the next one of that
+// name is a different mob, so its sheet expires with the pet-health TTL. A
+// proper name is a summoned pet and keeps its sheet while that name holds.
+function _petSheetFresh(sheet, now) {
+  if (!sheet) return false;
+  if (!/^(an?|the)\s+/i.test(sheet.pet || '')) return true;
+  return (now - (sheet.read_at || 0)) <= PET_HEALTH_TTL_MS;
+}
+
+function applyPetSheetLine(line, character) {
+  if (!line || !character) return;
+  const m = line.match(/^\[(.+?)\]\s+(.*)$/);
+  if (!m) return;
+  const owner = String(character).toLowerCase();
+  const ts = parseEqTimestamp(line);
+  const tsMs = ts ? ts.getTime() : Date.now();
+  const body = m[2].trim();
+  const head = body.match(/^-- (.+?)'s Stats --$/);
+  if (head) {
+    const pet = head[1].trim();
+    if (pet.toLowerCase() === owner) { _petSheetOpen.delete(owner); return; }  // the player's own stats
+    const prev = _petSheetByOwner.get(owner);
+    const samePet = prev && String(prev.pet).toLowerCase() === pet.toLowerCase();
+    _petSheetOpen.set(owner, { last_line_at: tsMs, sheet: {
+      pet, read_at: tsMs,
+      hp: null, hp_max: null, ac: null, atk: null,
+      dmg_min: null, dmg_max: null, dmg_avg: null,
+      delay_ms: null, base_delay_ms: samePet ? prev.base_delay_ms : null, haste_pct: null,
+      dps: null, resists: null, equipment: null, complete: false,
+    } });
+    return;
+  }
+  const open = _petSheetOpen.get(owner);
+  if (!open) return;
+  if ((tsMs - open.last_line_at) > PET_SHEET_GAP_MS) { _petSheetOpen.delete(owner); return; }
+  const s = open.sheet;
+  let hit = true, done = false, x;
+  if ((x = body.match(/^HP:\s*(-?\d+)\s*\/\s*(\d+)$/i)))  { s.hp = +x[1]; s.hp_max = +x[2]; }
+  else if ((x = body.match(/^AC:\s*(-?\d+)$/i)))          { s.ac = +x[1]; }
+  else if ((x = body.match(/^ATK:\s*(-?\d+)$/i)))         { s.atk = +x[1]; }
+  else if ((x = body.match(/^Attack Damage:\s*(\d+)\s*-\s*(\d+)(?:\s*\(avg\s*([\d.]+)\))?/i))) {
+    s.dmg_min = +x[1]; s.dmg_max = +x[2];
+    s.dmg_avg = x[3] != null ? +x[3] : (s.dmg_min + s.dmg_max) / 2;
+  }
+  else if ((x = body.match(/^Attack Delay:\s*(\d+)\s*ms/i))) {
+    s.delay_ms = +x[1];
+    if (s.delay_ms > 0) {
+      s.base_delay_ms = Math.max(s.base_delay_ms || 0, s.delay_ms);
+      s.haste_pct = s.base_delay_ms > s.delay_ms ? Math.round((s.base_delay_ms / s.delay_ms - 1) * 100) : 0;
+    }
+  }
+  else if ((x = body.match(/^Melee DPS:\s*([\d.]+)$/i)))  { s.dps = +x[1]; }
+  else if (/^Resists:/i.test(body)) {
+    const r = {};
+    for (const mm of body.slice(8).matchAll(/([A-Za-z]+)\s+(-?\d+)/g)) r[mm[1].toLowerCase()] = +mm[2];
+    s.resists = r;
+  }
+  else if (/^-- Equipped Inventory --$/i.test(body))      { s.equipment = {}; }
+  else if (s.equipment && (x = body.match(_PET_SHEET_SLOT_RX))) {
+    const slot = _PET_SHEET_SLOTS.find(n => n.toLowerCase() === x[1].replace(/\s+/g, ' ').toLowerCase());
+    const item = x[2].trim();
+    s.equipment[slot] = (!item || /^\(empty\)$/i.test(item)) ? null : item;
+    if (slot === 'Ammo') done = true;
+  }
+  else hit = false;                    // an unrelated line inside the window: skip it, keep reading
+  if (!hit) return;
+  open.last_line_at = tsMs;
+  s.complete = done;
+  // Publish from the first stat line on, so a block cut short still shows.
+  _petSheetByOwner.set(owner, s);
+  if (done) _petSheetOpen.delete(owner);
+  _savePetStateSoon();
 }
 
 // pet name → owner (lowercased), from Zeal gauge slot 16 for watched chars.
@@ -15890,6 +15992,11 @@ function _serializeForDashboard() {
         // TTL'd so a pet that hasn't acked recently doesn't show a stale name.
         const tgt = _petTargetByOwner.get(owner);
         const target = (tgt && (now - tgt.at) <= PET_TARGET_TTL_MS) ? tgt.target : null;
+        // #petstats sheet — only for the pet it was read from (it needs petName,
+        // so it never makes an otherwise-empty row show).
+        const sh = _petSheetByOwner.get(owner);
+        const sheet = (sh && petName && String(sh.pet).toLowerCase() === String(petName).toLowerCase()
+          && _petSheetFresh(sh, now)) ? sh : null;
         if (!petName && hp == null && buffs.length === 0 && !statsForPet && !target) continue;   // nothing to show
         out.push({
           owner,
@@ -15897,6 +16004,7 @@ function _serializeForDashboard() {
           hp_pct:      hp,
           buffs,
           stats:       statsForPet,
+          sheet,
           target,
           target_at:   target ? tgt.at : null,
           observed_at: repFresh ? rep.last_seen_at : now,
@@ -28162,6 +28270,7 @@ function startWebDashboard(port) {
           if (_petHealthByOwner.delete(owner)) removed = true;
           if (_petBuffLandings.delete(owner))  removed = true;
           if (_petStatsByOwner.delete(owner))  removed = true;
+          if (_petSheetByOwner.delete(owner))  removed = true;
           if (removed) _savePetStateSoon();
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -42582,6 +42691,8 @@ async function main() {
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
         // — no upload, never leaves the machine.
         applyPetHealthLine(line, b.character);
+        // #petstats sheet (same owner-log, same local-only rule).
+        try { applyPetSheetLine(line, b.character); } catch {}
 
         // Charm pet death → drop it from the tracker right away (don't wait out
         // the 5-min linger window). Pass the local character so "You have slain"
