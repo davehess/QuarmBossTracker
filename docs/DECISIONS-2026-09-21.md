@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PoP checklist, `/pop/guide`** | **On beta 2026-09-28 (§65).** 46 items (start here, PoK quests, spells, tiers 1–4, Time) tagged Solo / Group / Raid and must-have; ticks saved per character; recorded flags tick themselves | the guild lead: pick layout A (b.wolfpack.quest/pop/guide) or B (`?v=b`); then it graduates to main |
+| **PoP checklist, `/pop/guide`** | **Live 2026-09-28 (§65, §65a, web 1.8.31).** 74 steps in EQProgression's order, Solo / Group / Raid and must-have; copy buttons for every `/say` and `/map Y X`; item cards on hover; ticks per character, recorded flags tick themselves | members: use it from launch; anyone: report a step Quarm does differently (the "verify at launch" rows first) |
 | **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
 | **PoP board vs the 2026-09-28 patch notes** | **Three fixes on main 2026-09-28 (§63a, bot 3.1.163):** Quarm 168→162 h; Mujaki renamed "the Devourer" so the kill matches; "Avatar of Earth" added to the Rathe Council slot. Five bosses still read 72 h the notes do not name | the guild lead: 66 h for Xanamech, Ture, Mujaki, Askr, Charassis, or keep 72; add Mithaniel Marr and the Manaetic Behemoth to the board before Oct 1? |
 | **The Aten Ha Ra film on wolfpack.quest** | **On main 2026-09-28 (web 1.8.30, bot 3.1.162; §61, §62, §62b):** `/film`, `/film/making` with find-your-raider on top, and a Gallery on every character page, backed by the private `guild-media` store (628 files, 98 characters). The bot posts one card to #raid-chat. Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
@@ -3683,6 +3683,27 @@ what can be done with a group or a raid or solo. Make this a checkbox type of th
 - Found on the way: the patch says Tranquility portals no longer let anyone in on level alone, but
   `/pop` still labels tiers two and three "Classic: 55 / 62 if unflagged". Label only (access maths
   ignores it). Not changed here.
+
+### 65a. Live, with every flag step, /say and /map lines, and item cards (2026-09-28, web 1.8.31)
+The guild lead: *"this looks good, push it to live, add in mousover for any items mentioned, Put
+Locations for anyone that we need to reach with a copy of /map <Y> <x>"*, then *"anything you have to
+say should also have a copy button next to it with /say in front of it"*, then asked that the
+[EQProgression flagging guide](https://www.eqprogression.com/planes-of-power-planar-progression-flagging/)
+be fully folded in. "This" was the single-list layout (A); B was deleted in the same change.
+- **The steps now follow EQProgression's checklist:** the talk BEFORE each boss, the planar-projection
+  hail after it, the NPC to see afterwards, the zone-ins that set flags, the Tribunal plea, the three
+  Halls of Honor trial hails, Karana's line, Maelin before and after the Zeks, the optional keys, and the
+  way into Time. Also the two PoK flag fixers (Seer Mal Nae`Shi, Grand Librarian Maelin) and Gram
+  Dunnar's free charm. 74 steps, 48 of them must-haves; 35 `/say` lines; 51 items with cards.
+- **Every `/say` phrase was checked against the NPC's quest script** (`eqemu_quest_scripts`). Gram
+  Dunnar has no script in our mirror, so his row says "verify at launch". The Seer also answers
+  "delete", which clears flags; the page never offers it, and a test holds that.
+- **`/map` is the NPC's placed spawn, Y then X,** the order `/loc` prints and Zeal's `/map` takes.
+  Checked against PQDI, which labels its coordinates "(Y, X, Z)": the Seer is (-42, -224) in both. NPCs
+  that only appear after an event (Karana, Tarkil Adan, the post-kill Giwin, Loreseeker Maelin) get a
+  `/say` but no `/map`.
+- **Items:** `[[Name#itemId]]` in a step renders the existing inventory item card on hover; one
+  `item_card_info` call per render. A click on an item never ticks the box.
 
 
 

@@ -1520,12 +1520,16 @@ Charmed-mob sheets expire with the 30-min pet TTL. Display in `pets.html` /
 `charm.html` not built yet (agent 3.7.35 beta; DECISIONS 2026-09-21 §63).
 
 ### PoP checklist (`/pop/guide`)
-Items are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
-`flag` → a `POP_FLAGS` key). The page (`web/app/pop/guide/page.tsx`) loads the viewer's own
-characters (`ownedCharacters`), their hand ticks from `pop_guide_ticks` and their `pop_flags`; a
-recorded flag ticks and locks its row. `GuideChecklist.tsx` holds both beta layouts and ticks
-optimistically through `actions.ts` `setGuideTick` (known item + owned character, then upsert or
-delete). Linked from `/pop`'s nav. Beta 2026-09-28; DECISIONS 2026-09-21 §65.
+Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
+`flag` → a `POP_FLAGS` key, `says` → copyable `/say`, `where` → copyable `/map Y X` from the
+NPC's `eqemu_spawn2` row, and `[[Item#id]]` tokens in the text). The page
+(`web/app/pop/guide/page.tsx`) loads the viewer's own characters (`ownedCharacters`), their hand
+ticks from `pop_guide_ticks`, their `pop_flags`, and one `item_card_info` batch for the tokens; a
+recorded flag ticks and locks its row. `GuideChecklist.tsx` renders the list, the copy chips and the
+inventory page's `ItemHover` card, and ticks optimistically through `actions.ts` `setGuideTick`
+(known item + owned character, then upsert or delete). Adding a step: check its `/say` against
+`eqemu_quest_scripts` and its `/map` against the spawn row. Linked from `/pop`'s nav. Live web
+1.8.31; DECISIONS 2026-09-21 §65, §65a.
 
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),

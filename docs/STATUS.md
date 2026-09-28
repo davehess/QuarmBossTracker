@@ -133,10 +133,11 @@ next touch one rather than assuming a missing row means a missing doc.
   #petstats block (HP, AC, ATK, damage, delay, DPS, signed resists, 21 slots) and serves it as `sheet` on
   the petHealth row both windows read; haste is measured against the slowest delay seen. Display not
   built: waiting on the guild lead's pick. `test/pet-sheet.test.js`. `DECISIONS-2026-09-21.md` §63.
-- **🟡 PoP checklist `/pop/guide` (web, beta 2026-09-28).** Start here, the PoK quests open now,
-  spells, flags tier by tier; each item Solo / Group / Raid and must-have; ticks saved per character
-  (`pop_guide_ticks`), recorded flags tick themselves. Two layouts (A path, B `?v=b` by who's with
-  you) waiting on the guild lead's pick. `test/pop-guide.test.js`. `DECISIONS-2026-09-21.md` §65.
+- **✅ PoP checklist `/pop/guide` (web 1.8.31, main 2026-09-28).** 74 steps in EQProgression's flagging
+  order: start here, the PoK quests open now, spells, every flag with its before-and-after talk. Each
+  Solo / Group / Raid and must-have; copy buttons for every `/say` (script-checked) and `/map Y X`
+  (placed spawns); item cards on hover; ticks saved per character (`pop_guide_ticks`), recorded flags
+  tick themselves. `test/pop-guide.test.js`. `DECISIONS-2026-09-21.md` §65, §65a.
 - **✅ PoP board checked against the 2026-09-28 patch notes (bot 3.1.163, main).** Quarm 162 h, Mujaki
   "the Devourer", Avatar of Earth on the Rathe Council slot. Open: five 72 h bosses the notes do not
   name, and two missing bosses. `DECISIONS-2026-09-21.md` §63a.

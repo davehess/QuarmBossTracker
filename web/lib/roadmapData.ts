@@ -37,6 +37,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-checklist-2026-09-28',
+    title: 'Web 1.8.31',
+    version: 'Web 1.8.31',
+    date: '2026-09-28',
+    headline: 'A Planes of Power checklist: every step, who to talk to, where they stand, and what to say.',
+    features: [
+      {
+        name: 'Your PoP checklist',
+        blurb: 'PoP → My checklist. Start here, the Plane of Knowledge quests you can do now, your spells, then every flag tier by tier in the order you need them. Each step says whether it is solo, group or raid work, and whether it is a must-have.',
+      },
+      {
+        name: 'Tick it off per character',
+        blurb: 'Your ticks are saved for each of your characters. Any flag Mimic has already seen you earn ticks itself.',
+      },
+      {
+        name: 'Copy, paste, go',
+        blurb: 'Every NPC you have to reach has a copy button for /map with their location, and everything you have to say has a copy button for /say. Paste it into EQ.',
+      },
+      {
+        name: 'Item cards',
+        blurb: 'Hover any item a step mentions to see its card.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'film-making-of-2026-09-28',
     title: 'Web 1.8.30',
     version: 'Web 1.8.30 · Bot 3.1.162',
