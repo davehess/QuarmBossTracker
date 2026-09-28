@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
-| **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | anyone: paste the first "worthy conquest" line when one appears |
+| **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
 | **Target Info F/Q/V (Faction · Quest · Vendor)** | **Stable in Mimic 2.7.3 (§70, §71a, §72; bot 3.1.168).** What to say with `/say` chips (every word a branch needs, "sit first" + `/sit` where the NPC checks), the hand-in, who's next with `/map`, a merchant's stock | the guild lead: forward/back through quest NPCs you targeted, as a tab or its own overlay (§72) |
 | **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.35).** Starts at Agrakath Theric with the book from Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
 | **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
@@ -3729,6 +3729,24 @@ screenshot are in neither `pvp_kills` nor `pvp_deaths`.
   The post dedup also keys on killer + victim, so the same kill in both wordings posts once.
 - ⚠ **Reaches players only through Mimic.** Beta testers get it now; stable users will not read Glory
   lines until a stable Mimic is cut.
+
+### 66a. The Sebilis Glory kills that were missed (2026-09-28, no code change)
+The guild lead, with two "…spills …'s blood in Ruins of Sebilis, but finds no worthy conquest" lines:
+*"did these get missed"*. Yes, and nothing is broken now.
+- **Why:** PvP in Sebilis came back on about 19:51 UTC, and guild chat reacts to a kill at 20:25. Only two
+  machines uploaded PvP that day, and both still ran agent 3.7.35, which predates `parseGloryKill`
+  (3.7.36 went to beta at 20:28). The line matched nothing and was dropped without a trace, because
+  3.7.35's unmatched capture needed "has killed". The first Glory row stored is 22:18 UTC, after the
+  uploading machine took 3.7.37 (about 21:20–21:40). The two posts it did make at 20:11 and 20:25 were
+  instanced boss kills (Fright, Lord of Ire), both in `pvp_boss_kills`.
+- **Checked, not the cause:** the live tail runs `parsePvpBroadcast` before `shouldKeep`, and the Opt-in
+  Logs replay does too, so no filter drops the line on 3.7.36+. Glory rows from 22:18 on are all stored.
+- **Recovery:** anyone whose log holds the lines runs Opt-in Logs over that afternoon on 3.7.36+. The
+  replay reads the line, sends it flagged as backfill (no per-kill Discord post, one summary), and the
+  bot's dedup keys make re-sending the three stored kills harmless.
+- ⚠ **What this shows:** PvP collection rests on the few members whose client displays the `[PVP]`
+  channel, not on the whole fleet. Two uploaders on 2026-09-28, the column only exists since 2026-09-26.
+  A new server broadcast is lost for exactly as long as those few run an agent that predates its parser.
 
 ## 67. Missing spells: vendor names link, 📍 copies `/map Y X` (2026-09-28, web 1.8.32)
 The guild lead, on the Shopping list: *"This page needs to have the people be links and a map icon next
