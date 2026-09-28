@@ -15066,6 +15066,157 @@ function _refreshCatalogCastSecs() {
   _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
 }
 
+// ── Target Info's F/Q/V tab: quest and vendor for one NPC ─────────────────────
+// (the guild lead, 2026-09-28: "a quest tab on target info that has the quest details for what
+// to say and copyable /say and /map items for who to talk to next", then "Make it F/Q/V for
+// Faction, Quests, and Vendor. Don't bother showing Vendor if its not a vendor mob".) Faction
+// already rides mob-info; this adds, by npc id: what to say (utils/questDialog.js over the
+// eqemu_quest_scripts mirror), hand-ins (scripted_npc_turnins), who to talk to next (named NPCs
+// the replies mention, with a placed spawn for /map Y X) and what it sells (merchantlist).
+// Static catalog data: cached 6 h per id.
+const _npcInteractCache = new Map();   // npcId → { at, body }
+const _NPC_INTERACT_TTL_MS = 6 * 60 * 60 * 1000;
+async function _npcInteract(npcId) {
+  const supabase = require('./utils/supabase');
+  const qd = require('./utils/questDialog');
+  const zoneId = Math.floor(npcId / 1000);
+  const [npcRows, zoneRows] = await Promise.all([
+    supabase.select('eqemu_npc_types', `id=eq.${npcId}&select=id,name,merchant_id&limit=1`),
+    supabase.select('eqemu_zone', `zone_id=eq.${zoneId}&select=short_name,long_name&limit=1`),
+  ]);
+  const npc = Array.isArray(npcRows) ? npcRows[0] : null;
+  if (!npc) return null;
+  const zone = Array.isArray(zoneRows) ? zoneRows[0] : null;
+  const display = qd.displayName(npc.name);
+
+  // The script: the exact file first (zone folder + catalog name), else by name in the zone.
+  let script = null;
+  if (zone) {
+    const s = await supabase.select('eqemu_quest_scripts',
+      `path=eq.${encodeURIComponent(qd.scriptPath(zone.short_name, npc.name))}&select=path,body&limit=1`).catch(() => []);
+    script = (Array.isArray(s) && s[0]) || null;
+    if (!script) {
+      const s2 = await supabase.select('eqemu_quest_scripts',
+        `zone_short=eq.${encodeURIComponent(zone.short_name)}&npc_name=ilike.${encodeURIComponent(display)}&is_encounter=eq.false&select=path,body&limit=1`).catch(() => []);
+      script = (Array.isArray(s2) && s2[0]) || null;
+    }
+  }
+  const say = script ? qd.parseDialog(script.body) : [];
+  const trade = script ? qd.tradeReplies(script.body) : [];
+
+  const turnRows = await supabase.select('scripted_npc_turnins',
+    `npc_id=eq.${npcId}&is_duplicate=eq.false&select=inputs,outputs,cash,exp_award&limit=20`).catch(() => []);
+  const vendorRows = npc.merchant_id
+    ? await supabase.select('eqemu_merchantlist', `merchantid=eq.${npc.merchant_id}&select=item,slot&order=slot.asc&limit=300`).catch(() => [])
+    : [];
+  const itemIds = new Set();
+  for (const t of (Array.isArray(turnRows) ? turnRows : [])) {
+    for (const x of [...(t.inputs || []), ...(t.outputs || [])]) if (Number.isInteger(x?.item_id)) itemIds.add(x.item_id);
+  }
+  for (const v of (Array.isArray(vendorRows) ? vendorRows : [])) if (Number.isInteger(v.item)) itemIds.add(v.item);
+  const items = new Map();
+  if (itemIds.size) {
+    const rows = await supabase.select('eqemu_items', `id=in.(${[...itemIds].join(',')})&select=id,name,price&limit=1000`).catch(() => []);
+    for (const r of (Array.isArray(rows) ? rows : [])) items.set(r.id, r);
+  }
+  const itemRef = (id) => ({ id, name: items.get(id)?.name || `Item ${id}` });
+
+  // Who to talk to next: named NPCs (capitalised, not "a sarnak") that the replies mention.
+  // Full names anywhere; a bare surname ("Thiran") only in this zone ("Vicar Thiran").
+  const texts = [...say.flatMap((b) => b.replies.map((r) => r.text)), ...trade.map((r) => r.text)];
+  const joined = texts.join('\n');
+  const cands = qd.nameCandidates(texts).filter((c) => c.toLowerCase() !== display.toLowerCase());
+  const named = (n) => /^#*[A-Z]/.test(n);
+  const byName = new Map();   // display name → { id, name }
+  const pick = (row) => {
+    const dn = qd.displayName(row.name);
+    const prev = byName.get(dn);
+    const here = Math.floor(row.id / 1000) === zoneId;
+    if (!prev || (here && Math.floor(prev.id / 1000) !== zoneId)) byName.set(dn, row);
+  };
+  if (cands.length) {
+    // 60 names per request keeps each URL a few KB; a long flag NPC yields a few hundred.
+    const chunks = [];
+    for (let i = 0; i < Math.min(cands.length, 240); i += 60) chunks.push(cands.slice(i, i + 60));
+    const found = await Promise.all(chunks.map((ch) => {
+      const quoted = ch.flatMap((c) => { const u = c.replace(/ /g, '_'); return [u, '#' + u]; })
+        .map((n) => `"${n.replace(/"/g, '')}"`).join(',');
+      return supabase.select('eqemu_npc_types', `name=in.(${encodeURIComponent(quoted)})&select=id,name&limit=200`).catch(() => []);
+    }));
+    for (const r of found.flat()) if (r && named(r.name) && r.id !== npcId) pick(r);
+    const singles = new Set(cands.filter((c) => !c.includes(' ')).map((c) => c.toLowerCase()));
+    if (singles.size) {
+      const local = await supabase.select('eqemu_npc_types',
+        `id=gte.${zoneId * 1000}&id=lte.${zoneId * 1000 + 999}&select=id,name&limit=1000`).catch(() => []);
+      for (const r of (Array.isArray(local) ? local : [])) {
+        if (!named(r.name) || r.id === npcId) continue;
+        const last = qd.displayName(r.name).split(' ').pop().toLowerCase();
+        if (singles.has(last)) pick(r);
+      }
+    }
+  }
+  const mentionAt = (dn) => {
+    const i = joined.indexOf(dn);
+    return i >= 0 ? i : joined.indexOf(dn.split(' ').pop());
+  };
+  const nextNpcs = [...byName.entries()].sort((a, b) => mentionAt(a[0]) - mentionAt(b[0])).slice(0, 6);
+  const next = [];
+  if (nextNpcs.length) {
+    const ids = nextNpcs.map(([, r]) => r.id);
+    const ents = await supabase.select('eqemu_spawnentry', `npc_id=in.(${ids.join(',')})&select=npc_id,spawngroup_id&limit=500`).catch(() => []);
+    const groups = [...new Set((Array.isArray(ents) ? ents : []).map((e) => e.spawngroup_id))];
+    const pts = groups.length
+      ? await supabase.select('eqemu_spawn2', `spawngroup_id=in.(${groups.join(',')})&select=id,spawngroup_id,zone_short,x,y&order=id.asc&limit=500`).catch(() => [])
+      : [];
+    const zoneShorts = [...new Set((Array.isArray(pts) ? pts : []).map((p) => p.zone_short).filter(Boolean))];
+    const zRows = zoneShorts.length
+      ? await supabase.select('eqemu_zone', `short_name=in.(${zoneShorts.map(encodeURIComponent).join(',')})&select=short_name,long_name&limit=50`).catch(() => [])
+      : [];
+    const zoneLong = new Map((Array.isArray(zRows) ? zRows : []).map((z) => [z.short_name, z.long_name]));
+    for (const [dn, r] of nextNpcs) {
+      const g = new Set((ents || []).filter((e) => e.npc_id === r.id).map((e) => e.spawngroup_id));
+      const p = (pts || []).find((x) => g.has(x.spawngroup_id));
+      next.push({
+        id: r.id, name: dn,
+        zone_short: p ? p.zone_short : null, zone_long: p ? (zoneLong.get(p.zone_short) || p.zone_short) : null,
+        y: p ? Math.round(p.y) : null, x: p ? Math.round(p.x) : null,
+      });
+    }
+  }
+
+  const clip = (s) => (s.length > 600 ? s.slice(0, 597) + '…' : s);
+  return {
+    id: npcId, name: display, zone_short: zone ? zone.short_name : null, script: script ? script.path : null,
+    say: say.slice(0, 30).map((b) => ({ ...b, replies: b.replies.slice(0, 6).map((r) => ({ kind: r.kind, text: clip(r.text) })) })),
+    trade: trade.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })),
+    turnins: (Array.isArray(turnRows) ? turnRows : []).map((t) => ({
+      inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
+      outputs: (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => itemRef(x.item_id)),
+      exp: t.exp_award || null,
+    })).filter((t) => t.inputs.length),
+    next,
+    vendor: (Array.isArray(vendorRows) ? vendorRows : []).filter((v) => items.has(v.item))
+      .map((v) => ({ id: v.item, name: items.get(v.item).name, price: items.get(v.item).price ?? null })),
+  };
+}
+
+async function _handleAgentNpcInteract(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let npcId = NaN;
+  try { npcId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+  if (!Number.isInteger(npcId) || npcId <= 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const hit = _npcInteractCache.get(npcId);
+  let body = hit && Date.now() - hit.at < _NPC_INTERACT_TTL_MS ? hit.body : undefined;
+  if (body === undefined) {
+    body = await _npcInteract(npcId);
+    if (_npcInteractCache.size > 1000) _npcInteractCache.clear();
+    _npcInteractCache.set(npcId, { at: body ? Date.now() : Date.now() - _NPC_INTERACT_TTL_MS + 10 * 60 * 1000, body });
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body ? { ok: true, npc: body } : { ok: true, npc: null }));
+}
+
 async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -20668,6 +20819,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMobInfo(req, res); }
     catch (err) {
       console.error('[mob-info] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Target Info F/Q/V: what to say, hand-ins, who's next, what it sells — by npc id.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/npc-interact')) {
+    try { return await _handleAgentNpcInteract(req, res); }
+    catch (err) {
+      console.error('[npc-interact] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
