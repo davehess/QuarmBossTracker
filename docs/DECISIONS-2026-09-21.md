@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PoP checklist, `/pop/guide`** | **On beta 2026-09-28 (§65).** 46 items (start here, PoK quests, spells, tiers 1–4, Time) tagged Solo / Group / Raid and must-have; ticks saved per character; recorded flags tick themselves | the guild lead: pick layout A (b.wolfpack.quest/pop/guide) or B (`?v=b`); then it graduates to main |
 | **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
 | **PoP board vs the 2026-09-28 patch notes** | **Three fixes on main 2026-09-28 (§63a, bot 3.1.163):** Quarm 168→162 h; Mujaki renamed "the Devourer" so the kill matches; "Avatar of Earth" added to the Rathe Council slot. Five bosses still read 72 h the notes do not name | the guild lead: 66 h for Xanamech, Ture, Mujaki, Askr, Charassis, or keep 72; add Mithaniel Marr and the Manaetic Behemoth to the board before Oct 1? |
 | **The Aten Ha Ra film on wolfpack.quest** | **On main 2026-09-28 (web 1.8.30, bot 3.1.162; §61, §62, §62b):** `/film`, `/film/making` with find-your-raider on top, and a Gallery on every character page, backed by the private `guild-media` store (628 files, 98 characters). The bot posts one card to #raid-chat. Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
@@ -3658,6 +3659,30 @@ load-bearing claim against the source text before anything went into the doc.
   text the same way.
 - Not built: lore lines on `/pop` zone cards, a story block on `/guide/[bossId]`, a flavour line on
   Discord kill cards. Those are UI changes, so options come first.
+
+## 65. The PoP checklist, `/pop/guide` (2026-09-28, web on beta)
+The guild lead: *"we need a page made up for PoP guidance, where to start, what quests are must haves,
+what can be done with a group or a raid or solo. Make this a checkbox type of thing."*
+- **One list, 46 items, 8 sections:** start here, the PoK quests open now (the nine from the
+  2026-09-28 PoK list, easy to hard with PQDI links), spells, tiers one to four, the Plane of Time.
+  Each item says **Solo, Group or Raid** and whether it is a **must-have** (27 are). Items live in
+  `web/lib/popGuide.ts`; the `key` is a storage key and must never be renamed.
+- **Who-you-need is measured, not guessed:** every flag boss from tier one up is 150k HP or more in
+  the NPC catalog, so it is a raid. The group work is tier-one trash, Grummus, the hedge maze
+  (capped at 4 groups per dream by the patch), the Storms medallions (compound trash and minibosses
+  drop them) and the parchment farming. Rows the classic chart has not confirmed for Quarm say
+  "verify at launch".
+- **Ticks are per character and saved.** A hand tick is a row in `pop_guide_ticks` (migration
+  `20260928192730`, applied). A flag Mimic already recorded in `pop_flags` ticks its row by itself
+  and locks it, so the page and `/pop` never disagree. Members only; you see and tick only your own
+  characters (household and alt family, `ownedCharacters`); the action rejects unknown items and
+  other people's characters before it writes.
+- **Two layouts on beta:** A (default) is the path, one list in progression order with Solo / Group /
+  Raid filter chips. B (`?v=b`) opens on "your next five must-haves", then Solo / Group / Raid
+  columns. The pick is the guild lead's; the other goes when it graduates.
+- Found on the way: the patch says Tranquility portals no longer let anyone in on level alone, but
+  `/pop` still labels tiers two and three "Classic: 55 / 62 if unflagged". Label only (access maths
+  ignores it). Not changed here.
 
 
 
