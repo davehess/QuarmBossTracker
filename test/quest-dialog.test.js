@@ -143,6 +143,16 @@ describe('who to talk to next', () => {
     expect(c).not.toContain('I');
   });
 
+  it('a word only capitalised because it starts a sentence is flagged; a mid-sentence name is not', () => {
+    const s = q.sentenceStartOnly([
+      'Some are not even aware of it. Thiran will give you the book.',
+      'Ask Thiran about "Perhaps" later.',
+    ]);
+    expect(s.has('some')).toBe(true);
+    expect(s.has('thiran')).toBe(false);   // also appears mid-sentence
+    expect(s.has('ask')).toBe(true);
+  });
+
   it('catalog names read the way players see them, and map to the script file', () => {
     expect(q.displayName('#Chronographer_Muon')).toBe('Chronographer Muon');
     expect(q.scriptPath('poknowledge', 'Seer_Mal_Nae`Shi')).toBe('poknowledge/Seer_Mal_Nae-Shi.lua');
