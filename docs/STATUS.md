@@ -145,6 +145,13 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Missing spells: vendor links + 📍 `/map Y X` (web 1.8.32, main 2026-09-28).** Vendor and dropper
   names open `/db/npc/<id>`; each vendor copies its `/map` for that zone. `test/spell-sources.test.js`.
   `DECISIONS-2026-09-21.md` §67.
+- **✅ Quest NPC lines are no longer DM'd as tells (bot 3.1.165, main 2026-09-28).** Grand Librarian
+  Maelin's script prints "Maelin tells you, '…'" itself; the bot now drops any incoming tell whose sender
+  and text match a line a quest script prints (`eqemu_quest_scripts`). The 8 stored rows were deleted.
+  `test/tells-scripted-npc.test.js`. `DECISIONS-2026-09-21.md` §69.
+- **⏳ Tells are not captured with Zeal `/abc 2` (found 2026-09-28).** "Chat and Log" writes `[Fr] [X]: …`
+  into the log, which the agent's incoming-tell pattern never matches. Needs a second pattern in the agent
+  (beta), mapped to the same fields. `DECISIONS-2026-09-21.md` §69.
 - **🟡 UI pack options are checkboxes (Mimic beta, 2026-09-28).** None on by default; tick any mix; clashing
   options grey out and name the shared window; the pack's own files are kept so an untick restores them;
   updates keep your ticks. Fixes "Bank - Default layout" being lost to the pack's all-bags bank.

@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'npc-tells-2026-09-28',
+    title: 'Bot 3.1.165',
+    version: 'Web 1.8.33 · Bot 3.1.165',
+    date: '2026-09-28',
+    headline: 'Quest NPCs no longer arrive as tells.',
+    features: [],
+    fixes: [
+      'Some quest NPCs, like Grand Librarian Maelin in the Plane of Knowledge library, print their lines the way a tell looks. Those lines were sent to you as Discord DMs and listed with your tells. They are not any more, and the ones already stored are gone. Real tells from players are untouched.',
+    ],
+  },
+  {
     key: 'spells-map-2026-09-28',
     title: 'Web 1.8.32',
     version: 'Web 1.8.32',
@@ -52,6 +63,7 @@ export const releases: Release[] = [
         blurb: 'Click it to copy /map with the vendor’s location in that zone, then paste it into EQ. Works in the By-level list and the Shopping list.',
       },
     ],
+    fixes: [],
   },
   {
     key: 'pop-checklist-2026-09-28',

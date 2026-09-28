@@ -18341,6 +18341,44 @@ async function relayWebFeedback(readyClient) {
 // linked Discord user (characters.discord_id → wolfpack_members → discord
 // user). Outgoing tells are stored but NOT DMed (the user is already at their
 // keyboard, that would be noise). DM failures are non-fatal.
+//
+// NPC lines that only LOOK like tells (the guild lead, 2026-09-28: "this is an NPC
+// message, not a tell"). A quest script can print its own chat line with
+// e.other:Message(0, "Maelin tells you, '...'"), which lands in the log byte
+// for byte like a /tell; Grand Librarian Maelin's PoK script does it 17 times,
+// on every PoP flag step. The agent's NPC-sender rule compares the full name
+// ("Grand Librarian Maelin") and misses the short one, and a name rule alone
+// would also drop real players who share an NPC's name. The script's own text
+// is the exact signal: every (sender, text) pair a script prints as a tell,
+// read from our eqemu_quest_scripts mirror. Cached 6h; fail-open, so a failed
+// read drops nothing.
+const _scriptedTellKey = (sender, text) =>
+  `${String(sender || '').trim().toLowerCase()}|${String(text || '').replace(/\s+/g, ' ').trim()}`;
+let _scriptedTellCache = { at: 0, set: new Set(), loading: null };
+async function _scriptedNpcTells() {
+  if (Date.now() - _scriptedTellCache.at < 6 * 3600 * 1000) return _scriptedTellCache.set;
+  if (_scriptedTellCache.loading) return _scriptedTellCache.loading;
+  _scriptedTellCache.loading = (async () => {
+    try {
+      const rows = await require('./utils/supabase').select('eqemu_quest_scripts',
+        'select=body&body=like.*tells%20you%2C*&limit=500');
+      const set = new Set();
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        for (const m of String(r.body || '').matchAll(/"([A-Za-z`' ]+?) tells you, '([^"]*)'"/g)) {
+          set.add(_scriptedTellKey(m[1], m[2]));
+        }
+      }
+      _scriptedTellCache = { at: Date.now(), set, loading: null };
+    } catch (err) {
+      console.warn('[tells] scripted NPC lines unavailable:', err?.message);
+      // Keep what we had; try again in 30 minutes.
+      _scriptedTellCache = { at: Date.now() - 5.5 * 3600 * 1000, set: _scriptedTellCache.set, loading: null };
+    }
+    return _scriptedTellCache.set;
+  })();
+  return _scriptedTellCache.loading;
+}
+
 async function _handleAgentTells(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -18375,7 +18413,9 @@ async function _handleAgentTells(req, res) {
     if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
     return false;
   };
-  const tells = tellsRaw.filter(t => !(t && t.direction === 'incoming' && _isNpcTellText(t.text)));
+  const scriptedNpc = await _scriptedNpcTells();
+  const tells = tellsRaw.filter(t => !(t && t.direction === 'incoming'
+    && (_isNpcTellText(t.text) || scriptedNpc.has(_scriptedTellKey(t.other, t.text)))));
   // Per-machine DM pause set from the Mimic tray. When in the future, we still
   // STORE the tells (so /me/tells + the local card stay current) but skip the
   // Discord DM relay — same effect as the per-user snooze, but driven from the
