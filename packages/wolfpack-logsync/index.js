@@ -31830,6 +31830,37 @@ const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)>
 const PVP_BOSS_KILL_GUILDLESS_RX = /^(\w+) has killed (.+?)(?: in (.+?))?!$/;
 const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?)(?: in (.+?))?!$/;
 
+// Rallosian Glory kill broadcast (Quarm PoP patch, 2026-09-28): "[PVP] Rallos Zek watches as Myto
+// spills Songfin's blood in The Fungus Grove, but finds no worthy conquest." No guilds on the line,
+// so the bot fills them in from /who and the roster. Only the "no worthy conquest" ending has been
+// seen; any other ending is kept verbatim as `gloryText` and `glory` stays null (unknown) rather than
+// being guessed. Rallos lines that do not fit this shape land in the unmatched capture below.
+// The zone is split off at the clause (", but …", ", and …"), not the first comma: long zone names
+// carry commas of their own ("Doomfire, the Burning Lands").
+const PVP_GLORY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek watches as (\w+) spills (\w+)'s blood in (.+?)[.!]?\s*$/;
+const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
+function parseGloryKill(line) {
+  if (line.indexOf('Rallos Zek watches as') === -1) return null;   // cheap gate
+  const m = PVP_GLORY_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const rest = m[4].trim();
+  const clause = PVP_GLORY_CLAUSE_RX.exec(rest);
+  const zone = (clause ? clause[1] : rest).trim();
+  const gloryText = clause ? clause[2].trim() : null;
+  return {
+    ts: ts ? ts.toISOString() : new Date().toISOString(),
+    text: line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim(),
+    killType: 'pvp',
+    source: 'rallos_glory',
+    killer: m[2], killerGuild: null,
+    victim: m[3], victimGuild: null,
+    zone,
+    glory: gloryText && /no worthy conquest/i.test(gloryText) ? false : null,
+    gloryText,
+  };
+}
+
 // Player's own EQ guild, observed from any Druzzil-Ro guild broadcast that
 // fires on this log. Druzzil only ever addresses YOUR guild ("Druzzil Ro
 // tells the guild, '<X of Wolf Pack>...'"), so the killerGuild captured in
@@ -31952,6 +31983,10 @@ function parsePvpBroadcast(line) {
     return null;
   }
 
+  // Rallosian Glory broadcast (PoP patch): "[PVP] Rallos Zek watches as X spills Y's blood in Z, …".
+  const glory = parseGloryKill(line);
+  if (glory) return glory;
+
   // Path B: bare kill body in the in-game [PVP] channel — no Druzzil prefix.
   // Order mirrors Path A: most-specific first, broadest active-voice last.
   const ppkBare = PVP_BARE_PLAYER_RX.exec(line);
@@ -32023,7 +32058,9 @@ const PVP_UNMATCHED_FILE = path.join(__dirname, 'logsync.pvp-unmatched.json');
 const PVP_UNMATCHED_CAP  = 200;
 function captureUnmatchedPvpKill(line) {
   if (!/PVP Druzzil Ro BROADCASTS|\[PVP\]/.test(line)) return;   // broadcast context only
-  if (!/\bhas killed\b/.test(line)) return;                       // kill-shaped only
+  // Kill-shaped, or any Rallosian Glory line (the PoP patch's new broadcast family: rank, forfeit,
+  // and whatever a worthy kill says — none of those phrasings has been seen yet).
+  if (!/\bhas killed\b|Rallos Zek|\bGlory\b/.test(line)) return;
   if (/\(Instanced\)/i.test(line)) return;                        // instance kills are handled elsewhere
   console.warn(`[pvp-unmatched] kill-shaped broadcast not parsed: ${line.trim()}`);
   try {
