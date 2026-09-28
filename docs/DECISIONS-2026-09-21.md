@@ -3514,6 +3514,16 @@ bucket now holds 676 objects, about 4.1 GB (PNG added to its allowed types). The
 its own next run** on a one-minute timer when it pauses, and a script lock stops two runs overlapping. A
 mocked end-to-end run landed all 630 files, and a second run added nothing.
 
+**Then every attempted version (same night).** The guild lead: *"add all of the other versions ... each
+attempted version."* The earlier cut had left out the smoothed copies and composites; those are versions
+too, so four more folders went in: `13 Name cards, every round` (all six rounds, 506 clips),
+`14 Smoothed animations (the blurry ones)` (118), `15 Class intro versions` (47) and `16 Other versions`
+(28). Still left out: files byte-identical to one already in (the hash-named first stills), the same cut at
+a second resolution, frame grabs and contact sheets. The bucket now holds 1,375 objects, 6.6 GB. The
+script's file list is packed one line per file (folder numbers, not names), which brings it to 74 KB for
+1,329 files, below the 82 KB version already saved. Saving new code while the timer chain runs is safe;
+the next run reads the new list.
+
 ## 62. Guild media: long-term storage per character; the making-of page and character galleries (2026-09-28, web on beta)
 The guild lead asked for everything behind the film on wolfpack.quest: *"with this process, all of the
 pronunciations, everything that went into making it."* Then, mid-build: *"we should have a gallery
