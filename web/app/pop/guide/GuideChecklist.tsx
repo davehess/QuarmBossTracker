@@ -1,14 +1,16 @@
 'use client';
 
-// The PoP checklist (see page.tsx). Both layouts on beta share this state: which character, which
-// filters, and the optimistic ticks. Ticking calls setGuideTick; a failure puts the box back and says why.
+// The PoP checklist (see page.tsx): which character, which filters, and the optimistic ticks. Ticking
+// calls setGuideTick; a failure puts the box back and says why. Items named in a step show the site's
+// item card on hover; every /say and /map line has a copy button.
 
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
-  GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, recordedKeys, tickedKeys,
+  GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, splitItems, tickedKeys,
   type GuideItem, type Who,
 } from '@/lib/popGuide';
+import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import { setGuideTick } from './actions';
 
 export type GuideChar = { name: string; cls: string | null; isMain: boolean; manual: string[]; flags: string[] };
@@ -17,7 +19,7 @@ const WHO_ICON: Record<Who, string> = { solo: '🧍', group: '👥', raid: '⚔'
 const WHOS: Who[] = ['solo', 'group', 'raid'];
 
 export default function GuideChecklist(
-  { layout, chars, initial }: { layout: 'path' | 'who'; chars: GuideChar[]; initial: string | null },
+  { chars, initial, cards }: { chars: GuideChar[]; initial: string | null; cards: Record<number, ItemCard> },
 ) {
   const [charName, setCharName] = useState<string | null>(initial);
   const [manualBy, setManualBy] = useState<Record<string, Set<string>>>(
@@ -55,21 +57,16 @@ export default function GuideChecklist(
     setError(null);
     start(async () => {
       const res = await setGuideTick(name, item.key, next);
-      if (!res.ok) { apply(!next); setError(`Could not save “${item.title}”: ${res.error ?? 'unknown error'}`); }
+      if (!res.ok) { apply(!next); setError(`Could not save “${item.title.replace(/\[\[([^\]#]+)#\d+\]\]/g, '$1')}”: ${res.error ?? 'unknown error'}`); }
     });
   }
 
   const visible = (i: GuideItem) =>
-    (!mustOnly || i.must) && (!hideDone || !done.has(i.key)) && (layout === 'who' || who === 'all' || i.who === who);
+    (!mustOnly || i.must) && (!hideDone || !done.has(i.key)) && (who === 'all' || i.who === who);
 
   const mustTotal = GUIDE_ITEMS.filter(i => i.must).length;
   const mustDone = GUIDE_ITEMS.filter(i => i.must && done.has(i.key)).length;
   const allDone = GUIDE_ITEMS.filter(i => done.has(i.key)).length;
-
-  const row = (i: GuideItem, compact = false) => (
-    <Row key={i.key} item={i} checked={done.has(i.key)} recorded={recorded.has(i.key)}
-         disabled={!char} onToggle={toggle} compact={compact} />
-  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -101,7 +98,7 @@ export default function GuideChecklist(
           <div className="h-full bg-gold" style={{ width: `${Math.round((mustDone / Math.max(1, mustTotal)) * 100)}%` }} />
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
-          {layout === 'path' && (['all', ...WHOS] as const).map(w => (
+          {(['all', ...WHOS] as const).map(w => (
             <button key={w} type="button" onClick={() => setWho(w)} aria-pressed={who === w}
                     className={`px-2 py-0.5 rounded border ${who === w ? 'border-gold text-gold' : 'border-border text-dim hover:text-text'}`}>
               {w === 'all' ? 'All' : `${WHO_ICON[w]} ${WHO_LABEL[w]}`}
@@ -116,76 +113,82 @@ export default function GuideChecklist(
             Hide done
           </label>
         </div>
+        <p className="text-[11px] text-dim">
+          ⧉ copies a line for the EQ chat box: <code className="text-text">/say</code> for what to tell an NPC,
+          <code className="text-text"> /map Y X</code> to drop a Zeal map marker on them.
+        </p>
         {error && <p className="text-xs text-red" role="alert">{error}</p>}
       </section>
 
-      {layout === 'path' ? (
-        // ── A: the path — one list in progression order ─────────────────────
-        GUIDE_SECTIONS.map(s => {
-          const items = GUIDE_ITEMS.filter(i => i.section === s.key);
-          const shown = items.filter(visible);
-          if (shown.length === 0) return null;
-          const n = items.filter(i => done.has(i.key)).length;
-          return (
-            <section key={s.key} className="bg-panel border border-border rounded-lg p-3">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm text-text font-semibold">{s.title}</h2>
-                <span className={`text-xs ${n === items.length ? 'text-green' : 'text-dim'}`}>{n}/{items.length}</span>
-              </div>
-              <p className="text-xs text-dim mb-1">{s.blurb}</p>
-              <ul>{shown.map(i => row(i))}</ul>
-            </section>
-          );
-        })
-      ) : (
-        // ── B: who's with you — next must-haves, then Solo / Group / Raid ───
-        <>
-          {(() => {
-            const next = GUIDE_ITEMS.filter(i => i.must && !done.has(i.key)).slice(0, 5);
-            return (
-              <section className="bg-panel border border-gold/50 rounded-lg p-3">
-                <h2 className="text-sm text-gold font-semibold">Your next must-haves</h2>
-                {next.length === 0
-                  ? <p className="text-sm text-green mt-1">Every must-have is done.</p>
-                  : <ul>{next.map(i => row(i))}</ul>}
-              </section>
-            );
-          })()}
-          <div className="grid gap-4 md:grid-cols-3">
-            {WHOS.map(w => {
-              const items = GUIDE_ITEMS.filter(i => i.who === w);
-              const shown = items.filter(visible);
-              const n = items.filter(i => done.has(i.key)).length;
-              let lastSection = '';
-              return (
-                <section key={w} className="bg-panel border border-border rounded-lg p-3 min-w-0">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h2 className="text-sm text-text font-semibold">{WHO_ICON[w]} {WHO_LABEL[w]}</h2>
-                    <span className={`text-xs ${n === items.length ? 'text-green' : 'text-dim'}`}>{n}/{items.length}</span>
-                  </div>
-                  <ul>
-                    {shown.flatMap(i => {
-                      const title = GUIDE_SECTIONS.find(s => s.key === i.section)?.title ?? '';
-                      const head = title !== lastSection;
-                      lastSection = title;
-                      return [
-                        ...(head ? [<li key={`h-${i.key}`} className="text-[10px] uppercase tracking-wide text-dim mt-3">{title}</li>] : []),
-                        row(i, true),
-                      ];
-                    })}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
-        </>
-      )}
+      {GUIDE_SECTIONS.map(s => {
+        const items = GUIDE_ITEMS.filter(i => i.section === s.key);
+        const shown = items.filter(visible);
+        if (shown.length === 0) return null;
+        const n = items.filter(i => done.has(i.key)).length;
+        return (
+          <section key={s.key} className="bg-panel border border-border rounded-lg p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm text-text font-semibold">{s.title}</h2>
+              <span className={`text-xs ${n === items.length ? 'text-green' : 'text-dim'}`}>{n}/{items.length}</span>
+            </div>
+            <p className="text-xs text-dim mb-1">{s.blurb}</p>
+            <ul>
+              {shown.map(i => (
+                <Row key={i.key} item={i} checked={done.has(i.key)} recorded={recorded.has(i.key)}
+                     disabled={!char} onToggle={toggle} cards={cards} />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
     </div>
   );
 }
 
-function Row({ item, checked, recorded, disabled, onToggle, compact }: {
-  item: GuideItem; checked: boolean; recorded: boolean; disabled: boolean; compact: boolean;
+function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCard> }) {
+  return (
+    <>
+      {splitItems(text).map((p, n) => ('item' in p
+        ? (
+          // Inside the checkbox label, a click on the item must not tick the box (links in the card still work).
+          <span key={n} onClick={e => { if (!(e.target as HTMLElement).closest('a')) e.preventDefault(); }}>
+            <ItemHover card={cards[p.item.id]} fallbackName={p.item.name}
+                       className="text-blue underline decoration-dotted underline-offset-2 cursor-help">
+              {p.item.name}
+            </ItemHover>
+          </span>
+        )
+        : <span key={n}>{p.text}</span>))}
+    </>
+  );
+}
+
+function CopyChip({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older browsers or a denied permission: fall back to a selection copy.
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } finally { ta.remove(); }
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <button type="button" onClick={copy} title={`Copy “${text}”`}
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border bg-bg text-text hover:border-blue font-mono text-[11px] max-w-full">
+      <span className="truncate">{label ?? text}</span>
+      <span className={copied ? 'text-green' : 'text-dim'} aria-live="polite">{copied ? '✓' : '⧉'}</span>
+    </button>
+  );
+}
+
+function Row({ item, checked, recorded, disabled, onToggle, cards }: {
+  item: GuideItem; checked: boolean; recorded: boolean; disabled: boolean; cards: Record<number, ItemCard>;
   onToggle: (item: GuideItem, next: boolean) => void;
 }) {
   const id = `guide-${item.key}`;
@@ -198,21 +201,41 @@ function Row({ item, checked, recorded, disabled, onToggle, compact }: {
              title={recorded ? 'Mimic recorded this flag for you' : undefined} />
       <div className="flex-1 min-w-0">
         <label htmlFor={id} className={`text-sm cursor-pointer ${checked ? 'text-dim' : 'text-text'}`}>
-          {item.title}
+          <WithItems text={item.title} cards={cards} />
         </label>
         <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px]">
-          {!compact && <span className="px-1.5 rounded border border-border text-dim">{WHO_ICON[item.who]} {WHO_LABEL[item.who]}</span>}
+          <span className="px-1.5 rounded border border-border text-dim">{WHO_ICON[item.who]} {WHO_LABEL[item.who]}</span>
           {item.must && <span className="px-1.5 rounded border border-gold/60 text-gold">★ must</span>}
           {recorded && <span className="px-1.5 rounded border border-green/60 text-green">✓ recorded</span>}
           {item.check && <span className="px-1.5 rounded border border-border text-dim" title="Classic detail, not yet confirmed on Quarm">verify at launch</span>}
         </div>
         {(item.detail || item.link) && (
           <p className="text-xs text-dim mt-0.5">
-            {item.detail}{' '}
+            {item.detail && <WithItems text={item.detail} cards={cards} />}{' '}
             {item.link && (external
               ? <a href={item.link.href} target="_blank" rel="noopener noreferrer" className="text-blue hover:underline whitespace-nowrap">{item.link.label} ↗</a>
               : <Link href={item.link.href} className="text-blue hover:underline whitespace-nowrap">{item.link.label} →</Link>)}
           </p>
+        )}
+        {item.says && item.says.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px]">
+            {item.says.map((s, n) => (
+              <span key={n} className="inline-flex flex-wrap items-center gap-1 min-w-0 max-w-full">
+                {(n === 0 || item.says![n - 1].to !== s.to) && <span className="text-dim">to {s.to}:</span>}
+                <CopyChip text={sayCommand(s)} />
+              </span>
+            ))}
+          </div>
+        )}
+        {item.where && item.where.length > 0 && (
+          <div className="flex flex-col gap-1 mt-1.5 text-[11px]">
+            {item.where.map((l, n) => (
+              <span key={n} className="flex flex-wrap items-center gap-1.5 min-w-0">
+                <span className="text-dim">📍 {l.npc}, {ZONE_NAMES[l.zone]}{l.note ? ` (${l.note})` : ''}</span>
+                <CopyChip text={mapCommand(l)} />
+              </span>
+            ))}
+          </div>
         )}
       </div>
     </li>

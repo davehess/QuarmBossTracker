@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import {
-  GUIDE_ITEMS, GUIDE_SECTIONS, GUIDE_KEYS, tickedKeys, recordedKeys, unknownFlags,
+  GUIDE_ITEMS, GUIDE_SECTIONS, GUIDE_KEYS, ZONE_NAMES, tickedKeys, recordedKeys, unknownFlags,
+  mapCommand, sayCommand, splitItems, guideItemIds,
 } from '../web/lib/popGuide.ts';
 
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -35,6 +36,42 @@ describe('the checklist catalog', () => {
 
   it('links PQDI on www only (the bare domain resets the connection)', () => {
     for (const i of GUIDE_ITEMS) if (i.link?.href.includes('pqdi.cc')) expect(i.link.href).toMatch(/^https:\/\/www\.pqdi\.cc\//);
+  });
+});
+
+describe('copy lines and item cards', () => {
+  it('writes /map as Y then X, the order /loc prints (PQDI shows the Seer at Y -42, X -224)', () => {
+    const seer = GUIDE_ITEMS.find(i => i.key === 'start_flag_fixers').where.find(l => l.npc === 'Seer Mal Nae`Shi');
+    expect(mapCommand(seer)).toBe('/map -42 -224');
+    expect(sayCommand({ text: 'guided meditation' })).toBe('/say guided meditation');
+  });
+
+  it('gives every location a known zone and whole-number coordinates', () => {
+    for (const i of GUIDE_ITEMS) for (const l of i.where ?? []) {
+      expect(ZONE_NAMES[l.zone], `${i.key} ${l.npc}`).toBeTruthy();
+      expect(Number.isInteger(l.y) && Number.isInteger(l.x), `${i.key} ${l.npc}`).toBe(true);
+    }
+  });
+
+  it('never offers a phrase that edits flags or starts with a slash', () => {
+    for (const i of GUIDE_ITEMS) for (const s of i.says ?? []) {
+      expect(s.text.trim(), i.key).not.toBe('');
+      expect(s.text.startsWith('/'), i.key).toBe(false);
+      // The Seer also answers "delete", which clears flags. It must never be one click away.
+      expect(/\bdelete\b/i.test(s.text), i.key).toBe(false);
+    }
+  });
+
+  it('parses [[Item#id]] tokens, and leaves no half-written token behind', () => {
+    expect(splitItems('Loot the [[Globe of Dancing Flame#29147]].')).toEqual([
+      { text: 'Loot the ' }, { item: { name: 'Globe of Dancing Flame', id: 29147 } }, { text: '.' },
+    ]);
+    for (const i of GUIDE_ITEMS) for (const t of [i.title, i.detail ?? '']) {
+      const plain = splitItems(t).filter(p => 'text' in p).map(p => p.text).join('');
+      expect(plain, i.key).not.toMatch(/\[\[|\]\]/);
+    }
+    const ids = guideItemIds();
+    for (const id of [28745, 29165, 17186, 31842, 25596]) expect(ids).toContain(id);
   });
 });
 
