@@ -138,10 +138,11 @@ next touch one rather than assuming a missing row means a missing doc.
   Solo / Group / Raid and must-have; copy buttons for every `/say` (script-checked) and `/map Y X`
   (placed spawns); item cards on hover; ticks saved per character (`pop_guide_ticks`), recorded flags
   tick themselves. `test/pop-guide.test.js`. `DECISIONS-2026-09-21.md` §65, §65a.
-- **🟡 Rallosian Glory PvP kills (agent 3.7.36 beta, bot 3.1.164 main, 2026-09-28).** The PoP patch's
-  "Rallos Zek watches as X spills Y's blood" line is parsed; the bot fills guilds from `/who` + roster and
-  posts one card per kill across both wordings. Stable users need a stable Mimic cut.
-  `test/pvp-glory.test.js`, `test/pvp-glory-bot.test.js`. `DECISIONS-2026-09-21.md` §66.
+- **✅ Rallosian Glory PvP kills (agent 3.7.36, stable in Mimic 2.7.3; bot 3.1.164, 2026-09-28).** The PoP
+  patch's "Rallos Zek watches as X spills Y's blood" line is parsed; the bot fills guilds from `/who` +
+  roster and posts one card per kill across both wordings. Kills before the uploading machines updated
+  (about 19:50–21:30 UTC that day) were missed; Opt-in Logs recovers them (§66a).
+  `test/pvp-glory.test.js`, `test/pvp-glory-bot.test.js`. `DECISIONS-2026-09-21.md` §66, §66a.
 - **✅ Missing spells: vendor links + 📍 `/map Y X` (web 1.8.32, main 2026-09-28).** Vendor and dropper
   names open `/db/npc/<id>`; each vendor copies its `/map` for that zone. `test/spell-sources.test.js`.
   `DECISIONS-2026-09-21.md` §67.
