@@ -1567,12 +1567,14 @@
   },
   {
     "id": "mujaki_the_ravager",
-    "name": "Mujaki the Ravager",
+    "name": "Mujaki the Devourer",
     "zone": "Plane of Nightmare",
     "expansion": "PoP",
     "timerHours": 72,
     "nicknames": [
       "mujaki",
+      "devourer",
+      "mujaki the ravager",
       "ravager"
     ],
     "emoji": "😨",
@@ -1692,7 +1694,9 @@
     "nicknames": [
       "rathe",
       "council",
-      "rathe council"
+      "rathe council",
+      "avatar of earth",
+      "the avatar of earth"
     ],
     "emoji": "🌍",
     "pqdiUrl": ""
@@ -1758,7 +1762,7 @@
     "name": "Quarm",
     "zone": "Plane of Time",
     "expansion": "PoP",
-    "timerHours": 168,
+    "timerHours": 162,
     "nicknames": [
       "quarm",
       "time boss"
