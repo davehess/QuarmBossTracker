@@ -102,11 +102,16 @@ function parseDialog(body) {
   const branches = [];
   let m;
   while ((m = COND_RX.exec(say))) {
-    const kws = [...m[1].matchAll(/findi\(\s*(["'])(.+?)\1\s*\)/g)]
-      .filter((k) => !/\bnot\s+[\w.:]*$/.test(m[1].slice(0, k.index)))
-      .map((k) => k[2].trim())
-      .filter(Boolean);
-    if (kws.length) branches.push({ start: m.index, at: m.index + m[0].length, cond: m[1], keywords: [...new Set(kws)] });
+    const hits = [...m[1].matchAll(/findi\(\s*(["'])(.+?)\1\s*\)/g)]
+      .filter((k) => !/\bnot\s+[\w.:]*$/.test(m[1].slice(0, k.index)));
+    const kws = hits.map((k) => k[2].trim()).filter(Boolean);
+    // "and" between two findi calls means the line must hold every word: the Seer's
+    // findi("unlock") and findi("memories") ignores a bare "unlock".
+    const needsAll = hits.some((k, i) => i > 0 && /\band\b/.test(m[1].slice(hits[i - 1].index + hits[i - 1][0].length, k.index)));
+    if (kws.length) {
+      const keywords = [...new Set(kws)];
+      branches.push({ start: m.index, at: m.index + m[0].length, cond: m[1], keywords, sayText: needsAll ? keywords.join(' ') : keywords[0] });
+    }
   }
   // GM-only branches (the Seer's "delete" wipes every PoP flag, gated on GetGM() and
   // Admin() >= 80) are not something a player can say.
@@ -119,6 +124,7 @@ function parseDialog(body) {
     const hints = [...new Set(replies.flatMap((r) => [...r.text.matchAll(/\[([^\]]{1,40})\]/g)].map((h) => h[1].trim())))];
     return {
       keywords: b.keywords,
+      say: b.sayText,        // what to put after /say: one keyword, or all of them when all are needed
       replies,
       // Only answers while you sit (the Seer's meditation and "unlock my memories"; the guild
       // lead, 2026-09-28: "i had to sit down first").
