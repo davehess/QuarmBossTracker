@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-274-2026-09-28',
+    title: 'Mimic 2.7.4',
+    version: 'Mimic 2.7.4 · Agent 3.7.37',
+    date: '2026-09-28',
+    headline: 'UI pack layouts: tick what you want, then press Apply.',
+    features: [
+      {
+        name: 'An Apply button for UI pack layouts',
+        blurb: 'Tick the layouts you want and press Apply; nothing changes until you do, and it tells you how many changes are waiting. Untick all clears the boxes.',
+      },
+    ],
+    fixes: [
+      'If an earlier Mimic had applied a UI pack layout, almost every layout box was greyed out and Bank - Default layout could not be ticked. Only layouts that really change the same window block each other now.',
+    ],
+  },
+  {
     key: 'seer-sit-2026-09-28',
     title: 'Web 1.8.36',
     version: 'Web 1.8.36 · Bot 3.1.167',
