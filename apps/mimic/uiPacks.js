@@ -238,11 +238,21 @@ function _readDefaults(packRoot) {
 }
 
 // Every choice in the installed pack. A file counts when EQ would read it: it
-// is a UI asset type, or the main folder has one by that name (dzbars.png
-// does; Screenshot.png and Readme.txt do not). `effective` drops files that
-// are byte-for-byte the default.
+// is a UI asset type, or the pack's own main folder ships one by that name
+// (dzbars.png does; Screenshot.png and Readme.txt do not). `effective` drops
+// files that are byte-for-byte the default.
+//
+// "The pack's own main folder" is the release zip's, from the stored defaults,
+// not what is on disk now: the old Apply copied each option's Screenshot.png
+// into the main folder, so on a member's machine the disk said every option
+// changed Screenshot.png and every box clashed with every other (the guild
+// lead's screenshot, 2026-09-28). Only before the defaults are fetched does the
+// disk decide, with screenshots and readmes named out.
+const NOT_LAYOUT_RX = /^(?:screenshot|readme)/i;
 function _choices(packRoot, optDir, defaults) {
-  const inMain = n => fs.existsSync(path.join(packRoot, n));
+  const inMain = n => (defaults
+    ? !!(defaults.get(n.toLowerCase()) || {}).data
+    : !NOT_LAYOUT_RX.test(n) && fs.existsSync(path.join(packRoot, n)));
   const isLayout = n => !OWN_FILE_RX.test(n) && (ASSET_RX.test(n) || inMain(n));
   const filesIn = d => _ls(d, false).filter(isLayout).map(n => ({ key: n.toLowerCase(), name: n, src: path.join(d, n) }));
   const out = [];

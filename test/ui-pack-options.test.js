@@ -181,6 +181,22 @@ describe('updating the pack', () => {
   });
 });
 
+// The guild lead's machine, 2026-09-28: the old Apply copied every file of an option, its
+// Screenshot.png included, into the main folder. The disk then said every option changed
+// Screenshot.png, so nearly every box clashed with every other and Bank could not be ticked.
+describe('a pack folder the old Apply littered', () => {
+  it('a screenshot sitting in the main folder is still not a layout file', () => {
+    fs.writeFileSync(path.join(root(), 'Screenshot.png'), 'a picture');
+    fs.writeFileSync(path.join(root(), 'EQUI_HotButtonWnd.xml'), 'HOTBAR BAG1');   // Hotbar applied the old way
+    const s = state();
+    expect(s.choices.flatMap(c => c.files)).not.toContain('Screenshot.png');
+    expect(choice('Bank - Default layout').conflicts.map(c => c.id)).toEqual(['QQ Layout']);
+    expect(on()).toEqual(['Hotbar + Bag 1 slots']);
+    expect(ui.setOptions(eq, pack, ['Bank - Default layout', 'Hotbar + Bag 1 slots']).applied)
+      .toEqual(['Bank - Default layout', 'Hotbar + Bag 1 slots']);
+  });
+});
+
 describe('a pack installed before Mimic kept its default files', () => {
   it('shows no box as on and refuses to change files until the defaults are fetched', () => {
     ui.setOptions(eq, pack, ['Hotbar + Bag 1 slots']);
