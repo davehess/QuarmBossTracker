@@ -38,18 +38,18 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'willamina-chain-2026-09-28',
-    title: 'Web 1.8.34',
-    version: 'Web 1.8.34',
+    title: 'Web 1.8.35',
+    version: 'Web 1.8.35',
     date: '2026-09-28',
-    headline: 'The PoP checklist shows Willamina’s whole errand chain, starting with the one thing you actually need.',
+    headline: 'The PoP checklist shows Willamina’s whole errand chain, starting where you actually start: Agrakath Theric.',
     features: [
       {
-        name: 'Start with the book',
-        blurb: 'Willamina’s Needles runs through ten NPCs in the Plane of Knowledge, and all of it hangs on one book lying upstairs in the library. The step now says so up front, with /map to the spot.',
+        name: 'Start at Agrakath Theric',
+        blurb: 'Willamina’s Needles runs through ten NPCs in the Plane of Knowledge, and all of it hangs on one book lying upstairs in the library. The step now opens at Agrakath, who wants that book, with /say and /map for him and /map to the book.',
       },
       {
         name: 'Every hand-in, in order',
-        blurb: 'Open “Hand-ins” to see who takes what and what they give back, each with /map. Open “The story” for who sends you where and what to /say. Both fold away when you don’t need them.',
+        blurb: 'Open “Hand-ins” to see who takes what and what they give back, each with /map, from Agrakath back to Willamina. The story of who sends you where is there too, folded away, if you want it.',
       },
     ],
     fixes: [],

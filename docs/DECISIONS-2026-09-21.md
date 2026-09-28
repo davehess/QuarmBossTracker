@@ -116,7 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
 | **Target Info F/Q/V (Faction · Quest · Vendor)** | **On beta 2026-09-28 (§70; bot 3.1.166 main, agent 3.7.37).** What to say with `/say` chips, the hand-in, who's next with `/map`, and a merchant's stock | beta testers: target a PoK quest NPC and a merchant and try the chips; the guild lead: say when it should go to stable |
-| **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.34).** Starts with the book in Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
+| **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.35).** Starts at Agrakath Theric with the book from Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
 | **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
 | **UI pack options as checkboxes** | **On beta 2026-09-28 (§68).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | beta testers with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank; the guild lead: say when it should go to stable |
 | **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
@@ -3837,6 +3837,11 @@ quest chain with minimize sections there. Highlight stages where you will have i
   the debt"), written as sentences that contain them.
 - The chain is data on the step (`GuideItem.chain`), so other chained steps can use the same view; a
   test holds that each hand-in gives what the one before it got.
+- **It starts at Agrakath Theric (web 1.8.35).** The guild lead: *"That quest chain really looks like it
+  should start from … Agrakath Theric"*. The first hand-in is his, so the step opens there: the PQDI link
+  is his, and the "Start here" box carries his `/say erase the debt`, his `/map` and the book's `/map`. The
+  story, which runs from Willamina's end, is labelled optional. Step-level `/say` and `/map` chips were
+  dropped for this step because the box already carries them.
 
 
 

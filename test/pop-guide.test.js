@@ -92,11 +92,18 @@ describe('quest chains', () => {
     }
   });
 
-  it('Willamina\'s runs through Bolcen, starts with the book in Myrist, and ends with the manual', () => {
+  // "That quest chain really looks like it should start from … Agrakath Theric" (the guild lead,
+  // 2026-09-28): the first hand-in is his, so the step opens there, with the book to fetch.
+  it('Willamina\'s starts at Agrakath Theric with the book from Myrist, runs through Bolcen, and ends with the manual', () => {
     const w = GUIDE_ITEMS.find(i => i.key === 'start_traveler_manual');
-    expect(w.says.some(s => s.to === 'Bolcen Tendag' && s.text === 'needles')).toBe(true);
+    expect(w.chain.first.at.npc).toBe('Agrakath Theric');
+    expect(w.chain.first.at.npc).toBe(w.chain.handins[0].at.npc);
+    expect(w.chain.first.say).toEqual(['erase the debt']);
+    expect(w.link.href).toMatch(/\/npc\/202058$/);
+    expect(w.where).toBeUndefined();   // the Start here box is the one place to look
     expect(tokenIds(w.chain.first.text)).toEqual([28188]);
-    expect(mapCommand(w.chain.first.at)).toBe('/map -94 973');
+    expect(mapCommand(w.chain.first.fetch)).toBe('/map -94 973');
+    expect(w.chain.handins.some(s => s.at.npc === 'Bolcen Tendag')).toBe(true);
     expect(w.chain.handins).toHaveLength(10);
     expect(w.chain.talk.map(s => s.at.npc)).toEqual(['Willamina', 'Bolcen Tendag', 'Mirao Frostpouch', 'Oracle Cador',
       'Onirelin Gali', 'Arch Mage Narik', 'Elisha Dirtyshoes', 'Boiron Ston', 'Caden Zharik', 'Agrakath Theric']);
@@ -104,11 +111,12 @@ describe('quest chains', () => {
 
   it('every chain place and phrase follows the same rules as the rest of the guide', () => {
     for (const i of chained) {
-      for (const s of [i.chain.first, ...i.chain.talk, ...i.chain.handins]) {
-        expect(ZONE_NAMES[s.at.zone], i.key).toBeTruthy();
-        expect(Number.isInteger(s.at.y) && Number.isInteger(s.at.x), `${i.key} ${s.at.npc}`).toBe(true);
+      const places = [i.chain.first.at, i.chain.first.fetch, ...i.chain.talk.map(s => s.at), ...i.chain.handins.map(s => s.at)].filter(Boolean);
+      for (const at of places) {
+        expect(ZONE_NAMES[at.zone], i.key).toBeTruthy();
+        expect(Number.isInteger(at.y) && Number.isInteger(at.x), `${i.key} ${at.npc}`).toBe(true);
       }
-      for (const s of i.chain.talk) for (const t of s.say ?? []) {
+      for (const s of [i.chain.first, ...i.chain.talk]) for (const t of s.say ?? []) {
         expect(t.startsWith('/') || /\bdelete\b/i.test(t), `${i.key} ${t}`).toBe(false);
       }
     }
