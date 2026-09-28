@@ -3480,6 +3480,18 @@ layouts for review: the default stacks both takes, `?v=b` is one player with a s
 cooldown (the CH chain showed a cleric as "DI ?" right after he announced his DI). Investigated,
 not built: the guild lead asked for the YouTube work first. STATUS carries it.
 
+### 61a. Everything into the guild lead's Drive folder, by an import script (2026-09-28)
+The guild lead asked for every film asset in the raiders Google Drive folder. The Drive connector cannot
+carry video: it only creates files from content typed into a call, and its grant could not even list
+files. The guild lead chose an **import script**. Every asset is staged for 24 hours in a public Supabase
+bucket, `film-staging`, under a random 32-character path that is not written here. That is 105 objects,
+1,073 MB: 78 raider clips, both 1080p films as 19 MiB parts, the 720p copies and the covers. The bucket
+cannot be listed without auth, so only the exact links reach anything. The anon upload policy existed
+only for the upload, scoped to that path, and was dropped straight after. The guild lead runs a Google Apps
+Script that pulls it all into the folder and rebuilds each film from its parts with a resumable upload.
+Deletion is scheduled for 2026-09-29 04:00 UTC. The same night Munnkie got a new clip, breaking his
+chains (Gemini still, LTX pro 6 s, about $0.61), which replaced his clip in the set.
+
 
 
 
