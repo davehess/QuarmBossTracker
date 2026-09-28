@@ -168,7 +168,7 @@ describe('DPS mini: the page', () => {
     const full = p.el('deeps').innerHTML;
     expect(full).not.toContain('mrow');
     expect(full).toContain('<li class="total">');
-    expect(full).toContain('<li class="me">');
+    expect(full).toContain('<li class="pbrow me">');
 
     p.body.classList.add('wp-mini');
     p.window.fire('wp-mini-change');
@@ -182,6 +182,56 @@ describe('DPS mini: the page', () => {
     await flush();
     expect(p.el('deeps').innerHTML).toBe(full);
     expect(p.fits[p.fits.length - 1]).toBe(full);
+  });
+
+  // The guild lead, 2026-09-27: "your own row always, and always highlight it so
+  // its easier to see. Have a thin row underneath each person with their percentage done".
+  it('every row carries a thin bar against the top row; mine is highlighted', async () => {
+    const p = runPage(dpsHtml, { state: { current: fight('dmg') }, snap: 'deeps' });
+    await flush();
+    const lis = p.el('deeps').innerHTML.split('</li>').filter(s => s.includes('class="pbrow'));
+    expect(lis).toHaveLength(7);
+    expect(lis[0]).toContain('<i style="width:100.0%"></i>');      // 7000, the top
+    expect(lis[3]).toMatch(/^<li class="pbrow me">/);                // Rethlan, 4000
+    expect(lis[3]).toContain('<i style="width:57.1%"></i>');
+    expect(lis[6]).toContain('<i style="width:14.3%"></i>');       // 1000
+    const css = cssOf(dpsHtml);
+    expect(css).toContain('#deeps li.me{background:');
+    expect(css).toContain('#deeps li.me .pb i{background:#f6c365}');
+  });
+
+  it('my row shows even when I did nothing this fight: at zero, after the board', async () => {
+    const idle = fight('dmg'); idle.character = 'Vesmira';
+    const p = runPage(dpsHtml, { state: { current: idle }, snap: 'deeps' });
+    await flush();
+    const h = p.el('deeps').innerHTML;
+    const mine = h.split('</li>').find(s => s.includes('>Vesmira<'));
+    expect(mine).toMatch(/^<li class="pbrow me me-extra">/);
+    expect(mine).toContain('<span class="r">—</span>');
+    expect(mine).toContain('<i style="width:0.0%"></i>');
+    expect(h.indexOf('>Vesmira<')).toBeLessThan(h.indexOf('class="total"'));   // above the footer
+
+    const m = runPage(dpsHtml, { state: { current: idle }, mini: true, snap: 'deeps' });
+    await flush();
+    expect(m.el('deeps').innerHTML).toContain('<li class="mrow me">');           // mini keeps me too
+  });
+
+  it('knows me by the keys /api/state really sends: activeCharacter, else the fight\'s uploader', async () => {
+    const byActive = fight('dmg'); delete byActive.character; byActive.activeCharacter = 'Rethlan';
+    const a = runPage(dpsHtml, { state: { current: byActive }, snap: 'deeps' });
+    await flush();
+    expect(a.el('deeps').innerHTML).toContain('<li class="pbrow me">');
+
+    const byUploader = fight('dmg'); delete byUploader.character; byUploader.currentEncounterThreat.uploader = 'Corvale';
+    const u = runPage(dpsHtml, { state: { current: byUploader }, snap: 'deeps' });
+    await flush();
+    expect(u.el('deeps').innerHTML.split('</li>').find(s => s.includes('class="pbrow me"'))).toContain('>Corvale<');
+  });
+
+  it('with no fight at all there is no row of mine (the empty state stays empty)', async () => {
+    const p = runPage(dpsHtml, { state: { current: { character: 'Vesmira' } }, snap: 'deeps' });
+    await flush();
+    expect(p.el('deeps').innerHTML).not.toContain('Vesmira');
   });
 
   it('follows the last-picked tab: on Tank the rows are damage taken', async () => {

@@ -6108,6 +6108,7 @@ function currentStatus() {
     tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
     enableTriggerTts: !!cfg.enableTriggerTts,
+    triggerTimersTopDown: !!cfg.triggerTimersTopDown,
     showCharm: !!cfg.showCharm,
     showPets: !!cfg.showPets,
     showMobInfo: !!cfg.showMobInfo,
@@ -7591,6 +7592,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     growUp: _growUpSetting(cfg, key),
+    timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
     // ▭ / 📌 rows are built only for overlays that HAVE a mini rendition, so
     // the menu never offers a switch that would do nothing (see _MINI_KEYS).
@@ -7667,6 +7669,28 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
   return !!map[key];
+});
+// ⇅ Timers start at the top on the trigger overlay (a member, 2026-09-27: "start
+// the timers at the top, and go down with successive triggers to track, instead
+// of always starting at the bottom of window and growing up"). Off = the stack
+// rises from the bottom edge, as before; on = it hangs off the top edge and
+// reads down. The window's grow direction follows, or the auto-height would keep
+// the bottom edge fixed and walk the first timer up the screen as rows arrive:
+// on sets grow-upward OFF for this window, off clears the entry so the default
+// (up) returns. ⬆ Grow upward in the same menu still overrides afterwards.
+// triggers.html reads the flag from the status payload it already listens to,
+// so it re-renders without a reload.
+ipcMain.handle('wp-timers-order-toggle', () => {
+  const cfg = loadConfig();
+  cfg.triggerTimersTopDown = !cfg.triggerTimersTopDown;
+  const grow = (cfg.overlayGrowUp && typeof cfg.overlayGrowUp === 'object') ? cfg.overlayGrowUp : {};
+  if (cfg.triggerTimersTopDown) grow.trigger = false; else delete grow.trigger;
+  cfg.overlayGrowUp = grow;
+  saveConfig(cfg);
+  if (triggerWindow && !triggerWindow.isDestroyed()) {
+    triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
+  }
+  return cfg.triggerTimersTopDown;
 });
 ipcMain.handle('wp-backdrop-toggle', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
@@ -9424,7 +9448,7 @@ ipcMain.handle('ui-packs-list', () => {
           ...p,
           installed: st.installed,
           installedTag: st.installedTag,
-          options: st.installed ? uiPacks.listOptions(eqDir, p) : [],
+          options: st.installed ? uiPacks.optionsState(eqDir, p) : null,
         };
       }),
     };
@@ -9459,27 +9483,43 @@ ipcMain.handle('ui-pack-install', async (_e, id) => {
     cfg.uiPackTags = cfg.uiPackTags || {};
     cfg.uiPackTags[id] = res.tag || cfg.uiPackTags[id];
     saveConfig(cfg);
-    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up` +
+      (res.reapplied.length ? `, kept on: ${res.reapplied.join(', ')}` : '') + '\n');
     return {
       ok: true, id, tag: res.tag, written: res.written.length, backedUp: res.backedUp.length,
-      loadCmd: pack.loadCmd, options: uiPacks.listOptions(eqDir, pack),
+      reapplied: res.reapplied, loadCmd: pack.loadCmd, options: uiPacks.optionsState(eqDir, pack),
     };
   } catch (e) {
     appendAgentLog(`[ui-pack] install failed (${id}): ${e && e.message}\n`);
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
-// Apply one of a pack's Options/ layouts (copy its files up into the pack
-// folder, backing up what's replaced). Local file op — no network.
-ipcMain.handle('ui-pack-apply-option', async (_e, id, option) => {
+// The pack's option checkboxes (uiPacks.js explains the model). Setting the
+// ticked set is a local file op; the one network call is ensureDefaults, once,
+// for a pack installed before Mimic kept its default files.
+ipcMain.handle('ui-pack-prepare', async (_e, id) => {
   try {
     const pack = uiPacks.getPack(id);
     if (!pack) return { ok: false, error: 'unknown UI pack' };
     const eqDir = _zealEqDir();
     if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
-    const res = uiPacks.applyOption(eqDir, pack, String(option || ''));
-    appendAgentLog(`[ui-pack] applied option "${res.option}" to ${pack.packDir} — ${res.written} file(s), ${res.backedUp} backed up\n`);
-    return { ok: true, id, option: res.option, written: res.written, backedUp: res.backedUp, loadCmd: pack.loadCmd };
+    const fetched = await uiPacks.ensureDefaults(eqDir, pack, (loadConfig().uiPackTags || {})[id] || null);
+    if (fetched) appendAgentLog(`[ui-pack] stored ${pack.packDir}'s default files for its options\n`);
+    return { ok: true, id, options: uiPacks.optionsState(eqDir, pack) };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('ui-pack-set-options', async (_e, id, ids) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
+    await uiPacks.ensureDefaults(eqDir, pack, (loadConfig().uiPackTags || {})[id] || null);
+    const res = uiPacks.setOptions(eqDir, pack, Array.isArray(ids) ? ids : []);
+    appendAgentLog(`[ui-pack] ${pack.packDir} options now: ${res.applied.join(', ') || 'none'} — ${res.changed.length} file(s) changed, ${res.backedUp.length} backed up\n`);
+    return { ok: true, id, applied: res.applied, changed: res.changed.length, backedUp: res.backedUp.length, loadCmd: pack.loadCmd };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }

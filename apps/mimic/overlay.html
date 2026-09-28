@@ -44,7 +44,7 @@
   /* EQLogParser-style row: rank · name · %% · Damage · DPS · Sec. Grid columns
      are sized so the right-aligned numbers stack cleanly even when the name
      wraps narrow. */
-  li{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+  li{display:grid;grid-template-columns:24px minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;align-items:baseline;font-size:11px;padding:1px 0}
   /* Observed ("what THIS machine saw") is its own column, not a parenthetical
      tucked under the guild number. Inline it wrapped onto a second line and
@@ -61,6 +61,17 @@
   li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
+  /* Your row stands out as a whole band, not just a gold name (the guild lead,
+     2026-09-27: "always highlight it so its easier to see"). */
+  #deeps li.me{background:rgba(246,195,101,0.13);box-shadow:inset 3px 0 0 #f6c365;border-radius:2px}
+  /* A thin bar under each name: their share, drawn against the top row so the
+     differences read at a glance (a raw share of a 50-person raid tops out near
+     7% of the width). The % column still says the real share. */
+  #deeps li.pbrow{position:relative;padding-bottom:4px}
+  #deeps li .pb{position:absolute;left:30px;right:0;bottom:1px;height:2px;background:rgba(255,255,255,0.06);border-radius:1px}
+  #deeps li .pb i{display:block;height:100%;background:rgba(88,166,255,0.6);border-radius:1px}
+  #deeps li.tkrow .pb i{background:rgba(248,81,73,0.65)}
+  #deeps li.me .pb i{background:#f6c365}
   /* Your row when it fell below the visible cutoff and got appended — a dashed
      rule separates it from the contiguous top-N above. */
   li.me-extra{border-top:1px dashed rgba(110,118,129,0.35);margin-top:1px;padding-top:2px}
@@ -74,7 +85,7 @@
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
   .rowsn{font-size:9px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
-  .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+  .colhdr{display:grid;grid-template-columns:24px minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
   .colhdr .r,.colhdr .p,.colhdr .d,.colhdr .obs,.colhdr .dps,.colhdr .sec{text-align:right}
@@ -90,8 +101,11 @@
      wide enough for both. */
   .board{container:board / inline-size}
   @container board (min-width: 370px){
-    li{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
-    .colhdr{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
+    /* Rank is 24px, not 1.1em: two-digit ranks spilled left out of an em-wide
+       column, into the highlighted row's gold edge (and em differs between the
+       9px header and the 11px rows, so px keeps the two in line). */
+    li{grid-template-columns:24px minmax(0,1fr) 38px 50px 46px 42px 32px}
+    .colhdr{grid-template-columns:24px minmax(0,1fr) 38px 50px 46px 42px 32px}
     li .obs, .colhdr .obs{display:block;text-align:right}
     li .obs{color:#8b949e;font-variant-numeric:tabular-nums;font-size:10px}
     li.total .obs{color:#8b949e;font-weight:600}
@@ -743,14 +757,23 @@
 
       const totalDmg = allRows.reduce((s, r) => s + r[1], 0);
       allRows.forEach(function(r, i){ r[4] = i + 1; });            // true rank
-      const me = s.character || s.uploaderCharacter || s.self || null;
+      // Who "you" are. /api/state names you as activeCharacter, and the live
+      // fight carries its uploader; the three older keys are never sent, so on
+      // them alone the highlight and your always-shown row never happened (the
+      // overlay catalog's finding 1, 2026-09-27). Kept last as fallbacks.
+      const me = s.activeCharacter || (s.currentEncounterThreat && s.currentEncounterThreat.uploader)
+        || s.character || s.uploaderCharacter || s.self || null;
       let rows = allRows.slice(0, ROW_LIMIT);
       // Always show YOU — if your row fell below the visible cutoff, append it
       // with its REAL rank so you can always see where you stand.
       if (me && !rows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); })) {
         var meRow = allRows.find(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); });
         if (meRow) { meRow = meRow.slice(); meRow[5] = true; rows = rows.concat([meRow]); }
+        // Nothing from you this fight: still show your row, at zero, so you can
+        // see the meter knows who you are (the guild lead, 2026-09-27).
+        else if (allRows.length) rows = rows.concat([[me, 0, 0, null, '—', true, false, 0, false]]);
       }
+      const topDmg = allRows.length ? (allRows[0][1] || 0) : 0;      // bar scale: the top row is a full bar
       const startedAt = et && et.startedAt ? new Date(et.startedAt).getTime() : 0;
       const flushedAt = et && et.flushedAt;
       const nowMs = Date.now();
@@ -846,10 +869,11 @@
         var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
           ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
           : '';
-        var cls = (isMe ? 'me' : '') + (extra ? ' me-extra' : '');
+        var cls = 'pbrow' + (TAB_MODE === 'tank' ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
         var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
-        return '<li' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '>'
-             + '<span class="r">' + rank + '.</span>'
+        var barW = topDmg > 0 ? Math.min(100, (d / topDmg) * 100) : 0;
+        return '<li class="' + cls + '">'
+             + '<span class="r">' + (typeof rank === 'number' ? rank + '.' : rank) + '</span>'
              + '<span class="n">' + esc(n) + petHtml + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d)
@@ -863,6 +887,7 @@
              + '<span class="obs">' + (_obsDiffers ? fmt(row[7]) : '') + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
+             + '<span class="pb"><i style="width:' + barW.toFixed(1) + '%"></i></span>'
              + '</li>';
       }).join('');
       // Mob-total footer — EQLogParser's bottom line: <mob> · total · total DPS ·
@@ -885,7 +910,10 @@
       // ▭ Mini swaps only the rows; the byte-stability guard and the fit
       // below then run exactly as they do in full mode.
       if (document.body.classList.contains('wp-mini')) {
-        bodyHtml = miniRowsHtml(miniWindow(allRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
+        // Mini keeps you in its three rows too: at zero when you did nothing yet.
+        var miniRows = (me && allRows.length && !allRows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); }))
+          ? allRows.concat([[me, 0, 0, null, '—', true, false, 0, false]]) : allRows;
+        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
       }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.

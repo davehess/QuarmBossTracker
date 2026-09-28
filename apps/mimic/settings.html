@@ -174,7 +174,7 @@
   <div class="hint">Checks GitHub in the background every 12 hours and pops a notification — it never installs on its own. Uncheck to stop the reminders.</div>
 
   <h2>Custom UI packs</h2>
-  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, pick an alternate <b>layout</b> from the pack's Options and apply it. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after applying a layout.</div>
+  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, tick any of the pack's <b>layout options</b>; nothing ticked is the pack as it ships. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after changing a layout.</div>
   <div id="uiPacksList" style="margin-top:10px">
     <div class="hint">Loading UI packs…</div>
   </div>
@@ -1143,9 +1143,26 @@
   })();
 
   // ── Custom UI packs (Nillipuss etc.) ──────────────────────────────────────
-  // Each pack renders a card: install/update button + (when installed) an
-  // Options layout picker. All actions bridge through main.js -> uiPacks.js.
+  // Each pack renders a card: install/update button + (when installed) one
+  // checkbox per layout option. A tick takes effect at once, and the boxes are
+  // redrawn from what the files ARE, so they can't drift from the pack. Boxes
+  // that change the same window as a ticked one are disabled and say which.
+  // All actions bridge through main.js -> uiPacks.js.
   function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  var _UI_WND = { bankwnd: 'bank', hotbuttonwnd: 'hotbar', playerwindow: 'player window', targetwindow: 'target window',
+    buffwindow: 'buff window', shortdurationbuffwindow: 'song window', castspellwnd: 'spell bar', merchantwnd: 'merchant',
+    container: 'bags', inventory: 'inventory', spellbookwnd: 'spellbook' };
+  function _uiWhat(files){
+    var seen = {}, out = [];
+    (files || []).forEach(function(n){
+      var m = /^EQUI_(.+)\.xml$/i.exec(n);
+      var label = m ? (_UI_WND[m[1].toLowerCase()] || m[1]) : /^dzbars/i.test(n) ? 'bars' : /\.tga$/i.test(n) ? 'colors' : n;
+      if (!seen[label]) { seen[label] = 1; out.push(label); }
+    });
+    return out.join(', ');
+  }
+  function _uiLabel(c){ return c.variant ? c.option + ' · ' + c.variant : c.option; }
+  var _uiPackPrepTried = {};   // one defaults fetch per pack per Settings open
   async function _renderUiPacks(){
     var host = document.getElementById('uiPacksList');
     if (!host) return;
@@ -1165,16 +1182,24 @@
       var badge = p.installed
         ? '<span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
         : '';
-      var options = (p.options || []);
+      var opts = p.options || { ready: false, choices: [] };
+      var boxes = opts.choices.filter(function(c){ return !c.noop; });
+      var noops = opts.choices.filter(function(c){ return c.noop; });
       var optHtml = '';
-      if (p.installed && options.length) {
+      if (p.installed && opts.choices.length) {
         optHtml =
-          '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-            '<span style="font-size:11px;color:#8b949e">Layout option:</span>' +
-            '<select class="uiOptSel" style="background:#161b22;color:#c9d1d9;border:1px solid #2a3140;border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit">' +
-              options.map(function(o){ return '<option value="' + _esc(o) + '">' + _esc(o) + '</option>'; }).join('') +
-            '</select>' +
-            '<button type="button" class="uiOptApply" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:5px 10px;font-size:11px;margin:0;border-radius:4px;cursor:pointer">Apply layout</button>' +
+          '<div class="uiOpts" style="margin-top:8px">' +
+            '<div style="font-size:11px;color:#8b949e;margin-bottom:4px">Layout options: tick any mix. A tick takes effect straight away; type <code>/reloadskin</code> in-game to see it.</div>' +
+            (opts.ready ? '' : '<div class="hint uiOptPrep" style="margin-bottom:4px">Getting the pack’s own files from GitHub so an untick can put them back…</div>') +
+            boxes.map(function(c){
+              return '<label style="display:flex;gap:6px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">' +
+                '<input type="checkbox" class="uiOptBox" data-id="' + _esc(c.id) + '"' + (c.applied ? ' checked' : '') + (opts.ready ? '' : ' disabled') + ' style="margin:0">' +
+                '<span>' + _esc(_uiLabel(c)) + '</span>' +
+                '<span class="uiOptWhy" data-what="' + _esc(_uiWhat(c.files)) + '" style="font-size:10px;color:#6e7681">' + _esc(_uiWhat(c.files)) + '</span>' +
+              '</label>';
+            }).join('') +
+            (noops.length ? '<div class="hint" style="margin-top:2px">' + _esc(noops.map(_uiLabel).join(', ')) + (noops.length === 1 ? ' is' : ' are') + ' what you have with nothing ticked.</div>' : '') +
+            '<button type="button" class="uiOptReset" style="margin-top:6px;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
           '</div>';
       } else if (p.installed) {
         optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
@@ -1213,7 +1238,8 @@
             var u = await window.mimic.uiPackInstall(p.id);
             if (!u || !u.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((u && u.error) || 'update failed'); return; }
             msg.style.color = '#7ee787';
-            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') + '. /reloadskin in-game to see it.';
+            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') +
+              ((u.reapplied && u.reapplied.length) ? ', your options kept on' : '') + '. /reloadskin in-game to see it.';
             await _renderUiPacks();
           }
         } catch (err) {
@@ -1221,21 +1247,54 @@
         } finally { btn.disabled = false; btn.textContent = orig; }
       });
 
-      var applyBtn = card.querySelector('.uiOptApply');
-      if (applyBtn) {
-        applyBtn.addEventListener('click', async function(){
-          var sel = card.querySelector('.uiOptSel');
-          var opt = sel ? sel.value : '';
-          var orig = applyBtn.textContent; applyBtn.disabled = true; applyBtn.textContent = 'Applying…';
-          msg.style.color = '#8b949e'; msg.textContent = '';
-          try {
-            var r = await window.mimic.uiPackApplyOption(p.id, opt);
-            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'apply failed'); return; }
-            msg.style.color = '#7ee787';
-            msg.textContent = '✓ Applied "' + opt + '" — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Type /reloadskin in-game.';
-          } catch (err) {
-            msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
-          } finally { applyBtn.disabled = false; applyBtn.textContent = orig; }
+      var optBoxes = [].slice.call(card.querySelectorAll('.uiOptBox'));
+      var byId = {};
+      opts.choices.forEach(function(c){ byId[c.id] = c; });
+      // A box that shares a window with a ticked one can't be ticked; say why.
+      function syncClashes(){
+        var on = optBoxes.filter(function(b){ return b.checked; }).map(function(b){ return b.getAttribute('data-id'); });
+        optBoxes.forEach(function(b){
+          var c = byId[b.getAttribute('data-id')];
+          var why = b.parentNode.querySelector('.uiOptWhy');
+          var clash = b.checked ? null : (c.conflicts || []).filter(function(x){ return on.indexOf(x.id) >= 0; })[0];
+          b.disabled = !opts.ready || !!clash;
+          why.textContent = clash
+            ? 'off while ' + _uiLabel(byId[clash.id] || { option: clash.id }) + ' is on (' +
+              (clash.files.length ? 'both change the ' + _uiWhat(clash.files) : 'pick one') + ')'
+            : why.getAttribute('data-what');
+          why.style.color = clash ? '#d29922' : '#6e7681';
+        });
+      }
+      async function setOpts(ids){
+        optBoxes.forEach(function(b){ b.disabled = true; });
+        msg.style.color = '#8b949e'; msg.textContent = 'Changing layout files…';
+        try {
+          var r = await window.mimic.uiPackSetOptions(p.id, ids);
+          if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'could not change the options'); await _renderUiPacks(); return; }
+          // Redraw the ticks from what main says is on now, not from the clicks.
+          optBoxes.forEach(function(b){ b.checked = r.applied.indexOf(b.getAttribute('data-id')) >= 0; });
+          msg.style.color = '#7ee787';
+          msg.textContent = '✓ ' + (r.applied.length ? 'On: ' + r.applied.map(function(id){ return _uiLabel(byId[id] || { option: id }); }).join(', ') : 'Back to the pack as it ships') +
+            (r.backedUp ? ' (' + r.backedUp + ' of your own edited files backed up)' : '') + '. Type /reloadskin in-game.';
+        } catch (err) {
+          msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+        } finally { syncClashes(); }
+      }
+      optBoxes.forEach(function(b){
+        b.addEventListener('change', function(){
+          setOpts(optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); }));
+        });
+      });
+      var resetBtn = card.querySelector('.uiOptReset');
+      if (resetBtn) resetBtn.addEventListener('click', function(){ setOpts([]); });
+      syncClashes();
+      // A pack installed before Mimic kept its default files: fetch them once, then redraw.
+      if (p.installed && opts.choices.length && !opts.ready && !_uiPackPrepTried[p.id]) {
+        _uiPackPrepTried[p.id] = true;
+        window.mimic.uiPackPrepare(p.id).then(function(r){
+          if (r && r.ok) return _renderUiPacks();
+          var prep = card.querySelector('.uiOptPrep');
+          if (prep) { prep.style.color = '#ff9b9b'; prep.textContent = '✕ Could not get the pack’s own files (' + ((r && r.error) || 'no answer') + '). Check your connection and reopen Settings.'; }
         });
       }
     });

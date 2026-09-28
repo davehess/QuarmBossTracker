@@ -1603,6 +1603,21 @@ function _mobTickFor(name, now) {
   if (!t || (now || Date.now()) - t.seen_at > MOB_TICK_MAX_AGE_MS) return null;
   return t;
 }
+// A buff or debuff wears off on its ENTITY's tick, not the server tick Zeal
+// shows (the guild lead, 2026-09-27: "debuffs and buffs wear off on entity's
+// ticks, which do not correspond with the server ticks..rather with when an
+// entity spawned"). The server counts a buff's ticks down once per beat of the
+// mob's own 6 s timer, started at spawn, so a buff of N ticks fades on the Nth
+// of that mob's beats after it landed: anywhere up to 6 s EARLIER than the
+// naive landed + N × 6 s. With the mob's tick known (_mobTickFor) that beat is
+// computable and `snapped` says so; without it the naive estimate stands.
+function _entityTickFadeAt(landedMs, durTicks, tick) {
+  const n = Number(durTicks) || 0;
+  if (!(n > 0) || !Number.isFinite(landedMs)) return null;
+  if (!tick || !Number.isFinite(tick.at)) return { at: landedMs + n * MOB_TICK_MS, snapped: false };
+  const first = tick.at + (Math.floor((landedMs - tick.at) / MOB_TICK_MS) + 1) * MOB_TICK_MS;   // the first beat after landing
+  return { at: first + (n - 1) * MOB_TICK_MS, snapped: true, half: tick.half };
+}
 const _DOT_TICK_RX = /\]\s+(.+?)\s+has\s+taken\s+\d+(?:\s+points?\s+of)?\s+damage(?:\s+from\s+(.+?))?\.\s*$/i;
 const _dotLastHit = new Map();               // 'mob|source' → second-stamp ms of its last damage line
 function _noteDotTickLine(line, secMs, readMs) {
@@ -2456,6 +2471,7 @@ function _savePetStateSoon() {
         // as petBuffLandings so the Mob Info overlay survives a restart too.
         buffLandingsByTarget: [..._buffLandingsByTarget.entries()].map(([k, v]) => [k, [...v.entries()]]),
         petStatsByOwner: [..._petStatsByOwner.entries()],
+        petSheetByOwner: [..._petSheetByOwner.entries()],
       };
       const out = JSON.stringify(data);
       fs.writeFileSync(PET_STATE_FILE + '.tmp', out);
@@ -2512,7 +2528,11 @@ function _loadPetStateFromDisk() {
       // Stats keep indefinitely (running performance picture across sessions).
       for (const [k, v] of raw.petStatsByOwner) _petStatsByOwner.set(k, v);
     }
-    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats`);
+    if (Array.isArray(raw.petSheetByOwner)) {
+      // #petstats sheets: a charmed mob's expires with the TTL, a summoned pet's keeps.
+      for (const [k, v] of raw.petSheetByOwner) if (_petSheetFresh(v, now)) _petSheetByOwner.set(k, v);
+    }
+    console.log(`[pet-state] restored from disk: ${_petHealthByOwner.size} health · ${_petBuffLandings.size} pet landings · ${_buffLandingsByTarget.size} target landings · ${_petStatsByOwner.size} stats · ${_petSheetByOwner.size} sheets`);
   } catch (err) { console.warn('[pet-state] load failed:', err && err.message); }
 }
 const PET_HEALTH_TTL_MS = 30 * 60 * 1000;
@@ -2559,6 +2579,103 @@ function applyPetHealthLine(line, character) {
     rep.last_seen_at = Date.now();
     _savePetStateSoon();
   }
+}
+
+// #petstats sheet — the Quarm server command (PoP patch, 2026-09). The owner
+// types #petstats and the server prints a block into THEIR log, one line each:
+//   -- Xibobab's Stats --
+//   HP: 4000 / 4000        AC: 180        ATK: 956
+//   Attack Damage: 19 - 78 (avg 48.5)     Attack Delay: 2800 ms (2.80s)
+//   Melee DPS: 17.3
+//   Resists: Magic 35 Fire 35 Cold 35 Poison 15 Disease 15
+//   -- Equipped Inventory --
+//   Ear 1: (Empty) … Ammo: (Empty)        (21 slot lines, Ammo last)
+// The numbers are the pet's CURRENT values, so a Tashed charm pet reads its
+// lowered magic resist — the charm-break risk the Charm window wants.
+// Haste: the catalog carries no NPC attack delay, so haste is measured against
+// the SLOWEST delay seen for this pet (base_delay_ms). A pet first read while
+// slowed over-states its later haste; the fields say "observed", not "true".
+// LOCAL ONLY, like the rest of the pet state — never uploaded.
+const _petSheetByOwner = new Map();   // ownerLower → sheet
+const _petSheetOpen = new Map();      // ownerLower → { sheet, last_line_at } while a block is being read
+const PET_SHEET_GAP_MS = 3000;        // a line more than 3s after the last one closes the block
+const _PET_SHEET_SLOTS = ['Ear 1', 'Head', 'Face', 'Ear 2', 'Neck', 'Shoulders', 'Arms', 'Back',
+  'Wrist 1', 'Wrist 2', 'Range', 'Hands', 'Primary', 'Secondary', 'Finger 1', 'Finger 2',
+  'Chest', 'Legs', 'Feet', 'Waist', 'Ammo'];
+const _PET_SHEET_SLOT_RX = new RegExp('^(' + _PET_SHEET_SLOTS.map(s => s.replace(/ /g, '\\s+')).join('|') + '):\\s*(.*)$', 'i');
+
+// A common-name pet ("a lava crawler") is a charmed mob — the next one of that
+// name is a different mob, so its sheet expires with the pet-health TTL. A
+// proper name is a summoned pet and keeps its sheet while that name holds.
+function _petSheetFresh(sheet, now) {
+  if (!sheet) return false;
+  if (!/^(an?|the)\s+/i.test(sheet.pet || '')) return true;
+  return (now - (sheet.read_at || 0)) <= PET_HEALTH_TTL_MS;
+}
+
+function applyPetSheetLine(line, character) {
+  if (!line || !character) return;
+  const m = line.match(/^\[(.+?)\]\s+(.*)$/);
+  if (!m) return;
+  const owner = String(character).toLowerCase();
+  const ts = parseEqTimestamp(line);
+  const tsMs = ts ? ts.getTime() : Date.now();
+  const body = m[2].trim();
+  const head = body.match(/^-- (.+?)'s Stats --$/);
+  if (head) {
+    const pet = head[1].trim();
+    if (pet.toLowerCase() === owner) { _petSheetOpen.delete(owner); return; }  // the player's own stats
+    const prev = _petSheetByOwner.get(owner);
+    const samePet = prev && String(prev.pet).toLowerCase() === pet.toLowerCase();
+    _petSheetOpen.set(owner, { last_line_at: tsMs, sheet: {
+      pet, read_at: tsMs,
+      hp: null, hp_max: null, ac: null, atk: null,
+      dmg_min: null, dmg_max: null, dmg_avg: null,
+      delay_ms: null, base_delay_ms: samePet ? prev.base_delay_ms : null, haste_pct: null,
+      dps: null, resists: null, equipment: null, complete: false,
+    } });
+    return;
+  }
+  const open = _petSheetOpen.get(owner);
+  if (!open) return;
+  if ((tsMs - open.last_line_at) > PET_SHEET_GAP_MS) { _petSheetOpen.delete(owner); return; }
+  const s = open.sheet;
+  let hit = true, done = false, x;
+  if ((x = body.match(/^HP:\s*(-?\d+)\s*\/\s*(\d+)$/i)))  { s.hp = +x[1]; s.hp_max = +x[2]; }
+  else if ((x = body.match(/^AC:\s*(-?\d+)$/i)))          { s.ac = +x[1]; }
+  else if ((x = body.match(/^ATK:\s*(-?\d+)$/i)))         { s.atk = +x[1]; }
+  else if ((x = body.match(/^Attack Damage:\s*(\d+)\s*-\s*(\d+)(?:\s*\(avg\s*([\d.]+)\))?/i))) {
+    s.dmg_min = +x[1]; s.dmg_max = +x[2];
+    s.dmg_avg = x[3] != null ? +x[3] : (s.dmg_min + s.dmg_max) / 2;
+  }
+  else if ((x = body.match(/^Attack Delay:\s*(\d+)\s*ms/i))) {
+    s.delay_ms = +x[1];
+    if (s.delay_ms > 0) {
+      s.base_delay_ms = Math.max(s.base_delay_ms || 0, s.delay_ms);
+      s.haste_pct = s.base_delay_ms > s.delay_ms ? Math.round((s.base_delay_ms / s.delay_ms - 1) * 100) : 0;
+    }
+  }
+  else if ((x = body.match(/^Melee DPS:\s*([\d.]+)$/i)))  { s.dps = +x[1]; }
+  else if (/^Resists:/i.test(body)) {
+    const r = {};
+    for (const mm of body.slice(8).matchAll(/([A-Za-z]+)\s+(-?\d+)/g)) r[mm[1].toLowerCase()] = +mm[2];
+    s.resists = r;
+  }
+  else if (/^-- Equipped Inventory --$/i.test(body))      { s.equipment = {}; }
+  else if (s.equipment && (x = body.match(_PET_SHEET_SLOT_RX))) {
+    const slot = _PET_SHEET_SLOTS.find(n => n.toLowerCase() === x[1].replace(/\s+/g, ' ').toLowerCase());
+    const item = x[2].trim();
+    s.equipment[slot] = (!item || /^\(empty\)$/i.test(item)) ? null : item;
+    if (slot === 'Ammo') done = true;
+  }
+  else hit = false;                    // an unrelated line inside the window: skip it, keep reading
+  if (!hit) return;
+  open.last_line_at = tsMs;
+  s.complete = done;
+  // Publish from the first stat line on, so a block cut short still shows.
+  _petSheetByOwner.set(owner, s);
+  if (done) _petSheetOpen.delete(owner);
+  _savePetStateSoon();
 }
 
 // pet name → owner (lowercased), from Zeal gauge slot 16 for watched chars.
@@ -3346,7 +3463,14 @@ function targetBuffsFor(targetLower, wantId) {
     // filtering against changes every time the user swaps target.
     if (wantId != null && b && b.target_id != null && Number(b.target_id) !== Number(wantId)) continue;
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
-    let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+    // Fades on the mob's own tick when that is known (_entityTickFadeAt);
+    // the naive landed + ticks × 6 s otherwise. A timer-less entry keeps
+    // counting up from its landing so the linger rules below still apply.
+    // typeof-guarded like the other helpers: the source-slice tests lift this
+    // function out of the file without its neighbours.
+    const fade = (typeof _entityTickFadeAt === 'function' && typeof _mobTickFor === 'function')
+      ? _entityTickFadeAt(b.landed_at || now, b.dur_ticks, _mobTickFor(targetLower, now)) : null;
+    let rem = fade ? (fade.at - now) / 1000 : durSecs - (now - (b.landed_at || now)) / 1000;
     let fellOff = false;
     // HoTs (regen category) and short effects (stuns, procs — catalog duration
     // under 60s) get a 6s (one-tick) linger; everything else gets the 5-min
@@ -3378,6 +3502,7 @@ function targetBuffsFor(targetLower, wantId) {
       pacified: _isPacifySpell(b.name),
       pacify_ae: _isAePacify(b.name),
       unconfirmed: !!(b && b.unconfirmed),
+      tick_snapped: !!(fade && fade.snapped),
       owner: (b && b.owner) ? b.owner : null });
   }
   if (mp.size === 0) _buffLandingsByTarget.delete(targetLower);
@@ -8555,6 +8680,7 @@ class EncounterBuilder {
       // off." line names no pet at all. Resolve it to whichever open
       // session THIS character owns; an enchanter/charmer only ever has
       // one charm active at a time, so this is unambiguous.
+      const wasSelfLine = String(event.pet || '').toLowerCase() === '__self__';
       let petKey = String(event.pet || '').toLowerCase();
       let petDisplay = event.pet;
       if (petKey === '__self__') {
@@ -8605,6 +8731,12 @@ class EncounterBuilder {
       _bumpCharmTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, ownerWas, 'break', this.lastEvent || Date.now());
       // The same line is a mob-tick observation for that mob (_noteMobTick).
       try { _noteMobTick(petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, Date.parse(event.ts), Date.now(), 'break'); } catch { /* never block the break */ }
+      // The instant call, straight down the /api/fires/wait long-poll (see
+      // _pushCharmBreakInstant). Own charms only.
+      try {
+        const own = wasSelfLine || (!!ownerWas && String(ownerWas).toLowerCase() === String(this.character || '').toLowerCase());
+        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts));
+      } catch { /* never block the break */ }
       return;
     }
 
@@ -15860,6 +15992,11 @@ function _serializeForDashboard() {
         // TTL'd so a pet that hasn't acked recently doesn't show a stale name.
         const tgt = _petTargetByOwner.get(owner);
         const target = (tgt && (now - tgt.at) <= PET_TARGET_TTL_MS) ? tgt.target : null;
+        // #petstats sheet — only for the pet it was read from (it needs petName,
+        // so it never makes an otherwise-empty row show).
+        const sh = _petSheetByOwner.get(owner);
+        const sheet = (sh && petName && String(sh.pet).toLowerCase() === String(petName).toLowerCase()
+          && _petSheetFresh(sh, now)) ? sh : null;
         if (!petName && hp == null && buffs.length === 0 && !statsForPet && !target) continue;   // nothing to show
         out.push({
           owner,
@@ -15867,6 +16004,7 @@ function _serializeForDashboard() {
           hp_pct:      hp,
           buffs,
           stats:       statsForPet,
+          sheet,
           target,
           target_at:   target ? tgt.at : null,
           observed_at: repFresh ? rep.last_seen_at : now,
@@ -27480,6 +27618,20 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
       }
+      // Target Info's F/Q/V tab (what to say, hand-ins, who's next, what it sells) by npc
+      // id. Asked for only while that tab is open, so a fight never pays for it.
+      if (req.method === 'GET' && req.url.startsWith('/api/npc-interact')) {
+        let npcId = NaN;
+        try { npcId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+        if (!Number.isInteger(npcId) || npcId <= 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'id required' }));
+        }
+        fetchNpcInteract(npcId);
+        const hit = _npcInteractById.get(npcId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(hit ? { npc: hit.npc } : { npc: null, loading: true }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -28132,6 +28284,7 @@ function startWebDashboard(port) {
           if (_petHealthByOwner.delete(owner)) removed = true;
           if (_petBuffLandings.delete(owner))  removed = true;
           if (_petStatsByOwner.delete(owner))  removed = true;
+          if (_petSheetByOwner.delete(owner))  removed = true;
           if (removed) _savePetStateSoon();
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -31691,6 +31844,37 @@ const PVP_BARE_BOSS_ACTIVE_RX    = /^\[(.+?)\]\s+(?:\[PVP\]\s+)?(\w+) of <(.+?)>
 const PVP_BOSS_KILL_GUILDLESS_RX = /^(\w+) has killed (.+?)(?: in (.+?))?!$/;
 const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?)(?: in (.+?))?!$/;
 
+// Rallosian Glory kill broadcast (Quarm PoP patch, 2026-09-28): "[PVP] Rallos Zek watches as Myto
+// spills Songfin's blood in The Fungus Grove, but finds no worthy conquest." No guilds on the line,
+// so the bot fills them in from /who and the roster. Only the "no worthy conquest" ending has been
+// seen; any other ending is kept verbatim as `gloryText` and `glory` stays null (unknown) rather than
+// being guessed. Rallos lines that do not fit this shape land in the unmatched capture below.
+// The zone is split off at the clause (", but …", ", and …"), not the first comma: long zone names
+// carry commas of their own ("Doomfire, the Burning Lands").
+const PVP_GLORY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek watches as (\w+) spills (\w+)'s blood in (.+?)[.!]?\s*$/;
+const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
+function parseGloryKill(line) {
+  if (line.indexOf('Rallos Zek watches as') === -1) return null;   // cheap gate
+  const m = PVP_GLORY_RX.exec(line);
+  if (!m) return null;
+  const ts = parseEqTimestamp(line);
+  const rest = m[4].trim();
+  const clause = PVP_GLORY_CLAUSE_RX.exec(rest);
+  const zone = (clause ? clause[1] : rest).trim();
+  const gloryText = clause ? clause[2].trim() : null;
+  return {
+    ts: ts ? ts.toISOString() : new Date().toISOString(),
+    text: line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim(),
+    killType: 'pvp',
+    source: 'rallos_glory',
+    killer: m[2], killerGuild: null,
+    victim: m[3], victimGuild: null,
+    zone,
+    glory: gloryText && /no worthy conquest/i.test(gloryText) ? false : null,
+    gloryText,
+  };
+}
+
 // Player's own EQ guild, observed from any Druzzil-Ro guild broadcast that
 // fires on this log. Druzzil only ever addresses YOUR guild ("Druzzil Ro
 // tells the guild, '<X of Wolf Pack>...'"), so the killerGuild captured in
@@ -31813,6 +31997,10 @@ function parsePvpBroadcast(line) {
     return null;
   }
 
+  // Rallosian Glory broadcast (PoP patch): "[PVP] Rallos Zek watches as X spills Y's blood in Z, …".
+  const glory = parseGloryKill(line);
+  if (glory) return glory;
+
   // Path B: bare kill body in the in-game [PVP] channel — no Druzzil prefix.
   // Order mirrors Path A: most-specific first, broadest active-voice last.
   const ppkBare = PVP_BARE_PLAYER_RX.exec(line);
@@ -31884,7 +32072,9 @@ const PVP_UNMATCHED_FILE = path.join(__dirname, 'logsync.pvp-unmatched.json');
 const PVP_UNMATCHED_CAP  = 200;
 function captureUnmatchedPvpKill(line) {
   if (!/PVP Druzzil Ro BROADCASTS|\[PVP\]/.test(line)) return;   // broadcast context only
-  if (!/\bhas killed\b/.test(line)) return;                       // kill-shaped only
+  // Kill-shaped, or any Rallosian Glory line (the PoP patch's new broadcast family: rank, forfeit,
+  // and whatever a worthy kill says — none of those phrasings has been seen yet).
+  if (!/\bhas killed\b|Rallos Zek|\bGlory\b/.test(line)) return;
   if (/\(Instanced\)/i.test(line)) return;                        // instance kills are handled elsewhere
   console.warn(`[pvp-unmatched] kill-shaped broadcast not parsed: ${line.trim()}`);
   try {
@@ -35715,7 +35905,7 @@ const SUGGESTED_TRIGGERS = [
   // line itself — bards get it too (test/fixtures/golden/raid-pull.log) — so
   // it is the instant call for someone who runs no Charm overlay (a bard,
   // 2026-09-26: "the 'charm break' is a few seconds late").
-  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (instant — instead of the Charm overlay\'s call)',
+  { id: 'self_charm_broke', category: 'self', label: 'Your charm broke (for anyone not running the Charm overlay, which now calls it instantly itself)',
     pattern: 'Your charm spell has worn off\\.',
     overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
@@ -36030,6 +36220,35 @@ function _pushOverlay(o) {
   _wakeFireWaitersSoon();
 }
 
+// The charm break, the moment its log line is read (the guild lead, 2026-09-27:
+// "charm break needs to be as close to instant as possible, like EQLogParser";
+// a member on 2.7.3-beta.2: "still feels slightly behind. like 1 or 2 seconds").
+// The Charm overlay's own call waited for its 500 ms /api/state poll, behind that
+// route's 400 ms cache, then a 600 ms kill guard, then speech start: 1–1.6 s. This
+// pushes a `charm` fire down the /api/fires/wait long-poll instead, which the Charm
+// overlay speaks at once (the trigger overlay skips it). No kill guard is needed:
+// the log line is the break itself — if the pet died first, its tracker entry is
+// already gone and there is no pet to resolve. Live lines only (a backfill replays
+// old breaks); once per pet per 4 s (the self line and a bystander line can both
+// arrive). When the "Your charm broke" suggested trigger is on with TTS, the
+// trigger overlay already says it, so the fire is marked charm_spoken and the
+// Charm overlay only uses it to skip its own late call.
+const _charmBreakInstantAt = new Map();
+function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) {
+  if (!own || !petKey) return false;
+  if (!(Number.isFinite(lineMs) && Math.abs(now - lineMs) < 15_000)) return false;
+  if (now - (_charmBreakInstantAt.get(petKey) || 0) < 4000) return false;
+  _charmBreakInstantAt.set(petKey, now);
+  const sug = typeof _findSuggestedRow === 'function' ? _findSuggestedRow('self_charm_broke') : null;
+  _pushOverlay({
+    text: 'CHARM BREAK', tts: 'charm break', trigger: 'charm break', color: 'red', duration_ms: 3000,
+    firedAt: now, shownAt: now,
+    charm: true, charm_key: petKey, charm_pet: petName || petKey,
+    charm_spoken: !!(sug && sug.enabled !== false && _suggestedHasTts(sug)),
+  });
+  return true;
+}
+
 // One fire, in the shape triggers.html reads — for /api/state's
 // recentTriggerFires and the /api/fires/wait long-poll alike.
 function _fireForWeb(o) {
@@ -36054,6 +36273,11 @@ function _fireForWeb(o) {
     // Set by the damage-taken alert, whose cadence would otherwise camp the
     // shared centre flash and clobber other callouts on it.
     audioOnly: !!o.audioOnly,
+    // The instant charm break (_pushCharmBreakInstant) — for the Charm overlay;
+    // triggers.html skips it.
+    charm:        !!o.charm,
+    charm_key:    o.charm_key || null,
+    charm_spoken: !!o.charm_spoken,
   };
 }
 
@@ -37056,6 +37280,44 @@ function fetchMobInfo(name, selfChar, zoneId) {
     req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
     req.end();
   } catch { _mobInfoInflight.delete(key); }
+}
+
+// Target Info F/Q/V: the bot's /api/agent/npc-interact by npc id (the guild lead,
+// 2026-09-28). Catalog data, so 6h; an empty answer is retried after 10 minutes rather
+// than pinned (fetchMobInfo's 6h null is the trap this avoids).
+const _npcInteractById = new Map();      // npcId → { at, npc|null }
+const _npcInteractInflight = new Set();
+function fetchNpcInteract(npcId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_npcInteractInflight.has(npcId)) return;
+  const cached = _npcInteractById.get(npcId);
+  if (cached && (Date.now() - cached.at) < (cached.npc ? MOB_INFO_TTL_MS : 10 * 60 * 1000)) return;
+  _npcInteractInflight.add(npcId);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/npc-interact') + '?id=' + npcId;
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _npcInteractInflight.delete(npcId);
+        // An older bot 404s: remember "nothing" for the 10-minute retry, not every poll.
+        if (res.statusCode !== 200) { _npcInteractById.set(npcId, { at: Date.now(), npc: null }); return; }
+        if (_npcInteractById.size > 500) _npcInteractById.clear();
+        try { const j = JSON.parse(body); _npcInteractById.set(npcId, { at: Date.now(), npc: (j && j.npc) ? j.npc : null }); }
+        catch { /* retried on the next ask */ }
+      });
+    });
+    req.on('error',   () => { _npcInteractInflight.delete(npcId); });
+    req.on('timeout', () => { req.destroy(); _npcInteractInflight.delete(npcId); });
+    req.end();
+  } catch { _npcInteractInflight.delete(npcId); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.
@@ -39994,14 +40256,17 @@ function _builtinTimerRows(now) {
         const by = b && (b.cast_by || b.owner);
         if (!by || !mine.has(String(by).toLowerCase()) || b.worn_off_at) continue;
         const totalSec = (Number(b.dur_ticks) || 0) * 6;
-        const remMs = (Number(b.landed_at) || 0) + totalSec * 1000 - now;
+        const mob = b.target_name || tk;
+        // On the mob's own tick when it is known (a DoT ticking on it, or a
+        // charm break, teaches it); the naive estimate otherwise.
+        const fade = _entityTickFadeAt(Number(b.landed_at) || 0, b.dur_ticks, _mobTickFor(mob, now));
+        const remMs = fade ? fade.at - now : 0;
         if (!(remMs > 0)) continue;
         const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
         if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
-        const mob = b.target_name || tk;
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
-               target: mob, effect: b.name + (b.unconfirmed ? '?' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb' });
+               target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped });
       }
     }
   }
@@ -42515,6 +42780,8 @@ async function main() {
         // owner's own log). Feeds the per-owner pet buff SET + HP. Pure local UI
         // — no upload, never leaves the machine.
         applyPetHealthLine(line, b.character);
+        // #petstats sheet (same owner-log, same local-only rule).
+        try { applyPetSheetLine(line, b.character); } catch {}
 
         // Charm pet death → drop it from the tracker right away (don't wait out
         // the 5-min linger window). Pass the local character so "You have slain"
