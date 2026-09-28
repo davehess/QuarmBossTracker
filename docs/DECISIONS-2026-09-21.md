@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
+| **PoP board vs the 2026-09-28 patch notes** | **Three fixes on main 2026-09-28 (§63a, bot 3.1.163):** Quarm 168→162 h; Mujaki renamed "the Devourer" so the kill matches; "Avatar of Earth" added to the Rathe Council slot. Five bosses still read 72 h the notes do not name | the guild lead: 66 h for Xanamech, Ture, Mujaki, Askr, Charassis, or keep 72; add Mithaniel Marr and the Manaetic Behemoth to the board before Oct 1? |
 | **The Aten Ha Ra film on wolfpack.quest** | **On main 2026-09-28 (web 1.8.30, bot 3.1.162; §61, §62, §62b):** `/film`, `/film/making` with find-your-raider on top, and a Gallery on every character page, backed by the private `guild-media` store (628 files, 98 characters). The bot posts one card to #raid-chat. Film hosted on YouTube from links in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page and the "sung at" links); run the Drive importer before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips |
 | **eqmimic.quest: Mimic without the Wolf Pack imagery** | **Open 2026-09-28 (§62a).** Everything is AGPL-3.0-or-later already; the installed fleet updates from this repo being public (GitHub releases + raw agent fetch), so a private repo would silently stop updates | the guild lead: decide licence and service model; then first steps are moving the update feeds off this repo and one brand config with Wolf Pack as the first tenant |
 | **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
@@ -3599,6 +3601,43 @@ branding, and asked whether that means moving to a new, closed repository if it 
   the same Vercel project behind a host rewrite. This is the self-host wizard epic seen from the other
   side.
 - The recommendation and the non-technical questions went to the guild lead in chat, not into this file.
+
+## 63. #petstats feeds the Pet and Charm windows (2026-09-28, agent 3.7.35 beta)
+The guild lead, with a #petstats screenshot: *"We will be able to see what pets are using and build this
+into the pet window and charm window for sure. This will help with haste percentage and damage
+expectations, as well as negative MR of charm pets or positive stats."* #petstats is a live player command
+from the PoP patch (the notes list it under New Player Commands), not a test hook.
+- **What the agent reads:** the block the server prints into the owner's log: pet HP, AC, ATK, damage range
+  and average, attack delay, melee DPS, the five resists (signed, so a Tashed pet shows negative MR) and
+  21 equipment slots. `applyPetSheetLine` in the agent, per owner, a 3-second line window, lines that do
+  not belong skipped. It rides `/api/state` as `sheet` on the petHealth row that both `pets.html` and
+  `charm.html` already read, only when the sheet's pet is the row's pet. Local only, like all pet state.
+- **Haste is "observed":** the catalog carries no NPC attack delay, so haste is measured against the
+  slowest delay seen for that pet. A pet first read while slowed over-states its later haste.
+- **Charmed mobs expire, summoned pets keep:** a sheet for an "a/an/the" name expires with the 30-minute
+  pet TTL, because the next mob of that name is a different mob. A proper-named summoned pet keeps it.
+- **Display is not built.** Overlay rule: options first. Pending the guild lead's pick.
+- An equipped slot's exact wording has not been seen yet (the screenshot's pet wore nothing), so the
+  parser stores the text after the slot name as it comes.
+
+### 63a. The PoP patch notes against the boss board (2026-09-28, bot 3.1.163)
+The guild lead posted the server's PoP patch notes (July 23 to September 28). The board unlocks PoP on
+Oct 1, and `data/bosses.json` matches kills by EXACT name or nickname, so a wrong name means a kill that
+silently never starts a timer. Fixed, all confirmed by the notes and the NPC catalog:
+- **Quarm 168 → 162 hours** ("Boss lockouts are 6 days 18 hours" in the Plane of Time).
+- **Mujaki the Ravager → Mujaki the Devourer.** The notes and `eqemu_npc_types` 204039 both say
+  Devourer; the old name stays as a nickname.
+- **"Avatar of Earth" on the Rathe Council slot.** The notes name the Avatar as Earth's elemental god
+  (5 days 18 hours, matching the slot's 138 hours); the Council summons it in instances.
+Not changed, for the guild lead: the notes put "most PoP raid bosses" at 66 hours and list them, but do not
+name Xanamech, Ture, Mujaki, Askr or Charassis, which the board has at 72. The notes also name two
+66-hour bosses the board lacks (Mithaniel Marr, the Manaetic Behemoth) and shorter lockouts it has never
+tracked (Emmerik and Evynd 6 h, Grioihin 18 h, Halls of Honor trials 18 h, Keeper of Sorrows and Tylis
+2 h, An Unimaginable Horror 30 min).
+- Also from the notes, recorded for whoever touches them next: NPCs no longer equip bows handed to them,
+  so the bow-pet reasoning in the agent's pet verb table is historical; PoP graveyards move corpses after
+  60 minutes, so a corpse DM's /loc goes stale there; quakes open an 8-hour raid window in the PvP
+  instance; new commands #popflags, #timelockout and #glory are parser candidates like #petstats.
 
 
 

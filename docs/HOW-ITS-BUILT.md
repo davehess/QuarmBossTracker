@@ -1511,6 +1511,14 @@ summoned. Charm spells log nothing on land → `_recordCharmSpellOnTarget`
 synthesizes the buff entry and pushes `buff_casts` with `is_charm_spell`.
 🐺 Charm diagnostic card walks all four checkpoints.
 
+### #petstats sheet (Pet + Charm windows)
+Agent `applyPetSheetLine` reads the server's #petstats block from the owner's
+log into `_petSheetByOwner` (HP, AC, ATK, damage, delay + observed haste, DPS,
+signed resists, 21 equipment slots), persists it with the pet state, and serves
+it as `sheet` on the `/api/state` petHealth row when its pet is the row's pet.
+Charmed-mob sheets expire with the 30-min pet TTL. Display in `pets.html` /
+`charm.html` not built yet (agent 3.7.35 beta; DECISIONS 2026-09-21 §63).
+
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),
 era-cap level fallback (`_assumedCasterLevel`) so level-formula durations

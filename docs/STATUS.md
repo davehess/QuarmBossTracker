@@ -128,6 +128,13 @@ next touch one rather than assuming a missing row means a missing doc.
   costed, the spec/signal/part architecture, six phases sized at 21–34 sessions, and the October 1
   answer (alpha.1 yes, full 3.0 no). Waiting on the guild lead's seven answers (plan §8).
   `DECISIONS-2026-09-21.md` §57.
+- **🟡 #petstats → Pet and Charm windows (agent 3.7.35, beta 2026-09-28).** The agent parses the server's
+  #petstats block (HP, AC, ATK, damage, delay, DPS, signed resists, 21 slots) and serves it as `sheet` on
+  the petHealth row both windows read; haste is measured against the slowest delay seen. Display not
+  built: waiting on the guild lead's pick. `test/pet-sheet.test.js`. `DECISIONS-2026-09-21.md` §63.
+- **✅ PoP board checked against the 2026-09-28 patch notes (bot 3.1.163, main).** Quarm 162 h, Mujaki
+  "the Devourer", Avatar of Earth on the Rathe Council slot. Open: five 72 h bosses the notes do not
+  name, and two missing bosses. `DECISIONS-2026-09-21.md` §63a.
 - **✅ The Aten Ha Ra film on `/film` (web 1.8.30, main 2026-09-28).** Film hosted on YouTube; `/film`
   (members) plays both takes from links in bot_kv `film_youtube`, which are still empty until the guild
   lead uploads and sends them. `DECISIONS-2026-09-21.md` §61, §62b.
