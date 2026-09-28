@@ -16,6 +16,7 @@ type PageMeta = { title: string; description: string; image?: string };
 const STATIC_META: Record<string, PageMeta> = {
   '/':             { title: 'WolfPack.quest', description: DEFAULT_DESCRIPTION },
   '/pop':          { title: 'PoP Flags (Preview)', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
+  '/pop/guide':    { title: 'PoP Checklist', description: 'Every Planes of Power step in order — what to say to whom, where they stand, and whether it is solo, group or raid work. Tick it off per character.' },
   '/roster':       { title: 'Raid Roster', description: 'Typical raiders by role and class — 60-day raid attendance from DKP ticks, tanks/healers/DPS grouped, notable alts called out.' },
   '/parses':       { title: 'Boss Kills & Parses', description: 'Per-night kill cards with merged damage parses, loot, and attendance for every raid.' },
   '/boards':       { title: 'Raid Boards', description: 'Instanced boss cooldowns and spawn windows, by expansion — the live raid-target board.' },

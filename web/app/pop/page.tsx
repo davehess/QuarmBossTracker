@@ -336,6 +336,7 @@ export default async function PopFlagsPage(
             <Link href={hrefFor({ view: null, zone: null })} className={navCls(!selected && view !== 'matrix' && view !== 'mine')}>Chart</Link>
             <Link href={hrefFor({ view: 'matrix', zone: null })} className={navCls(view === 'matrix')}>Matrix</Link>
             <Link href={hrefFor({ view: 'mine', zone: null })} className={navCls(view === 'mine')}>🧍 My Characters</Link>
+            <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
           </span>
         </div>
       </section>
