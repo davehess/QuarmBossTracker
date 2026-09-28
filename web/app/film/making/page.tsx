@@ -2,7 +2,8 @@
 // on wolfpack.quest, with this process, all of the pronunciations, everything that went into making it").
 // Members only. The pictures and clips come from guild media (web/lib/guildMedia.ts); the names, how each
 // is said and when each take sings it come from bot_kv `film_making`, never the repo.
-// Two layouts on beta: the default tells it as a story, chapter by chapter; ?v=b is "find your raider".
+// Find-your-raider sits at the top ("make sure people can filter just see specific characters at the top",
+// the guild lead, 2026-09-28); the story follows, chapter by chapter. ?raider=<name> opens on that raider.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -85,12 +86,13 @@ function Pronunciations({ fm, youtube }: { fm: FilmMaking; youtube: Record<strin
   );
 }
 
-export default async function MakingPage({ searchParams }: { searchParams: { v?: string } }) {
+export default async function MakingPage({ searchParams }: { searchParams: { raider?: string } }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/film/making');
 
-  const [fm, youtube] = await Promise.all([loadFilmMaking(), youtubeIds()]);
-  const variantB = searchParams.v === 'b';
+  const [fm, youtube, firsts] = await Promise.all([
+    loadFilmMaking(), youtubeIds(), loadMedia({ collection: SET, section: 'first-still' }, { limit: 200 }),
+  ]);
 
   const head = (
     <header className="grid gap-2">
@@ -118,29 +120,15 @@ export default async function MakingPage({ searchParams }: { searchParams: { v?:
     return <main className="mx-auto grid max-w-5xl gap-6 px-4 py-8">{head}<p className="text-sm text-dim">The making-of is not set up yet.</p></main>;
   }
 
-  if (variantB) {
-    const firsts = await loadMedia({ collection: SET, section: 'first-still' }, { limit: 200 });
-    const thumb = new Map(firsts.items.map((i) => [i.character, i.thumbUrl]));
-    const raiders: FinderRaider[] = fm.raiders.map((r) => ({ ...r, thumbUrl: thumb.get(r.name) ?? null }));
-    return (
-      <main className="mx-auto grid max-w-5xl gap-6 px-4 py-8">
-        {head}
-        <RaiderFinder raiders={raiders} youtube={youtube} takes={fm.song.takes} />
-        <section className="grid gap-3 border-t border-border pt-6">
-          <h2 className="text-xl text-text">Every name, as the song says it</h2>
-          <Pronunciations fm={fm} youtube={youtube} />
-        </section>
-        <Chapter n={1} title="Behind the scenes" sections={['cold-open', 'class-intro', 'opening-ending', 'transition', 'cut', 'test', 'cover']} character>
-          <p>The shots that are not one raider: the cold open, the class intros, the opening and the end, the earlier cuts, and the tests.</p>
-        </Chapter>
-      </main>
-    );
-  }
+  const thumb = new Map(firsts.items.map((i) => [i.character, i.thumbUrl]));
+  const raiders: FinderRaider[] = fm.raiders.map((r) => ({ ...r, thumbUrl: thumb.get(r.name) ?? null }));
 
   return (
     <main className="mx-auto grid max-w-5xl gap-6 px-4 py-8">
       {head}
-      <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      <RaiderFinder raiders={raiders} youtube={youtube} takes={fm.song.takes} initialPick={searchParams.raider ?? null} />
+      <nav className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-6 text-sm">
+        <span className="text-dim">How it was made:</span>
         {['The song', 'Ninety-eight pictures', 'Into action', 'Making them move', 'Four arms', 'Classes, opening, end', 'Cutting to the song', 'Outtakes', 'Take it home']
           .map((t, i) => <a key={t} href={`#ch${i + 1}`} className="text-blue hover:underline">{t}</a>)}
       </nav>

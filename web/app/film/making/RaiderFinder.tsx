@@ -1,17 +1,19 @@
 'use client';
 
-// /film/making?v=b — find your raider: every card in the set, a filter by name or class, and one raider's
-// whole journey (how the song says the name, where each take sings it, every picture and take) on a click.
-import { useMemo, useState } from 'react';
+// The top of /film/making — find your raider: every card in the set, a filter by name or class, and one
+// raider's whole journey (how the song says the name, where each take sings it, every picture and take) on
+// a click. ?raider=<name> opens with that raider picked, so a link can go straight to one person.
+import { useEffect, useMemo, useState } from 'react';
 import MediaGrid from '@/components/MediaGrid';
 import { clock, inGalleryOrder, type FilmRaider, type MediaItem } from '@/lib/guildMedia';
 
 export type FinderRaider = FilmRaider & { thumbUrl: string | null };
 
-export default function RaiderFinder({ raiders, youtube, takes }: {
+export default function RaiderFinder({ raiders, youtube, takes, initialPick = null }: {
   raiders: FinderRaider[];
   youtube: Record<string, string | null>;
   takes: { key: string; title: string }[];
+  initialPick?: string | null;
 }) {
   const [q, setQ] = useState('');
   const [cls, setCls] = useState('');
@@ -35,6 +37,11 @@ export default function RaiderFinder({ raiders, youtube, takes }: {
       setMedia((m) => ({ ...m, [name]: 'failed' }));
     }
   };
+
+  useEffect(() => {
+    const hit = initialPick && raiders.find((r) => r.name.toLowerCase() === initialPick.toLowerCase());
+    if (hit) choose(hit.name);
+  }, []);   // once, on arrival
 
   const got = cur ? media[cur.name] : undefined;
   return (
@@ -86,7 +93,7 @@ export default function RaiderFinder({ raiders, youtube, takes }: {
         </section>
       )}
 
-      <ul className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(132px,1fr))]">
+      <ul className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(104px,1fr))] sm:[grid-template-columns:repeat(auto-fill,minmax(132px,1fr))]">
         {shown.map((r) => (
           <li key={r.name}>
             <button type="button" onClick={() => choose(r.name)}

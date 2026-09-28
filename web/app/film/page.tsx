@@ -1,6 +1,6 @@
 // /film — the Aten Ha Ra film (the guild lead, 2026-09-27). Both takes are on YouTube; the links are
 // data in bot_kv `film_youtube` (web/lib/film.ts), so the page lights up when they are set, no deploy.
-// Two layouts on beta: the default stacks both takes, ?v=b shows one player with a switch.
+// Both takes stacked, the regular take first.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -36,12 +36,11 @@ function TakeHead({ n, take }: { n: number; take: FilmTake }) {
   );
 }
 
-export default async function FilmPage({ searchParams }: { searchParams: { v?: string; take?: string } }) {
+export default async function FilmPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/film');
 
   const takes = await loadTakes();
-  const variantB = searchParams.v === 'b';
 
   return (
     <main className="mx-auto grid max-w-4xl gap-6 px-4 py-8">
@@ -56,36 +55,12 @@ export default async function FilmPage({ searchParams }: { searchParams: { v?: s
 
       {!takes.length && <p className="text-sm text-dim">The film is not set up yet.</p>}
 
-      {!variantB && takes.map((t, i) => (
+      {takes.map((t, i) => (
         <section key={t.key} className="grid gap-2">
           <TakeHead n={i + 1} take={t} />
           <LiteYouTube id={t.youtube} title={t.title} poster={t.poster} />
         </section>
       ))}
-
-      {variantB && takes.length > 0 && (() => {
-        const cur = takes.find((t) => t.key === searchParams.take) || takes[0];
-        return (
-          <section className="grid gap-3">
-            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Take">
-              {takes.map((t, i) => (
-                <Link
-                  key={t.key}
-                  href={`/film?v=b&take=${encodeURIComponent(t.key)}`}
-                  role="tab"
-                  aria-selected={t.key === cur.key}
-                  className={`rounded border px-3 py-1.5 text-sm tabular-nums ${t.key === cur.key
-                    ? 'border-accent bg-accent/20 text-text'
-                    : 'border-border text-dim hover:text-text'}`}
-                >
-                  {i + 1} · {t.title}{t.length ? ` · ${t.length}` : ''}
-                </Link>
-              ))}
-            </div>
-            <LiteYouTube key={cur.key} id={cur.youtube} title={cur.title} poster={cur.poster} />
-          </section>
-        );
-      })()}
     </main>
   );
 }

@@ -209,7 +209,7 @@ export async function generateMetadata({ params }: { params: Promise<{ name: str
   };
 }
 
-export default async function CharacterPage({ params, searchParams }: { params: Promise<{ name: string }>; searchParams?: { g?: string } }) {
+export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {
   const { name } = await params;
   // Reject sentinel / non-character names like "(unknown)". Real EQ player
   // names are letters only, so anything with parens/digits/spaces — or the
@@ -363,7 +363,7 @@ export default async function CharacterPage({ params, searchParams }: { params: 
       </section>
 
       {/* Gallery (2026-09-28): this character's pictures and clips; nothing renders without any. */}
-      <CharacterGallery name={displayName} layout={searchParams?.g === 'b' ? 'b' : 'a'} />
+      <CharacterGallery name={displayName} />
 
       {/* All-character aggregate strip — only shown when there's more than one
           character. The first three stats are totals across every character;
