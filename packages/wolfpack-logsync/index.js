@@ -27618,6 +27618,20 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(mobCached ? { mob: mobCached.mob } : { mob: null, loading: true }));
       }
+      // Target Info's F/Q/V tab (what to say, hand-ins, who's next, what it sells) by npc
+      // id. Asked for only while that tab is open, so a fight never pays for it.
+      if (req.method === 'GET' && req.url.startsWith('/api/npc-interact')) {
+        let npcId = NaN;
+        try { npcId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+        if (!Number.isInteger(npcId) || npcId <= 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'id required' }));
+        }
+        fetchNpcInteract(npcId);
+        const hit = _npcInteractById.get(npcId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(hit ? { npc: hit.npc } : { npc: null, loading: true }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -37266,6 +37280,44 @@ function fetchMobInfo(name, selfChar, zoneId) {
     req.on('timeout', () => { req.destroy(); _mobInfoInflight.delete(key); });
     req.end();
   } catch { _mobInfoInflight.delete(key); }
+}
+
+// Target Info F/Q/V: the bot's /api/agent/npc-interact by npc id (the guild lead,
+// 2026-09-28). Catalog data, so 6h; an empty answer is retried after 10 minutes rather
+// than pinned (fetchMobInfo's 6h null is the trap this avoids).
+const _npcInteractById = new Map();      // npcId → { at, npc|null }
+const _npcInteractInflight = new Set();
+function fetchNpcInteract(npcId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_npcInteractInflight.has(npcId)) return;
+  const cached = _npcInteractById.get(npcId);
+  if (cached && (Date.now() - cached.at) < (cached.npc ? MOB_INFO_TTL_MS : 10 * 60 * 1000)) return;
+  _npcInteractInflight.add(npcId);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/npc-interact') + '?id=' + npcId;
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        _npcInteractInflight.delete(npcId);
+        // An older bot 404s: remember "nothing" for the 10-minute retry, not every poll.
+        if (res.statusCode !== 200) { _npcInteractById.set(npcId, { at: Date.now(), npc: null }); return; }
+        if (_npcInteractById.size > 500) _npcInteractById.clear();
+        try { const j = JSON.parse(body); _npcInteractById.set(npcId, { at: Date.now(), npc: (j && j.npc) ? j.npc : null }); }
+        catch { /* retried on the next ask */ }
+      });
+    });
+    req.on('error',   () => { _npcInteractInflight.delete(npcId); });
+    req.on('timeout', () => { req.destroy(); _npcInteractInflight.delete(npcId); });
+    req.end();
+  } catch { _npcInteractInflight.delete(npcId); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.

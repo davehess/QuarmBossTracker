@@ -59,6 +59,30 @@
   .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
   .fac .up{color:#56d364}
   .fac .dn{color:#f85149}
+  /* F/Q/V sub-tabs (Faction / Quest / Vendor), the quest rows and their copy chips. */
+  .fqvtabs{display:flex;gap:3px;margin:6px 0 3px}
+  .fqvtab{background:rgba(255,255,255,0.04);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
+          border-radius:4px;padding:1px 8px;font-size:10px;cursor:pointer;font-family:inherit}
+  .fqvtab:hover{color:#fff;border-color:#a371f7}
+  .fqvtab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .qhead{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin:6px 0 1px}
+  .qrow{padding:3px 0;border-top:1px solid rgba(110,118,129,0.14);font-size:10px}
+  .qhead + .qrow{border-top:0}
+  .qline{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+  .qcopy{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:0 5px;
+         font-size:10px;font-family:inherit;cursor:pointer}
+  .qcopy:hover{border-color:#58a6ff}
+  .qcopy.ok{border-color:#56d364;color:#56d364}
+  .qsay{color:#c9d1d9;line-height:1.35;margin-top:1px;font-size:10px}
+  .qsay.alt{color:#8b949e}
+  .qtag{font-size:8.5px;border-radius:3px;padding:0 4px;border:1px solid}
+  .qtag.gate{color:#d29922;border-color:rgba(210,153,34,0.5)}
+  .qtag.flag{color:#56d364;border-color:rgba(86,211,100,0.5)}
+  .qnpc{color:#58a6ff}
+  .qzone{color:#8b949e}
+  .vrow{display:flex;gap:6px;font-size:10px;padding:1px 0}
+  .vrow .vn{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  .vrow .vp{color:#d29922;font-variant-numeric:tabular-nums}
   /* #130 slow status — a distinct compact badge right under the HP header so
      "is it slowed, with what, how long left" reads at a glance (a slow matters
      more than a generic debuff row, so it is NOT buried in the debuff list). */
@@ -205,7 +229,7 @@
         <button id="tabStats"  class="tab on" type="button">Stats</button>
         <button id="tabLoot"   class="tab"    type="button">Loot</button>
         <button id="tabSpells" class="tab"    type="button">Spells</button>
-        <button id="tabFactions" class="tab"  type="button">Factions</button>
+        <button id="tabFactions" class="tab"  type="button" title="Faction · Quest · Vendor">F/Q/V</button>
         <button id="tabMana" class="tab" type="button"
                 title="Estimated mana bar on/off. OFF shows only the spell the mob was seen casting; ON also subtracts its mana cost from the catalog pool. The estimate is a FLOOR — a resisted or interrupted cast spends mana and prints no message.">&#9889;</button>
       </span>
@@ -521,18 +545,37 @@
   // interactive on hover the click falls straight through to EQ.
   if (bodyEl) {
     bodyEl.addEventListener('click', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var t = (ev.target && ev.target.closest) ? ev.target : null;
+      if (!t) return;
+      // F/Q/V sub-tabs and the /say + /map copy chips live in the repainted body too.
+      var sub = t.closest('.fqvtab');
+      if (sub) {
+        _fqvSub = sub.getAttribute('data-fqv') || 'quest';
+        try { window.localStorage.setItem('wpTargetFqv', _fqvSub); } catch (e) {}
+        _renderBody(_lastMi);
+        return;
+      }
+      var chip = t.closest('.qcopy');
+      if (chip) {
+        _copyText(chip.getAttribute('data-copy') || '');
+        chip.classList.add('ok');
+        chip.textContent = '✓ copied';
+        _copyHoldUntil = Date.now() + 1200;
+        bodyEl.__wpHtml = null;
+        return;
+      }
+      var a = t.closest('.pqdi');
       if (!a) return;
       ev.preventDefault();
       var url = a.getAttribute('data-pqdi');
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
   }
@@ -578,6 +621,100 @@
            + '</div>';
     }).join('');
     return '<div class="facwrap"><div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+  }
+
+  // ── F/Q/V: Faction · Quest · Vendor ───────────────────────────────────────
+  // The guild lead, 2026-09-28: "a quest tab on target info that has the quest details for
+  // what to say and copyable /say and /map items for who to talk to next", then "Make it
+  // F/Q/V for Faction, Quests, and Vendor. Don't bother showing Vendor if its not a vendor
+  // mob. Then have sub-tabs underneath that." Quest and Vendor come from the agent's
+  // /api/npc-interact (the bot reads the NPC's quest script), asked for only while this
+  // tab is open. The chosen sub-tab is a per-viewer convenience, so localStorage.
+  var _fqvSub = 'quest';
+  try { _fqvSub = window.localStorage.getItem('wpTargetFqv') || 'quest'; } catch (e) {}
+  var _npc = { id: null, data: null, loading: false, tries: 0, at: 0 };
+  function _loadNpc(id){
+    if (_npc.id !== id) _npc = { id: id, data: null, loading: true, tries: 0, at: 0 };
+    if (!_npc.loading || Date.now() - _npc.at < 1500) return;
+    if (_npc.tries >= 10) { _npc.loading = false; return; }
+    _npc.at = Date.now(); _npc.tries++;
+    fetch('http://127.0.0.1:' + PORT + '/api/npc-interact?id=' + id, { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (_npc.id !== id || !j || j.loading) return;
+        _npc.data = j.npc || null; _npc.loading = false;
+        _renderBody(_lastMi);
+      })
+      .catch(function(){});
+  }
+  function _copyChip(cmd){
+    return '<button type="button" class="qcopy" data-copy="' + esc(cmd) + '" title="Copy, then paste into EQ">' + esc(cmd) + ' &#x29C9;</button>';
+  }
+  function _clip(t, n){ t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+  function _coin(cp){
+    if (cp == null) return '';
+    var p = Math.floor(cp / 1000), g = Math.floor(cp % 1000 / 100), s = Math.floor(cp % 100 / 10), c = cp % 10, out = [];
+    if (p) out.push(p + 'p'); if (g) out.push(g + 'g'); if (s) out.push(s + 's'); if (c) out.push(c + 'c');
+    return out.join(' ') || '0c';
+  }
+  function renderQuest(mob, d){
+    if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
+    if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
+    var out = '';
+    if (d.say && d.say.length) {
+      out += '<div class="qhead">What to say</div>' + d.say.map(function(b){
+        var tags = (b.gated ? ' <span class="qtag gate" title="What it says depends on your flags, items or faction">depends on you</span>' : '')
+                 + (b.flag ? ' <span class="qtag flag" title="This can give you a character flag">flag</span>' : '');
+        var lines = (b.replies || []).map(function(r, i){
+          return '<div class="qsay' + (i ? ' alt' : '') + '" title="' + esc(r.text) + '">' + (r.kind === 'emote' ? '* ' : '') + esc(_clip(r.text, 220)) + '</div>';
+        }).join('');
+        return '<div class="qrow"><div class="qline">' + _copyChip('/say ' + b.keywords[0]) + tags + '</div>' + lines + '</div>';
+      }).join('');
+    }
+    if (d.turnins && d.turnins.length) {
+      out += '<div class="qhead">Hand in</div>' + d.turnins.map(function(t){
+        var ins = t.inputs.map(function(x){ return (x.qty > 1 ? x.qty + '× ' : '') + esc(x.name); }).join(' + ');
+        var outs = t.outputs.length ? ' → <span style="color:#d29922">' + t.outputs.map(function(x){ return esc(x.name); }).join(', ') + '</span>' : '';
+        return '<div class="qrow">' + ins + outs + '</div>';
+      }).join('') + (d.trade || []).map(function(r){
+        return '<div class="qsay alt" title="' + esc(r.text) + '">then: ' + esc(_clip(r.text, 220)) + '</div>';
+      }).join('');
+    }
+    if (d.next && d.next.length) {
+      out += '<div class="qhead">Who to talk to next</div>' + d.next.map(function(n){
+        return '<div class="qrow"><div class="qline"><span class="qnpc">' + esc(n.name) + '</span>'
+             + (n.zone_long ? '<span class="qzone">' + esc(n.zone_long) + '</span>' : '')
+             + (n.y != null && n.x != null ? _copyChip('/map ' + n.y + ' ' + n.x) : '') + '</div></div>';
+      }).join('');
+    }
+    return out || '<div class="sub">' + (d.script ? 'nothing to say to this NPC in its script' : 'no quest script for this NPC') + '</div>';
+  }
+  function renderVendor(d){
+    return '<div class="qhead" title="Base price; what you pay moves with your faction and Charisma">Sells (' + d.vendor.length + ')</div>'
+      + d.vendor.map(function(v){ return '<div class="vrow"><span class="vn">' + esc(v.name) + '</span><span class="vp">' + _coin(v.price) + '</span></div>'; }).join('');
+  }
+  function renderFqv(mob){
+    if (mob && mob.id) _loadNpc(mob.id);
+    var d = (mob && _npc.id === mob.id) ? _npc.data : null;
+    var subs = [['faction', 'Faction'], ['quest', 'Quest']];
+    if (d && d.vendor && d.vendor.length) subs.push(['vendor', 'Vendor']);   // only a vendor mob
+    var sub = subs.some(function(s){ return s[0] === _fqvSub; }) ? _fqvSub : 'quest';
+    var bar = '<div class="fqvtabs">' + subs.map(function(s){
+      return '<button type="button" class="fqvtab' + (s[0] === sub ? ' on' : '') + '" data-fqv="' + s[0] + '">' + s[1] + '</button>';
+    }).join('') + '</div>';
+    return bar + (sub === 'faction' ? renderFactions(mob) : sub === 'vendor' ? renderVendor(d) : renderQuest(mob, d));
+  }
+  // Copy for the /say and /map chips. The chip holds its ✓ for 1.2s: the 500ms repaint
+  // skips while it does, or the confirmation would vanish before anyone saw it.
+  var _copyHoldUntil = 0;
+  function _copyText(text){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
   }
 
   // ── Loot tab ──────────────────────────────────
@@ -671,6 +808,7 @@
   function _renderBody(mi){
     if (!mi || !mi.target_name) {
       bodyEl.innerHTML = '';
+      bodyEl.__wpHtml = null;
       var lvlElEmpty = document.getElementById('lvlRange'); if (lvlElEmpty) lvlElEmpty.textContent = '';
       emptyEl.style.display = 'block';
       return;
@@ -744,6 +882,7 @@
     // and the buff/cast lists are the full overlay's; the title bar hides by CSS.
     if (document.body.classList.contains('wp-mini')) {
       bodyEl.innerHTML = miniTargetHtml(mi, nm, htChip);
+      bodyEl.__wpHtml = null;
       _fitHeight();
       return;
     }
@@ -819,7 +958,7 @@
 
     var tabBody = '';
     if (_tab === 'factions') {
-      tabBody = renderFactions(mob);
+      tabBody = renderFqv(mob);
     } else if (_tab === 'loot') {
       tabBody = renderLoot(mob, mi);
     } else if (_tab === 'spells') {
@@ -978,7 +1117,7 @@
     // mob.id comes from the bot mob-info catalog row. Only render for real
     // catalog mobs (mob.id present) — corpses / unknown targets get nothing.
     var pqdiChip = (mob && mob.id) ? ' <a class="pqdi" data-pqdi="https://www.pqdi.cc/npc/'+mob.id+'" title="Open this mob on PQDI.cc (opens your browser)">🔗 PQDI</a>' : '';
-    bodyEl.innerHTML = '<div class="mob">'
+    var html = '<div class="mob">'
       + '<div><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
       + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
@@ -992,6 +1131,12 @@
       + tabBody
       + lastFight
       + '</div>';
+    // Unchanged HTML is not set again: every rewrite drops the hover under the cursor and a
+    // copy chip's ✓. While a chip shows ✓ the repaint waits (the click cleared __wpHtml, so
+    // the next paint after the hold goes through).
+    if (Date.now() < _copyHoldUntil || html === bodyEl.__wpHtml) return;
+    bodyEl.innerHTML = html;
+    bodyEl.__wpHtml = html;
     _fitHeight();
   }
   // Grow the host window to fit the rendered content so the Loot tab can
