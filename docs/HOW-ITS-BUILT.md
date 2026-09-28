@@ -1529,7 +1529,18 @@ recorded flag ticks and locks its row. `GuideChecklist.tsx` renders the list, th
 inventory page's `ItemHover` card, and ticks optimistically through `actions.ts` `setGuideTick`
 (known item + owned character, then upsert or delete). Adding a step: check its `/say` against
 `eqemu_quest_scripts` and its `/map` against the spawn row. Linked from `/pop`'s nav. Live web
-1.8.31; DECISIONS 2026-09-21 §65, §65a.
+1.8.31; DECISIONS 2026-09-21 §65, §65a. A step can carry a `chain` (first item, the story, the
+hand-ins in order); `ChainView` renders it with folding sections. Willamina's Needles is the first
+(web 1.8.34, §71).
+
+### Target Info F/Q/V (Faction · Quest · Vendor)
+`apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
+agent's `/api/npc-interact?id=` (only while the tab is open), which proxies the bot's
+`/api/agent/npc-interact` (`_npcInteract` in `index.js`, 6 h cache): `utils/questDialog.js` reads the
+NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped), hand-ins from
+`scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
+and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
+3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
 
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),

@@ -115,6 +115,8 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
+| **Target Info F/Q/V (Faction · Quest · Vendor)** | **On beta 2026-09-28 (§70; bot 3.1.166 main, agent 3.7.37).** What to say with `/say` chips, the hand-in, who's next with `/map`, and a merchant's stock | beta testers: target a PoK quest NPC and a merchant and try the chips; the guild lead: say when it should go to stable |
+| **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.34).** Starts with the book in Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
 | **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
 | **UI pack options as checkboxes** | **On beta 2026-09-28 (§68).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | beta testers with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank; the guild lead: say when it should go to stable |
 | **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
@@ -3794,6 +3796,47 @@ message, not a tell"*.
 - **Side finding, filed in STATUS:** with Zeal `/abc 2` ("Chat and Log") the LOG line itself becomes
   `[Fr] [X]: …`, which the agent's tell pattern never matches, so those users' real tells are not
   captured at all.
+
+## 70. Target Info F/Q/V: Faction, Quest, Vendor (2026-09-28, bot 3.1.166 main, agent 3.7.37 + Mimic beta)
+The guild lead: *"lets make a quest tab on target info that has the quest details for what to say and
+copyable /say and /map items for who to talk to next"*, then *"Lets make it the same tab as Faction, Make
+it F/Q/V for Faction, Quests, and Vendor. Don't bother showing Vendor if its not a vendor mob"* and *"Then
+have sub-tabs underneath that."*
+- **The tab:** Factions became F/Q/V with sub-tabs Faction / Quest / Vendor. Vendor appears only when the
+  NPC sells something. The chosen sub-tab is remembered per viewer.
+- **Quest** is read from the NPC's own script (`utils/questDialog.js` over `eqemu_quest_scripts`; all
+  5,719 mirrored scripts are Lua). Keywords come from `e.message:findi("…")`, never the [brackets] in
+  replies, which can differ (Tarerd Gahar says "[from you]" and listens for "from me"). Each keyword is a
+  `/say` chip with the reply; "depends on you" when the answer turns on flags, items or faction; "flag"
+  when it can give one. GM-only branches are never offered (the Seer's "delete" wipes every PoP flag and
+  is gated on `GetGM()`). Hand-ins come from `scripted_npc_turnins`; who to talk to next is every named
+  NPC the replies mention (full names anywhere, a bare surname only in the same zone) with a placed
+  spawn for `/map Y X`.
+- **Data path:** `GET /api/agent/npc-interact?id=` (bot, 6 h cache) → agent `/api/npc-interact` (asked
+  only while the tab is open; an empty answer retried after 10 minutes, not pinned for 6 h the way
+  mob-info pins a miss) → `mobinfo.html`.
+- **One overlay fix rode along:** Target Info's body is only rewritten when its HTML changed. Before, it
+  was replaced every 500 ms, which would have wiped a chip's "copied" and the hover under the cursor.
+- **Not built, the one alternative:** a one-line "next step" strip on Stats for quest NPCs, with no tab
+  switch. Cheaper to read mid-fight, but it can only show one keyword, and the ask was the full dialogue.
+
+## 71. The PoP checklist shows Willamina's whole chain (2026-09-28, web 1.8.34)
+The guild lead: *"Willamina's quest needs Bolcen Tendag's section in it"*, then *"Follow the chain and
+show the first item that seems to be required (gives you an item, spawns an npc, etc) and show the full
+quest chain with minimize sections there. Highlight stages where you will have input/output."*
+- **Traced through ten PoK scripts:** Willamina → Bolcen Tendag → Mirao Frostpouch → Oracle Cador →
+  Onirelin Gali → Arch Mage Narik → Elisha Dirtyshoes → Boiron Ston → Caden Zharik → Agrakath Theric. It
+  all hangs on one ground spawn: *History of Evils: The Age of Scale* on the upper level of Myrist
+  (`/map -94 973`, one up at a time, 30-minute respawn, from `eqemu_ground_spawns`).
+- **No NPC checks that you talked to it first** (every `event_trade` checks only the item), so with the
+  book you can walk the ten hand-ins straight through.
+- **On the page:** a gold "Start with this" box with the book and its `/map`; "Hand-ins, in order" (each
+  row give → get, gold, with `/map`); "The story: who sends you where" (each NPC's `/say` and what they
+  tell you). Both lists fold away. Every `/say` was checked against the NPC's `findi` keyword; Mirao,
+  Boiron and Agrakath listen for phrases ("have come for the elixir", "like elisha dirtyshoes", "erase
+  the debt"), written as sentences that contain them.
+- The chain is data on the step (`GuideItem.chain`), so other chained steps can use the same view; a
+  test holds that each hand-in gives what the one before it got.
 
 
 

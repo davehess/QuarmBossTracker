@@ -8,7 +8,7 @@ import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
   GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, splitItems, tickedKeys,
-  type GuideItem, type Who,
+  type Chain, type GuideItem, type Loc, type Who,
 } from '@/lib/popGuide';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
@@ -164,6 +164,65 @@ function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCa
   );
 }
 
+function Place({ at }: { at: Loc }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 min-w-0">
+      <span className="text-text">{at.npc}</span>
+      {at.note && <span className="text-dim">({at.note})</span>}
+      <CopyChip text={mapCommand(at)} />
+    </span>
+  );
+}
+
+// A quest chain (the guild lead, 2026-09-28: "show the first item that seems to be required …
+// the full quest chain with minimize sections … Highlight stages where you will have
+// input/output"). The first item stays in view; the hand-ins (item in → item out, gold) and
+// the story fold away.
+function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
+  return (
+    <div className="mt-2 space-y-1.5 text-[11px]">
+      <div className="rounded border border-gold/60 bg-gold/10 px-2 py-1.5">
+        <div className="text-gold text-[10px] uppercase tracking-wide">Start with this</div>
+        <p className="text-text"><WithItems text={chain.first.text} cards={cards} /></p>
+        <div className="mt-1">📍 <Place at={chain.first.at} /></div>
+      </div>
+      <details className="rounded border border-border px-2 py-1">
+        <summary className="cursor-pointer text-dim">Hand-ins, in order · {chain.handins.length}</summary>
+        <ol className="mt-1 space-y-1">
+          {chain.handins.map((s, n) => (
+            <li key={n} className="border-l-2 border-gold/70 bg-gold/5 pl-2 py-0.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-dim">{n + 1}.</span>
+                <Place at={s.at} />
+              </div>
+              <div className="mt-0.5">
+                <span className="text-dim">give</span> <WithItems text={s.give ?? ''} cards={cards} />
+                <span className="text-gold"> → </span>
+                <span className="text-dim">get</span> <WithItems text={s.get ?? ''} cards={cards} />
+              </div>
+            </li>
+          ))}
+        </ol>
+      </details>
+      <details className="rounded border border-border px-2 py-1">
+        <summary className="cursor-pointer text-dim">The story: who sends you where · {chain.talk.length}</summary>
+        <ol className="mt-1 space-y-1">
+          {chain.talk.map((s, n) => (
+            <li key={n} className="pl-2 py-0.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-dim">{n + 1}.</span>
+                <Place at={s.at} />
+                {(s.say ?? []).map(t => <CopyChip key={t} text={sayCommand({ text: t })} />)}
+              </div>
+              {s.note && <div className="text-dim mt-0.5">{s.note}</div>}
+            </li>
+          ))}
+        </ol>
+      </details>
+    </div>
+  );
+}
+
 function Row({ item, checked, recorded, disabled, onToggle, cards }: {
   item: GuideItem; checked: boolean; recorded: boolean; disabled: boolean; cards: Record<number, ItemCard>;
   onToggle: (item: GuideItem, next: boolean) => void;
@@ -214,6 +273,7 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
             ))}
           </div>
         )}
+        {item.chain && <ChainView chain={item.chain} cards={cards} />}
       </div>
     </li>
   );

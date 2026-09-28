@@ -149,6 +149,13 @@ next touch one rather than assuming a missing row means a missing doc.
   Maelin's script prints "Maelin tells you, '…'" itself; the bot now drops any incoming tell whose sender
   and text match a line a quest script prints (`eqemu_quest_scripts`). The 8 stored rows were deleted.
   `test/tells-scripted-npc.test.js`. `DECISIONS-2026-09-21.md` §69.
+- **🟡 Target Info F/Q/V (bot 3.1.166 main; agent 3.7.37 + Mimic beta, 2026-09-28).** Factions tab →
+  Faction / Quest / Vendor. Quest reads the NPC's script: `/say` chips with replies, hand-ins, who's next
+  with `/map`. Vendor only for merchants. `utils/questDialog.js`, `test/quest-dialog.test.js`,
+  `test/npc-interact.test.js`, `test/target-info-fqv.test.js` (beta). `DECISIONS-2026-09-21.md` §70.
+- **✅ PoP checklist: Willamina's whole chain (web 1.8.34, main 2026-09-28).** The book in Myrist first,
+  then ten hand-ins (give → get) and the story, in folding sections. `test/pop-guide.test.js`.
+  `DECISIONS-2026-09-21.md` §71.
 - **⏳ Tells are not captured with Zeal `/abc 2` (found 2026-09-28).** "Chat and Log" writes `[Fr] [X]: …`
   into the log, which the agent's incoming-tell pattern never matches. Needs a second pattern in the agent
   (beta), mapped to the same fields. `DECISIONS-2026-09-21.md` §69.
