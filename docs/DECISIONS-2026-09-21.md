@@ -3639,6 +3639,26 @@ tracked (Emmerik and Evynd 6 h, Grioihin 18 h, Halls of Honor trials 18 h, Keepe
   60 minutes, so a corpse DM's /loc goes stale there; quakes open an 8-hour raid window in the PvP
   instance; new commands #popflags, #timelockout and #glory are parser candidates like #petstats.
 
+## 64. The lore behind the raids: `docs/LORE-planes-of-power.md` (2026-09-28)
+The guild lead: *"Consume the Lore for Everquest so that we can build a larger narrative around our raids
+moving forward. Use Haiku agents to comb through the site and build a better understanding of how Planes
+of Power matters and what happens in the pantheon of gods."* Six Haiku agents split
+loreofnorrath.wordpress.com (about 990 posts, read through the WordPress public API) into pantheon, PoP
+story, timeline, dark gods, light and elemental gods, and Luclin. A second pass checked every
+load-bearing claim against the source text before anything went into the doc.
+- **The frame it gives us:** PoP is where mortals break into the gods' own realms, kill their champions
+  and reach the Plane of Time. Afterwards (EverQuest 2's *Tome of Destiny*) the gods agree mortals are
+  too strong and withdraw from Norrath, which leads to the Rending and the Shattering of Luclin. Our
+  raids are the cause of the gods' silence.
+- **Source tiers are part of the doc.** EQ1 in-game text wins; EQ2 text is canon only for what happens
+  AFTER PoP; the tabletop RPG and fan essays are "legend has it".
+- **Haiku alone was not good enough for lore.** The first pass put the EQ2 bridge story before PoP,
+  called Tallon and Vallon goddesses and Aerin`Dar a priestess, and padded gods with invented "raid
+  hooks". The corrections are listed in the doc. Any later lore pass should verify against the source
+  text the same way.
+- Not built: lore lines on `/pop` zone cards, a story block on `/guide/[bossId]`, a flavour line on
+  Discord kill cards. Those are UI changes, so options come first.
+
 
 
 
