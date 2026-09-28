@@ -3843,6 +3843,18 @@ quest chain with minimize sections there. Highlight stages where you will have i
   story, which runs from Willamina's end, is labelled optional. Step-level `/say` and `/map` chips were
   dropped for this step because the box already carries them.
 
+### 71a. The Seer only listens while you sit (2026-09-28, web 1.8.36, bot 3.1.167)
+The guild lead, with an in-game log: *"For Seer Mal Nae'Shi i had to sit down first and then say 'unlock
+my memories'"*. Her script answers "guided meditation" and "unlock … memories" only when
+`e.other:IsSitting()`; standing, she says to sit down. "unlock" alone does nothing, because the branch
+needs both words. "You manage to recover some images from your childhood, but no recent events spark a
+memory" means it worked and there was nothing new to unlock.
+- **Checklist:** `Say.sit`; each Seer line gets a gold "sit first" and a `/sit` chip before it, on both
+  steps that send you to her. A test holds that every Seer meditation/unlock line carries it, and that an
+  unlock line says "memories".
+- **Target Info Quest:** `utils/questDialog.js` marks a branch `sit` when it checks `IsSitting()`, so any
+  NPC like her is flagged; the overlay's "sit first" tag rides the next beta.
+
 
 
 

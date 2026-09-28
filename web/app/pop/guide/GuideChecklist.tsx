@@ -262,6 +262,7 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
             {item.says.map((s, n) => (
               <span key={n} className="inline-flex flex-wrap items-center gap-1 min-w-0 max-w-full">
                 {(n === 0 || item.says![n - 1].to !== s.to) && <span className="text-dim">to {s.to}:</span>}
+                {s.sit && <><span className="text-gold">sit first</span><CopyChip text="/sit" /></>}
                 <CopyChip text={sayCommand(s)} />
               </span>
             ))}

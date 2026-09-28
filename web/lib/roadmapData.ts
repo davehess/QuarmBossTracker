@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'seer-sit-2026-09-28',
+    title: 'Web 1.8.36',
+    version: 'Web 1.8.36 · Bot 3.1.167',
+    date: '2026-09-28',
+    headline: 'The Seer only listens while you sit, and the checklist now says so.',
+    features: [],
+    fixes: [
+      'Seer Mal Nae`Shi answers “guided meditation” and “unlock my memories” only while you are sitting. Her lines on the PoP checklist now come with a /sit button first. If she says no recent events spark a memory, you have nothing new to unlock yet.',
+    ],
+  },
+  {
     key: 'willamina-chain-2026-09-28',
     title: 'Web 1.8.35',
     version: 'Web 1.8.35',

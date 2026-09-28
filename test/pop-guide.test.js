@@ -53,6 +53,16 @@ describe('copy lines and item cards', () => {
     }
   });
 
+  // The Seer's script answers "guided meditation" and "unlock … memories" only when
+  // e.other:IsSitting() (the guild lead, 2026-09-28: "i had to sit down first").
+  it('every Seer line that needs you seated carries sit', () => {
+    const seer = GUIDE_ITEMS.flatMap(i => (i.says ?? []).filter(s => s.to.startsWith('Seer Mal')));
+    expect(seer.length).toBeGreaterThan(0);
+    for (const s of seer) if (/meditation|unlock/.test(s.text)) expect(s.sit, s.text).toBe(true);
+    // The script needs both words: "unlock" alone does nothing.
+    for (const s of seer) if (/unlock/.test(s.text)) expect(s.text).toMatch(/memories/);
+  });
+
   it('never offers a phrase that edits flags or starts with a slash', () => {
     for (const i of GUIDE_ITEMS) for (const s of i.says ?? []) {
       expect(s.text.trim(), i.key).not.toBe('');
