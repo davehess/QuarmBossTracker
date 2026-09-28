@@ -3503,6 +3503,16 @@ interpolate hand-drawn animation.** On twos is how it is meant to move. A native
 tested on one raider ($0.48). Its lines are sharper, but it is a fresh take with new motion and some
 camera drift. All 78 would cost about $37; that is the guild lead's call.
 
+**Outtakes too (same night).** The guild lead asked for every other generated piece: *"some of them are
+worth having a laugh over, others looked better."* Staged under `Outtakes/` in twelve folders: both
+rounds of stills with their tries, every animation take (the film's take marked), the class, opening,
+ending and transition renders, the cold open and storyboard takes, the one-raider redo, the earlier cuts
+of the film, the cover candidates, and the old clips with the song. Only raw generations and finished
+cuts went in; intermediates such as frame sheets, smoothed copies and card composites stayed out. The
+bucket now holds 676 objects, about 4.1 GB (PNG added to its allowed types). The importer now **books
+its own next run** on a one-minute timer when it pauses, and a script lock stops two runs overlapping. A
+mocked end-to-end run landed all 630 files, and a second run added nothing.
+
 
 
 
