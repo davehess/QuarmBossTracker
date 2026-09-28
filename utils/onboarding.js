@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.165': [
+    '**Quest NPCs no longer arrive as tells.** Some NPCs, like Grand Librarian Maelin in the Plane of Knowledge library, print their lines the way a tell looks, and those were being DM’d to you. They are not any more. Real tells from players are untouched.',
+  ],
   '3.1.154': [
     '**Feedback takes screenshots.** Add up to three pictures to feedback or a roadmap suggestion on the website (📷 or paste with Ctrl+V; sign in first), and a screenshot on `/feedback` in Discord is kept for good now instead of expiring. Mimic’s 📸 button follows on the beta.',
   ],

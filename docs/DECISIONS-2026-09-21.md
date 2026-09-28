@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
+| **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
 | **UI pack options as checkboxes** | **On beta 2026-09-28 (§68).** None on by default, any mix, clashes greyed with the shared window named, untick restores the pack's own file, updates keep the ticks | beta testers with Nillipuss: tick Bank - Default layout, `/reloadskin`, and check the bank; the guild lead: say when it should go to stable |
 | **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
 | **PoP checklist, `/pop/guide`** | **Live 2026-09-28 (§65, §65a, web 1.8.31).** 74 steps in EQProgression's order, Solo / Group / Raid and must-have; copy buttons for every `/say` and `/map Y X`; item cards on hover; ticks per character, recorded flags tick themselves | members: use it from launch; anyone: report a step Quarm does differently (the "verify at launch" rows first) |
@@ -3770,6 +3771,29 @@ have overlap and make it checkboxes."*
   inventory windows; the matrix is worked out from the files at run time, never written into the code.
 - **To get the normal bank back today on stable Mimic:** apply "Bank - Default layout" again, check that
   the ✓ line names it, then `/reloadskin`.
+
+## 69. Quest NPC lines that look like tells are not tells (2026-09-28, bot 3.1.165)
+The guild lead, with a Discord DM reading "Maelin → <character>: Welcome to Myrist! …": *"this is an NPC
+message, not a tell"*.
+- **Cause:** Grand Librarian Maelin's PoK script prints its own chat line,
+  `e.other:Message(0, "Maelin tells you, '…'")`, 17 times across the PoP flag steps. It lands in the log
+  exactly like a `/tell`. The agent's NPC-sender rule (3.6.52) compares against the targeted NPC's FULL
+  name, and "Maelin" is not "Grand Librarian Maelin". In game it shows as `[Fr] [Maelin]:` because Zeal's
+  `/abc` abbreviation rewrites any "X tells you" text; that label does not mean it came in as a tell.
+- **Fix, on the bot so the whole fleet has it without a Mimic update:** drop an incoming tell whose sender
+  AND text are a line some quest script prints as a tell. The lines are read from `eqemu_quest_scripts`
+  (20 scripts, 67 lines, 16 senders; cached 6 h, fail-open). A name rule alone was measured and rejected:
+  four real players share an NPC's name or last word, with 49 real tells between them, and 27 senders
+  never seen on /who sent 90 tells that look real. Covers Maelin, Mavuin (PoJ) and Thelin; the 13
+  multi-word senders were already dropped by the agent.
+- **Stored rows:** the 8 Maelin rows (all 2026-09-28) were deleted by the same exact match; nothing else
+  matched. Older NPC rows (bankers and a merchant, ~77 in all, mostly before 3.6.52) are left alone.
+- **Not changed:** the agent's local Recent Tells card still lists these lines until the agent's
+  NPC-sender rule also accepts the target's last word. The exact long-term signal is Zeal's chat colour
+  (0 for this line, 257 for a real tell), which Mimic does not forward to the agent.
+- **Side finding, filed in STATUS:** with Zeal `/abc 2` ("Chat and Log") the LOG line itself becomes
+  `[Fr] [X]: …`, which the agent's tell pattern never matches, so those users' real tells are not
+  captured at all.
 
 
 
