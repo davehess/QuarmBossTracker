@@ -7,7 +7,7 @@
 // Run: npx vitest run test/spell-sources.test.js
 
 import { describe, it, expect } from 'vitest';
-import { groupSources, shoppingList } from '../web/lib/spellSources.ts';
+import { groupSources, shoppingList, vendorSpots, spotCommand } from '../web/lib/spellSources.ts';
 
 const row = (item_id, kind, npc_id, npc_name, zone_short, zone_long) =>
   ({ item_id, kind, npc_id, npc_name, zone_short, zone_long });
@@ -70,5 +70,36 @@ describe('shoppingList', () => {
       missing('Alpha', 2, { scribe_level: 51 }),
     ], sources);
     expect(zones[0].spells.map(s => s.spellName)).toEqual(['Zeta', 'Alpha']);
+  });
+});
+
+// The 📍 copy on each vendor (the guild lead, 2026-09-28: "have the people be
+// links and a map icon next to each with a copy with /map <y><x>").
+describe('vendor spots', () => {
+  it('writes Y before X, rounded, the order /loc prints and Zeal /map takes', () => {
+    const spots = vendorSpots(
+      [{ npc_id: 10, spawngroup_id: 7 }],
+      [{ id: 1, spawngroup_id: 7, zone_short: 'poknowledge', x: -224.4, y: -41.6 }],
+    );
+    expect(spotCommand(spots[10].poknowledge)).toBe('/map -42 -224');
+  });
+
+  it('keeps one point per vendor per zone, lowest spawn id first', () => {
+    const spots = vendorSpots(
+      [{ npc_id: 10, spawngroup_id: 7 }, { npc_id: 10, spawngroup_id: 8 }, { npc_id: 11, spawngroup_id: 8 }],
+      [
+        { id: 9, spawngroup_id: 8, zone_short: 'twilight', x: 5, y: 6 },
+        { id: 2, spawngroup_id: 7, zone_short: 'twilight', x: 1, y: 2 },
+        { id: 3, spawngroup_id: 7, zone_short: null, x: 0, y: 0 },
+      ],
+    );
+    expect(spots[10]).toEqual({ twilight: { y: 2, x: 1 } });
+    expect(spots[11]).toEqual({ twilight: { y: 6, x: 5 } });
+  });
+
+  it('the shopping list carries each vendor\'s npc id so its name can link', () => {
+    const sources = groupSources([row(1, 'merchant', 10, 'Seer_Vendor', 'twilight', 'The Twilight Sea')]);
+    const { zones } = shoppingList([{ spell_name: 'S', scroll_item_id: 1, scribe_level: 1, pop: false, held_by: [] }], sources);
+    expect(zones[0].spells[0].vendors).toEqual([{ npcId: 10, name: 'Seer Vendor' }]);
   });
 });

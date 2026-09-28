@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Rallosian Glory PvP kills** | **Agent 3.7.36 on beta, bot 3.1.164 on main (§66).** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once | the guild lead: cut a stable Mimic when ready, since stable users do not read these lines until then; anyone: paste the first "worthy conquest" line when one appears |
+| **Missing spells: vendor links + 📍 `/map`** | **Live 2026-09-28 (§67, web 1.8.32).** Vendor and dropper names open their NPC page; each vendor has a 📍 that copies `/map Y X` for that zone | none; the boss guide's spawn lookup has the broken embed §67 found (separate task) |
 | **PoP checklist, `/pop/guide`** | **Live 2026-09-28 (§65, §65a, web 1.8.31).** 74 steps in EQProgression's order, Solo / Group / Raid and must-have; copy buttons for every `/say` and `/map Y X`; item cards on hover; ticks per character, recorded flags tick themselves | members: use it from launch; anyone: report a step Quarm does differently (the "verify at launch" rows first) |
 | **#petstats in the Pet and Charm windows** | **Parser on beta 2026-09-28 (§63, agent 3.7.35).** The sheet (HP, AC, ATK, damage, delay, DPS, resists, 21 slots) rides the Pet/Charm row as `sheet`; nothing draws it yet | the guild lead: pick a display (A strip, B fold-out sheet, C MR badge on Charm) |
 | **PoP board vs the 2026-09-28 patch notes** | **Three fixes on main 2026-09-28 (§63a, bot 3.1.163):** Quarm 168→162 h; Mujaki renamed "the Devourer" so the kill matches; "Avatar of Earth" added to the Rathe Council slot. Five bosses still read 72 h the notes do not name | the guild lead: 66 h for Xanamech, Ture, Mujaki, Askr, Charassis, or keep 72; add Mithaniel Marr and the Manaetic Behemoth to the board before Oct 1? |
@@ -3704,6 +3706,40 @@ be fully folded in. "This" was the single-list layout (A); B was deleted in the 
   `/say` but no `/map`.
 - **Items:** `[[Name#itemId]]` in a step renders the existing inventory item card on hover; one
   `item_card_info` call per render. A click on an item never ticks the box.
+
+## 66. Rallosian Glory PvP kills (2026-09-28, agent 3.7.36 beta, bot 3.1.164 main)
+The guild lead posted two new broadcast lines after the PoP patch (*"Some new messages"*):
+`[PVP] Rallos Zek watches as <killer> spills <victim>'s blood in <zone>, but finds no worthy conquest.`
+No pattern matched it and the unmatched capture only kept lines with "has killed", so both kills in the
+screenshot are in neither `pvp_kills` nor `pvp_deaths`.
+- **Agent:** `parseGloryKill` reads killer, victim, zone (split at the clause, not the first comma, so
+  "Doomfire, the Burning Lands" survives), `source: 'rallos_glory'`, guilds null. `glory` is `false` only
+  for the "no worthy conquest" ending we have seen; any other ending is kept as `gloryText`. The unmatched
+  capture now also keeps any Rallos Zek / Glory line that fails to parse, so the worthy-kill wording is
+  on record the first time it appears.
+- **Bot:** the line names no guilds, so `_resolveGloryGuilds` fills them: each name's latest non-anonymous
+  `/who` guild in the last 30 days, else our roster → Wolf Pack, else unknown. A Glory kill is always
+  player-versus-player: it counts as ours when one side is ours even if the other guild is unknown, and
+  never takes the boss-timer path. Its guilds came from `/who`, so it is not written back as a sighting.
+  The post dedup also keys on killer + victim, so the same kill in both wordings posts once.
+- ⚠ **Reaches players only through Mimic.** Beta testers get it now; stable users will not read Glory
+  lines until a stable Mimic is cut.
+
+## 67. Missing spells: vendor names link, 📍 copies `/map Y X` (2026-09-28, web 1.8.32)
+The guild lead, on the Shopping list: *"This page needs to have the people be links and a map icon next
+to each with a copy with /map <y><x>"*.
+- **Every vendor and dropper name links to its NPC page** (`/db/npc/<id>`: every spawn point, loot,
+  faction), in both the By-level dropdowns and the Shopping list.
+- **Each vendor gets a 📍 button** that copies `/map Y X` for that zone, Y first, the same order as the
+  checklist (§65a). The point comes from `eqemu_spawnentry` → `eqemu_spawn2`, one per vendor per zone,
+  lowest spawn id first.
+- **Droppers get the link, not a 📍.** Across every spell scroll no vendor has more than 3 spawn points
+  (463 in all), while a dropper can have 119; one point for a roaming mob would send people to the
+  wrong place. Its NPC page lists them all.
+- **Found on the way:** the boss guide (`/guide/[bossId]`) asks PostgREST to embed `eqemu_spawn2` from
+  `eqemu_spawnentry`. The two tables share `spawngroup_id` but have no key between them, so the call
+  fails (PGRST200) and no boss guide shows a spawn point. Filed as a separate task; not changed here.
+- The copy button moved to `web/components/CopyChip.tsx`, shared by the checklist and this page.
 
 
 

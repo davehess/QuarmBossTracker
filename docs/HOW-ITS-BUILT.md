@@ -3493,7 +3493,9 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   mirror (`spell_scroll_sources` RPC over merchantlist + npc_drops +
   spawn-table zones; npc_types.merchant_id mirrored since 2026-08-18), zone
   shopping mode with only-here badges. `MissingSpellsView.tsx` +
-  `lib/spellSources.ts`.
+  `lib/spellSources.ts`. Since web 1.8.32 every vendor/dropper name links to
+  `/db/npc/<id>` and each vendor has a 📍 that copies `/map Y X`
+  (`vendorSpots` over spawnentry → spawn2; `components/CopyChip.tsx`).
 - **Adoption metrics — `/admin/adoption`** (web 1.1.66): product health in
   PLAYERS — WAU, activations (new-raider vs converted split on joined_at),
   4-week retention, raid-window-only corroboration, fleet version, and the

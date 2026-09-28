@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'spells-map-2026-09-28',
+    title: 'Web 1.8.32',
+    version: 'Web 1.8.32',
+    date: '2026-09-28',
+    headline: 'Missing spells: every vendor is a link, with a 📍 that copies where they stand.',
+    features: [
+      {
+        name: 'Click a vendor, see the NPC',
+        blurb: 'On your Missing spells page, every vendor and every mob that drops a spell opens its own page: where it spawns, what it drops, its faction.',
+      },
+      {
+        name: '📍 next to every vendor',
+        blurb: 'Click it to copy /map with the vendor’s location in that zone, then paste it into EQ. Works in the By-level list and the Shopping list.',
+      },
+    ],
+  },
+  {
     key: 'pop-checklist-2026-09-28',
     title: 'Web 1.8.31',
     version: 'Web 1.8.31',
