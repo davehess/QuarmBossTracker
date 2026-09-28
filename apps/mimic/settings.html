@@ -1189,7 +1189,7 @@
       if (p.installed && opts.choices.length) {
         optHtml =
           '<div class="uiOpts" style="margin-top:8px">' +
-            '<div style="font-size:11px;color:#8b949e;margin-bottom:4px">Layout options: tick any mix. A tick takes effect straight away; type <code>/reloadskin</code> in-game to see it.</div>' +
+            '<div style="font-size:11px;color:#8b949e;margin-bottom:4px">Layout options: tick the ones you want, then <b>Apply</b>. Type <code>/reloadskin</code> in-game to see them.</div>' +
             (opts.ready ? '' : '<div class="hint uiOptPrep" style="margin-bottom:4px">Getting the pack’s own files from GitHub so an untick can put them back…</div>') +
             boxes.map(function(c){
               return '<label style="display:flex;gap:6px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">' +
@@ -1199,7 +1199,11 @@
               '</label>';
             }).join('') +
             (noops.length ? '<div class="hint" style="margin-top:2px">' + _esc(noops.map(_uiLabel).join(', ')) + (noops.length === 1 ? ' is' : ' are') + ' what you have with nothing ticked.</div>' : '') +
-            '<button type="button" class="uiOptReset" style="margin-top:6px;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
+            '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<button type="button" class="uiOptApply" disabled style="background:#21262d;border:1px solid #2a3140;color:#8b949e;padding:5px 14px;font-size:12px;font-weight:600;border-radius:5px;cursor:pointer">Apply</button>' +
+              '<button type="button" class="uiOptReset" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
+              '<span class="uiOptPending" style="font-size:11px;color:#d29922"></span>' +
+            '</div>' +
           '</div>';
       } else if (p.installed) {
         optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
@@ -1280,14 +1284,39 @@
           msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
         } finally { syncClashes(); }
       }
+      // Tick, then Apply (the guild lead, 2026-09-28: "There's no button to install, only reset and
+      // untick"). A tick only plans the change; Apply writes the files. Apply lights up while the
+      // ticks differ from what is on, and says how many changes are waiting.
+      var applyBtn = card.querySelector('.uiOptApply');
+      var pendingEl = card.querySelector('.uiOptPending');
+      var appliedNow = opts.choices.filter(function(c){ return c.applied; }).map(function(c){ return c.id; });
+      function ticked(){ return optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); }); }
+      function syncApply(){
+        var want = ticked();
+        var diff = want.filter(function(id){ return appliedNow.indexOf(id) < 0; }).length
+                 + appliedNow.filter(function(id){ return want.indexOf(id) < 0; }).length;
+        if (!applyBtn) return;
+        applyBtn.disabled = !diff || !opts.ready;
+        applyBtn.style.background = diff ? '#1f6feb' : '#21262d';
+        applyBtn.style.color = diff ? '#fff' : '#8b949e';
+        applyBtn.style.border = diff ? '0' : '1px solid #2a3140';
+        if (pendingEl) pendingEl.textContent = diff ? diff + ' change' + (diff === 1 ? '' : 's') + ' not applied yet' : '';
+      }
       optBoxes.forEach(function(b){
-        b.addEventListener('change', function(){
-          setOpts(optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); }));
-        });
+        b.addEventListener('change', function(){ syncClashes(); syncApply(); });
+      });
+      if (applyBtn) applyBtn.addEventListener('click', async function(){
+        await setOpts(ticked());
+        appliedNow = optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); });
+        syncApply();
       });
       var resetBtn = card.querySelector('.uiOptReset');
-      if (resetBtn) resetBtn.addEventListener('click', function(){ setOpts([]); });
+      if (resetBtn) resetBtn.addEventListener('click', function(){
+        optBoxes.forEach(function(b){ b.checked = false; });
+        syncClashes(); syncApply();
+      });
       syncClashes();
+      syncApply();
       // A pack installed before Mimic kept its default files: fetch them once, then redraw.
       if (p.installed && opts.choices.length && !opts.ready && !_uiPackPrepTried[p.id]) {
         _uiPackPrepTried[p.id] = true;
