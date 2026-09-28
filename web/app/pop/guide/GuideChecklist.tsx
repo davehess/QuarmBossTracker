@@ -182,9 +182,13 @@ function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemC
   return (
     <div className="mt-2 space-y-1.5 text-[11px]">
       <div className="rounded border border-gold/60 bg-gold/10 px-2 py-1.5">
-        <div className="text-gold text-[10px] uppercase tracking-wide">Start with this</div>
+        <div className="text-gold text-[10px] uppercase tracking-wide">Start here</div>
         <p className="text-text"><WithItems text={chain.first.text} cards={cards} /></p>
-        <div className="mt-1">📍 <Place at={chain.first.at} /></div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          📍 <Place at={chain.first.at} />
+          {(chain.first.say ?? []).map(t => <CopyChip key={t} text={sayCommand({ text: t })} />)}
+        </div>
+        {chain.first.fetch && <div className="mt-1">📖 <Place at={chain.first.fetch} /></div>}
       </div>
       <details className="rounded border border-border px-2 py-1">
         <summary className="cursor-pointer text-dim">Hand-ins, in order · {chain.handins.length}</summary>
@@ -205,7 +209,7 @@ function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemC
         </ol>
       </details>
       <details className="rounded border border-border px-2 py-1">
-        <summary className="cursor-pointer text-dim">The story: who sends you where · {chain.talk.length}</summary>
+        <summary className="cursor-pointer text-dim">Optional: the story, from {chain.talk[0]?.at.npc ?? 'the start'} · {chain.talk.length}</summary>
         <ol className="mt-1 space-y-1">
           {chain.talk.map((s, n) => (
             <li key={n} className="pl-2 py-0.5">

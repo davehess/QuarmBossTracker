@@ -153,8 +153,8 @@ next touch one rather than assuming a missing row means a missing doc.
   Faction / Quest / Vendor. Quest reads the NPC's script: `/say` chips with replies, hand-ins, who's next
   with `/map`. Vendor only for merchants. `utils/questDialog.js`, `test/quest-dialog.test.js`,
   `test/npc-interact.test.js`, `test/target-info-fqv.test.js` (beta). `DECISIONS-2026-09-21.md` §70.
-- **✅ PoP checklist: Willamina's whole chain (web 1.8.34, main 2026-09-28).** The book in Myrist first,
-  then ten hand-ins (give → get) and the story, in folding sections. `test/pop-guide.test.js`.
+- **✅ PoP checklist: Willamina's whole chain (web 1.8.34–1.8.35, main 2026-09-28).** Starts at Agrakath
+  Theric with the book from Myrist, then ten hand-ins (give → get) and the optional story, in folding sections. `test/pop-guide.test.js`.
   `DECISIONS-2026-09-21.md` §71.
 - **⏳ Tells are not captured with Zeal `/abc 2` (found 2026-09-28).** "Chat and Log" writes `[Fr] [X]: …`
   into the log, which the agent's incoming-tell pattern never matches. Needs a second pattern in the agent

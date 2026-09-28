@@ -41,11 +41,17 @@ export type GuideItem = {
 
 // A quest that is a chain of NPCs (the guild lead, 2026-09-28: "Follow the chain and show the
 // first item that seems to be required … and show the full quest chain with minimize sections
-// there. Highlight stages where you will have input/output"). `first` is what the whole chain
-// hangs on; `talk` is the story in the order you hear it; `handins` is the order you actually
-// walk it, each one an item in and an item out. give/get are [[Item#id]] tokens.
+// there. Highlight stages where you will have input/output", then "That quest chain really
+// looks like it should start from … Agrakath Theric"). `first` is where you actually start:
+// the NPC, what to say, and the item to `fetch` for them. `handins` is the order you walk it,
+// each one an item in and an item out; `talk` is the optional story in the order the quest
+// giver tells it. give/get are [[Item#id]] tokens.
 export type ChainStage = { at: Loc; say?: string[]; give?: string; get?: string; note?: string };
-export type Chain = { first: { text: string; at: Loc }; talk: ChainStage[]; handins: ChainStage[] };
+export type Chain = {
+  first: { text: string; at: Loc; say?: string[]; fetch?: Loc };
+  talk: ChainStage[];
+  handins: ChainStage[];
+};
 
 export type SectionKey = 'start' | 'pok' | 'spells' | 't1' | 't2' | 't3' | 't4' | 'time';
 
@@ -151,14 +157,15 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Gram Dunnar gives it free. Come back each time you open a new zone for free AA and charm upgrades.',
     says: [{ to: 'Gram Dunnar', text: 'craft' }, { to: 'Gram Dunnar', text: 'I have stories' }], where: [L.gram] },
   { key: 'start_traveler_manual', section: 'start', who: 'solo', must: true, title: '[[Planar Traveler’s Manual#28745]] (Willamina’s Needles)',
-    detail: 'All inside PoK, no fighting: ten NPCs pass one favour down the line, and it ends with Bolcen Tendag’s needles. Needed for the Beginner Manual quests later.',
-    link: pqdiNpc(202055),
-    says: [{ to: 'Willamina', text: 'quests' }, { to: 'Willamina', text: 'help' }, { to: 'Bolcen Tendag', text: 'needles' }],
-    where: [L.willamina, L.bolcen],
+    detail: 'All inside PoK, no fighting. Start at Agrakath Theric and fetch him one book; ten hand-ins later, Willamina gives you the manual. Needed for the Beginner Manual quests later.',
+    link: pqdiNpc(202058),
+    // No step-level says/where: the chain's "Start here" box carries Agrakath's /say and both /maps.
     chain: {
       first: {
-        text: 'Everything hangs on one book: [[History of Evils: The Age of Scale#28188]], lying on the floor on the upper level of Myrist. One is up at a time, back 30 minutes after someone takes it. No NPC needs the talk before taking its item, so with the book in hand you can go straight down the hand-ins.',
-        at: L.scaleBook,
+        text: 'Start at Agrakath Theric. He wants [[History of Evils: The Age of Scale#28188]], which lies on the floor on the upper level of Myrist: one is up at a time, back 30 minutes after someone takes it. Hand it to him and walk the hand-ins below; no NPC needs the talk before taking its item.',
+        at: L.agrakath,
+        say: ['erase the debt'],
+        fetch: L.scaleBook,
       },
       talk: [
         { at: L.willamina, say: ['quests', 'help'], note: 'Her needles are late. Bolcen Tendag was bringing them.' },
