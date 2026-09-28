@@ -11710,6 +11710,76 @@ async function _announceOptinPvpOnce() {
   }, 5 * 60_000);
 }
 
+// ── The film's making-of: one-shot #raid-chat card (2026-09-28) ──────────────
+// The guild lead: "send a link to the guild's raid-chat using this image as the
+// 'come look at the stuff'." Waits until the card's picture is live on
+// wolfpack.quest, which ships in the same web deploy as /film/making, so the
+// post never beats the page. One post ever; pings nobody.
+const _FILMMAKING_KV_KEY = 'announce_film_making_raid_chat';
+const _FILMMAKING_IMG = 'https://wolfpack.quest/film/making-of.jpg';
+function _filmMakingEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🎬 How the Aten Ha Ra film was made — come look')
+    .setURL('https://wolfpack.quest/film/making')
+    .setDescription([
+      'Every picture, animation and outtake from the film is up on wolfpack.quest.',
+      '',
+      '- **Find yourself:** type your name or pick your class at the top, then click your character — every picture and animation of you, how the song says your name, and when it is sung.',
+      '- **The whole story:** the song and its lyric sheet, every take, the four-armed queen, and the outtakes (some are very funny).',
+      '- **Your character page** has a Gallery now, kept for good.',
+      '',
+      '**https://wolfpack.quest/film/making** — sign in with Discord.',
+    ].join('\n'))
+    .setImage(_FILMMAKING_IMG)
+    .setFooter({ text: 'Wolf Pack · Aten Ha Ra · one-time note' });
+}
+async function _announceFilmMakingOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FILMMAKING_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[film-making-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const status = await new Promise((resolve) => {
+    const https = require('https');
+    const u = new URL(_FILMMAKING_IMG);
+    https.get({ hostname: u.hostname, path: u.pathname, headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 10000 },
+      (res) => { res.on('data', () => {}); res.on('end', () => resolve(res.statusCode)); }
+    ).on('error', () => resolve(0)).on('timeout', function () { this.destroy(); resolve(0); });
+  });
+  if (status !== 200) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[film-making-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_filmMakingEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[film-making-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FILMMAKING_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[film-making-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// First try a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const go = () => _announceFilmMakingOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+    .catch(err => console.warn('[film-making-announce]', err?.message));
+  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } go(); }, 5 * 60_000);
+  setTimeout(go, 60_000);
+}
+
 // ── Vex Thal cleared: the one-time celebration on the Aten Ha Ra kill ────────
 // The guild lead, 2026-09-27: "a one time celebration for all miMIC users after
 // tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid." The
