@@ -37,6 +37,45 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'willamina-chain-2026-09-28',
+    title: 'Web 1.8.34',
+    version: 'Web 1.8.34',
+    date: '2026-09-28',
+    headline: 'The PoP checklist shows Willamina’s whole errand chain, starting with the one thing you actually need.',
+    features: [
+      {
+        name: 'Start with the book',
+        blurb: 'Willamina’s Needles runs through ten NPCs in the Plane of Knowledge, and all of it hangs on one book lying upstairs in the library. The step now says so up front, with /map to the spot.',
+      },
+      {
+        name: 'Every hand-in, in order',
+        blurb: 'Open “Hand-ins” to see who takes what and what they give back, each with /map. Open “The story” for who sends you where and what to /say. Both fold away when you don’t need them.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-fqv-uipack-2026-09-28',
+    title: 'Target Info F/Q/V',
+    version: 'Mimic beta · Agent 3.7.37 · Bot 3.1.166',
+    date: '2026-09-28',
+    channel: 'beta',
+    headline: 'Target an NPC and see what to say to it, what it wants, who to see next, and what it sells.',
+    features: [
+      {
+        name: 'F/Q/V on Target Info',
+        blurb: 'The Factions tab is now F/Q/V: Faction, Quest and Vendor. Quest lists every word the NPC answers to with a /say button and its reply, the hand-in and its reward, and who to talk to next with a /map button. Vendor appears only for merchants and lists what they sell.',
+      },
+      {
+        name: 'UI pack layouts are checkboxes',
+        blurb: 'Custom UI packs start with nothing extra switched on. Tick any mix of the pack’s layouts; two that change the same window can’t both be on, and the box tells you which window. Unticking puts the pack’s own window back, and an update keeps your ticks.',
+      },
+    ],
+    fixes: [
+      'A UI pack update no longer puts the pack’s big all-bags bank back over the normal bank you picked.',
+    ],
+  },
+  {
     key: 'npc-tells-2026-09-28',
     title: 'Bot 3.1.165',
     version: 'Web 1.8.33 · Bot 3.1.165',

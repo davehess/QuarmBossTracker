@@ -36,7 +36,16 @@ export type GuideItem = {
   check?: boolean;     // not yet confirmed on Quarm — say so on the row
   says?: Say[];
   where?: Loc[];
+  chain?: Chain;
 };
+
+// A quest that is a chain of NPCs (the guild lead, 2026-09-28: "Follow the chain and show the
+// first item that seems to be required … and show the full quest chain with minimize sections
+// there. Highlight stages where you will have input/output"). `first` is what the whole chain
+// hangs on; `talk` is the story in the order you hear it; `handins` is the order you actually
+// walk it, each one an item in and an item out. give/get are [[Item#id]] tokens.
+export type ChainStage = { at: Loc; say?: string[]; give?: string; get?: string; note?: string };
+export type Chain = { first: { text: string; at: Loc }; talk: ChainStage[]; handins: ChainStage[] };
 
 export type SectionKey = 'start' | 'pok' | 'spells' | 't1' | 't2' | 't3' | 't4' | 'time';
 
@@ -73,6 +82,16 @@ const L = {
   gram: { npc: 'Gram Dunnar', zone: 'poknowledge', y: -341, x: -181 },
   willamina: { npc: 'Willamina', zone: 'poknowledge', y: -427, x: 1154 },
   bolcen: { npc: 'Bolcen Tendag', zone: 'poknowledge', y: 685, x: 954 },
+  // Willamina's Needles, the rest of the chain (placed spawns; the book is a ground spawn).
+  mirao: { npc: 'Mirao Frostpouch', zone: 'poknowledge', y: -88, x: -215 },
+  cador: { npc: 'Oracle Cador', zone: 'poknowledge', y: 696, x: 102 },
+  onirelin: { npc: 'Onirelin Gali', zone: 'poknowledge', y: -650, x: 1053 },
+  narik: { npc: 'Arch Mage Narik', zone: 'poknowledge', y: 428, x: 20 },
+  elisha: { npc: 'Elisha Dirtyshoes', zone: 'poknowledge', y: 394, x: 945 },
+  boiron: { npc: 'Boiron Ston', zone: 'poknowledge', y: 30, x: 323 },
+  caden: { npc: 'Caden Zharik', zone: 'poknowledge', y: -342, x: 752 },
+  agrakath: { npc: 'Agrakath Theric', zone: 'poknowledge', y: -554, x: 1219 },
+  scaleBook: { npc: 'History of Evils: The Age of Scale', zone: 'poknowledge', y: -94, x: 973, note: 'on the floor, upper level of Myrist' },
   merri: { npc: 'Curator Merri', zone: 'poknowledge', y: 865, x: 668 },
   holly: { npc: 'Holly Longtail', zone: 'poknowledge', y: 878, x: 563 },
   trep: { npc: 'Trep Thilcan', zone: 'poknowledge', y: -426, x: 864 },
@@ -132,9 +151,40 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Gram Dunnar gives it free. Come back each time you open a new zone for free AA and charm upgrades.',
     says: [{ to: 'Gram Dunnar', text: 'craft' }, { to: 'Gram Dunnar', text: 'I have stories' }], where: [L.gram] },
   { key: 'start_traveler_manual', section: 'start', who: 'solo', must: true, title: '[[Planar Traveler’s Manual#28745]] (Willamina’s Needles)',
-    detail: 'All inside PoK, no fighting: a chain of errands that ends with Bolcen Tendag’s needles. Needed for the Beginner Manual quests later.',
+    detail: 'All inside PoK, no fighting: ten NPCs pass one favour down the line, and it ends with Bolcen Tendag’s needles. Needed for the Beginner Manual quests later.',
     link: pqdiNpc(202055),
-    says: [{ to: 'Willamina', text: 'quests' }, { to: 'Willamina', text: 'help' }], where: [L.willamina, L.bolcen] },
+    says: [{ to: 'Willamina', text: 'quests' }, { to: 'Willamina', text: 'help' }, { to: 'Bolcen Tendag', text: 'needles' }],
+    where: [L.willamina, L.bolcen],
+    chain: {
+      first: {
+        text: 'Everything hangs on one book: [[History of Evils: The Age of Scale#28188]], lying on the floor on the upper level of Myrist. One is up at a time, back 30 minutes after someone takes it. No NPC needs the talk before taking its item, so with the book in hand you can go straight down the hand-ins.',
+        at: L.scaleBook,
+      },
+      talk: [
+        { at: L.willamina, say: ['quests', 'help'], note: 'Her needles are late. Bolcen Tendag was bringing them.' },
+        { at: L.bolcen, say: ['needles'], note: 'He is too ill to go. Mirao Frostpouch has an elixir.' },
+        { at: L.mirao, say: ['I have come for the elixir'], note: 'Out of medicine: he needs black lava powder, and Cador has some.' },
+        { at: L.cador, say: ['black lava powder'], note: 'Only for an artifact that Onirelin Gali holds.' },
+        { at: L.onirelin, say: ['artifact'], note: 'Only for his jewel back. Arch Mage Narik took it.' },
+        { at: L.narik, say: ['jewel'], note: 'Only for his engagement ring. Elisha Dirtyshoes has it.' },
+        { at: L.elisha, say: ['ring'], note: 'Only if Boiron Ston likes her.' },
+        { at: L.boiron, say: ['Do you like Elisha Dirtyshoes'], note: 'His family standard is gone. Caden Zharik stole it.' },
+        { at: L.caden, say: ['standard'], note: 'He stole it to pay Agrakath Theric.' },
+        { at: L.agrakath, say: ['erase the debt'], note: 'He will clear the debt for the book in Myrist.' },
+      ],
+      handins: [
+        { at: L.agrakath, give: '[[History of Evils: The Age of Scale#28188]]', get: '[[Note to Caden#28084]]' },
+        { at: L.caden, give: '[[Note to Caden#28084]]', get: '[[Boiron’s Standard#28085]]' },
+        { at: L.boiron, give: '[[Boiron’s Standard#28085]]', get: '[[Letter to Elisha#28086]]' },
+        { at: L.elisha, give: '[[Letter to Elisha#28086]]', get: '[[Narik’s Ring#28087]]' },
+        { at: L.narik, give: '[[Narik’s Ring#28087]]', get: '[[Onirelin’s Jewel#28088]]' },
+        { at: L.onirelin, give: '[[Onirelin’s Jewel#28088]]', get: '[[Cador’s Artifact#28089]]' },
+        { at: L.cador, give: '[[Cador’s Artifact#28089]]', get: '[[Black Lava Powder#28090]]' },
+        { at: L.mirao, give: '[[Black Lava Powder#28090]]', get: '[[Curative Potion#28091]]' },
+        { at: L.bolcen, give: '[[Curative Potion#28091]]', get: '[[New Sewing Needles#28092]]' },
+        { at: L.willamina, give: '[[New Sewing Needles#28092]]', get: '[[Planar Traveler’s Manual#28745]]' },
+      ],
+    } },
 
   // ── PoK quests (open now) ────────────────────────────────────────────────
   { key: 'pok_taxidermy', section: 'pok', who: 'solo', title: 'Collection of Taxidermy → [[Fine Antique Ring#28237]]',
@@ -332,7 +382,8 @@ export function splitItems(text: string): TextPart[] {
 export function guideItemIds(): number[] {
   const ids = new Set<number>();
   for (const i of GUIDE_ITEMS) {
-    for (const t of [i.title, i.detail ?? '']) for (const p of splitItems(t)) if ('item' in p) ids.add(p.item.id);
+    const chain = i.chain ? [i.chain.first.text, ...i.chain.handins.flatMap(s => [s.give ?? '', s.get ?? ''])] : [];
+    for (const t of [i.title, i.detail ?? '', ...chain]) for (const p of splitItems(t)) if ('item' in p) ids.add(p.item.id);
   }
   return [...ids].sort((a, b) => a - b);
 }

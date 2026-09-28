@@ -75,6 +75,48 @@ describe('copy lines and item cards', () => {
   });
 });
 
+// Willamina's Needles as a full chain (the guild lead, 2026-09-28: "Willamina's quest needs
+// Bolcen Tendag's section in it", then "Follow the chain and show the first item that seems to
+// be required … and show the full quest chain"). Traced through the ten PoK scripts.
+describe('quest chains', () => {
+  const tokenIds = (t) => splitItems(t ?? '').filter(p => 'item' in p).map(p => p.item.id);
+  const chained = GUIDE_ITEMS.filter(i => i.chain);
+
+  it('each hand-in gives what the one before it got, from the first item to the reward', () => {
+    expect(chained.length).toBeGreaterThan(0);
+    for (const i of chained) {
+      const h = i.chain.handins;
+      expect(tokenIds(h[0].give), i.key).toEqual(tokenIds(i.chain.first.text).slice(0, 1));
+      for (let n = 1; n < h.length; n++) expect(tokenIds(h[n].give), `${i.key} #${n + 1}`).toEqual(tokenIds(h[n - 1].get));
+      expect(tokenIds(i.title), i.key).toContain(tokenIds(h[h.length - 1].get)[0]);
+    }
+  });
+
+  it('Willamina\'s runs through Bolcen, starts with the book in Myrist, and ends with the manual', () => {
+    const w = GUIDE_ITEMS.find(i => i.key === 'start_traveler_manual');
+    expect(w.says.some(s => s.to === 'Bolcen Tendag' && s.text === 'needles')).toBe(true);
+    expect(tokenIds(w.chain.first.text)).toEqual([28188]);
+    expect(mapCommand(w.chain.first.at)).toBe('/map -94 973');
+    expect(w.chain.handins).toHaveLength(10);
+    expect(w.chain.talk.map(s => s.at.npc)).toEqual(['Willamina', 'Bolcen Tendag', 'Mirao Frostpouch', 'Oracle Cador',
+      'Onirelin Gali', 'Arch Mage Narik', 'Elisha Dirtyshoes', 'Boiron Ston', 'Caden Zharik', 'Agrakath Theric']);
+  });
+
+  it('every chain place and phrase follows the same rules as the rest of the guide', () => {
+    for (const i of chained) {
+      for (const s of [i.chain.first, ...i.chain.talk, ...i.chain.handins]) {
+        expect(ZONE_NAMES[s.at.zone], i.key).toBeTruthy();
+        expect(Number.isInteger(s.at.y) && Number.isInteger(s.at.x), `${i.key} ${s.at.npc}`).toBe(true);
+      }
+      for (const s of i.chain.talk) for (const t of s.say ?? []) {
+        expect(t.startsWith('/') || /\bdelete\b/i.test(t), `${i.key} ${t}`).toBe(false);
+      }
+    }
+    const ids = guideItemIds();
+    for (const id of [28188, 28084, 28091, 28092]) expect(ids).toContain(id);
+  });
+});
+
 describe('ticks', () => {
   it('merges hand ticks with recorded flags, and drops keys the guide does not define', () => {
     const t = tickedKeys(['start_level46', 'not_a_key'], ['grummus_dead']);
