@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
 | **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta. **§59f:** the member's other eight reports are investigated and not yet built — the guild lead picks which fixes go into the next beta round |
 | **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
@@ -3429,6 +3430,33 @@ report, and all of them fit inside one agent + Mimic beta round.
 | 7 | DPS copy leaves out the charmed pet; History copy shows the pet's damage but not whose pet it is | The on-screen meter folds pets into their owners with `_foldPetsIntoOwners` (`overlay.html:547`/`689`). Neither copy builder calls it. The current-fight copy drops pet rows outright, so the header total includes the pet while no line shows it. The History copy gets the owner's damage already folded in by the bot, with no "+pet" mark, and a leftover local pet row can be counted twice in the header | Build both copies from the folded rows and print "+pet" where the meter shows it | S |
 | 8 | Per-character layouts do not seem to work at all | Saving and applying work. The trigger is the problem: the active character is **whichever Zeal stream reported last** (§52), so with an enchanter and a bard boxed, it flips several times a second and each flip re-applies the other character's layout | Debounce in Mimic `_onActiveCharacter`: a switch counts after the new name holds for ~5 s. The real fix, focus-based detection, stays the separate item from §52 | S |
 Row 8 assumes the member runs both characters at once; one client at a time would not flip, so ask.
+
+## 60. DPS HUD: your row always, highlighted, a % bar under every name, and the HUD finally knows who you are (2026-09-27, Mimic 2.7.3 beta)
+The guild lead, mid-raid on Thall Xundraux Diabo: *"your own row always, and always highlight it so
+its easier to see. Have a thin row underneath each person with their percentage done."*
+
+**The call and where it landed** (`apps/mimic/overlay.html`, beta `4d89add1` + `881f07c0`):
+- **Your row always shows.** It was already appended under a dashed rule when you fell below the
+  visible rows. It now also appears at zero, rank "—", when you did nothing this fight, on every
+  tab and in mini. An empty board stays empty.
+- **Highlighted as a band:** gold background and a gold left edge, not only a gold name.
+- **A 2px bar under every row**, drawn against the TOP row rather than the raw share. A raw share
+  of a 50-person raid tops out near 7% of the width, so every bar would be a stub. The % column
+  still shows the real share. Gold for you, blue on DPS, red on Tank. Mini already had its own
+  share-of-raid bar and keeps it.
+- The rank column went from 1.1em to 24px: two-digit ranks spilled out of it into the new gold
+  edge, and the em also differed between the 9px header and the 11px rows.
+
+**Why none of this showed before (root cause).** The HUD looked for you under `s.character`,
+`s.uploaderCharacter` and `s.self`, and `/api/state` sends none of them. That is the overlay
+catalog's finding 1 (§57, `DESIGN-overlay-catalog.md` §3). So the gold name, the always-show-you row
+and mini's centring on you had never run, and the screenshot had no highlighted row. The HUD
+now reads `activeCharacter`, then the live fight's `uploader`, with the old three kept as fallbacks.
+When two characters are boxed, `activeCharacter` still flips with whichever Zeal stream reported last
+(§52), so the highlight follows that flip.
+
+**Deliberately not touched:** the Threat meter has the same wrong keys (the same catalog finding).
+It is a one-line fix of the same shape; it was left for its own change.
 
 
 

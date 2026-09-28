@@ -1993,7 +1993,10 @@ machine's own observations, History is the guild's settled numbers for the last
 live view: mid-fight the bot has under three readings per player so its
 corroboration estimator falls back to max and doubles people. `_recordFightHistory`
 captures each kill and re-asks `/live-damage` at +40s and +100s; the header says
-`· N clients` once settled, `· settling…` until then), Triggers+timers
+`· N clients` once settled, `· settling…` until then; your row is found by
+`activeCharacter` (then the fight's `uploader`), shown as a gold band, and always
+present — appended under a dashed rule when off-screen, at zero when idle; every
+row carries a 2px bar against the top row, Mimic 2.7.3 beta, DECISIONS §60), Triggers+timers
 (`triggers.html`), CH chain
 (`chchain.html` — slots, GO pill, beat countdown, pivot, off-heal list),
 Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal;
