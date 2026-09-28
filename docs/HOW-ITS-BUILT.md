@@ -2784,7 +2784,9 @@ holds it in memory.
   /raid/review (#80 morning-after page, kernel `web/lib/raidReview.ts`),
   /guide (#81 Raid Guide, below), /buffs (coverage grid vs role targets),
   /who, /pvp, /boards, /boss, /character, /leaderboards, /loadouts, /bards,
-  /fun, /planner, /feedback, /roadmap, /search.
+  /fun, /planner, /feedback, /roadmap, /search, /film (the Aten Ha Ra film from
+  YouTube: `web/app/film/page.tsx` + `web/lib/film.ts` + `web/components/LiteYouTube.tsx`,
+  links in bot_kv `film_youtube`, beta, DECISIONS §61).
 - **/guide — the Wolf Pack Raid Guide (#81, phase 0)**. One page per boss,
   generated from our own history; `/guide` is the index *and* the authoring
   worklist (most-killed-but-unwritten first). Pure kernel
