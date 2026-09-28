@@ -25,7 +25,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
-import { groupSources, type SourceRow, type ItemSources } from '@/lib/spellSources';
+import { groupSources, vendorSpots, type SourceRow, type ItemSources, type VendorSpots } from '@/lib/spellSources';
 import MissingSpellsView from './MissingSpellsView';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 
@@ -128,6 +128,25 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
     }
   }
 
+  // Where each vendor stands, for the 📍 /map Y X copy (the guild lead, 2026-09-28).
+  // Vendors only: across every spell scroll no vendor has more than 3 spawn
+  // points (463 in all, measured 2026-09-28), so both reads stay under the
+  // cap. A dropper can have 100+ points; its name links to its NPC page instead.
+  let spots: VendorSpots = {};
+  const vendorIds = [...new Set(Object.values(sourcesByItem)
+    .flatMap(s => s.merchants.map(v => v.npcId))
+    .filter((n): n is number => typeof n === 'number'))];
+  if (vendorIds.length) {
+    const { data: entries } = await sb.from('eqemu_spawnentry')
+      .select('npc_id, spawngroup_id').in('npc_id', vendorIds).limit(1000);
+    const groups = [...new Set((entries ?? []).map(e => e.spawngroup_id as number))];
+    if (groups.length) {
+      const { data: points } = await sb.from('eqemu_spawn2')
+        .select('id, spawngroup_id, zone_short, x, y').in('spawngroup_id', groups).limit(1000);
+      spots = vendorSpots(entries ?? [], points ?? []);
+    }
+  }
+
   const heldCount = missing.filter(m => m.held_by.length > 0).length;
   const buyableCount = missing.filter(m => m.buyable).length;
   const otherCount = missing.length - buyableCount;
@@ -195,6 +214,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
             <MissingSpellsView
               missing={missing}
               sources={sourcesByItem}
+              spots={spots}
               officer={officer}
               character={decoded}
               popTiers={popTiers}

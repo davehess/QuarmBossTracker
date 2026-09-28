@@ -6,9 +6,11 @@
 // spell_scroll_sources — PQDI is the escape hatch, not the answer.
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { POP_TURN_INS, type TurnInKey } from '@/lib/popSpells';
-import type { ItemSources } from '@/lib/spellSources';
-import { shoppingList, type MissingForShopping } from '@/lib/spellSources';
+import type { ItemSources, VendorSpots } from '@/lib/spellSources';
+import { shoppingList, spotCommand, type MissingForShopping } from '@/lib/spellSources';
+import CopyChip from '@/components/CopyChip';
 import SpellLevelEditor from './SpellLevelEditor';
 
 export type MissingSpellRow = {
@@ -23,7 +25,20 @@ export type MissingSpellRow = {
 
 const zoneLabel = (z: { short: string | null; long: string | null }) => z.long || z.short || 'unknown zone';
 
-function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: number | null }) {
+// A vendor or dropper: its name opens its NPC page (every spawn point, loot, faction).
+function NpcName({ npcId, name }: { npcId: number | null; name: string }) {
+  return npcId
+    ? <Link href={`/db/npc/${npcId}`} className="hover:text-blue hover:underline">{name}</Link>
+    : <>{name}</>;
+}
+
+// 📍 copies the vendor's /map Y X for that zone; nothing when we have no spawn point.
+function MapChip({ spots, npcId, zone }: { spots: VendorSpots; npcId: number | null; zone: string | null }) {
+  const s = npcId && zone ? spots[npcId]?.[zone] : undefined;
+  return s ? <CopyChip text={spotCommand(s)} label="📍" /> : null;
+}
+
+function SourcePanel({ src, itemId, spots }: { src: ItemSources | undefined; itemId: number | null; spots: VendorSpots }) {
   const pqdi = itemId ? `https://www.pqdi.cc/item/${itemId}` : null;
   const merchants = src?.merchants ?? [];
   const drops = src?.drops ?? [];
@@ -35,8 +50,12 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
           <ul className="mt-0.5 space-y-0.5">
             {merchants.slice(0, 8).map(v => (
               <li key={`${v.npcId}-${v.name}`} className="text-text">
-                {v.name}
-                <span className="text-dim"> — {v.zones.length ? v.zones.map(zoneLabel).join(', ') : 'spawn spot unknown'}</span>
+                <NpcName npcId={v.npcId} name={v.name} />
+                <span className="text-dim"> — {v.zones.length ? v.zones.map((z, i) => (
+                  <span key={z.short ?? i}>
+                    {i > 0 && ', '}{zoneLabel(z)} <MapChip spots={spots} npcId={v.npcId} zone={z.short} />
+                  </span>
+                )) : 'spawn spot unknown'}</span>
               </li>
             ))}
             {merchants.length > 8 && <li className="text-dim">…and {merchants.length - 8} more vendors</li>}
@@ -49,7 +68,7 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
           <ul className="mt-0.5 space-y-0.5">
             {drops.slice(0, 6).map(d => (
               <li key={`${d.npcId}-${d.name}`} className="text-text">
-                {d.name}
+                <NpcName npcId={d.npcId} name={d.name} />
                 <span className="text-dim"> — {d.zones.length ? d.zones.map(zoneLabel).join(', ') : 'zone unknown'}</span>
               </li>
             ))}
@@ -72,10 +91,11 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
 }
 
 export default function MissingSpellsView({
-  missing, sources, officer, character, popTiers = {},
+  missing, sources, spots = {}, officer, character, popTiers = {},
 }: {
   missing: MissingSpellRow[];
   sources: Record<number, ItemSources>;
+  spots?: VendorSpots;
   officer: boolean;
   character: string;
   // spell name (lowercased) -> parchment tier, from the quest-script pools
@@ -194,7 +214,7 @@ export default function MissingSpellsView({
                         )}
                       </div>
                       {isOpen(m.spell_name) && (
-                        <SourcePanel src={m.scroll_item_id ? sourceMap.get(m.scroll_item_id) : undefined} itemId={m.scroll_item_id} />
+                        <SourcePanel src={m.scroll_item_id ? sourceMap.get(m.scroll_item_id) : undefined} itemId={m.scroll_item_id} spots={spots} />
                       )}
                     </li>
                   ))}
@@ -224,7 +244,7 @@ export default function MissingSpellsView({
               </h3>
               <ul className="text-sm space-y-0.5">
                 {z.spells.map(s => (
-                  <li key={s.spellName} className="flex items-baseline gap-2">
+                  <li key={s.spellName} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                     <span className={s.pop ? 'text-dim' : 'text-text'}>
                       {s.spellName}
                       {s.level != null && <span className="text-dim text-[10px]"> · L{s.level}</span>}
@@ -243,7 +263,14 @@ export default function MissingSpellsView({
                         </span>
                       );
                     })()}
-                    <span className="text-dim text-[10px]">{s.vendors.slice(0, 3).join(', ')}{s.vendors.length > 3 ? ` +${s.vendors.length - 3}` : ''}</span>
+                    <span className="text-dim text-[10px]">
+                      {s.vendors.slice(0, 3).map((v, i) => (
+                        <span key={`${v.npcId}-${v.name}`}>
+                          {i > 0 && ', '}<NpcName npcId={v.npcId} name={v.name} /> <MapChip spots={spots} npcId={v.npcId} zone={z.zoneShort} />
+                        </span>
+                      ))}
+                      {s.vendors.length > 3 ? ` +${s.vendors.length - 3}` : ''}
+                    </span>
                     {s.heldBy.length > 0 && <span className="text-green text-[10px]">🎒 {s.heldBy.join(', ')}</span>}
                   </li>
                 ))}
