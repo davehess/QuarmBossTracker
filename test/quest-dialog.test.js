@@ -59,10 +59,17 @@ const MAELIN = `function event_say(e)
 end
 `;
 
-// poknowledge/Seer_Mal_Nae-Shi.lua, trimmed: a normal branch, then the GM-only flag wipe.
+// poknowledge/Seer_Mal_Nae-Shi.lua, trimmed: a normal branch, one that needs you seated, then the
+// GM-only flag wipe.
 const SEER = `function event_say(e)
 	if ( e.message:findi("hail") ) then
 		e.self:Say("Greetings. I can [see] what you have done.");
+	elseif ( e.message:findi("unlock") and e.message:findi("memories") ) then
+		if ( e.other:IsSitting() ) then
+			UnlockMemories(e.other);
+		else
+			e.other:Message(0, "Seer Mal Nae\`Shi tells you, 'You will never be able to focus unless you are relaxed.  Please, sit down for a moment and allow me to [unlock your memories].'");
+		end
 	elseif ( e.message:findi("delete") and e.other:GetGM() and e.other:Admin() >= 80 ) then
 		eq.delete_global("mavuin");
 		eq.delete_global("time");
@@ -99,7 +106,15 @@ describe('what to say', () => {
 
   it('never offers a GM-only branch', () => {
     const d = q.parseDialog(SEER);
-    expect(d.map((b) => b.keywords[0])).toEqual(['hail']);
+    expect(d.map((b) => b.keywords[0])).toEqual(['hail', 'unlock']);
+  });
+
+  it('marks a branch that only answers while you sit, and keeps both words it needs', () => {
+    const d = q.parseDialog(SEER);
+    const unlock = d.find((b) => b.keywords[0] === 'unlock');
+    expect(unlock.keywords).toEqual(['unlock', 'memories']);
+    expect(unlock.sit).toBe(true);
+    expect(d.find((b) => b.keywords[0] === 'hail').sit).toBe(false);
   });
 
   it('a script with no event_say has nothing to say', () => {

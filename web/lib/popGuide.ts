@@ -21,7 +21,9 @@
 import { POP_FLAGS } from './popFlags';
 
 export type Who = 'solo' | 'group' | 'raid';
-export type Say = { to: string; text: string };
+// sit: the NPC only answers while you sit (the Seer's script checks IsSitting(); the guild lead,
+// 2026-09-28: "For Seer Mal Nae'Shi i had to sit down first"). The page puts a /sit chip first.
+export type Say = { to: string; text: string; sit?: boolean };
 export type Loc = { npc: string; zone: ZoneKey; y: number; x: number; note?: string };
 
 export type GuideItem = {
@@ -144,10 +146,10 @@ export const GUIDE_ITEMS: GuideItem[] = [
   { key: 'start_hails', section: 'start', who: 'solo', must: true, title: 'The two rules that break flags',
     detail: 'Talk to the right NPC before AND after each boss; after a kill, hail A Planar Projection. And the first time you earn a flag, zone into the next plane from the one you are in (Valor → Halls of Honor, Storms → Bastion of Thunder).' },
   { key: 'start_flag_fixers', section: 'start', who: 'solo', must: true, title: 'Meet the two flag fixers in PoK',
-    detail: 'Seer Mal Nae`Shi (sit down first) shows and repairs your flags; Grand Librarian Maelin hands out the ones you are owed. Repeat each phrase until nothing new comes. Visit Maelin before and after the Zeks and after Saryrn.',
+    detail: 'Seer Mal Nae`Shi shows and repairs your flags, but only while you sit: /sit, then say her line. If she answers that “no recent events spark a memory”, there is nothing new to unlock yet. Grand Librarian Maelin hands out the flags you are owed. Repeat each phrase until nothing new comes. Visit Maelin before and after the Zeks and after Saryrn.',
     says: [
-      { to: 'Seer Mal Nae`Shi', text: 'guided meditation' },
-      { to: 'Seer Mal Nae`Shi', text: 'unlock my memories' },
+      { to: 'Seer Mal Nae`Shi', text: 'guided meditation', sit: true },
+      { to: 'Seer Mal Nae`Shi', text: 'unlock my memories', sit: true },
       { to: 'Grand Librarian Maelin', text: 'Hail' },
       { to: 'Grand Librarian Maelin', text: 'what lore' },
       { to: 'Grand Librarian Maelin', text: 'what information' },
@@ -322,7 +324,7 @@ export const GUIDE_ITEMS: GuideItem[] = [
   { key: 'flag_tallon', section: 't3', who: 'raid', flag: 'tallon_dead', title: 'Kill Tallon Zek', detail: PROJECTION, link: popZone('tactics') },
   { key: 'flag_rallos', section: 't3', who: 'raid', must: true, flag: 'rallos_dead', title: 'Kill Rallos Zek', detail: PROJECTION, link: popZone('tactics') },
   { key: 'tactics_maelin_after', section: 't3', who: 'solo', must: true, title: 'After the Zeks: Maelin again, then the Seer',
-    says: [{ to: 'Grand Librarian Maelin', text: 'what information' }, { to: 'Seer Mal Nae`Shi', text: 'unlock my memories' }],
+    says: [{ to: 'Grand Librarian Maelin', text: 'what information' }, { to: 'Seer Mal Nae`Shi', text: 'unlock my memories', sit: true }],
     where: [L.maelin, L.seer] },
   // Solusek Ro
   { key: 'flag_solro_minis', section: 't3', who: 'raid', flag: 'solro_minis', title: 'The five Tower of Solusek Ro minis',

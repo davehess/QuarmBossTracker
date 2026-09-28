@@ -89,6 +89,7 @@ const GATE_RX = /\bqglobals\b|:HasItem\s*\(|:GetFaction|:GetLevel\s*\(|:GetClass
 
 // One entry per findi branch of event_say, in script order:
 //   { keywords, replies: [{kind, text}], gated, flag, clears, hints }
+// sit = the NPC only answers while you are seated;
 // gated = the reply depends on the player's flags, items, faction, level, class or race;
 // flag = this branch gives a character flag; clears = it deletes flags (the Seer's "delete").
 function parseDialog(body) {
@@ -119,6 +120,9 @@ function parseDialog(body) {
     return {
       keywords: b.keywords,
       replies,
+      // Only answers while you sit (the Seer's meditation and "unlock my memories"; the guild
+      // lead, 2026-09-28: "i had to sit down first").
+      sit: /:IsSitting\s*\(/.test(b.cond) || /:IsSitting\s*\(/.test(seg),
       gm: GM_RX.test(b.cond),
       gated: GATE_RX.test(b.cond) || GATE_RX.test(seg),
       flag: /set_global\s*\(|received a character flag/i.test(seg),
