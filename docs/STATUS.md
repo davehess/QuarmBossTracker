@@ -58,6 +58,7 @@ folly** — it's here.*
 | `beta-releases.md` | Beta-channel mechanics (electron-updater, cutting beta/stable) | Evergreen process reference (dated "current state" block is stale, harmless) |
 | `DESIGN-75-golden-log.md` | [#75] The agent-parser golden-log regression net + the pre-raid drill: what the fixtures contain, why the expectations are shaped the way they are, and the six parser defects the golden PINS | Shipped 2026-08-02; read before changing `parseEvent`/`EncounterBuilder` or regenerating the golden |
 | `HOW-ITS-BUILT.md` | Long-form "how each feature actually works" companion to CLAUDE.md | Living companion doc |
+| `LORE-planes-of-power.md` | **The story behind the raids:** the PoP arc in order, zone by zone with our `/pop` keys, the pantheon at PoP, the Luclin→PoP bridge, source tiers, and what the first agent pass got wrong | **Built 2026-09-28** from Lore of Norrath, every claim checked against the source text. Use it for pre-pull lines, kill cards, the next film |
 | `MIMIC.md` / `MIMIC_AGENT.md` | Mimic vision + the Electron/self-updating-agent rearchitecture assessment | CLAUDE.md roadmap refs |
 | `PRIVACY.md` | Source-of-truth privacy statement, mirrored to the web page | Load-bearing (CLAUDE.md) |
 | `eqemu-catalog-cheatsheet.md` | Load-bearing conventions for the `eqemu_*` mirror + gear/spells pages | Load-bearing (CLAUDE.md) |
