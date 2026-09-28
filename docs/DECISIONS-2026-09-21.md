@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **The Aten Ha Ra film on wolfpack.quest** | **`/film` on beta 2026-09-27 (§61).** Film hosted on YouTube, played on `/film` from links kept in bot_kv `film_youtube`; the links are still empty | the guild lead: upload both takes to YouTube and send the links (then one SQL update lights the page); pick the default or `?v=b` layout at b.wolfpack.quest/film; run the Drive importer (HQ raider clips added, §61a) before 2026-09-30 04:00 UTC; say yes or no to a ~$37 native-1080p re-render of all 78 clips; the raider clips (members-only) are the next build |
+| **DPS HUD: your row always, highlighted, a % bar under every name** | **On beta 2026-09-27 (§60).** Your row shows even at zero and is a gold band; every row has a thin bar against the top row. Root cause of the missing highlight: the HUD read keys `/api/state` never sends; it now reads `activeCharacter` | the guild lead: update beta Mimic and check the gold row is yours; the Threat meter has the same bug, unfixed |
 | **A member's Sunday-morning batch (feedback acks, charm break, timers, target the pet)** | **2026-09-27 (§59–§59e).** Mimic feedback can be acknowledged from Discord and no longer double-posts (bot 3.1.160–.161, main). Charm break called the instant the line is read, and trigger timers can start at the top (agent 3.7.34, beta). Targeting the pet from the Charm window needs a Zeal change; designed, not built | the guild lead: acknowledge the "via web" copy of the timers report and delete the plain Mimic copy (§59b); pick option 1 (`/targetpet` command) or 2 (click in the Charm window, a policy call) in §59e; the member tests 3.7.34 on beta. **§59f:** the member's other eight reports are investigated and not yet built — the guild lead picks which fixes go into the next beta round |
 | **The Vex Thal celebration (Sunday 2026-09-27 — tonight; an earlier draft said the 28th, which is a Monday)** | **Armed 2026-09-27 (§58, reworded §58a).** On `Aten Ha Ra has been slain by`: every Mimic in the zone flashes two lines — *Congrats Wolf Pack on the last Aten Ha Ra of Luclin!* and the guild's damage total since the first kill — speaks them and plays a fanfare (guild trigger `fdf89cd5…`, sound at `/sounds/vex-thal-cleared.wav`); the bot posts one embed to #raid-chat with the same two lines computed live (bot 3.1.159, latched in `bot_kv`). **The film posts itself:** paste its link into the tuning key `celebration_video_url` and the bot puts the video in #raid-chat within a minute (once, after the kill embed) | the guild lead: after the raid, **disable the trigger** on /admin/triggers; when the film is cut, paste its URL into `celebration_video_url` on /admin/overlays (the bot posts it) and send a Mimic Mail from /admin/notices; add the roadmap line then (the entry carries a teaser only, so it is not spoiled) |
 | **Mimic 3.0 — the open overlay builder** | **Planned 2026-09-27 (§57).** The catalog of every overlay is `docs/DESIGN-overlay-catalog.md`; the plan with phases, the access options and their costs, and the October 1 answer is `docs/DESIGN-mimic-3.0-overlay-builder.md`. Honest size: 21–34 sessions; **3.0-alpha.1 by October 1 is possible, the full 3.0 is not** | the guild lead: the seven questions in the plan's §8 — window model, snap targets, first parts, the Zeal upstream ask, alpha testers, "see the screen" meaning geometry, and whether alpha.1-by-Oct-1 is the target |
@@ -3429,6 +3431,87 @@ report, and all of them fit inside one agent + Mimic beta round.
 | 7 | DPS copy leaves out the charmed pet; History copy shows the pet's damage but not whose pet it is | The on-screen meter folds pets into their owners with `_foldPetsIntoOwners` (`overlay.html:547`/`689`). Neither copy builder calls it. The current-fight copy drops pet rows outright, so the header total includes the pet while no line shows it. The History copy gets the owner's damage already folded in by the bot, with no "+pet" mark, and a leftover local pet row can be counted twice in the header | Build both copies from the folded rows and print "+pet" where the meter shows it | S |
 | 8 | Per-character layouts do not seem to work at all | Saving and applying work. The trigger is the problem: the active character is **whichever Zeal stream reported last** (§52), so with an enchanter and a bard boxed, it flips several times a second and each flip re-applies the other character's layout | Debounce in Mimic `_onActiveCharacter`: a switch counts after the new name holds for ~5 s. The real fix, focus-based detection, stays the separate item from §52 | S |
 Row 8 assumes the member runs both characters at once; one client at a time would not flip, so ask.
+
+## 60. DPS HUD: your row always, highlighted, a % bar under every name, and the HUD finally knows who you are (2026-09-27, Mimic 2.7.3 beta)
+The guild lead, mid-raid on Thall Xundraux Diabo: *"your own row always, and always highlight it so
+its easier to see. Have a thin row underneath each person with their percentage done."*
+
+**The call and where it landed** (`apps/mimic/overlay.html`, beta `4d89add1` + `881f07c0`):
+- **Your row always shows.** It was already appended under a dashed rule when you fell below the
+  visible rows. It now also appears at zero, rank "—", when you did nothing this fight, on every
+  tab and in mini. An empty board stays empty.
+- **Highlighted as a band:** gold background and a gold left edge, not only a gold name.
+- **A 2px bar under every row**, drawn against the TOP row rather than the raw share. A raw share
+  of a 50-person raid tops out near 7% of the width, so every bar would be a stub. The % column
+  still shows the real share. Gold for you, blue on DPS, red on Tank. Mini already had its own
+  share-of-raid bar and keeps it.
+- The rank column went from 1.1em to 24px: two-digit ranks spilled out of it into the new gold
+  edge, and the em also differed between the 9px header and the 11px rows.
+
+**Why none of this showed before (root cause).** The HUD looked for you under `s.character`,
+`s.uploaderCharacter` and `s.self`, and `/api/state` sends none of them. That is the overlay
+catalog's finding 1 (§57, `DESIGN-overlay-catalog.md` §3). So the gold name, the always-show-you row
+and mini's centring on you had never run, and the screenshot had no highlighted row. The HUD
+now reads `activeCharacter`, then the live fight's `uploader`, with the old three kept as fallbacks.
+When two characters are boxed, `activeCharacter` still flips with whichever Zeal stream reported last
+(§52), so the highlight follows that flip.
+
+**Deliberately not touched:** the Threat meter has the same wrong keys (the same catalog finding).
+It is a one-line fix of the same shape; it was left for its own change.
+
+## 61. The Aten Ha Ra film goes on YouTube; `/film` plays it (2026-09-27, web on beta)
+**The call** (the guild lead, answering "how can we make these available on wolfpack.quest"): **YouTube**,
+option 1 of three that were costed. The full film is hosted on YouTube. The raider clips are to stay
+members-only on the site, as the next change.
+
+**Why not the repo or our own storage for the film.** The repo is public, the film carries
+members' names, and the two 1080p masters are 230 and 210 MB. Supabase Storage would work for the
+720p copies, but YouTube costs the platform nothing in storage or egress and plays well on phones.
+The guild lead was uploading there anyway (the covers were made for it).
+
+**Where it landed** (beta `6fa74bef`): `/film`, signed-in members only, in the Stats menu. The two takes
+come regular first, then the remix. Each poster is our own cover image, and the YouTube embed loads
+only on the click. The takes and links are **data**: bot_kv `film_youtube`, seeded 2026-09-27 with
+empty links. Until a link is set the poster reads "On YouTube soon". Setting it is one SQL update, no
+deploy. `web/lib/film.ts` accepts any usual YouTube link shape and refuses everything else. Two
+layouts for review: the default stacks both takes, `?v=b` is one player with a switch.
+
+**Parked, same night:** a raid-say "Divine Intervention to < X >" should start that cleric's DI
+cooldown (the CH chain showed a cleric as "DI ?" right after he announced his DI). Investigated,
+not built: the guild lead asked for the YouTube work first. STATUS carries it.
+
+### 61a. Everything into the guild lead's Drive folder, by an import script (2026-09-28)
+The guild lead asked for every film asset in the raiders Google Drive folder. The Drive connector cannot
+carry video: it only creates files from content typed into a call, and its grant could not even list
+files. The guild lead chose an **import script**. Every asset is staged for 24 hours in a public Supabase
+bucket, `film-staging`, under a random 32-character path that is not written here. That is 105 objects,
+1,073 MB: 78 raider clips, both 1080p films as 19 MiB parts, the 720p copies and the covers. The bucket
+cannot be listed without auth, so only the exact links reach anything. The anon upload policy existed
+only for the upload, scoped to that path, and was dropped straight after. The guild lead runs a Google Apps
+Script that pulls it all into the folder and rebuilds each film from its parts with a resumable upload.
+Deletion is scheduled for 2026-09-29 04:00 UTC. The same night one raider got a new clip, breaking their
+chains (Gemini still, LTX pro 6 s, about $0.61), which replaced their clip in the set.
+
+**The HQ raider clips (same night).** The guild lead found the clips blurry and smeared. The cause was
+our smoothing step, not the generator: 78 of the 104 renders were drawn on twos, and the pipeline had
+ffmpeg invent the missing frames (motion-compensated interpolation), which ghosted every fast move. The
+name card's punch-in zoom and the song sat on top of that. The clips were rebuilt straight from the
+generator's files: the video stream is copied untouched (720p; the one 1080p redo stays 1080p), with no
+card and no song. They went up in a new `Raider clips (HQ)` folder. The importer skips files already in
+Drive, so re-running it adds only these. Deletion moved to **2026-09-30 04:00 UTC**. **Rule: never
+interpolate hand-drawn animation.** On twos is how it is meant to move. A native-1080p re-render was
+tested on one raider ($0.48). Its lines are sharper, but it is a fresh take with new motion and some
+camera drift. All 78 would cost about $37; that is the guild lead's call.
+
+**Outtakes too (same night).** The guild lead asked for every other generated piece: *"some of them are
+worth having a laugh over, others looked better."* Staged under `Outtakes/` in twelve folders: both
+rounds of stills with their tries, every animation take (the film's take marked), the class, opening,
+ending and transition renders, the cold open and storyboard takes, the one-raider redo, the earlier cuts
+of the film, the cover candidates, and the old clips with the song. Only raw generations and finished
+cuts went in; intermediates such as frame sheets, smoothed copies and card composites stayed out. The
+bucket now holds 676 objects, about 4.1 GB (PNG added to its allowed types). The importer now **books
+its own next run** on a one-minute timer when it pauses, and a script lock stops two runs overlapping. A
+mocked end-to-end run landed all 630 files, and a second run added nothing.
 
 
 

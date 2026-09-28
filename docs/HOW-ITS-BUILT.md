@@ -1993,7 +1993,10 @@ machine's own observations, History is the guild's settled numbers for the last
 live view: mid-fight the bot has under three readings per player so its
 corroboration estimator falls back to max and doubles people. `_recordFightHistory`
 captures each kill and re-asks `/live-damage` at +40s and +100s; the header says
-`· N clients` once settled, `· settling…` until then), Triggers+timers
+`· N clients` once settled, `· settling…` until then; your row is found by
+`activeCharacter` (then the fight's `uploader`), shown as a gold band, and always
+present — appended under a dashed rule when off-screen, at zero when idle; every
+row carries a 2px bar against the top row, Mimic 2.7.3 beta, DECISIONS §60), Triggers+timers
 (`triggers.html`), CH chain
 (`chchain.html` — slots, GO pill, beat countdown, pivot, off-heal list),
 Tank (`tank.html` — MT focus, DA, DS, deathtouch, rampage+invuln, off-heal;
@@ -2781,7 +2784,9 @@ holds it in memory.
   /raid/review (#80 morning-after page, kernel `web/lib/raidReview.ts`),
   /guide (#81 Raid Guide, below), /buffs (coverage grid vs role targets),
   /who, /pvp, /boards, /boss, /character, /leaderboards, /loadouts, /bards,
-  /fun, /planner, /feedback, /roadmap, /search.
+  /fun, /planner, /feedback, /roadmap, /search, /film (the Aten Ha Ra film from
+  YouTube: `web/app/film/page.tsx` + `web/lib/film.ts` + `web/components/LiteYouTube.tsx`,
+  links in bot_kv `film_youtube`, beta, DECISIONS §61).
 - **/guide — the Wolf Pack Raid Guide (#81, phase 0)**. One page per boss,
   generated from our own history; `/guide` is the index *and* the authoring
   worklist (most-killed-but-unwritten first). Pure kernel

@@ -128,10 +128,24 @@ next touch one rather than assuming a missing row means a missing doc.
   costed, the spec/signal/part architecture, six phases sized at 21–34 sessions, and the October 1
   answer (alpha.1 yes, full 3.0 no). Waiting on the guild lead's seven answers (plan §8).
   `DECISIONS-2026-09-21.md` §57.
+- **⏳ The Aten Ha Ra film on `/film` (2026-09-27, web on beta).** Film hosted on YouTube; `/film`
+  (members) plays both takes from links in bot_kv `film_youtube`, which are still empty until the guild
+  lead uploads and sends them. Two layouts for review (default / `?v=b`). Raider clips, members-only
+  on the site, are the next build. `DECISIONS-2026-09-21.md` §61.
+- **⏳ Parked: a raid-say "Divine Intervention to < X >" should start that cleric's DI cooldown
+  (2026-09-27).** DI readiness is stamped only from the cleric's OWN log (`_noteDiCast`), so a cleric
+  without an up-to-date agent shows "DI ?" and can be nominated on D.I. DOWN right after announcing his
+  DI. Plan: parse the raid-say (message starting "Divine Intervention"/"DI" + to/on + target; not
+  "down/fired/need"), skip known non-clerics, never override an own-log stamp, then `_noteDiCast`.
+  Held by the guild lead for the YouTube work (§61).
+- **✅ DPS HUD: your row always, highlighted; a % bar under every name (2026-09-27, Mimic 2.7.3 beta).**
+  Your row shows even at zero damage and is a gold band; every row has a 2px bar drawn against the top
+  row (the % column keeps the real share). It also fixes the catalog's finding 1 for the DPS HUD: it now
+  finds you by `activeCharacter`. `DECISIONS-2026-09-21.md` §60. Stable: not yet.
 - **⏳ Findings the overlay catalog turned up (2026-09-27, not yet fixed).** Twelve, listed in the
-  catalog's §3. The two that matter most: the DPS HUD and Threat meter never know who "you" are
-  (`/api/state` sends none of the keys they read, so the highlight and the always-show-YOU row never
-  happen), and the active-character flip-flop (§52). Then: Tank's CH urgency colour reads the local
+  catalog's §3. The two that matter most: the Threat meter never knows who "you" are (`/api/state`
+  sends none of the keys it reads; the DPS HUD half was fixed on beta, §60), and the active-character
+  flip-flop (§52). Then: Tank's CH urgency colour reads the local
   HP; Command Center rez dismissals are not applied from other clients and `hpValText` lacks the HP
   floor; PoP raids' Setup THIS uses the wrong key; the dock has no bounds key; Pets is `pets` vs
   `pet`; display changes snap back only eight windows; charProfiles carry no positions; two stale
