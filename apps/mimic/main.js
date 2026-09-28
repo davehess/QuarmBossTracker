@@ -9448,7 +9448,7 @@ ipcMain.handle('ui-packs-list', () => {
           ...p,
           installed: st.installed,
           installedTag: st.installedTag,
-          options: st.installed ? uiPacks.listOptions(eqDir, p) : [],
+          options: st.installed ? uiPacks.optionsState(eqDir, p) : null,
         };
       }),
     };
@@ -9483,27 +9483,43 @@ ipcMain.handle('ui-pack-install', async (_e, id) => {
     cfg.uiPackTags = cfg.uiPackTags || {};
     cfg.uiPackTags[id] = res.tag || cfg.uiPackTags[id];
     saveConfig(cfg);
-    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
+    appendAgentLog(`[ui-pack] installed ${pack.packDir} ${res.tag} — ${res.written.length} file(s), ${res.backedUp.length} backed up` +
+      (res.reapplied.length ? `, kept on: ${res.reapplied.join(', ')}` : '') + '\n');
     return {
       ok: true, id, tag: res.tag, written: res.written.length, backedUp: res.backedUp.length,
-      loadCmd: pack.loadCmd, options: uiPacks.listOptions(eqDir, pack),
+      reapplied: res.reapplied, loadCmd: pack.loadCmd, options: uiPacks.optionsState(eqDir, pack),
     };
   } catch (e) {
     appendAgentLog(`[ui-pack] install failed (${id}): ${e && e.message}\n`);
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
-// Apply one of a pack's Options/ layouts (copy its files up into the pack
-// folder, backing up what's replaced). Local file op — no network.
-ipcMain.handle('ui-pack-apply-option', async (_e, id, option) => {
+// The pack's option checkboxes (uiPacks.js explains the model). Setting the
+// ticked set is a local file op; the one network call is ensureDefaults, once,
+// for a pack installed before Mimic kept its default files.
+ipcMain.handle('ui-pack-prepare', async (_e, id) => {
   try {
     const pack = uiPacks.getPack(id);
     if (!pack) return { ok: false, error: 'unknown UI pack' };
     const eqDir = _zealEqDir();
     if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
-    const res = uiPacks.applyOption(eqDir, pack, String(option || ''));
-    appendAgentLog(`[ui-pack] applied option "${res.option}" to ${pack.packDir} — ${res.written} file(s), ${res.backedUp} backed up\n`);
-    return { ok: true, id, option: res.option, written: res.written, backedUp: res.backedUp, loadCmd: pack.loadCmd };
+    const fetched = await uiPacks.ensureDefaults(eqDir, pack, (loadConfig().uiPackTags || {})[id] || null);
+    if (fetched) appendAgentLog(`[ui-pack] stored ${pack.packDir}'s default files for its options\n`);
+    return { ok: true, id, options: uiPacks.optionsState(eqDir, pack) };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('ui-pack-set-options', async (_e, id, ids) => {
+  try {
+    const pack = uiPacks.getPack(id);
+    if (!pack) return { ok: false, error: 'unknown UI pack' };
+    const eqDir = _zealEqDir();
+    if (!eqDir) return { ok: false, error: 'No EverQuest folder is set.' };
+    await uiPacks.ensureDefaults(eqDir, pack, (loadConfig().uiPackTags || {})[id] || null);
+    const res = uiPacks.setOptions(eqDir, pack, Array.isArray(ids) ? ids : []);
+    appendAgentLog(`[ui-pack] ${pack.packDir} options now: ${res.applied.join(', ') || 'none'} — ${res.changed.length} file(s) changed, ${res.backedUp.length} backed up\n`);
+    return { ok: true, id, applied: res.applied, changed: res.changed.length, backedUp: res.backedUp.length, loadCmd: pack.loadCmd };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }

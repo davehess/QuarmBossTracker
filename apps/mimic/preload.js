@@ -668,12 +668,14 @@ contextBridge.exposeInMainWorld('mimic', {
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),
   // Custom UI packs (Nillipuss etc.): list is local; check hits GitHub;
-  // install downloads the pack into uifiles/<name>/; applyOption copies an
-  // Options/ layout up into the pack folder.
+  // install downloads the pack into uifiles/<name>/; setOptions makes the
+  // ticked Options/ layouts the ones on (prepare fetches the pack's default
+  // files once, for a pack installed before Mimic kept them).
   uiPacksList:       ()          => ipcRenderer.invoke('ui-packs-list'),
   uiPackCheck:       (id)        => ipcRenderer.invoke('ui-pack-check', id),
   uiPackInstall:     (id)        => ipcRenderer.invoke('ui-pack-install', id),
-  uiPackApplyOption: (id, opt)   => ipcRenderer.invoke('ui-pack-apply-option', id, opt),
+  uiPackPrepare:     (id)        => ipcRenderer.invoke('ui-pack-prepare', id),
+  uiPackSetOptions:  (id, ids)   => ipcRenderer.invoke('ui-pack-set-options', id, ids),
 
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
