@@ -5024,14 +5024,54 @@ function _isPvpDupe(b) {
   }
   const norm = _pvpNorm(b);
   if (!norm) return false;
+  // One kill can arrive in two wordings (the old "X of <G> has killed Y" and the PoP patch's
+  // "Rallos Zek watches as X spills Y's blood"), so killer + victim is a second key.
+  const pair = (b?.killType === 'pvp' && b?.killer && b?.victim)
+    ? `pair|${String(b.killer).toLowerCase()}|${String(b.victim).toLowerCase()}` : null;
   const bucket = _pvpBucket(b);
   // Check the current bucket AND its neighbors so two observers whose
   // timestamps straddle a 15s boundary still collapse to one.
   for (const nb of [bucket - 1, bucket, bucket + 1]) {
     if (_recentPvpBroadcasts.has(`${nb}|${norm}`)) return true;
+    if (pair && _recentPvpBroadcasts.has(`${nb}|${pair}`)) return true;
   }
   _recentPvpBroadcasts.set(`${bucket}|${norm}`, now + 5 * 60_000);
+  if (pair) _recentPvpBroadcasts.set(`${bucket}|${pair}`, now + 5 * 60_000);
   return false;
+}
+
+// Rallosian Glory kill lines (PoP patch, 2026-09-28) name no guilds. Fill them in from the latest
+// /who sighting of each name that carried a guild (last 30 days), else our own roster → Wolf Pack.
+// An unknown guild becomes '' so the death still records; '' is never read as a guild downstream
+// (_hasRealGuild, _pvpDeathRow's real()).
+async function _resolveGloryGuilds(broadcasts) {
+  const glory = broadcasts.filter(b => b && b.source === 'rallos_glory');
+  if (glory.length === 0) return;
+  const names = [...new Set(glory.flatMap(b => [b.killer, b.victim])
+    .filter(n => typeof n === 'string' && /^[A-Za-z]{2,20}$/.test(n)))];
+  const guildOf = new Map();
+  try {
+    const supabase = require('./utils/supabase');
+    if (names.length && supabase.isEnabled()) {
+      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const rows = await supabase.select('who_observations',
+        `select=character,guild_name,observed_at&character=in.(${names.join(',')})`
+        + `&guild_name=not.is.null&anonymous=is.false&observed_at=gte.${encodeURIComponent(since)}`
+        + '&order=observed_at.desc&limit=500');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const k = String(r?.character || '').toLowerCase();
+        const g = typeof r?.guild_name === 'string' ? r.guild_name.trim() : '';
+        if (k && g && !guildOf.has(k)) guildOf.set(k, g);
+      }
+    }
+  } catch (err) { console.warn('[pvp-relay] glory guild lookup failed:', err?.message); }
+  const roster = await _rosterNameSet().catch(() => new Set());
+  for (const b of glory) {
+    for (const side of ['killer', 'victim']) {
+      const k = String(b[side] || '').toLowerCase();
+      b[`${side}Guild`] = guildOf.get(k) || (roster.has(k) ? WP_GUILD_NAME : '');
+    }
+  }
 }
 
 // One pvp_deaths row per death the PvP broadcast reports, whoever is on either side: the fight
@@ -5095,6 +5135,7 @@ async function _handleAgentPvp(req, res) {
   if (broadcasts.length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, posted: 0 }));
   }
+  await _resolveGloryGuilds(broadcasts);
 
   const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
   if (!pvpTargetId) {
@@ -5130,6 +5171,8 @@ async function _handleAgentPvp(req, res) {
   // who_observations so /whois and the web app pick them up.
   const harvestedRows = [];
   for (const b of broadcasts) {
+    // A Glory line's guilds came FROM /who; writing them back as a sighting would only echo it.
+    if (b?.source === 'rallos_glory') continue;
     const nowIso = b?.ts || new Date().toISOString();
     const zone = b?.zone || null;
     for (const side of ['victim', 'killer']) {
@@ -5235,8 +5278,13 @@ async function _handleAgentPvp(req, res) {
       // Lord of Ire of <null>"). The plain death-notice fallback handles
       // them as informational posts.
       const _hasRealGuild = (g) => typeof g === 'string' && g.length > 0 && g.toLowerCase() !== 'null' && g !== '<>' && g.toLowerCase() !== '<null>';
-      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && _hasRealGuild(victimGuild);
-      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME && _hasRealGuild(killerGuild);
+      // A Rallosian Glory line is only ever player-versus-player, so an unknown guild on the other
+      // side does not make it an NPC kill.
+      const isGlory    = b?.source === 'rallos_glory';
+      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(victimGuild));
+      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(killerGuild));
+      const ofG = (g) => (_hasRealGuild(g) ? ` of <${g}>` : '');
+      const gloryNote = isGlory && b?.glory === false ? ' _(no Glory: Rallos Zek finds no worthy conquest)_' : '';
 
       // Record the kill to the PvP ledger (player-vs-player, WP involved).
       if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
@@ -5281,12 +5329,12 @@ async function _handleAgentPvp(req, res) {
         // remain informational with no mention.
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
         const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
-        content = `${mention}⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
+        content = `${mention}⚔️ **${killer}**${ofG(killerGuild)} killed **${victim}**${ofG(victimGuild)} in ${zone}! AWROOOO!${gloryNote}`;
       } else if (isWpDeath) {
         // Request backup — Wolf Pack member was killed
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
         const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
-        content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
+        content = `${mention}💀 **${victim}**${ofG(victimGuild)} was killed by **${killer}**${ofG(killerGuild)} in ${zone}! Backup requested!`;
       } else {
         // NPC kill or other-guild kill — informational only, NO @PVP
         // mention regardless of raid window or cooldown. Pings are
@@ -5304,8 +5352,8 @@ async function _handleAgentPvp(req, res) {
       // victimGuild (PVP_BOSS_KILL_ACTIVE_RX shape: "X of <G> has killed Boss
       // [in Zone]!"). Auto-records call recordPvpKill with the broadcast
       // timestamp so the ±20% window is anchored to when the kill actually
-      // happened, not when the relay landed.
-      if (killType === 'pvp' && !victimGuild && victim) {
+      // happened, not when the relay landed. A Glory line's victim is always a player, never a boss.
+      if (killType === 'pvp' && !victimGuild && victim && !isGlory) {
         try {
           delete require.cache[require.resolve('./data/bosses.json')];
           const bosses = require('./data/bosses.json');
