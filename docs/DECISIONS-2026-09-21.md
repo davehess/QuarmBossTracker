@@ -3884,6 +3884,22 @@ lint and the dashboard check clean. Beta re-parked at 2.7.4.
     agent already caches. Change: easy, because it stands alone. Target Info keeps the Quest sub-tab as the
     quick look.
 
+### 72a. Stable Mimic 2.7.4: UI pack layouts get an Apply button, and stray screenshots stop clashing (2026-09-28)
+The guild lead's screenshot of 2.7.3: nearly every layout box greyed out with "both change the
+Screenshot.png", and *"There's no button to install, only reset and untick"*.
+- **Cause:** the old Apply copied every file of an option, its `Screenshot.png` included, into the pack's
+  main folder. The 2.7.3 rule counted a file as a layout file when the main folder on disk had one by that
+  name, so on any machine the old Apply had touched, every option "changed Screenshot.png" and clashed
+  with every other. Bank - Default layout could not be ticked. The rule now reads the pack's own main
+  folder from the stored release defaults; only before those are fetched does the disk decide, with
+  screenshots and readmes named out. A test reproduces the littered folder.
+- **Tick, then Apply:** a tick only plans the change; Apply writes the files, lights up while the ticks
+  differ from what is on, and says how many changes are waiting. Untick all only clears the boxes. The
+  instant-apply of 2.7.3 read as "nothing happens", and the greyed-out boxes hid that anything could.
+- **Why a second stable the same evening:** 2.7.3 broke the feature for exactly the members who had used
+  the old Apply, the guild lead among them. Promoted file-level from beta (`66dc3d1a`), byte-identical;
+  330 test files green, lint and the dashboard check clean. Beta re-parked at 2.7.5.
+
 
 
 
