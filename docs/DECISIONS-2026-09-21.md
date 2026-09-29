@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
+| **Essences of Power loot queue on /pop** | **Beta `7b942d11` (§96).** The guild's rule as code: one bid buys the set, the next drop goes to the first in line who lacks it and is there, else bid and join the end. `?v=b` by person, `?v=c` by essence, `&demo=1` sample data | the guild lead: open `b.wolfpack.quest/pop?v=b&demo=1` and `?v=c&demo=1`, pick one. Officers: record every piece in OpenDKP (bid, then 0 DKP hand-outs); name the set bid "Essences of Power" |
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
@@ -1105,7 +1106,9 @@ or Rampages denote that with an F in a fist outline or an R in a fist outline
 next to the boss's name."* · *"Lets try adding in small sliders next to each of
 the hud's elements for font size on the config page."*
 
-**A player's consider does not give a level — decided, from the evidence.**
+**A player's consider does not give a level — decided, from the evidence.** ⚠ *Superseded in part by §98
+(2026-09-29): "looks like quite a gamble" to a player IS the even con, so it gives your own level. Every
+other phrase still gives a player nothing.*
 - **What the server does:** it sends only a colour. `Handle_OP_Consider` →
   `GetLevelCon`, the same table Zeal copies from the client, and by that table
   60-vs-60 is white.
@@ -4693,6 +4696,72 @@ server's scripts rather than copied:
   - **Auto-fill:** the Tiny Gold Fist in an inventory upload ticks part one. Any ONE of the five rewards
     ticks part two; she swaps them, so requiring all five would never tick. A held-item rule can now say
     `any`.
+
+### 96. Essences of Power: the loot queue, and where it shows (2026-09-29, web beta `7b942d11`)
+**The guild's rule (the guild lead):** *"it will be an opendkp bid out for the entire item. this means the
+guild needs to see the order for who is next on the loot list for those items, and if they're present to
+get them, if they are not, we would bid out the item again and add to the queue. That person that bids
+would get to loot that item, and we would continue onwards · raid 1, someone bids and wins the item,
+they're queued up for the first set · if raid 3 that person's not there, we bid the item and whoever comes
+in is next in the queue · as long as we bid the item only when we don't have someone in queue we're good"*.
+As written into `web/lib/essencesQueue.ts`:
+1. **One OpenDKP bid buys the whole set.** Winning it puts you in the queue, in the order you won.
+2. **An essence drop goes to the first person in the queue** who lacks that essence and is in the raid.
+3. **Nobody like that there? Bid it again.** The winner loots it and joins the end of the queue.
+4. **Four pieces and you are done.** You leave the queue.
+
+**Where the page reads it from.** It is guild-wide on `/pop`, members-only like the rest of that page
+(the guild lead: *"a public item on the pop landing page … we can see who has which pieces"*).
+- **The queue** is every OpenDKP award (`opendkp_loot`) of an essence, or of the bid item, in award
+  order: oldest raid first, then the order OpenDKP recorded them.
+  - An award with DKP is a bid won; 0 DKP is a queued hand-out.
+  - The bid item may be entered as **"Essences of Power"** or **"Power of the Planes"**. Anything else
+    is not seen.
+- **Pieces** come from those awards, plus Mimic seeing someone loot an essence (`looted_items`). A loot on
+  its own never queues anyone.
+- **"In the raid"** is the live raid roster: a row in the last 15 minutes, as `/raid` uses. With no raid on,
+  the next name is simply the first in line.
+
+**Two layouts on beta, to pick from.** No `?v=` stays production as it was.
+- **`?v=b` by person:** the queue as rows, one ✓ per piece held, "next" in the cell of the essence that
+  person gets next, and a "next drop" strip on top. It answers *"who has which pieces"*.
+- **`?v=c` by essence:** four columns, each the order that essence goes out in, first one "next". It
+  answers *"who gets this drop"* at loot time.
+- **Sample data:** `&demo=1` shows invented names, labelled on the card, since nothing has dropped yet.
+- **Costs:**
+
+  | | Build | Maintenance | Runtime | Change |
+  |---|---|---|---|---|
+  | b | S | low | 5 small reads per /pop view with ?v | low |
+  | c | S | low | same | low |
+
+- **Needs the guild to record every piece in OpenDKP:** a bid for the first, 0 DKP for each queued
+  hand-out. Mimic's loot line is a backstop, not the record.
+- **Tests:** `test/essences-queue.test.js` runs the guild lead's story raid by raid. Mutation-checked.
+
+### 97. Command Center: 📋 on a deathroll (2026-09-29, Mimic beta `013e2e0c`, agent 3.7.47)
+The guild lead: *"add in a copy button for deathrolls"*.
+- **What it copies:** the whole game as one chat line, e.g. "Deathroll 32,000: A 26189 > B 24160 > … >
+  B 0. B loses.". A game still going ends with whose roll it is.
+- **Fits EQ chat:** plain ASCII (EQ's chat font has no dash or arrow glyphs), at most 250 characters.
+  A long game keeps the first roll, "...", then as many of the last rolls as fit.
+- **The button:** ✓ for two seconds after a copy; on the hover handshake, so it works on a locked overlay.
+  The clipboard is the only path; the agent never types into chat.
+- **Tests:** `test/deathroll-copy.test.js`.
+
+### 98. Target Info: a player who cons even shows your level (2026-09-29, Mimic beta `386cfc99`, agent 3.7.48)
+The guild lead: *"Faedar conned even to me he should show up as level 60"* — an anonymous bard, whom Target
+Info had called "level unknown until a /who sees them out of anonymous".
+- **Partly reverses §15.** §15 stopped using a player's /consider after "looks like quite a gamble",
+  yellow by the documented table, gave level 60s a range of 61–62.
+- **The evidence:** both reports are level-60 players reading that phrase to a level 60. For a PLAYER it
+  is the even con.
+- **Now:** a player's level comes from live `/who`, else an even con (that phrase or "looks like an even
+  fight") = your own level, shown "(even con)", else `/who` history. The con outranks history, which can
+  be weeks old.
+- **Unchanged:** every other phrase still gives a player no level and no colour. NPC considers, and the
+  phrase learner (NPCs only), are as they were.
+- **Tests:** `test/mana-drain-and-con.test.js`.
 
 
 

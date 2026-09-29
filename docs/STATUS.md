@@ -204,6 +204,13 @@ next touch one rather than assuming a missing row means a missing doc.
   classic page; pick a main (`cfg.mainCharacter`) whose own logs are read at the finish; a don't-send change
   restarts the engine so it takes effect. Tray ✨ Setup walkthrough and the dashboard Setup card open either;
   `loading.html` stays the first-run page until the pick. `test/setup-walkthrough.test.js`. §93.
+- **⏳ Essences of Power loot queue on /pop (web beta `7b942d11`, 2026-09-29).** The guild's rule (one bid
+  buys the set; each drop to the first in line who lacks it and is in the raid; else bid, winner joins the
+  end) worked out from OpenDKP awards + Mimic loot + the live roster. Two layouts, `?v=b` by person and
+  `?v=c` by essence, `&demo=1` for sample data. Waiting on the pick. `web/lib/essencesQueue.ts`,
+  `test/essences-queue.test.js`. §96.
+- **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
+  level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
 - **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for
   the Tiny Gold Fist, one Fist per run (tier one); part 2, the four elemental essences in Kerasha's Sacred Bowl
   for the Jade Hoop and the four other rewards she cycles through (elemental planes). Checked against the
