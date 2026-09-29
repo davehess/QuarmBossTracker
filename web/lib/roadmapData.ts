@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-planner-mains-alts-2026-09-29',
+    title: 'Web 1.8.50',
+    version: 'Web 1.8.50',
+    date: '2026-09-29',
+    headline: 'The PoP raid-night planner counts mains, with alts in brackets.',
+    features: [
+      {
+        name: 'Mains (alts)',
+        blurb: 'Every number in the raid-night planner is now mains, with alts in brackets, ranked by mains.',
+      },
+    ],
+    fixes: [
+      'The PoP page could only ever read the first 1,000 flag rows, so real flags would never have shown once PoP opened. It now reads them all, and counts the unmapped rows instead of listing other guilds’ characters.',
+    ],
+  },
+  {
     key: 'pop-guide-essences-2026-09-29',
     title: 'Web 1.8.49',
     version: 'Web 1.8.49',
