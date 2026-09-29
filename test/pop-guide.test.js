@@ -193,6 +193,38 @@ describe('Justice and the Bastion of Thunder read the way the server works', () 
   });
 });
 
+// Essences of Power (the guild lead, 2026-09-29: "consume this too and put it on the pop guide",
+// eqprogression.com/essences-of-power-quest-pop-elemental-gods). Checked against the server's scripts:
+// ponightmare/EinoInvisNight (the phrase, night only, within 30 of the tree), ponightmare/Aid_Eino
+// (the waves, the strand hand-in, depop after it), poknowledge/Councilwoman_Kerasha (the Fist check,
+// the bowl, the reward cycle), tradeskill recipe 9921 and the gods' loot tables (40%, lore).
+describe('Essences of Power reads the way the server works', () => {
+  const step = (k) => GUIDE_ITEMS.find(i => i.key === k);
+  const ids = (t) => splitItems(t ?? '').filter(p => 'item' in p).map(p => p.item.id);
+  it('part one: the tree phrase at night in Nightmare, one Fist per run', () => {
+    const e = step('essences_escort');
+    expect(e.section).toBe('t1');
+    expect(e.says.map(s => s.text)).toEqual(['Quellious be my guide', 'help']);
+    expect(e.where.map(l => [l.zone, l.y, l.x])).toEqual([['ponightmare', -510, 1687], ['poknowledge', -11, 1005]]);
+    expect(ids(e.title)).toEqual([16260]);
+    expect(ids(e.detail)).toEqual([16261]);
+    expect(e.detail).toMatch(/8 PM to 7 AM/);
+    expect(e.detail).toMatch(/one Fist per run/);
+    expect(e.detail).toMatch(/Hand me the strand from the beast/);
+  });
+  it('part two: Kerasha needs the Fist, four essences in the bowl, and the reward cycles in her order', () => {
+    const p = step('essences_power');
+    expect(p.section).toBe('t4');
+    expect(p.says.map(s => s.text)).toEqual(['essences of power']);
+    expect(p.where.map(l => [l.npc, l.y, l.x])).toEqual([['Councilwoman Kerasha', 0, 1003]]);
+    expect(ids(p.title)).toEqual([32106]);
+    // Fist, bowl, the four essences, Power of the Planes, then Hoop → Purse → Cord → Mace → Ring.
+    expect(ids(p.detail)).toEqual([16260, 17183, 16262, 16263, 16265, 32111, 16266, 17209, 32107, 32108, 32109]);
+    expect(p.detail).toMatch(/not the four the Plane of Time needs/);
+    expect(p.detail).toMatch(/40% of kills/);
+  });
+});
+
 describe('the page and the table', () => {
   it('is members-only and reads only the viewer’s own characters', () => {
     const page = stripJs(read('web/app/pop/guide/page.tsx'));

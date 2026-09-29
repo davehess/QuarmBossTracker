@@ -204,6 +204,10 @@ next touch one rather than assuming a missing row means a missing doc.
   classic page; pick a main (`cfg.mainCharacter`) whose own logs are read at the finish; a don't-send change
   restarts the engine so it takes effect. Tray ✨ Setup walkthrough and the dashboard Setup card open either;
   `loading.html` stays the first-run page until the pick. `test/setup-walkthrough.test.js`. §93.
+- **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for
+  the Tiny Gold Fist, one Fist per run (tier one); part 2, the four elemental essences in Kerasha's Sacred Bowl
+  for the Jade Hoop and the four other rewards she cycles through (elemental planes). Checked against the
+  quest scripts, the bowl recipe and the gods' loot tables. `test/pop-guide.test.js`. §95.
 - **⏳ Companion suite review, round two (docs artifact, 2026-09-29).** Settings pages, bandolier, spell sets,
   maps, raid summary and the gear upgrade finder added: 28 missing / 38 partial / 19 covered. Waiting on the
   guild lead to say which gaps to queue. §94.

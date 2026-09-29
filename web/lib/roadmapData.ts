@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-guide-essences-2026-09-29',
+    title: 'Web 1.8.49',
+    version: 'Web 1.8.49',
+    date: '2026-09-29',
+    headline: 'The PoP checklist has the Essences of Power quest, from the Nightmare escort to your pick of five rewards.',
+    features: [
+      {
+        name: 'Part one: the Nightmare escort',
+        blurb: 'At night in game, say “Quellious be my guide” by the big tree near the waterfall and keep Aid Eino alive through four waves and The Dreamkeeper. The checklist lists every wave and has the spot to /map. One strand drops, so it is one Tiny Gold Fist per run.',
+      },
+      {
+        name: 'Part two: the four essences',
+        blurb: 'With the Fist, Councilwoman Kerasha gives you a Sacred Bowl. Fill it with the Essence of Fire, Wind, Water and Earth from the four elemental gods, and trade the result for the Jade Hoop of Speed, or hand it back for the coin purse, cord, mace or ring.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-guide-justice-bot-2026-09-29',
     title: 'Web 1.8.48 · Bot 3.1.176',
     version: 'Web 1.8.48 · Bot 3.1.176',
