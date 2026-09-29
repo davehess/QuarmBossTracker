@@ -3369,12 +3369,17 @@ async function _askAboutDisplays() {
 }
 // 🧲 Rescue brings back LOST overlays only (the guild lead, 2026-09-29: "not only
 // does the rescue capture all of the overlays but it puts them all into one spot
-// which is dreadfully annoying"). Lost = its middle is on no screen, or its
-// top-left corner (where ✥ sits) is on no screen, so it cannot be grabbed. The
-// "middle" test is the 2026-07-15 fix: a window straddling a monitor edge had
-// only a sliver showing and was counted as fine. An overlay sitting whole on
-// another screen is where the raider keeps it (§80a), so it is not lost.
-// → { lost, away: [{…entry, from: display}], home }
+// which is dreadfully annoying"; then, same day: "only brings the overlays that
+// were missing from the screen, not the ones that are already arranged").
+// Lost = you cannot see it: its middle is on no screen (the 2026-07-15 fix — a
+// window straddling a monitor edge had only a sliver showing), or less than
+// half of it is on a screen. An overlay you CAN see but whose ✥ hangs past an
+// edge is not lost: it is nudged just far enough to grab (`nudge`), and stays
+// where it was arranged. That used to count as lost and get relocated — which
+// is how an arranged HUD ring, whose see-through corners overhang the edge and
+// whose ✥ sits under the ring, not at the top-left, got moved. An overlay
+// sitting whole on another screen is where the raider keeps it (§80a).
+// → { lost, away: [{…entry, from: display}], home, nudge: [{…entry, to}] }
 const _OVERLAY_NAMES = {
   dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
@@ -3385,13 +3390,36 @@ const _OVERLAY_NAMES = {
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
   const on = (x, y) => displays.find(d => inside(d.bounds, x, y)) || null;
-  const out = { lost: [], away: [], home: [] };
+  const shown = (b) => {
+    let a = 0;
+    for (const d of displays) {
+      const r = d.bounds;
+      const w = Math.min(b.x + b.width, r.x + r.width) - Math.max(b.x, r.x);
+      const h = Math.min(b.y + b.height, r.y + r.height) - Math.max(b.y, r.y);
+      if (w > 0 && h > 0) a += w * h;
+    }
+    return a / Math.max(1, b.width * b.height);
+  };
+  // Where ✥ sits: top-left on every overlay; the HUD in its ring layout keeps
+  // it under the ring, bottom-centre, so either spot being on a screen will do.
+  const handles = (key, b) => key === 'me'
+    ? [[b.x + 12, b.y + 12], [b.x + b.width / 2, b.y + b.height - 12]]
+    : [[b.x + 12, b.y + 12]];
+  const out = { lost: [], away: [], home: [], nudge: [] };
   for (const e of entries) {
     const b = e.b;
     const mid = on(b.x + b.width / 2, b.y + b.height / 2);
-    if (!mid || !on(b.x + 12, b.y + 12)) out.lost.push(e);
-    else if (mid.id !== targetId) out.away.push(Object.assign({}, e, { from: mid }));
-    else out.home.push(e);
+    if (!mid || shown(b) < 0.5) { out.lost.push(e); continue; }
+    let cur = e;
+    if (!handles(e.key, b).some(([x, y]) => on(x, y))) {
+      // Just far enough that the top-left corner is on the screen it is on.
+      const r = mid.bounds;
+      const to = { x: Math.max(b.x, r.x), y: Math.max(b.y, r.y), width: b.width, height: b.height };
+      cur = Object.assign({}, e, { b: to, to });
+      out.nudge.push(cur);
+    }
+    if (mid.id !== targetId) out.away.push(Object.assign({}, cur, { from: mid }));
+    else out.home.push(cur);
   }
   return out;
 }
@@ -3420,6 +3448,7 @@ async function _rescueOverlays() {
     } catch { /* mid-close */ }
   }
   const sorted = _rescueSort(entries, screen.getAllDisplays(), disp.id);
+  for (const e of sorted.nudge) { try { e.win.setBounds(e.to); } catch { /* mid-close */ } }
   const MARGIN = 8, STEP = 16;
   const pad = (r) => ({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.width + MARGIN * 2, h: r.height + MARGIN * 2 });
   const hits = (r, list) => list.some(o => o.x < r.x + r.width && o.x + o.w > r.x && o.y < r.y + r.height && o.y + o.h > r.y);
@@ -3465,7 +3494,11 @@ async function _rescueOverlays() {
       brought = sorted.away.length;
     }
   } else if (!sorted.lost.length) {
-    try { await dialog.showMessageBox({ type: 'info', title: 'Wolf Pack miMIC', noLink: true, message: 'No overlay was lost.', detail: 'Every overlay can be reached where it is, so nothing moved.' }); } catch { /* no dialog */ }
+    const one = sorted.nudge.length === 1;
+    const detail = sorted.nudge.length
+      ? 'Nothing else moved. ' + names(sorted.nudge) + (one ? ' had its' : ' had their') + ' ✥ past the edge of the screen, so ' + (one ? 'it' : 'they') + ' moved just far enough to grab.'
+      : 'Every overlay can be reached where it is, so nothing moved.';
+    try { await dialog.showMessageBox({ type: 'info', title: 'Wolf Pack miMIC', noLink: true, message: 'No overlay was lost.', detail }); } catch { /* no dialog */ }
   }
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
@@ -3474,9 +3507,10 @@ async function _rescueOverlays() {
   const missing = KNOWN.filter(k => !present.has(k));
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
+    + ` · nudged ${sorted.nudge.length} [${sorted.nudge.map(e => e.key).join(', ')}]`
     + ` · other screen ${sorted.away.length} (${brought ? 'brought' : 'left'}) · no free spot ${stuck}\n`
     + (missing.length ? `[rescue]   NO WINDOW (disabled/gated — re-enable from tray → Overlays): ${missing.join(', ')}\n` : ''));
-  return { moved: sorted.lost.length, brought, left: sorted.away.length - brought, display: `${disp.size.width}x${disp.size.height}`, missing };
+  return { moved: sorted.lost.length, nudged: sorted.nudge.length, brought, left: sorted.away.length - brought, display: `${disp.size.width}x${disp.size.height}`, missing };
 }
 
 // Resolve the starting bounds for an overlay: use the saved rect only if the
