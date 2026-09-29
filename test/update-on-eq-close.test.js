@@ -41,11 +41,12 @@ const block = sliceBlock(
   'if (running) { try { _nagPendingUpdate(); } catch { /* ditto */ } }\n}',
 );
 
-function harness({ eqRunning = false, pending = { version: '9.9.9' } } = {}) {
+function harness({ eqRunning = false, pending = { version: '9.9.9' }, win = null } = {}) {
   const quitAndInstall = vi.fn();
   const notifications = [];
   const log = [];
   const preamble = `
+    let mainWindow = __win;
     let updatePending = ${JSON.stringify(pending)};
     let _eqRunning    = ${eqRunning};
     let __eqNext      = ${eqRunning};
@@ -66,8 +67,8 @@ function harness({ eqRunning = false, pending = { version: '9.9.9' } } = {}) {
     };
   `;
   // eslint-disable-next-line no-new-func
-  const api = new Function('__quitAndInstall', '__log', '__notes',
-    preamble + block + epilogue)(quitAndInstall, log, notifications);
+  const api = new Function('__quitAndInstall', '__log', '__notes', '__win',
+    preamble + block + epilogue)(quitAndInstall, log, notifications, win);
   return { ...api, quitAndInstall, log, notifications };
 }
 
@@ -137,6 +138,48 @@ describe('install-on-EQ-closed', () => {
     await vi.advanceTimersByTimeAsync(GRACE * 3);
     expect(h.quitAndInstall).not.toHaveBeenCalled();
     expect(h.isArmed()).toBe(false);
+  });
+
+  // A member, 2026-09-29: Mimic "just closed" while the guild lead walked them
+  // through the crash review. EQ was shut (it had failed to start), an update
+  // was waiting, so Mimic installed it and came back hidden in the tray.
+  const fakeWindow = (state) => ({
+    isDestroyed: () => false,
+    isVisible: () => state.visible,
+    isMinimized: () => state.minimized,
+  });
+
+  it('holds the install while the Mimic window is open, then installs once it is minimized', async () => {
+    const state = { visible: true, minimized: false };
+    const h = harness({ eqRunning: false, win: fakeWindow(state) });
+    for (let i = 0; i < 5; i++) await h.poll();
+    await vi.advanceTimersByTimeAsync(GRACE * 3);
+    expect(h.quitAndInstall, 'never close the window someone is reading').not.toHaveBeenCalled();
+    expect(h.isArmed()).toBe(false);
+    expect(h.log.filter(l => /waits — the Mimic window is open/.test(l)), 'said once, not every poll').toHaveLength(1);
+
+    state.minimized = true;
+    await h.poll();
+    await vi.advanceTimersByTimeAsync(GRACE + 50);
+    expect(h.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('a window hidden to the tray does not hold the install', async () => {
+    const h = harness({ eqRunning: false, win: fakeWindow({ visible: false, minimized: false }) });
+    await h.poll();
+    await vi.advanceTimersByTimeAsync(GRACE + 50);
+    expect(h.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  it('the window opened during the grace holds it too, and the latch clears', async () => {
+    const state = { visible: false, minimized: false };
+    const h = harness({ eqRunning: false, win: fakeWindow(state) });
+    await h.poll();                             // armed with the window hidden
+    state.visible = true;                       // they open Mimic inside the 15s
+    await vi.advanceTimersByTimeAsync(GRACE + 50);
+    expect(h.quitAndInstall).not.toHaveBeenCalled();
+    expect(h.isArmed()).toBe(false);
+    expect(h.log.join('\n')).toMatch(/window was opened — holding the install/);
   });
 
   it('re-arms after a deferral so the NEXT close still installs', async () => {
