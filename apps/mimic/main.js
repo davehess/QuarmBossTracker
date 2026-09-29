@@ -3385,7 +3385,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Timers canvas',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -5404,7 +5404,7 @@ function _canvasDisplay() {
 function createCanvasWindow() {
   const d = _canvasDisplay();
   canvasWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Timers canvas',
+    title: 'Wolf Pack miMIC — Canvas',
     x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
     frame: false, transparent: true, resizable: false, movable: false,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
@@ -7083,7 +7083,7 @@ function buildTrayMenu() {
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
-    { label: 'Timers canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
+    { label: 'Canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
         _toggleOverlay('canvas');
         buildTrayMenu();
       } },
