@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
+| **/who overlay: Zone column** | **Beta 2026-09-29 (§73, agent 3.7.38).** `ZONE` in the title bar shows each player's zone from their last /who, off by default | the guild lead: try it after a `/who all`; say if it should be a filter or a sort too |
 | **Target Info F/Q/V (Faction · Quest · Vendor)** | **Stable in Mimic 2.7.3 (§70, §71a, §72; bot 3.1.168).** What to say with `/say` chips (every word a branch needs, "sit first" + `/sit` where the NPC checks), the hand-in, who's next with `/map`, a merchant's stock | the guild lead: forward/back through quest NPCs you targeted, as a tab or its own overlay (§72) |
 | **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.35).** Starts at Agrakath Theric with the book from Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
 | **Quest NPC lines DM'd as tells** | **Fixed on main 2026-09-28 (§69, bot 3.1.165).** Script-printed "X tells you" lines are dropped by exact sender + text; 8 stored rows deleted | next session: `/abc 2` users' tells are not captured at all (agent pattern, beta) |
@@ -3923,6 +3924,25 @@ Screenshot.png", and *"There's no button to install, only reset and untick"*.
 - **Why a second stable the same evening:** 2.7.3 broke the feature for exactly the members who had used
   the old Apply, the guild lead among them. Promoted file-level from beta (`66dc3d1a`), byte-identical;
   330 test files green, lint and the dashboard check clean. Beta re-parked at 2.7.5.
+
+## 73. The /who overlay gets a Zone column (2026-09-29, agent 3.7.38 beta)
+The guild lead: *"lets include zone on /who overlay as toggleable column"*.
+- **Switch:** `ZONE` in the title bar, next to CLASS and GUILD. Off by default so the overlay looks as
+  it did; remembered on this machine. The column sits after level, a fixed 96px, full text on hover;
+  the Target card holds an empty cell so it stays lined up.
+- **Where the zone comes from:** `/who all` prints each player's short zone name on the row
+  (`ZONE: wakening`). A plain /who prints none there, but its footer names the zone everyone listed is
+  in (`There are 12 players in The Wakening Land.`), so every row gets that. A `/who all` row with no
+  zone (an /anon player) goes blank instead of keeping an older zone. Recently gone rows keep the zone
+  they were last seen in.
+- **Shown as the game printed it,** so the column can mix `wakening` and `The Wakening Land` across the
+  two kinds of /who. The agent has an id-to-name zone table but no short-name one; adding one (about
+  200 rows from `eqemu_zone`) would make it read one way. Left for the guild lead to ask for.
+- **Upload untouched:** the zone map (`_whoZoneSeen`) sits apart from `whoData`, whose rows upload to
+  the bot as they are, so a footer's long name never lands in `who_observations`.
+- **Can follow on the same data:** a zone filter chip, or sort by zone.
+- `test/who-zone-column.test.js` runs the real /who tracking and row markup; mutation-checked (the /anon
+  blanking and the off state).
 
 
 

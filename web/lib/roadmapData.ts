@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'who-zone-2026-09-29',
+    title: 'Agent 3.7.38',
+    version: 'Agent 3.7.38',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'The /who overlay can show which zone each player is in.',
+    features: [
+      {
+        name: 'A Zone column on /who',
+        blurb: 'Press ZONE in the /who overlay’s title bar to show or hide it; Mimic remembers your choice. After a /who all you see where everyone is; after a plain /who, everyone shows your zone. Recently gone players keep the zone they were last seen in.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-274-2026-09-28',
     title: 'Mimic 2.7.4',
     version: 'Mimic 2.7.4 · Agent 3.7.37',
