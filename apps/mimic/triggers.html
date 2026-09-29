@@ -926,14 +926,29 @@
     { id: 'sample|slow', target: 'an elder thought horror', effect: "Turgur's Insects", duration_sec: 150, group: 'trigger' },
     { id: 'sample|tash', target: 'an elder thought horror', effect: 'Tashania', duration_sec: 120, group: 'trigger' },
     { id: 'sample|tick', target: null, effect: 'Server tick', duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', group: 'tick', pinned: true },
+    { id: 'sample|spell', target: 'a sarnak conscript', effect: 'Malosini', duration_sec: 90, group: 'spell' },
+    { id: 'sample|loot', target: null, effect: 'Bid: Cloak of Flames', duration_sec: 90, kind: 'loot', group: 'loot' },
   ];
+  // One of every group the canvas offers, plus one for each timer the panel
+  // claims by name (window.parent.wpCanvasPanelNames), so a 🧪 test shows every
+  // kind of row that will land in it. Routing (_partWants) keeps each where it goes.
   function _sampleTimers(){
     var now = Date.now();
-    return _SAMPLE_TIMERS.map(function(s){
+    var list = _SAMPLE_TIMERS.slice();
+    try {
+      var names = (window.parent && typeof window.parent.wpCanvasPanelNames === 'function') ? window.parent.wpCanvasPanelNames(PANEL) : [];
+      (names || []).forEach(function(n){
+        if (list.some(function(s){ return String(s.effect).toLowerCase() === n; })) return;
+        list.push({ id: 'sample|name|' + n, target: 'a test mob', effect: n, duration_sec: 45, group: 'trigger' });
+      });
+    } catch (e) { /* standalone */ }
+    return list.map(function(s){
       var d = s.duration_sec * 1000;
       return Object.assign({}, s, { remaining_ms: d - (now % d), test: true });
     });
   }
+  // 🧪 on a callouts panel: one sample callout, shown and never spoken (a part never speaks).
+  window.wpPartFlash = function(text){ if (PART) flash(text); };
   let _moreRow = null;
   function overflowRow(n){
     if (!_moreRow){

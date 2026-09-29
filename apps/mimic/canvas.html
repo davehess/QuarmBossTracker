@@ -223,6 +223,8 @@
     }
     return byGroup || all;
   };
+  // A part's 🧪 test rows include one per timer its panel claims by name.
+  window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };
 
   // ── Panels ──────────────────────────────────────────────────────────────────
   var panelsEl = document.getElementById('panels');
@@ -278,7 +280,7 @@
       var q = panelById(p.id); if (!q) return;
       q.off = !q.off; save(); render();
     });
-    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, root); });
+    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
     panelsEl.appendChild(root);
     return e;
   }
@@ -295,7 +297,7 @@
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
       doc.body.classList.toggle('part-edit', _edit);
       var w = e.frame.contentWindow;
-      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit);
+      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit || _isTesting(p.id));
     } catch (err) { /* page mid-load — its load handler re-applies */ }
   }
 
@@ -424,7 +426,22 @@
   window.addEventListener('blur', endDrag);
 
   // ── Panel settings ──────────────────────────────────────────────────────────
-  var _menuFor = null;
+  // 🧪 Test rows (the guild lead, 2026-09-29: "give me a button to show test
+  // data there of each type that's selected there"): one panel shows a sample
+  // of every kind of countdown that would land in it, for 30 seconds or until
+  // pressed again, locked or not. Nothing is saved.
+  var TEST_MS = 30000;
+  var _testing = {};
+  function _isTesting(id) { return !!_testing[id] && _testing[id] > Date.now(); }
+  function setTesting(id, on) {
+    _testing[id] = on ? Date.now() + TEST_MS : 0;
+    if (on) setTimeout(function () {
+      if (_isTesting(id)) return;
+      render();
+      if (_menuFor === id && _els[id]) openMenu(id, _menuAnchor || _els[id].root);
+    }, TEST_MS + 100);
+  }
+  var _menuFor = null, _menuAnchor = null;
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   function closeMenu() { _menuFor = null; menuEl.classList.remove('show'); }
 
@@ -460,17 +477,35 @@
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
     h += '<div class="row" style="margin-top:8px">'
+      + (p.kind === 'callouts'
+        ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
+        : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
+          + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
+      + '</div>';
+    h += '<div class="row">'
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
       + '</div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
-    var r = anchor.getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
-    var left = Math.max(8, Math.min(window.innerWidth - mr.width - 8, r.left));
-    var top = r.bottom + 6;
-    if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - mr.height - 26);
-    menuEl.style.left = left + 'px'; menuEl.style.top = top + 'px';
+    _menuAnchor = anchor;
+    placeMenu();
     if (p.kind === 'timers' && !p.all) fillLive(p);
+  }
+  // Whole on the screen wherever the panel sits (the guild lead, 2026-09-29:
+  // "This view could go off the screen"): below the ✥ or panel it came from,
+  // else above it, else as low as it can sit while whole. Never taller than
+  // the screen (it scrolls inside), and placed again when the live list fills in.
+  function placeMenu() {
+    if (!_menuAnchor || !menuEl.classList.contains('show')) return;
+    var W = window.innerWidth, H = window.innerHeight;
+    menuEl.style.maxHeight = (H - 16) + 'px';
+    var r = _menuAnchor.getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
+    var left = Math.max(8, Math.min(W - mr.width - 8, r.left));
+    var top = r.bottom + 6;
+    if (top + mr.height > H - 8) top = r.top - mr.height - 6;
+    if (top < 8) top = Math.max(8, H - mr.height - 8);
+    menuEl.style.left = left + 'px'; menuEl.style.top = top + 'px';
   }
 
   // The countdowns up right now, as one-click claims — the way to pull a
@@ -489,6 +524,7 @@
           h += '<span class="chip add" data-add="' + esc(n) + '">＋ ' + esc(n) + '</span>';
         });
         box.innerHTML = h || '<span class="dim">no countdowns right now</span>';
+        placeMenu();
       })
       .catch(function () { var box = document.getElementById('mLive'); if (box) box.innerHTML = '<span class="dim">agent not answering</span>'; });
   }
@@ -505,6 +541,15 @@
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
+    if (t.hasAttribute('data-test')) {
+      if (p.kind === 'callouts') {
+        try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
+        return;
+      }
+      setTesting(p.id, !_isTesting(p.id));
+      render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
+      return;
+    }
     var chip = t.closest('.chip');
     if (chip && chip.hasAttribute('data-rm')) { var rm = chip.getAttribute('data-rm'); p.names = p.names.filter(function (x) { return x !== rm; }); }
     else if (chip && chip.hasAttribute('data-add')) { claimName(p, chip.getAttribute('data-add')); }
@@ -517,7 +562,7 @@
       save(); closeMenu(); render(); return;
     }
     else return;
-    save(); render(); openMenu(p.id, _els[p.id].root);
+    save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
   });
   menuEl.addEventListener('change', function (ev) {
     var p = panelById(_menuFor);
