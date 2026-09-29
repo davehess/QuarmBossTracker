@@ -119,7 +119,8 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105).** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
+| **Overlays tab: three mockups** | **Artifact page (§106).** A gallery / B studio (the builder in the tab) / C layouts that launch the on-screen builder, each with four costs. Recommendation: C, with A's cards as its Add drawer | the guild lead: pick A, B or C (or mix) |
+| **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105) + group sizing `a5532ace` (§106).** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
 | **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
@@ -4956,3 +4957,44 @@ This reverses §103's drag rule. What changed:
 
 
 
+
+### 106. Old characters fold away; the Overlays tab gets three mockups; a group sizes as one (2026-09-29)
+**Characters touched in the last 3 months show; the rest fold into "more".** The guild lead, on the
+setup walkthrough's character list: *"i have too many old files in here. we should really just show things
+that have been touched in the last 3 months and then a collapsed section with more. Same thing for the /me
+page."*
+- **Mimic setup walkthrough** (beta `3f390c1c`): the table shows characters whose log was written in the
+  last 90 days, plus the starred main. The rest sit under a closed "N more · not played in 3 months",
+  with the same Main and Send controls. `splitRecentChars()` in `apps/mimic/welcome.html`.
+- **/me** (web 1.8.54, main `318cbe1d`): "touched" means the newest agent upload on any stream, or a
+  live-state snapshot, within 90 days. The character cards and the Mimic sync list both split this way.
+  The sync list's old "with no uploads" section now holds the older characters too.
+- On both surfaces, if nothing is recent, everything shows. An empty list would be worse than a long one.
+
+**The Overlays tab: three mockups, no pick yet.** The guild lead, from a screenshot of the tab: *"Show me a
+few mockups for a new overlays tab that can build these overlays faster, right now it's just a wall of
+text and toggles, then mismatched keybinds. We should have a gallery view in here if it's a selection
+tool, but ideally it would be a home for the builder to live."* The mockups are a
+private page in the guild lead's artifact list, titled "Overlays Tab Mockups". The three options:
+- **A, gallery:** cards with a sketch, a switch, a key and "Open in builder".
+- **B, studio:** a pieces library, a miniature of the screen and a settings panel. The builder lives in
+  the tab.
+- **C, layouts:** saved layouts as tiles, "on screen now" with one key each, and "Arrange on screen". The
+  tab launches the on-screen builder. A's cards become C's Add drawer.
+
+All three share one key format, with clashes shown in red. The recommendation is C, which does not
+build a second editor. B's costs are high on build and on maintenance, because two editors of one layout
+have to agree. ⚠ The tab lives in the agent dashboard (`packages/wolfpack-logsync/dashboard.html`), so
+whichever option is picked lands through `beta` and must show the builder parts only on a Mimic that has
+the canvas.
+
+**A group sizes as one** (alpha `a5532ace`). The guild lead: *"when a group is selected by grabbing the top
+bar you should be able to resize the entire group"*.
+- A click on a grouped piece now selects the whole group; Alt-click selects just the one piece.
+- Two or more selected get a dashed box with a single ◢. Dragging it stretches every piece from the box's
+  top-left corner, keeping their places relative to each other.
+- A piece's text grows with the height. A wider group alone keeps the text size. Shift keeps the group's
+  shape.
+- The ◢ on any grouped piece does the same; Alt-drag on it sizes only that piece.
+- `groupBox()` and `scaleGroup()` are pure functions and are tested for real in
+  `test/canvas-pieces.test.js`.
