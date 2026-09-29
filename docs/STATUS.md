@@ -184,6 +184,12 @@ next touch one rather than assuming a missing row means a missing doc.
   rolling release, `mimic-alpha`, which alpha installs read directly (never the 10-entry release feed). Opt
   in from the tray or the dashboard's α alpha; leaving goes back to beta. The bot and site count only
   `-beta.N` tags as the beta. Agent changes still land on beta. `DECISIONS-2026-09-21.md` §81.
+- **⏳ FB-34 suggested triggers per character · FB-35 pets on the meter (agent 3.7.44 beta `f857fa6f` + bot
+  3.1.174, 2026-09-29).** A personal trigger may carry a character list; the Suggested panel's **For:** picker
+  sets it, and a line fires it only from those characters' logs. The poll serves the bot's pooled pet owners
+  (`pet_owners`), so one `/pet leader` seen by anyone credits that pet on every Mimic; a generator-named pet
+  nobody named shows as **(pet)** and stays out of the /rs copy. Bot parse cards still credit an unowned pet
+  as a player. §84.
 - **⏳ 🧲 Rescue brings back only what is lost (Mimic beta `1cd1d423`, 2026-09-29).** No more pile in one
   corner and no re-arrange: only overlays that cannot be reached move, each to its own spot; overlays on
   another screen come only on a yes. §82.

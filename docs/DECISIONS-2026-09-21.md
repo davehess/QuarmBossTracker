@@ -115,7 +115,8 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **3.0: sets, edit in place, six display types** | **Recorded 2026-09-29 (§83; R16–R21).** Six types rendered on the canvas "Mimic 3.0 display types"; nothing built yet | the guild lead: pick which display types to build first, and yes/no on the build order (sets + `/pipe mimic` first) |
+| **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a).** Sets + `/pipe mimic` verbs + local file first, then the database backup and sharing; display types Bar, Readout, Chips, then Ring and Pips, Timeline last | sessions: build step 1 on `alpha` |
+| **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
@@ -4230,6 +4231,47 @@ will need to be saved to our database for portability."*
 - **Not built.** These land on the `alpha` branch (§81) when the builder does. Proposed order: sets +
   `/pipe mimic` verbs + local file first (useful on today's overlays), then the database backup, then
   sharing, then the display types on the canvas panels.
+
+### 83a. The build order is taken (2026-09-29)
+The guild lead: *"do your ordering for the new types and the two latest entries."* So the proposed
+order stands, and the display types go in pairs by what they reuse:
+1. **Overlay sets** — local file, `/pipe mimic load|save|next|lock`, tray load/save/cycle, the same on
+   the dashboard (tray ↔ dashboard parity). Useful on today's overlays before any builder exists.
+2. **Database backup** of the sets, then **sharing / suggesting** a set.
+3. **Display types: Bar, Readout, Chips first** (what today's overlays already draw, so the builder
+   proves itself on known shapes), **then Ring and Pips, Timeline last** (it needs a time axis every
+   data element would have to supply).
+Builder work goes to `alpha`; anything the agent needs goes to `beta` first (§81).
+
+### 84. Suggested triggers per character; pets on the meter (2026-09-29, agent 3.7.44 beta `f857fa6f`, bot 3.1.174)
+Two member reports the same morning.
+- **FB-34** — *"Can these be made to per character triggers and not across the board?"* (the Suggested
+  triggers panel). A personal trigger may now carry a list of characters; no list means every character,
+  as before. A line fires it only from the log of a character on that list (after a character swap on
+  one client, Zeal's live character wins); Zeal gauge triggers scope the same way; the timer-bar
+  switches, which have no line of their own, count as on while one of their characters is being
+  played. The panel has a **For:** picker (Every character, or each character this machine has logs
+  for). Unticking one character keeps the trigger on for the others, even from an every-character row.
+  Guild triggers are untouched — they already have class targeting and are the officers' call.
+- **FB-35** — *"This doesn't show pets? maybe its only if they dont use /pet leader, not sure."* Right:
+  a summoned pet names its owner only in "My leader is <Owner>." The pet in the report never said it
+  on the reporter's screen, its owner does not run Mimic, and the fight's uploads credited the pet as a
+  raider. Two layers:
+  - The bot already pooled every declaration any raider's agent uploaded (`addPetOwners`). The poll
+    now serves that pool as a `pet_owners` stream (bot 3.1.174; latest declaration wins, 12 h max,
+    one-word pet names only, sheddable with `flag_shed_pet_owners`). The agent asks every minute while
+    fights run, five idle, and a live fight adopts the owner the first time the pet swings — so one
+    `/pet leader` seen by anyone names that pet on every Mimic for the night. Old-log replays do not
+    borrow tonight's owners.
+  - A pet nobody named, whose name came out of the server's pet-name generator (EQMacEmu
+    `GetRandPetName`: G/J/K/L/V/X/Z + two optional middles + ab/er/n/tik) and that /who and the raid
+    window never showed, is sent as a pet: the DPS HUD labels it **(pet)** and leaves it out of the
+    parse copied to /rs.
+  - ⚠ **Not changed: the bot's parse cards.** An unowned pet still reaches the Discord parse as a
+    player when no upload carried its owner. The pool fixes it whenever anyone saw the leader line;
+    folding generator-named pets on the bot side is a separate call (it would touch every parse card).
+- Tests: `per-character-triggers-and-pet-owners` (beta; the agent runs for real, every rule
+  mutation-checked) and `pet-owners-stream` (main).
 
 
 
