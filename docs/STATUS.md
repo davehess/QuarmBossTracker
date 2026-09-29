@@ -210,6 +210,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ 🧲 Rescue brings back only what is lost (Mimic beta `1cd1d423`, 2026-09-29).** No more pile in one
   corner and no re-arrange: only overlays that cannot be reached move, each to its own spot; overlays on
   another screen come only on a yes. §82.
+- **⏳ An update never installs while the Mimic window is open (Mimic beta `7c82aa0a`, 2026-09-29).** A
+  member's Mimic "closed" mid crash review: EQ was shut, so the waiting stable update installed itself and
+  Mimic came back hidden in the tray. The install now waits until the window is hidden or minimized.
+  Reaches stable at the next cut. `test/update-on-eq-close.test.js`, `DECISIONS-2026-09-21.md` §88.
 - **⏳ Timers canvas — option A, first slice (agent 3.7.42 + Mimic beta `d6f9ccca`, 2026-09-29; FB-33).** One
   screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
   one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by
