@@ -127,7 +127,7 @@ is ephemeral. It is a desktop-session job.
 | **Bard charm + recharm call + clicky buffs** | **Beta, agent 3.7.40 (§75).** Class from Zeal; a bard's charm gets its song's duration; "recharm pet" at 4s left; clicky casts land on the pet with a timer | the guild lead: confirm on the next charm cycle |
 | **Screens changed → ask; EQ's real window; Zeal bars in UI Studio** | **Beta 2026-09-29 (§80).** Positions remembered per screen setup; a monitor coming back offers "put them back", a lost or reshaped screen offers "bring them to EQ's screen"; Mimic reads EQ's window from Windows; UI Studio moves `/raidbars` and `/assistbar`. **§80a (`f3e444dd`):** each overlay keeps its screen — auto-arrange works per screen, a side-screen overlay goes to another side screen; overlays do not need windowed EQ | the guild lead: pull a monitor's power with overlays on it, then plug it back, and answer both prompts; move the raid bars in UI Studio and relog |
 | **3.0: formats, anchoring to game windows, one product (R11–R15)** | **Recorded 2026-09-29 (§80).** Every part in horizontal / vertical / arc / circle / thin / thick / transparent / locked-to-a-window; know EQ's window shapes; charm parts around the pet window; HP over the target window; the dashboard folded into one product | the guild lead: say whether to file the Zeal "ui windows" ask now (R12–R14 depend on it); options for how the dashboard and the builder fit together come next |
-| **Timers canvas (option A, FB-33)** | **Beta 2026-09-29 (§79; agent 3.7.42).** One screen-sized click-through window: Callouts, Timers and Charm panels, each dragged and sized alone; ＋ more timer panels that claim groups or timers by name; the trigger window stays the voice | the guild lead: tray → Overlays → Timers canvas, place the three panels, run a pull; say what the next panel type should be (Charm tracker, Tick, CH chain) and whether it feels heavy on the raid machine |
+| **Timers canvas (option A, FB-33)** | **Beta 2026-09-29 (§79; agent 3.7.42).** One screen-sized click-through window: Callouts, Timers and Charm panels, each dragged and sized alone; ＋ more timer panels that claim groups or timers by name; the trigger window stays the voice. **Every panel now has an always-on ✥** (§87, beta `1a292133`) | the guild lead: tray → Overlays → Timers canvas, place the three panels, run a pull; say what the next panel type should be (Charm tracker, Tick, CH chain) and whether it feels heavy on the raid machine |
 | **CH chain: drag stutter, overlap ✕, grey out who didn't pick up** | **Queued 2026-09-29 (§77).** Stutters back when dragged after EQ was active; a stale slot's ✕ is hard to hit on overlap; grey the slot-holder another cleric covered | next session: needs a Windows repro for the drag |
 | **Trigger TTS "stopped working" (beta.3, a bard)** | **Open 2026-09-29 (§77).** Charm callouts no longer cancel shared speech; root cause unconfirmed | the member: send Mimic feedback with logs attached next time it goes quiet |
 | **/who overlay: Zone column** | **Beta 2026-09-29 (§73, agent 3.7.38).** `ZONE` in the title bar shows each player's zone from their last /who, off by default | the guild lead: try it after a `/who all`; say if it should be a filter or a sort too |
@@ -4400,6 +4400,23 @@ With no `?v=`, the page is production as it stands.
   and the row sizing to its content on phones), both now fixed.
 - Graduating needs the guild lead's pick. When one is picked, promote it and delete the other in the same
   change.
+
+### 87. Timers canvas: a ✥ on every panel, all the time (2026-09-29, Mimic beta `1a292133`)
+The guild lead, looking at the canvas in game: *"these windows look good, they do not have a move button
+on them which should be there at all times"*. Until now a panel moved only inside Arrange.
+- **Every panel carries a small ✥** just outside its top-left corner, tucked inside when the panel sits at
+  the screen's left edge. Drag it to move the panel; right-click it for the panel's settings. While
+  arranging it hides, and the panel's tab carries ✥ as before.
+- **The canvas stays click-through.** Locked, the ✥ is the only part of a panel that takes the mouse: it
+  arms the hover handshake, the drag shield holds the drag, and a panel's body still passes clicks to EQ.
+  So the §79 rule ("click-through always, unlocked included") holds; the ✥ is one more control on the
+  handshake, like the ✕ on every other overlay.
+- A settings menu opened from ✥ while locked closes when the cursor leaves it, because a click outside
+  would land in EQ and never reach the canvas.
+- Resize stays in Arrange (the ◢ grip). Sizing mid-play was not asked for, and a second always-on handle
+  is one more thing on screen during a fight.
+- `test/timers-canvas.test.js` pins the ✥, its any-time drag and that the panel body takes the mouse only
+  while arranging; the guard was mutation-checked. Rendered headless, locked and arranging, before pushing.
 
 
 

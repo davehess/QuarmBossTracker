@@ -214,8 +214,9 @@ next touch one rather than assuming a missing row means a missing doc.
   screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
   one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by
   name. The panels are `triggers.html?part=…`; the trigger window stays running hidden as the one voice.
-  Tray + dashboard (✥ Arrange). Not yet measured on a raid machine. Next: Charm tracker / Tick / CH chain as
-  panels. `apps/mimic/canvas.html`, `test/timers-canvas.test.js`, `DECISIONS-2026-09-21.md` §79.
+  Tray + dashboard (✥ Arrange). Every panel has an always-on ✥ that moves it without opening Arrange
+  (beta `1a292133`, §87). Not yet measured on a raid machine. Next: Charm tracker / Tick / CH chain as
+  panels. `apps/mimic/canvas.html`, `test/timers-canvas.test.js`, `DECISIONS-2026-09-21.md` §79, §87.
 - **✅ PoP checklist: Willamina's whole chain (web 1.8.34–1.8.35, main 2026-09-28).** Starts at Agrakath
   Theric with the book from Myrist, then ten hand-ins (give → get) and the optional story, in folding sections. `test/pop-guide.test.js`.
   `DECISIONS-2026-09-21.md` §71.
