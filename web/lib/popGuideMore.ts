@@ -90,6 +90,21 @@ export const STEP_MORE: Record<string, StepMore> = {
   flag_aerindar: { auto: FLAG_AUTO },
   flag_saryrn: { back: [at('torment_return'), at('torment_return', 1)], auto: FLAG_AUTO },
   flag_keeper: { back: [at('torment_return', 1)], auto: FLAG_AUTO },
+
+  // Essences of Power (§95): ponightmare/Aid_Eino.lua, poknowledge/Councilwoman_Kerasha.lua.
+  essences_escort: {
+    expect: 'A group or two. The waves come at points along his walk, with a rest between each. He waits 30 minutes for the strand at the portal, then leaves, and only one person gets the Fist per run, so plan a run each.',
+    back: [at('essences_power')],
+    auto: 'Ticks itself when your last inventory upload holds the Tiny Gold Fist.',
+  },
+  essences_power: {
+    expect: 'Solo once you hold all four essences. Getting them is four raid kills at 40% each, so the guild decides who they go to.',
+    turnIn: [
+      { to: at('essences_power'), give: '[[Power of the Planes#16266]] (the four essences combined in the bowl)', get: '[[Jade Hoop of Speed#32106]]' },
+      { to: at('essences_power'), give: 'the reward you hold', get: 'the next one: Coin Purse, Cord, Mace, Ring, then the Hoop again' },
+    ],
+    auto: 'Ticks itself when your last inventory upload holds any of the five rewards.',
+  },
 };
 
 // Every place a step sends you: where[] + the chain's start + turn-ins + who you go back to.

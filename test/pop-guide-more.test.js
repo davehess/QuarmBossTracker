@@ -65,6 +65,18 @@ describe('what fills itself in, and says so', () => {
     expect(guideEvidence({ ...base, inventory: [29112, 29131, 29132].map(item_id => ({ item_id, observed_at: null })) }).spells_parchments.source).toBe('database');
     expect(guideEvidence({ ...base, inventory: null }).start_traveler_manual).toBeUndefined();
   });
+  // Essences of Power (§95): the Fist proves part one; any of Kerasha's five rewards proves part two,
+  // since she swaps one for the next.
+  it('the Fist ticks the escort; any one of the five rewards ticks the essences, the Fist alone does not', () => {
+    const inv = (...ids) => ({ ...base, inventory: ids.map(item_id => ({ item_id, observed_at: '2026-09-29T00:00:00Z' })) });
+    expect(guideEvidence(inv(16260)).essences_escort.source).toBe('database');
+    expect(guideEvidence(inv(16260)).essences_power).toBeUndefined();
+    for (const id of [32106, 17209, 32107, 32108, 32109]) {
+      expect(guideEvidence(inv(id)).essences_power, String(id)).toEqual({ source: 'database', what: 'You hold one of its five rewards.', at: '2026-09-29T00:00:00Z' });
+    }
+    expect(STEP_MORE.essences_escort.back[0].npc).toBe('Councilwoman Kerasha');
+    expect(STEP_MORE.essences_power.turnIn[0].to.npc).toBe('Councilwoman Kerasha');
+  });
   it('every held-item rule names a real step, and the page asks for exactly those items', () => {
     for (const key of Object.keys(HELD_ITEM_STEPS)) expect(GUIDE_KEYS.has(key), key).toBe(true);
     expect(AUTO_ITEM_IDS).toContain(9433);
