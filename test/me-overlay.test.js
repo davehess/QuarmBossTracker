@@ -1156,7 +1156,8 @@ describe('Mimic wiring', () => {
     expect(main).toContain("_blindForceOpen('me')");
   });
   it('is in the hide-all set and has a ✕ branch', () => {
-    expect(main).toMatch(/'showPopRaid',\s*\n\s*'showMe',\s*\n\];/);
+    // (The Timers canvas's flag follows it on the same line, 2026-09-29.)
+    expect(main).toMatch(/'showPopRaid',\s*\n\s*'showMe',[^\]\n]*\n\];/);
     expect(main).toContain('} else if (win === meWindow) {');
   });
 });

@@ -67,7 +67,9 @@ let _wpHoverArmed = false;
 let _wpIsOverlayDoc = null;
 function _wpOverlayDoc() {
   if (_wpIsOverlayDoc === null && document.body) {
-    _wpIsOverlayDoc = !!document.getElementById('move-btn');
+    // The Timers canvas has no ✥ of its own (it is the screen; its panels
+    // move), so it says it is an overlay with body[data-wp-overlay].
+    _wpIsOverlayDoc = !!document.getElementById('move-btn') || document.body.hasAttribute('data-wp-overlay');
   }
   return _wpIsOverlayDoc === true;
 }
@@ -735,6 +737,16 @@ contextBridge.exposeInMainWorld('mimic', {
     // dock". It goes back to being its own floating window, still visible.
     ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
     : ipcRenderer.invoke('hide-overlay')),
+
+  // ── Timers canvas (canvas.html) ───────────────────────────────────────────
+  // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores
+  // it for the screen's resolution; canvasEdit(on) is the tray's "Arrange";
+  // onCanvasEdit hears it flip from anywhere.
+  canvasState:       ()       => ipcRenderer.invoke('canvas-state'),
+  canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
+  canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
+  canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

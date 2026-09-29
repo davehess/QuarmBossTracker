@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>canvas</title>
+<style>
+  /* ── The Timers canvas ─────────────────────────────────────────────────────
+     One transparent window the size of the screen, holding the trigger
+     overlay's pieces as panels a raider places and sizes one by one: the
+     callouts (what the TTS says, as text), the general countdown stack, and
+     any number of timer panels that each claim some of the countdowns — the
+     charm timers, the lulls, one named debuff. The guild lead picked this
+     shape on 2026-09-29 (option A, docs/DECISIONS-2026-09-21.md §77 and §79)
+     as the first piece of the 3.0 overlay builder.
+
+     How it stays out of the way:
+     • Click-through, always. main keeps the window ignoring the mouse even
+       while overlays are unlocked; a panel takes the mouse only through the
+       hover handshake (preload arms on [data-wp-interact] and buttons), so
+       the empty screen between panels belongs to EQ and to every other
+       overlay underneath.
+     • Dragging a panel moves an element, not an OS window, so there is no
+       focus fight with EQ (the CH chain's "stutters back in place").
+     • The panels are triggers.html itself (?part=timers | ?part=callouts), not
+       a copy. The trigger window keeps the voice, hidden, so every callout is
+       spoken exactly once whatever is on screen.
+
+     Layout: one per screen resolution, positions as fractions of the screen
+     and sizes in px — the ini rule EQ uses, so a new resolution keeps the
+     arrangement's shape. */
+  html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:#c9d1d9;user-select:none}
+  #panels{position:fixed;inset:0}
+  .panel{position:absolute;box-sizing:border-box}
+  .panel > iframe{position:absolute;inset:0;width:100%;height:100%;border:0;
+    background:transparent;display:block}
+  /* A hidden panel keeps its page (a callouts panel is where a pinned callout
+     lives); it is only invisible. */
+  .panel.off{visibility:hidden}
+  .tab,.grip{display:none}
+
+  /* ── Arranging ─────────────────────────────────────────────────────────── */
+  body.edit .panel{outline:1px dashed rgba(88,166,255,0.85);outline-offset:0;
+    background:rgba(31,111,235,0.07);cursor:move}
+  body.edit .panel > iframe{pointer-events:none}
+  body.edit .panel.off{visibility:visible;opacity:0.4}
+  body.edit .panel.lift{z-index:50;outline-style:solid}
+  body.edit .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
+    bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
+    padding:2px 6px;font-size:11px;line-height:16px;white-space:nowrap;
+    background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-bottom:0;
+    border-radius:4px 4px 0 0}
+  /* No room above (a panel at the top edge): the tab sits inside. */
+  body.edit .panel.tabin .tab{bottom:auto;top:0;left:0;border-radius:0 0 4px 0;
+    border:0;border-right:1px solid #30363d;border-bottom:1px solid #30363d}
+  .tab .mv{color:#58a6ff}
+  .tab .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis}
+  .tab .what{color:#6e7681;overflow:hidden;text-overflow:ellipsis}
+  .tab .ctl{cursor:pointer;color:#6e7681;padding:0 3px;border-radius:3px}
+  .tab .ctl:hover{color:#e6edf3;background:rgba(88,166,255,0.18)}
+  .tab .ctl.x:hover{color:#f85149;background:rgba(248,81,73,0.18)}
+  body.edit .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
+    line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
+
+  /* The drag shield: while a panel moves, one screen-sized interactive layer
+     keeps the window taking the mouse, so a fast drag that outruns the panel
+     still lands its mouseup here instead of in EQ. */
+  #shield{display:none;position:fixed;inset:0;z-index:80;cursor:move}
+  #shield.on{display:block}
+
+  /* Toolbar, top centre, only while arranging. */
+  #bar{display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:90;
+    align-items:center;gap:8px;flex-wrap:wrap;max-width:calc(100% - 32px);
+    padding:5px 10px;font-size:11px;background:rgba(22,27,34,0.96);
+    border:1px solid #1f6feb;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+  body.edit #bar{display:flex}
+  #bar b{color:#e6edf3}
+  #bar .dim{color:#6e7681}
+  .btn{font:inherit;font-size:11px;padding:2px 9px;border-radius:4px;cursor:pointer;
+    background:#21262d;color:#c9d1d9;border:1px solid #30363d}
+  .btn:hover{border-color:#58a6ff;color:#e6edf3}
+  .btn.go{color:#56d364}
+  .btn.warn{color:#ffa657;border-color:#ffa657}
+
+  /* Panel settings. */
+  #menu{display:none;position:fixed;z-index:95;width:280px;box-sizing:border-box;
+    padding:8px;font-size:11px;background:#161b22;border:1px solid #30363d;
+    border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);max-height:80vh;overflow:auto}
+  #menu.show{display:block}
+  #menu .mh{font-weight:700;color:#e6edf3;margin-bottom:6px}
+  #menu .sec{margin:8px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #menu .row{display:flex;align-items:center;gap:6px;margin:3px 0}
+  #menu .note{color:#8b949e;line-height:1.4}
+  #menu input[type=text]{flex:1;min-width:0;font:inherit;font-size:11px;padding:2px 6px;
+    background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #menu input[type=text]:focus{outline:none;border-color:#58a6ff}
+  #menu label.chk{display:flex;align-items:baseline;gap:6px;padding:2px 0;cursor:pointer}
+  #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
+  #menu label.chk .dim{color:#6e7681}
+  #menu .btn.on{background:rgba(31,111,235,0.25);border-color:#1f6feb;color:#e6edf3}
+  .chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;
+    background:#21262d;border:1px solid #30363d;cursor:pointer}
+  .chip:hover{border-color:#58a6ff}
+  .chip .cx{color:#6e7681}
+  .chip:hover .cx{color:#f85149}
+  .chip.add{color:#58a6ff}
+</style></head>
+<body data-wp-overlay>
+  <div id="panels"></div>
+  <div id="shield" data-wp-interact></div>
+  <div id="bar" data-wp-interact>
+    <b>🧩 Timers canvas</b>
+    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · Shift while dragging: no snapping</span>
+    <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
+    <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
+    <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
+    <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
+    <button class="btn go" id="doneBtn" title="Finish arranging (locks overlays if they were unlocked)">✓ Done</button>
+  </div>
+  <div id="menu" data-wp-interact></div>
+<script>
+  var M = window.mimic || {};
+  var PORT = 7779;
+  try { if (M.getAgentPort) M.getAgentPort().then(function (p) { if (p) PORT = p; }).catch(function () {}); } catch (e) {}
+  try { if (M.onAgentPort) M.onAgentPort(function (p) { PORT = p; }); } catch (e) {}
+
+  // What a timers panel can claim, by the group the agent stamps on each row.
+  var GROUPS = [
+    ['charm',   'Charm',              'recharm tick, charm songs and spells'],
+    ['trigger', 'Trigger countdowns', 'debuffs and anything a trigger starts'],
+    ['lull',    'Lulls',              'pacify, lull, harmony'],
+    ['spell',   'My spells on mobs',  ''],
+    ['tick',    'Server tick',        ''],
+    ['loot',    'Loot bids',          ''],
+  ];
+  var MAX_PANELS = 12;
+
+  function defaultLayout() {
+    return { panels: [
+      { id: 'callouts', kind: 'callouts', name: 'Callouts', all: false, groups: [], names: [], x: 0.31, y: 0.16, w: 720, h: 160, scale: 1, anchor: 'bottom', off: false },
+      { id: 'timers', kind: 'timers', name: 'Timers', all: true, groups: [], names: [], x: 0.64, y: 0.52, w: 340, h: 230, scale: 1, anchor: 'bottom', off: false },
+      { id: 'charm', kind: 'timers', name: 'Charm', all: false, groups: ['charm'], names: [], x: 0.64, y: 0.36, w: 340, h: 110, scale: 1, anchor: 'bottom', off: false },
+    ] };
+  }
+
+  // One name form for matching: the agent writes "Tashania?" for an
+  // unconfirmed landing and "… ⏱" when the fade is on the mob's own tick, and
+  // EQ logs possessives with a backtick.
+  function normEffect(s) {
+    return String(s == null ? '' : s).replace(/`/g, "'").replace(/\s*⏱\s*$/, '')
+      .replace(/\?+$/, '').trim().toLowerCase();
+  }
+  function num(v, lo, hi, d) { v = Number(v); return (isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d); }
+
+  // Whatever comes back from disk, the canvas always has exactly one callouts
+  // panel and exactly one catch-all timers panel — without them a callout or
+  // a countdown would have nowhere to show.
+  function sanitize(layout) {
+    var src = (layout && Array.isArray(layout.panels)) ? layout.panels : null;
+    if (!src) return null;
+    var out = [], seen = {}, haveCallouts = false, haveAll = false;
+    for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
+      var p = src[i];
+      if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
+      var kind = p.kind === 'callouts' ? 'callouts' : 'timers';
+      if (kind === 'callouts' && haveCallouts) continue;
+      var all = kind === 'timers' && !!p.all && !haveAll;
+      seen[p.id] = true;
+      if (kind === 'callouts') haveCallouts = true;
+      if (all) haveAll = true;
+      out.push({
+        id: p.id.slice(0, 24), kind: kind, all: all,
+        name: String(p.name || (kind === 'callouts' ? 'Callouts' : 'Timers')).slice(0, 24),
+        groups: Array.isArray(p.groups) ? p.groups.filter(function (g) { return GROUPS.some(function (G) { return G[0] === g; }); }) : [],
+        names: Array.isArray(p.names) ? p.names.map(normEffect).filter(Boolean).slice(0, 20) : [],
+        x: num(p.x, 0, 1, 0.5), y: num(p.y, 0, 1, 0.5),
+        w: num(p.w, 120, 4000, 340), h: num(p.h, 36, 3000, 160),
+        scale: num(p.scale, 0.6, 2.5, 1),
+        anchor: p.anchor === 'top' ? 'top' : 'bottom',
+        off: !!p.off,
+      });
+    }
+    var d = defaultLayout().panels;
+    if (!haveCallouts) out.unshift(d[0]);
+    if (!haveAll) out.push(d[1]);
+    return { panels: out };
+  }
+
+  var _layout = defaultLayout();
+  var _res = null;
+  function panelById(id) {
+    for (var i = 0; i < _layout.panels.length; i++) if (_layout.panels[i].id === id) return _layout.panels[i];
+    return null;
+  }
+
+  // ── Routing: which panel shows a countdown ──────────────────────────────────
+  // Called by every timers part (window.parent.wpCanvasRoute). A timer claimed
+  // BY NAME goes to that panel; else to the first panel claiming its group;
+  // else to the catch-all. So pulling one debuff into its own panel takes it
+  // out of its group's panel too.
+  window.wpCanvasRoute = function (t) {
+    var eff = normEffect(t && (t.effect || t.name));
+    var grp = (t && t.group) || ((t && t.kind === 'loot') ? 'loot' : 'trigger');
+    var all = null, byGroup = null;
+    for (var i = 0; i < _layout.panels.length; i++) {
+      var p = _layout.panels[i];
+      if (p.kind !== 'timers') continue;
+      if (p.all) { if (!all) all = p.id; continue; }
+      if (eff && p.names.indexOf(eff) >= 0) return p.id;
+      if (!byGroup && p.groups.indexOf(grp) >= 0) byGroup = p.id;
+    }
+    return byGroup || all;
+  };
+
+  // ── Panels ──────────────────────────────────────────────────────────────────
+  var panelsEl = document.getElementById('panels');
+  var shield = document.getElementById('shield');
+  var menuEl = document.getElementById('menu');
+  var _els = {};
+  var _edit = false, _locked = true, _setup = false, _arrange = false;
+  var _bgAlpha = null;
+
+  function claimText(p) {
+    if (p.kind === 'callouts') return 'what the voice says';
+    if (p.all) return 'everything else';
+    var parts = [];
+    p.groups.forEach(function (g) { for (var i = 0; i < GROUPS.length; i++) if (GROUPS[i][0] === g) parts.push(GROUPS[i][1].toLowerCase()); });
+    if (p.names.length) parts.push(p.names.length === 1 ? p.names[0] : p.names.length + ' named');
+    return parts.length ? parts.join(', ') : 'nothing yet — ⚙';
+  }
+
+  function build(p) {
+    var root = document.createElement('div');
+    root.className = 'panel';
+    root.setAttribute('data-id', p.id);
+    var tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.innerHTML = '<span class="mv">✥</span><span class="nm"></span><span class="what"></span>'
+      + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
+      + '<span class="ctl x" role="button"></span>';
+    var fr = document.createElement('iframe');
+    fr.setAttribute('scrolling', 'no');
+    fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    var grip = document.createElement('span');
+    grip.className = 'grip';
+    grip.textContent = '◢';
+    grip.setAttribute('data-wp-interact', '');
+    grip.title = 'Drag to size this panel';
+    root.appendChild(fr); root.appendChild(tab); root.appendChild(grip);
+    var e = { root: root, tab: tab, frame: fr, grip: grip };
+    fr.addEventListener('load', function () { var q = panelById(p.id); if (q) applyFrame(e, q); });
+    root.addEventListener('mousedown', function (ev) {
+      if (ev.target.closest('.ctl')) return;
+      if (ev.target === grip) { startDrag(ev, p.id, 'size'); return; }
+      startDrag(ev, p.id, 'move');
+    });
+    tab.querySelector('.gear').addEventListener('click', function (ev) { ev.stopPropagation(); openMenu(p.id, root); });
+    tab.querySelector('.x').addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var q = panelById(p.id); if (!q) return;
+      q.off = !q.off; save(); render();
+    });
+    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit) openMenu(p.id, root); });
+    panelsEl.appendChild(root);
+    return e;
+  }
+
+  // Same-origin, so the canvas reaches into each part directly: its text
+  // size, its stack direction, whether it is being arranged (sample rows),
+  // and the card alpha the overlay-wide slider sets.
+  function applyFrame(e, p) {
+    try {
+      var doc = e.frame.contentDocument;
+      if (!doc || !doc.body) return;
+      doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
+      if (_bgAlpha != null) doc.documentElement.style.setProperty('--bg-alpha', String(_bgAlpha));
+      doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
+      doc.body.classList.toggle('part-edit', _edit);
+      var w = e.frame.contentWindow;
+      if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit);
+    } catch (err) { /* page mid-load — its load handler re-applies */ }
+  }
+
+  function place(e, p) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var w = Math.min(p.w, W), h = Math.min(p.h, H);
+    var x = Math.max(0, Math.min(W - w, Math.round(p.x * W)));
+    var y = Math.max(0, Math.min(H - h, Math.round(p.y * H)));
+    e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
+    e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+    e.root.classList.toggle('tabin', y < 22);
+  }
+
+  function render() {
+    var keep = {};
+    _layout.panels.forEach(function (p) {
+      keep[p.id] = true;
+      var e = _els[p.id] || (_els[p.id] = build(p));
+      place(e, p);
+      e.root.classList.toggle('off', !!p.off);
+      if (_edit) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
+      e.tab.querySelector('.nm').textContent = p.name;
+      e.tab.querySelector('.what').textContent = '· ' + claimText(p);
+      var x = e.tab.querySelector('.x');
+      x.textContent = p.off ? '👁' : '✕';
+      x.title = p.off ? 'Show this panel again' : 'Hide this panel';
+      applyFrame(e, p);
+    });
+    Object.keys(_els).forEach(function (id) {
+      if (!keep[id]) { _els[id].root.remove(); delete _els[id]; }
+    });
+  }
+
+  var _saveT = null;
+  function save() {
+    clearTimeout(_saveT);
+    _saveT = setTimeout(function () {
+      try { if (M.canvasSave) M.canvasSave(_layout); } catch (e) {}
+    }, 250);
+  }
+
+  // ── Arranging ───────────────────────────────────────────────────────────────
+  function setEdit() {
+    var e = !_locked || _setup || _arrange;
+    if (e === _edit) return;
+    _edit = e;
+    document.body.classList.toggle('edit', e);
+    if (!e) closeMenu();
+    render();
+  }
+  try { if (M.onOverlayLocked) M.onOverlayLocked(function (l) { _locked = !!l; setEdit(); }); } catch (e) {}
+  try { if (M.onSetupMode) M.onSetupMode(function (p) { _setup = !!(p && (p === true || p.active)); setEdit(); }); } catch (e) {}
+  try { if (M.onCanvasEdit) M.onCanvasEdit(function (on) { _arrange = !!on; setEdit(); }); } catch (e) {}
+  try {
+    if (M.onBgAlpha) M.onBgAlpha(function (v) {
+      _bgAlpha = (typeof v === 'number' && v >= 0.15 && v <= 1) ? v : null;
+      render();
+    });
+  } catch (e) {}
+
+  // Drag to move / drag ◢ to size. Snaps to the screen's edges and centre and
+  // to the other panels' edges, within 8px; Shift turns it off.
+  var SNAP = 8;
+  var _drag = null;
+  function startDrag(ev, id, mode) {
+    if (!_edit || ev.button !== 0) return;
+    ev.preventDefault(); ev.stopPropagation();
+    var e = _els[id];
+    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY,
+      x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
+    e.root.classList.add('lift');
+    shield.classList.add('on');
+    shield.style.cursor = mode === 'size' ? 'nwse-resize' : 'move';
+    closeMenu();
+    try { M.overlayHoverInteractive(true); } catch (err) {}
+  }
+  function snapTo(v, targets) {
+    var best = v, bd = SNAP + 1;
+    for (var i = 0; i < targets.length; i++) { var d = Math.abs(targets[i] - v); if (d < bd) { bd = d; best = targets[i]; } }
+    return best;
+  }
+  function snapMove(id, x, y, w, h) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var xs = [0, Math.round(W / 2 - w / 2), W - w], ys = [0, Math.round(H / 2 - h / 2), H - h];
+    Object.keys(_els).forEach(function (k) {
+      if (k === id) return;
+      var r = _els[k].root, ox = r.offsetLeft, oy = r.offsetTop, ow = r.offsetWidth, oh = r.offsetHeight;
+      xs.push(ox, ox + ow - w, ox + ow, ox - w);
+      ys.push(oy, oy + oh - h, oy + oh, oy - h);
+    });
+    return { x: snapTo(x, xs), y: snapTo(y, ys) };
+  }
+  document.addEventListener('mousemove', function (ev) {
+    if (!_drag) return;
+    var d = _drag, e = _els[d.id], W = window.innerWidth, H = window.innerHeight;
+    if (!e) return;
+    if (d.mode === 'move') {
+      var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
+      if (!ev.shiftKey) { var s = snapMove(d.id, x, y, d.w0, d.h0); x = s.x; y = s.y; }
+      x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(0, Math.min(H - d.h0, y));
+      e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
+      e.root.classList.toggle('tabin', y < 22);
+      d.x = x; d.y = y;
+    } else {
+      var w = Math.max(120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
+      var h = Math.max(36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
+      e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+      d.w = w; d.h = h;
+    }
+  });
+  function endDrag() {
+    if (!_drag) return;
+    var d = _drag; _drag = null;
+    shield.classList.remove('on');
+    var p = panelById(d.id);
+    if (_els[d.id]) _els[d.id].root.classList.remove('lift');
+    if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
+    if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); save(); }
+    render();
+    try { M.overlayHoverInteractive(false); } catch (err) {}
+  }
+  document.addEventListener('mouseup', endDrag);
+  window.addEventListener('blur', endDrag);
+
+  // ── Panel settings ──────────────────────────────────────────────────────────
+  var _menuFor = null;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  function closeMenu() { _menuFor = null; menuEl.classList.remove('show'); }
+
+  function openMenu(id, anchor) {
+    var p = panelById(id);
+    if (!p) return;
+    _menuFor = id;
+    var h = '<div class="mh">' + esc(p.name) + '</div>';
+    h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(p.name) + '" placeholder="panel name"></div>';
+    if (p.kind === 'callouts') {
+      h += '<div class="note">The text of every callout, where you want to read it. The voice is unchanged.</div>';
+    } else if (p.all) {
+      h += '<div class="note">Every countdown no other panel claims lands here, so nothing goes missing.</div>';
+    } else {
+      h += '<div class="sec">Shows</div>';
+      GROUPS.forEach(function (g) {
+        h += '<label class="chk"><input type="checkbox" data-g="' + g[0] + '"' + (p.groups.indexOf(g[0]) >= 0 ? ' checked' : '') + '>'
+          + '<span>' + esc(g[1]) + (g[2] ? ' <span class="dim">' + esc(g[2]) + '</span>' : '') + '</span></label>';
+      });
+      h += '<div class="sec">…and these, by name</div><div class="chips" id="mNames">';
+      if (!p.names.length) h += '<span class="dim">none</span>';
+      p.names.forEach(function (n) { h += '<span class="chip" data-rm="' + esc(n) + '" title="Stop claiming this">' + esc(n) + ' <span class="cx">✕</span></span>'; });
+      h += '</div>';
+      h += '<div class="row"><input type="text" id="mAdd" maxlength="48" placeholder="a timer or spell name"><button class="btn" id="mAddBtn">Add</button></div>';
+      h += '<div class="sec">On screen now — click to claim</div><div class="chips" id="mLive"><span class="dim">…</span></div>';
+    }
+    if (p.kind === 'timers') {
+      h += '<div class="sec">Stack</div><div class="row">'
+        + '<button class="btn' + (p.anchor !== 'top' ? ' on' : '') + '" data-anchor="bottom">↑ grows up</button>'
+        + '<button class="btn' + (p.anchor === 'top' ? ' on' : '') + '" data-anchor="top">↓ grows down</button></div>';
+    }
+    h += '<div class="sec">Text size</div><div class="row">'
+      + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
+      + '<button class="btn" data-sc="1">A+</button></div>';
+    h += '<div class="row" style="margin-top:8px">'
+      + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
+      + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
+      + '</div>';
+    menuEl.innerHTML = h;
+    menuEl.classList.add('show');
+    var r = anchor.getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
+    var left = Math.max(8, Math.min(window.innerWidth - mr.width - 8, r.left));
+    var top = r.bottom + 6;
+    if (top + mr.height > window.innerHeight - 8) top = Math.max(8, r.top - mr.height - 26);
+    menuEl.style.left = left + 'px'; menuEl.style.top = top + 'px';
+    if (p.kind === 'timers' && !p.all) fillLive(p);
+  }
+
+  // The countdowns up right now, as one-click claims — the way to pull a
+  // single timer into this panel without typing its name.
+  function fillLive(p) {
+    fetch('http://127.0.0.1:' + PORT + '/api/timers', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : { activeTimers: [] }; })
+      .then(function (s) {
+        var box = document.getElementById('mLive');
+        if (!box || _menuFor !== p.id) return;
+        var seen = {}, h = '';
+        (s.activeTimers || []).forEach(function (t) {
+          var n = normEffect(t.effect || t.name);
+          if (!n || seen[n] || p.names.indexOf(n) >= 0) return;
+          seen[n] = true;
+          h += '<span class="chip add" data-add="' + esc(n) + '">＋ ' + esc(n) + '</span>';
+        });
+        box.innerHTML = h || '<span class="dim">no countdowns right now</span>';
+      })
+      .catch(function () { var box = document.getElementById('mLive'); if (box) box.innerHTML = '<span class="dim">agent not answering</span>'; });
+  }
+
+  // A name lives in one panel: claiming it here releases it everywhere else.
+  function claimName(p, raw) {
+    var n = normEffect(raw);
+    if (!n) return;
+    _layout.panels.forEach(function (q) { if (q !== p) q.names = q.names.filter(function (x) { return x !== n; }); });
+    if (p.names.indexOf(n) < 0 && p.names.length < 20) p.names.push(n);
+  }
+
+  menuEl.addEventListener('click', function (ev) {
+    var p = panelById(_menuFor);
+    if (!p) return;
+    var t = ev.target;
+    var chip = t.closest('.chip');
+    if (chip && chip.hasAttribute('data-rm')) { var rm = chip.getAttribute('data-rm'); p.names = p.names.filter(function (x) { return x !== rm; }); }
+    else if (chip && chip.hasAttribute('data-add')) { claimName(p, chip.getAttribute('data-add')); }
+    else if (t.id === 'mAddBtn') { var inp = document.getElementById('mAdd'); if (inp) claimName(p, inp.value); }
+    else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
+    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), 0.6, 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
+    else if (t.hasAttribute('data-remove')) {
+      _layout.panels = _layout.panels.filter(function (q) { return q !== p; });
+      save(); closeMenu(); render(); return;
+    }
+    else return;
+    save(); render(); openMenu(p.id, _els[p.id].root);
+  });
+  menuEl.addEventListener('change', function (ev) {
+    var p = panelById(_menuFor);
+    if (!p) return;
+    var t = ev.target;
+    if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || p.name; }
+    else if (t.hasAttribute('data-g')) {
+      var g = t.getAttribute('data-g');
+      p.groups = p.groups.filter(function (x) { return x !== g; });
+      if (t.checked) p.groups.push(g);
+    } else return;
+    save(); render();
+  });
+  menuEl.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.id === 'mAdd') { ev.preventDefault(); document.getElementById('mAddBtn').click(); }
+    if (ev.key === 'Escape') closeMenu();
+  });
+  document.addEventListener('mousedown', function (ev) {
+    if (menuEl.classList.contains('show') && !menuEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.gear'))) closeMenu();
+  }, true);
+
+  // ── Toolbar ─────────────────────────────────────────────────────────────────
+  document.getElementById('addBtn').addEventListener('click', function () {
+    if (_layout.panels.length >= MAX_PANELS) return;
+    var n = 1;
+    _layout.panels.forEach(function (q) { if (q.kind === 'timers') n++; });
+    var p = { id: 'p' + Date.now().toString(36), kind: 'timers', all: false, name: 'Timers ' + n,
+      groups: [], names: [], x: 0.42, y: 0.42, w: 300, h: 110, scale: 1, anchor: 'bottom', off: false };
+    _layout.panels.push(p);
+    save(); render();
+    openMenu(p.id, _els[p.id].root);
+  });
+  var screenBtn = document.getElementById('screenBtn');
+  screenBtn.addEventListener('click', function () {
+    try { if (M.canvasNextDisplay) M.canvasNextDisplay().then(loadState); } catch (e) {}
+  });
+  var resetBtn = document.getElementById('resetBtn');
+  var _resetArmed = null;
+  resetBtn.addEventListener('click', function () {
+    // Two clicks: an arrangement is an evening's fiddling, and ↺ sits next to Done.
+    if (!_resetArmed) {
+      resetBtn.textContent = '↺ Sure? Click again';
+      resetBtn.classList.add('warn');
+      _resetArmed = setTimeout(function () { _resetArmed = null; resetBtn.textContent = '↺ Reset'; resetBtn.classList.remove('warn'); }, 3000);
+      return;
+    }
+    clearTimeout(_resetArmed); _resetArmed = null;
+    resetBtn.textContent = '↺ Reset'; resetBtn.classList.remove('warn');
+    _layout = defaultLayout();
+    save(); render();
+  });
+  document.getElementById('hideBtn').addEventListener('click', function () {
+    try { M.hideThisOverlay(); } catch (e) {}
+  });
+  document.getElementById('doneBtn').addEventListener('click', function () {
+    try { if (_arrange && M.canvasEdit) M.canvasEdit(false); } catch (e) {}
+    try { if (_setup && M.setSetupMode) M.setSetupMode(false); } catch (e) {}
+    try { if (!_locked && M.setOverlaysLocked) M.setOverlaysLocked(true); } catch (e) {}
+  });
+
+  // ── State from main ─────────────────────────────────────────────────────────
+  function loadState(st) {
+    if (!st) return;
+    var fresh = !st.layout;
+    if (st.res !== _res || !_res) {
+      _res = st.res;
+      _layout = sanitize(st.layout) || _layout || defaultLayout();
+    }
+    _arrange = !!st.edit;
+    screenBtn.style.display = (st.displays > 1) ? '' : 'none';
+    render();
+    setEdit();
+    // First time on: keep the starting layout and open arranging, so the three
+    // panels are placed before a pull (and not re-opened on the next refresh).
+    if (fresh) {
+      save();
+      if (!_arrange && M.canvasEdit) { try { M.canvasEdit(true); } catch (e) {} }
+    }
+  }
+  function refresh() { try { if (M.canvasState) M.canvasState().then(loadState).catch(function () {}); } catch (e) {} }
+  refresh();
+  // A resolution change resizes this window; keep the fractions, re-read the
+  // layout saved for the new size if there is one.
+  var _rsT = null;
+  window.addEventListener('resize', function () { clearTimeout(_rsT); _rsT = setTimeout(refresh, 150); });
+</script>
+</body></html>

@@ -338,7 +338,8 @@ describe('the dashboard Dock button', () => {
   });
 
   it('offers no Dock button for the trigger overlay (or the dock itself, or the HUD ring)', () => {
-    expect(agent).toMatch(/var dockCell = \(key === 'trigger' \|\| key === 'dock' \|\| key === 'me'\)/);
+    // (…nor the Timers canvas, a screen-sized host itself — 2026-09-29.)
+    expect(agent).toMatch(/var dockCell = \(key === 'trigger' \|\| key === 'dock' \|\| key === 'me' \|\| key === 'canvas'\)/);
   });
 
   it('greys out a docked overlay\'s on/off toggle', () => {

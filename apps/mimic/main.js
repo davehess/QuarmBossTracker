@@ -130,6 +130,8 @@ let extTargetWindow = null;
 let commandWindow = null;
 let popRaidWindow = null;
 let meWindow = null;
+let canvasWindow = null;    // the Timers canvas — one screen-sized window of placed panels
+let _canvasArrange = false; // arranging it from the tray / dashboard (not persisted)
 let uiStudioWindow = null;
 let settingsWindow = null;
 // Per-panel overlay windows — keyed by panel slug (e.g. "live-threat",
@@ -2384,7 +2386,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
-  'showExtTarget',
+  'showExtTarget', 'showCanvas',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -2402,6 +2404,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showThreat',       get: () => threatWindow,    create: () => createThreatMeterOverlay() },
   { flag: 'showExtTarget',    get: () => extTargetWindow, create: () => createExtTargetOverlay() },
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
+  { flag: 'showCanvas',       get: () => canvasWindow,    create: () => createCanvasWindow() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
 let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
@@ -3090,6 +3093,9 @@ function _rescueOverlays() {
   const report = [];
   const present = new Set();
   for (const [key, win] of _overlayEntries()) {
+    // The Timers canvas covers its whole screen and places its own panels —
+    // parking it as a small rect would shrink it to a corner.
+    if (key === 'canvas') continue;
     try {
       present.add(key);
       const b = win.getBounds();
@@ -3184,6 +3190,7 @@ function _overlayEntries() {
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
   if (meWindow && !meWindow.isDestroyed()) out.push(['me', meWindow]);
+  if (canvasWindow && !canvasWindow.isDestroyed()) out.push(['canvas', canvasWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
@@ -3524,7 +3531,8 @@ function _autoArrangeOverlays(pinnedKey) {
   const pad = (b) => ({ x: b.x - MARGIN, y: b.y - MARGIN, w: b.width + MARGIN * 2, h: b.height + MARGIN * 2 });
   // Visible overlays, biggest first (big ones need the scarce large gaps).
   const wins = _overlayEntries()
-    .filter(([, w]) => { try { return w.isVisible(); } catch { return false; } })
+    // Not the Timers canvas: it is screen-sized, fits nowhere, and would block every spot.
+    .filter(([k, w]) => { if (k === 'canvas') return false; try { return w.isVisible(); } catch { return false; } })
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   for (const o of wins) pendingCur.set(o.key, pad(o.b));
@@ -3608,7 +3616,12 @@ function applyOverlayInteractivity() {
     // interactivity sweep (tray toggle, status push) must not re-lock it
     // out from under the user while its setup strip is open.
     if (_inSingleSetup(win)) continue;
-    if (locked) {
+    if (key === 'canvas') {
+      // Screen-sized: click-through even while unlocked, or it would wall off
+      // EQ and every overlay beneath it. Its panels take the mouse through the
+      // hover handshake; its visibility is applyCanvasVisibility's alone.
+      win.setIgnoreMouseEvents(true, { forward: true });
+    } else if (locked) {
       win.setIgnoreMouseEvents(true, { forward: true });
       win.setResizable(false);
     } else {
@@ -3650,6 +3663,7 @@ function applySetupMode(on) {
   applyWhoVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
+  applyCanvasVisibility();
   applyAllOverlayOpacities();
   // Leaving setup mode hands back the renderers it built for overlays the user
   // does not actually run. No-op on the way IN — _overlayForcedOn() spares
@@ -4863,8 +4877,95 @@ function applyTriggerVisibility() {
   if (!triggerWindow) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
+  // The Timers canvas shows the timers and callouts while it is on; this window
+  // stays, hidden, as their voice (#97's rule — hidden, never freed).
+  if (cfg.showCanvas) { triggerWindow.hide(); return; }
   const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
+}
+
+// ── Timers canvas ────────────────────────────────────────────────────────────
+// The guild lead picked option A on 2026-09-29 (DECISIONS §77, §79): one
+// transparent window the size of a screen, holding the trigger overlay's
+// timers and callouts as panels a raider places and sizes one by one — the
+// first piece of the 3.0 overlay builder. canvas.html explains the page; the
+// window rules live here:
+//  • Screen-sized and click-through ALWAYS, unlocked included
+//    (applyOverlayInteractivity, overlay-hover-interactive). Its panels take
+//    the mouse only through the hover handshake.
+//  • Not force-shown by setup / unlock (_overlayWanted): it is an alternative
+//    home for the trigger overlay's visuals, so on means on and off means off.
+//  • Never arranged or rescued as a rect; it follows its own screen
+//    (cfg.canvasDisplayId, else the trigger overlay's, else the primary).
+//  • nodeIntegrationInSubFrames, as the dock: the panels are triggers.html
+//    itself in iframes, and need window.mimic there.
+function _canvasDisplay() {
+  const cfg = loadConfig();
+  const all = screen.getAllDisplays();
+  const byId = all.find(d => String(d.id) === String(cfg.canvasDisplayId));
+  if (byId) return byId;
+  const tb = cfg.triggerBounds;
+  if (tb && Number.isFinite(tb.x) && Number.isFinite(tb.y)) {
+    try { return screen.getDisplayMatching({ x: tb.x, y: tb.y, width: tb.width || 1, height: tb.height || 1 }); } catch { /* fall through */ }
+  }
+  return screen.getPrimaryDisplay();
+}
+function createCanvasWindow() {
+  const d = _canvasDisplay();
+  canvasWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Timers canvas',
+    x: d.bounds.x, y: d.bounds.y, width: d.bounds.width, height: d.bounds.height,
+    frame: false, transparent: true, resizable: false, movable: false,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Timers canvas', { nodeIntegrationInSubFrames: true }),
+  });
+  canvasWindow.setAlwaysOnTop(true, 'screen-saver');
+  canvasWindow.setVisibleOnAllWorkspaces(true);
+  canvasWindow.setIgnoreMouseEvents(true, { forward: true });
+  canvasWindow.loadFile('canvas.html');
+  canvasWindow.once('ready-to-show', () => {
+    canvasWindow.webContents.send('agent-port', agentPort);
+    applyCanvasVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(canvasWindow, 'canvas');
+  });
+}
+function applyCanvasVisibility() {
+  if (!canvasWindow) return;
+  const cfg = loadConfig();
+  const unlocked = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = !!cfg.showCanvas && (unlocked || _canvasArrange || (!cfg.hideOverlays && _eqGateOk(cfg)));
+  if (shouldShow) canvasWindow.showInactive(); else canvasWindow.hide();
+}
+// A monitor added, removed or re-sized: the canvas re-covers its screen.
+function _fitCanvasToDisplay() {
+  if (!canvasWindow || canvasWindow.isDestroyed()) return;
+  try { canvasWindow.setBounds(_canvasDisplay().bounds); } catch { /* mid-close */ }
+}
+function _canvasStatePayload() {
+  const cfg = loadConfig();
+  let d;
+  try { d = (canvasWindow && !canvasWindow.isDestroyed()) ? screen.getDisplayMatching(canvasWindow.getBounds()) : _canvasDisplay(); }
+  catch { d = screen.getPrimaryDisplay(); }
+  const res = d.bounds.width + 'x' + d.bounds.height;
+  const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
+  // Per resolution, like EQ's own ini; a new resolution starts from the last
+  // one used (positions are fractions, so the shape carries over).
+  const layout = all[res] || all[cfg.canvasLastRes] || null;
+  return { res, layout, edit: _canvasArrange, displays: screen.getAllDisplays().length };
+}
+// Arrange from the tray or the dashboard. Turning it on turns the canvas on.
+function _setCanvasArrange(on) {
+  _canvasArrange = !!on;
+  const cfg = loadConfig();
+  if (_canvasArrange && !cfg.showCanvas) { cfg.showCanvas = true; saveConfig(cfg); }
+  if (_canvasArrange && !canvasWindow) createCanvasWindow();
+  applyCanvasVisibility();
+  applyTriggerVisibility();
+  try { if (canvasWindow) canvasWindow.webContents.send('canvas-edit', _canvasArrange); } catch { /* loading — it reads edit from canvas-state */ }
+  try { buildTrayMenu(); } catch {}
+  pushStatus();
+  return _canvasArrange;
 }
 function createCharmOverlay() {
   const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
@@ -5501,6 +5602,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
   { key: 'me',        flag: 'showMe',           get: () => meWindow,        create: createMeOverlay,           drop: () => { meWindow = null; } },
+  { key: 'canvas',    flag: 'showCanvas',       get: () => canvasWindow,    create: createCanvasWindow,        drop: () => { canvasWindow = null; } },
 ];
 
 // ── The Dock ────────────────────────────────────────────────────────────────
@@ -5648,6 +5750,14 @@ function _overlayForcedOn(cfg, e) {
 // gate. Reaping it would trade a missed raid callout for 35 MB while EQ is
 // closed, which is precisely when nobody cares about the 35 MB.
 function _overlayWanted(cfg, e) {
+  // The Timers canvas is an alternative home for the trigger overlay's
+  // visuals, so setup / unlock never conjure it for placement (that would
+  // show every timer twice): its own switch decides, and while it is being
+  // placed or arranged the EQ gate steps aside, as it does for the others.
+  if (e.key === 'canvas') {
+    return !!cfg.showCanvas && (setupMode || cfg.overlaysLocked === false || _canvasArrange
+      || (!cfg.hideOverlays && _eqGateOk(cfg)));
+  }
   if (_overlayForcedOn(cfg, e)) return true;
   if (!cfg[e.flag]) return false;
   if (e.key === 'trigger') return true;
@@ -5710,6 +5820,7 @@ function applyAllVisibility() {
   applyCommandVisibility();
   applyPopRaidVisibility();
   applyMeVisibility();
+  applyCanvasVisibility();
   _reapDisabledOverlays();
 }
 
@@ -5764,7 +5875,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
-  'showMe',
+  'showMe', 'showCanvas',
 ];
 function toggleHideAllOverlays() {
   const cfg = loadConfig();
@@ -5853,7 +5964,7 @@ let _registeredMiniAccel = null;
 // the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
 // key away from EverQuest, so nobody gets one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
-  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
 function _registerOverlayHotkeys(globalShortcut, cfg) {
@@ -6145,6 +6256,11 @@ function currentStatus() {
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
     showMe: !!cfg.showMe,
+    // Timers canvas. canvasOwnsTriggers tells the (hidden) trigger window to
+    // speak only, so a pinned callout lives in one place.
+    showCanvas: !!cfg.showCanvas,
+    canvasOwnsTriggers: !!cfg.showCanvas,
+    canvasArrange: !!_canvasArrange,
     // 💥 Damage-taken audio alert — drives the tray checkbox (and is available
     // to any renderer that wants to show the state). Default off.
     damageAlert: !!cfg.damageAlert,
@@ -6473,6 +6589,15 @@ function buildTrayMenu() {
         const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
+      } },
+    // Timers canvas — same internals as the dashboard row (_toggleOverlay /
+    // _setCanvasArrange), per the tray ↔ dashboard parity rule.
+    { label: 'Timers canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
+        _toggleOverlay('canvas');
+        buildTrayMenu();
+      } },
+    { label: _canvasArrange ? '  ↳ ✓ Done arranging the canvas' : '  ↳ Arrange the canvas…', enabled: !s.hideOverlays, click: () => {
+        _setCanvasArrange(!_canvasArrange);
       } },
     { type: 'separator' },
     // Panel-overlay tray toggles removed per user feedback — the per-card
@@ -7427,6 +7552,8 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
       // is exactly what used to re-lock it on the first mouseleave, making
       // its Done button and resize edges unclickable.
       if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
+      // The Timers canvas is screen-sized: back to click-through, unlocked or not.
+      if (win === canvasWindow) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
       const cfg = loadConfig();
       const locked = !setupMode && cfg.overlaysLocked !== false;
       if (locked) win.setIgnoreMouseEvents(true, { forward: true });
@@ -7565,6 +7692,14 @@ function _toggleOverlay(name) {
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
       cfg.showDock = !cfg.showDock; saveConfig(cfg);
       if (cfg.showDock && !dockWindow) createDockWindow(); else applyDockVisibility();
+      break;
+    case 'canvas':
+      // The Timers canvas. On, the trigger overlay hands it the timers and
+      // callouts; off, they come back to the trigger overlay.
+      cfg.showCanvas = !cfg.showCanvas; saveConfig(cfg);
+      if (!cfg.showCanvas) _canvasArrange = false;
+      if (cfg.showCanvas && !canvasWindow) createCanvasWindow(); else applyCanvasVisibility();
+      applyTriggerVisibility();
       break;
     default:
       return null;
@@ -7799,6 +7934,37 @@ ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return 
 // stays hidden across restarts and the tray checkbox updates); for a panel
 // overlay we just close the window. The user re-enables named overlays from
 // the tray "Overlays" submenu.
+// ── Timers canvas IPC ───────────────────────────────────────────────────────
+ipcMain.handle('canvas-state', () => _canvasStatePayload());
+// Only the canvas itself saves its layout, keyed by the resolution it is on.
+// Bounded: a layout is a dozen small panels, never a blob.
+ipcMain.handle('canvas-save', (e, layout) => {
+  if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
+  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 16) return false;
+  let json;
+  try { json = JSON.stringify(layout); } catch { return false; }
+  if (json.length > 32_000) return false;
+  const res = _canvasStatePayload().res;
+  const cfg = loadConfig();
+  cfg.canvasLayouts = Object.assign({}, (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {}, { [res]: JSON.parse(json) });
+  cfg.canvasLastRes = res;
+  saveConfig(cfg);
+  return true;
+});
+ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
+ipcMain.handle('canvas-next-display', () => {
+  if (!canvasWindow || canvasWindow.isDestroyed()) return _canvasStatePayload();
+  const all = screen.getAllDisplays();
+  if (all.length < 2) return _canvasStatePayload();
+  const cur = screen.getDisplayMatching(canvasWindow.getBounds());
+  const next = all[(Math.max(0, all.findIndex(d => d.id === cur.id)) + 1) % all.length];
+  const cfg = loadConfig();
+  cfg.canvasDisplayId = next.id;
+  saveConfig(cfg);
+  try { canvasWindow.setBounds(next.bounds); } catch { /* mid-close */ }
+  return _canvasStatePayload();
+});
+
 // ── Dock IPC ────────────────────────────────────────────────────────────────
 // All three return the new state so the dock re-renders from one round trip
 // and can never drift from what main actually saved.
@@ -8074,6 +8240,13 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === meWindow) {
       cfg.showMe = false; saveConfig(cfg);
       try { meWindow.hide(); } catch {}
+    } else if (win === canvasWindow) {
+      // Turning the canvas off gives the timers and callouts back to the
+      // trigger overlay — same as the tray / dashboard switch.
+      cfg.showCanvas = false; _canvasArrange = false; saveConfig(cfg);
+      try { canvasWindow.hide(); } catch {}
+      applyTriggerVisibility();
+      try { buildTrayMenu(); } catch {}
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -9719,7 +9892,7 @@ function _windowLabelsByPid() {
     pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
     who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
     chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-    command: 'Command center', popraid: 'PoP raids', me: 'HUD',
+    command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Timers canvas',
   };
   for (const e of _OVERLAY_WINDOWS) {
     // Flag the ones that are alive despite being switched off — that pairing is
@@ -9877,6 +10050,10 @@ app.whenReady().then(async () => {
   };
   screen.on('display-removed',          _rescueOverlays);
   screen.on('display-metrics-changed',  _rescueOverlays);
+  // The Timers canvas re-covers its screen (the rescue above skips it).
+  screen.on('display-added',            _fitCanvasToDisplay);
+  screen.on('display-removed',          _fitCanvasToDisplay);
+  screen.on('display-metrics-changed',  _fitCanvasToDisplay);
 
   // Apply autostart setting on every launch — re-synchronizes the HKCU\…\Run
   // entry with the saved pref (in case the user uninstalled/reinstalled, or

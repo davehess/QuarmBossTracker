@@ -19706,6 +19706,7 @@ function renderTriggers(s) {
 var WP_OVERLAY_ROWS = [
   ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use the DOCK buttons below (or + Panes on the dock itself) to pick what lives in it.'],
   ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['canvas',  'Timers canvas',       '<button type="button" class="wp-ov-act" data-act="canvasArrange" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;margin-right:6px">✥ Arrange</button>The trigger overlay taken apart: the callouts and the timers become panels you place and size anywhere on the screen, one by one. Add timer panels of your own — charm timers, lulls, one debuff by name — and each takes those countdowns out of the main stack. The voice is unchanged. Beta.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
@@ -19901,7 +19902,8 @@ function renderOverlays(s) {
     // would tie the callouts to being on screen. The dock can't dock itself.
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')
+    // The Timers canvas covers the screen and is a host itself.
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')
       ? '<td class="dim" style="font-size:11px">&mdash;</td>'
       : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -20400,11 +20402,11 @@ function wpRefreshOverlayToggles() {
   try {
     window.mimic.getStatus().then(function(st){
       st = st || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0;
       var btns = document.querySelectorAll('.wp-ov-toggle');
@@ -20529,6 +20531,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same internals as the tray's "Arrange the canvas…" (turns it on too).
+      if (a === 'canvasArrange' && window.mimic.canvasEdit) {
+        window.mimic.canvasEdit(true).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       if (a === 'miniall' && window.mimic.toggleMiniAll) {
         window.mimic.toggleMiniAll().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
@@ -28673,6 +28681,18 @@ function startWebDashboard(port) {
         if (res.writableEnded || res.destroyed) return;
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify({ fires }));
+      }
+      // GET /api/timers — the three fields the trigger overlay reads out of
+      // /api/state, and nothing else. The Timers canvas runs one trigger page
+      // per panel; each polling the whole multi-MB state every 700 ms would
+      // multiply that parse by the panel count on a raid machine.
+      if (req.url === '/api/timers' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({
+          activeTimers:       _activeTimersSnapshot(),
+          recentTriggerFires: _activeOverlays.map(_fireForWeb),
+          blindEvents:        _blindEvents.slice(-20),
+        }));
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
@@ -40320,7 +40340,7 @@ function _builtinTimerRows(now) {
       const into = ((now - mt.at) % 6000 + 6000) % 6000;
       push({ id: 'bt|recharm|' + k + '|' + (c.started_at || 0), name: c.pet + ' - Recharm tick',
              target: c.pet, effect: 'Recharm tick', remaining_ms: 6000 - into, duration_sec: 6,
-             cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
+             cycle_ms: 6000, bar_color: '#a371f7', pinned: true, group: 'charm' });
     }
   }
   if (on.has('server_tick')) {
@@ -40334,7 +40354,7 @@ function _builtinTimerRows(now) {
     if (at != null) {
       const left = ((at - now) % 6000 + 6000) % 6000 || 6000;
       push({ id: 'bt|servertick', name: 'Server tick', target: null, effect: 'Server tick',
-             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true });
+             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true, group: 'tick' });
     }
   }
   if (on.has('lull') || on.has('my_spells')) {
@@ -40351,9 +40371,13 @@ function _builtinTimerRows(now) {
         if (!(remMs > 0)) continue;
         const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
         if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
+        // group: which Timers-canvas panel claims the row (a charm spell sits
+        // with the recharm tick, a lull with the lulls, the rest are spells).
+        const group = CHARM_SPELLS.has(String(b.name || '').toLowerCase()) ? 'charm'
+                    : _isPacifySpell(b.name) ? 'lull' : 'spell';
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
                target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped });
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
       }
     }
   }
@@ -40398,6 +40422,7 @@ function _activeTimersSnapshot() {
       kind:         t.kind || null,
       dismissible:  !!t.dismissible,
       test:         t.test,
+      group:        t.kind === 'loot' ? 'loot' : 'trigger',   // Timers-canvas panel routing
     });
   }
   try { for (const r of _builtinTimerRows(now)) out.push(r); }

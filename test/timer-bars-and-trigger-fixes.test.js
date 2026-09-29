@@ -341,7 +341,7 @@ describe('trigger overlay: filled bars and a wrapping cycle', () => {
   const trig = readSource(path.join(ROOT, 'apps', 'mimic', 'triggers.html'));
   const paint = sliceBlock(trig, '  function paintTimers(){', '\n    requestAutoHeight();\n  }');
   function harness() {
-    return new Function('const timerNodes = new Map(); function fmtRemain(ms){ return String(ms); }'
+    return new Function('var PART = null; const timerNodes = new Map(); function fmtRemain(ms){ return String(ms); }'
       + ' function fire(){} function requestAutoHeight(){}\n' + paint + '\nreturn { paintTimers, timerNodes };')();
   }
   function node(extra) {

@@ -41,6 +41,7 @@ describe('triggers.html: Mute silences, it does not hide (run, not read)', () =>
                            const j = T.indexOf('\n  }', i); return T.slice(i, j + 4); };
   const mk = () => new Function(`
     const calls = []; let muted = false;
+    var PART = null, _visualElsewhere = false;   // the trigger window itself, not a Timers-canvas part
     const el = { classList: { toggle(){}, remove(){} } };
     function flash(x){ calls.push('flash'); }
     function _wpMutedNow(){ return muted; }
