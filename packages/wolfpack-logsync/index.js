@@ -1502,12 +1502,20 @@ const knownPetOwners = new Map();
 // (`pet_owners`); each EncounterBuilder reads it the first time the pet attacks.
 // petNameLower → OwnerName.
 const _guildPetOwners = new Map();
+// …and the pet's spawn id, when the owner's own Mimic knew it (Zeal pet_id)
+// and uploaded it with the pet's damage. petNameLower → spawn id.
+const _guildPetIds = new Map();
 function _applyPetOwnersResponse(resp) {
   const owners = resp && resp.owners;
   if (!owners || typeof owners !== 'object') return;
   _guildPetOwners.clear();
+  _guildPetIds.clear();
   for (const [pet, owner] of Object.entries(owners)) {
     if (pet && owner && !/\s/.test(pet) && /^[A-Z][a-z]+$/.test(String(owner))) _guildPetOwners.set(pet.toLowerCase(), String(owner));
+  }
+  for (const [pet, id] of Object.entries((resp.ids && typeof resp.ids === 'object') ? resp.ids : {})) {
+    const n = Number(id);
+    if (_guildPetOwners.has(String(pet).toLowerCase()) && Number.isInteger(n) && n > 0) _guildPetIds.set(String(pet).toLowerCase(), n);
   }
 }
 // The server's own pet-name generator (EQMacEmu zone/pets.cpp GetRandPetName):
@@ -4836,6 +4844,37 @@ function _petIdForOwner(ownerLower) {
     if (st && Number.isFinite(st.pet_id)) return st.pet_id;
   }
   return null;
+}
+// The spawn id of a pet on the DPS meter (the guild lead, 2026-09-29: "if you
+// click on +pet it should open a line below to show the pets name and damage
+// and spawnid"). Only when it is provably THAT pet, best first:
+//   1. this machine runs the owner, and Zeal's pet gauge names this pet → pet_id;
+//   2. someone tagged it with a Zeal /tag (the tag line carries the id);
+//   3. one of this machine's characters is targeting it → target_id;
+//   4. the owner's own Mimic knew it and the bot pooled it (_guildPetIds).
+// Null otherwise — a wrong id is worse than none. _ownPetSpawnId is step 1
+// alone: the only id this machine may upload as fact.
+function _ownPetSpawnId(petName, ownerName) {
+  const ol = String(ownerName || '').toLowerCase();
+  const pn = ol ? _petNameForOwner(ol) : null;
+  if (!pn || _normMobName(pn) !== _normMobName(petName)) return null;
+  const id = _petIdForOwner(ol);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+function _petSpawnIdFor(petName, ownerName) {
+  const want = _normMobName(petName);
+  if (!want) return null;
+  const own = _ownPetSpawnId(petName, ownerName);
+  if (own) return own;
+  const now = Date.now();
+  for (const t of _zealTags.values()) {
+    if (t && t.spawn_id > 0 && now - (t.tsMs || 0) < _TAG_FRESH_MS
+      && (_normMobName(t.mob) === want || _normMobName(t.mobDisplay) === want)) return t.spawn_id;
+  }
+  for (const st of Object.values(_zealState)) {
+    if (st && Number.isInteger(st.target_id) && st.target_id > 0 && _normMobName(st.target_name) === want) return st.target_id;
+  }
+  return _guildPetIds.get(String(petName).toLowerCase()) || null;
 }
 function notePetBuffWornOff(line, character) {
   if (!line || !character) return;
@@ -8378,6 +8417,9 @@ class EncounterBuilder {
         // window have never shown it. Rendered "(pet)", not as a raider.
         pet_summoned: (!petOwner && !petCharm && _isGeneratedPetName(name)
           && !whoData.has(nl) && !_raidRosterHas(name)) || undefined,
+        // The owned pet's spawn id when it is provable (_petSpawnIdFor) — the
+        // DPS HUD's +pet line shows it.
+        pet_spawn_id: (petOwner && _petSpawnIdFor(name, petOwner)) || undefined,
         procDetail: t.procDetail || {},
       };
     }
@@ -10307,7 +10349,15 @@ class EncounterBuilder {
         r.hits   += 1;
       }
       for (const r of _petAcc.values()) {
-        if (r.damage > 0) { r.damage = Math.round(r.damage); _petRows.push(r); }
+        if (r.damage > 0) {
+          r.damage = Math.round(r.damage);
+          // Only an id this machine's own Zeal gave for its own pet ships as
+          // fact — the bot pools it for every HUD's +pet line. Never on a
+          // replay: the live pet is not the one in an old log.
+          const sid = this.silent ? null : _ownPetSpawnId(r.name, r.pet_owner);
+          if (sid) r.spawn_id = sid;
+          _petRows.push(r);
+        }
       }
       _petRows.sort((a, b) => b.damage - a.damage);
     }
@@ -43358,6 +43408,8 @@ module.exports = {
   _normCharList, _triggerOnFor, _playingCharactersLc, _builtinTimerKindsOn,
   _applyPetOwnersResponse, _isGeneratedPetName, _guildPetOwners, whoData,
   _liveThreatForTest: () => stats.currentEncounterThreat,
+  // +pet spawn ids on the DPS HUD — exported for their test.
+  _petSpawnIdFor, _ownPetSpawnId, _guildPetIds, _zealTagsForTest: _zealTags,
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 
