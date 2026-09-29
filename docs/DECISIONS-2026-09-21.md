@@ -5072,3 +5072,10 @@ is in HOW-ITS-BUILT ("Dashboard: the Overlays tab, option C").
     is the guild lead's call.
 - **The alpha got it by a hand merge** (`703a6017`). The sync workflow failed, as expected: the tray label,
   the canvas hint line and their test changed on both branches. The alpha kept its own wording.
+
+**The Pieces chooser, readable again** (alpha `7f239374`). The guild lead, on the chooser once the new
+formats landed (one crowded line per piece, names cut off, a sideways scrollbar): *"i can't read this"*.
+- Each piece shows its whole name and current value, with its ways to draw it on a wrapping line
+  underneath, by name.
+- The chooser went from 300 to 360 px and from 11 to 12 px text.
+- Its right edge drags from 280 to 640 px, and the width is kept with the layout.
