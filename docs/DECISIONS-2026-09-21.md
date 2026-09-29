@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
+| **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
 | **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records" | the guild lead: open `b.wolfpack.quest/pop/guide?v=b` and `?v=c`, pick one |
@@ -4574,6 +4576,86 @@ show test data there of each type that's selected there"*.
   - the samples cover every canvas group and the claimed names (run for real);
   - `placeMenu` is run for real in three positions.
   Rendered headless near the top and bottom of a screen.
+
+### 93. Mimic setup walkthrough: two layouts on beta (2026-09-29, Mimic beta `a9f2db26` + `bbfe59e6`, agent 3.7.46)
+The guild lead, reviewing another companion app's onboarding: *"i like the clickthrough. Build out a version
+of this for mimic instead of the single setup view. It shouldn't look the same, and should show some of the
+optional setup pieces that we have for /me and the abilities that entails"*.
+- **`apps/mimic/welcome.html`, one step registry, two layouts.** They differ in shape, never in what they do:
+  - **A (`?v=a`), the trail.** A rail of every step, one step at a time, Back / Skip / Next. The three
+    needed steps hold Next until done.
+  - **B (`?v=b`), essentials then unlocks.** Account, EverQuest folder and characters as a three-part
+    stepper. Under it, Zeal, Set up EverQuest, Overlays, Your /me page and Old fights and chat are cards,
+    opened one at a time in any order. "Open the dashboard" is always in reach once the gate passes.
+- **The gate is the classic page's:** signed in or local-only, a folder saved, the engine up.
+- **What it adds over the classic page:**
+  - every optional step leads with a "What this turns on" box;
+  - a main pick (`cfg.mainCharacter`) whose own log files are read at the finish when "read my main's
+    whole log" is left ticked. Not a character set not to send; not a file already being read;
+  - Zeal's install state with check and install;
+  - Defender exclusions and the clock with their current state and the measured drift. These are the
+    dashboard's three fixers, the same calls;
+  - the /me abilities: tells, inventory, UI backups, parses, PoP flags, corpse DMs, UI Studio, crash reports.
+- **Reached from:** the tray (✨ Setup walkthrough → A / B), the dashboard Setup card (✨ Walkthrough A / B),
+  and a link on the classic page. **`loading.html` stays the first-run page until the pick.** Then:
+  - `loading.html` sends a first run to the picked layout. Keep it for the engine-failed diagnostics;
+  - the other layout is deleted in the same change;
+  - web `/start`'s Mimic steps follow the same order.
+- **Cost, four numbers each.** Both are one file, so the costs are nearly the same; the difference is who
+  they suit.
+
+  | | Build | Maintenance | Runtime | Change |
+  |---|---|---|---|---|
+  | A trail | S (done) | low: a step is one registry entry | nil | low |
+  | B essentials + unlocks | S (done) | low: same registry | nil | low |
+
+  A suits a first install: nothing to choose. B suits reopening it later to do one thing.
+- **Found while building (the classic page):**
+  - **Unticking "Transmit" only takes effect at the engine's next start** (`excludedCharacters` reaches the
+    agent as an env var at launch). Until then that character's log still uploads. The walkthrough restarts
+    the engine 2.5 s after the last change (`bbfe59e6`). The classic page is left as it is, since the pick
+    retires it. If the pick waits long, give the classic page the same restart; it is one line.
+  - **The tells radio (`cfg.tellsMode`) is stored and shown in the tray, but nothing reads it.** The agent
+    never receives it; tells are governed on `/me/tells`. The walkthrough leaves it out.
+  - **Nothing after setup edits the don't-send list.** The walkthrough can now be reopened for it; a
+    Settings entry is still worth adding.
+  - **Old logs, two paths.** The classic page saves `cfg.importedLogPaths` and restarts the engine. The
+    dashboard hands paths to the agent's importer (`/api/optin` `import`). The walkthrough uses the
+    importer: no restart, and the same list the Logsync tab shows.
+  - **The Discord `/onboarding` Mimic card is stale** (`utils/onboarding.js`). It says "Mimic v1.0.0" and
+    tells people to paste a `/token` into Settings, where Discord sign-in replaced that. This is bot copy,
+    left for a bot change.
+- **Tests:** `test/setup-walkthrough.test.js`, mutation-checked. It covers:
+  - `gateOk`, `mainBackfillPaths` and the restart debounce, run for real;
+  - every bridge call the page makes exists on `window.mimic`;
+  - the `welcome-optin` relay over a fake http: only `import` and `backfill` pass, paths are cleaned and
+    capped at 200;
+  - tray, dashboard and preload wiring.
+  Rendered headless at 1100 px and 390 px (no sideways scroll).
+
+### 94. Companion suite review, round two: settings pages, bandolier, spell sets, maps, the gear finder (2026-09-29)
+The guild lead kept sending screenshots of the same app: *"bandolier builder looks really clean as are
+spellsets"*, its Settings pages (audio, accessibility, navigation, overlays, spell timers, DPS meters,
+Discord, maps, advanced), its raid summary, and *"THIS GEAR UPGRADE FINDER IS INTERESTING"* / *"Overview
+tells me what gear scores i could replace"*.
+- **All of it is in the review doc** (a claude.ai doc in the guild lead's artifacts, "Companion suite review —
+  what we don't have yet"; the other app is not named there by request). **Counts now: 28 missing, 38
+  partial, 19 covered.** Each item was checked on all four surfaces.
+- **The gaps worth knowing about first:**
+  - **A client version check.** Our Client versions card shows the eqgame.dll build from `/zeal version`
+    but compares it with nothing. A check against known-good builds would have flagged §88's wrong
+    eqgame.dll.
+  - **The gear upgrade finder** (L), written up in the doc's closer look:
+    - by slot, and an overview of each slot's best upgrade by score;
+    - class weights (off / low / med / high / crit) with rules for the attack, haste, mana-regen and
+      weapon-damage caps; filters.
+    Ours would build on the gear page's worn totals and caps, the item mirror and the wishlist. Ours could
+    also rank against what the guild actually loots.
+  - **Zone maps with in-game map markers** written to Zeal's map files (L).
+  - **Per-overlay lock modes:** interactive, click-through, display only.
+  - **Timers that stay red until recast.**
+  - **Mimic's own voice settings:** volume, speed, voice.
+- **Nothing is queued.** Waiting on the guild lead to say which gaps to build.
 
 
 
