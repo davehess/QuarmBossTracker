@@ -4189,6 +4189,11 @@ elements."*
   link (`utils/mimicReleases.js`), `/mimic/beta` and `/admin/agents` all took "the newest prerelease";
   each now takes only a `-beta.N` tag. Any new consumer of releases owes the same filter.
 - **Not announced.** The rolling release never reaches #mimic-releases. Alpha testers are told directly.
+- ⚠ **electron-builder writes only `latest.yml` under the github publish provider**, whatever the version
+  says — the beta releases carry only `latest.yml` too, and beta installs quietly fall back to it. The
+  alpha's fixed-address reader has no fallback, so the first alpha (`v3.0.0-alpha.832`) shipped with
+  nothing an alpha install could read. The alpha build now copies `latest.yml` to `alpha.yml` and
+  publishes that; the second alpha is the first one an install can actually take.
 - `test/mimic-alpha-channel.test.js`, `test/alpha-release-isolation.test.js`; CLAUDE.md channel table.
 
 ### 82. 🧲 Rescue brings back only what is lost (2026-09-29, Mimic beta `1cd1d423`)

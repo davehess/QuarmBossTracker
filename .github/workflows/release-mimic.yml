@@ -280,6 +280,11 @@ jobs:
           fi
           git tag -f mimic-alpha "${{ github.sha }}"
           git push -f origin refs/tags/mimic-alpha
+          # electron-builder writes only latest.yml under the github publish
+          # provider, whatever the version says (the beta releases carry only
+          # latest.yml too; beta installs fall back to it). An alpha install
+          # reads alpha.yml from a fixed address with no fallback, so name it.
+          cp apps/mimic/dist/latest.yml apps/mimic/dist/alpha.yml
 
       - name: Alpha — publish to the rolling release
         if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha == 'true'
@@ -294,5 +299,5 @@ jobs:
           body_path:  ${{ github.workspace }}/release-notes.md
           files: |
             apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
-            apps/mimic/dist/*.yml
+            apps/mimic/dist/alpha.yml
             apps/mimic/dist/*.blockmap
