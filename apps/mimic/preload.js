@@ -844,6 +844,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // α alpha (dashboard, any build): { optedIn, running, available } / confirm + join or leave.
   getAlphaChannel: ()   => ipcRenderer.invoke('get-alpha-channel'),
   setAlphaChannel: (on) => ipcRenderer.invoke('set-alpha-channel', !!on),
+  // 🗂 Overlay sets (Settings): list() → { char, sets: [{ key, name, savedAt, current, mine, overlays }] };
+  // command({ verb: 'save'|'load'|'next'|'prev'|'delete', name }) → { ok, message }.
+  overlaySetsList:    ()    => ipcRenderer.invoke('overlay-sets-list'),
+  overlaySetsCommand: (cmd) => ipcRenderer.invoke('overlay-sets-command', cmd),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),

@@ -179,6 +179,18 @@
     <div class="hint">Loading UI packs…</div>
   </div>
 
+  <h2>Overlay sets <span style="background:#2d1b4e;color:#d2a8ff;border:1px solid #6e40c9;border-radius:3px;font-size:9px;padding:1px 5px;margin-left:6px;vertical-align:middle;letter-spacing:1px">ALPHA</span></h2>
+  <div class="sub">Save how your overlays are laid out — which are on, where each one sits, how see-through, and the Timers canvas panels — then switch layouts in one step. Sets are kept on this computer.</div>
+  <div id="overlaySetsList" style="margin-top:10px">
+    <div class="hint">Loading overlay sets…</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+    <input id="overlaySetName" type="text" maxlength="32" placeholder="Name for your current layout, e.g. raid" style="flex:1" />
+    <button id="overlaySetSave" type="button" style="margin-top:0;white-space:nowrap">💾 Save as</button>
+  </div>
+  <div id="overlaySetMsg" class="hint"></div>
+  <div class="hint">In game (needs Zeal), put these on social buttons: <code>/pipe mimic load raid</code> · <code>/pipe mimic save raid</code> (no name saves over the set you are on) · <code>/pipe mimic next</code> · <code>/pipe mimic lock</code> (locks or unlocks the overlays). The tray has the same under 🗂 Overlay sets.</div>
+
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
@@ -1328,6 +1340,57 @@
       }
     });
   }
+
+  // 🗂 Overlay sets — the same command the tray and /pipe mimic use (main.js _overlaySetCommand).
+  function _setsMsg(r){
+    var m = document.getElementById('overlaySetMsg');
+    if (!m) return;
+    m.style.color = r && r.ok ? '#56d364' : '#ff9b9b';
+    m.textContent = r ? (r.ok ? '✓ ' : '✕ ') + r.message : '';
+  }
+  async function _setsRun(cmd){
+    var r;
+    try { r = await window.mimic.overlaySetsCommand(cmd); } catch (e) { r = { ok: false, message: String(e && e.message || e) }; }
+    _setsMsg(r);
+    await _renderOverlaySets();
+    return r;
+  }
+  async function _renderOverlaySets(){
+    var host = document.getElementById('overlaySetsList');
+    if (!host) return;
+    if (!window.mimic || !window.mimic.overlaySetsList) { host.innerHTML = '<div class="hint">This Mimic has no overlay sets yet.</div>'; return; }
+    var data;
+    try { data = await window.mimic.overlaySetsList(); }
+    catch (e) { host.innerHTML = '<div class="hint">Could not read overlay sets.</div>'; return; }
+    var sets = (data && data.sets) || [];
+    if (!sets.length) { host.innerHTML = '<div class="hint">No sets yet. Lay your overlays out, name the layout below, and save it.</div>'; return; }
+    var btn = 'margin-top:0;background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:3px 10px;font-size:11px;border-radius:4px';
+    host.innerHTML = sets.map(function(s){
+      return '<div style="display:flex;gap:8px;align-items:center;padding:5px 8px;margin:0 0 4px;background:#0f1420;border:1px solid ' + (s.current ? '#1f6feb' : '#223') + ';border-radius:5px">' +
+        '<span style="flex:1;font-size:12px;color:#c9d1d9">' + _esc(s.name) +
+          (s.current ? ' <span style="color:#58a6ff;font-size:10px">· on now' + (data.char ? ' for ' + _esc(data.char) : '') + '</span>' : '') +
+          ' <span style="color:#6e7681;font-size:10px">· ' + s.overlays + ' overlay' + (s.overlays === 1 ? '' : 's') + '</span></span>' +
+        '<button type="button" data-set-load="' + _esc(s.name) + '" style="' + btn + '">Load</button>' +
+        '<button type="button" data-set-save="' + _esc(s.name) + '" style="' + btn + '" title="Replace this set with the layout on screen now">Save over</button>' +
+        '<button type="button" data-set-del="' + _esc(s.name) + '" style="' + btn + ';color:#ff9b9b" title="Delete this set">✕</button>' +
+      '</div>';
+    }).join('');
+  }
+  document.getElementById('overlaySetsList').addEventListener('click', async function(e){
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.setLoad) return _setsRun({ verb: 'load', name: b.dataset.setLoad });
+    if (b.dataset.setSave) return _setsRun({ verb: 'save', name: b.dataset.setSave });
+    if (b.dataset.setDel && confirm('Delete the overlay set "' + b.dataset.setDel + '"?')) return _setsRun({ verb: 'delete', name: b.dataset.setDel });
+  });
+  document.getElementById('overlaySetSave').addEventListener('click', async function(){
+    var inp = document.getElementById('overlaySetName');
+    var name = (inp.value || '').trim();
+    if (!name) { _setsMsg({ ok: false, message: 'Give the set a name first.' }); inp.focus(); return; }
+    var r = await _setsRun({ verb: 'save', name: name });
+    if (r && r.ok) inp.value = '';
+  });
+  _renderOverlaySets();
 </script>
 
 <script>

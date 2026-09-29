@@ -1817,6 +1817,9 @@ function _zealAbsorb(obj, pid) {
       s.custom_recent.push({ at: Date.now(), text: String(text).slice(0, 300) });
       while (s.custom_recent.length > 8) s.custom_recent.shift();
       cur.dirty = true;
+      // `/pipe mimic load|save|next|prev|lock` — overlay sets, for the character who typed it.
+      const cmd = overlaySets.parsePipeCommand(text);
+      if (cmd) { try { _overlaySetCommand(cmd, character); } catch (e) { appendAgentLog(`[sets] /pipe ${text}: ${e.message}\n`); } }
     }
   } else if (type === 6) {                            // group — this char's group
     // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
@@ -2571,6 +2574,205 @@ function _charProfileTrayItems() {
         buildTrayMenu();
       } });
   }
+  return items;
+}
+
+// ── Overlay sets (Mimic 3.0 step 1; R18 + R20, DECISIONS §83a) ───────────────
+// The guild lead, 2026-09-29: "multiple overlay modes per character, switchable
+// via hotkeys or a simple pipe output that we pick up /pipe mimic load <overlay
+// set name> or /pipe mimic save <overlay set name> the same load/save should
+// also be available from taskbar or cycle through via command". A set is which
+// overlays are on, where each one sits, how each is drawn, and the Timers
+// canvas panels; overlaySets.js keeps them in overlay-sets.json beside the
+// config, so they work with no network. The hotkey is EverQuest's own: a social
+// with `/pipe mimic next` on a hotbar button.
+// Loading is always asked for — /pipe, the tray or Settings — never done on a
+// character switch: with two clients open the active character flips as you
+// alt-tab, and the screen must not rearrange itself under you. The
+// per-character layouts above stay until sets replace them.
+const overlaySets = require('./overlaySets');
+const _SETS_FILE = () => path.join(app.getPath('userData'), 'overlay-sets.json');
+// Every overlay's saved spot, by the config key its window persists under.
+const _SET_BOUNDS_KEYS = [
+  'dockBounds', 'hudBounds', 'triggerBounds', 'charmBounds', 'petsBounds', 'mobInfoBounds',
+  'buffQueueBounds', 'whoBounds', 'melodyBounds', 'zealBounds', 'threatBounds', 'chChainBounds',
+  'tankBounds', 'extTargetBounds', 'commandBounds', 'popRaidBounds', 'meBounds',
+];
+// How each overlay is drawn: opacity, background, per-overlay size.
+const _SET_LOOK_KEYS = ['overlayOpacity', 'overlayBgAlpha', 'overlayBackdrop', 'overlayScaleByKey'];
+
+function _captureOverlaySet() {
+  const cfg = loadConfig();
+  const sig = _screenSignature();
+  const show = {};
+  for (const f of _HIDEALL_FLAGS) {
+    // While everything is hidden, the set is what the unhide would bring back.
+    const v = (_hideAllActive && _hideAllPrev && f in _hideAllPrev) ? _hideAllPrev[f]
+      : (f === 'showTriggerOverlay' ? cfg[f] !== false : cfg[f]);
+    show[f] = !!v;
+  }
+  // An overlay with no window right now (closing EverQuest frees them) keeps
+  // the spot it last saved on this screen setup; open windows say where they are.
+  const rects = {};
+  for (const bk of _SET_BOUNDS_KEYS) {
+    const b = cfg[bk];
+    if (b && cfg[bk + 'Sig'] === sig) rects[bk] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  }
+  Object.assign(rects, _overlayRectsNow());
+  const look = {};
+  for (const k of _SET_LOOK_KEYS) {
+    if (cfg[k] && typeof cfg[k] === 'object') look[k] = JSON.parse(JSON.stringify(cfg[k]));
+  }
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  return {
+    show, sig, rects, look,
+    eq: eq ? { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height } : null,
+    canvas: (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? JSON.parse(JSON.stringify(cfg.canvasLayouts)) : null,
+  };
+}
+// A set saved on another screen setup lands the way a screen change does
+// (§80a): an overlay whose screen is still here stays where the set had it;
+// one whose screen is gone keeps its side — with EverQuest, or on another screen.
+function _setRectsHere(set) {
+  const rects = (set && set.rects) || {};
+  const cur = _screenSignature();
+  if (!set.sig || set.sig === cur) return rects;
+  const eqWin = _eqMainWindow();
+  let target;
+  try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); }
+  catch { target = screen.getPrimaryDisplay(); }
+  const plan = _displayChangePlan({
+    prevSig: set.sig, curSig: cur, memory: { [set.sig]: { rects, eq: set.eq } }, currentRects: rects,
+    curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds, workArea: d.workArea })),
+    target: { bounds: target.bounds, workArea: target.workArea },
+  });
+  return Object.assign({}, rects, plan.moves);
+}
+function _applyOverlaySet(set) {
+  if (!set) return false;
+  const cfg = loadConfig();
+  // Loading a set is asking to see it, so a hide-all in force steps aside.
+  if (_hideAllActive) { _hideAllActive = false; _hideAllPrev = null; cfg.hideAllActive = false; cfg.hideAllPrev = null; }
+  for (const f of _HIDEALL_FLAGS) {
+    if (set.show && typeof set.show[f] === 'boolean') cfg[f] = set.show[f];
+  }
+  const rects = _setRectsHere(set);
+  const sig = _screenSignature();
+  // An overlay the set turns on opens at its spot (_resolveBounds reads these).
+  for (const [bk, r] of Object.entries(rects)) { cfg[bk] = r; cfg[bk + 'Sig'] = sig; }
+  for (const k of _SET_LOOK_KEYS) { if (set.look && set.look[k]) cfg[k] = set.look[k]; }
+  if (set.canvas) cfg.canvasLayouts = set.canvas;
+  saveConfig(cfg);
+  applyAllVisibility();
+  for (const [key, win] of _overlayEntries()) {
+    const bk = _boundsKeyForEntry(key, win);
+    if (bk && rects[bk]) { try { win.setBounds(rects[bk]); } catch { /* mid-close */ } }
+  }
+  applyAllOverlayOpacities();
+  applyAllOverlayBackdrops();
+  // The canvas reads its panels once per resolution; a reload picks up the set's.
+  if (set.canvas && canvasWindow && !canvasWindow.isDestroyed()) { try { canvasWindow.webContents.reload(); } catch { /* */ } }
+  pushStatus();
+  try { buildTrayMenu(); } catch { /* */ }
+  return true;
+}
+// A short line on the trigger overlay — where a raider is already looking; a
+// Windows notification does not show over full-screen EverQuest. It goes
+// through the agent's own preview path (/api/triggers/fire), so nothing new
+// draws it.
+function _flashOnTriggerOverlay(text) {
+  if (!agentPort) return;
+  const body = JSON.stringify({ trigger: { name: 'Mimic', actions: [{ type: 'text_overlay', text: String(text).slice(0, 80), duration_ms: 2500 }] } });
+  try {
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: '/api/triggers/fire', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 3000,
+    });
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+    req.end(body);
+  } catch { /* the agent is restarting */ }
+}
+function _setsSay(r, quiet) {
+  appendAgentLog(`[sets] ${r.message}\n`);
+  if (!quiet) _flashOnTriggerOverlay(r.message);
+  return r;
+}
+// The one way in for /pipe, the tray and Settings.
+// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock', name?, on? } → { ok, message }
+function _overlaySetCommand(cmd, char, quiet) {
+  const file = _SETS_FILE();
+  const store = overlaySets.load(file);
+  const who = char || _activeCharName || null;
+  const persist = () => {
+    try { overlaySets.save(file, store); return true; }
+    catch (e) { appendAgentLog(`[sets] could not write ${file}: ${e.message}\n`); return false; }
+  };
+  if (cmd.verb === 'save') {
+    const cur = overlaySets.current(store, who);
+    const name = cmd.name || (cur && store.sets[cur].name);
+    if (!name) return _setsSay({ ok: false, message: 'Name the set: /pipe mimic save <name>' }, quiet);
+    const r = overlaySets.put(store, name, _captureOverlaySet(), who);
+    if (!r.ok) return _setsSay({ ok: false, message: r.error }, quiet);
+    if (!persist()) return _setsSay({ ok: false, message: 'Could not save the set (see the agent log)' }, quiet);
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: `Saved overlay set: ${r.name}` }, quiet);
+  }
+  if (cmd.verb === 'load') {
+    const set = overlaySets.use(store, cmd.name, who);
+    if (!set) return _setsSay({ ok: false, message: `No overlay set called "${cmd.name}"` }, quiet);
+    persist();
+    _applyOverlaySet(set);
+    return _setsSay({ ok: true, message: `Overlay set: ${set.name}` }, quiet);
+  }
+  if (cmd.verb === 'next' || cmd.verb === 'prev') {
+    const key = overlaySets.step(store, who, cmd.verb === 'prev' ? -1 : 1);
+    if (!key) return _setsSay({ ok: false, message: 'No overlay sets yet: /pipe mimic save <name>' }, quiet);
+    return _overlaySetCommand({ verb: 'load', name: store.sets[key].name }, who, quiet);
+  }
+  if (cmd.verb === 'delete') {
+    if (!overlaySets.remove(store, cmd.name)) return _setsSay({ ok: false, message: `No overlay set called "${cmd.name}"` }, quiet);
+    persist();
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: `Deleted overlay set: ${cmd.name}` }, quiet);
+  }
+  if (cmd.verb === 'lock') {
+    const cfg = loadConfig();
+    const locked = cmd.on == null ? cfg.overlaysLocked === false : !!cmd.on;
+    cfg.overlaysLocked = locked;
+    saveConfig(cfg);
+    if (locked) _exitAllSingleSetup();
+    applyOverlayInteractivity();
+    pushStatus();
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: locked ? 'Overlays locked' : 'Overlays unlocked — drag to move' }, quiet);
+  }
+  return { ok: false, message: 'Unknown overlay set command' };
+}
+// Tray: the sets by name (the active character's current one ticked), next,
+// save over the current one, save as a new one. Delete lives in Settings,
+// which can also take a name.
+function _overlaySetTrayItems() {
+  const who = _activeCharName;
+  const store = overlaySets.load(_SETS_FILE());
+  const rows = overlaySets.list(store, who);
+  const cur = overlaySets.current(store, who);
+  const items = rows.map(r => ({
+    label: r.name, type: 'radio', checked: r.current,
+    click: () => { _overlaySetCommand({ verb: 'load', name: r.name }, who); },
+  }));
+  if (items.length) items.push({ type: 'separator' });
+  items.push(
+    { label: '⏭ Next set', enabled: rows.length > 0, click: () => { _overlaySetCommand({ verb: 'next' }, who); } },
+    { label: cur ? `💾 Save over "${store.sets[cur].name}"` : '💾 Save over the current set', enabled: !!cur,
+      click: () => { _overlaySetCommand({ verb: 'save' }, who); } },
+    { label: '💾 Save as a new set', click: () => {
+      let n = rows.length + 1;
+      while (store.sets[overlaySets.keyOf('Set ' + n)]) n++;
+      _overlaySetCommand({ verb: 'save', name: 'Set ' + n }, who);
+    } },
+    { label: 'Name, delete, and the /pipe commands… (Settings)', click: () => { try { openSettings(); } catch { /* */ } } },
+  );
   return items;
 }
 
@@ -7245,6 +7447,7 @@ function buildTrayMenu() {
     // cursor), then Check for updates directly below Restart, then Settings →
     // Quit as the two safe bottom actions.
     { label: 'Overlays', submenu: overlaysSubmenu },
+    { label: '🗂 Overlay sets', submenu: _overlaySetTrayItems() },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -9212,6 +9415,16 @@ ipcMain.handle('set-overlays-locked', (_e, locked) => {
   applyOverlayInteractivity();
   pushStatus();
   return currentStatus();
+});
+// Overlay sets from Settings — the same command the tray and /pipe use.
+ipcMain.handle('overlay-sets-list', () => {
+  const store = overlaySets.load(_SETS_FILE());
+  return { char: _activeCharName || null, sets: overlaySets.list(store, _activeCharName) };
+});
+ipcMain.handle('overlay-sets-command', (_e, cmd) => {
+  const verb = cmd && String(cmd.verb || '');
+  if (!['save', 'load', 'next', 'prev', 'delete'].includes(verb)) return { ok: false, message: 'Unknown overlay set command' };
+  return _overlaySetCommand({ verb, name: overlaySets.cleanName(cmd.name) }, null, true);
 });
 ipcMain.handle('get-agent-port', () => agentPort);
 // "Set up for me" from Settings — bridge to the agent's single writer
