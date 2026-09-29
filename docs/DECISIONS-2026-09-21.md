@@ -4438,6 +4438,28 @@ The guild lead, live with a member: *"mimic just closed as we were reviewing his
   checking against the XP-compat field issue in CLAUDE.md.
 - `test/update-on-eq-close.test.js` has three new cases, and both guards were mutation-checked.
 
+**Follow-up, same hour — EQ still would not start.** Compatibility mode was off, running as administrator
+did not help, and removing the two dgVoodoo files did not help either. Evidence from the file fingerprints
+his crash report carried (`crash_reports.system.files`, hashed at upload, 12:35 UTC):
+- **His `eqgame.dll` is not Quarm's.** It is 241,664 bytes and was written 2026-09-29 01:43 UTC, three hours
+  after his last in-game crash. The one other player whose report carries it has 318,464 bytes, dated
+  2026-07-07, which matches "eqgame.dll version: 7 (Jul 7 2026)" from `/zeal version`. Mimic and the agent
+  never write this file (checked). So the file changed after the last time EQ ran, and EQ has not started
+  since. That is the lead. It is not proven: Quarm's own repository is not reachable from a cloud session,
+  so a Quarm release that night cannot be ruled out here.
+- `eqgfx_dx8.dll`, `dpvs.dll`, `eqw.dll` and `dgvoodoo.conf` are byte-identical to the other players'.
+- A normal Quarm install ships dgVoodoo's `D3D8.dll`. Removing it falls back to Windows' own, so it does
+  not explain the error, but it should go back.
+- **Drivers:** Windows installed a batch of Intel drivers on 9/27. His display driver was 31.0.101.2127 on
+  9/17 and 31.0.101.2145 in the 9/28 crash, and that crash shows the graphics driver resetting. That fits
+  the in-game crashes, not the refusal to start.
+- **What to ask, in order:** put Quarm's `eqgame.dll` (and `D3D8.dll`) back from a working install or the
+  official client download, keeping the current one as `.bak`, and ask what was run around 9:40 PM ET on
+  9/28. If the crashes continue once it starts, roll the Intel display driver back to 31.0.101.2127.
+- **Worth building (not built):** the crash review could compare a player's fingerprints with the rest of
+  the fleet and say "your eqgame.dll differs from everyone else's". The data to do that is already
+  uploaded.
+
 
 
 
