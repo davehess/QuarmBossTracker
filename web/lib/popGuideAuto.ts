@@ -23,8 +23,9 @@ export type AutoInput = {
   liveAt: string | null;
 };
 
-// Holding the reward (or the thing the step asks you to get) proves the step.
-export const HELD_ITEM_STEPS: Record<string, { ids: number[]; what: string }> = {
+// Holding the reward (or the thing the step asks you to get) proves the step. All the ids, unless
+// `any`: then one of them is enough (a reward you can swap for another).
+export const HELD_ITEM_STEPS: Record<string, { ids: number[]; what: string; any?: boolean }> = {
   start_traveler_manual: { ids: [28745], what: 'Your last inventory upload holds the Planar Traveler’s Manual.' },
   pok_taxidermy: { ids: [28237], what: 'You hold the Fine Antique Ring, its reward.' },
   pok_instruments: { ids: [28239], what: 'You hold the Fine Antique Amice, its reward.' },
@@ -40,6 +41,8 @@ export const HELD_ITEM_STEPS: Record<string, { ids: number[]; what: string }> = 
   earth_key: { ids: [28636], what: 'You hold A Gem-Etched Key.' },
   time_vial: { ids: [17186], what: 'You hold an Odylic Vial.' },
   time_quintessence: { ids: [29165], what: 'You hold the Quintessence of Elements.' },
+  essences_escort: { ids: [16260], what: 'You hold the Tiny Gold Fist, its reward.' },
+  essences_power: { ids: [32106, 17209, 32107, 32108, 32109], any: true, what: 'You hold one of its five rewards.' },
 };
 
 const MARK_RX = /^Mark of (Execution|Flame|Lashing|Stone|Suffocation|Torture)$/i;
@@ -69,7 +72,8 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
     for (const r of inp.inventory) if (!held.has(r.item_id)) held.set(r.item_id, r.observed_at);
     for (const [key, rule] of Object.entries(HELD_ITEM_STEPS)) {
       if (out[key]) continue;
-      if (rule.ids.every(id => held.has(id))) out[key] = { source: 'database', what: rule.what, at: held.get(rule.ids[0]) ?? null };
+      const have = rule.ids.filter(id => held.has(id));
+      if (rule.any ? have.length > 0 : have.length === rule.ids.length) out[key] = { source: 'database', what: rule.what, at: held.get(have[0]) ?? null };
     }
   }
   return out;
