@@ -839,7 +839,12 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
   moves only the lost ones — to their remembered spot for this screen setup, else through
   `_arrangeOnScreen` with every other overlay and EQ's windows as obstacles — and asks before bringing
   the other-screen ones (projected with `_projectRect`). Never re-arranges. Test
-  `test/rescue-overlays.test.js`.
+  `test/rescue-overlays.test.js`. With no free spot left, `place()` lands a lost overlay at its remembered
+  spot (else a cascade) and a brought one at its projected spot, overlapping (§90).
+- **🖥 Move to another screen** (every overlay's right-click menu; §90): `wp-overlay-menu-state` carries
+  `screens` from `_otherScreensFor` (named by `_screenWhere`, EverQuest's marked from `_eqMainWindow`);
+  preload's `_buildOverlayMenu` adds a row per screen; IPC `wp-move-to-display` projects the window with
+  `_projectRect` and saves it with `_persistBounds`. Not for the canvas. Test `test/move-to-screen.test.js`.
 - **Zeal's bars:** UI Studio's `_zealBarWindows` / `_zealBarEdits` read and write `zeal.ini`
   `[RaidBars]` / `[AssistBar]`; main's `_zealBarRects` feeds auto-arrange. Test
   `test/zeal-bars-and-screens.test.js`. DECISIONS §80.
