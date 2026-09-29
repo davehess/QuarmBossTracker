@@ -195,7 +195,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ 3.0: pieces — every data element as a lego (alpha `994eb032`, 2026-09-29).** 116 pieces in 12
   categories (`apps/mimic/parts.js`) in a movable 🧩 chooser; modes bar / ring / readout / big / pips /
   rows / chips; today's 17 overlays as groups of pieces; Ctrl-drag a group, pull a piece out, Shift-click and
-  💾 to save a group. Next: slim endpoints for the /api/state pieces; timeline mode; anchoring to EQ windows.
+  💾 to save a group. **Round two (alpha `291ddcaa`, §105):** ✕ deletes with Undo; a drag moves the whole
+  group or selection (Alt-drag pulls one out); click / Shift-click select, then 🔗 lock together or 💾 save;
+  one click on ✥ opens settings; "Arrange the canvas" in every overlay's menu; `/pipe mimic edit`.
+  Next: slim endpoints for the /api/state pieces; timeline mode; anchoring to EQ windows.
   `test/canvas-pieces.test.js`. §103.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /

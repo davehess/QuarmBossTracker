@@ -884,8 +884,14 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
   (`neededSources`). `paintParts` rewrites a piece only when its HTML changed.
 - The chooser (`#chooser`, state in `layout.chooser`) places pieces by drag (`dropThing` → `addPart` /
   `placeGroup`).
-- Ctrl-drag moves a `grp`, Shift-click fills `_sel`, and 💾 saves through `canvas-groups-save`
-  (`cfg.canvasGroups`).
+- A plain drag moves `togetherWith(id)`: the selection the panel is in, else its `grp`, else itself.
+  Alt-drag moves one piece and clears its `grp`.
+- Clicks fill `_sel` (Shift/Ctrl adds). `#selbar` then locks the selection together (a new `grp`), unlocks it,
+  saves it through `canvas-groups-save` (`cfg.canvasGroups`), or deletes it.
+- ✕ on a piece and Delete go through `removePanels`, with an Undo toast (`undoRemove`, Ctrl+Z).
+- A click on ✥ while locked opens the panel's settings, which start with ✏ Arrange / 🧩 Pieces.
+- Every overlay's right-click menu has "🧩 Arrange the canvas" (preload, `canvas-edit`), and
+  `/pipe mimic edit` does the same (`overlaySets.parsePipeCommand` → `_setCanvasArrange`) (§105).
 Test `test/canvas-pieces.test.js`. Alpha only.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
