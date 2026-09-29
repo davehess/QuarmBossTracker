@@ -803,6 +803,17 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
   `docs/DESIGN-mimic-3.0-overlay-builder.md`.
 
+### Timers canvas — placed, sized timer panels (agent 3.7.42 · Mimic beta, 2026-09-29)
+`apps/mimic/canvas.html`: one transparent window per screen (`createCanvasWindow`, key `canvas`, flag
+`showCanvas`), click-through always — panels take the mouse by the hover handshake (`body[data-wp-overlay]`
+counts it as an overlay in the preload). Each panel is `triggers.html?part=timers|callouts&panel=<id>` in an
+iframe (`nodeIntegrationInSubFrames`); `window.wpCanvasRoute(t)` sends each countdown to one panel (name claim →
+group claim → catch-all) using the `group` the agent stamps on timer rows (`_builtinTimerRows`,
+`_activeTimersSnapshot`). Parts poll `GET /api/timers`, never speak; the hidden trigger window speaks only
+(`canvasOwnsTriggers`). Layout `cfg.canvasLayouts[<W>x<H>]` via `canvas-state` / `canvas-save`; arrange via
+`canvas-edit` (tray "↳ Arrange the canvas…", dashboard ✥ Arrange). Test `test/timers-canvas.test.js`.
+Catalog entry in `docs/DESIGN-overlay-catalog.md`. DECISIONS §79.
+
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
 `feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first
 line (`_handleAgentFeedback`), the web relay's embed title (`relayWebFeedback`), and the `/feedback` card

@@ -976,8 +976,16 @@ tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Tick
 (`zealhealth.html`, key `zeal` — server + charm ticks; the old Zeal health
 check and the clock offset sit behind its status line), HUD (`me.html`, key `me` — the player's own panel, reads
 `/api/me`; the HUD ring built from parts via its ⚙ builder, plus layouts A
-and C, on beta), plus
+and C, on beta), Timers canvas (`canvas.html`, key `canvas`, beta — see below), plus
 Settings, UI Studio, loading.
+
+**The Timers canvas is the one overlay that breaks the window rules, on purpose** (the guild lead
+picked it 2026-09-29 as the first piece of 3.0; DECISIONS §79). It is screen-sized, so: click-through
+ALWAYS, unlocked included (`applyOverlayInteractivity` + the hover-restore special-case it); never
+force-shown by setup/unlock (`_overlayWanted` — it is an alternative home for the trigger visuals, so
+forcing it would show every timer twice); skipped by rescue and auto-arrange. Its panels are
+`triggers.html?part=…` in iframes, which never speak — the trigger window stays alive hidden as the
+ONE voice. A new panel type must keep all three of those true.
 
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the

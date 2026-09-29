@@ -107,6 +107,7 @@ popraid, me or the dock. Renderers read `window.screen.avail*` themselves (me.ht
 | Tick | zealhealth.html · `zeal` · showZeal | /api/state | 2 (24), 0 | clock offset | — | ✓ | — |
 | PoP raids | popraid.html · `popraid` · showPopRaid | /api/pop-objectives, /api/pop-mob-info | — | **required** for shared objectives | ✓ | ✓ | — |
 | Dock | dock.html · `dock` · showDock | IPC only | — | — | — | is the container | — |
+| Timers canvas (beta) | canvas.html · `canvas` · showCanvas | IPC; its panels /api/timers | via the trigger rows | via the trigger overlay | — | — (a host itself) | — (the trigger window speaks) |
 
 Windows that are not overlays: Settings (`settings.html`), UI Studio (`ui-studio.html`), Resource
 use (`resources.html`), loading. Panel overlays (`createPanelOverlay`, `?overlay=<key>`) turn any
@@ -285,6 +286,15 @@ Invented names in examples are conventions, not people.
 - **Raid impact.** One window holds every docked overlay: hiding or losing it blanks all of them.
 - **State.** cfg `dockedOverlays`, `dockedPrev`, `dockCols`, `dockSpans`, `dockPaneBg`, `dockGrowUp`, `dockAutoFit`, `dockName`, `dockLayouts`, `dockBounds`, `overlayScaleDock`.
 - **Caveats.** Trigger and HUD excluded; excluded from the global scale unless opted in. **Found in code:** `_boundsKeyForWindow` has no dock entry, so "Setup THIS" and per-overlay scale on the dock silently return false.
+
+### Timers canvas — `canvas.html` (beta, agent 3.7.42; DECISIONS §79)
+- **Identity.** key `canvas`, flag `showCanvas`; one transparent window covering a whole screen (`canvasDisplayId`, else the trigger overlay's screen, else the primary); `nodeIntegrationInSubFrames`. The first piece of the 3.0 builder (§5.3's "one freeform window", option A).
+- **Data.** IPC `canvas-state` / `canvas-save` / `canvas-edit` / `canvas-next-display`. Each panel is `triggers.html?part=timers|callouts&panel=<id>` in an iframe: timers parts poll the slim `GET /api/timers` (activeTimers + recentTriggerFires + blindEvents, falls back to `/api/state` on an older agent); the callouts part also runs the fires long-poll. Routing is `window.wpCanvasRoute(t)` in the canvas: a name claim beats a group claim (`t.group`: charm / tick / lull / spell / trigger / loot) beats the catch-all.
+- **Outputs.** Callouts panel (flash, votes, pinned rows), a catch-all Timers panel, a Charm panel, up to 12 panels in all; while arranging: tabs (✥ name · what it shows · ⚙ · ✕/👁), ◢ sizing, snapping, sample rows, toolbar (＋ Timers panel, ⇆ Next screen, ↺ Reset twice, ✕ Turn off, ✓ Done). **No speech:** parts never speak; the trigger window stays running hidden as the voice and, while the canvas is on, only speaks (`canvasOwnsTriggers`).
+- **Surfaces.** Tray "Timers canvas" + "↳ Arrange the canvas…"; dashboard Overlays row with ✥ Arrange; own hotkey. No mini, no dock.
+- **Raid impact.** When on, it IS the trigger overlay's visuals; turned off, they return to the trigger overlay. Screen-sized transparent layer: not yet measured on a raid machine.
+- **State.** cfg `showCanvas`, `canvasLayouts[<W>x<H>]` (positions as screen fractions, sizes px), `canvasLastRes`, `canvasDisplayId`.
+- **Caveats.** Click-through always (unlocked too) — panels take the mouse by the hover handshake; never force-shown by setup/unlock; skipped by rescue and auto-arrange. Main's pushes reach the top frame only, so a callouts part re-reads status every 5 s.
 
 ### UI Studio — `ui-studio.html` (a window; the base a builder would extend)
 It edits **EverQuest's own ini files**, not Mimic overlays. Window geometry for every `[Section]` with
