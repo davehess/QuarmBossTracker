@@ -72,6 +72,17 @@
   #deeps li .pb i{display:block;height:100%;background:rgba(88,166,255,0.6);border-radius:1px}
   #deeps li.tkrow .pb i{background:rgba(248,81,73,0.65)}
   #deeps li.me .pb i{background:#f6c365}
+  /* +pet (the guild lead, 2026-09-29): the pet's share is the end of the bar
+     in the pet colour, and "+pet" wears the same colour, so player and pet read
+     apart at a glance. Clicking +pet opens a line per pet: name, damage, spawn
+     id. The pet orange is the dashboard's 🐾 colour. Must stay after the three
+     rules above: same specificity, so the last one wins. */
+  #deeps li .pb{display:flex}
+  #deeps li .pb i{flex:none}
+  #deeps li .pb i.pet{background:#f0883e}
+  #deeps .petx{color:#f0883e;font-size:9px;cursor:pointer}
+  #deeps li.petline{display:block;padding:0 0 1px 30px;font-size:10px;color:#f0883e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #deeps li.petline .pid{color:#8b949e}
   /* Your row when it fell below the visible cutoff and got appended — a dashed
      rule separates it from the contiguous top-N above. */
   li.me-extra{border-top:1px dashed rgba(110,118,129,0.35);margin-top:1px;padding-top:2px}
@@ -460,6 +471,32 @@
     HIST_IDX = parseInt(b.getAttribute('data-i'), 10) || 0;
     tick().catch(function(){});
   });
+  // +pet opens its owner's pets underneath (the guild lead, 2026-09-29). Owners
+  // are kept by lowercase name, so the choice survives the rows being rebuilt
+  // every second. The window turns interactive only while the cursor is on a
+  // +pet — the rest of the scoreboard stays click-through to EverQuest — and the
+  // toggle runs on mousedown: a row can be rebuilt between press and release,
+  // which would swallow a click.
+  var _petOpen = new Set();
+  var deepsEl = document.getElementById('deeps');
+  var _onPetx = function(el){ return !!(el && el.closest && el.closest('.petx')); };
+  if (deepsEl) {
+    deepsEl.addEventListener('mouseover', function(e){
+      if (_onPetx(e.target)) { try { window.mimic.overlayHoverInteractive(true); } catch (x) {} }
+    });
+    deepsEl.addEventListener('mouseout', function(e){
+      if (_onPetx(e.target) && !_onPetx(e.relatedTarget)) { try { window.mimic.overlayHoverInteractive(false); } catch (x) {} }
+    });
+    deepsEl.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (x) {} });
+    deepsEl.addEventListener('mousedown', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('.petx') : null;
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      var k = b.getAttribute('data-owner');
+      if (_petOpen.has(k)) _petOpen.delete(k); else _petOpen.add(k);
+      tick().catch(function(){});
+    });
+  }
   // One row of the fight list: the mob, then how long it took and how long
   // ago it ended; "…" while the guild's numbers are still settling.
   function histItemHtml(h, i, on, nowMs) {
@@ -608,6 +645,9 @@
         owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
         owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
                                                 // (7 is localDmg once the guild merge runs)
+        // index 10 = the pets folded in, kept apart for the bar's pet share and
+        // the +pet line (index 9 is the pet row's own spawn id).
+        (owner[10] = owner[10] || []).push({ name: String(r[0]), v: r[1] || 0, id: r[9] || null });
       });
     return _folded.sort(function(a,b){ return (b[1]||0)-(a[1]||0); });
   }
@@ -699,7 +739,8 @@
         // …and 'pet' there = a summoned pet whose owner nobody has named yet
         // (FB-35): labelled "(pet)" so it never reads as a raider.
         allRows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || (t && t.pet_summoned ? 'pet' : false)])
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || (t && t.pet_summoned ? 'pet' : false),
+                               undefined, false, (t && t.pet_spawn_id) || null])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
         allRows = _foldPetsIntoOwners(allRows);
@@ -855,8 +896,12 @@
         // owner proof say "(charmed)" — same-name charm pets can't be told
         // apart (no spawn id), so the meter never guesses a specific raider.
         // Owner absorbed a pet's damage — mark it so the number is explainable.
+        var pets = (row[8] && Array.isArray(row[10])) ? row[10] : null;
+        var petSum = pets ? pets.reduce(function(a, p){ return a + (p.v || 0); }, 0) : 0;
+        var petKey = String(n).toLowerCase();
+        var petOpen = !!(pets && _petOpen.has(petKey));
         var petHtml = row[8]
-          ? ' <span style="color:#8b949e;font-size:9px" title="includes this player\'s pet damage">+pet</span>'
+          ? ' <span class="petx" data-owner="' + esc(petKey) + '" title="Includes this player\'s pet damage: the orange end of the bar. Click for the pet\'s name, damage and spawn id; click again to close.">+pet</span>'
           : '';
         var ownerHtml = petOwner
           ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
@@ -876,6 +921,15 @@
         var cls = 'pbrow' + (TAB_MODE === 'tank' ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
         var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
         var barW = topDmg > 0 ? Math.min(100, (d / topDmg) * 100) : 0;
+        var petW = (petSum > 0 && d > 0) ? barW * Math.min(1, petSum / d) : 0;
+        // One line per pet under its owner once +pet is clicked. The spawn id is
+        // there when it is provable (the agent's _petSpawnIdFor), else "unknown".
+        var petLines = petOpen ? pets.slice().sort(function(a, b){ return (b.v || 0) - (a.v || 0); }).map(function(p){
+          return '<li class="petline">↳ ' + esc(p.name) + ' · ' + fmt(p.v || 0)
+            + (d > 0 ? ' (' + Math.round((p.v || 0) / d * 100) + '% of ' + esc(n) + '\'s)' : '')
+            + ' · <span class="pid"' + (p.id ? '' : ' title="Known once the owner runs Zeal 1.4.6 or newer with Mimic and the pet has said \'My leader is\', or when someone tags or targets it"')
+            + '>' + (p.id ? 'spawn id ' + p.id : 'spawn id unknown') + '</span></li>';
+        }).join('') : '';
         return '<li class="' + cls + '">'
              + '<span class="r">' + (typeof rank === 'number' ? rank + '.' : rank) + '</span>'
              + '<span class="n">' + esc(n) + petHtml + ownerHtml + maxHitHtml + '</span>'
@@ -891,8 +945,9 @@
              + '<span class="obs">' + (_obsDiffers ? fmt(row[7]) : '') + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
-             + '<span class="pb"><i style="width:' + barW.toFixed(1) + '%"></i></span>'
-             + '</li>';
+             + '<span class="pb"><i style="width:' + (barW - petW).toFixed(1) + '%"></i>'
+               + (petW > 0 ? '<i class="pet" style="width:' + petW.toFixed(1) + '%"></i>' : '') + '</span>'
+             + '</li>' + petLines;
       }).join('');
       // Mob-total footer — EQLogParser's bottom line: <mob> · total · total DPS ·
       // duration, scored over EVERY witnessed player this fight.
