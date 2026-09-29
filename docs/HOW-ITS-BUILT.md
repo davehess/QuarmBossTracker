@@ -859,7 +859,11 @@ group claim → catch-all) using the `group` the agent stamps on timer rows (`_b
 (`canvasOwnsTriggers`). Layout `cfg.canvasLayouts[<W>x<H>]` via `canvas-state` / `canvas-save`; arrange via
 `canvas-edit` (tray "↳ Arrange the canvas…", dashboard ✥ Arrange). Every panel also carries an always-on
 `.mvbtn` ✥ (`data-wp-interact`, `startDrag(…, anyTime)`) that moves it and opens its settings while locked;
-the panel body takes the mouse only while arranging (DECISIONS §87). Test `test/timers-canvas.test.js`.
+the panel body takes the mouse only while arranging (DECISIONS §87). 🧪 test rows: the settings button sets
+`_testing[id]` for 30 s, `applyFrame` passes `_edit || _isTesting(id)` to the part's `wpPartSample`, and the
+part's `_sampleTimers` holds one sample per group plus one per claimed name (`wpCanvasPanelNames`); callouts
+panels get `wpPartFlash`. `placeMenu` keeps the settings view whole on screen (§92).
+Test `test/timers-canvas.test.js`.
 Catalog entry in `docs/DESIGN-overlay-catalog.md`. DECISIONS §79.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)

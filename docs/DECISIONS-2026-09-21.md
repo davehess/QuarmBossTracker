@@ -4555,6 +4555,26 @@ what is installed in the EQ folder. On import:
 - Waiting on the guild lead's pick. Then build on beta: Mimic and agent on `beta`; bot routes and the
   migration on `main`.
 
+### 92. Timers canvas: 🧪 test rows per panel; the settings view stays on screen (2026-09-29, Mimic beta `7ebe2989`)
+The guild lead, on a panel's settings opened from ✥: *"This view could go off the screen. give me a button to
+show test data there of each type that's selected there"*.
+- **🧪 Show test rows** (every timers panel's settings): that one panel shows a sample of every kind of
+  countdown that would land in it: one per group it claims, and one per timer it claims by name. It lasts
+  30 seconds or until pressed again, works locked or while arranging, and nothing is saved.
+  - The catch-all panel shows samples of whatever no other panel claims. The samples are routed exactly
+    like real countdowns.
+  - A callouts panel gets **🧪 Show a test callout** instead: one sample, shown and never spoken.
+- **The samples now cover all six groups.** "My spells on mobs" and "Loot bids" had none, so a panel
+  claiming only those looked empty while arranging too.
+- **The settings view is placed whole on the screen:** under the ✥ or panel it came from, else above it,
+  else as low as it can sit. It is never taller than the screen (it scrolls inside). It is placed again
+  when the "on screen now" list fills in, which used to grow it past the bottom edge. Opened from ✥, it
+  anchors to the ✥.
+- Tests in `test/timers-canvas.test.js`, mutation-checked:
+  - the samples cover every canvas group and the claimed names (run for real);
+  - `placeMenu` is run for real in three positions.
+  Rendered headless near the top and bottom of a screen.
+
 
 
 
