@@ -872,6 +872,21 @@ dock's catalog + the HUD ring). A hosted overlay has no window of its own: `_can
 newly hosted overlay's flag on and takes it out of the Dock. Preload's `WP_IN_CANVAS` hides the page's own
 ✥/✕/setup bar. "＋ Overlay" / "Bring in the N on screen now" in the canvas toolbar (`canvas-state` carries
 each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha only.
+**Pieces (Mimic 3.0 alpha `994eb032`, DECISIONS §103):** `apps/mimic/parts.js` holds the library.
+- `SOURCES`: the seven agent endpoints.
+- `PARTS`: 116 pieces, each `{id, cat, label, src, kind, get(data, at), sample}`.
+- `MODES` per kind; the renderers are HTML strings.
+- `resolve()` turns a countdown into a gauge locally, with `period` for the tick and swing.
+- `PRESETS`: today's overlays laid out as pieces.
+`canvas.html` side:
+- The `part` panel kind is drawn in place, with no iframe.
+- The data hub polls a source only while a placed piece or the open chooser tab needs it
+  (`neededSources`). `paintParts` rewrites a piece only when its HTML changed.
+- The chooser (`#chooser`, state in `layout.chooser`) places pieces by drag (`dropThing` → `addPart` /
+  `placeGroup`).
+- Ctrl-drag moves a `grp`, Shift-click fills `_sel`, and 💾 saves through `canvas-groups-save`
+  (`cfg.canvasGroups`).
+Test `test/canvas-pieces.test.js`. Alpha only.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
 `feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first

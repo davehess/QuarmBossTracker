@@ -192,6 +192,14 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-09-29).** The Timers canvas holds any of the 15 overlays as a panel: ＋ Overlay adds one, "Bring in"
   moves everything on screen at its spot and size. A hosted overlay has no window of its own; Remove gives it
   back. The views come later, one overlay at a time. `test/canvas-overlays.test.js`. §102.
+- **⏳ 3.0: pieces — every data element as a lego (alpha `994eb032`, 2026-09-29).** 116 pieces in 12
+  categories (`apps/mimic/parts.js`) in a movable 🧩 chooser; modes bar / ring / readout / big / pips /
+  rows / chips; today's 17 overlays as groups of pieces; Ctrl-drag a group, pull a piece out, Shift-click and
+  💾 to save a group. Next: slim endpoints for the /api/state pieces; timeline mode; anchoring to EQ windows.
+  `test/canvas-pieces.test.js`. §103.
+- **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
+  five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
+  C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
 - **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
   Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
   does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the
