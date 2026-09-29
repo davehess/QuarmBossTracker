@@ -3200,8 +3200,14 @@ function _projectRect(r, from, to) {
   const y = Math.max(to.y, Math.min(to.y + to.height - h, Math.round(to.y + fy * to.height)));
   return { x, y, width: w, height: h };
 }
-// o: { prevSig, curSig, memory, currentRects: {boundsKey: rect}, curDisplays: [{bounds}], target: {bounds, workArea} }
-// → { kind: 'restore' | 'bring' | 'none', moves: {boundsKey: rect} }
+// o: { prevSig, curSig, memory, currentRects: {boundsKey: rect},
+//      curDisplays: [{bounds, workArea}], target: {bounds, workArea} (EverQuest's screen now) }
+// → { kind: 'restore' | 'bring' | 'none', moves: {boundsKey: rect}, withEq, side, sideOntoEq }
+// An overlay keeps its SIDE (the guild lead, 2026-09-29: "folks might want these
+// overlays on a second monitor, it's up to us to know if they're on the same or
+// a different monitor. or both"): one that sat on EverQuest's screen follows
+// EverQuest; one that sat on another screen goes to another screen that is not
+// EverQuest's, and lands with EverQuest only when no other screen is left.
 function _displayChangePlan(o) {
   const same = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
   const back = o.memory && o.memory[o.curSig] && o.memory[o.curSig].rects;
@@ -3213,18 +3219,53 @@ function _displayChangePlan(o) {
     if (Object.keys(moves).length) return { kind: 'restore', moves };
     return { kind: 'none', moves: {} };
   }
-  const prev = (o.memory && o.memory[o.prevSig] && o.memory[o.prevSig].rects) || {};
+  const prevMem = (o.memory && o.memory[o.prevSig]) || {};
+  const prev = prevMem.rects || {};
   const oldDisplays = _parseSigDisplays(o.prevSig);
   const stillThere = (d) => (o.curDisplays || []).some(c => same(c.bounds, d));
+  const inside = (d, x, y) => !!d && x >= d.x && x < d.x + d.width && y >= d.y && y < d.y + d.height;
+  // EverQuest's screen on the old setup (unknown → every overlay counts as with EQ, as before).
+  const oldEq = prevMem.eq ? oldDisplays.find(d => inside(d, prevMem.eq.x + prevMem.eq.width / 2, prevMem.eq.y + prevMem.eq.height / 2)) : null;
+  // The biggest screen that is not EverQuest's, for overlays that lived away from it.
+  const others = (o.curDisplays || []).filter(c => !same(c.bounds, o.target.bounds))
+    .sort((a, b) => (b.bounds.width * b.bounds.height) - (a.bounds.width * a.bounds.height));
+  const sideDest = others[0] ? (others[0].workArea || others[0].bounds) : null;
   const moves = {};
+  let withEq = 0, side = 0, sideOntoEq = 0;
   for (const k of Object.keys(o.currentRects)) {
     const was = prev[k] || o.currentRects[k];
     const cx = was.x + was.width / 2, cy = was.y + was.height / 2;
-    const from = oldDisplays.find(d => cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height);
+    const from = oldDisplays.find(d => inside(d, cx, cy));
     if (from && stillThere(from)) continue;   // its screen is unchanged: leave it where the raider put it
-    moves[k] = _projectRect(was, from || o.target.bounds, o.target.workArea);
+    const wasWithEq = !oldEq || !from || same(from, oldEq);
+    if (wasWithEq || !sideDest) {
+      moves[k] = _projectRect(was, from || o.target.bounds, o.target.workArea);
+      if (wasWithEq) withEq++; else { side++; sideOntoEq++; }
+    } else {
+      moves[k] = _projectRect(was, from, sideDest);
+      side++;
+    }
   }
-  return Object.keys(moves).length ? { kind: 'bring', moves } : { kind: 'none', moves: {} };
+  return Object.keys(moves).length ? { kind: 'bring', moves, withEq, side, sideOntoEq } : { kind: 'none', moves: {} };
+}
+// The question, in words that say where each overlay is going.
+function _displayPlanText(plan, eqKnown) {
+  const n = Object.keys(plan.moves).length;
+  const count = (k) => (k === 1 ? '1 overlay' : k + ' overlays');
+  if (plan.kind === 'restore') {
+    return { message: 'Your screens are back the way they were.',
+      detail: 'Put ' + count(n) + ' back where you had them on this screen setup?',
+      buttons: ['Put them back', 'Leave them'] };
+  }
+  const eqScreen = eqKnown ? 'the screen EverQuest is on' : 'your main screen';
+  const withEq = plan.withEq || 0, side = plan.side || 0, sideOntoEq = plan.sideOntoEq || 0;
+  const parts = [];
+  if (withEq) parts.push(count(withEq) + ' that sat with EverQuest onto ' + eqScreen);
+  if (side - sideOntoEq) parts.push(count(side - sideOntoEq) + ' from your other screen onto the other screen you still have');
+  if (sideOntoEq) parts.push(count(sideOntoEq) + ' from your other screen onto ' + eqScreen + ' (the only screen left)');
+  const detail = (parts.length ? 'Move ' + parts.join(', and ') : 'Move ' + count(n) + ' onto ' + eqScreen)
+    + ', each at the same spot it had? They sat on a screen that went away or changed shape.';
+  return { message: 'Your screen setup changed.', detail, buttons: ['Move them', 'Leave them'] };
 }
 function _boundsKeyForEntry(key, win) {
   if (key === 'canvas') return null;                 // it re-covers its own screen
@@ -3244,6 +3285,10 @@ function _rememberLayout(cfg, sig, key, b) {
   const cur = (all[sig] && all[sig].rects) ? all[sig] : { rects: {} };
   cur.rects[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
   cur.at = Date.now();
+  // Where EverQuest was on this setup, so a later change knows which overlays
+  // sat WITH it and which sat on another screen.
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  if (eq) cur.eq = { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height };
   all[sig] = cur;
   const sigs = Object.keys(all).sort((a, c) => (all[c].at || 0) - (all[a].at || 0));
   for (const s of sigs.slice(_LAYOUT_MEMORY_MAX)) delete all[s];
@@ -3290,7 +3335,7 @@ async function _askAboutDisplays() {
   const cfg = loadConfig();
   const plan = _displayChangePlan({
     prevSig, curSig, memory: cfg.overlayLayoutBySig || {}, currentRects: _overlayRectsNow(),
-    curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds })),
+    curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds, workArea: d.workArea })),
     target: { bounds: target.bounds, workArea: target.workArea },
   });
   const n = Object.keys(plan.moves).length;
@@ -3300,16 +3345,7 @@ async function _askAboutDisplays() {
     setTimeout(_snapshotLayout, 1500);
     return;
   }
-  const many = n === 1 ? '1 overlay' : n + ' overlays';
-  const opts = plan.kind === 'restore'
-    ? { message: 'Your screens are back the way they were.',
-        detail: 'Put ' + many + ' back where you had them on this screen setup?',
-        buttons: ['Put them back', 'Leave them'] }
-    : { message: 'Your screen setup changed.',
-        detail: many + ' sat on a screen that went away or changed shape. Bring '
-          + (n === 1 ? 'it' : 'them') + ' to ' + (eqWin ? 'the screen EverQuest is on' : 'your main screen')
-          + ', each at the same spot ' + (n === 1 ? 'it' : 'they') + ' had?',
-        buttons: ['Bring them over', 'Leave them'] };
+  const opts = _displayPlanText(plan, !!eqWin);
   _displayPromptOpen = true;
   let choice = 1;
   try {
@@ -3792,26 +3828,59 @@ function _zealBarRects(text, resW, resH) {
 }
 function _autoArrangeOverlays(pinnedKey) {
   const t0 = Date.now();
-  const area = _overlayHomeDisplay().workArea;   // home display, not always primary (multi-monitor)
+  // Each overlay is arranged on the screen it is ON (the guild lead, 2026-09-29:
+  // "folks might want these overlays on a second monitor, it's up to us to know
+  // if they're on the same or a different monitor. or both"). Only the HOME
+  // screen — EverQuest's, when Mimic knows it — carries EQ's own windows and
+  // the keep-the-middle-clear rule; another screen is just its work area.
+  const home = _overlayHomeDisplay();   // EQ's screen when known, else the stamped home / primary
   const ui = _parseUiWindowRects();
   const MARGIN = 8, STEP = 16;
-  const occupied = [];
-  if (ui) for (const r of ui.rects) occupied.push({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.w + MARGIN * 2, h: r.h + MARGIN * 2 });
+  const uiOccupied = [];
+  if (ui) for (const r of ui.rects) uiOccupied.push({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.w + MARGIN * 2, h: r.h + MARGIN * 2 });
   // Drop UI rects fully contained in another (bags inside the inventory,
   // gems inside the spellbar, …) — they add obstacle-scan cost but never
   // change placement. EQ inis carry 60-100 sections; this typically halves
   // the obstacle list.
-  for (let i = occupied.length - 1; i >= 0; i--) {
-    const a = occupied[i];
-    for (let j = 0; j < occupied.length; j++) {
+  for (let i = uiOccupied.length - 1; i >= 0; i--) {
+    const a = uiOccupied[i];
+    for (let j = 0; j < uiOccupied.length; j++) {
       if (i === j) continue;
-      const b = occupied[j];
+      const b = uiOccupied[j];
       if (a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h) {
-        occupied.splice(i, 1);
+        uiOccupied.splice(i, 1);
         break;
       }
     }
   }
+  // Visible overlays, biggest first (big ones need the scarce large gaps),
+  // grouped by the screen each one sits on.
+  const wins = _overlayEntries()
+    // Not the Timers canvas: it is screen-sized, fits nowhere, and would block every spot.
+    .filter(([k, w]) => { if (k === 'canvas') return false; try { return w.isVisible(); } catch { return false; } })
+    .map(([key, win]) => ({ key, win, b: win.getBounds() }))
+    .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
+  const byScreen = new Map();
+  for (const o of wins) {
+    let d = home;
+    try { d = screen.getDisplayMatching(o.b); } catch { /* keep home */ }
+    if (!byScreen.has(d.id)) byScreen.set(d.id, { display: d, list: [] });
+    byScreen.get(d.id).list.push(o);
+  }
+  let placed = 0, skipped = 0;
+  for (const { display, list } of byScreen.values()) {
+    const isHome = display.id === home.id;
+    const r = _arrangeOnScreen(display.workArea, list, isHome ? uiOccupied.slice() : [], isHome, pinnedKey, MARGIN, STEP);
+    placed += r.placed; skipped += r.skipped;
+  }
+  const summary = { placed, skipped, screens: byScreen.size, ms: Date.now() - t0, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
+  appendAgentLog('[auto-arrange] ' + JSON.stringify(summary) + '\n');
+  return summary;
+}
+// One screen's worth of auto-arrange. `occupied` = obstacles already on it (EQ's
+// own windows, on the home screen only); `keepMiddleClear` = the perimeter rule,
+// which only means something on the screen EverQuest is played on.
+function _arrangeOnScreen(area, wins, occupied, keepMiddleClear, pinnedKey, MARGIN, STEP) {
   // Perimeter rule (a member, 2026-07-11 — "they should stay out of the center
   // of the screen for the most part, lining the outside"): the middle ~52% of
   // the display is the play view and is a soft no-go zone. Pass 1 blocks it,
@@ -3829,12 +3898,6 @@ function _autoArrangeOverlays(pinnedKey) {
   // "overlays in contention" pile-up. Skipped overlays keep their block.
   const pendingCur = new Map();
   const pad = (b) => ({ x: b.x - MARGIN, y: b.y - MARGIN, w: b.width + MARGIN * 2, h: b.height + MARGIN * 2 });
-  // Visible overlays, biggest first (big ones need the scarce large gaps).
-  const wins = _overlayEntries()
-    // Not the Timers canvas: it is screen-sized, fits nowhere, and would block every spot.
-    .filter(([k, w]) => { if (k === 'canvas') return false; try { return w.isVisible(); } catch { return false; } })
-    .map(([key, win]) => ({ key, win, b: win.getBounds() }))
-    .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   for (const o of wins) pendingCur.set(o.key, pad(o.b));
   // Pinned overlay (arrange-on-show passes the just-opened one, a member
   // 2026-07-12: "the overlay must not jump when opening"): it stays exactly
@@ -3871,7 +3934,7 @@ function _autoArrangeOverlays(pinnedKey) {
         for (let x = area.x + area.width - w; x >= area.x && !spot; x -= STEP) {
           // Obstacles whose x-range intersects this column (padded rects).
           colObstacles.length = 0;
-          if (blockCenter && centerZone.x < x + w && centerZone.x + centerZone.w > x) colObstacles.push(centerZone);
+          if (keepMiddleClear && blockCenter && centerZone.x < x + w && centerZone.x + centerZone.w > x) colObstacles.push(centerZone);
           for (const ob of occupied) if (ob.x < x + w && ob.x + ob.w > x) colObstacles.push(ob);
           for (const [k, r] of pendingCur) if (k !== o.key && r.x < x + w && r.x + r.w > x) colObstacles.push(r);
           let y = area.y;
@@ -3897,9 +3960,7 @@ function _autoArrangeOverlays(pinnedKey) {
     }
     if (!done) skipped++;   // left where it was — its pendingCur rect keeps blocking
   }
-  const summary = { placed, skipped, ms: Date.now() - t0, uiWindows: ui ? ui.rects.length : 0, uiFile: ui ? path.basename(ui.file) : null, resolution: ui ? ui.resolution : null };
-  appendAgentLog('[auto-arrange] ' + JSON.stringify(summary) + '\n');
-  return summary;
+  return { placed, skipped };
 }
 
 function applyOverlayInteractivity() {

@@ -113,7 +113,7 @@ describe('B: where EverQuest\'s window is', () => {
 
 describe('the screens changed: remember per setup, then ask', () => {
   const plan = evalBlock(sliceBlock(main, 'function _parseSigDisplays(sig) {',
-    "return Object.keys(moves).length ? { kind: 'bring', moves } : { kind: 'none', moves: {} };\n}"),
+    "return Object.keys(moves).length ? { kind: 'bring', moves, withEq, side, sideOntoEq } : { kind: 'none', moves: {} };\n}"),
     ['_parseSigDisplays', '_projectRect', '_displayChangePlan']);
   const MAIN = { x: 0, y: 0, width: 1920, height: 1080 };
   const SIDE = { x: 1920, y: 0, width: 1920, height: 1080 };
@@ -162,6 +162,48 @@ describe('the screens changed: remember per setup, then ask', () => {
       currentRects: { triggerBounds: trig }, curDisplays: [{ bounds: MAIN }], target }).kind).toBe('none');
   });
 
+  // "folks might want these overlays on a second monitor, it's up to us to know if they're on the same
+  // or a different monitor. or both" — an overlay keeps its SIDE.
+  const THIRD = { x: 3840, y: 0, width: 1920, height: 1080 };
+  const THREE = BOTH + '|3840,0,1920x1080';
+  const eqOnMain = { x: 0, y: 0, width: 1920, height: 1080 };
+  const wa = (d) => ({ bounds: d, workArea: { x: d.x, y: d.y, width: d.width, height: d.height - 40 } });
+  const onThird = { x: 3840 + 960, y: 540, width: 300, height: 200 };
+
+  it('a side-screen overlay whose screen goes away moves to the other side screen, not onto EverQuest', () => {
+    const memory = { [THREE]: { rects: { whoBounds: onThird, triggerBounds: trig }, eq: eqOnMain } };
+    const p = plan._displayChangePlan({ prevSig: THREE, curSig: BOTH, memory,
+      currentRects: { whoBounds: { x: 100, y: 100, width: 300, height: 200 }, triggerBounds: trig },
+      curDisplays: [wa(MAIN), wa(SIDE)], target: wa(MAIN) });
+    expect(p).toMatchObject({ kind: 'bring', withEq: 0, side: 1, sideOntoEq: 0 });
+    expect(p.moves.whoBounds).toEqual({ x: 1920 + 960, y: 520, width: 300, height: 200 });   // on SIDE, same spot
+  });
+
+  it('with no other screen left, a side overlay comes to EverQuest\'s screen, and says so', () => {
+    const memory = { [BOTH]: { rects: { whoBounds: hud }, eq: eqOnMain } };
+    const p = plan._displayChangePlan({ prevSig: BOTH, curSig: ONE, memory,
+      currentRects: { whoBounds: { x: 100, y: 100, width: 300, height: 200 } },
+      curDisplays: [wa(MAIN)], target: wa(MAIN) });
+    expect(p).toMatchObject({ kind: 'bring', withEq: 0, side: 1, sideOntoEq: 1 });
+  });
+
+  it('EverQuest\'s screen goes away: its overlays follow EverQuest; the side screen\'s stay put', () => {
+    const memory = { [BOTH]: { rects: { triggerBounds: trig, hudBounds: hud }, eq: eqOnMain } };
+    const p = plan._displayChangePlan({ prevSig: BOTH, curSig: '1920,0,1920x1080', memory,
+      currentRects: { triggerBounds: { x: 2620, y: 200, width: 600, height: 200 }, hudBounds: hud },
+      curDisplays: [wa(SIDE)], target: wa(SIDE) });
+    expect(p).toMatchObject({ kind: 'bring', withEq: 1, side: 0 });
+    expect(Object.keys(p.moves)).toEqual(['triggerBounds']);
+    expect(p.moves.triggerBounds.x).toBe(1920 + 700);
+  });
+
+  it('the question names where each overlay is going', () => {
+    const { _displayPlanText } = evalBlock(sliceBlock(main, 'function _displayPlanText(plan, eqKnown) {', "buttons: ['Move them', 'Leave them'] };\n}"), ['_displayPlanText']);
+    const t = _displayPlanText({ kind: 'bring', moves: { a: 1, b: 1, c: 1 }, withEq: 2, side: 1, sideOntoEq: 0 }, true);
+    expect(t.detail).toBe('Move 2 overlays that sat with EverQuest onto the screen EverQuest is on, and 1 overlay from your other screen onto the other screen you still have, each at the same spot it had? They sat on a screen that went away or changed shape.');
+    expect(_displayPlanText({ kind: 'restore', moves: { a: 1 } }, true).buttons).toEqual(['Put them back', 'Leave them']);
+  });
+
   it('never moves anything by itself: display events ask; positions written while settling are not remembered', () => {
     const code = stripJs(main);
     expect(code).toContain("screen.on('display-removed',          _onDisplaysChanged);");
@@ -172,5 +214,39 @@ describe('the screens changed: remember per setup, then ask', () => {
     expect(ask).toMatch(/await dialog\.showMessageBox\(/);
     expect(ask).toMatch(/if \(choice === 0\) \{/);
     expect(ask).toMatch(/_rescueOffscreenOverlays\(\);/);
+  });
+});
+
+describe('auto-arrange keeps each overlay on the screen it is on', () => {
+  // Real _autoArrangeOverlays + _arrangeOnScreen over two fake screens and fake windows.
+  function run(rects) {
+    const src = sliceBlock(main, 'function _autoArrangeOverlays(pinnedKey) {', '  return { placed, skipped };\n}');
+    const MAIN = { id: 1, bounds: { x: 0, y: 0, width: 1920, height: 1080 }, workArea: { x: 0, y: 0, width: 1920, height: 1040 } };
+    const SIDE = { id: 2, bounds: { x: 1920, y: 0, width: 1920, height: 1080 }, workArea: { x: 1920, y: 0, width: 1920, height: 1040 } };
+    const wins = Object.entries(rects).map(([key, b]) => {
+      const w = { key, b: { ...b }, isVisible: () => true, getBounds() { return { ...this.b }; }, setBounds(nb) { this.b = { ...nb }; } };
+      return [key, w];
+    });
+    const env = {
+      screen: { getDisplayMatching: (r) => ((r.x + r.width / 2) >= 1920 ? SIDE : MAIN) },
+      _overlayHomeDisplay: () => MAIN, _parseUiWindowRects: () => null, _overlayEntries: () => wins,
+      appendAgentLog: () => {}, path: { basename: (p) => p },
+    };
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(...Object.keys(env), src + '\nreturn _autoArrangeOverlays;')(...Object.values(env));
+    const summary = fn();
+    return { summary, after: Object.fromEntries(wins.map(([k, w]) => [k, w.b])) };
+  }
+  it('an overlay on the side screen is arranged on the side screen; one with EverQuest stays on its screen', () => {
+    const { summary, after } = run({
+      hud: { x: 800, y: 500, width: 300, height: 200 },          // middle of EQ's screen
+      who: { x: 1920 + 900, y: 500, width: 320, height: 280 },   // middle of the side screen
+    });
+    expect(summary).toMatchObject({ placed: 2, skipped: 0, screens: 2 });
+    expect(after.who.x).toBeGreaterThanOrEqual(1920);
+    expect(after.hud.x + after.hud.width).toBeLessThanOrEqual(1920);
+    // Each packs from its own screen's right edge.
+    expect(after.hud.x).toBe(1920 - 300);
+    expect(after.who.x).toBe(1920 * 2 - 320);
   });
 });
