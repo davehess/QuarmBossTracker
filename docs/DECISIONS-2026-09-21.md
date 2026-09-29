@@ -4480,6 +4480,9 @@ him working"*. So the first lead was right, and switching off it was the mistake
 - **The build idea above earns its place:** the crash review comparing a player's game files with everyone
   else's would have said "your eqgame.dll is not the one the guild has" on the first look. The data is
   already uploaded. It is the guild lead's call (it is UI, so options on beta first).
+- **Closed:** after the swap, `/zeal version` on the member's client read `eqgame.dll version: 7 (Jul 7
+  2026 09:14:03)`, which is Quarm's current build. It matches the guild lead's working copy (318,464 bytes,
+  md5 `d45c9b22…`; full fingerprint in the runbook §3c).
 
 
 
