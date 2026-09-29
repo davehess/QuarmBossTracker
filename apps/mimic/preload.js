@@ -284,7 +284,11 @@ document.addEventListener('DOMContentLoaded', function () {
     st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92)) !important;border-radius:8px}'
       // (on <body> itself, so the opacity fade of its children cannot reach
       // it — the overlay's opacity is folded into the alpha instead)
-      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      + 'body.wp-backdrop:not(:has(#wrap)):not(:has(#screenBtn)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      // The Timers canvas is a screen-sized window, so a plate on its <body> blacked out the whole screen
+      // (the guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark").
+      // There each panel gets the plate instead. #screenBtn is the canvas's own toolbar button.
+      + 'body.wp-backdrop:has(#screenBtn) #panels > .panel:not(.off){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}'
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
