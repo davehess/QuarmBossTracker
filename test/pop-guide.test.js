@@ -164,6 +164,35 @@ describe('the tick action', () => {
   });
 });
 
+// Officers were working Justice and Storms off this page on 2026-09-29 and it confused them ("is this
+// all we have to do for justice?" · "who to turn the mark into?"). Checked against the server's quest
+// scripts (#Mavuin, The_Tribunal, Askr_the_Lost, postorms/player.lua, bothunder/player.lua, Karana)
+// and EQProgression's Talisman page. These pin what was wrong so it cannot drift back.
+describe('Justice and the Bastion of Thunder read the way the server works', () => {
+  const step = (k) => GUIDE_ITEMS.find(i => i.key === k);
+  it('the Tribunal checks your Mark and does not take it; its only circle is by the trial room', () => {
+    const t = step('justice_tribunal');
+    expect(t.detail).toMatch(/does not take it/);
+    expect(t.where.map(l => [l.y, l.x])).toEqual([[765, 469]]);   // the Y 1225 circle is inside the Hammer's room
+    expect(step('flag_trial_justice').detail).toMatch(/SIX of its Mark/);
+    expect(step('justice_seventh_hammer').says.map(s => s.text)).toEqual(['knowledge']);
+  });
+  it('Askr takes one head, then a sealed bag, then a meld, and the Talisman is a flag, not a keyring item', () => {
+    const a = step('flag_askr');
+    expect(a.says.map(s => s.text)).toEqual(['it was me', 'paying attention', 'continue', 'bastion of thunder']);
+    expect(a.detail).not.toMatch(/keyring/);
+    const shrine = step('storms_zone_bot');
+    expect(shrine.detail).toMatch(/Justice flag/);
+    expect(shrine.detail).toMatch(/not a keyring item/);
+    expect(shrine.where.map(l => [l.zone, l.y, l.x])).toEqual([['postorms', -163, -362]]);
+  });
+  it('the Symbol of Torden is required, not optional, and the tower walk is its own step', () => {
+    expect(step('bot_symbol').title).not.toMatch(/Optional/);
+    expect(step('bot_tower').says.map(s => s.text)).toEqual(['transport', 'what storm']);
+    expect(step('flag_agnarr').detail).toMatch(/casts Gate/);
+  });
+});
+
 describe('the page and the table', () => {
   it('is members-only and reads only the viewer’s own characters', () => {
     const page = stripJs(read('web/app/pop/guide/page.tsx'));

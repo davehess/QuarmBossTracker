@@ -37,6 +37,33 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-guide-justice-bot-2026-09-29',
+    title: 'Web 1.8.48 · Bot 3.1.176',
+    version: 'Web 1.8.48 · Bot 3.1.176',
+    date: '2026-09-29',
+    headline: 'The PoP checklist’s Justice and Bastion of Thunder steps now match what the server actually does.',
+    features: [
+      {
+        name: 'Bastion of Thunder, step by step',
+        blurb: 'Askr the Lost is three hand-ins: one storm giant head, a bag of three giant parts, and a meld of two medallions from different camps. The checklist lists every word to say to him. Then you click the shrine in the middle of Storms, which needs your Justice flag too.',
+      },
+      {
+        name: 'Agnarr’s tower',
+        blurb: 'The Symbol of Torden is required, one per raid, and the checklist says who drops its parts. A new step covers the two Askr stops inside the tower before you reach Agnarr.',
+      },
+      {
+        name: 'The Seventh Hammer',
+        blurb: 'An optional step: with all six Marks, tell a Tribunal “knowledge” for The Mark of Justice.',
+      },
+    ],
+    fixes: [
+      'Justice: the Tribunal only checks that you carry a Mark. Nobody takes it, and one trial win drops six Marks.',
+      'Justice: the second Tribunal location is inside the Seventh Hammer’s room, so it is gone from the list.',
+      'The “Talisman of Thunderous Foyer” is a flag you get from the Storms shrine, not a keyring item.',
+      'Flags from the Keeper of Sorrows, Mithaniel Marr, Coirnav, Fennin Ro, Xegony, the Arbitor of Earth and the Rathe Council now tick your checklist when Mimic sees them.',
+    ],
+  },
+  {
     key: 'screens-zeal-bars-2026-09-29',
     title: 'Mimic 2.7.5 beta',
     version: 'Mimic 2.7.5 beta',

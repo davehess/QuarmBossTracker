@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
+| **PoP checklist: Justice + Bastion of Thunder** | **Corrected live, web 1.8.48 + bot 3.1.176 (§86).** Six Marks per trial, the Mark is checked not taken, the wrong Tribunal location removed; Askr is three hand-ins; the Talisman is a flag from the Storms shrine and needs Justice; Symbol of Torden required; tower walk added; seven flag bosses now map | the guild lead: tell officers the page is corrected; decide the 9,846 hail rows in `pop_flags` (delete, or store them as evidence) |
 | **DPS HUD +pet breakdown** | **Beta `672ff15e` (agent 3.7.45) + bot 3.1.175 (§85).** Pet's share of the bar in pet orange, "+pet" in the same colour; click for name, damage, spawn id | the guild lead: on a pet class's row, check the orange end reads apart from the row colour (gold on your own row); click +pet. Say if orange should be purple |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
@@ -4314,6 +4315,54 @@ someone does pet leader and has zeal tags on"*
   id, and the declaration names the owner for everyone else. Otherwise the line says unknown; it never
   guesses.
 - Tests: `dps-hud-pet-breakdown` (beta) and `pet-owners-stream` (main), each rule mutation-checked.
+
+### 86. PoP checklist: Justice and the Bastion of Thunder corrected; the page rebuilt on beta; auto-fill (2026-09-29, web 1.8.48, bot 3.1.176)
+The guild lead, top priority, after officers asked in chat "is this all we have to do for justice?", "who to
+turn the mark into?" and "are the medallions the giant heads?": *"the pop guide page needs some love. more
+detail, maps, who to turn things into, expectations and who you will go back to. a sidebar nav with
+sections. automatic fill in when someone is running mimic … and note when it's been filled in by database
+or mimic in a line item. need this reviewed as top priority"* — with EQProgression's Talisman of Thunderous
+Foyer page.
+- **Reviewed against the server, not memory.** The quest scripts in `eqemu_quest_scripts` were the
+  authority, read alongside EQProgression's Talisman, flagging and Symbol of Torden pages. The scripts are
+  #Mavuin, The_Tribunal, pojustice/player.lua, Askr_the_Lost (postorms and bothunder), postorms/player.lua,
+  bothunder/player.lua and Karana. Every place was checked in `eqemu_spawn2` or `eqemu_doors`.
+- **Justice (live now):**
+  - A trial's boss drops **six** of its Mark, one each.
+  - The Tribunal **checks** your Mark and never takes it.
+  - The second "Tribunal" location (Y 1225 X 75) is inside the Seventh Hammer's room, so it was wrong and
+    is gone.
+  - The last Mavuin hail is the Justice flag, and the Storms shrine checks it.
+  - New optional step: **the Seventh Hammer**. Say "knowledge" to a Tribunal while holding all six Marks to
+    get The Mark of Justice. The member in chat was right that it takes all six.
+- **Storms / Bastion of Thunder (live now):**
+  - Askr is **three hand-ins**: one Storm Giant Head, then a sealed bag of beard + bone + sash, then a meld
+    of two medallions from different camps. The phrases are "it was me", "paying attention", "continue"
+    ×2 and "bastion of thunder".
+  - The **Talisman of Thunderous Foyer is a flag**, granted by clicking the shrine at Y -163 X -362. It is
+    not a keyring item; EQProgression's flagging page says keyring, but its own Talisman page and the
+    script both say flag.
+  - The shrine needs **Askr's flag AND the Justice flag**.
+  - The **Symbol of Torden is required**, one per raid, with a 5-minute window. The old guide wrongly said
+    optional.
+  - New step: the tower walk (Evynd → Askr "transport" → Emmerik → Askr "what storm" → the vortex).
+  - Karana answers only the raid with kill credit, and "send me" is Gate.
+  - `test/pop-guide.test.js` pins each correction.
+- **Auto-fill fix, bot 3.1.176.** The flag map was keyed on short boss names, but the server names seven
+  flag bosses differently: The Keeper of Sorrows, Lord Mithaniel Marr, Coirnav the Avatar of Water,
+  Fennin Ro the Tyrant of Fire, #Xegony_the_Queen_of_Air, A Mystical Arbitor of Earth and A Rathe
+  Councilman. Those flags would never have ticked. The map now carries those names, and `_popBossKey`
+  reads the catalog and log spellings alike (`test/pop-flags-boss-map.test.js`).
+- **Maps:** `zone_outline(zone)` is a read-only SQL function, migration `20260929123000`. It draws a zone
+  from the server's own spawn points, doors, ground spawns and objects, snapped to a grid, plus the doors
+  that lead elsewhere. No map files are borrowed. About 5 KB per zone; the page caches it for a day.
+- ⚠ **Found, not fixed (the guild lead's call):**
+  - `pop_flags` holds **9,846 `unmapped` rows**, all hails the agent witnessed during log backfill, not
+    flag grants. The bot drops their `source` and `npc` and stores each as a grant for the person who
+    hailed. The guide ignores `unmapped`, so nothing shows wrong today.
+  - Two options: (a) stop writing hails as grants and delete those rows, or (b) store `source` and `npc`
+    so they become useful evidence. Deleting is irreversible, so it waits for a yes.
+  - `PRIVACY.md` also says we keep the hail's NPC text and witness, which we don't.
 
 
 
