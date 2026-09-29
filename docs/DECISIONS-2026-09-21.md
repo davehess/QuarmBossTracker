@@ -5079,3 +5079,27 @@ formats landed (one crowded line per piece, names cut off, a sideways scrollbar)
   underneath, by name.
 - The chooser went from 300 to 360 px and from 11 to 12 px text.
 - Its right edge drags from 280 to 640 px, and the width is kept with the layout.
+
+### 108. Vercel Deployment Storage over the Hobby 10 GB (2026-09-29)
+The guild lead, with the Usage page: *"vercel is overdeployed on storage it seems"* — Deployment Storage
+**10.32 GB / 10 GB** ("Exceeded free resources"). The 7-day chart climbed about 2 GB a day, dropped once
+on Sep 26, and climbed again.
+- **Why:** every finished build keeps its whole output until retention deletes it (Hobby default: 30 days
+  for every kind). `web/public` alone is about 40 MB, and a 23 MB GIF (`pvp/deeps-pit-full.gif`) is more
+  than half of that. Until §101 today, every push to every one of 50 branches built the site. Vercel also
+  keeps the latest build of every branch that still exists, however old it is.
+- **Done:** `web/vercel.json` `ignoreCommand: "git diff --quiet HEAD^ HEAD -- ."`. A main or beta push that
+  changes nothing under `web/` now skips the build, and skipped builds store nothing; most pushes are
+  bot, agent or docs changes. This does not change the 100-deployments-a-day count, since a skipped build
+  still counts there. The site imports nothing from outside `web/`. `test/vercel-deploy-branches.test.js`;
+  CLAUDE.md release playbook.
+- **The guild lead's, in the dashboard** (the Vercel connector is not signed in, and no token is in the
+  repo):
+  1. Project → Settings → Security → Deployment Retention Policy: set Preview, Canceled and Errored to the
+     shortest option offered. Production keeps its last builds anyway, because the live one carries the
+     domain.
+  2. Deployments list: delete old preview builds. The CLI does it in one line: `vercel remove <project>
+     --safe --yes` removes every build that carries no live URL or domain.
+- **Offered, not done:** deleting merged `task/*` and `claude/*` branches (about 40 of the 50) so their
+  last builds can expire. Deleting branches cannot be undone, so it waits for a yes. Also offered:
+  replacing the 23 MB GIF with a video of a few MB.
