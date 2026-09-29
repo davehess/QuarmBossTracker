@@ -128,6 +128,7 @@ is ephemeral. It is a desktop-session job.
 | **Screens changed → ask; EQ's real window; Zeal bars in UI Studio** | **Beta 2026-09-29 (§80).** Positions remembered per screen setup; a monitor coming back offers "put them back", a lost or reshaped screen offers "bring them to EQ's screen"; Mimic reads EQ's window from Windows; UI Studio moves `/raidbars` and `/assistbar`. **§80a (`f3e444dd`):** each overlay keeps its screen — auto-arrange works per screen, a side-screen overlay goes to another side screen; overlays do not need windowed EQ | the guild lead: pull a monitor's power with overlays on it, then plug it back, and answer both prompts; move the raid bars in UI Studio and relog |
 | **3.0: formats, anchoring to game windows, one product (R11–R15)** | **Recorded 2026-09-29 (§80).** Every part in horizontal / vertical / arc / circle / thin / thick / transparent / locked-to-a-window; know EQ's window shapes; charm parts around the pet window; HP over the target window; the dashboard folded into one product | the guild lead: say whether to file the Zeal "ui windows" ask now (R12–R14 depend on it); options for how the dashboard and the builder fit together come next |
 | **Timers canvas (option A, FB-33)** | **Beta 2026-09-29 (§79; agent 3.7.42).** One screen-sized click-through window: Callouts, Timers and Charm panels, each dragged and sized alone; ＋ more timer panels that claim groups or timers by name; the trigger window stays the voice. **Every panel now has an always-on ✥** (§87, `v2.7.5-beta.14`). **Look signed off:** the guild lead, 2026-09-29, in game with four panels: *"panels look good"* | the guild lead: move a panel by its ✥ while locked (beta.14+), run a pull; say what the next panel type should be (Charm tracker, Tick, CH chain) and whether it feels heavy on the raid machine |
+| **Share a whole Mimic setup (file + direct)** | **Options written 2026-09-29 (§91), not built.** A: file + six-character share code (24 h). B: file + send to a named guildmate. Recommended: A now, B later on the same storage (which is also 3.0's "back up to your account") | the guild lead: pick A or B. Sessions: build on beta (Mimic + agent), bot routes + migration on main |
 | **CH chain: drag stutter, overlap ✕, grey out who didn't pick up** | **Queued 2026-09-29 (§77).** Stutters back when dragged after EQ was active; a stale slot's ✕ is hard to hit on overlap; grey the slot-holder another cleric covered | next session: needs a Windows repro for the drag |
 | **Trigger TTS "stopped working" (beta.3, a bard)** | **Open 2026-09-29 (§77).** Charm callouts no longer cancel shared speech; root cause unconfirmed | the member: send Mimic feedback with logs attached next time it goes quiet |
 | **/who overlay: Zone column** | **Beta 2026-09-29 (§73, agent 3.7.38).** `ZONE` in the title bar shows each player's zone from their last /who, off by default | the guild lead: try it after a `/who all`; say if it should be a filter or a sort too |
@@ -4499,6 +4500,60 @@ overlays that were missing from the screen, not the ones that are already arrang
 - `test/rescue-overlays.test.js`: the old "top-left off the top is lost" case is now "moves only as far as
   its ✥ needs". New cases cover under half showing (lost) and the HUD ring against the corner (untouched).
   Each rule was mutation-checked.
+
+### 90. Right-click 🖥 Move to another screen; Rescue always lands what it brings (2026-09-29, Mimic beta `f494f41c`)
+The guild lead: *"rescue did not bring the extended target to the current monitor. perhaps we add it to the
+right click menu"*.
+- **Why Rescue left it:** when this screen had no free spot for an overlay, the placement skipped it, so it
+  stayed where it was. "Bring them here" then did nothing for it, and a lost overlay stayed lost. Now a
+  brought overlay lands at the same spot on this screen, and a lost one at its remembered spot (else a
+  cascade near the top-left), overlapping if it must. (If Extended Target was sitting whole on the other
+  screen and the answer was "Leave them there", that was the old design working as meant; the new menu
+  row is the direct way.)
+- **The menu row:** every overlay's right-click menu gets one row per other screen, "🖥 Move to the screen
+  on the left / right / above / below". EverQuest's screen is marked when Mimic has read where EQ is, and
+  the size is added when two screens sit on the same side. The overlay goes to the same spot on that
+  screen, kept whole, and the spot is saved (`_persistBounds`; `setBounds` alone does not save).
+  There is no row with one screen, and none on the Timers canvas, which follows its own screen.
+- Tests: `test/move-to-screen.test.js` (new; the real handler over fake screens) and two new
+  `rescue-overlays` cases. Mutation-checked.
+
+### 91. Copying a whole Mimic setup to another person's install — options, not built (2026-09-29)
+The guild lead, relaying a member setting up a second install in their household: *"wants to be able to
+copy overlays and triggers and everything. we should support this, Direct sharing should be an option as
+well"*. Nothing does this today: Mimic has no settings export, and trigger import reads GINA/EQLP only.
+An inventory (file:line in the session that wrote this) says a setup lives in three places:
+- **Mimic's `mimic.config.json`** (Windows: `%APPDATA%\wolfpack-mimic\`). It holds overlay positions (absolute
+  pixels per screen setup), looks, hotkeys and the canvas layout (fractions). ⚠ **It also holds the sign-in
+  and identity**, so copying the file makes the other install upload as the first person. Never tell
+  anyone to copy it.
+- **Mimic's own `localStorage`:** the HUD builder per character (`wpHudParts:<char>`), plus the DPS HUD,
+  Melody, Buff queue, /who, Extended Target and CH chain options.
+- **The agent's `agent\personal_triggers.json`:** personal and suggested triggers. Rows can be scoped to
+  character names.
+**Never in a shared setup:** the sign-in, tokens and Discord identity, EQ and log paths, crash-report consent,
+the updater channel, the OpenDKP login, bids, the excluded-characters list, auto-start, and anything tied to
+what is installed in the EQ folder. On import:
+- per-character parts are re-pointed at the recipient's characters;
+- positions are placed on the recipient's EQ screen as fractions;
+- triggers that post to Discord arrive switched off, and sounds that point at a file on the sender's PC
+  are dropped.
+
+**Options (direct sharing; a file export/import underlies both):**
+
+| | What it is | Build | Maintenance | Runtime | Change |
+|---|---|---|---|---|---|
+| **A. File + share code** | Export → a file, or "Get a code" (six characters, 24 h). The other person: Import → file or code → preview with ticks → pick which of their characters get the per-character parts | M (the collector and the preview are most of it; one table and two bot routes) | M: every new setting must be marked shareable or private. A test fails on unmarked keys | one row per share, ~50 KB, deleted at expiry | low |
+| **B. File + send to a guildmate** | Pick a member; it arrives in their Mimic as "<name> sent you their setup — Preview / Import / Dismiss", via the existing notices | L: A's storage plus a picker, delivery, accept or decline, and limits against spam | M+: who-can-send rules | low | M |
+
+- **Recommendation:** A now; B later on the same storage if people ask. For a household, both people are
+  in the room, so a code is as quick as a push.
+- The same table is also the 3.0 "back up your setup to your account" (§83 step 2): owner-only rows that
+  never expire.
+- **Today, on stable, by hand:** copy `personal_triggers.json` between the two installs with Mimic closed,
+  then re-pick "For:" characters in Suggested triggers. Overlays: place by hand or use ✨ Auto-arrange.
+- Waiting on the guild lead's pick. Then build on beta: Mimic and agent on `beta`; bot routes and the
+  migration on `main`.
 
 
 
