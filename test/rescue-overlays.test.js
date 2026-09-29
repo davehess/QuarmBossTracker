@@ -68,15 +68,38 @@ describe('🧲 Rescue brings back lost overlays only', () => {
     expect(result).toMatchObject({ moved: 2, brought: 0, left: 0 });
   });
 
-  it('an overlay straddling an edge (middle off-screen) or with its ✥ corner off the top is lost', async () => {
-    const { after, moves } = await rescue({
+  it('an overlay straddling an edge (middle off-screen) or less than half on a screen is lost', async () => {
+    const { after, moves, result } = await rescue({
       straddle: { x: -250, y: 300, width: 300, height: 200 },   // middle at x=-100
-      topless:  { x: 700, y: -40, width: 300, height: 400 },    // middle on screen, top-left corner above it
+      mostlyOff: { x: -150, y: -150, width: 400, height: 400 }, // middle on screen, 39% of it showing
     });
+    expect(result, 'both are lost, not nudged').toMatchObject({ moved: 2, nudged: 0 });
     expect(moves.straddle).toBe(1);
-    expect(moves.topless).toBe(1);
+    expect(moves.mostlyOff).toBe(1);
     expect(onMain(after.straddle)).toBe(true);
-    expect(after.topless.y).toBeGreaterThanOrEqual(0);
+    expect(onMain(after.mostlyOff)).toBe(true);
+  });
+
+  // The guild lead, 2026-09-29: "make it so that rescue to screen only brings the overlays that were
+  // missing from the screen, not the ones that are already arranged".
+  it('an arranged overlay whose ✥ hangs past the edge moves only as far as its ✥ needs, and says so', async () => {
+    const { after, moves, asked, result } = await rescue({
+      topless: { x: 700, y: -40, width: 300, height: 400 },     // 90% showing, top-left corner above the screen
+    });
+    expect(moves.topless).toBe(1);
+    expect(after.topless).toEqual({ x: 700, y: 0, width: 300, height: 400 });
+    expect(result).toMatchObject({ moved: 0, nudged: 1 });
+    expect(asked[0].message).toBe('No overlay was lost.');
+    expect(asked[0].detail).toBe('Nothing else moved. topless had its ✥ past the edge of the screen, so it moved just far enough to grab.');
+  });
+
+  it('the HUD ring arranged against the corner is left alone: its ✥ is under the ring, not at the top-left', async () => {
+    const ring = { x: -30, y: -30, width: 360, height: 360 };  // see-through corners overhang; ✥ at bottom-centre
+    const { after, moves, result } = await rescue({ me: ring, hud: { x: 1600, y: 20, width: 300, height: 200 } });
+    expect(moves.me).toBe(0);
+    expect(after.me).toEqual(ring);
+    expect(moves.hud).toBe(0);
+    expect(result).toMatchObject({ moved: 0, nudged: 0 });
   });
 
   it('a lost overlay goes back to where it last sat on this screen setup', async () => {
