@@ -184,6 +184,9 @@ next touch one rather than assuming a missing row means a missing doc.
   rolling release, `mimic-alpha`, which alpha installs read directly (never the 10-entry release feed). Opt
   in from the tray or the dashboard's α alpha; leaving goes back to beta. The bot and site count only
   `-beta.N` tags as the beta. Agent changes still land on beta. `DECISIONS-2026-09-21.md` §81.
+- **⏳ 3.0 step 1 — overlay sets (alpha `e9e4f3d6`, 2026-09-29).** Save the layout under a name and switch
+  with `/pipe mimic load|save|next|prev|lock`, the tray's 🗂 Overlay sets, or Settings. Kept locally. Next:
+  the database backup (step 2), then sharing, then the display types Bar/Readout/Chips. §83a.
 - **⏳ FB-34 suggested triggers per character · FB-35 pets on the meter (agent 3.7.44 beta `f857fa6f` + bot
   3.1.174, 2026-09-29).** A personal trigger may carry a character list; the Suggested panel's **For:** picker
   sets it, and a line fires it only from those characters' logs. The poll serves the bot's pooled pet owners

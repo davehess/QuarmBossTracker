@@ -797,6 +797,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
     an alpha build.
   - Built by `release-mimic.yml` from the `alpha` branch; `sync-alpha.yml` keeps alpha = beta + builder
     work. The bot and site count only `-beta.N` tags as the beta (`test/alpha-release-isolation.test.js`).
+  - **Overlay sets — ALPHA ONLY** (alpha `e9e4f3d6`, §83a). `apps/mimic/overlaySets.js` is the store
+    (`overlay-sets.json` beside `mimic.config.json`) and the `/pipe mimic load|save|next|prev|lock`
+    parser; `main.js` `_captureOverlaySet` / `_applyOverlaySet` / `_overlaySetCommand`, called from the
+    Zeal type-4 branch of `_zealAbsorb`, the tray's 🗂 Overlay sets, and Settings → Overlay sets (IPC
+    `overlay-sets-list` / `overlay-sets-command`). `test/overlay-sets.test.js` (on `alpha`).
 Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 `test/dashboard-join-beta.test.js`, `test/mimic-alpha-channel.test.js`.
 
