@@ -803,6 +803,20 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
   `docs/DESIGN-mimic-3.0-overlay-builder.md`.
 
+### Where EQ is, screen changes, Zeal's bars (Mimic beta, 2026-09-29)
+- **EQ's live window:** `_eqWindowGeometry()` (`apps/mimic/main.js`) runs a PowerShell + user32 script
+  (DPI-aware, `screenToDipRect` back to window coordinates) for every `eqgame.exe`; cached, on demand.
+  `_eqMainWindow()` picks the biggest one showing. Used by `_overlayHomeDisplay`, `_parseUiWindowRects`
+  (projects onto a windowed EQ's client area), `_canvasDisplay`, and the auto-arrange IPC. IPC
+  `eq-window-geometry`.
+- **Screen changes:** display events call `_onDisplaysChanged` → `_askAboutDisplays` after they settle.
+  Positions are remembered per `_screenSignature` in `cfg.overlayLayoutBySig` (`_persistBounds`, skipped
+  while settling; `_snapshotLayout`). `_displayChangePlan` decides restore / bring / none;
+  `dialog.showMessageBox` asks; `_rescueOffscreenOverlays` is the "leave them" safety net.
+- **Zeal's bars:** UI Studio's `_zealBarWindows` / `_zealBarEdits` read and write `zeal.ini`
+  `[RaidBars]` / `[AssistBar]`; main's `_zealBarRects` feeds auto-arrange. Test
+  `test/zeal-bars-and-screens.test.js`. DECISIONS §80.
+
 ### Timers canvas — placed, sized timer panels (agent 3.7.42 · Mimic beta, 2026-09-29)
 `apps/mimic/canvas.html`: one transparent window per screen (`createCanvasWindow`, key `canvas`, flag
 `showCanvas`), click-through always — panels take the mouse by the hover handshake (`body[data-wp-overlay]`

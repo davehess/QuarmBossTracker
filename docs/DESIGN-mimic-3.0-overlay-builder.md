@@ -44,6 +44,11 @@ windows accordingly … in fact that will be 3.0."*
 | R8 | The builder is an **extension of UI Studio**, not a fourth doc root or a parallel tool | "extension of the UI builder" |
 | R9 | Mid-raid cost stays where it is: no new per-frame work while EQ has the screen | CLAUDE.md's overlay rules; "read mid-fight" |
 | R10 | Ships on an **alpha channel** first, to volunteers, with the LKG rollback the beta channel has | DECISIONS §36 |
+| R11 | Every part comes in **formats**: horizontal, vertical, arc, circle, thin, thick, transparent — or **locked to another window** | 2026-09-29: "every element of the overlays to be available in different formats (horizonal, vertical, arc, circle, thin, thick, transparent or locked to another window)" |
+| R12 | Mimic knows the **shape** of EQ's and Zeal's windows (rect, live where possible), so parts fit around the game's own UI | "it would make sense for us to know the shape of the windows" |
+| R13 | A part can be **anchored to a game window**: on it, around it, along an edge — e.g. charm parts on or around the pet window | "add the charm overlay items on top of or surrounding their charm window" |
+| R14 | Minimal parts **over the game's own window** — e.g. just the HP numbers written over the target window — and the fastest path from Zeal to those pixels | "writing just the HP totals over the actual target window could help get rid of our latency issue when people are actively targeting someone" |
+| R15 | **One product, not a sprinkle**: the builder is where Mimic is organised; the dashboard's good parts are reachable from it rather than left behind | "many parts of our mimic feel disjointed … the rest of the dashboard has gone to the wayside, with bits of goodness sprinkled in" |
 
 ## 3. What exists to build on (from the catalog)
 
@@ -99,6 +104,11 @@ FFI addon (`koffi`) — a dependency on the desktop app only, never the zero-dep
   arranging. Change **easy**.
 - Gives: exact projection when windowed or moved, DPI-correct scale, multi-monitor certainty.
 - **Verdict: phase 2.** PowerShell first; the addon only if the latency bites.
+- **Shipped early (2026-09-29, Mimic beta; DECISIONS §80):** the guild lead said "add B".
+  `_eqWindowGeometry()` in `main.js`, PowerShell + user32, DPI-aware, on demand and cached (not polled).
+  It feeds the overlay home screen, the UI-layout projection, the Timers canvas's screen and
+  auto-arrange, and the screen-change prompt uses it to find "the screen EverQuest is on". The
+  real cost per call on a raid machine is not measured yet.
 
 ### C. Seeing the screen: capture + recognise
 `desktopCapturer` exists (feedback screenshots). Locating EQ windows by *looking* would mean
@@ -121,6 +131,10 @@ cleanest possible data.
   message reaches only raiders who update Zeal. So it can never be the only source.
 - **Verdict: file the upstream ask now, build on A+B, take D when it lands.** Rewrite it against
   `named_pipe.cpp` the way CLAUDE.md says the spawn-id ask should have been.
+- **R12–R14 make D the load-bearing source, not a nicety** (2026-09-29). Anchoring a part to the
+  Target or Pet window, or writing HP numbers over the Target window, needs the window's LIVE rect:
+  the ini (A) is as of the last camp, and B only knows EQ's outer window. The same message should
+  carry Zeal's own bars (raid bars, assist bar), which today are known only from `zeal.ini`.
 
 **Decision proposed:** A now, B in phase 2, D as the standing upstream ask, C as a one-shot
 self-check only. Nothing here reads game memory from Mimic itself, and nothing injects into EQ —

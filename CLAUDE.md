@@ -987,6 +987,13 @@ forcing it would show every timer twice); skipped by rescue and auto-arrange. It
 `triggers.html?part=…` in iframes, which never speak — the trigger window stays alive hidden as the
 ONE voice. A new panel type must keep all three of those true.
 
+**Screens changing never moves an overlay without a yes** (the guild lead, 2026-09-29: *"if I kick the
+power out of my monitor it moves everything to a different screen and I have to rearrange it"*;
+DECISIONS §80). Positions are remembered per screen setup (`cfg.overlayLayoutBySig`); display events go
+to `_onDisplaysChanged`, which asks "put them back" or "bring them to EQ's screen". Do not wire a
+display event straight to a mover again. Where EQ is comes from `_eqWindowGeometry()` (PowerShell +
+user32, on demand, cached) — never poll it.
+
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the
 dashboard as well."** A control that exists only in the tray menu is a control
