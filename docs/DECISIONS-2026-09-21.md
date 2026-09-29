@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
+| **3.0: sets, edit in place, six display types** | **Recorded 2026-09-29 (§83; R16–R21).** Six types rendered on the canvas "Mimic 3.0 display types"; nothing built yet | the guild lead: pick which display types to build first, and yes/no on the build order (sets + `/pipe mimic` first) |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
@@ -4210,6 +4211,25 @@ which is dreadfully annoying."*
   the same spot?"*, default "Leave them there" (§80a's rule: keep each overlay's side). With nothing
   lost and nothing elsewhere, Rescue says so instead of doing nothing silently.
 - `test/rescue-overlays.test.js` runs the real rescue over two fake screens.
+
+### 83. 3.0: edit in place, overlay sets, sharing, local-first storage, six display types (2026-09-29)
+The guild lead: *"when we do get this new format working we should be able to edit displays in place, and
+lock/unlock windows will be crucial for whether we drag and resize during gameplay. we also need to build in
+multiple overlay modes per character, switchable via hotkeys or a simple pipe output that we pick up /pipe
+mimic load <overlay set name> or /pipe mimic save <overlay set name> the same load/save should also be
+available from taskbar or cycle through via command. overlay designs can be saved and shared, even
+suggested … we need our overlays arrangements to be stored locally in case of server issues, but backups
+will need to be saved to our database for portability."*
+- Recorded as **R16–R21** in `DESIGN-mimic-3.0-overlay-builder.md` §2, with how each lands on what
+  exists (the `/pipe` channel is already live — Zeal type 4; sets replace `cfg.charProfiles` and
+  `cfg.canvasLayouts`; UI Studio's `ui_layout` backup is the precedent for the database copy).
+- **Six display types rendered** on the claude.ai canvas "Mimic 3.0 display types" (the guild lead's
+  artifact list): Bar, Ring, Readout, Pips, Timeline, Chips, each applied to target HP, the charm
+  timer and the debuff list side by side, with a board per type and an edit-in-place board (locked vs
+  unlocked, the set switcher, the `/pipe mimic` verbs). **Not picked yet** — the guild lead's call.
+- **Not built.** These land on the `alpha` branch (§81) when the builder does. Proposed order: sets +
+  `/pipe mimic` verbs + local file first (useful on today's overlays), then the database backup, then
+  sharing, then the display types on the canvas panels.
 
 
 
