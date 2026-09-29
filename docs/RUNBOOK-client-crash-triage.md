@@ -174,11 +174,30 @@ machine so far.
 - **Fix:** Device Manager → the Intel adapter → Driver → **Roll Back Driver**, or
   install 31.0.101.2141 from Intel's site. Then decline 2145 when Intel's
   assistant offers it again.
+- **If that install does not take** (the member's first try did not, 2026-09-29),
+  in rising order of effort:
+  1. Device Manager → the Intel adapter → **Update driver → Browse my computer →
+     Let me pick from a list**. Windows keeps older driver packages, so 2141 or
+     2127 is often listed there even when Intel's installer refuses to go
+     backwards. Pick it, then reboot.
+  2. **System Restore** (`rstrui`) to a point before the 2145 install. Windows
+     normally makes one before a driver installs. Personal files are kept;
+     programs installed after that point may need reinstalling.
+  3. **Clean install:** DDU in Safe Mode, then install 2141. If its `.exe`
+     refuses, use Intel's `.zip` of the same driver and point *Let me pick →
+     Have Disk* at the `.inf` inside its `Graphics` folder.
+- **If 2141 is in and EQ still says "Failed to load the graphics DLL!"**, the
+  driver was not the whole story:
+  - check `winver` for build 26200.9550 (KB5124010, §3b);
+  - run a **fresh Quarm client in a new folder**. If it starts, the old folder's
+    files are the problem (see the next bullet). If it fails the same way, the
+    problem is the machine.
 - Not fixed by compatibility mode, running as administrator, or removing
   dgVoodoo's files (all tried).
 - The crash review's own file fingerprints showed the member's `eqgame.dll`
-  differing from other players' at the same time. It was a red herring for this
-  error, so don't lead with it when the driver is 2145.
+  differing from other players' at the same time (241,664 bytes, against Quarm's
+  318,464-byte July build). Don't lead with it when the driver is 2145, but it is
+  the first file suspect if the right driver does not fix the launch.
 
 ## 4. "Blames Zeal" does not mean Zeal did it
 
