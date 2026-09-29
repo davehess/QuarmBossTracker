@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
+| **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records" | the guild lead: open `b.wolfpack.quest/pop/guide?v=b` and `?v=c`, pick one |
 | **PoP checklist: Justice + Bastion of Thunder** | **Corrected live, web 1.8.48 + bot 3.1.176 (§86).** Six Marks per trial, the Mark is checked not taken, the wrong Tribunal location removed; Askr is three hand-ins; the Talisman is a flag from the Storms shrine and needs Justice; Symbol of Torden required; tower walk added; seven flag bosses now map | the guild lead: tell officers the page is corrected; decide the 9,846 hail rows in `pop_flags` (delete, or store them as evidence) |
 | **DPS HUD +pet breakdown** | **Beta `672ff15e` (agent 3.7.45) + bot 3.1.175 (§85).** Pet's share of the bar in pet orange, "+pet" in the same colour; click for name, damage, spawn id | the guild lead: on a pet class's row, check the orange end reads apart from the row colour (gold on your own row); click +pet. Say if orange should be purple |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
@@ -4363,6 +4364,42 @@ Foyer page.
   - Two options: (a) stop writing hails as grants and delete those rows, or (b) store `source` and `npc`
     so they become useful evidence. Deleting is irreversible, so it waits for a yes.
   - `PRIVACY.md` also says we keep the hail's NPC text and witness, which we don't.
+
+**The page itself: two layouts on beta, `d0e69d49`.** Read them at `b.wolfpack.quest/pop/guide?v=b` and `?v=c`.
+With no `?v=`, the page is production as it stands.
+- **Shared:** a sidebar with the character, must-have progress and "N filled in for you". It lists every
+  section with its count and follows the section on screen; on a phone it becomes a row of chips that
+  scrolls sideways. It also holds the filters and a key for the two sources.
+- **Each row says how it got its tick:** "✓ filled by Mimic · date", "✓ from our records · date", or
+  "✓ ticked by you".
+- **A step's detail:** what to expect, what to say, who takes what (give → get), who you go back to, where
+  to go, the quest chain, and a map of each zone involved.
+- **B, "Guide":** the detail opens in place under its step.
+- **C, "Route":** a compact list, with one sticky panel beside it that shows the step you pick. On a phone
+  the panel opens in place instead.
+- **Cost, the four numbers:**
+
+  | | Build | Maintenance | Runtime | Change |
+  |---|---|---|---|---|
+  | B | low | low | lightest: a map draws only when its step is opened | easy |
+  | C | a little more (selection state and a second column) | low | same | harder: a two-pane layout is harder to rework |
+
+  Both read the same data.
+- **What fills itself in** (`web/lib/popGuideAuto.ts`):
+  - *Mimic:* a mapped flag after a boss kill, a looted Justice Mark, and Mimic reporting the character.
+  - *Our records:* level on /who, the spellbook upload, and holding a step's item or reward in the last
+    inventory upload. Never for a character that hides its inventory.
+  - About 19 steps can fill themselves today.
+- **Next captures, not built yet — each one is a `PRIVACY.md` change first:**
+  - the NPC reply lines of the guide's own NPCs (matched on the machine; only the step key uploads);
+  - keyring lines;
+  - zone entries (Storms shrine → Bastion of Thunder, Valor → Halls of Honor);
+  - the `#popflags` output.
+- **Smoke-rendered before pushing,** both layouts plus one opened step, at desktop and phone width, with
+  the site's own compiled CSS. That caught two layout bugs (long section names overflowing the sidebar,
+  and the row sizing to its content on phones), both now fixed.
+- Graduating needs the guild lead's pick. When one is picked, promote it and delete the other in the same
+  change.
 
 
 
