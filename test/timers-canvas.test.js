@@ -225,12 +225,73 @@ describe('Mimic wiring (the overlay checklist)', () => {
     expect(c).toMatch(/\.mvbtn\{position:absolute;/);
     expect(c).toContain('.tab,.grip{display:none}');
     expect(c).toContain('body.edit .mvbtn{display:none}');
-    expect(c).toMatch(/if \(_edit \|\| ev\.target === mv\) openMenu\(p\.id, root\);/);
+    expect(c).toMatch(/if \(_edit \|\| ev\.target === mv\) openMenu\(p\.id, ev\.target === mv \? mv : root\);/);
     expect(c).toMatch(/menuEl\.addEventListener\('mouseleave', function \(\) \{ if \(!_edit\) closeMenu\(\); \}\);/);
   });
   it('the canvas page counts as an overlay for the hover handshake', () => {
     expect(stripJs(preload)).toContain("_wpIsOverlayDoc = !!document.getElementById('move-btn') || document.body.hasAttribute('data-wp-overlay');");
     expect(canvas).toContain('<body data-wp-overlay>');
+  });
+});
+
+// The guild lead, 2026-09-29, on a panel's settings view: "This view could go off the screen. give me a
+// button to show test data there of each type that's selected there".
+describe('🧪 test rows, and a settings view that stays on screen', () => {
+  const partSamples = (names) => {
+    const block = sliceBlock(triggers, '  var _SAMPLE_TIMERS = [', "  window.wpPartFlash = function(text){ if (PART) flash(text); };");
+    return new Function('PANEL', 'window', block + '\nreturn _sampleTimers;')('p1', { parent: { wpCanvasPanelNames: (id) => (id === 'p1' ? names : []) } })();
+  };
+  const canvasGroups = () => new Function(sliceBlock(canvas, '  var GROUPS = [', '\n  ];') + '\nreturn GROUPS;')().map(g => g[0]);
+
+  it('a sample of every kind a panel can show — every canvas group — marked TEST', () => {
+    const rows = partSamples([]);
+    const groups = new Set(rows.map(r => r.group));
+    for (const g of canvasGroups()) expect(groups.has(g), 'no sample for ' + g).toBe(true);
+    expect(rows.every(r => r.test === true)).toBe(true);
+    expect(rows.find(r => r.group === 'loot').kind).toBe('loot');
+  });
+
+  it('and one for each timer the panel claims by name, not doubling one it already has', () => {
+    const rows = partSamples(['tashania', 'malo']);
+    expect(rows.filter(r => String(r.effect).toLowerCase() === 'tashania')).toHaveLength(1);
+    expect(rows.find(r => r.id === 'sample|name|malo')).toMatchObject({ effect: 'malo', group: 'trigger', test: true });
+  });
+
+  it('the button turns one panel\'s samples on, locked or not, for 30 seconds; a callouts panel shows one callout', () => {
+    const c = stripJs(canvas);
+    expect(c).toContain("if (w && typeof w.wpPartSample === 'function') w.wpPartSample(_edit || _isTesting(p.id));");
+    expect(c).toContain('var TEST_MS = 30000;');
+    expect(c).toMatch(/setTesting\(p\.id, !_isTesting\(p\.id\)\);/);
+    expect(c).toMatch(/cw\.wpPartFlash\('TEST — Death Touch on the main tank'\)/);
+    expect(c).toContain("window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };");
+  });
+
+  const placeMenu = ({ W = 1920, H = 1080, anchor, menuH, menuW = 280 }) => {
+    const style = {};
+    const menuEl = { classList: { contains: () => true }, style, getBoundingClientRect: () => ({ width: menuW, height: Math.min(menuH, parseInt(style.maxHeight || '99999', 10)) }) };
+    const fn = new Function('_menuAnchor', 'menuEl', 'window', sliceBlock(canvas, '  function placeMenu() {', '\n  }') + '\nreturn placeMenu;');
+    fn({ getBoundingClientRect: () => anchor }, menuEl, { innerWidth: W, innerHeight: H })();
+    return { top: parseInt(style.top, 10), left: parseInt(style.left, 10), height: menuEl.getBoundingClientRect().height, maxHeight: parseInt(style.maxHeight, 10) };
+  };
+  const whole = (m, H = 1080) => m.top >= 8 && m.top + m.height <= H - 8;
+
+  it('opens under the ✥ when it fits, above it when it does not, and is always whole on the screen', () => {
+    const under = placeMenu({ anchor: { left: 0, top: 0, right: 16, bottom: 16 }, menuH: 400 });
+    expect(under.top).toBe(22);
+    const above = placeMenu({ anchor: { left: 900, top: 900, right: 916, bottom: 916 }, menuH: 400 });
+    expect(above.top).toBe(900 - 400 - 6);
+    const tall = placeMenu({ anchor: { left: 1900, top: 500, right: 1916, bottom: 516 }, menuH: 900 });
+    expect(whole(tall), JSON.stringify(tall)).toBe(true);
+    expect(tall.left).toBe(1920 - 280 - 8);
+    const taller = placeMenu({ anchor: { left: 100, top: 500, right: 116, bottom: 516 }, menuH: 5000 });
+    expect(taller.maxHeight).toBe(1080 - 16);
+    expect(whole(taller)).toBe(true);
+  });
+
+  it('is placed again once the live list fills in, and opened from ✥ it anchors to the ✥', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/box\.innerHTML = h \|\| '<span class="dim">no countdowns right now<\/span>';\s*placeMenu\(\);/);
+    expect(c).toContain("openMenu(p.id, ev.target === mv ? mv : root);");
   });
 });
 
