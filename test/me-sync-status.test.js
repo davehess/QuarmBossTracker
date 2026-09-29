@@ -58,8 +58,19 @@ describe('the character grid', () => {
   it('sorts seen characters newest first and collapses the never-uploaded', () => {
     expect(me).toMatch(/const seenRows {2}= syncRows\.filter\(r => r\.lastSeen\)\.sort\(\(a, b\) => b\.lastSeen!\.localeCompare\(a\.lastSeen!\)/);
     expect(me).toMatch(/const neverRows = syncRows\.filter\(r => !r\.lastSeen\)/);
-    expect(me).toMatch(/\{neverRows\.length\} character\{neverRows\.length === 1 \? '' : 's'\} with no uploads/);
     expect(me).toMatch(/<details className="mt-2 text-xs">/);
-    expect(me).toMatch(/\{seenRows\.map\(r => <SyncCard key=\{r\.name\} \{\.\.\.r\} \/>\)\}/);
+  });
+
+  // The guild lead, 2026-09-29: show what was touched in the last 3 months, the rest collapsed.
+  it('shows the last 3 months up front; older and never-uploaded fold into "more"', () => {
+    expect(me).toMatch(/const RECENT_MS = 90 \* 24 \* 60 \* 60 \* 1000;/);
+    expect(me).toMatch(/const isRecent = \(name: string\) => !anyRecent \|\| now - lastTouched\(name\) <= RECENT_MS;/);
+    expect(me).toMatch(/const olderRows = \[\.\.\.seenRows\.filter\(r => !isRecent\(r\.name\)\), \.\.\.neverRows\];/);
+    expect(me).toMatch(/\{recentSeenRows\.map\(r => <SyncCard key=\{r\.name\} \{\.\.\.r\} \/>\)\}/);
+    expect(me).toMatch(/\{olderRows\.map\(r => <SyncCard key=\{r\.name\} \{\.\.\.r\} \/>\)\}/);
+    expect(me).toMatch(/recent: isRecent\(c\.name\)/);
+    const cards = fs.readFileSync(path.join(__dirname, '../web/app/me/MeCharacterCards.tsx'), 'utf8');
+    expect(cards).toMatch(/visible\.filter\(n => byName\.get\(n\)!\.recent\)\.map\(renderCard\)/);
+    expect(cards).toMatch(/visible\.filter\(n => !byName\.get\(n\)!\.recent\)\.map\(renderCard\)/);
   });
 });

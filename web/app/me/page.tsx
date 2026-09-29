@@ -836,6 +836,20 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   // collapsed section … sort by how recently it was seen").
   const seenRows  = syncRows.filter(r => r.lastSeen).sort((a, b) => b.lastSeen!.localeCompare(a.lastSeen!) || a.name.localeCompare(b.name));
   const neverRows = syncRows.filter(r => !r.lastSeen).sort((a, b) => a.name.localeCompare(b.name));
+  // Only characters touched in the last 3 months show up front; the rest wait in
+  // a collapsed section (the guild lead, 2026-09-29: "we should really just show
+  // things that have been touched in the last 3 months and then a collapsed
+  // section with more"). Touched = any upload, or a live-state snapshot.
+  const RECENT_MS = 90 * 24 * 60 * 60 * 1000;
+  const lastTouched = (name: string): number => Math.max(
+    heartbeats.get(name) ? Date.parse(heartbeats.get(name)!.lastSeen) : 0,
+    Date.parse(liveState.get(name.toLowerCase())?.updatedAt ?? '') || 0,
+  );
+  const anyRecent = allChars.some(c => now - lastTouched(c.name) <= RECENT_MS);
+  // Nobody touched lately → show everything rather than an empty section.
+  const isRecent = (name: string) => !anyRecent || now - lastTouched(name) <= RECENT_MS;
+  const recentSeenRows = seenRows.filter(r => isRecent(r.name));
+  const olderRows = [...seenRows.filter(r => !isRecent(r.name)), ...neverRows];
   const mostRecentSeen = seenRows[0]?.lastSeen ?? null;
 
   // Page-level aggregates
@@ -1123,7 +1137,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
       </div>
     );
 
-    return { name: c.name, level, header, summary: buffsZonePanel, details } as MeCard;
+    return { name: c.name, level, header, summary: buffsZonePanel, details, recent: isRecent(c.name) } as MeCard;
   });
 
   return (
@@ -1154,18 +1168,18 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               </a>
             </div>
           </div>
-          {seenRows.length > 0 && (
+          {recentSeenRows.length > 0 && (
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
-              {seenRows.map(r => <SyncCard key={r.name} {...r} />)}
+              {recentSeenRows.map(r => <SyncCard key={r.name} {...r} />)}
             </div>
           )}
-          {neverRows.length > 0 && (
+          {olderRows.length > 0 && (
             <details className="mt-2 text-xs">
               <summary className="cursor-pointer select-none text-dim hover:text-text">
-                {neverRows.length} character{neverRows.length === 1 ? '' : 's'} with no uploads
+                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months or never uploaded
               </summary>
               <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
-                {neverRows.map(r => <SyncCard key={r.name} {...r} />)}
+                {olderRows.map(r => <SyncCard key={r.name} {...r} />)}
               </div>
             </details>
           )}
