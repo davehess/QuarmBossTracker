@@ -119,8 +119,8 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **Overlays tab: three mockups** | **Artifact page (§106).** A gallery / B studio (the builder in the tab) / C layouts that launch the on-screen builder, each with four costs. Recommendation: C, with A's cards as its Add drawer | the guild lead: pick A, B or C (or mix) |
-| **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105) + group sizing `a5532ace` (§106).** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
+| **Overlays tab: option C** | **Picked 2026-09-29 (§107); being built on beta.** Layouts, what is on screen now with one key format, an Add drawer of overlay cards, Arrange on screen | the guild lead: try it on the next beta |
+| **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105) + group sizing `a5532ace` (§106) + round three `ec8ad702` (§107): Target Info's every tab, HUD formats, per-piece look, menu beside the piece.** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
 | **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
@@ -5004,3 +5004,56 @@ makes the whole screen dark"*. The backdrop painted `<body>` on any overlay with
 canvas window covers the screen, so the whole screen went dark. On the canvas the plate now goes on each
 visible panel instead, in `preload.js`, marked by the canvas's own `#screenBtn`. The alpha picks it up by
 sync; the merge was checked and is clean.
+
+### 107. Canvas round three: Target Info's every tab as pieces, the HUD's formats, a menu that moves aside, option C for the Overlays tab (2026-09-29)
+The guild lead, on alpha 848, with screenshots:
+- *"Go with C, change the name of the Timer Canvas to Canvas."* Also: *"we're going with C for Overlay
+  screen."*
+- *"When the Canvas has a background toggled it just greys out the whole screen instead of individual
+  components within it."*
+- *"We need more element types, sizes, formats like in the hud"*.
+- *"The Target Info is missing all sorts of data. no drops no spells no fwv"*.
+- *"The right click in the corner of an element completely covers the overlay. We need to adaptively find a
+  spot where we can put it above or to the side depending on how far from the edge of the screen it is."*
+- *"Selecting Chips in the target info's breakout 'its buffs' version doesn't expand to match the size of
+  the overlay."*
+
+**Picked: Overlays tab option C** (§106's mockups). The tab becomes layouts, what is on screen now, and an
+Add drawer, and "Arrange on screen" launches the builder. The build is in the next entry once it lands on
+beta.
+
+**Built on the alpha (`ec8ad702`, 3.0.0-alpha.852):**
+- **Renamed Canvas** on the tray, window title, overlay name list, toolbar and the overlay-sets note. Beta
+  follows with the Overlays tab (`e07d75fa`, held for one build). Code comments keep the old name.
+- **Background:** §106's per-panel plate reaches the alpha only on its next own push, because syncs do not
+  rebuild. `ec8ad702` is that push. Checked headless: with Background on, the body stays transparent and
+  each panel takes the 0.92 plate.
+- **Target Info, every tab** — from the bot's catalog row (`mobInfo.mob`):
+  - Stats tab: level, zone, HP (live cur/max when known), damage, AC, the AC-and-resists grid (coloured by
+    how hard it is to land on), special attacks (dangerous ones red, immunities blue), sight ("Sees Invis"
+    judged as the overlay does: undead → IVU only), and a PQDI link that opens the browser.
+  - Other tabs: drops (drop-rate colours, ⭐ unique, LORE, "N× won"), spells (what it casts at you first,
+    resist and cast time), and faction hits on kill.
+  - Quest and Vendor from a new `npc` source. Its path is a function of the state source
+    (`/api/npc-interact?id=<target npc>`); it waits while there is no target, drops the old answer on a
+    new target, and asks again every 1.5 s while the bot is still reading the script.
+  - Quest rows copy a `/say` or `/map` when clicked, locked or not (a `.ctl data-wp-interact` span).
+  - The Target Info group gains a second column with the tabs. A separate "Target: drops, spells,
+    F/Q/V" group has just those.
+- **Formats like the HUD:** slim bar, upright bar, half ring, badge (the HUD's DS circle), one coloured
+  line (the HUD's resist row; resists now carry its colours) and columns.
+  - Every piece can also hide its label, and take a thin, normal or thick bar or ring, its own colour and
+    left, centre or right text.
+  - These settings go through sanitize, saved groups and placement.
+- **The menu moves aside:** `menuSpot(W, H, box, mw, mh)` is pure. It tries right, then left, then below,
+  then above, and takes the first side with room for the whole menu. Otherwise it takes the spot that
+  covers the least of the piece. The box it keeps clear is the piece's whole group.
+- **Pieces fit:** a mode change keeps the piece's width (rings excepted) and takes the height its content
+  needs. "↕ Fit" does the same on demand. Checked headless: chips on "Its buffs" stayed 200 px wide and
+  grew to 79 px, all shown.
+- **Found while testing:** double-click on a piece never opened its settings. The first press raises the
+  drag shield, so the browser's dblclick lands on the body. The canvas now counts two clicks on one piece
+  within 450 ms itself.
+- Tests: `test/canvas-pieces.test.js` round three (modes, look options, resist colours, every target piece
+  on real-shaped data, the npc source, the preset, sanitize, fit, clicks, two clicks) and
+  `test/timers-canvas.test.js` (menuSpot on five placements). Full suite green.
