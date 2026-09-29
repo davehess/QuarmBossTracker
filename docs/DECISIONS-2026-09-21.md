@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **3.0: pieces (legos)** | **Alpha `994eb032` (§103).** 116 pieces in 12 categories in a movable 🧩 chooser; drag one (or one of its mode chips) onto the screen; today's 17 overlays as groups; Ctrl-drag moves a group, a plain drag pulls a piece out; Shift-click + 💾 saves your own group; right-click changes the mode | the guild lead: on the next alpha, arrange the canvas → 🧩 Pieces → drop the Tank group, pull a piece out, put down a few pieces from My info in different modes, save a group; say which pieces are missing or wrong |
+| **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105).** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
 | **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
@@ -4917,6 +4917,39 @@ on a pick** (`docs/DESIGN-xp-tracking.md`).
   - C: B plus a live "best XP right now" piece.
 - **Recommendation:** A, then B.
 - **Questions:** retention (7 or 30 days), names (guild by name, others by class), and whether raid XP counts.
+
+### 105. Pieces, round two: delete, a group drags whole, edit from any corner, lock and save your own sets (2026-09-29, alpha `291ddcaa`)
+The guild lead, on the first pieces alpha:
+- *"when i hit the X on one of these elements it just hides it … I should be able to delete out the elements
+  instead of hiding them"*;
+- *"I should also be able to drag the whole group that came out from the panel at the same time instead of
+  grabbing the top one and having it get disconnected"*;
+- *"I have no way of bringing up the overlay editing other than the taskbar now. It needs to be something
+  that i can get to from the right click menu in the top corner of the overlay panel"*;
+- *"I need a faster way to get to the editing mode for individual components"*;
+- *"I should be able to select multiple pieces, lock them together (and not necessarily touching) and move
+  them at the same time. Should be able to save my own subsets."*
+
+This reverses §103's drag rule. What changed:
+- **✕ on a piece deletes it**, with an Undo toast for 8 s (and Ctrl+Z). Other panels' ✕ still hides. The
+  callouts panel and the catch-all timers panel can never be deleted.
+- **A plain drag moves the set:** the selection the piece is in, else its group, else just the piece. The
+  grabbed piece snaps; the rest keep their distance.
+  - **Alt-drag** pulls one piece out and takes it out of its group.
+  - Ctrl-drag is gone.
+- **Selecting:**
+  - Click selects; Shift- or Ctrl-click adds, however far apart.
+  - A bar under the toolbar then offers 🔗 lock together, 🔓 unlock, 💾 save as a group, and 🗑 delete.
+  - Any panel kind can be locked with pieces, including an overlay or a timers panel.
+- **The ways into editing:**
+  - One click on a piece's always-on ✥ while playing opens its settings, and the settings open with ✏
+    Arrange the canvas / ✓ Done and 🧩 Pieces.
+  - Double-click a piece while arranging.
+  - "🧩 Arrange the canvas (pieces)" in every overlay's right-click menu.
+  - `/pipe mimic edit` (also `arrange`, with `on` / `off` / `done`) from the game.
+- Tests `test/canvas-pieces.test.js` (the drag set and delete/undo run for real). A headless run moved all 11
+  Tank pieces by one offset, pulled one out with Alt, deleted and undid, and moved a far-apart locked pair
+  as one.
 
 
 
