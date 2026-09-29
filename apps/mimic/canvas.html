@@ -159,9 +159,10 @@
 
   /* The chooser: a movable palette of every piece, by category, and of the
      groups — today's overlays first. Only while arranging. */
-  #chooser{display:none;position:fixed;z-index:85;width:300px;max-height:70vh;box-sizing:border-box;
-    flex-direction:column;font-size:11px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
-    border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}
+  /* Wide enough to read, and wider on request: drag its right edge (the width is kept). */
+  #chooser{display:none;position:fixed;z-index:85;width:360px;min-width:280px;max-width:640px;max-height:75vh;box-sizing:border-box;
+    flex-direction:column;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
+    border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6);resize:horizontal;overflow:hidden}
   body.edit #chooser.open{display:flex}
   #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid #30363d}
   #chooser .ch-h b{color:#e6edf3;flex:1}
@@ -170,11 +171,16 @@
   #chooser .ch-tab.on{color:#e6edf3;border-color:#1f6feb;background:rgba(31,111,235,0.25)}
   #chooser .ch-list{overflow:auto;padding:4px 6px;flex:1;min-height:60px}
   #chooser .ch-sec{margin:6px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
-  #chooser .pc{display:flex;align-items:center;gap:6px;padding:3px 4px;border:1px solid transparent;border-radius:4px;cursor:grab}
+  #chooser .pc{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;padding:4px 5px;border:1px solid transparent;border-radius:4px;cursor:grab}
   #chooser .pc:hover{border-color:#30363d;background:#0d1117}
   #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
-  #chooser .pc-v{color:#6e7681;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #chooser .pc-m{padding:0 4px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab}
+  #chooser .pc-v{color:#6e7681;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* A piece: its whole name, what it reads now, then the ways to draw it on a line of their own
+     (the guild lead, 2026-09-29, on one crowded line: "i can't read this"). */
+  #chooser .pc.pp{border-bottom-color:#21262d;border-radius:0}
+  #chooser .pc.pp .pc-l{white-space:normal;font-weight:600}
+  #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
+  #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
   #chooser .pc-m:hover{border-color:#58a6ff}
   #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
   #chooser .pc .x:hover{color:#f85149}
@@ -330,11 +336,12 @@
     if (!haveCallouts) out.unshift(d[0]);
     if (!haveAll) out.push(d[1]);
     var res = { panels: out };
-    // The chooser remembers whether it was open, where, and on which tab.
+    // The chooser remembers whether it was open, where, how wide, and on which tab.
     var ch = layout.chooser;
     if (ch && typeof ch === 'object') {
       res.chooser = { open: ch.open !== false, x: num(ch.x, 0, 1, 0.72), y: num(ch.y, 0, 1, 0.12),
         tab: /^[a-z]{2,12}$/.test(String(ch.tab || '')) ? ch.tab : 'groups' };
+      if (ch.w != null) res.chooser.w = num(ch.w, 280, 640, 360);
     }
     return res;
   }
@@ -1082,7 +1089,8 @@
   var _src = {};                 // source key → { data, at, running }
   var _groups = [];              // saved groups, one list for every screen (main: canvas-groups)
   var STALE_MS = 10000;          // older than this and a source counts as silent
-  var MODE_ICON = { bar: '▭', ring: '◯', readout: 'ab', big: '12', pips: '⁞⁞', rows: '☰', chips: '◌◌' };
+  var MODE_ICON = { bar: '▭', thin: '▬', vbar: '▮', ring: '◯', arc: '◠', readout: 'ab', big: '12', badge: '◉', pips: '⁞⁞',
+    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦' };
 
   function catName(k) {
     var c = window.WpParts ? WpParts.CATS : [];
@@ -1193,9 +1201,21 @@
   var chHead = document.getElementById('chHead'), ghost = document.getElementById('ghost');
   function placeChooser() {
     var st = chooserState(), W = window.innerWidth, H = window.innerHeight;
-    var w = chEl.offsetWidth || 300, h = chEl.offsetHeight || 300;
+    if (st.w) chEl.style.width = st.w + 'px';
+    var w = chEl.offsetWidth || 360, h = chEl.offsetHeight || 300;
     chEl.style.left = Math.max(0, Math.min(W - w, Math.round(st.x * W))) + 'px';
     chEl.style.top = Math.max(0, Math.min(H - Math.min(h, 60), Math.round(st.y * H))) + 'px';
+  }
+  // Dragging the chooser's right edge wider (or narrower) is kept with the layout.
+  if (window.ResizeObserver) {
+    var _chWT = null;
+    new ResizeObserver(function () {
+      if (!chEl.classList.contains('open') || !chEl.offsetWidth) return;
+      var st = chooserState(), w = Math.round(chEl.offsetWidth);
+      if (w === st.w) return;
+      clearTimeout(_chWT);
+      _chWT = setTimeout(function () { st.w = Math.max(280, Math.min(640, w)); save(); }, 300);
+    }).observe(chEl);
   }
   function presetById(id) { for (var i = 0; i < WpParts.PRESETS.length; i++) if (WpParts.PRESETS[i].id === id) return WpParts.PRESETS[i]; return null; }
   function savedById(id) { for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) return _groups[i]; return null; }
@@ -1232,12 +1252,13 @@
     } else {
       WpParts.PARTS.forEach(function (d) {
         if (d.cat !== st.tab) return;
-        lh += '<div class="pc" data-drag="part:' + d.id + '" title="' + esc(d.note || d.label) + '"><span class="pc-l">' + esc(d.label) + '</span>'
-          + '<span class="pc-v" data-val="' + d.id + '"></span>';
+        lh += '<div class="pc pp" data-drag="part:' + d.id + '" title="' + esc(d.note || d.label) + '"><span class="pc-l">' + esc(d.label) + '</span>'
+          + '<span class="pc-v" data-val="' + d.id + '"></span><span class="pc-ms">';
         (WpParts.MODES[d.kind] || []).forEach(function (m) {
-          lh += '<span class="pc-m" data-drag="part:' + d.id + ':' + m[0] + '" title="Drag to place as ' + esc(m[1].toLowerCase()) + '">' + (MODE_ICON[m[0]] || m[0]) + '</span>';
+          lh += '<span class="pc-m" data-drag="part:' + d.id + ':' + m[0] + '" title="Drag to place as ' + esc(m[1].toLowerCase()) + '">'
+            + (MODE_ICON[m[0]] ? MODE_ICON[m[0]] + ' ' : '') + esc(m[1]) + '</span>';
         });
-        lh += '</div>';
+        lh += '</span></div>';
       });
     }
     if (chList._html !== lh) { chList._html = lh; chList.innerHTML = lh; }
