@@ -1612,6 +1612,10 @@ inventory page's `ItemHover` card, and ticks optimistically through `actions.ts`
 1.8.31; DECISIONS 2026-09-21 §65, §65a. A step can carry a `chain` (first item, the story, the
 hand-ins in order); `ChainView` renders it with folding sections. Willamina's Needles is the first
 (web 1.8.34, §71).
+**Justice + Bastion of Thunder corrected against the quest scripts (web 1.8.48, §86).** A flag grant
+maps to a step by the boss that died just before it: the bot's `POP_FLAG_BY_BOSS` plus `_popBossKey`
+(catalog `#Name_With_Underscores` = log `Name With Underscores`). `zone_outline(zone)` (SQL) draws a
+zone from the server's own placement rows for step maps.
 
 ### Target Info F/Q/V (Faction · Quest · Vendor)
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
