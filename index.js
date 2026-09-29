@@ -9082,7 +9082,18 @@ const POP_FLAG_BY_BOSS = {
   'xegony':                  'xegony_dead',     // Eryslai (Time gate)
   'xegony the queen of air': 'xegony_dead',
   'quarm':                   'quarm_dead',      // Plane of Time, Phase VI
+  // The names the server's NPC catalog actually uses (eqemu_npc_types, checked 2026-09-29): the short
+  // names above would never match these kills, so their flags would all land as 'unmapped'.
+  'the keeper of sorrows':        'keeper_dead',
+  'lord mithaniel marr':          'marr_dead',
+  'coirnav the avatar of water':  'coirnav_dead',
+  'fennin ro the tyrant of fire': 'fennin_dead',
+  'a mystical arbitor of earth':  'arbitor_dead',
+  'a rathe councilman':           'rathe_dead',
 };
+// A catalog name ("#Xegony_the_Queen_of_Air") and a log name ("Xegony the Queen of Air") are the same
+// boss: drop the leading #, read _ as a space, lowercase.
+const _popBossKey = (b) => (b ? String(b).trim().replace(/^#/, '').replace(/_/g, ' ').toLowerCase() : '');
 async function _handleAgentPopFlags(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -9107,7 +9118,7 @@ async function _handleAgentPopFlags(req, res) {
     if (!e || !e.character || !e.ts) continue;
     const ts = new Date(e.ts);
     if (isNaN(ts.getTime())) continue;
-    const bossLower = e.boss ? String(e.boss).toLowerCase() : '';
+    const bossLower = _popBossKey(e.boss);
     const flagKey = POP_FLAG_BY_BOSS[bossLower] || 'unmapped';
     const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts.toISOString()}`;
     if (seen.has(key)) continue;

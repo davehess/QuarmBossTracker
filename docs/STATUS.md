@@ -187,6 +187,12 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ 3.0 step 1 — overlay sets (alpha `e9e4f3d6`, 2026-09-29).** Save the layout under a name and switch
   with `/pipe mimic load|save|next|prev|lock`, the tray's 🗂 Overlay sets, or Settings. Kept locally. Next:
   the database backup (step 2), then sharing, then the display types Bar/Readout/Chips. §83a.
+- **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
+  Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
+  does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the
+  Talisman is a flag from the Storms shrine that also needs Justice, the Symbol of Torden is required, the
+  tower walk added. Seven flag bosses whose server names never matched now tick. `zone_outline()` SQL for
+  step maps. Open: 9,846 hail rows stored as unmapped flags (§86).
 - **⏳ DPS HUD +pet breakdown (agent 3.7.45 beta `672ff15e` + bot 3.1.175, 2026-09-29).** The pet's share of an
   owner's bar and the "+pet" label share the pet orange; clicking +pet opens a line per pet with name, damage and
   spawn id (provable only: the owner's Zeal `pet_id`, a Zeal /tag, our own target, or the bot's pool of ids the
