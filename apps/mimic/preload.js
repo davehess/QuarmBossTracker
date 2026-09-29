@@ -442,6 +442,10 @@ function _buildOverlayMenu(onClose, state) {
     () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
+  // 🖥 One row per other screen, only when there is one (main's _otherScreensFor).
+  (st.screens || []).forEach(function (s) {
+    menu.appendChild(mkItem('🖥 Move to ' + s.label, '#1f3a57', () => ipcRenderer.invoke('wp-move-to-display', s.id)));
+  });
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';

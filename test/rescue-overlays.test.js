@@ -126,6 +126,22 @@ describe('🧲 Rescue brings back lost overlays only', () => {
     expect(brought.result).toMatchObject({ moved: 0, brought: 1, left: 0 });
   });
 
+  // The guild lead, 2026-09-29: "rescue did not bring the extended target to the current monitor".
+  // With no free spot left, the old rescue left a brought or lost overlay exactly where it was.
+  it('"Bring them here" brings it even when this screen has no free spot (it lands at the same spot, overlapping)', async () => {
+    const full = { x: 0, y: 0, width: 1920, height: 1040 };  // an overlay filling this screen
+    const { after, result } = await rescue({ hud: full, exttarget: { x: 1920 + 100, y: 100, width: 320, height: 280 } }, { answer: 1 });
+    expect(after.exttarget).toEqual({ x: 100, y: 100, width: 320, height: 280 });
+    expect(after.hud).toEqual(full);
+    expect(result).toMatchObject({ brought: 1, left: 0 });
+  });
+
+  it('a lost overlay with no free spot still comes back onto this screen', async () => {
+    const full = { x: 0, y: 0, width: 1920, height: 1040 };
+    const { after } = await rescue({ hud: full, chchain: { x: -900, y: 300, width: 260, height: 180 } });
+    expect(onMain(after.chchain)).toBe(true);
+  });
+
   it('nothing lost and nothing elsewhere: says so and moves nothing', async () => {
     const { asked, moves } = await rescue({ hud: { x: 1600, y: 20, width: 300, height: 200 } });
     expect(moves.hud).toBe(0);
