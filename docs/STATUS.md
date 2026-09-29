@@ -198,6 +198,15 @@ next touch one rather than assuming a missing row means a missing doc.
   sticky detail panel): sidebar nav, per-step expectations / what to say / who takes what / who you go back to /
   zone map (`zone_outline()`), and rows that fill themselves labelled "filled by Mimic" or "from our records"
   (`web/lib/popGuideAuto.ts`). Waiting on the guild lead's pick. §86.
+- **⏳ Mimic setup walkthrough: two layouts on beta (agent 3.7.46, beta `a9f2db26` + `bbfe59e6`, 2026-09-29).**
+  `welcome.html` over one step registry: `?v=a` one step at a time with a rail; `?v=b` three essentials as a
+  stepper, then Zeal / Set up EverQuest / Overlays / Your /me page / Old fights as cards. Same gate as the
+  classic page; pick a main (`cfg.mainCharacter`) whose own logs are read at the finish; a don't-send change
+  restarts the engine so it takes effect. Tray ✨ Setup walkthrough and the dashboard Setup card open either;
+  `loading.html` stays the first-run page until the pick. `test/setup-walkthrough.test.js`. §93.
+- **⏳ Companion suite review, round two (docs artifact, 2026-09-29).** Settings pages, bandolier, spell sets,
+  maps, raid summary and the gear upgrade finder added: 28 missing / 38 partial / 19 covered. Waiting on the
+  guild lead to say which gaps to queue. §94.
 - **⏳ DPS HUD +pet breakdown (agent 3.7.45 beta `672ff15e` + bot 3.1.175, 2026-09-29).** The pet's share of an
   owner's bar and the "+pet" label share the pet orange; clicking +pet opens a line per pet with name, damage and
   spawn id (provable only: the owner's Zeal `pet_id`, a Zeal /tag, our own target, or the bot's pool of ids the
