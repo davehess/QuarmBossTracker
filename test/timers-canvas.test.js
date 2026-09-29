@@ -266,26 +266,48 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
     expect(c).toContain("window.wpCanvasPanelNames = function (id) { var p = panelById(id); return p ? p.names.slice() : []; };");
   });
 
+  // placeMenu with its two helpers; the box to keep clear is the anchor's (the panel's) own.
   const placeMenu = ({ W = 1920, H = 1080, anchor, menuH, menuW = 280 }) => {
     const style = {};
     const menuEl = { classList: { contains: () => true }, style, getBoundingClientRect: () => ({ width: menuW, height: Math.min(menuH, parseInt(style.maxHeight || '99999', 10)) }) };
-    const fn = new Function('_menuAnchor', 'menuEl', 'window', sliceBlock(canvas, '  function placeMenu() {', '\n  }') + '\nreturn placeMenu;');
+    const fn = new Function('_menuAnchor', 'menuEl', 'window', sliceBlock(canvas, '  function placeMenu() {', '\n  }')
+      + '\n' + sliceBlock(canvas, '  function menuSpot(W, H, box, mw, mh) {', '\n  }\n')
+      + '\nfunction menuAvoid() { var r = _menuAnchor.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }'
+      + '\nreturn placeMenu;');
     fn({ getBoundingClientRect: () => anchor }, menuEl, { innerWidth: W, innerHeight: H })();
-    return { top: parseInt(style.top, 10), left: parseInt(style.left, 10), height: menuEl.getBoundingClientRect().height, maxHeight: parseInt(style.maxHeight, 10) };
+    return { top: parseInt(style.top, 10), left: parseInt(style.left, 10), width: menuW, height: menuEl.getBoundingClientRect().height, maxHeight: parseInt(style.maxHeight, 10) };
   };
+  const covers = (m, a) => m.left < a.right && m.left + m.width > a.left && m.top < a.bottom && m.top + m.height > a.top;
   const whole = (m, H = 1080) => m.top >= 8 && m.top + m.height <= H - 8;
 
-  it('opens under the ✥ when it fits, above it when it does not, and is always whole on the screen', () => {
-    const under = placeMenu({ anchor: { left: 0, top: 0, right: 16, bottom: 16 }, menuH: 400 });
-    expect(under.top).toBe(22);
-    const above = placeMenu({ anchor: { left: 900, top: 900, right: 916, bottom: 916 }, menuH: 400 });
-    expect(above.top).toBe(900 - 400 - 6);
-    const tall = placeMenu({ anchor: { left: 1900, top: 500, right: 1916, bottom: 516 }, menuH: 900 });
-    expect(whole(tall), JSON.stringify(tall)).toBe(true);
-    expect(tall.left).toBe(1920 - 280 - 8);
+  // The guild lead, 2026-09-29: "The right click in the corner of an element completely covers the
+  // overlay. We need to adaptively find a spot where we can put it above or to the side depending on how
+  // far from the edge of the screen it is."
+  it('opens beside the panel — right, else left, else below, else above — never on it, always whole', () => {
+    const tl = { left: 0, top: 0, right: 16, bottom: 16 };
+    const a = placeMenu({ anchor: tl, menuH: 400 });
+    expect([a.left, a.top]).toEqual([24, 8]);                        // right of it
+    expect(covers(a, tl)).toBe(false);
+    const edge = { left: 1700, top: 500, right: 1916, bottom: 700 };
+    const b = placeMenu({ anchor: edge, menuH: 400 });
+    expect(b.left).toBe(1700 - 8 - 280);                             // no room right: left of it
+    expect(covers(b, edge)).toBe(false);
+    const wide = { left: 8, top: 100, right: 1900, bottom: 300 };
+    const c = placeMenu({ anchor: wide, menuH: 400 });
+    expect(c.top).toBe(308);                                         // no room either side: below
+    expect(covers(c, wide)).toBe(false);
+    const low = { left: 8, top: 600, right: 1900, bottom: 1000 };
+    const d = placeMenu({ anchor: low, menuH: 400 });
+    expect(d.top).toBe(600 - 8 - 400);                               // nor below: above
+    expect(covers(d, low)).toBe(false);
+    const huge = { left: 8, top: 8, right: 1900, bottom: 1060 };
+    const e = placeMenu({ anchor: huge, menuH: 400 });
+    expect(whole(e), JSON.stringify(e)).toBe(true);                  // nowhere clear: still whole on the screen
     const taller = placeMenu({ anchor: { left: 100, top: 500, right: 116, bottom: 516 }, menuH: 5000 });
     expect(taller.maxHeight).toBe(1080 - 16);
     expect(whole(taller)).toBe(true);
+    // The box it keeps clear is the panel's whole group, not only the ✥.
+    expect(stripJs(canvas)).toMatch(/var ids = _menuFor \? togetherWith\(_menuFor\)\.filter/);
   });
 
   it('is placed again once the live list fills in, and opened from ✥ it anchors to the ✥', () => {
@@ -298,7 +320,7 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 describe('tray ↔ dashboard parity', () => {
   it('the tray has the switch and Arrange; the dashboard has the row and Arrange, on the same internals', () => {
     const m = stripJs(main);
-    expect(m).toMatch(/label: 'Timers canvas \(callouts, timers and any overlay, placed anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
+    expect(m).toMatch(/label: 'Canvas \(callouts, timers, pieces and any overlay, placed anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
     expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_setCanvasArrange\(!_canvasArrange\);/);
     expect(dash).toMatch(/\['canvas',\s+'Timers canvas',\s+'<button type="button" class="wp-ov-act" data-act="canvasArrange"/);
     expect(stripJs(dash)).toMatch(/if \(a === 'canvasArrange' && window\.mimic\.canvasEdit\) \{\s*window\.mimic\.canvasEdit\(true\)/);

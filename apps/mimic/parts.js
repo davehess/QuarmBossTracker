@@ -39,16 +39,28 @@
     ['timers', 'Timers & ticks'], ['zone', 'Zone'], ['casting', 'Casting'],
   ];
 
+  // More ways to draw each kind, the HUD's among them (the guild lead, 2026-09-29: "We need more
+  // element types, sizes, formats like in the hud"): a slim one-line bar, an upright bar, a half
+  // ring, a round badge (the HUD's DS circle), and lists as one coloured line (the HUD's
+  // resists) or as columns.
   var MODES = {
-    gauge:     [['bar', 'Bar'], ['ring', 'Ring'], ['readout', 'Readout'], ['big', 'Big number'], ['pips', 'Pips']],
-    countdown: [['bar', 'Bar'], ['ring', 'Ring'], ['readout', 'Readout'], ['big', 'Big number']],
-    value:     [['readout', 'Readout'], ['big', 'Big number']],
-    list:      [['rows', 'Rows'], ['chips', 'Chips']],
+    gauge:     [['bar', 'Bar'], ['thin', 'Slim bar'], ['vbar', 'Upright bar'], ['ring', 'Ring'], ['arc', 'Half ring'],
+                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['pips', 'Pips']],
+    countdown: [['bar', 'Bar'], ['thin', 'Slim bar'], ['vbar', 'Upright bar'], ['ring', 'Ring'], ['arc', 'Half ring'],
+                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge']],
+    value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge']],
+    list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns']],
   };
   var DEFAULT_SIZE = {
-    bar: [220, 34], ring: [96, 96], readout: [200, 22], big: [120, 52], pips: [180, 30],
-    rows: [260, 150], chips: [260, 48],
+    bar: [220, 34], thin: [220, 18], vbar: [40, 120], ring: [96, 96], arc: [140, 90], readout: [200, 22],
+    big: [120, 52], badge: [60, 60], pips: [180, 30],
+    rows: [260, 150], chips: [260, 48], inline: [320, 22], columns: [300, 90],
   };
+  // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
+  // ring is, its own colour, and where its text sits. Offered in the piece's menu.
+  var THICK = [['thin', 'Thin'], ['', 'Normal'], ['thick', 'Thick']];
+  var ALIGN = [['', 'Left'], ['c', 'Centre'], ['r', 'Right']];
+  var PALETTE = ['#c9d1d9', '#58a6ff', '#56d364', '#d29922', '#ffa657', '#f85149', '#a371f7', '#39c5cf'];
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
@@ -96,73 +108,146 @@
   }
 
   // ── Renderers ──────────────────────────────────────────────────────────────
+  // Every renderer takes (part, view, opts). opts carries the piece's own settings: color
+  // overrides the data's colour, the rest (label, thickness, alignment) are classes on .pt.
   function lbl(part, v) { return v.label || part.short || part.label; }
-  function rBar(part, v) {
-    var p = pct(v.pct), col = v.color || part.color || C.blue;
+  function fillCol(part, v, o) { return (o && o.color) || v.color || part.color || C.blue; }
+  function textCol(part, v, o, dflt) { return (o && o.color) || v.color || part.color || dflt; }
+  // An item that copies a command or opens a page when clicked (a /say, a /map, PQDI). .ctl keeps
+  // the canvas from starting a drag on it; data-wp-interact lets it take the click while locked.
+  function act(it, inner) {
+    if (it && it.copy) return '<span class="ctl pt-act" data-copy="' + esc(it.copy) + '" data-wp-interact title="Copy, then paste into EQ">' + inner + ' <span class="pt-cp">⧉</span></span>';
+    if (it && it.url) return '<span class="ctl pt-act" data-url="' + esc(it.url) + '" data-wp-interact title="Opens in your browser">' + inner + '</span>';
+    return inner;
+  }
+  function valueText(v) { var p = pct(v.pct); return v.text != null ? v.text : (p == null ? '—' : Math.round(p) + '%'); }
+  // A gauge's own number is its percent in the round and big modes; its text moves underneath.
+  function headline(part, v) { var p = pct(v.pct); return (part.kind === 'gauge' && p != null) ? Math.round(p) + '%' : valueText(v); }
+  function rBar(part, v, o) {
+    var p = pct(v.pct);
     return '<div class="pt pt-bar"><div class="pt-lr"><span class="pt-l">' + esc(lbl(part, v)) + '</span>'
-      + '<span class="pt-v">' + esc(v.text != null ? v.text : (p == null ? '—' : Math.round(p) + '%')) + '</span></div>'
-      + '<div class="pt-track"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + col + '"></div></div>'
+      + '<span class="pt-v">' + act(v, esc(valueText(v))) + '</span></div>'
+      + '<div class="pt-track"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
       + (v.sub ? '<div class="pt-sub">' + esc(v.sub) + '</div>' : '') + '</div>';
   }
-  function rRing(part, v) {
-    var p = pct(v.pct), col = v.color || part.color || C.blue, R = 42, CIRC = 2 * Math.PI * R;
+  // One line: label, a slim bar, the value.
+  function rThin(part, v, o) {
+    var p = pct(v.pct);
+    return '<div class="pt pt-thin"><span class="pt-l">' + esc(lbl(part, v)) + '</span>'
+      + '<div class="pt-track"><div class="pt-fill" style="width:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
+      + '<span class="pt-v">' + esc(valueText(v)) + '</span></div>';
+  }
+  // Fills from the bottom, like the HUD's hit columns.
+  function rVbar(part, v, o) {
+    var p = pct(v.pct);
+    return '<div class="pt pt-vbar"><span class="pt-v">' + esc(headline(part, v)) + '</span>'
+      + '<div class="pt-vt"><div class="pt-vf" style="height:' + (p == null ? 0 : p.toFixed(1)) + '%;background:' + fillCol(part, v, o) + '"></div></div>'
+      + '<span class="pt-l">' + esc(lbl(part, v)) + '</span></div>';
+  }
+  function rRing(part, v, o) {
+    var p = pct(v.pct), R = 42, CIRC = 2 * Math.PI * R;
     var dash = p == null ? 0 : CIRC * p / 100;
     return '<div class="pt pt-ring"><svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">'
       + '<circle cx="50" cy="50" r="42" class="pt-rt"/>'
-      + '<circle cx="50" cy="50" r="42" class="pt-rf" style="stroke:' + col + '" stroke-dasharray="' + dash.toFixed(1) + ' ' + CIRC.toFixed(1) + '" transform="rotate(-90 50 50)"/>'
-      + '<text x="50" y="52" class="pt-rv">' + esc((part.kind === 'gauge' && p != null) ? Math.round(p) + '%' : valueText(v)) + '</text>'
+      + '<circle cx="50" cy="50" r="42" class="pt-rf" style="stroke:' + fillCol(part, v, o) + '" stroke-dasharray="' + dash.toFixed(1) + ' ' + CIRC.toFixed(1) + '" transform="rotate(-90 50 50)"/>'
+      + '<text x="50" y="52" class="pt-rv">' + esc(headline(part, v)) + '</text>'
       + '<text x="50" y="68" class="pt-rl">' + esc(lbl(part, v)) + '</text></svg></div>';
   }
-  function valueText(v) { var p = pct(v.pct); return v.text != null ? v.text : (p == null ? '—' : Math.round(p) + '%'); }
-  function rReadout(part, v) {
+  // The top half of a ring, filling left to right; the number sits inside it.
+  var ARC_LEN = Math.PI * 42;
+  function rArc(part, v, o) {
+    var p = pct(v.pct), dash = p == null ? 0 : ARC_LEN * p / 100;
+    return '<div class="pt pt-arc"><svg viewBox="0 0 100 62" preserveAspectRatio="xMidYMid meet">'
+      + '<path d="M 8 54 A 42 42 0 0 1 92 54" class="pt-rt"/>'
+      + '<path d="M 8 54 A 42 42 0 0 1 92 54" class="pt-rf" style="stroke:' + fillCol(part, v, o) + '" stroke-dasharray="' + dash.toFixed(1) + ' ' + ARC_LEN.toFixed(1) + '"/>'
+      + '<text x="50" y="46" class="pt-rv">' + esc(headline(part, v)) + '</text>'
+      + '<text x="50" y="60" class="pt-rl">' + esc(lbl(part, v)) + '</text></svg></div>';
+  }
+  function rReadout(part, v, o) {
     return '<div class="pt pt-read"><span class="pt-l">' + esc(lbl(part, v)) + '</span> <span class="pt-v" style="color:'
-      + (v.color || part.color || C.text) + '">' + esc(valueText(v)) + '</span>'
+      + textCol(part, v, o, C.text) + '">' + act(v, esc(valueText(v))) + '</span>'
       + (v.sub ? ' <span class="pt-sub">' + esc(v.sub) + '</span>' : '') + '</div>';
   }
   // A gauge as a big number is its percent; its own text (3,512 / 4,180) moves
   // underneath, where a long value cannot wrap the big line.
-  function rBig(part, v) {
+  function rBig(part, v, o) {
     var p = pct(v.pct), big = valueText(v), sub = v.sub || '';
     if (part.kind === 'gauge' && p != null) { big = Math.round(p) + '%'; if (v.text != null) sub = v.text + (sub ? ' · ' + sub : ''); }
-    return '<div class="pt pt-big"><div class="pt-bv" style="color:' + (v.color || part.color || C.text) + '">'
-      + esc(big) + '</div><div class="pt-l">' + esc(lbl(part, v)) + (sub ? ' · ' + esc(sub) : '') + '</div></div>';
+    return '<div class="pt pt-big"><div class="pt-bv" style="color:' + textCol(part, v, o, C.text) + '">'
+      + act(v, esc(big)) + '</div><div class="pt-l">' + esc(lbl(part, v)) + (sub ? ' · ' + esc(sub) : '') + '</div></div>';
   }
-  function rPips(part, v) {
-    var p = pct(v.pct), n = 10, lit = p == null ? 0 : Math.round(p / 10), col = v.color || part.color || C.blue, h = '';
+  // A round badge with the number in it, like the HUD's DS circle.
+  function rBadge(part, v, o) {
+    var c = textCol(part, v, o, C.gold);
+    return '<div class="pt pt-badge"><div class="pt-bc" style="border-color:' + c + '"><span class="pt-l">' + esc(lbl(part, v)) + '</span>'
+      + '<b style="color:' + c + '">' + act(v, esc(headline(part, v))) + '</b></div></div>';
+  }
+  function rPips(part, v, o) {
+    var p = pct(v.pct), n = 10, lit = p == null ? 0 : Math.round(p / 10), col = fillCol(part, v, o), h = '';
     for (var i = 0; i < n; i++) h += '<i' + (i < lit ? ' style="background:' + col + '"' : '') + '></i>';
     return '<div class="pt pt-pips"><div class="pt-lr"><span class="pt-l">' + esc(lbl(part, v)) + '</span><span class="pt-v">'
       + esc(valueText(v)) + '</span></div><div class="pt-pp">' + h + '</div></div>';
   }
-  function rRows(part, v) {
+  function itemText(it) { var p = pct(it.pct); return it.text != null ? it.text : (p == null ? '' : Math.round(p) + '%'); }
+  function rRows(part, v, o) {
     var items = (v.items || []), h = '';
     items.forEach(function (it) {
       var p = pct(it.pct);
-      h += '<div class="pt-row' + (it.hi ? ' hi' : '') + '"><div class="pt-lr"><span class="pt-n">' + esc(it.name) + '</span>'
-        + '<span class="pt-v" style="color:' + (it.color && p == null ? it.color : C.text) + '">' + esc(it.text != null ? it.text : (p == null ? '' : Math.round(p) + '%')) + '</span></div>'
-        + (p != null ? '<div class="pt-track thin"><div class="pt-fill" style="width:' + p.toFixed(1) + '%;background:' + (it.color || part.color || C.blue) + '"></div></div>' : '')
+      h += '<div class="pt-row' + (it.hi ? ' hi' : '') + '"><div class="pt-lr"><span class="pt-n">' + act(it, esc(it.name)) + '</span>'
+        + '<span class="pt-v" style="color:' + (it.color && p == null ? it.color : C.text) + '">' + esc(itemText(it)) + '</span></div>'
+        + (p != null ? '<div class="pt-track thin"><div class="pt-fill" style="width:' + p.toFixed(1) + '%;background:' + ((o && o.color) || it.color || part.color || C.blue) + '"></div></div>' : '')
         + (it.sub ? '<div class="pt-sub">' + esc(it.sub) + '</div>' : '') + '</div>';
     });
     return '<div class="pt pt-rows"><div class="pt-l pt-head">' + esc(lbl(part, v)) + '</div>'
       + (h || '<div class="pt-sub">' + esc(v.empty || 'nothing right now') + '</div>') + '</div>';
   }
-  function rChips(part, v) {
+  function rChips(part, v, o) {
     var items = (v.items || []), h = '';
     items.forEach(function (it) {
-      h += '<span class="pt-chip" style="border-color:' + (it.color || C.dim) + '">' + esc(it.name)
-        + (it.text != null ? ' <b>' + esc(it.text) + '</b>' : '') + '</span>';
+      h += '<span class="pt-chip" style="border-color:' + ((o && o.color) || it.color || C.dim) + '">' + act(it, esc(it.name))
+        + (itemText(it) !== '' ? ' <b>' + esc(itemText(it)) + '</b>' : '') + '</span>';
     });
     return '<div class="pt pt-chips"><span class="pt-l">' + esc(lbl(part, v)) + '</span> '
       + (h || '<span class="pt-sub">' + esc(v.empty || 'none') + '</span>') + '</div>';
   }
-  var RENDER = { bar: rBar, ring: rRing, readout: rReadout, big: rBig, pips: rPips, rows: rRows, chips: rChips };
+  // Every item on one line in its own colour, no pills: the HUD's "MR196 FR212 CR233".
+  function rInline(part, v, o) {
+    var items = (v.items || []), h = '';
+    items.forEach(function (it) {
+      h += '<span class="pt-in" style="color:' + ((o && o.color) || it.color || C.text) + '">' + act(it, esc(it.name))
+        + (itemText(it) !== '' ? '<b>' + esc(itemText(it)) + '</b>' : '') + '</span>';
+    });
+    return '<div class="pt pt-inline"><span class="pt-l">' + esc(lbl(part, v)) + '</span> '
+      + (h || '<span class="pt-sub">' + esc(v.empty || 'none') + '</span>') + '</div>';
+  }
+  // A grid: each item a cell with its value, and a slim bar when it has one.
+  function rColumns(part, v, o) {
+    var items = (v.items || []), h = '';
+    items.forEach(function (it) {
+      var p = pct(it.pct);
+      h += '<div class="pt-cell"><span class="pt-cn">' + act(it, esc(it.name)) + '</span>'
+        + '<b style="color:' + ((o && o.color) || it.color || C.text) + '">' + esc(itemText(it)) + '</b>'
+        + (p != null ? '<div class="pt-track thin"><div class="pt-fill" style="width:' + p.toFixed(1) + '%;background:' + ((o && o.color) || it.color || part.color || C.blue) + '"></div></div>' : '')
+        + '</div>';
+    });
+    return '<div class="pt pt-columns"><div class="pt-l pt-head">' + esc(lbl(part, v)) + '</div>'
+      + (h ? '<div class="pt-cols">' + h + '</div>' : '<div class="pt-sub">' + esc(v.empty || 'nothing right now') + '</div>') + '</div>';
+  }
+  var RENDER = { bar: rBar, thin: rThin, vbar: rVbar, ring: rRing, arc: rArc, readout: rReadout, big: rBig, badge: rBadge,
+    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns };
 
-  // The one entry point: a piece, the mode it is drawn in, its view.
-  function render(part, mode, view, now) {
+  // The one entry point: a piece, the mode it is drawn in, its view, and the piece's own
+  // options ({ nolabel, thick, color, align }).
+  function render(part, mode, view, now, opts) {
+    var o = opts || {};
     var v = resolve(part.kind, view, now || Date.now());
     var modes = MODES[part.kind] || MODES.value;
     if (!modes.some(function (m) { return m[0] === mode; })) mode = modes[0][0];
     if (!v) return '<div class="pt pt-none"><span class="pt-l">' + esc(part.short || part.label) + '</span> <span class="pt-sub">—</span></div>';
-    return RENDER[mode](part, v);
+    var cls = (o.nolabel ? ' nl' : '') + (o.thick === 'thin' || o.thick === 'thick' ? ' tk-' + o.thick : '')
+      + (o.align === 'c' || o.align === 'r' ? ' al-' + o.align : '');
+    var html = RENDER[mode](part, v, o);
+    return cls ? html.replace('<div class="pt ', '<div class="pt' + cls + ' ') : html;
   }
 
   // The stylesheet the canvas injects once. Pieces fill their panel; --ps is
@@ -192,7 +277,32 @@
     + '.pt-n{overflow:hidden;text-overflow:ellipsis}'
     + '.pt-chips{display:flex;flex-wrap:wrap;gap:3px;align-items:center;align-content:flex-start}'
     + '.pt-chip{padding:0 5px;border:1px solid;border-radius:9px;background:rgba(13,17,23,0.7);white-space:nowrap}'
-    + '.pt-none{opacity:0.55}';
+    + '.pt-none{opacity:0.55}'
+    // The newer formats.
+    + '.pt-thin{display:flex;align-items:center;gap:6px;white-space:nowrap}'
+    + '.pt-thin .pt-track{flex:1;margin-top:0;height:calc(6px * var(--ps,1))}'
+    + '.pt-vbar{display:flex;flex-direction:column;align-items:center;gap:2px}'
+    + '.pt-vbar .pt-l{max-width:100%;font-size:0.85em}'
+    + '.pt-vt{flex:1;width:calc(12px * var(--ps,1));background:rgba(13,17,23,0.75);border:1px solid #30363d;border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}'
+    + '.pt-vf{width:100%;transition:height 0.25s linear}'
+    + '.pt-arc svg{width:100%;height:100%;display:block}'
+    + '.pt-badge{display:flex;align-items:center;justify-content:center}'
+    + '.pt-bc{box-sizing:border-box;height:100%;max-width:100%;aspect-ratio:1;border:2px solid;border-radius:50%;background:rgba(13,17,23,0.6);'
+    + 'display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}'
+    + '.pt-bc .pt-l{font-size:0.75em}.pt-bc b{font-size:1.25em;font-variant-numeric:tabular-nums}'
+    + '.pt-inline{white-space:normal}.pt-in{margin-right:0.6em;font-weight:700;white-space:nowrap}.pt-in b{margin-left:1px}'
+    + '.pt-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(calc(70px * var(--ps,1)),1fr));gap:2px 8px}'
+    + '.pt-cell{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 4px;min-width:0}'
+    + '.pt-cell .pt-cn{color:' + C.dim + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}'
+    + '.pt-cell .pt-track{flex-basis:100%}'
+    + '.pt-act{cursor:pointer;border-bottom:1px dotted currentColor}.pt-act:hover{color:#e6edf3}.pt-cp{font-size:0.8em;opacity:0.7}'
+    // The piece's own options.
+    + '.pt.nl .pt-l,.pt.nl .pt-rl{display:none}'
+    + '.pt.tk-thin .pt-track{height:calc(4px * var(--ps,1))}.pt.tk-thick .pt-track{height:calc(14px * var(--ps,1))}'
+    + '.pt.tk-thin .pt-rt,.pt.tk-thin .pt-rf{stroke-width:5}.pt.tk-thick .pt-rt,.pt.tk-thick .pt-rf{stroke-width:15}'
+    + '.pt.tk-thin .pt-vt{width:calc(7px * var(--ps,1))}.pt.tk-thick .pt-vt{width:calc(22px * var(--ps,1))}'
+    + '.pt.al-c{text-align:center}.pt.al-c .pt-lr{justify-content:center}.pt.al-c.pt-chips,.pt.al-c.pt-thin{justify-content:center}'
+    + '.pt.al-r{text-align:right}.pt.al-r .pt-lr{justify-content:flex-end}.pt.al-r.pt-chips{justify-content:flex-end}';
 
   // ── Sources ────────────────────────────────────────────────────────────────
   // The agent's own endpoints (docs/DESIGN-overlay-catalog.md §4 has the
@@ -206,6 +316,10 @@
     ext:    { path: '/api/extended-target', every: 2000 },
     bq:     { path: '/api/buff-queue',      every: 2000 },
     timers: { path: '/api/timers',          every: 700 },
+    // What the target NPC says, takes and sells (Target Info's Quest and Vendor tabs). Its path
+    // depends on who is targeted, so it is a function of the other sources; null means wait.
+    npc:    { path: function (live) { var s = live('state'), m = s && s.mobInfo && s.mobInfo.mob; return m && m.id ? '/api/npc-interact?id=' + m.id : null; },
+              needs: ['state'], every: 5000 },
   };
 
   // ── Helpers for get() ──────────────────────────────────────────────────────
@@ -236,10 +350,11 @@
     });
   }
   var ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
-  var RES = [['mr', 'MR'], ['fr', 'FR'], ['cr', 'CR'], ['pr', 'PR'], ['dr', 'DR']];
+  // Each resist in the HUD's colour for it, so "One line" reads like the HUD's resist row.
+  var RES = [['mr', 'MR', C.purple], ['fr', 'FR', C.orange], ['cr', 'CR', C.blue], ['pr', 'PR', C.green], ['dr', 'DR', C.gold]];
   function resistChips(r) {
     if (!r) return null;
-    var items = RES.filter(function (k) { return num(r[k[0]]) != null; }).map(function (k) { return { name: k[1], text: r[k[0]] }; });
+    var items = RES.filter(function (k) { return num(r[k[0]]) != null; }).map(function (k) { return { name: k[1], text: r[k[0]], color: k[2] }; });
     return items.length ? { items: items } : null;
   }
   function meT(d) { return d && d.character && d.target ? d.target : null; }
@@ -445,12 +560,132 @@
   P('target.stats', 'target', 'Target stats', 'state', 'value',
     function (d) { var m = d.mobInfo && d.mobInfo.mob; if (!m) return null; return { text: 'AC ' + (m.ac == null ? '?' : m.ac) + ' · HP ' + fmtNum(m.hp), sub: m.mindmg != null ? 'hits ' + m.mindmg + '–' + m.maxdmg : '' }; },
     { text: 'AC 420 · HP 32k', sub: 'hits 60–240' }, { short: 'Stats' });
-  P('target.specials', 'target', 'Special attacks', 'state', 'list',
-    function (d) { var m = d.mobInfo && d.mobInfo.mob; if (!m || !Array.isArray(m.specials)) return null; return { items: m.specials.map(function (s) { return { name: typeof s === 'string' ? s : (s.name || s.label || String(s.code || s)) }; }), empty: 'none' }; },
-    { items: [{ name: 'Summon' }, { name: 'Enrage' }, { name: 'Immune to Mez' }] }, { short: 'Specials', mode: 'chips' });
+  // Dangerous ones red, immunities blue — the Target Info overlay's own colouring.
+  var WARN_SPECS = { 'Summon': 1, 'Enrage': 1, 'Rampage': 1, 'Area Rampage': 1, 'Flurry': 1, 'Bane': 1 };
+  function specColor(s) { return WARN_SPECS[s] ? C.red : (s.indexOf('Immune') === 0 || s.indexOf('Un') === 0) ? C.blue : C.dim; }
+  P('target.specials', 'target', 'Special attacks and immunities', 'state', 'list',
+    function (d) {
+      var m = d.mobInfo && d.mobInfo.mob; if (!m || !Array.isArray(m.specials)) return null;
+      return { items: m.specials.map(function (s) { var n = typeof s === 'string' ? s : (s.name || s.label || String(s.code || s)); return { name: n, color: specColor(n) }; }), empty: 'none' };
+    },
+    { items: [{ name: 'Magical', color: C.dim }, { name: 'Unslowable', color: C.blue }, { name: 'Unmezzable', color: C.blue }, { name: 'Summon', color: C.red }, { name: 'Immune Melee Except Bane', color: C.blue }] },
+    { short: 'Specials', mode: 'chips' });
   P('target.player', 'target', 'Player target: guild, class, level', 'state', 'value',
     function (d) { var p = d.mobInfo && d.mobInfo.target_player; if (!p) return null; return { text: p.name + (p.guild ? ' <' + p.guild + '>' : ''), sub: [p.level != null ? 'L' + p.level : '', p['class'], p.anonymous ? 'anon' : ''].filter(Boolean).join(' ') }; },
     { text: 'Zarrin <Wolf Pack>', sub: 'L60 Shaman' }, { short: 'Player' });
+
+  // Everything else the Target Info overlay shows — its Stats, Loot, Spells and F/Q/V tabs —
+  // one piece each (the guild lead, 2026-09-29: "The Target Info is missing all sorts of data. no
+  // drops no spells no fwv"). All from the catalog row the bot sends for the target (mobInfo.mob),
+  // except Quest and Vendor, which read the NPC's script (the npc source).
+  function mob(d) { return d && d.mobInfo && d.mobInfo.mob ? d.mobInfo.mob : null; }
+  P('target.level', 'target', 'Level and class (catalog)', 'state', 'value',
+    function (d) { var m = mob(d); if (!m || m.level == null) return null; return { text: 'L' + m.level + (m.maxlevel != null && m.maxlevel > m.level ? '–' + m.maxlevel : ''), sub: m['class'] || '' }; },
+    { text: 'L60', sub: 'Warrior' }, { short: 'Level' });
+  P('target.zone', 'target', 'Its zone', 'state', 'value',
+    function (d) { var m = mob(d); return m && m.zone ? { text: '@ ' + m.zone } : null; },
+    { text: '@ Plane of Mischief' }, { short: 'Zone' });
+  P('target.hpmax', 'target', 'Its hit points', 'state', 'value',
+    function (d) {
+      var mi = d.mobInfo, m = mob(d);
+      if (mi && num(mi.target_hp_cur) != null && num(mi.target_hp_max) != null) return { text: fmtNum(mi.target_hp_cur) + ' / ' + fmtNum(mi.target_hp_max) + ' HP' };
+      return m && num(m.hp) != null ? { text: fmtNum(m.hp) + ' HP' } : null;
+    },
+    { text: '24.4k HP' }, { short: 'HP' });
+  P('target.dmg', 'target', 'How hard it hits', 'state', 'value',
+    function (d) { var m = mob(d); return m && m.mindmg != null && m.maxdmg != null ? { text: m.mindmg + '–' + m.maxdmg, sub: 'dmg' } : null; },
+    { text: '104–471', sub: 'dmg' }, { short: 'Hits' });
+  P('target.ac', 'target', 'Its armour class', 'state', 'value',
+    function (d) { var m = mob(d); return m && m.ac != null ? { text: String(m.ac), color: '#d2a8ff' } : null; },
+    { text: '200', color: '#d2a8ff' }, { short: 'AC' });
+  // The overlay's grid: AC, then each resist, green / orange / red by how hard it is to land on.
+  function resistCol(v) { return v == null ? C.dim : v >= 150 ? C.red : v >= 75 ? C.orange : C.green; }
+  P('target.statgrid', 'target', 'AC and resists (catalog)', 'state', 'list',
+    function (d) {
+      var m = mob(d); if (!m) return null; var r = m.resists || {};
+      return { items: [{ name: 'AC', text: m.ac == null ? '?' : m.ac, color: '#d2a8ff' }].concat(RES.map(function (k) { return { name: k[1], text: r[k[0]] == null ? '?' : r[k[0]], color: resistCol(r[k[0]]) }; })) };
+    },
+    { items: [{ name: 'AC', text: 200, color: '#d2a8ff' }, { name: 'MR', text: 46, color: C.green }, { name: 'FR', text: 46, color: C.green }, { name: 'CR', text: 46, color: C.green }, { name: 'PR', text: 46, color: C.green }, { name: 'DR', text: 46, color: C.green }] },
+    { short: 'Stats', mode: 'columns' });
+  P('target.sight', 'target', 'Sees through invis or hide', 'state', 'list',
+    function (d) {
+      var m = mob(d); if (!m) return null; var it = [];
+      if (m.undead) { if (m.see_invis_undead) it.push({ name: 'Sees Invis vs Undead', color: C.orange }); }
+      else if (m.see_invis) it.push({ name: 'Sees Invis', color: C.orange });
+      if (m.see_improved_hide) it.push({ name: 'Sees Improved Hide', color: C.orange });
+      else if (m.see_hide) it.push({ name: 'Sees Hide', color: C.orange });
+      return { items: it, empty: 'invis and hide work' };
+    },
+    { items: [{ name: 'Sees Invis', color: C.orange }] }, { short: 'Sight', mode: 'chips' });
+  P('target.pqdi', 'target', 'PQDI link', 'state', 'value',
+    function (d) { var m = mob(d); return m && m.id ? { text: '🔗 PQDI', url: 'https://www.pqdi.cc/npc/' + m.id, color: '#d2a8ff' } : null; },
+    { text: '🔗 PQDI', color: '#d2a8ff' }, { short: 'PQDI' });
+  // Drop rate buckets, as the Loot tab colours them: always > common > uncommon > rare.
+  function lootCol(p) { return p == null ? C.dim : p >= 95 ? C.gold : p >= 35 ? C.green : p >= 10 ? C.blue : p >= 2 ? C.purple : C.dim; }
+  function dropPct(p) { return p == null ? '?' : p >= 99.95 ? '100%' : p.toFixed(p < 10 ? 1 : 0) + '%'; }
+  P('target.loot', 'target', 'What it drops', 'state', 'list',
+    function (d) {
+      var m = mob(d); if (!m) return null;
+      return { items: (Array.isArray(m.loot) ? m.loot : []).filter(function (it) { return it && it.name; }).map(function (it) {
+        var tags = [it.unique_to_mob ? '⭐ only this mob' : '', it.lore ? 'LORE' : '', +it.seen > 0 ? it.seen + '× won' : ''].filter(Boolean).join(' · ');
+        return { name: it.name, text: dropPct(num(it.pct)), color: lootCol(num(it.pct)), sub: tags };
+      }), empty: 'no drops on record' };
+    },
+    { items: [{ name: 'Guardian Helm', text: '12%', color: C.blue, sub: '⭐ only this mob · 3× won' }, { name: 'Words of Dimension', text: '4.5%', color: C.purple, sub: 'LORE' }] },
+    { short: 'Drops' });
+  var RESIST_NAME = { 1: 'Magic', 2: 'Fire', 3: 'Cold', 4: 'Poison', 5: 'Disease', 6: 'Chromatic', 7: 'Prismatic' };
+  function castSecs(ms) { ms = num(ms); return ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms'; }
+  P('target.spells', 'target', 'The spells it casts', 'state', 'list',
+    function (d) {
+      var m = mob(d); if (!m) return null;
+      var sp = (Array.isArray(m.spells) ? m.spells : []).filter(Boolean).slice().sort(function (a, b) { return (a.good === 1) - (b.good === 1); });
+      return { items: sp.map(function (s) {
+        var res = s.good === 1 ? 'buff' : (RESIST_NAME[s.resist_type] || 'unresistable') + (num(s.resist_diff) ? ' ' + s.resist_diff : '');
+        return { name: s.name || ('Spell #' + s.id), text: s.mana != null ? s.mana + 'm' : '', color: s.good === 1 ? C.green : C.purple,
+          sub: [res, castSecs(s.cast_ms) ? 'cast ' + castSecs(s.cast_ms) : '', num(s.recast_ms) ? 'recast ' + Math.round(s.recast_ms / 1000) + 's' : ''].filter(Boolean).join(' · ') };
+      }), empty: 'no spell list catalogued' };
+    },
+    { items: [{ name: 'Lava Breath', text: '150m', color: C.purple, sub: 'Fire · cast 3.0s · recast 30s' }, { name: 'Shield of Lava', text: '60m', color: C.green, sub: 'buff · cast 2.5s' }] },
+    { short: 'Spells' });
+  P('target.factions', 'target', 'Faction hits on kill', 'state', 'list',
+    function (d) {
+      var m = mob(d); if (!m) return null;
+      return { items: (Array.isArray(m.factions) ? m.factions : []).map(function (f) { var up = Number(f.value) > 0; return { name: f.name, text: (up ? '+' : '') + f.value, color: up ? C.green : C.red }; }),
+        empty: 'no faction change' };
+    },
+    { items: [{ name: 'Guardians of the Mischief', text: '-25', color: C.red }, { name: 'Tricksters', text: '+10', color: C.green }] },
+    { short: 'Faction' });
+  function names(list, n) { return (list || []).slice(0, n || 3).map(function (x) { return (x.qty > 1 ? x.qty + '× ' : '') + (x.name || x); }).join(', '); }
+  P('target.quest', 'target', 'Quest: what to say, hand in, who next', 'npc', 'list',
+    function (d) {
+      if (d.loading) return { items: [], empty: 'reading the quest script…' };
+      var n = d.npc; if (!n) return { items: [], empty: 'nothing on record for this NPC' };
+      var it = [];
+      (n.say || []).forEach(function (b) {
+        var cmd = '/say ' + (b.say || (b.keywords && b.keywords[0]) || '');
+        it.push({ name: cmd, copy: cmd, color: C.blue, sub: [b.sit ? 'sit first' : '', b.needs ? 'needs ' + names(b.needs) : '', b.gives ? 'get ' + (b.gives_random ? 'one of ' : '') + names(b.gives) : '', b.flag ? 'flag' : ''].filter(Boolean).join(' · ') });
+      });
+      (n.turnins || []).forEach(function (t) {
+        it.push({ name: 'give ' + names(t.inputs, 4), text: '', color: C.gold,
+          sub: 'get ' + ((t.outputs && t.outputs.length) ? (t.random ? 'one of ' : '') + names(t.outputs, 4) : 'nothing listed') + (t.exp ? ' · exp' : '') + (t.unverified ? ' · not in Quarm\'s script' : '') });
+      });
+      (n.next || []).forEach(function (x) {
+        var map = x.y != null && x.x != null ? '/map ' + x.y + ' ' + x.x : null;
+        it.push({ name: 'next: ' + x.name, copy: map, sub: x.zone_long || '', color: C.purple });
+      });
+      return { items: it, empty: n.script ? 'nothing to say to this NPC' : 'no quest script for this NPC' };
+    },
+    { items: [{ name: '/say unlock memories', copy: '/say unlock memories', color: C.blue, sub: 'sit first · get Memory Shard' }, { name: 'give Essence of Fire', color: C.gold, sub: 'get Symbol of the Planes · exp' }, { name: 'next: Kerasha', copy: '/map 120 -340', sub: 'Plane of Tranquility', color: C.purple }] },
+    { short: 'Quest' });
+  function coin(cp) {
+    if (cp == null) return '';
+    var p = Math.floor(cp / 1000), g = Math.floor(cp % 1000 / 100), s = Math.floor(cp % 100 / 10), c = cp % 10, out = [];
+    if (p) out.push(p + 'p'); if (g) out.push(g + 'g'); if (s) out.push(s + 's'); if (c) out.push(c + 'c');
+    return out.join(' ') || '0c';
+  }
+  P('target.vendor', 'target', 'What it sells', 'npc', 'list',
+    function (d) { var n = d.npc; if (d.loading || !n) return null; return { items: (n.vendor || []).map(function (v) { return { name: v.name, text: coin(v.price) }; }), empty: 'not a vendor' }; },
+    { items: [{ name: 'Bone Chips', text: '1s 2c' }, { name: 'Fishing Bait', text: '5c' }] }, { short: 'Sells' });
 
   // ── Group ──
   P('group.members', 'group', 'My group', 'me', 'list',
@@ -658,6 +893,8 @@
       return row;
     });
   }
+  // A second column: the same rows moved dx to the right.
+  function beside(rows, dx) { return rows.map(function (r) { return [r[0], r[1], r[2] + dx, r[3], r[4], r[5]]; }); }
   var PRESETS = [
     { id: 'hud-box', name: 'HUD (box)', parts: stack([['me.name', 'readout'], ['me.hp', 'bar'], ['me.mana', 'bar'], ['me.end', 'bar'], ['me.xp', 'bar'], ['me.aa', 'bar'],
       ['me.cast', 'bar'], ['target.name', 'readout'], ['target.hp', 'bar'], ['pet.hp', 'bar'], ['group.members', 'rows', 110], ['me.gems', 'rows', 150]], 240) },
@@ -668,8 +905,15 @@
       ['tank.dt', 'bar'], ['tank.rampage', 'bar'], ['heal.chdue', 'bar'], ['tank.ds', 'readout'], ['tank.mtbuffs', 'rows', 130], ['tank.offtanks', 'rows', 70]], 260) },
     { id: 'command', name: 'Command Center', parts: stack([['tank.target', 'bar'], ['tank.enrage', 'readout'], ['tank.dt', 'bar'], ['tank.mt', 'bar'], ['tank.rampage', 'bar'],
       ['raid.defensives', 'rows', 70], ['me.cd_disc', 'bar'], ['heal.mana', 'rows', 110], ['heal.di', 'chips'], ['raid.rolls', 'rows', 80], ['raid.cures', 'rows', 70], ['raid.rez', 'rows', 70]], 260) },
-    { id: 'target', name: 'Target Info', parts: stack([['target.name', 'readout'], ['target.hp', 'bar'], ['target.ht', 'readout'], ['target.slow', 'readout'], ['target.mana', 'bar'],
-      ['target.lastcast', 'readout'], ['target.tot', 'readout'], ['target.resists', 'chips'], ['target.flags', 'chips'], ['target.casting', 'rows', 60], ['target.debuffs', 'rows', 100], ['target.buffs', 'rows', 70]], 260) },
+    // Target Info as the overlay has it: the Stats tab down the left, its Loot, Spells and F/Q/V
+    // tabs down the right.
+    { id: 'target', name: 'Target Info', parts: stack([['target.name', 'readout'], ['target.level', 'readout'], ['target.pqdi', 'readout'], ['target.hpmax', 'readout'],
+      ['target.dmg', 'readout'], ['target.hp', 'bar'], ['target.statgrid', 'columns', 58], ['target.specials', 'chips', 92], ['target.sight', 'chips', 24], ['target.flags', 'chips'],
+      ['target.ht', 'readout'], ['target.slow', 'readout'], ['target.mana', 'bar'], ['target.lastcast', 'readout'], ['target.tot', 'readout'],
+      ['target.casting', 'rows', 60], ['target.debuffs', 'rows', 100], ['target.buffs', 'rows', 70]], 260)
+      .concat(beside(stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170], ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280), 268)) },
+    { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
+      ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280) },
     { id: 'charm', name: 'Charm', parts: stack([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
     { id: 'pets', name: 'Pets', parts: stack([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
     { id: 'dps', name: 'DPS HUD', parts: stack([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },
@@ -685,7 +929,7 @@
   ];
 
   root.WpParts = {
-    C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS,
+    C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS, THICK: THICK, ALIGN: ALIGN, PALETTE: PALETTE,
     render: render, resolve: resolve,
     util: { esc: esc, num: num, pct: pct, hpColor: hpColor, mmss: mmss, fmtNum: fmtNum, pctOf: pctOf, at: at },
     SOURCES: SOURCES, PARTS: PARTS, byId: byId, PRESETS: PRESETS,

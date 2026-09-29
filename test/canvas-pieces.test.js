@@ -249,3 +249,126 @@ describe('main and preload', () => {
     expect(canvas.indexOf('<script src="parts.js"></script>')).toBeLessThan(canvas.indexOf('var M = window.mimic || {};'));
   });
 });
+
+// Round three (the guild lead, 2026-09-29): "We need more element types, sizes, formats like in the hud",
+// "The Target Info is missing all sorts of data. no drops no spells no fwv", chips that do not grow with
+// their piece, and a menu that covered the piece it was for.
+describe('pieces, round three', () => {
+  const now = Date.now();
+  it('more ways to draw each kind, the HUD\'s among them', () => {
+    const modes = k => W.MODES[k].map(m => m[0]);
+    for (const m of ['thin', 'vbar', 'arc', 'badge']) { expect(modes('gauge')).toContain(m); expect(modes('countdown')).toContain(m); }
+    expect(modes('value')).toContain('badge');
+    for (const m of ['inline', 'columns']) expect(modes('list')).toContain(m);
+    for (const k of Object.keys(W.MODES)) for (const [m] of W.MODES[k]) expect(W.DEFAULT_SIZE[m], m).toBeTruthy();
+    const hp = W.byId['me.hp'];
+    expect(W.render(hp, 'arc', { pct: 40 }, now)).toMatch(/<path d="M 8 54 A 42 42 0 0 1 92 54" class="pt-rf"[^>]*stroke-dasharray="52\.8 /);
+    expect(W.render(hp, 'vbar', { pct: 25 }, now)).toMatch(/class="pt-vf" style="height:25\.0%/);
+    expect(W.render(hp, 'badge', { pct: 25 }, now)).toMatch(/<b style="color:[^"]+">25%<\/b>/);
+  });
+  it('each piece\'s own look: label, thickness, alignment and colour, whatever the mode', () => {
+    const hp = W.byId['me.hp'];
+    const h = W.render(hp, 'bar', { pct: 50 }, now, { nolabel: true, thick: 'thick', align: 'c', color: '#f85149' });
+    expect(h).toMatch(/^<div class="pt nl tk-thick al-c pt-bar">/);
+    expect(h).toContain('background:#f85149');
+    expect(W.render(hp, 'bar', { pct: 50 }, now, { thick: 'huge', align: 'x' })).toMatch(/^<div class="pt pt-bar">/);
+    expect(W.CSS).toContain('.pt.nl .pt-l');
+    expect(W.THICK.map(t => t[0])).toEqual(['thin', '', 'thick']);
+    expect(W.PALETTE.every(c => /^#[0-9a-f]{6}$/.test(c))).toBe(true);
+  });
+  it('resists carry the HUD\'s colours, so "One line" reads like the HUD\'s resist row', () => {
+    const v = W.byId['me.resists'].get({ character: 'Aldenmar', resists: { mr: 196, fr: 212, cr: 233, pr: 263, dr: 283 } });
+    expect(v.items.map(i => [i.name, i.color])).toEqual([['MR', '#a371f7'], ['FR', '#ffa657'], ['CR', '#58a6ff'], ['PR', '#56d364'], ['DR', '#d29922']]);
+    expect(W.render(W.byId['me.resists'], 'inline', v, now)).toContain('<span class="pt-in" style="color:#a371f7">MR<b>196</b></span>');
+  });
+
+  const mobInfo = { target_hp_cur: 18000, target_hp_max: 24400, mob: {
+    id: 204045, level: 60, maxlevel: 62, class: 'Warrior', zone: 'Plane of Mischief', hp: 24400, ac: 200, mindmg: 104, maxdmg: 471,
+    resists: { mr: 46, fr: 160, cr: 80, pr: 46, dr: null }, specials: ['Summon', 'Unslowable', 'Magical'],
+    undead: false, see_invis: true, see_improved_hide: true,
+    loot: [{ name: 'Guardian Helm', pct: 12, unique_to_mob: true, seen: 3 }, { name: 'Rune', pct: 100, lore: true }, { name: '' }],
+    spells: [{ name: 'Shield of Lava', good: 1, mana: 60, cast_ms: 2500 }, { name: 'Lava Breath', good: 0, resist_type: 2, resist_diff: -50, mana: 150, cast_ms: 3000, recast_ms: 30000 }],
+    factions: [{ name: 'Tricksters', value: 10 }, { name: 'Guardians', value: -25 }],
+  } };
+  const g = (id, d) => W.byId[id].get(d, now);
+  it('every tab of Target Info is a piece: stats, specials, sight, PQDI, drops, spells, faction', () => {
+    const d = { mobInfo };
+    expect(g('target.level', d)).toMatchObject({ text: 'L60–62', sub: 'Warrior' });
+    expect(g('target.zone', d).text).toBe('@ Plane of Mischief');
+    expect(g('target.hpmax', d).text).toBe('18k / 24k HP');
+    expect(g('target.dmg', d).text).toBe('104–471');
+    expect(g('target.statgrid', d).items.map(i => [i.name, i.text, i.color])).toEqual([
+      ['AC', 200, '#d2a8ff'], ['MR', 46, '#56d364'], ['FR', 160, '#f85149'], ['CR', 80, '#ffa657'], ['PR', 46, '#56d364'], ['DR', '?', '#6e7681']]);
+    expect(g('target.specials', d).items.map(i => [i.name, i.color])).toEqual([['Summon', '#f85149'], ['Unslowable', '#58a6ff'], ['Magical', '#6e7681']]);
+    expect(g('target.sight', d).items.map(i => i.name)).toEqual(['Sees Invis', 'Sees Improved Hide']);
+    expect(g('target.sight', { mobInfo: { mob: { undead: true, see_invis: true } } }).items).toEqual([]);   // undead: regular invis is not the question
+    expect(g('target.pqdi', d)).toMatchObject({ url: 'https://www.pqdi.cc/npc/204045' });
+    expect(W.render(W.byId['target.pqdi'], 'readout', g('target.pqdi', d), now)).toMatch(/class="ctl pt-act" data-url="https:\/\/www\.pqdi\.cc\/npc\/204045" data-wp-interact/);
+    const loot = g('target.loot', d).items;
+    expect(loot.map(i => [i.name, i.text, i.sub])).toEqual([['Guardian Helm', '12%', '⭐ only this mob · 3× won'], ['Rune', '100%', 'LORE']]);
+    const sp = g('target.spells', d).items;
+    expect(sp.map(i => i.name)).toEqual(['Lava Breath', 'Shield of Lava']);             // what it casts at you first
+    expect(sp[0].sub).toBe('Fire -50 · cast 3.0s · recast 30s');
+    expect(g('target.factions', d).items.map(i => [i.text, i.color])).toEqual([['+10', '#56d364'], ['-25', '#f85149']]);
+    expect(g('target.loot', {})).toBeNull();
+  });
+  it('Quest and Vendor read the NPC\'s script from its own source, which follows the target', () => {
+    const S = W.SOURCES.npc;
+    expect(S.needs).toEqual(['state']);
+    expect(S.path(k => k === 'state' ? { mobInfo } : null)).toBe('/api/npc-interact?id=204045');
+    expect(S.path(() => null)).toBeNull();
+    expect(W.byId['target.quest'].src).toBe('npc');
+    expect(g('target.quest', { loading: true }).empty).toBe('reading the quest script…');
+    const npc = { script: true,
+      say: [{ keywords: ['memories'], say: 'unlock memories', sit: true, gives: [{ name: 'Memory Shard' }] }],
+      turnins: [{ inputs: [{ qty: 2, name: 'Essence of Fire' }], outputs: [{ name: 'Symbol' }], exp: true }],
+      next: [{ name: 'Kerasha', zone_long: 'Plane of Tranquility', y: 120, x: -340 }],
+      vendor: [{ name: 'Bone Chips', price: 1203 }] };
+    const q = g('target.quest', { npc }).items;
+    expect(q.map(i => [i.name, i.copy || null, i.sub])).toEqual([
+      ['/say unlock memories', '/say unlock memories', 'sit first · get Memory Shard'],
+      ['give 2× Essence of Fire', null, 'get Symbol · exp'],
+      ['next: Kerasha', '/map 120 -340', 'Plane of Tranquility']]);
+    expect(W.render(W.byId['target.quest'], 'rows', { items: q }, now)).toContain('data-copy="/say unlock memories" data-wp-interact');
+    expect(g('target.vendor', { npc }).items).toEqual([{ name: 'Bone Chips', text: '1p 2g 3c' }]);
+  });
+  it('Target Info as a group has the tabs too, in a second column', () => {
+    const t = W.PRESETS.find(p => p.id === 'target');
+    const ids = t.parts.map(a => a[0]);
+    for (const id of ['target.statgrid', 'target.specials', 'target.sight', 'target.pqdi', 'target.loot', 'target.spells', 'target.factions', 'target.quest', 'target.vendor']) expect(ids).toContain(id);
+    const loot = t.parts.find(a => a[0] === 'target.loot');
+    expect(loot[2]).toBe(268);                                    // the right-hand column
+  });
+  it('the canvas polls a source that depends on another, and passes each piece its look', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/var path = typeof S\.path === 'function' \? S\.path\(liveData\) : S\.path;/);
+    expect(c).toMatch(/\(S && S\.needs \|\| \[\]\)\.forEach\(function \(n\) \{ need\[n\] = true; \}\);/);
+    expect(c).toContain('WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align })');
+    const r = evalBlock('var window = {};\n' + sliceBlock(canvas, '  var GROUPS = [', '  // ── Panels ──'), ['sanitize']);
+    const s = r.sanitize({ panels: [{ id: 'a', kind: 'part', part: 'me.hp', mode: 'arc', x: 0, y: 0, w: 140, h: 90, nolabel: 1, thick: 'thick', color: '#58a6ff', align: 'c' },
+      { id: 'b', kind: 'part', part: 'me.hp', mode: 'bar', x: 0, y: 0, w: 99, h: 30, thick: 'x', color: 'red;background:url(x)', align: 'z' }] });
+    const [a, b] = s.panels.filter(p => p.kind === 'part');
+    expect([a.mode, a.nolabel, a.thick, a.color, a.align]).toEqual(['arc', true, 'thick', '#58a6ff', 'c']);
+    expect([b.nolabel, b.thick, b.color, b.align]).toEqual([false, '', '', '']);
+    // A saved group brings each piece's look along.
+    expect(c).toContain("nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || ''");
+  });
+  it('a piece keeps its width and takes the height it needs when its mode changes; ↕ Fit does it on demand', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(nm !== p\.mode && sz\) \{ if \(ringy \|\| !p\.w\) p\.w = sz\[0\]; p\.h = sz\[1\]; \}/);
+    expect(c).toMatch(/if \(fit\) \{ var fid = p\.id; setTimeout\(function \(\) \{ fitPiece\(fid\); \}, 0\); \}/);
+    expect(c).toContain('data-fit title="Make it as tall as what it shows right now"');
+    expect(c).toMatch(/pt\.style\.height = 'auto';\s*var need = Math\.ceil\(pt\.getBoundingClientRect\(\)\.height\) \+ 4;/);
+  });
+  it('two clicks on a piece open its settings (the browser\'s dblclick never reaches it past the drag shield)', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(!d\.add && _lastClick && _lastClick\.id === p\.id && tNow - _lastClick\.t < 450\) \{\s*_lastClick = null; render\(\); if \(_els\[p\.id\]\) openMenu\(p\.id, _els\[p\.id\]\.root\); return;/);
+    expect(c).toMatch(/shield\.classList\.add\('on'\);/);   // why: the shield is up between press and release
+  });
+  it('a clickable item copies or opens, locked or not, and never starts a drag', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(cp\) \{ copyText\(cp\); note\('Copied ' \+ cp \+ ' — paste it into EQ'\); \}/);
+    expect(c).toMatch(/else if \(url\) \{ try \{ if \(M\.openExternal\) M\.openExternal\(url\); \}/);
+    expect(c).toMatch(/if \(ev\.target\.closest\('\.ctl'\)\) return;/);   // .pt-act is a .ctl
+  });
+});

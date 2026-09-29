@@ -120,6 +120,8 @@
   #menu label.chk input{accent-color:#1f6feb;cursor:pointer}
   #menu label.chk .dim{color:#6e7681}
   #menu .btn.on{background:rgba(31,111,235,0.25);border-color:#1f6feb;color:#e6edf3}
+  #menu .btn.sw{width:22px;height:20px;padding:0;border:2px solid #30363d;border-radius:4px}
+  #menu .btn.sw.on{border-color:#e6edf3}
   .chips{display:flex;flex-wrap:wrap;gap:4px}
   .chip{display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:10px;
     background:#21262d;border:1px solid #30363d;cursor:pointer}
@@ -153,6 +155,7 @@
   #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
     padding:6px 10px;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #d29922;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
   #toast.on{display:flex}
+  #toast:not(.undo) #undoBtn{display:none}
 
   /* The chooser: a movable palette of every piece, by category, and of the
      groups — today's overlays first. Only while arranging. */
@@ -186,7 +189,7 @@
   <div id="gbox"><span class="ggrip" data-wp-interact title="Drag to size the whole group · Shift: keep its shape">◢</span></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
-    <b>🧩 Timers canvas</b>
+    <b>🧩 Canvas</b>
     <span class="dim">drag a piece and its group comes with it · Alt-drag pulls one piece out · click selects a piece's whole group (Alt-click: just the piece), Shift- or Ctrl-click adds · the group's ◢ sizes them all · double-click or right-click: settings · Shift while dragging: no snapping</span>
     <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
@@ -277,6 +280,11 @@
           x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
           w: num(p.w, 40, 4000, 200), h: num(p.h, 16, 3000, 30),
           scale: num(p.scale, 0.5, 3, 1), back: !!p.back,
+          // Its own look: label hidden, bar thickness, colour, text alignment.
+          nolabel: !!p.nolabel,
+          thick: (p.thick === 'thin' || p.thick === 'thick') ? p.thick : '',
+          color: /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '',
+          align: (p.align === 'c' || p.align === 'r') ? p.align : '',
           grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
           off: !!p.off,
         });
@@ -546,7 +554,7 @@
   // Drag to move / drag ◢ to size. Snaps to the screen's edges and centre and
   // to the other panels' edges, within 8px; Shift turns it off.
   var SNAP = 8;
-  var _drag = null;
+  var _drag = null, _lastClick = null;
   // anyTime: the always-on ✥, which moves a panel even while locked.
   function startDrag(ev, id, mode, anyTime) {
     if ((!_edit && !anyTime) || ev.button !== 0) return;
@@ -700,6 +708,13 @@
     if (!d.moved && p) {
       if (d.fromMv && !_edit) { render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return; }
       if (_edit) {
+        // Two clicks on one piece: its settings. The browser's own dblclick never reaches the piece —
+        // the drag shield is up between the press and the release — so the canvas counts the clicks.
+        var tNow = Date.now();
+        if (!d.add && _lastClick && _lastClick.id === p.id && tNow - _lastClick.t < 450) {
+          _lastClick = null; render(); if (_els[p.id]) openMenu(p.id, _els[p.id].root); return;
+        }
+        _lastClick = { id: p.id, t: tNow };
         if (d.add) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
         // A click on a grouped piece picks up its whole group (its ◢ then sizes them all); Alt-click, just the one.
         else { _sel = {}; (d.alt ? [p.id] : togetherWith(p.id)).forEach(function (k) { _sel[k] = true; }); }
@@ -762,9 +777,25 @@
       (pdef ? (WpParts.MODES[pdef.kind] || []) : []).forEach(function (m) {
         h += '<button class="btn' + ((p.mode || WpParts.MODES[pdef.kind][0][0]) === m[0] ? ' on' : '') + '" data-mode="' + m[0] + '">' + esc(m[1]) + '</button>';
       });
+      h += '<button class="btn" data-fit title="Make it as tall as what it shows right now">↕ Fit</button>';
       h += '</div><div class="sec">Backing</div><div class="row">'
         + '<button class="btn' + (!p.back ? ' on' : '') + '" data-back="0">Clear</button>'
         + '<button class="btn' + (p.back ? ' on' : '') + '" data-back="1">Panel</button></div>';
+      // Its own look, on any mode (the guild lead, 2026-09-29: "more element types, sizes, formats
+      // like in the hud").
+      h += '<div class="sec">Label</div><div class="row">'
+        + '<button class="btn' + (!p.nolabel ? ' on' : '') + '" data-nolabel="0">Show</button>'
+        + '<button class="btn' + (p.nolabel ? ' on' : '') + '" data-nolabel="1">Hide</button></div>';
+      h += '<div class="sec">Bar or ring</div><div class="row">';
+      WpParts.THICK.forEach(function (t) { h += '<button class="btn' + ((p.thick || '') === t[0] ? ' on' : '') + '" data-thick="' + t[0] + '">' + esc(t[1]) + '</button>'; });
+      h += '</div><div class="sec">Text</div><div class="row">';
+      WpParts.ALIGN.forEach(function (a) { h += '<button class="btn' + ((p.align || '') === a[0] ? ' on' : '') + '" data-align="' + a[0] + '">' + esc(a[1]) + '</button>'; });
+      h += '</div><div class="sec">Colour</div><div class="row" style="flex-wrap:wrap">'
+        + '<button class="btn' + (!p.color ? ' on' : '') + '" data-color="" title="The data\'s own colour (health goes green → red)">Auto</button>';
+      WpParts.PALETTE.forEach(function (c) {
+        h += '<button class="btn sw' + (p.color === c ? ' on' : '') + '" data-color="' + c + '" title="' + c + '" style="background:' + c + '"></button>';
+      });
+      h += '</div>';
       if (p.grp) {
         var gn = _layout.panels.filter(function (q) { return q.grp === p.grp; }).length;
         h += '<div class="sec">Group · ' + gn + ' pieces move together</div><div class="row" style="flex-wrap:wrap">'
@@ -822,19 +853,47 @@
     if (p.kind === 'timers' && !p.all) fillLive(p);
   }
   // Whole on the screen wherever the panel sits (the guild lead, 2026-09-29:
-  // "This view could go off the screen"): below the ✥ or panel it came from,
-  // else above it, else as low as it can sit while whole. Never taller than
-  // the screen (it scrolls inside), and placed again when the live list fills in.
+  // "This view could go off the screen"), and beside the panel rather than on it
+  // ("The right click in the corner of an element completely covers the overlay. We need to
+  // adaptively find a spot where we can put it above or to the side depending on how far from
+  // the edge of the screen it is"). Never taller than the screen (it scrolls inside), and placed
+  // again when the live list fills in.
   function placeMenu() {
     if (!_menuAnchor || !menuEl.classList.contains('show')) return;
     var W = window.innerWidth, H = window.innerHeight;
     menuEl.style.maxHeight = (H - 16) + 'px';
-    var r = _menuAnchor.getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
-    var left = Math.max(8, Math.min(W - mr.width - 8, r.left));
-    var top = r.bottom + 6;
-    if (top + mr.height > H - 8) top = r.top - mr.height - 6;
-    if (top < 8) top = Math.max(8, H - mr.height - 8);
-    menuEl.style.left = left + 'px'; menuEl.style.top = top + 'px';
+    var mr = menuEl.getBoundingClientRect(), box = menuAvoid();
+    var s = menuSpot(W, H, box, mr.width, mr.height);
+    menuEl.style.left = s.left + 'px'; menuEl.style.top = s.top + 'px';
+  }
+  // What the menu must not cover: the panel it is for, and the rest of its group.
+  function menuAvoid() {
+    var ids = _menuFor ? togetherWith(_menuFor).filter(function (k) { return _els[k]; }) : [];
+    if (!ids.length) { var r = _menuAnchor.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; }
+    var b = groupBox(ids.map(function (k) { var e = _els[k].root; return { x0: e.offsetLeft, y0: e.offsetTop, w0: e.offsetWidth, h0: e.offsetHeight }; }));
+    return { left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h };
+  }
+  // Where a mw × mh menu goes next to box on a W × H screen: to the right, else the left, else
+  // below, else above — the first side with room for all of it. With no room anywhere, the spot
+  // that covers the least of the box. Pure, so the tests run it.
+  function menuSpot(W, H, box, mw, mh) {
+    var G = 8, M = 8;
+    function cl(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+    var vTop = cl(box.top, M, H - mh - M), hLeft = cl(box.left, M, W - mw - M);
+    var c = [
+      { left: box.right + G, top: vTop, ok: box.right + G + mw <= W - M },
+      { left: box.left - G - mw, top: vTop, ok: box.left - G - mw >= M },
+      { left: hLeft, top: box.bottom + G, ok: box.bottom + G + mh <= H - M },
+      { left: hLeft, top: box.top - G - mh, ok: box.top - G - mh >= M },
+    ];
+    for (var i = 0; i < c.length; i++) if (c[i].ok) return { left: Math.round(c[i].left), top: Math.round(c[i].top) };
+    var best = null, bestCover = Infinity;
+    c.forEach(function (s) {
+      var l = cl(s.left, M, W - mw - M), t = cl(s.top, M, H - mh - M);
+      var cover = Math.max(0, Math.min(l + mw, box.right) - Math.max(l, box.left)) * Math.max(0, Math.min(t + mh, box.bottom) - Math.max(t, box.top));
+      if (cover < bestCover) { bestCover = cover; best = { left: Math.round(l), top: Math.round(t) }; }
+    });
+    return best;
   }
 
   // The countdowns up right now, as one-click claims — the way to pull a
@@ -960,10 +1019,20 @@
     else if (t.id === 'mAddBtn') { var inp = document.getElementById('mAdd'); if (inp) claimName(p, inp.value); }
     else if (t.hasAttribute('data-mode')) {
       // A new mode brings its own shape: a ring wants a square, rows want height.
+      // Otherwise it keeps its width and takes the height its content needs (the guild lead,
+      // 2026-09-29: chips on "Its buffs" "doesn't expand to match the size of the overlay").
       var nm = t.getAttribute('data-mode'), sz = (pdefOf(p) && pdefOf(p).size && pdefOf(p).size[nm]) || WpParts.DEFAULT_SIZE[nm];
-      if (nm !== p.mode && sz) { p.w = sz[0]; p.h = sz[1]; }
+      var ringy = nm === 'ring' || p.mode === 'ring' || nm === 'arc' || p.mode === 'arc';
+      if (nm !== p.mode && sz) { if (ringy || !p.w) p.w = sz[0]; p.h = sz[1]; }
+      var fit = nm !== p.mode && !ringy;
       p.mode = nm;
+      if (fit) { var fid = p.id; setTimeout(function () { fitPiece(fid); }, 0); }
     }
+    else if (t.hasAttribute('data-fit')) { setTimeout(function () { fitPiece(p.id); }, 0); }
+    else if (t.hasAttribute('data-nolabel')) { p.nolabel = t.getAttribute('data-nolabel') === '1'; }
+    else if (t.hasAttribute('data-thick')) { p.thick = t.getAttribute('data-thick'); }
+    else if (t.hasAttribute('data-align')) { p.align = t.getAttribute('data-align'); }
+    else if (t.hasAttribute('data-color')) { p.color = t.getAttribute('data-color'); }
     else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
     else if (t.hasAttribute('data-leave')) { p.grp = null; }
     else if (t.hasAttribute('data-selgrp')) {
@@ -1036,6 +1105,9 @@
     });
     var tab = chooserState().tab;
     if (chooserShown() && tab !== 'groups') WpParts.PARTS.forEach(function (d) { if (d.cat === tab) need[d.src] = true; });
+    // A source whose path is read from another (the target NPC's script needs the target) keeps
+    // that one polling too.
+    Object.keys(need).forEach(function (k) { var S = WpParts.SOURCES[k]; (S && S.needs || []).forEach(function (n) { need[n] = true; }); });
     return need;
   }
   function syncSources() {
@@ -1049,11 +1121,16 @@
     s.running = true;
     (function tick() {
       if (!neededSources()[k]) { s.running = false; return; }
-      fetch('http://127.0.0.1:' + PORT + S.path, { cache: 'no-store' })
+      // A path that depends on another source: nothing to ask yet waits a second; a new path
+      // (a new target) drops the old answer at once, and asks again soon while it is loading.
+      var path = typeof S.path === 'function' ? S.path(liveData) : S.path;
+      if (!path) { if (s.path) { s.path = null; s.data = null; paintParts(k); } setTimeout(tick, 1000); return; }
+      if (path !== s.path) { s.path = path; s.data = null; }
+      fetch('http://127.0.0.1:' + PORT + path, { cache: 'no-store' })
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (j) { if (j) { s.data = j; s.at = Date.now(); } })
+        .then(function (j) { if (j && s.path === path) { s.data = j; s.at = Date.now(); } })
         .catch(function () {})
-        .then(function () { paintParts(k); paintChooserValues(); setTimeout(tick, S.every); });
+        .then(function () { paintParts(k); paintChooserValues(); setTimeout(tick, (s.data && s.data.loading) ? 1500 : S.every); });
     })();
   }
   function liveData(k) { var s = _src[k]; return (s && s.data && Date.now() - s.at < STALE_MS) ? s.data : null; }
@@ -1084,8 +1161,25 @@
       var v = viewFor(d), sample = false;
       if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
-      setBody(e, WpParts.render(d, p.mode, v, now));
+      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align }));
     });
+  }
+  // A piece's height to what it shows right now (chips wrap onto however many lines they need),
+  // never off the screen. Its width stays.
+  function fitPiece(id) {
+    var p = panelById(id), e = _els[id];
+    if (!p || p.kind !== 'part' || !e || !e.body) return;
+    var pt = e.body.querySelector('.pt');
+    if (!pt) return;
+    var was = pt.style.height;
+    pt.style.height = 'auto';
+    var need = Math.ceil(pt.getBoundingClientRect().height) + 4;
+    pt.style.height = was;
+    var H = window.innerHeight, top = e.root.offsetTop;
+    p.h = Math.max(16, Math.min(H - top, need));
+    e.root.style.height = p.h + 'px';
+    save();
+    if (_menuFor === id) placeMenu();
   }
   setInterval(function () {
     if (!window.WpParts) return;
@@ -1273,6 +1367,13 @@
     var p = { id: newId('q'), kind: 'part', part: pid, mode: mode, name: '',
       x: num(X / W, 0, 1, 0.3), y: num(Y / H, 0, 1, 0.3), w: num(sz[0], 40, 4000, 200), h: num(sz[1], 16, 3000, 30),
       scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false };
+    // A saved group brings each piece's own look with it.
+    if (o) {
+      p.nolabel = !!o.nolabel;
+      p.thick = (o.thick === 'thin' || o.thick === 'thick') ? o.thick : '';
+      p.color = /^#[0-9a-fA-F]{6}$/.test(String(o.color || '')) ? o.color : '';
+      p.align = (o.align === 'c' || o.align === 'r') ? o.align : '';
+    }
     _layout.panels.push(p);
     return p;
   }
@@ -1309,7 +1410,7 @@
     var g = { id: newId('s'), name: String(name || '').trim().slice(0, 24) || ('Group ' + (_groups.length + 1)),
       parts: ps.map(function (p) {
         return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
-          w: p.w, h: p.h, scale: p.scale, back: p.back };
+          w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '' };
       }) };
     _groups.push(g);
     _groups = _groups.slice(-60);
@@ -1356,6 +1457,7 @@
     _undo = gone;
     var nm = gone.length === 1 ? (gone[0].p.name || (partDef(gone[0].p) ? partDef(gone[0].p).label : 'panel')) : gone.length + ' pieces';
     toastMsg.textContent = 'Deleted ' + nm;
+    toastEl.classList.add('undo');
     toastEl.classList.add('on');
     clearTimeout(_undoT);
     _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 8000);
@@ -1370,6 +1472,33 @@
     save(); render();
   }
   document.getElementById('undoBtn').addEventListener('click', undoRemove);
+
+  // A piece's clickable items: a /say or /map copies (paste it into EQ), PQDI opens the browser.
+  // They work locked too — each carries data-wp-interact, so the click reaches the canvas.
+  function note(msg) {
+    toastMsg.textContent = msg;
+    toastEl.classList.remove('undo');
+    toastEl.classList.add('on');
+    clearTimeout(_undoT);
+    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 2500);
+  }
+  function copyText(text) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+  }
+  document.addEventListener('click', function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest('.pt-act') : null;
+    if (!a || !a.closest('.panel')) return;
+    ev.stopPropagation();
+    var cp = a.getAttribute('data-copy'), url = a.getAttribute('data-url');
+    if (cp) { copyText(cp); note('Copied ' + cp + ' — paste it into EQ'); }
+    else if (url) { try { if (M.openExternal) M.openExternal(url); } catch (e) {} note('Opening in your browser'); }
+  }, true);
 
   // ── The selection bar: lock together, unlock, save as a group, delete ────────
   // The guild lead, 2026-09-29: "I should be able to select multiple pieces, lock them together (and not
