@@ -78,6 +78,19 @@
   .qtag{font-size:8.5px;border-radius:3px;padding:0 4px;border:1px solid}
   .qtag.gate{color:#d29922;border-color:rgba(210,153,34,0.5)}
   .qtag.flag{color:#56d364;border-color:rgba(86,211,100,0.5)}
+  /* Warnings and item labels (the guild lead, 2026-09-29): ⚠ orange for a despawn or a spawn, red
+     for a faction loss; "needs" blue; "get" gold like the hand-in rewards. */
+  .qtag.warn{color:#ffa657;border-color:rgba(255,166,87,0.55)}
+  .qtag.bad{color:#f85149;border-color:rgba(248,81,73,0.55)}
+  .qtag.need{color:#58a6ff;border-color:rgba(88,166,255,0.5)}
+  .qtag.give{color:#d29922;border-color:rgba(210,153,34,0.5)}
+  .qtoggle{background:none;border:0;color:#8b949e;font-size:10px;font-family:inherit;cursor:pointer;padding:0 2px}
+  .qtoggle:hover{color:#fff}
+  .qlbl{font-size:8.5px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;flex:0 0 24px}
+  .qget{color:#d29922}
+  .qfac{font-size:9.5px;color:#8b949e;margin-top:1px}
+  .qfac .up{color:#56d364}
+  .qfac .dn{color:#f85149}
   .qnpc{color:#58a6ff}
   .qzone{color:#8b949e}
   .vrow{display:flex;gap:6px;font-size:10px;padding:1px 0}
@@ -555,6 +568,13 @@
         _renderBody(_lastMi);
         return;
       }
+      var tog = t.closest('.qtoggle');
+      if (tog) {
+        var qk = tog.getAttribute('data-qk');
+        if (qk) _qOpen[qk] = !_qOpen[qk];
+        _renderBody(_lastMi);
+        return;
+      }
       var chip = t.closest('.qcopy');
       if (chip) {
         _copyText(chip.getAttribute('data-copy') || '');
@@ -571,11 +591,11 @@
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
   }
@@ -657,32 +677,88 @@
     if (p) out.push(p + 'p'); if (g) out.push(g + 'g'); if (s) out.push(s + 's'); if (c) out.push(c + 'c');
     return out.join(' ') || '0c';
   }
+  // What the NPC says is folded away until asked for (the guild lead, 2026-09-29: "we should be
+  // collapse the npc text"). Open rows live in a JS map keyed per NPC, never in the DOM, which the
+  // 500ms repaint replaces.
+  var _qOpen = {}, _qOpenFor = null;
+  function _qToggle(key, lines){
+    if (!lines || !lines.length) return '';
+    return '<button type="button" class="qtoggle" data-qk="' + key + '" title="' + (_qOpen[key] ? 'Hide' : 'Show') + ' what the NPC says">'
+         + (_qOpen[key] ? '▾' : '▸') + ' says</button>';
+  }
+  function _qLines(key, lines){
+    if (!_qOpen[key] || !lines || !lines.length) return '';
+    return lines.map(function(r, i){
+      return '<div class="qsay' + (i ? ' alt' : '') + '" title="' + esc(r.text) + '">' + (r.kind === 'emote' ? '* ' : '') + esc(_clip(r.text, 220)) + '</div>';
+    }).join('');
+  }
+  function _qNames(list, n){
+    n = n || 2;
+    var names = (list || []).map(function(x){ return x.name; });
+    return names.slice(0, n).join(', ') + (names.length > n ? ' +' + (names.length - n) : '');
+  }
+  // ⚠ on anything that despawns a mob, spawns one, or costs faction (the guild lead, 2026-09-29).
+  // The full list rides in the title.
+  function _qWarnTags(w, faction){
+    var h = '';
+    if (w && w.despawn) h += ' <span class="qtag warn" title="The NPC leaves after this and comes back on its respawn">⚠ despawns</span>';
+    if (w && w.despawns) h += ' <span class="qtag warn" title="' + esc(w.despawns.map(function(n){ return n.name; }).join(', ')) + '">⚠ despawns ' + esc(_qNames(w.despawns)) + '</span>';
+    if (w && w.spawns) h += ' <span class="qtag warn" title="' + esc(w.spawns.map(function(n){ return n.name; }).join(', ')) + ' — may attack">⚠ spawns ' + esc(_qNames(w.spawns)) + '</span>';
+    if (w && w.spawn_other && !w.spawns) h += ' <span class="qtag warn" title="Puts a mob up">⚠ spawns a mob</span>';
+    var loss = (faction || []).filter(function(f){ return f.delta < 0; });
+    if (loss.length) h += ' <span class="qtag bad" title="' + esc(loss.map(function(f){ return f.name + ' ' + f.delta; }).join(', ')) + '">⚠ faction −</span>';
+    return h;
+  }
+  // Every faction change, gains and losses (the guild lead, 2026-09-29: "we should also track
+  // faction for these quests as well where it makes sense").
+  function _qFaction(faction){
+    if (!faction || !faction.length) return '';
+    return '<div class="qfac">' + faction.map(function(f){
+      return '<span class="' + (f.delta < 0 ? 'dn' : 'up') + '">' + (f.delta > 0 ? '+' : '−') + Math.abs(f.delta) + '</span> ' + esc(f.name);
+    }).join(' · ') + '</div>';
+  }
   function renderQuest(mob, d){
     if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
     if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
+    if (_qOpenFor !== mob.id) { _qOpen = {}; _qOpenFor = mob.id; }
     var out = '';
     if (d.say && d.say.length) {
-      out += '<div class="qhead">What to say</div>' + d.say.map(function(b){
+      out += '<div class="qhead">What to say</div>' + d.say.map(function(b, i){
         var tags = (b.gated ? ' <span class="qtag gate" title="What it says depends on your flags, items or faction">depends on you</span>' : '')
-                 + (b.flag ? ' <span class="qtag flag" title="This can give you a character flag">flag</span>' : '');
-        var lines = (b.replies || []).map(function(r, i){
-          return '<div class="qsay' + (i ? ' alt' : '') + '" title="' + esc(r.text) + '">' + (r.kind === 'emote' ? '* ' : '') + esc(_clip(r.text, 220)) + '</div>';
-        }).join('');
+                 + (b.flag ? ' <span class="qtag flag" title="This can give you a character flag">flag</span>' : '')
+                 + (b.needs ? ' <span class="qtag need" title="It checks you carry this before it answers">needs ' + esc(_qNames(b.needs)) + '</span>' : '')
+                 + (b.gives ? ' <span class="qtag give" title="' + (b.gives_random ? 'You get one of these' : 'You get this') + '">get ' + (b.gives_random ? 'one of ' : '') + esc(_qNames(b.gives)) + '</span>' : '')
+                 + _qWarnTags(b.warn, b.faction);
         // Some NPCs answer only while you sit (the Seer; the guild lead, 2026-09-28: "i had to sit
         // down first"). b.say joins every word a branch needs ("unlock memories"); older bots send
         // only keywords.
         var sit = b.sit ? '<span class="qtag gate" title="Answers only while you are sitting">sit first</span>' + _copyChip('/sit') : '';
-        return '<div class="qrow"><div class="qline">' + sit + _copyChip('/say ' + (b.say || b.keywords[0])) + tags + '</div>' + lines + '</div>';
+        return '<div class="qrow"><div class="qline">' + sit + _copyChip('/say ' + (b.say || b.keywords[0])) + tags
+             + _qToggle('s' + i, b.replies) + '</div>' + _qFaction(b.faction) + _qLines('s' + i, b.replies) + '</div>';
       }).join('');
     }
     if (d.turnins && d.turnins.length) {
-      out += '<div class="qhead">Hand in</div>' + d.turnins.map(function(t){
+      // Each hand-in says what you give, what you get, and what else it does (the guild lead,
+      // 2026-09-29: "If there are turn-in requirements or you get an item as output from a quest we
+      // should denote that"). Its own words ride behind the toggle; an older bot sends them only
+      // for the whole NPC (d.trade), shown once after the list.
+      var perTurn = d.turnins.some(function(t){ return t.says; });
+      out += '<div class="qhead">Hand in</div>' + d.turnins.map(function(t, i){
         var ins = t.inputs.map(function(x){ return (x.qty > 1 ? x.qty + '× ' : '') + esc(x.name); }).join(' + ');
-        var outs = t.outputs.length ? ' → <span style="color:#d29922">' + t.outputs.map(function(x){ return esc(x.name); }).join(', ') + '</span>' : '';
-        return '<div class="qrow">' + ins + outs + '</div>';
-      }).join('') + (d.trade || []).map(function(r){
-        return '<div class="qsay alt" title="' + esc(r.text) + '">then: ' + esc(_clip(r.text, 220)) + '</div>';
+        var gets = t.outputs.length
+          ? (t.random ? 'one of ' : '') + t.outputs.map(function(x){ return esc(x.name); }).join(', ')
+          : '';
+        if (t.exp) gets += (gets ? ' · ' : '') + 'exp';
+        var extra = _qWarnTags(t.warn, t.faction) + _qToggle('t' + i, t.says);
+        return '<div class="qrow">'
+             + '<div class="qline"><span class="qlbl">give</span><span>' + ins + '</span></div>'
+             + '<div class="qline"><span class="qlbl">get</span><span class="qget">' + (gets || '<span class="qzone">nothing listed</span>') + '</span></div>'
+             + (extra ? '<div class="qline">' + extra + '</div>' : '')
+             + _qFaction(t.faction) + _qLines('t' + i, t.says) + '</div>';
       }).join('');
+      if (!perTurn && d.trade && d.trade.length) {
+        out += '<div class="qline">' + _qToggle('trade', d.trade) + '</div>' + _qLines('trade', d.trade);
+      }
     }
     if (d.next && d.next.length) {
       out += '<div class="qhead">Who to talk to next</div>' + d.next.map(function(n){

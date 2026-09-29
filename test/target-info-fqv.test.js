@@ -24,7 +24,7 @@ function load(npcById) {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   // eslint-disable-next-line no-new-func
   const api = new Function('window', 'fetch', 'esc', 'PORT', '_renderBody', '_lastMi', 'renderFactions',
-    block + '\nreturn { renderFqv, _setSub: function(s){ _fqvSub = s; } };')(
+    block + '\nreturn { renderFqv, _setSub: function(s){ _fqvSub = s; }, _open: function(k){ _qOpen[k] = true; } };')(
     env.window, env.fetch, esc, 7779, () => {}, null, () => '<div class="facwrap">factions</div>');
   return api;
 }
@@ -74,10 +74,69 @@ describe('an NPC that only listens while you sit', () => {
   });
 });
 
+// The guild lead, 2026-09-29: "we should be collapse the npc text and put a warning on anything
+// that despawns a mob or spawns something else, or causes negative faction. If there are turn-in
+// requirements or you get an item as output from a quest we should denote that", and "we should
+// also track faction for these quests as well where it makes sense".
+describe('the Quest tab folds the NPC text, warns, and labels items', () => {
+  const WARDEN = { id: 202300, say: [
+    { keywords: ['fight'], say: 'fight', replies: [{ kind: 'say', text: 'Guards! Seize them!' }], gated: false, flag: false, hints: [],
+      warn: { despawn: true, spawns: [{ id: 202401, name: 'a warden guard' }] } },
+    { keywords: ['sword'], say: 'sword', replies: [{ kind: 'say', text: 'Take it.' }], gated: false, flag: false, hints: [],
+      needs: [{ id: 1234, name: 'Rusty Key' }], gives: [{ id: 15392, name: 'Spell: Resurrection' }] },
+  ], trade: [{ kind: 'say', text: 'old-bot words' }], turnins: [
+    { inputs: [{ id: 22519, name: 'Sarnak Blood', qty: 2 }], outputs: [{ id: 15958, name: 'Note From Tarerd' }, { id: 15392, name: 'Spell: Resurrection' }],
+      exp: 1000, random: true, warn: { despawns: [{ id: 202223, name: 'Vicar Thiran' }] },
+      faction: [{ id: 1504, name: 'Knowledge Seekers', delta: 10 }, { id: 1505, name: 'Dark Reflection', delta: -25 }],
+      says: [{ kind: 'say', text: 'Two of them. Good.' }] },
+  ], next: [], vendor: [] };
+  async function render(open) {
+    const f = load({ 202300: WARDEN });
+    f.renderFqv({ id: 202300 }); await settle(); await settle();
+    f.renderFqv({ id: 202300 });
+    for (const k of open || []) f._open(k);
+    return f.renderFqv({ id: 202300 });
+  }
+
+  it('what the NPC says is folded behind a toggle until opened', async () => {
+    const closed = await render();
+    expect(closed).not.toContain('Guards! Seize them!');
+    expect(closed).not.toContain('Two of them. Good.');
+    expect(closed).toContain('data-qk="s0"');
+    expect(closed).toContain('data-qk="t0"');
+    const opened = await render(['s0']);
+    expect(opened).toContain('Guards! Seize them!');
+    expect(opened).not.toContain('Two of them. Good.');
+  });
+
+  it('warns on a despawn, a spawn and a faction loss', async () => {
+    const out = await render();
+    expect(out).toContain('⚠ despawns</span>');
+    expect(out).toContain('⚠ spawns a warden guard');
+    expect(out).toContain('⚠ despawns Vicar Thiran');
+    expect(out).toMatch(/qtag bad" title="Dark Reflection -25">⚠ faction −/);
+  });
+
+  it('every faction change shows, gains and losses', async () => {
+    const out = await render();
+    expect(out).toContain('<span class="up">+10</span> Knowledge Seekers');
+    expect(out).toContain('<span class="dn">−25</span> Dark Reflection');
+  });
+
+  it('a hand-in says what you give and what you get; a branch what it needs and gives', async () => {
+    const out = await render();
+    expect(out).toContain('<span class="qlbl">give</span><span>2× Sarnak Blood</span>');
+    expect(out).toContain('<span class="qget">one of Note From Tarerd, Spell: Resurrection · exp</span>');
+    expect(out).toContain('needs Rusty Key');
+    expect(out).toContain('get Spell: Resurrection');
+    expect(out).not.toContain('old-bot words');     // Per-hand-in words win over the old whole-NPC list.
+  });
+});
+
 describe('a locked overlay still takes the clicks', () => {
   const code = stripJs(html);
-  it('the hover handshake covers the sub-tabs and chips', () => {
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
+  it('the hover handshake covers the sub-tabs, chips and the says toggles', () => {
+    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
+    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
   });
 });
