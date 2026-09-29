@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a).** Sets + `/pipe mimic` verbs + local file first, then the database backup and sharing; display types Bar, Readout, Chips, then Ring and Pips, Timeline last | sessions: build step 1 on `alpha` |
+| **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
@@ -4242,6 +4242,22 @@ order stands, and the display types go in pairs by what they reuse:
    proves itself on known shapes), **then Ring and Pips, Timeline last** (it needs a time axis every
    data element would have to supply).
 Builder work goes to `alpha`; anything the agent needs goes to `beta` first (§81).
+
+**Step 1 shipped the same day — alpha `e9e4f3d6`.** Overlay sets: which overlays are on, where each one
+sits, how see-through and how big, and the Timers canvas panels, saved under a name in
+`overlay-sets.json` beside Mimic's config (no network). Switched by `/pipe mimic load <set>`,
+`save [set]` (no name = over the set you are on), `next`, `prev`, `lock` / `lock on|off` / `unlock`;
+the tray's 🗂 Overlay sets; and Settings → Overlay sets (tray ↔ dashboard parity, through one command).
+Choices made in the build, each the guild lead's to overturn:
+- **A set is loaded only when asked.** A character switch does not load one: with two clients open
+  the active character flips on every alt-tab, and the screen must not rearrange itself under you.
+  The old per-character layouts keep working beside sets until sets replace them.
+- **`next` cycles the sets that character has used**; a character with fewer than two cycles every set.
+- **No delete from the game** — a hotbar typo must not lose a set; Settings deletes.
+- **The hotkey is EverQuest's own**: a social with `/pipe mimic next`. No new Windows-wide key.
+- **Feedback shows on the trigger overlay** ("Overlay set: raid"), because a Windows notification does
+  not show over full-screen EverQuest.
+- A set saved on another screen setup lands like a screen change (§80a): each overlay keeps its side.
 
 ### 84. Suggested triggers per character; pets on the meter (2026-09-29, agent 3.7.44 beta `f857fa6f`, bot 3.1.174)
 Two member reports the same morning.
