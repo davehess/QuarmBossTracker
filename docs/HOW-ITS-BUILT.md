@@ -850,7 +850,9 @@ iframe (`nodeIntegrationInSubFrames`); `window.wpCanvasRoute(t)` sends each coun
 group claim → catch-all) using the `group` the agent stamps on timer rows (`_builtinTimerRows`,
 `_activeTimersSnapshot`). Parts poll `GET /api/timers`, never speak; the hidden trigger window speaks only
 (`canvasOwnsTriggers`). Layout `cfg.canvasLayouts[<W>x<H>]` via `canvas-state` / `canvas-save`; arrange via
-`canvas-edit` (tray "↳ Arrange the canvas…", dashboard ✥ Arrange). Test `test/timers-canvas.test.js`.
+`canvas-edit` (tray "↳ Arrange the canvas…", dashboard ✥ Arrange). Every panel also carries an always-on
+`.mvbtn` ✥ (`data-wp-interact`, `startDrag(…, anyTime)`) that moves it and opens its settings while locked;
+the panel body takes the mouse only while arranging (DECISIONS §87). Test `test/timers-canvas.test.js`.
 Catalog entry in `docs/DESIGN-overlay-catalog.md`. DECISIONS §79.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)

@@ -1004,7 +1004,9 @@ ALWAYS, unlocked included (`applyOverlayInteractivity` + the hover-restore speci
 force-shown by setup/unlock (`_overlayWanted` — it is an alternative home for the trigger visuals, so
 forcing it would show every timer twice); skipped by rescue and auto-arrange. Its panels are
 `triggers.html?part=…` in iframes, which never speak — the trigger window stays alive hidden as the
-ONE voice. A new panel type must keep all three of those true.
+ONE voice. A new panel type must keep all three of those true. Every panel also gets the always-on ✥
+(the guild lead, 2026-09-29: *"a move button on them which should be there at all times"*; §87) — it is
+the only part of a locked panel on the hover handshake, so the window stays click-through.
 
 **Screens changing never moves an overlay without a yes** (the guild lead, 2026-09-29: *"if I kick the
 power out of my monitor it moves everything to a different screen and I have to rearrange it"*;
