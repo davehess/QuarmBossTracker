@@ -1,0 +1,94 @@
+name: Sync alpha from beta and main
+
+# The Mimic 3.0 alpha (the guild lead, 2026-09-29: "can we make an alpha channel
+# for 3.0 testing as well? I'm sure we're going to do more beta releases before
+# that"). `alpha` is `beta` + the 3.0 overlay-builder work, so every push to beta
+# or main is merged into alpha — the same rule as sync-beta.yml, one step down.
+# Without it alpha would age the way beta once did (79,199 lines behind).
+#
+# Two consequences of that design, both deliberate:
+#   - Agent changes land on BETA, not alpha. The alpha's agent is always beta's,
+#     which is what lets an alpha Mimic hot-swap along the beta agent line.
+#   - apps/mimic/package.json is alpha's park (3.0.0) and never follows beta's.
+#     Any other conflict fails loudly, as sync-beta does.
+#
+# The push uses GITHUB_TOKEN, which does not trigger `on: push` workflows, so a
+# sync never cuts an alpha build by itself; the next real push to alpha does.
+# If alpha does not exist yet, this does nothing.
+#
+# ⚠ This file must live on `main` AND `beta` — GitHub runs the workflow from the
+# branch being pushed. sync-beta.yml carries it from main to beta.
+
+on:
+  push:
+    branches: [main, beta]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-alpha
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Merge beta and main into alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git ls-remote --exit-code --heads origin alpha >/dev/null; then
+            echo "no alpha branch — nothing to do."
+            exit 0
+          fi
+          git fetch origin main beta alpha
+          git checkout -B alpha origin/alpha
+
+          # The agent's version file too: alpha carries beta's, and main's can
+          # trail it, exactly as sync-beta.yml keeps beta's.
+          PARK_FILES="apps/mimic/package.json packages/wolfpack-logsync/package.json"
+          changed=0
+          # beta first (it is main + the Mimic park), then main in case this run
+          # beat sync-beta.yml to it.
+          for src in beta main; do
+            if git merge-base --is-ancestor "origin/$src" HEAD; then
+              echo "alpha already contains $src."
+              continue
+            fi
+            if git merge --no-edit -m "sync: $src -> alpha [sync]" "origin/$src"; then
+              echo "clean merge of $src"
+            else
+              conflicts="$(git diff --name-only --diff-filter=U)"
+              echo "conflicts:"; echo "$conflicts"
+              for f in $conflicts; do
+                case " $PARK_FILES " in
+                  *" $f "*) ;;
+                  *)
+                    echo "::error::Unexpected conflict in $f merging $src into alpha — resolve by hand; not auto-merging."
+                    git merge --abort
+                    exit 1
+                    ;;
+                esac
+              done
+              for f in $conflicts; do
+                git checkout --ours -- "$f"
+                git add -- "$f"
+                echo "kept alpha's $f"
+              done
+              git commit --no-edit -m "sync: $src -> alpha [sync] (kept alpha's park)"
+            fi
+            changed=1
+          done
+
+          if [ "$changed" = 1 ]; then
+            git push origin alpha
+            echo "alpha synced to beta $(git rev-parse --short origin/beta), main $(git rev-parse --short origin/main)"
+          fi
