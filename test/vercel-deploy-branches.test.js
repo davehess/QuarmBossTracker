@@ -18,4 +18,13 @@ describe('web/vercel.json deploys', () => {
   it('every branch is off, then main and beta are switched back on', () => {
     expect(cfg.git.deploymentEnabled).toEqual({ '**': false, main: true, beta: true });
   });
+  // The same evening, Deployment Storage passed the Hobby 10 GB. Every finished build keeps its whole output
+  // until retention removes it, and most main and beta pushes change the bot, the agent or the docs, not the
+  // website. A push that leaves web/ alone now skips the build. A skipped build still counts toward the 100
+  // a day, but it stores nothing.
+  it('a push that changes nothing under web/ skips the build', () => {
+    // Vercel builds on exit 1 and skips on 0; `git diff --quiet` exits 1 when something changed. The command
+    // runs in the project root (web/), so "." is web/ — the site imports nothing from outside it.
+    expect(cfg.ignoreCommand).toBe('git diff --quiet HEAD^ HEAD -- .');
+  });
 });

@@ -324,8 +324,14 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     sync merges alone spent ~100 that day and beta went 90 minutes unbuilt
     ("Deployment rate limited — retry in 24 hours" on the commit's Vercel status, which is readable
     unauthenticated at `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`). An Ignored Build Step
-    does NOT help — a skipped build still counts. A new branch that should build the site goes in this
-    map, and costs a slot per push;
+    does NOT help that cap — a skipped build still counts. A new branch that should build the site goes in
+    this map, and costs a slot per push.
+    ⚠ **Hobby also caps Deployment Storage at 10 GB**, and every finished build keeps its whole output
+    (≈40 MB of `web/public` alone) until retention deletes it (Hobby default 30 days), plus the latest build
+    of every branch that still exists, indefinitely. It hit 10.32 GB on 2026-09-29 (DECISIONS §108). So
+    `"ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."` skips a push that changes nothing under `web/`:
+    skipped builds store nothing. It is safe because the site imports nothing from outside `web/`; if that
+    ever changes, widen the path;
   - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
     environment, then set Git Branch to `beta`.** There is no "beta"
     environment and there should not be — Vercel's environments are
