@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'screens-zeal-bars-2026-09-29',
+    title: 'Mimic 2.7.5 beta',
+    version: 'Mimic 2.7.5 beta',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Pull a monitor’s plug and your overlays wait for you instead of scattering.',
+    features: [
+      {
+        name: 'Screens changed? Mimic asks',
+        blurb: 'When a monitor goes away or turns, Mimic offers to bring the overlays that were on it to the screen EverQuest is on, each at the same spot. When the monitor comes back, it offers to put everything back where it was.',
+      },
+      {
+        name: 'Mimic knows where EverQuest is',
+        blurb: 'It now finds the EverQuest window itself, so Auto-arrange and the Timers canvas land on the right screen, even when the game runs in a window.',
+      },
+      {
+        name: 'Zeal’s raid bars and assist bar in UI Studio',
+        blurb: 'Move the /raidbars box and the /assistbar in UI Studio like any other window. Auto-arrange keeps overlays off them.',
+      },
+    ],
+    fixes: [
+      'Changing monitors no longer throws overlays onto your main screen at default spots.',
+    ],
+  },
+  {
     key: 'timers-canvas-2026-09-29',
     title: 'Agent 3.7.42',
     version: 'Agent 3.7.42',

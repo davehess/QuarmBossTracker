@@ -171,6 +171,12 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Mimic: "Save layout" finds the character (beta, 2026-09-29).** State poll cap 256 KB → 16 MB,
   logged; the last character is kept through a quiet Zeal. §76. **Agent 3.7.41:** the dashboard's 💾 button
   flashes "✓ Saved for <char>" or "✗ Not saved — no character yet" for 2.5 s. §79.
+- **⏳ Screens changed → ask, EQ's real window, Zeal bars in UI Studio (Mimic beta `2e05962c`, 2026-09-29).**
+  Overlay positions remembered per screen setup; a returning monitor offers "put them back", a lost or
+  reshaped screen offers "bring them to EQ's screen" (no more silent snap to the primary). Mimic asks
+  Windows where EQ's window is (3.0 plan §4 B). UI Studio moves Zeal's `/raidbars` box and `/assistbar`
+  (zeal.ini); auto-arrange avoids them. 3.0 requirements R11–R15 recorded. `test/zeal-bars-and-screens.test.js`,
+  `DECISIONS-2026-09-21.md` §80.
 - **⏳ Timers canvas — option A, first slice (agent 3.7.42 + Mimic beta `d6f9ccca`, 2026-09-29; FB-33).** One
   screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
   one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by
