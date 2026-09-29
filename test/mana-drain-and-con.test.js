@@ -195,17 +195,31 @@ describe('a player on Target Info', () => {
   });
   // The guild lead, 2026-09-24: "INcorrectly characterizing 'looks like quite a
   // gamble' as a yellow con. these folks are level 60".
-  it('anonymous: the last level /who history saw — a consider never overrides it, and names no colour', () => {
-    const m = load({ zeal: me('Nyssara', 60), who: { corvale: { name: 'Corvale', anonymous: true } }, hist: { corvale: { class: 'Wizard', level: 60 } } });
-    m.noteConsiderLevel(L('Corvale regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+  it('anonymous: the last level /who history saw, when nothing newer says otherwise; names no colour', () => {
+    const m = load({ zeal: me('Nyssara', 60), who: { corvale: { name: 'Corvale', anonymous: true } }, hist: { corvale: { class: 'Wizard', level: 58 } } });
     const p = m._targetPlayerInfo(st('Corvale'), 'Nyssara', { mob: null });
-    expect(p).toMatchObject({ anonymous: true, class: 'Wizard', class_src: 'history', level: 60, level_src: 'history',
+    expect(p).toMatchObject({ anonymous: true, class: 'Wizard', class_src: 'history', level: 58, level_src: 'history',
       level_min: null, level_max: null, con_colour: null });
   });
-  it('a consider alone gives a player no level', () => {
-    const m = load({ zeal: me('Nyssara', 60) });
-    m.noteConsiderLevel(L('Tovrin regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
-    expect(m._targetPlayerInfo(st('Tovrin'), 'Nyssara', { mob: null })).toMatchObject({ level: null, level_min: null, con_colour: null });
+  // The guild lead, 2026-09-29: "Faedar conned even to me he should show up as level 60". A player's
+  // "looks like quite a gamble" is the EVEN con (a level 60 reading level 60s), so it is your level —
+  // and it outranks history, which can be weeks old. Live /who still outranks it.
+  it('an even con of a player is your own level, and beats history', () => {
+    const m = load({ zeal: me('Nyssara', 60), who: { faeder: { name: 'Faeder', anonymous: true } }, hist: { faeder: { class: 'Bard', level: 58 } } });
+    m.noteConsiderLevel(L('Faeder regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+    expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 60, level_src: 'con',
+      level_min: null, level_max: null, con_colour: null, history_level: 58 });
+    const alone = load({ zeal: me('Nyssara', 60) });
+    alone.noteConsiderLevel(L('Tovrin regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+    expect(alone._targetPlayerInfo(st('Tovrin'), 'Nyssara', { mob: null })).toMatchObject({ level: 60, level_src: 'con' });
+  });
+  it('live /who beats the con; any other con phrase gives a player no level', () => {
+    const m = load({ zeal: me('Nyssara', 60), who: { brackwyn: { name: 'Brackwyn', class: 'Enchanter', level: 59, anonymous: false } } });
+    m.noteConsiderLevel(L('Brackwyn regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+    expect(m._targetPlayerInfo(st('Brackwyn'), 'Nyssara', { mob: null })).toMatchObject({ level: 59, level_src: 'who' });
+    const red = load({ zeal: me('Nyssara', 60) });
+    red.noteConsiderLevel(L('Tovrin regards you indifferently -- what would you like your tombstone to say?'), 'Nyssara');
+    expect(red._targetPlayerInfo(st('Tovrin'), 'Nyssara', { mob: null })).toMatchObject({ level: null, level_min: null, con_colour: null });
   });
   it('says when there is nothing to drain', () => {
     const m = load({ who: { rethlan: { class: 'Bard', level: 60 }, zarrin: { class: 'Warrior', level: 60 } } });
@@ -236,8 +250,10 @@ describe('the Target Info card', () => {
     expect(h).toContain('last seen 58');
     expect(h).toContain('drained up to <b style="color:#58a6ff">770</b> mana · 2 casts');
   });
-  it('with no level at all, says /who is where it comes from — never a consider', () => {
-    expect(card({ anonymous: true })).toContain('level unknown until a /who sees them out of anonymous');
-    expect(card({ anonymous: true })).not.toContain('/consider');
+  it('with no level at all, says where it comes from: /who, or an even con', () => {
+    expect(card({ anonymous: true })).toContain('level unknown until a /who sees them out of anonymous or they con even');
+  });
+  it('an even-con level says so', () => {
+    expect(card({ class: 'Bard', level: 60, level_src: 'con' })).toContain('level <b>60</b> <span style="color:#8b949e">(even con)</span>');
   });
 });
