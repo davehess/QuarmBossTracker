@@ -116,7 +116,6 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
 | **Essences of Power loot queue on /pop** | **Beta `7b942d11` (§96).** The guild's rule as code: one bid buys the set, the next drop goes to the first in line who lacks it and is there, else bid and join the end. `?v=b` by person, `?v=c` by essence, `&demo=1` sample data | the guild lead: open `b.wolfpack.quest/pop?v=b&demo=1` and `?v=c&demo=1`, pick one. Officers: record every piece in OpenDKP (bid, then 0 DKP hand-outs); name the set bid "Essences of Power" |
-| **/pop counts the raid roster** | **Live, web 1.8.51 (§100).** Raiders on Mains, + raid alts on All; active, level 46+ on the last /who; traders and other guilds out; the planner follows the toggle | the guild lead: say whether "at level" means 46 or 60, and whether Recruits count as raiders |
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
@@ -4795,19 +4794,20 @@ raiders and raid alts, pack members toons at level and above"*. Partly reverses 
   - mains: Pack Leader, Officer, Raid Pack, Recruit;
   - alts: Raid Alt;
   - out: Trader, Inactive, Non-raid Alt, no rank, UNKNOWN, and every other guild's character.
-  - Active characters only, at level 46 or higher on the last `/who` (`who_directory`).
+  - Active characters only, at level 60 or higher on the last `/who` (`who_directory`). Web 1.8.51
+    shipped 46 (PoP's entry level); the guild lead set it the same day: *"for us it's 60. Recruits are
+    raider, include them"* (web 1.8.52).
   - A raider never seen on `/who` still counts. A raid alt needs a seen level, because that is where the
     low and trader characters are.
-  - Measured the same day: 67 raiders and 135 raid alts.
+  - Measured the same day at 60: 66 raiders and 101 raid alts (at 46 it was 67 and 135).
 - **The page's population is that roster, with each character's flags attached.** §99 counted characters
   with a real flag, and before that every character with a hail row. Today no one has a real flag, so
   the charts start at zero for everyone.
 - **Mains means raiders everywhere on the page, the planner included.** All characters adds the raid
   alts, and only there does the planner show "mains (alts)". §99 had the planner ignore the toggle.
 - **The matrix's "+N?" marker is gone.** It counted a character's hail rows, which are not flags.
-- ⚠ **Two numbers are a guess, easy to change:** the level floor (46 is PoP's entry level; the guild
-  lead said "at level", which might mean 60), and Recruit counting as a raider. Both live in
-  `popRoster.ts`.
+- **Settled by the guild lead:** level 60, and Recruits are raiders. Both live in `popRoster.ts`. The 60
+  is our guild's floor, not a rule of the game (self-host epic, §3).
 - **Tests:** `test/pop-planner-mains-alts.test.js` runs `popRoster` for real.
 
 

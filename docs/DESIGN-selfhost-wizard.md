@@ -580,3 +580,8 @@ and the same never-refetch guarantee.
   The wizard's export must be complete enough to stand as the guild's archive
   on its own, and a **tenant merge** (two rosters, two DKP histories, two sets
   of anchors → one) is a real operation the tenancy design does not yet have.
+- **2026-09-29 — who counts as the raid is ours, hardcoded.** `/pop` counts
+  raiders by OpenDKP rank (Pack Leader, Officer, Raid Pack, Recruit), raid alts
+  by `Raid Alt`, level 60 and up (`web/lib/popRoster.ts`, DECISIONS
+  2026-09-21 §100). Another guild's rank names and floor will differ, so both
+  are config for the wizard, not constants.
