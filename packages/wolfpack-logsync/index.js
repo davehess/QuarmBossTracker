@@ -18230,6 +18230,10 @@ function renderSetupChecks(s) {
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
      + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
      + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
+     // ✨ The setup walkthrough, both layouts until one is picked (DECISIONS §93). Mimic-only;
+     // the tray's ✨ Setup walkthrough opens the same page.
+     + '<button class="wp-welcome" data-v="a" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup, one step at a time">✨ Walkthrough A</button>'
+     + '<button class="wp-welcome" data-v="b" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup: three essentials, then everything else as cards">✨ Walkthrough B</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
@@ -18328,6 +18332,13 @@ function wpWireFixerButtons(s) {
         say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
       }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
     });
+  });
+  document.querySelectorAll('.wp-welcome').forEach(function (wBtn) {
+    if (!(window.mimic && window.mimic.openWelcome)) return;
+    wBtn.style.display = '';
+    if (wBtn.dataset.wired) return;
+    wBtn.dataset.wired = '1';
+    wBtn.addEventListener('click', function () { window.mimic.openWelcome(wBtn.dataset.v); });
   });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
