@@ -1494,6 +1494,35 @@ function confirmPlayer(name) {
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
 const knownPetOwners = new Map();
 
+// Pets the rest of the guild has named (FB-35, a member, 2026-09-29: "This doesn't
+// show pets? maybe its only if they dont use /pet leader"). A summoned pet names
+// its owner only in "My leader is <Owner>." (at summon, or on /pet leader), so a
+// client that missed that line cannot tell the pet from a raider. The bot pools
+// every declaration uploaded by any raider and serves it on the poll
+// (`pet_owners`); each EncounterBuilder reads it the first time the pet attacks.
+// petNameLower → OwnerName.
+const _guildPetOwners = new Map();
+function _applyPetOwnersResponse(resp) {
+  const owners = resp && resp.owners;
+  if (!owners || typeof owners !== 'object') return;
+  _guildPetOwners.clear();
+  for (const [pet, owner] of Object.entries(owners)) {
+    if (pet && owner && !/\s/.test(pet) && /^[A-Z][a-z]+$/.test(String(owner))) _guildPetOwners.set(pet.toLowerCase(), String(owner));
+  }
+}
+// The server's own pet-name generator (EQMacEmu zone/pets.cpp GetRandPetName):
+// G|J|K|L|V|X|Z + (""|ab|ar|as|eb|en|ib|ob|on) + (""|an|ar|ek|ob) + (ab|er|n|tik),
+// "tik" forced when both middles are empty, never "tik" after "ek". Kebantik,
+// Gobeker, Jarn. A name of this shape that /who and the raid window have never
+// shown is a summoned pet whose owner we have not learned, not a raider.
+const _PET_NAME_RX = /^([GJKLVXZ])(ab|ar|as|eb|en|ib|ob|on)?(an|ar|ek|ob)?(ab|er|n|tik)$/;
+function _isGeneratedPetName(name) {
+  const m = _PET_NAME_RX.exec(String(name || ''));
+  if (!m) return false;
+  if (!m[2] && !m[3]) return m[4] === 'tik';
+  return !(m[3] === 'ek' && m[4] === 'tik');
+}
+
 // ── Vision eyes are never damage-dealing pets ───────────────────────────────
 // EQ's Eye of Zomm summons a scout named "Eye of <Owner>". It is a VISION pet:
 // no attacks, no procs, zero damage, ever. But it IS a pet by every other
@@ -8344,6 +8373,11 @@ class EncounterBuilder {
         // whitelisted on the meter but rendered "(charmed)", never credited
         // to a specific raider (undefined when not applicable, keeps payload flat).
         pet_charm:  petCharm || undefined,
+        // A summoned pet whose owner no one has named yet (FB-35): its name
+        // came out of the server's pet-name generator and /who and the raid
+        // window have never shown it. Rendered "(pet)", not as a raider.
+        pet_summoned: (!petOwner && !petCharm && _isGeneratedPetName(name)
+          && !whoData.has(nl) && !_raidRosterHas(name)) || undefined,
         procDetail: t.procDetail || {},
       };
     }
@@ -8640,6 +8674,16 @@ class EncounterBuilder {
 
   add(event) {
     if (!event) return;
+
+    // ── A pet some other raider's agent has already named (FB-35) ──────────
+    // Live builders only: a replay of an old log must not borrow tonight's owners.
+    if (!this.silent && event.attacker && _guildPetOwners.size) {
+      const _gk = String(event.attacker).toLowerCase();
+      if (!this.petLeaders[_gk]) {
+        const _go = _guildPetOwners.get(_gk);
+        if (_go && !_isVisionEyePet(event.attacker)) this.petLeaders[_gk] = _go;
+      }
+    }
 
     // ── Possessive-named pet, self-owned — auto-populate petLeaders ────────
     // A member (Beastlord) 2026-07-03: "the DPS meter never reads my pet."
@@ -25953,20 +25997,50 @@ async function dismissTopDamage(key) {
 (function setupSuggestedTriggers(){
   var mounted = false;
   var listEl = null;
+  // Per character (FB-34, a member, 2026-09-29: "Can these be made to per
+  // character triggers and not across the board?"). '' = every character, the
+  // old behaviour; a lowercase name = ticks apply to that character only.
+  var forChar = '';
+  try { forChar = localStorage.getItem('wp:sugChar') || ''; } catch (e) { void e; }
+  // Ticked for this view? Every-character view: on for everyone. One character: on for them.
+  function onFor(t){
+    if (!t.enabled) return false;
+    if (!forChar) return !t.characters;
+    return !t.characters || t.characters.indexOf(forChar) >= 0;
+  }
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
                    self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
+    var on = onFor(t);
+    // Set for some characters only: say for whom, so the every-character view
+    // never shows a row as simply off when it is on for an alt.
+    var who = (t.enabled && t.characters)
+      ? '<div style="color:#79c0ff;font-size:10px;margin-top:2px">on for: ' + t.characters.map(function(c){ return c.charAt(0).toUpperCase() + c.slice(1); }).join(', ') + '</div>'
+      : '';
     return '<tr data-tid="' + t.id + '">'
-         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
+         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
-           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
+  }
+  function pickerHtml(chars){
+    var opts = '<option value="">Every character</option>';
+    var seen = false;
+    for (var i = 0; i < chars.length; i++) {
+      var lc = String(chars[i]).toLowerCase();
+      if (lc === forChar) seen = true;
+      opts += '<option value="' + lc + '"' + (lc === forChar ? ' selected' : '') + '>' + chars[i] + '</option>';
+    }
+    if (forChar && !seen) opts += '<option value="' + forChar + '" selected>' + forChar.charAt(0).toUpperCase() + forChar.slice(1) + '</option>';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)">For'
+         + '<select id="trgSugFor" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + opts + '</select>'
+         + '<span style="font-size:11px">' + (forChar ? 'ticks here apply to this character only' : 'ticks here apply to every character') + '</span></label>';
   }
   function groupHtml(category, label, items){
     if (!items || items.length === 0) return '';
@@ -25988,7 +26062,7 @@ async function dismissTopDamage(key) {
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
       var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
-      var html = '';
+      var html = pickerHtml((j && j.chars) || []);
       html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
@@ -25996,15 +26070,22 @@ async function dismissTopDamage(key) {
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
       html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
       listEl.innerHTML = html;
+      var sel = document.getElementById('trgSugFor');
+      if (sel) sel.addEventListener('change', function(){
+        forChar = sel.value || '';
+        try { localStorage.setItem('wp:sugChar', forChar); } catch (e) { void e; }
+        fetchAndRender();
+      });
       // Wire toggles. Both flips POST to the same endpoint with partial state;
       // missing fields preserve current values server-side.
       listEl.querySelectorAll('tr[data-tid]').forEach(function(tr){
         var id = tr.getAttribute('data-tid');
         var en = tr.querySelector('.trgEn');
         var tts = tr.querySelector('.trgTts');
+        if (en && en.getAttribute('data-partial')) en.indeterminate = true;   // on for some characters
         if (en) en.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
-          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
+          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked, char: forChar || undefined }) }); }
           catch (e) {}
           tr.style.opacity = '1';
           // The personal list holds the copy this created or removed; its redraw redraws this panel too.
@@ -28466,10 +28547,13 @@ function startWebDashboard(port) {
             // User-state slice
             enabled:    !!(row && row.enabled),
             tts:        _suggestedHasTts(row),
+            characters: (row && row.characters) || null,   // null = every character (FB-34)
           };
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ triggers: items }));
+        // The characters this machine has logs for, and who is playing now, so
+        // the panel can offer "For: <character>" and start on the one in use.
+        return res.end(JSON.stringify({ triggers: items, chars: _watchedCharacters(), playing: _playingCharactersLc() }));
       }
       // POST /api/triggers/suggested — body { id, enabled?, tts? }. Toggles
       // a specific suggested trigger by id; missing fields preserve current
@@ -28492,8 +28576,23 @@ function startWebDashboard(port) {
         const existing = existingIdx >= 0 ? _personalTriggers[existingIdx] : null;
         // Resolve desired final state: enabled defaults to existing-or-true;
         // tts defaults to existing-or-tpl.tts_default.
-        const finalEnabled = wantEnabled != null ? wantEnabled : !!existing;
+        let finalEnabled   = wantEnabled != null ? wantEnabled : !!existing;
         const finalTts     = wantTts     != null ? wantTts     : (existing ? _suggestedHasTts(existing) : !!tpl.tts_default);
+        // Per character (FB-34). `char` = the toggle is for that one character;
+        // none = for every character, as before. `chars` null = every character.
+        const charLc = _normCharList([payload.char]) ? String(payload.char).trim().toLowerCase() : '';
+        let chars = existing && existing.characters ? existing.characters.slice() : null;
+        if (charLc && wantEnabled === true) {
+          if (!existing) chars = [charLc];
+          else if (chars && !chars.includes(charLc)) chars.push(charLc);   // no list = already on for everyone
+        } else if (charLc && wantEnabled === false && existing) {
+          // Off for one: a row that was on for everyone stays on for the others.
+          if (!chars) chars = _watchedCharacters().map(c => String(c).toLowerCase());
+          chars = chars.filter(c => c !== charLc);
+          finalEnabled = chars.length > 0;
+        } else if (!charLc && wantEnabled === true) {
+          chars = null;   // ticked for every character
+        }
         if (!finalEnabled) {
           // Disable → drop the row entirely. The user can re-toggle the
           // checkbox to restore (with template defaults).
@@ -28506,13 +28605,14 @@ function startWebDashboard(port) {
         }
         // Enabled — instantiate from the template, then compile + save.
         const row = _templateToPersonalRow(tpl, { tts: finalTts });
+        if (chars) row.characters = chars;
         try {
           const compiled = _compilePersonalTrigger(row);
           if (existingIdx >= 0) _personalTriggers[existingIdx] = compiled;
           else                  _personalTriggers.push(compiled);
           savePersonalTriggers();
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: true, enabled: true, tts: finalTts }));
+          return res.end(JSON.stringify({ ok: true, enabled: true, tts: finalTts, characters: compiled.characters || null }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'compile failed: ' + (err.message || String(err)) }));
@@ -34990,6 +35090,39 @@ function _watchedCharacters() {
   return out;
 }
 
+// Per-character triggers (FB-34, a member, 2026-09-29: "Can these be made to per
+// character triggers and not across the board?"). A personal trigger may carry
+// `characters`: the lowercase names it is on for. No list = every character,
+// which is what every trigger did before.
+function _normCharList(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (const c of v) {
+    const s = String(c == null ? '' : c).trim().toLowerCase();
+    if (/^[a-z]{2,20}$/.test(s) && !out.includes(s)) out.push(s);
+  }
+  return out.length ? out.slice(0, 50) : null;
+}
+function _triggerOnFor(t, charLc) {
+  return !(t && t.characters && t.characters.length) || (!!charLc && t.characters.includes(charLc));
+}
+// Who is being played right now, lowercase: Zeal's live characters, else the
+// logs written in the last three minutes. For switches with no log line of
+// their own to say whose they are (the timer bars).
+function _playingCharactersLc(now) {
+  const t = now || Date.now();
+  const out = [];
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (st && (t - (st.updatedAt || 0)) <= 90_000) out.push(ch.toLowerCase());
+  }
+  if (out.length) return out;
+  for (const w of (stats.watchedLogs || [])) {
+    if (w && w.character && w.lastSeen && (t - w.lastSeen) <= 3 * 60_000) out.push(String(w.character).toLowerCase());
+  }
+  return out;
+}
+
 // The single compile entry point. Returns { regex, conditions, aliases,
 // anchorsRewritten, warnings, source } and throws only when the final RegExp
 // is genuinely unusable.
@@ -35953,7 +36086,8 @@ function _compilePersonalTrigger(t) {
     regex = c.regex; conditions = c.conditions; aliases = c.aliases;
     for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
-  return { ...t, _regex: regex, _conditions: conditions, _aliases: aliases,
+  const characters = _normCharList(t.characters);   // per-character scope (FB-34); none = every character
+  return { ...t, characters: characters || undefined, _regex: regex, _conditions: conditions, _aliases: aliases,
            _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
@@ -36134,7 +36268,7 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 // (EQLogParser imports set the first three; guild-parity rows the rest).
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns'];
+  'display_threshold_sec', 'exclude_patterns', 'characters'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
@@ -37110,9 +37244,10 @@ const POLL_TRIG_MS       = 2 * 60_000;
 const POLL_PREFS_MS      = 10 * 60_000;
 const POLL_BACKFILL_MS   = 5 * 60_000;
 const POLL_UI_MS         = 5 * 60_000;
+const POLL_PETS_MS       = 60_000;       // pooled pet owners (FB-35): a minute while fights run, five idle
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0 };
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0 };
 function _multiplexActive() { return _pollSupported !== false; }
 function _pollFellBack(reason) {
   if (_pollSupported === false) return;
@@ -37144,6 +37279,7 @@ async function _pollMultiplexed() {
     if (active) want.push('recent_fires');
     if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
     if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
+    if (now - _pollLast.pet_owners >= (active ? POLL_PETS_MS : 5 * POLL_PETS_MS)) want.push('pet_owners');
     if (chars.length) {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
@@ -37193,6 +37329,7 @@ async function _pollMultiplexed() {
       _pollLast.tuning = now;
     }
     if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
+    if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
     if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
     if (want.includes('ui_edits')) {
@@ -39695,6 +39832,7 @@ function _evaluateZealConditions(character, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   for (const t of all) {
     if (t.enabled === false) continue;   // unticked on the dashboard = off (see evaluateTriggersAgainstLine)
+    if (!_triggerOnFor(t, String(character).toLowerCase())) continue;   // set for other characters (FB-34)
     const cond = t.zeal_condition;
     if (!cond || !cond.field || !cond.op || cond.value == null) continue;
     const fv = _zealFieldValue(state, cond.field);
@@ -40350,7 +40488,15 @@ const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short D
 const _builtinTimerHidden = new Set();
 function _builtinTimerKindsOn() {
   const on = new Set();
-  for (const t of _personalTriggers) if (t && t.builtin_timer && t.enabled !== false) on.add(t.builtin_timer);
+  let playing = null;   // resolved once, only when a switch is set for some characters (FB-34)
+  for (const t of _personalTriggers) {
+    if (!t || !t.builtin_timer || t.enabled === false) continue;
+    if (t.characters && t.characters.length) {
+      if (!playing) playing = _playingCharactersLc();
+      if (!playing.some(c => t.characters.includes(c))) continue;
+    }
+    on.add(t.builtin_timer);
+  }
   return on;
 }
 function _builtinTimerRows(now) {
@@ -40844,15 +40990,23 @@ function _rehearseTrigger(t, opts) {
 }
 
 // Hot-path: called for every kept log line in the tail loop.
-function evaluateTriggersAgainstLine(line, tsMs) {
+function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
+  let charLc;   // whose line this is — resolved once, only when a trigger is set per character
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
     // fire path read `enabled` (a bard, 2026-09-26). Guild rows arrive already
     // filtered by the bot, so this only ever skips a personal one.
     if (t.enabled === false) continue;
+    // Set for some characters only (FB-34): the line is theirs when it came
+    // from their log — or, after a character swap on one client, from the
+    // character Zeal says is really playing (_resolveSelfChatSpeaker).
+    if (t.characters && t.characters.length) {
+      if (charLc === undefined) charLc = String((fileChar && _resolveSelfChatSpeaker(fileChar)) || fileChar || '').toLowerCase();
+      if (!_triggerOnFor(t, charLc)) continue;
+    }
     // End-early check runs FIRST so a single log line containing the end
     // phrase cancels the timer before the same line could (also) re-trigger
     // the start pattern. Per-target: if the end pattern matches and there
@@ -43030,7 +43184,7 @@ async function main() {
         // system lines so nothing private ever reaches a trigger. Cheap:
         // precompiled regex set; usually < 50 entries, < 50µs each.
         if (triggerVisibleLine(line, dropPatterns)) {
-          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
         }
         // A DoT's repeating damage lands on the mob's own 6s tick — the charm
         // overlay's "mob tick" (_noteDotTickLine).
@@ -43200,6 +43354,10 @@ module.exports = {
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
+  // FB-34 per-character triggers / FB-35 pooled pet owners — exported for their tests.
+  _normCharList, _triggerOnFor, _playingCharactersLc, _builtinTimerKindsOn,
+  _applyPetOwnersResponse, _isGeneratedPetName, _guildPetOwners, whoData,
+  _liveThreatForTest: () => stats.currentEncounterThreat,
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 

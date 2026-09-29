@@ -696,8 +696,10 @@
         // Index 6 = pet_charm: a charm mob with no live owner proof — kept on
         // the meter (someone's charm is doing that damage) but labeled
         // "(charmed)" instead of crediting a possibly-stale owner.
+        // …and 'pet' there = a summoned pet whose owner nobody has named yet
+        // (FB-35): labelled "(pet)" so it never reads as a raider.
         allRows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || false])
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || (t && t.pet_summoned ? 'pet' : false)])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
         allRows = _foldPetsIntoOwners(allRows);
@@ -820,12 +822,12 @@
         // another fight's header — and that line gets pasted into /rs.
         if (!HIST && et && et.perPlayer && boss && secs > 0) {
           var dmgAll = Object.entries(et.perPlayer)
-            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null, (t && t.pet_charm) || false]; })
+            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null, (t && t.pet_charm) || !!(t && t.pet_summoned)]; })
             .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[2] || x[3]) && x[1] > 0; });
           if (dmgAll.length) {
             var fullTotal = dmgAll.reduce(function(a, x){ return a + x[1]; }, 0);
             var realp = dmgAll
-              .filter(function(x){ return !x[2] && !/\s/.test(x[0]); })
+              .filter(function(x){ return !x[2] && !x[3] && !/\s/.test(x[0]); })
               .sort(function(a, b){ return b[1] - a[1]; })
               .slice(0, 10);
             if (fullTotal > 0 && realp.length) {
@@ -858,7 +860,9 @@
           : '';
         var ownerHtml = petOwner
           ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
-          : (petCharm
+          : (petCharm === 'pet'
+            ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s summoned pet — its owner has not typed /pet leader where a Mimic could see it, so it is not credited yet">(pet)</span>'
+            : petCharm
             ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s charmed pet — pets with the same name as other mobs can\'t be credited to one raider">(charmed)</span>'
             : '');
         // In Tank mode, show the biggest single hit absorbed under the

@@ -9728,20 +9728,50 @@ async function dismissTopDamage(key) {
 (function setupSuggestedTriggers(){
   var mounted = false;
   var listEl = null;
+  // Per character (FB-34, a member, 2026-09-29: "Can these be made to per
+  // character triggers and not across the board?"). '' = every character, the
+  // old behaviour; a lowercase name = ticks apply to that character only.
+  var forChar = '';
+  try { forChar = localStorage.getItem('wp:sugChar') || ''; } catch (e) { void e; }
+  // Ticked for this view? Every-character view: on for everyone. One character: on for them.
+  function onFor(t){
+    if (!t.enabled) return false;
+    if (!forChar) return !t.characters;
+    return !t.characters || t.characters.indexOf(forChar) >= 0;
+  }
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
                    self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
+    var on = onFor(t);
+    // Set for some characters only: say for whom, so the every-character view
+    // never shows a row as simply off when it is on for an alt.
+    var who = (t.enabled && t.characters)
+      ? '<div style="color:#79c0ff;font-size:10px;margin-top:2px">on for: ' + t.characters.map(function(c){ return c.charAt(0).toUpperCase() + c.slice(1); }).join(', ') + '</div>'
+      : '';
     return '<tr data-tid="' + t.id + '">'
-         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
+         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
-           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
+  }
+  function pickerHtml(chars){
+    var opts = '<option value="">Every character</option>';
+    var seen = false;
+    for (var i = 0; i < chars.length; i++) {
+      var lc = String(chars[i]).toLowerCase();
+      if (lc === forChar) seen = true;
+      opts += '<option value="' + lc + '"' + (lc === forChar ? ' selected' : '') + '>' + chars[i] + '</option>';
+    }
+    if (forChar && !seen) opts += '<option value="' + forChar + '" selected>' + forChar.charAt(0).toUpperCase() + forChar.slice(1) + '</option>';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)">For'
+         + '<select id="trgSugFor" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + opts + '</select>'
+         + '<span style="font-size:11px">' + (forChar ? 'ticks here apply to this character only' : 'ticks here apply to every character') + '</span></label>';
   }
   function groupHtml(category, label, items){
     if (!items || items.length === 0) return '';
@@ -9763,7 +9793,7 @@ async function dismissTopDamage(key) {
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
       var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
-      var html = '';
+      var html = pickerHtml((j && j.chars) || []);
       html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
@@ -9771,15 +9801,22 @@ async function dismissTopDamage(key) {
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
       html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
       listEl.innerHTML = html;
+      var sel = document.getElementById('trgSugFor');
+      if (sel) sel.addEventListener('change', function(){
+        forChar = sel.value || '';
+        try { localStorage.setItem('wp:sugChar', forChar); } catch (e) { void e; }
+        fetchAndRender();
+      });
       // Wire toggles. Both flips POST to the same endpoint with partial state;
       // missing fields preserve current values server-side.
       listEl.querySelectorAll('tr[data-tid]').forEach(function(tr){
         var id = tr.getAttribute('data-tid');
         var en = tr.querySelector('.trgEn');
         var tts = tr.querySelector('.trgTts');
+        if (en && en.getAttribute('data-partial')) en.indeterminate = true;   // on for some characters
         if (en) en.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
-          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
+          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked, char: forChar || undefined }) }); }
           catch (e) {}
           tr.style.opacity = '1';
           // The personal list holds the copy this created or removed; its redraw redraws this panel too.
