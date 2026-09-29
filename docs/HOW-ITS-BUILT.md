@@ -832,8 +832,10 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - **Auto-arrange, per screen:** `_autoArrangeOverlays` groups overlays by the screen they are on and runs
   `_arrangeOnScreen` for each; only the home (EverQuest's) screen gets EQ's windows as obstacles and the
   keep-the-middle-clear rule.
-- **🧲 Rescue** (tray, dashboard Overlays tab, IPC `rescue-overlays`; §82): `_rescueSort` splits overlays
-  into lost (middle or top-left ✥ corner on no screen), on another screen, and fine. `_rescueOverlays`
+- **🧲 Rescue** (tray, dashboard Overlays tab, IPC `rescue-overlays`; §82, §89): `_rescueSort` splits overlays
+  into lost (middle on no screen, or under half on one), on another screen, and fine, plus `nudge`: visible
+  ones whose ✥ spot is off-screen (top-left; for the HUD `me`, top-left or under the ring), moved just far
+  enough that the top-left corner is on their own screen. `_rescueOverlays`
   moves only the lost ones — to their remembered spot for this screen setup, else through
   `_arrangeOnScreen` with every other overlay and EQ's windows as obstacles — and asks before bringing
   the other-screen ones (projected with `_projectRect`). Never re-arranges. Test
