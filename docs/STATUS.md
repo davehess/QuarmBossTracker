@@ -205,6 +205,11 @@ next touch one rather than assuming a missing row means a missing doc.
   the piece; a mode change fits the height; two clicks open settings.
   Next: slim endpoints for the /api/state pieces; timeline mode; anchoring to EQ windows.
   `test/canvas-pieces.test.js`. §103.
+- **⏳ Overlays tab rebuilt as option C (beta `b8c6b98c`, agent 3.7.49; alpha `703a6017`, 2026-09-29).**
+  Layout tiles, "✏ Arrange on screen", what is on screen now, an Add drawer of overlay cards, one keycap
+  format with clashes in red, and Keys and Look strips. It fixes the per-character layouts card, which never
+  listed anything. The Canvas is renamed (tray, title, toolbar). Next: the guild lead tries it; role filters
+  only if they pick the roles. `test/overlays-tab-option-c.test.js`. §106–§107.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
