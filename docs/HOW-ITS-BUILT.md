@@ -892,7 +892,20 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
 - A click on ✥ while locked opens the panel's settings, which start with ✏ Arrange / 🧩 Pieces.
 - Every overlay's right-click menu has "🧩 Arrange the canvas" (preload, `canvas-edit`), and
   `/pipe mimic edit` does the same (`overlaySets.parsePipeCommand` → `_setCanvasArrange`) (§105).
-Test `test/canvas-pieces.test.js`. Alpha only.
+- A click on a grouped piece selects its whole group. Two or more selected get `#gbox`, whose ◢ stretches
+  them all (`groupBox` / `scaleGroup`, pure) (§106).
+**Round three (alpha `ec8ad702`, §107), renamed "Canvas":**
+- `parts.js` modes add `thin` / `vbar` / `arc` / `badge` and list `inline` / `columns`.
+  `render(part, mode, view, now, opts)` takes the piece's `{ nolabel, thick, color, align }`, kept by
+  sanitize and saved groups. `act()` makes an item with `copy` / `url` a clickable `.ctl` span.
+- Target Info's tabs are pieces from `mobInfo.mob`: `target.level/zone/hpmax/dmg/ac/statgrid/specials/sight/
+  pqdi/loot/spells/factions`.
+  - `target.quest` / `target.vendor` read the `npc` source, whose `path` is a function of `state`
+    (`/api/npc-interact?id=`). `pollSource` takes function paths, and `neededSources` adds `needs`.
+- `menuSpot(W, H, box, mw, mh)` puts the settings beside the piece's group: right, left, below, above.
+- `fitPiece` sizes a piece to its content on a mode change and on ↕ Fit.
+- The canvas counts two clicks itself to open settings; dblclick never gets past the drag shield.
+Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
 `feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first
