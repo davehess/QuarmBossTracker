@@ -49,6 +49,29 @@ windows accordingly … in fact that will be 3.0."*
 | R13 | A part can be **anchored to a game window**: on it, around it, along an edge — e.g. charm parts on or around the pet window | "add the charm overlay items on top of or surrounding their charm window" |
 | R14 | Minimal parts **over the game's own window** — e.g. just the HP numbers written over the target window — and the fastest path from Zeal to those pixels | "writing just the HP totals over the actual target window could help get rid of our latency issue when people are actively targeting someone" |
 | R15 | **One product, not a sprinkle**: the builder is where Mimic is organised; the dashboard's good parts are reachable from it rather than left behind | "many parts of our mimic feel disjointed … the rest of the dashboard has gone to the wayside, with bits of goodness sprinkled in" |
+| R16 | **Edit in place**: unlocked, a part is dragged, resized and restyled right where it sits on the screen — no separate editor window to round-trip through | 2026-09-29: "we should be able to edit displays in place" |
+| R17 | **Lock / unlock is the gameplay switch**: locked = every click reaches EQ; unlocked = the parts take the mouse. One hotkey, the tray, and `/pipe mimic lock` all flip it, and dragging mid-fight must not stutter | "lock/unlock windows will be crucial for whether we drag and resize during gameplay" |
+| R18 | **Overlay sets, several per character**, switched by hotkey, by the tray (load / save / cycle), or in game: `/pipe mimic load <set>`, `/pipe mimic save <set>`, `/pipe mimic next` | "multiple overlay modes per character, switchable via hotkeys or a simple pipe output … the same load/save should also be available from taskbar or cycle through via command" |
+| R19 | **Sets are shareable**: export, share with the guild, and **suggest** one to a guildmate, who can adopt it | "overlay designs can be saved and shared, even suggested as the amazing guild mates I play with find new, better deployments" |
+| R20 | **Local first, backed up to the database**: a set works with the server down; a copy in our database carries it to another character or another computer | "stored locally in case of server issues, but backups will need to be saved to our database for portability. raiders will want to reuse the overlay designs between characters or computers" |
+| R21 | **Six display types, any data element**: Bar, Ring, Readout, Pips, Timeline, Chips — each with weight (thin/thick), direction (across/up), backing (clear/panel) and an anchor (screen or an EQ window). A list (DPS rows, raid HP) is a *container* of elements, not a seventh type | "render me 6 different display types for data elements we could build into this 3.0 master overlay and apply to any data element" — rendered on the canvas "Mimic 3.0 display types" |
+
+**How R16–R21 land on what exists (2026-09-29):**
+- **`/pipe` is already a live channel.** Zeal forwards `/pipe <text>` as custom message type 4
+  (`docs/zeal-pipe-protocol.md`), and the agent already reads `/pipe fd|mend|…` off hotkeys for cooldowns.
+  `mimic load|save|next|lock` is a new verb set on the same path — no Zeal change.
+- **Sets replace two stores that exist today:** the per-character profiles (`cfg.charProfiles`, which
+  overlays are on) and the Timers canvas layouts (`cfg.canvasLayouts`, per resolution). A set holds both:
+  which parts, where (as fractions of their anchor, so a set survives a resolution change), and how each
+  part is drawn. Characters point at sets; a set is not owned by one character, which is what makes
+  "reuse between characters" free.
+- **Local first:** the sets file lives in Mimic's own folder and is read at start with no network.
+  **Backup:** the same JSON goes to a database table keyed by the Discord account, through the bot's
+  agent API — the UI Studio backups (`POST /api/agent/ui_layout`) are the precedent. A new computer
+  signs in and pulls its sets; nothing is lost if the server is down, only not yet backed up.
+- **Sharing and suggestions** are rows in that table marked shared (guild library) or addressed to one
+  member (a suggestion); adopting copies the set, so an author's later edit never changes yours
+  silently.
 
 ## 3. What exists to build on (from the catalog)
 

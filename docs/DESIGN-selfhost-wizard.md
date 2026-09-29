@@ -150,6 +150,8 @@ Management API exposes neither. Do not quote an egress figure until someone does
 
 - **2026-09-29 — Mimic has an alpha release channel as well as beta and stable** (`DECISIONS-2026-09-21.md` §81): an `alpha` branch builds onto ONE rolling GitHub release (tag `mimic-alpha`) that alpha installs read by its fixed download address, because GitHub's release feed lists only 10 releases. Costs nothing extra to host (one release's files, replaced each build) but one Windows CI build per alpha push. For the wizard: the release repo's owner/name is baked into Mimic (`_ALPHA_FEED`, `_GITHUB_FEED`, `package.json` publish), so a guild running its own fork must change all three; a guild that never tests ahead can simply never create `alpha`.
 
+- **2026-09-29 — overlay sets are local first, with a database copy (planned)** (`DECISIONS-2026-09-21.md` §83; 3.0 plan R20): each raider's overlay sets live in a file on their own machine and work with no server; a copy per Discord account goes to a database table for moving between computers and for sharing. Small JSON per set (a few kB), kept until deleted. For the wizard: a guild with no database still gets working overlays, only no backup or sharing.
+
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
 
