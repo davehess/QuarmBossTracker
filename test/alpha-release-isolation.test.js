@@ -64,6 +64,10 @@ describe('the alpha build and its branch', () => {
     expect(normal).toMatch(/steps\.tag\.outputs\.alpha != 'true'/);
     const alpha = sliceBlock(release, '- name: Alpha — clear the rolling release', 'apps/mimic/dist/*.blockmap');
     expect(alpha).toMatch(/gh release delete-asset mimic-alpha/);
+    // electron-builder writes only latest.yml under the github provider; the alpha feed reads
+    // alpha.yml with no fallback (the first alpha, v3.0.0-alpha.832, shipped without one).
+    expect(alpha).toMatch(/cp apps\/mimic\/dist\/latest\.yml apps\/mimic\/dist\/alpha\.yml/);
+    expect(alpha).toMatch(/apps\/mimic\/dist\/alpha\.yml\n/);
     expect(alpha).toMatch(/tag_name:\s+mimic-alpha/);
     expect(alpha).toMatch(/prerelease: true/);
   });
