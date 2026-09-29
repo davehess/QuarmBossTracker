@@ -39,6 +39,7 @@ import {
 } from '@/lib/popFlags';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
 import SpellbookSubmit from './SpellbookSubmit';
 import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
@@ -48,7 +49,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags (Preview) — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
-type CharFlags = { name: string; flags: Set<string>; unmapped: number };
+type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean };
 
 // One row per (character, PoP spell they haven't scribed) — main OR alt, as
 // of pop_spell_needs v4 (2026-08-26). Ordered by character level descending
@@ -166,59 +167,52 @@ export default async function PopFlagsPage(
     }
     return out;
   }
-  const [flagRows, { count: unmappedCount }, { data: charMetaRaw }, { count: rosterCount }] = await Promise.all([
+  const [flagRows, { count: unmappedCount }, { data: rosterRaw }, { count: rosterCount }] = await Promise.all([
     mappedFlagRows(),
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
-      .select('name, main_name')
-      .eq('guild_id', 'wolfpack'),
+      .select('name, rank, active')
+      .eq('guild_id', 'wolfpack')
+      .in('rank', [...RAIDER_RANKS, ...RAID_ALT_RANKS])
+      .limit(1000),
     sb.from('characters')
       .select('name', { count: 'exact', head: true })
       .eq('guild_id', 'wolfpack'),
   ]);
 
-  // `pop_flags.character` is free text, not FK'd to `characters` — so knowing
-  // whether a name is a main takes its own lookup, same "main_name IS NULL or
-  // main_name = name" convention as everywhere else (e.g. pop_spell_needs).
-  // A name `characters` doesn't know about defaults to "main" — the safe
-  // direction under the mains-default rule is to keep it visible, not hide it.
-  const mainOfLc = new Map<string, string | null>();
-  for (const r of (charMetaRaw ?? []) as { name: string; main_name: string | null }[]) {
-    const key = r.name.toLowerCase();
-    const main = r.main_name?.toLowerCase() || null;
-    mainOfLc.set(key, main && main !== key ? main : null);
+  // Levels from each character's last /who (who_directory), a hundred names a request.
+  const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null }[];
+  const levelOf = new Map<string, number>();
+  for (let i = 0; i < rosterRows.length; i += 100) {
+    const { data } = await sb.from('who_directory').select('character_key, level')
+      .in('character_key', rosterRows.slice(i, i + 100).map(r => r.name.toLowerCase())).limit(1000);
+    for (const w of (data ?? []) as { character_key: string; level: number | null }[]) {
+      if (w.level != null && w.level > (levelOf.get(w.character_key) ?? 0)) levelOf.set(w.character_key, w.level);
+    }
   }
-  const isMainName = (name: string) => (mainOfLc.get(name.toLowerCase()) ?? null) === null;
+  const members = popRoster(rosterRows.map(r => ({ ...r, level: levelOf.get(r.name.toLowerCase()) ?? null })));
 
-  // Per-character flag sets (canonical casing = first seen). Only characters with a REAL flag are on the
-  // page: the unmapped hail rows name ~2,000 characters, most of them not ours.
+  // Per-character flag sets (canonical casing = first seen), for anyone with a real flag — the My
+  // Characters view reads these for the viewer's own toons, whatever their rank.
   const byChar = new Map<string, CharFlags>();
   for (const r of flagRows) {
     const k = r.character.toLowerCase();
     let c = byChar.get(k);
-    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0 }; byChar.set(k, c); }
+    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true }; byChar.set(k, c); }
     c.flags.add(r.flag_key);
   }
-  // The matrix's "+N?" (unattributed grants) for those characters, a hundred names a request.
-  const flagNames = Array.from(byChar.values()).map(c => c.name);
-  for (let i = 0; i < flagNames.length; i += 100) {
-    const { data } = await sb.from('pop_flags').select('character')
-      .eq('flag_key', 'unmapped').in('character', flagNames.slice(i, i + 100)).limit(1000);
-    for (const r of (data ?? []) as { character: string }[]) {
-      const c = byChar.get(r.character.toLowerCase());
-      if (c) c.unmapped++;
-    }
-  }
-  const chars = Array.from(byChar.values())
+  // The guild-wide surfaces count the raid roster only (popRoster): raiders are the mains, raid alts the
+  // alts. Their flags come from byChar; someone with none yet can still enter the open tier.
+  const chars: CharFlags[] = members
+    .map(m => ({ name: m.name, flags: byChar.get(m.name.toLowerCase())?.flags ?? new Set<string>(), unmapped: 0, main: m.main }))
     .sort((a, b) => b.flags.size - a.flags.size || a.name.localeCompare(b.name));
   const totalUnmapped = unmappedCount ?? 0;
 
   // Everything below this line — counts, the chart, the matrix, the planner —
-  // reads `scopedChars`, not `chars`. Default is mains; `?scope=all` widens
-  // it to every character with a recorded flag. `chars`/`byChar` (unscoped)
-  // stay around only for the My Characters view, which always wants the
+  // reads `scopedChars`, not `chars`. Default is mains (the raider ranks); `?scope=all` adds the raid
+  // alts. `byChar` (unscoped) stays around only for the My Characters view, which always wants the
   // viewer's full roster regardless of scope.
-  const scopedChars = scope === 'all' ? chars : chars.filter(c => isMainName(c.name));
+  const scopedChars = scope === 'all' ? chars : chars.filter(c => c.main);
 
   // Counts.
   const flagCount = new Map<string, number>();
@@ -235,11 +229,12 @@ export default async function PopFlagsPage(
   // For each earnable flag F in zone Z: who could ATTEND (eligible for Z),
   // who would GAIN F, and what that unlocks — per downstream gate W where F is
   // required, the characters missing ONLY F for W ("one flag away through F").
-  // Every number is mains, with alts in parentheses (the guild lead, 2026-09-29: "make this mains and in
-  // parenths alts"), so the planner counts every character whatever the scope, and ranks by mains.
+  // It counts the scoped roster, like the rest of the page (the guild lead, 2026-09-29: "it should be mains
+  // only when i'm on mains, vs all characters"). On All characters each number is mains with the raid alts
+  // in parentheses ("make this mains and in parenths alts"); ranked by mains either way.
   type Split = { mains: number; alts: number };
   const split = (list: CharFlags[]): Split => {
-    const mains = list.filter(c => isMainName(c.name)).length;
+    const mains = list.filter(c => c.main).length;
     return { mains, alts: list.length - mains };
   };
   type PlanRow = {
@@ -252,18 +247,18 @@ export default async function PopFlagsPage(
     for (const fk of z.grants) {
       const def = POP_FLAGS[fk];
       if (!def || def.kind === 'loot') continue;
-      const attendList = chars.filter(c => zoneAccess(z, c.flags));
+      const attendList = scopedChars.filter(c => zoneAccess(z, c.flags));
       const gains = attendList.filter(c => !c.flags.has(fk));
       const unlocks = POP_ZONES
         .filter(w => w.requires.includes(fk))
         .map(w => {
-          const oneAway = chars.filter(c => {
+          const oneAway = scopedChars.filter(c => {
             const miss = missingFor(w, c.flags);
             return miss.length === 1 && miss[0] === fk;
           });
           return { zone: w, count: split(oneAway),
-            mains: oneAway.filter(c => isMainName(c.name)).map(c => c.name),
-            alts: oneAway.filter(c => !isMainName(c.name)).map(c => c.name) };
+            mains: oneAway.filter(c => c.main).map(c => c.name),
+            alts: oneAway.filter(c => !c.main).map(c => c.name) };
         })
         .filter(u => u.count.mains + u.count.alts > 0);
       const leverage = unlocks.reduce((n, u) => ({ mains: n.mains + u.count.mains, alts: n.alts + u.count.alts }), { mains: 0, alts: 0 });
@@ -273,7 +268,7 @@ export default async function PopFlagsPage(
   plan.sort((a, b) => b.leverage.mains - a.leverage.mains || b.gains.mains - a.gains.mains
     || b.leverage.alts - a.leverage.alts || b.gains.alts - a.gains.alts || a.zone.tier - b.zone.tier);
   const planTop = plan.filter(p => p.leverage.mains + p.leverage.alts > 0 || p.gains.mains + p.gains.alts > 0).slice(0, 12);
-  const MainsAlts = ({ s }: { s: Split }) => <>{s.mains}<span className="text-dim"> ({s.alts})</span></>;
+  const MainsAlts = ({ s }: { s: Split }) => <>{s.mains}{scope === 'all' && <span className="text-dim"> ({s.alts})</span>}</>;
 
   const selected = zoneKey ? POP_ZONE_BY_KEY[zoneKey] ?? null : null;
   const topLevel = POP_ZONES.filter(z => !z.subZoneOf);
@@ -366,10 +361,12 @@ export default async function PopFlagsPage(
         </p>
         <div className="flex flex-wrap gap-4 mt-3 text-xs text-dim items-center">
           <span>
-            👥 <b className="text-text">{scopedChars.length}</b> {scope === 'mains' ? 'mains' : 'characters'} with flags
-            {scope === 'mains' && chars.length > scopedChars.length && (
-              <span className="text-dim"> ({chars.length} incl. alts)</span>
-            )}
+            <span title={`Raiders (Pack Leader, Officer, Raid Pack, Recruit) and raid alts, active, level ${POP_MIN_LEVEL}+ on their last /who. Traders and inactive characters are left out.`}>
+              👥 <b className="text-text">{scopedChars.length}</b> {scope === 'mains' ? 'raiders' : 'raiders and raid alts'} at {POP_MIN_LEVEL}+
+              {scope === 'mains' && chars.length > scopedChars.length && (
+                <span className="text-dim"> ({chars.length - scopedChars.length} raid alts)</span>
+              )}
+            </span>
             {' '}· roster {rosterCount ?? '—'}
           </span>
           <span>🚩 <b className="text-text">{flagRows.length}</b> flags recorded</span>
@@ -442,7 +439,6 @@ export default async function PopFlagsPage(
                   <tr key={c.name}>
                     <td className="py-1.5 pr-3">
                       <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
-                      {c.unmapped > 0 && <span className="ml-1 text-[10px] text-orange" title="unattributed grants">+{c.unmapped}?</span>}
                     </td>
                     {gatedZones.map(z => (
                       <td key={z.key} className="py-1.5 px-2 text-center">
