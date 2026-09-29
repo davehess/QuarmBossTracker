@@ -56,6 +56,40 @@ describe('reading the main\'s old log at the finish', () => {
   });
 });
 
+describe('a don\'t-send change takes effect', () => {
+  // The engine reads the don't-send list when it starts, so until it restarts an unticked
+  // character's log is still being sent. The page restarts it once the ticking stops.
+  const block = sliceBlock(script, 'var _restartT = null;', '\n  }\n');
+  function run() {
+    const S = { agentReady: true }, calls = { relaunch: 0, poll: 0 };
+    let pending = null;
+    const env = {
+      S, changed: () => {}, pollEngine: () => { calls.poll++; },
+      M: { relaunchAgent: () => { calls.relaunch++; return Promise.resolve(true); } },
+      setTimeout: (fn) => { pending = fn; return 1; }, clearTimeout: () => { pending = null; },
+    };
+    // eslint-disable-next-line no-new-func
+    const restartSoon = new Function(...Object.keys(env), block + '\nreturn restartSoon;')(...Object.values(env));
+    return { S, calls, restartSoon, fire: () => { const f = pending; pending = null; if (f) f(); } };
+  }
+  it('restarts the engine once, after the last change', async () => {
+    const h = run();
+    h.restartSoon(); h.restartSoon(); h.restartSoon();
+    expect(h.calls.relaunch).toBe(0);
+    h.fire();
+    await Promise.resolve(); await Promise.resolve();
+    expect(h.calls.relaunch).toBe(1);
+    expect(h.S.agentReady).toBe(false);
+    expect(h.calls.poll).toBe(1);
+  });
+  it('an untick schedules it, and Open the dashboard does not leave before it runs', () => {
+    const code = stripJs(script);
+    expect(code).toMatch(/saveConfig\(\{ excludedCharacters: out \}\)\)\.catch\(function \(\) \{\}\)\.then\(restartSoon\)/);
+    const fin = stripJs(sliceBlock(script, 'function finish() {', '\n  }\n'));
+    expect(fin).toMatch(/if \(_restartT\) \{[^}]*_finishWhenUp = true;/);
+  });
+});
+
 describe('every bridge call the page makes exists', () => {
   // A typo here is a button that silently does nothing in Mimic (the preview bridge would hide it).
   const bridge = sliceBlock(preload, "contextBridge.exposeInMainWorld('mimic', {", '\n});');

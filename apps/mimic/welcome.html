@@ -337,7 +337,7 @@
     });
     h += '</tbody></table>'
       + '<div class="note dim">★ <b>Main</b> is the character whose old log the last step offers to read. '
-      + '<b>Send</b> unticked means that character\'s log never leaves this PC — overlays still work for it.</div>';
+      + '<b>Send</b> unticked means that character\'s log never leaves this PC — overlays still work for it. The engine restarts a moment after you change one.</div>';
     el.innerHTML = h;
     el.querySelectorAll('[data-main]').forEach(function (r) {
       r.addEventListener('change', function () { S.main = r.dataset.main; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); changed('chars'); });
@@ -347,9 +347,20 @@
         var lc = cb.dataset.tx.toLowerCase();
         if (cb.checked) S.excluded.delete(lc); else S.excluded.add(lc);
         var out = S.chars.filter(function (c) { return S.excluded.has(c.character.toLowerCase()); }).map(function (c) { return c.character; });
-        M.saveConfig({ excludedCharacters: out }).catch(function () {});
+        Promise.resolve(M.saveConfig({ excludedCharacters: out })).catch(function () {}).then(restartSoon);
       });
     });
+  }
+  // The engine reads the don't-send list when it starts, so an untick means nothing until it
+  // restarts — and until then that character's log is still being sent. Restart once the ticking
+  // stops, not on every click.
+  var _restartT = null;
+  function restartSoon() {
+    clearTimeout(_restartT);
+    _restartT = setTimeout(function () {
+      S.agentReady = false; changed();
+      Promise.resolve(M.relaunchAgent()).catch(function () {}).then(pollEngine);
+    }, 2500);
   }
 
   function bZeal(el) {
@@ -556,8 +567,15 @@
   }
 
   // ── Finish ──────────────────────────────────────────────────────────────
-  var _finishing = false;
+  var _finishing = false, _finishWhenUp = false;
   function finish() {
+    // A don't-send change still waiting for its restart: restart now, finish once the engine is back.
+    if (_restartT) {
+      clearTimeout(_restartT); _restartT = null; _finishWhenUp = true;
+      S.agentReady = false; changed();
+      Promise.resolve(M.relaunchAgent()).catch(function () {}).then(pollEngine);
+      return;
+    }
     if (_finishing || !gateOk(S)) return;
     _finishing = true;
     if (!S.main && S.chars.length) { S.main = S.chars[0].character; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); }
@@ -677,6 +695,7 @@
           S.agentReady = true;
           S.clockOffsetMs = st && typeof st.clockOffsetMs === 'number' ? st.clockOffsetMs : null;
           changed();
+          if (_finishWhenUp) { _finishWhenUp = false; finish(); }
         })
         .catch(function () {
           if (tries > 80) { clearInterval(id); S.engineFailed = true; changed(); }
