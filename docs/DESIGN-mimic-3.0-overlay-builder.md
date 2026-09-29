@@ -56,6 +56,13 @@ windows accordingly … in fact that will be 3.0."*
 | R20 | **Local first, backed up to the database**: a set works with the server down; a copy in our database carries it to another character or another computer | "stored locally in case of server issues, but backups will need to be saved to our database for portability. raiders will want to reuse the overlay designs between characters or computers" |
 | R21 | **Six display types, any data element**: Bar, Ring, Readout, Pips, Timeline, Chips — each with weight (thin/thick), direction (across/up), backing (clear/panel) and an anchor (screen or an EQ window). A list (DPS rows, raid HP) is a *container* of elements, not a seventh type | "render me 6 different display types for data elements we could build into this 3.0 master overlay and apply to any data element" — rendered on the canvas "Mimic 3.0 display types" |
 
+**Also built (2026-09-29, alpha `994eb032`, DECISIONS §103):** the parts library — R1, R2 and the first
+part of R21. It has 116 single data elements (`apps/mimic/parts.js`) in the categories the guild lead
+named, each drawable as bar / ring / readout / big / pips / rows / chips, with sample data while
+arranging. They sit in a movable chooser, with today's overlays as groups of pieces and user-saved groups.
+Next: slim per-family endpoints (the pieces that read `/api/state` pull the whole thing), the Timeline
+type, and anchoring to EQ windows (R13).
+
 **Also built (2026-09-29, alpha `d2dadf94`, DECISIONS §102):** R7's compat parts — every overlay's own page
 can be a panel on the Timers canvas, as it is today (the guild lead: "no new modalities if that makes this
 less of a lift, but the end goal is to incorporate the different views"). The display types then replace
