@@ -304,3 +304,19 @@ describe('tray ↔ dashboard parity', () => {
     expect(stripJs(dash)).toMatch(/if \(a === 'canvasArrange' && window\.mimic\.canvasEdit\) \{\s*window\.mimic\.canvasEdit\(true\)/);
   });
 });
+
+// The guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark".
+describe('Background on the Timers canvas', () => {
+  const pre = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
+  const cv = readSource(path.join(ROOT, 'apps', 'mimic', 'canvas.html'));
+  it('plates each panel, never the screen-sized body', () => {
+    expect(pre).toMatch(/body\.wp-backdrop:not\(:has\(#wrap\)\):not\(:has\(#screenBtn\)\)\{background:/);
+    expect(pre).toMatch(/body\.wp-backdrop:has\(#screenBtn\) #panels > \.panel:not\(\.off\)\{background:/);
+    // The marker is the canvas's alone.
+    expect(cv).toMatch(/id="screenBtn"/);
+    const fs = require('node:fs');
+    const others = fs.readdirSync(path.join(ROOT, 'apps', 'mimic')).filter(f => f.endsWith('.html') && f !== 'canvas.html')
+      .filter(f => /id="screenBtn"/.test(fs.readFileSync(path.join(ROOT, 'apps', 'mimic', f), 'utf8')));
+    expect(others).toEqual([]);
+  });
+});
