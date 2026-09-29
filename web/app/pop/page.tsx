@@ -111,7 +111,8 @@ export default async function PopFlagsPage(
   const { zone: zoneKey, view, scope: scopeParam, v, demo } = await searchParams;
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/pop');
+  // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
+  if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
   // 💠 The Essences of Power queue, two layouts on beta until one is picked (DECISIONS §96). No ?v= is
   // production as it was. &demo=1 swaps in labelled sample data, to compare the layouts before any drop.
   const essLayout: 'b' | 'c' | null = v === 'b' || v === 'c' ? v : null;

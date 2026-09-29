@@ -38,8 +38,8 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'pop-planner-mains-alts-2026-09-29',
-    title: 'Web 1.8.50–1.8.52',
-    version: 'Web 1.8.52',
+    title: 'Web 1.8.50–1.8.53',
+    version: 'Web 1.8.53',
     date: '2026-09-29',
     headline: 'The PoP page counts the raid roster: raiders on Mains, raiders and raid alts on All characters.',
     features: [
@@ -54,6 +54,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'The PoP page could only ever read the first 1,000 flag rows, so real flags would never have shown once PoP opened. It now reads them all, and counts the unmapped rows instead of listing other guilds’ characters.',
+      'Opening a PoP page link while signed out lost the rest of the link after sign-in; you now land on the view the link named.',
     ],
   },
   {
