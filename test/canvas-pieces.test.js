@@ -162,8 +162,39 @@ describe('the canvas places pieces', () => {
     expect(run(P, { d: true, e: true }, 'a')).toEqual(['a', 'b', 'c']);   // not in the selection: its group
     expect(run(P, { d: true }, 'd')).toEqual(['d']);                        // a selection of one is just itself
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(mode === 'move' && !ev\.altKey\) ids = togetherWith\(id\);/);
+    expect(c).toMatch(/if \(!ev\.altKey\) ids = togetherWith\(id\);/);
     expect(c).toMatch(/if \(d\.moved && d\.alt && p && p\.grp\) \{ p\.grp = null;/);
+  });
+  // The guild lead, 2026-09-29: "when a group is selected by grabbing the top bar you should be able to
+  // resize the entire group".
+  it('sizing a group stretches every piece from the group\'s top-left corner', () => {
+    const { groupBox, scaleGroup } = evalBlock(
+      sliceBlock(canvas, '  function groupBox(ms) {', '\n  }\n') + '\n'
+      + sliceBlock(canvas, '  function scaleGroup(ms, box, w, h, keep, minW, minH) {', '\n  }\n'),
+      ['groupBox', 'scaleGroup']);
+    const ms = [
+      { id: 'a', x0: 100, y0: 100, w0: 200, h0: 20, sc0: 1 },
+      { id: 'b', x0: 100, y0: 124, w0: 200, h0: 40, sc0: 1 },
+      { id: 'c', x0: 100, y0: 168, w0: 300, h0: 32, sc0: 1.2 },
+    ];
+    const box = groupBox(ms);
+    expect(box).toEqual({ x: 100, y: 100, w: 300, h: 100 });
+    // Twice as tall: every piece doubles in height and moves down in proportion; text doubles.
+    const tall = scaleGroup(ms, box, 300, 200, false);
+    expect(tall.map(n => [n.x, n.y, n.w, n.h, n.scale])).toEqual([
+      [100, 100, 200, 40, 2], [100, 148, 200, 80, 2], [100, 236, 300, 64, 2.4]]);
+    // Wider only: boxes widen, text stays.
+    const wide = scaleGroup(ms, box, 450, 100, false);
+    expect(wide.map(n => [n.w, n.h, n.scale])).toEqual([[300, 20, 1], [300, 40, 1], [450, 32, 1.2]]);
+    // Shift keeps the shape: the larger factor both ways.
+    const keep = scaleGroup(ms, box, 450, 100, true);
+    expect(keep.map(n => [n.w, n.h])).toEqual([[300, 30], [300, 60], [450, 48]]);
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(mode === 'size'\) _drag\.box = groupBox\(_drag\.members\);/);
+    expect(c).toMatch(/if \(q && m\.w != null\) \{ q\.w = m\.w; q\.h = m\.h; if \(q\.kind === 'part'\) q\.scale = m\.scale; \}/);
+    // A click on a grouped piece selects its whole group; the box's ◢ sizes the selection.
+    expect(c).toMatch(/\(d\.alt \? \[p\.id\] : togetherWith\(p\.id\)\)\.forEach/);
+    expect(c).toMatch(/if \(ids\.length > 1\) startDrag\(ev, ids\[0\], 'size'\);/);
   });
   it('✕ on a piece deletes it, and Undo puts it back where it was', () => {
     const block = sliceBlock(canvas, '  function removable(q) {', "  document.getElementById('undoBtn')");
@@ -185,7 +216,7 @@ describe('the canvas places pieces', () => {
     expect(c).toMatch(/if \(a === 'lock'\) \{ var g = newId\('g'\); ids\.forEach\(function \(id\) \{ panelById\(id\)\.grp = g; \}\);/);
     expect(c).toMatch(/else if \(a === 'unlock'\) \{ ids\.forEach\(function \(id\) \{ panelById\(id\)\.grp = null; \}\);/);
     expect(c).toMatch(/else if \(a === 'save'\) \{ var inp = document\.getElementById\('selName'\); saveSelectionAsGroup\(/);
-    expect(c).toMatch(/if \(d\.add\) \{ if \(_sel\[p\.id\]\) delete _sel\[p\.id\]; else _sel\[p\.id\] = true; \}\s*else \{ _sel = \{\}; _sel\[p\.id\] = true; \}/);
+    expect(c).toMatch(/if \(d\.add\) \{ if \(_sel\[p\.id\]\) delete _sel\[p\.id\]; else _sel\[p\.id\] = true; \}\s*else \{ _sel = \{\}; \(d\.alt \? \[p\.id\] : togetherWith\(p\.id\)\)/);
   });
   // "I have no way of bringing up the overlay editing other than the taskbar now" and "I need a faster way
   // to get to the editing mode for individual components".

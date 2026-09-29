@@ -137,6 +137,12 @@
   body.edit .panel.part .tab{display:none}
   body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
   body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+  /* Two or more selected (a group, or a Shift-click set): one box around them all, and its ◢
+     stretches every piece at once. The box itself lets clicks through; only the ◢ takes the mouse. */
+  #gbox{display:none;position:fixed;z-index:55;border:1px dashed rgba(210,153,34,0.8);pointer-events:none}
+  body.edit #gbox.on{display:block}
+  #gbox .ggrip{position:absolute;right:-9px;bottom:-9px;width:16px;height:16px;pointer-events:auto;cursor:nwse-resize;
+    background:#d29922;color:#0d1117;font-size:11px;line-height:16px;text-align:center;border-radius:3px}
   /* What is selected, and what can be done with it: lock together, save as a
      group, remove. A row of its own under the toolbar, only while there is one. */
   #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
@@ -177,10 +183,11 @@
 </style></head>
 <body data-wp-overlay>
   <div id="panels"></div>
+  <div id="gbox"><span class="ggrip" data-wp-interact title="Drag to size the whole group · Shift: keep its shape">◢</span></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
     <b>🧩 Timers canvas</b>
-    <span class="dim">drag a piece and its group comes with it · Alt-drag pulls one piece out · click selects, Shift- or Ctrl-click adds · double-click or right-click: settings · stretch from ◢ · Shift while dragging: no snapping</span>
+    <span class="dim">drag a piece and its group comes with it · Alt-drag pulls one piece out · click selects a piece's whole group (Alt-click: just the piece), Shift- or Ctrl-click adds · the group's ◢ sizes them all · double-click or right-click: settings · Shift while dragging: no snapping</span>
     <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
     <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
@@ -506,6 +513,7 @@
     syncSources();
     renderChooser();
     renderSelbar();
+    placeGbox();
   }
 
   var _saveT = null;
@@ -549,16 +557,20 @@
     // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
     // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
     // it; else the group it was placed or locked with. Alt-drag moves this one alone and takes it out.
+    // ◢ on a grouped or selected piece sizes them all (the guild lead, 2026-09-29: "when a group is
+    // selected … you should be able to resize the entire group"); Alt sizes just this one.
     var ids = [];
-    if (mode === 'move' && !ev.altKey) ids = togetherWith(id);
+    if (!ev.altKey) ids = togetherWith(id);
     if (ids.length > 1) {
       _drag.members = [];
       _drag.skip = {};
       ids.forEach(function (k) {
         if (!_els[k]) return;
-        _drag.members.push({ id: k, x0: _els[k].root.offsetLeft, y0: _els[k].root.offsetTop });
+        var r = _els[k].root, q = panelById(k);
+        _drag.members.push({ id: k, x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight, sc0: (q && q.scale) || 1 });
         _drag.skip[k] = true;
       });
+      if (mode === 'size') _drag.box = groupBox(_drag.members);
     }
     e.root.classList.add('lift');
     shield.classList.add('on');
@@ -579,6 +591,39 @@
     if (me && me.grp) return _layout.panels.filter(function (q) { return q.grp === me.grp; }).map(function (q) { return q.id; });
     return [id];
   }
+  // The box around a set of panels ({x0, y0, w0, h0} each).
+  function groupBox(ms) {
+    var x = Infinity, y = Infinity, r = -Infinity, b = -Infinity;
+    ms.forEach(function (m) { x = Math.min(x, m.x0); y = Math.min(y, m.y0); r = Math.max(r, m.x0 + m.w0); b = Math.max(b, m.y0 + m.h0); });
+    return { x: x, y: y, w: r - x, h: b - y };
+  }
+  // Stretch a set to a new box size, from its top-left corner: every piece keeps its place
+  // and share of the box. Text grows with the height (a wider box alone keeps the text size);
+  // keep = the same factor both ways (Shift). Pure: returns each piece's new x, y, w, h, scale.
+  function scaleGroup(ms, box, w, h, keep, minW, minH) {
+    var sx = Math.max(0.2, w / box.w), sy = Math.max(0.2, h / box.h);
+    if (keep) sx = sy = Math.max(sx, sy);
+    return ms.map(function (m) {
+      return { id: m.id,
+        x: Math.round(box.x + (m.x0 - box.x) * sx), y: Math.round(box.y + (m.y0 - box.y) * sy),
+        w: Math.max(minW || 16, Math.round(m.w0 * sx)), h: Math.max(minH || 12, Math.round(m.h0 * sy)),
+        scale: Math.round(Math.min(3, Math.max(0.5, m.sc0 * sy)) * 100) / 100 };
+    });
+  }
+  // The dashed box and its ◢ around two or more selected panels.
+  function placeGbox() {
+    var gbox = document.getElementById('gbox');
+    var ids = _edit ? selIds().filter(function (k) { return _els[k]; }) : [];
+    if (ids.length < 2) { gbox.classList.remove('on'); return; }
+    var b = groupBox(ids.map(function (k) { var r = _els[k].root; return { x0: r.offsetLeft, y0: r.offsetTop, w0: r.offsetWidth, h0: r.offsetHeight }; }));
+    gbox.style.left = (b.x - 3) + 'px'; gbox.style.top = (b.y - 3) + 'px';
+    gbox.style.width = (b.w + 6) + 'px'; gbox.style.height = (b.h + 6) + 'px';
+    gbox.classList.add('on');
+  }
+  document.querySelector('#gbox .ggrip').addEventListener('mousedown', function (ev) {
+    var ids = selIds();
+    if (ids.length > 1) startDrag(ev, ids[0], 'size');
+  });
   function snapMove(id, x, y, w, h, skip) {
     var W = window.innerWidth, H = window.innerHeight;
     var xs = [0, Math.round(W / 2 - w / 2), W - w], ys = [0, Math.round(H / 2 - h / 2), H - h];
@@ -611,6 +656,20 @@
         m.x = m.x0 + dx; m.y = m.y0 + dy;
         r.style.left = m.x + 'px'; r.style.top = m.y + 'px';
       });
+      placeGbox();
+    } else if (d.mode === 'size' && d.box) {
+      var bw = Math.min(W - d.box.x, Math.max(40, d.box.w + ev.clientX - d.sx));
+      var bh = Math.min(H - d.box.y, Math.max(20, d.box.h + ev.clientY - d.sy));
+      scaleGroup(d.members, d.box, bw, bh, ev.shiftKey).forEach(function (n) {
+        var ee = _els[n.id], q = panelById(n.id); if (!ee || !q) return;
+        var m = d.members.filter(function (k) { return k.id === n.id; })[0];
+        m.x = n.x; m.y = n.y; m.w = n.w; m.h = n.h; m.scale = n.scale;
+        ee.root.style.left = n.x + 'px'; ee.root.style.top = n.y + 'px';
+        ee.root.style.width = n.w + 'px'; ee.root.style.height = n.h + 'px';
+        if (q.kind === 'part') ee.root.style.setProperty('--ps', String(n.scale));
+        sizeFrame(ee, q, n.w, n.h);
+      });
+      placeGbox();
     } else if (d.mode === 'move') {
       var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
       if (!ev.shiftKey) { var s = snapMove(d.id, x, y, d.w0, d.h0); x = s.x; y = s.y; }
@@ -642,7 +701,8 @@
       if (d.fromMv && !_edit) { render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return; }
       if (_edit) {
         if (d.add) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
-        else { _sel = {}; _sel[p.id] = true; }
+        // A click on a grouped piece picks up its whole group (its ◢ then sizes them all); Alt-click, just the one.
+        else { _sel = {}; (d.alt ? [p.id] : togetherWith(p.id)).forEach(function (k) { _sel[k] = true; }); }
       }
     }
     // Alt-drag took this one out of its group.
@@ -651,6 +711,8 @@
       d.members.forEach(function (m) {
         var q = panelById(m.id);
         if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
+        // A group size: each piece's size, and a piece's text with it.
+        if (q && m.w != null) { q.w = m.w; q.h = m.h; if (q.kind === 'part') q.scale = m.scale; }
       });
       save();
     } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
