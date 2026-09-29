@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
 | **Quest tab: warnings, give/get, faction, Quarm-only hand-ins** | **Beta + bot 3.1.171 (§74).** NPC text folded; ⚠ despawn / spawn / faction loss; GIVE / GET; every faction change; hand-ins from Quarm's own script; ProjectEQ-only ones flagged | the guild lead: pick the quest catalog shape (deep link page vs Quests overlay, §72 picked "its own overlay") |
 | **Bard charm + recharm call + clicky buffs** | **Beta, agent 3.7.40 (§75).** Class from Zeal; a bard's charm gets its song's duration; "recharm pet" at 4s left; clicky casts land on the pet with a timer | the guild lead: confirm on the next charm cycle |
-| **Separate timers window (EQLogParser shape) → first freeform part** | **Asked 2026-09-29, not built (§77).** A member's picture separates charm timers, TTS callouts and debuff timers, each placed and sized alone; the guild lead asks whether one overlay with individually movable parts can do it, as the start of 3.0 | the guild lead: pick A (one freeform timers canvas, the 3.0 pilot) or B (split EQLogParser-style windows now) |
+| **Timers canvas (option A, FB-33)** | **Beta 2026-09-29 (§79; agent 3.7.42).** One screen-sized click-through window: Callouts, Timers and Charm panels, each dragged and sized alone; ＋ more timer panels that claim groups or timers by name; the trigger window stays the voice | the guild lead: tray → Overlays → Timers canvas, place the three panels, run a pull; say what the next panel type should be (Charm tracker, Tick, CH chain) and whether it feels heavy on the raid machine |
 | **CH chain: drag stutter, overlap ✕, grey out who didn't pick up** | **Queued 2026-09-29 (§77).** Stutters back when dragged after EQ was active; a stale slot's ✕ is hard to hit on overlap; grey the slot-holder another cleric covered | next session: needs a Windows repro for the drag |
 | **Trigger TTS "stopped working" (beta.3, a bard)** | **Open 2026-09-29 (§77).** Charm callouts no longer cancel shared speech; root cause unconfirmed | the member: send Mimic feedback with logs attached next time it goes quiet |
 | **/who overlay: Zone column** | **Beta 2026-09-29 (§73, agent 3.7.38).** `ZONE` in the title bar shows each player's zone from their last /who, off by default | the guild lead: try it after a `/who all`; say if it should be a filter or a sort too |
@@ -4051,6 +4051,46 @@ can update these when they get implemented"*.
   FB-13 (the server tick as its own timer: the Tick overlay), FB-19 (timers can start at the top, agent
   3.7.34), FB-3 / FB-4 (June's PvP kill reports), and tonight FB-27 / FB-25 (bard charm, §75) and FB-32
   (switching characters, §76) pending a beta check.
+
+## 79. The Timers canvas — option A, first slice (2026-09-29, agent 3.7.42, Mimic beta; FB-33)
+The guild lead: *"Go with A"* — the freeform timers canvas from §77, as the first piece of the 3.0
+overlay builder. A member's report FB-33: *"What if EVERY timer could be put on the screen and resized
+how you wanted it to be?"*
+- **What shipped (beta):** `apps/mimic/canvas.html`, one transparent window the size of a screen. Three
+  starting panels — **Callouts** (the text of what the voice says), **Timers** (every countdown nothing
+  else claims) and **Charm** (recharm tick, charm songs and spells). Arranging: drag a panel by its tab,
+  size it from ◢, snaps to the screen's edges and centre and to other panels (Shift: off). ⚙ per panel:
+  name, text size, stack up or down, and what it shows — groups (charm, trigger countdowns, lulls, my
+  spells on mobs, server tick, loot bids) and timers **by name**, with the countdowns on screen now as
+  one-click claims. ＋ Timers panel adds more (12 at most). Hidden panels dim while arranging.
+- **Routing, the rule that makes it safe:** a name claim beats a group claim beats the catch-all, and
+  there is always exactly one catch-all and one Callouts panel (`sanitize()` restores them), so no
+  countdown and no callout can end up with nowhere to show.
+- **One voice:** the panels ARE `triggers.html` (`?part=timers` / `?part=callouts`), not a copy. A part
+  never speaks or plays a sound; a timers part reads no fires and fires no warnings. The trigger window
+  keeps running hidden as the voice (#97's rule — hidden, never freed) and, while the canvas is on,
+  speaks without flashing or pinning (`canvasOwnsTriggers`), so a pinned callout lives in one place.
+- **Out of the way:** click-through always, unlocked included — a panel takes the mouse only through
+  the hover handshake, with a drag shield holding it mid-drag. Dragging moves an element, not a
+  window, so there is no focus fight with EQ (the CH chain's stutter). Never force-shown by setup or
+  unlock (it is an alternative home for the trigger visuals — on means on); never rescued or
+  auto-arranged as a rect; re-covers its screen on display changes; ⇆ Next screen moves it.
+- **Where it lives:** layout per screen resolution in Mimic's config (`canvasLayouts`, positions as
+  fractions of the screen, sizes in px — EQ's ini rule), saved only by the canvas itself and bounded.
+  Tray: "Timers canvas" + "↳ Arrange the canvas…"; dashboard Overlays row with ✥ Arrange; hotkey,
+  hide-all, per-character layouts, process name. Agent: `GET /api/timers` (the three fields a part
+  reads) and a `group` on every timer row.
+- **Cost, measured and not:** one renderer for all panels (iframes share it). Each timers part polls
+  the slim `/api/timers` at 700 ms instead of the multi-MB `/api/state`. **Not measured:** a
+  screen-sized transparent window over EQ on a raid machine — the guild lead's first run is that
+  measurement; it is opt-in and off by default.
+- **Next slices** (not built): the Charm tracker, Tick and CH chain as panels (the dock's iframe host
+  pattern, one host at a time); a per-panel background; the trigger overlay's 🗑 clear-all on the
+  Timers panel. The trigger window's own `/api/state` poll could move to `/api/timers` too — a real
+  saving for every raider, left alone here under the minimal-diff rule.
+- **Also this evening (agent 3.7.41):** the dashboard's 💾 Save layout button now answers — "✓ Saved for
+  <char>" in green or "✗ Not saved — no character yet" in red, for 2.5 s (the guild lead: *"this button
+  has no feedback"*).
 
 
 

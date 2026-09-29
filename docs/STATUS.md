@@ -169,7 +169,14 @@ next touch one rather than assuming a missing row means a missing doc.
   (beta) or implemented (main), edits the card and DMs the submitter. `utils/feedbackRefs.js`,
   `test/feedback-refs.test.js`, rule in `CLAUDE.md`. `DECISIONS-2026-09-21.md` §78.
 - **⏳ Mimic: "Save layout" finds the character (beta, 2026-09-29).** State poll cap 256 KB → 16 MB,
-  logged; the last character is kept through a quiet Zeal. §76.
+  logged; the last character is kept through a quiet Zeal. §76. **Agent 3.7.41:** the dashboard's 💾 button
+  flashes "✓ Saved for <char>" or "✗ Not saved — no character yet" for 2.5 s. §79.
+- **⏳ Timers canvas — option A, first slice (agent 3.7.42 + Mimic beta `d6f9ccca`, 2026-09-29; FB-33).** One
+  screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
+  one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by
+  name. The panels are `triggers.html?part=…`; the trigger window stays running hidden as the one voice.
+  Tray + dashboard (✥ Arrange). Not yet measured on a raid machine. Next: Charm tracker / Tick / CH chain as
+  panels. `apps/mimic/canvas.html`, `test/timers-canvas.test.js`, `DECISIONS-2026-09-21.md` §79.
 - **✅ PoP checklist: Willamina's whole chain (web 1.8.34–1.8.35, main 2026-09-28).** Starts at Agrakath
   Theric with the book from Myrist, then ten hand-ins (give → get) and the optional story, in folding sections. `test/pop-guide.test.js`.
   `DECISIONS-2026-09-21.md` §71.

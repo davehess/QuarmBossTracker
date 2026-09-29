@@ -37,6 +37,31 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'timers-canvas-2026-09-29',
+    title: 'Agent 3.7.42',
+    version: 'Agent 3.7.42',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Put every timer where you want it: the Timers canvas.',
+    features: [
+      {
+        name: 'Timers canvas',
+        blurb: 'Turn it on from the tray or the Overlays page. The callouts, the timers and the charm timers become separate panels you drag anywhere on the screen and size one by one.',
+      },
+      {
+        name: 'Your own timer panels',
+        blurb: 'Add a panel and choose what it shows: charm timers, lulls, your spells on mobs, the server tick, or one debuff by name. Whatever it takes leaves the main timers panel.',
+      },
+      {
+        name: 'Same voice as before',
+        blurb: 'Callouts are still spoken once, exactly as they were. The canvas only changes where you read them.',
+      },
+    ],
+    fixes: [
+      'The Save layout button on the dashboard now says whether it saved, and for which character.',
+    ],
+  },
+  {
     key: 'quest-bard-charm-2026-09-29',
     title: 'Agent 3.7.40',
     version: 'Agent 3.7.40 · Bot 3.1.171',

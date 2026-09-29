@@ -165,6 +165,12 @@ HTML in an iframe (the dock already does this) — every overlay is usable in th
 - **Recommendation:** parts render into **overlay windows the spec defines** — a spec may hold one
   part or thirty — so both are the same engine. The alpha keeps one window per overlay preset;
   the freeform view is a spec whose anchor is the whole screen.
+- **First answer (2026-09-29, DECISIONS §77/§79):** the guild lead picked the freeform window for the
+  timers — the **Timers canvas** (`apps/mimic/canvas.html`, agent 3.7.42, beta). It proves the three
+  mechanics above in the small: the hover handshake generalised to a screen-sized click-through window
+  (plus a drag shield mid-drag), compat parts (the trigger overlay's own page in iframes, `?part=`), and a
+  per-resolution layout stored as screen fractions. What it does not yet prove: cost on a raid machine,
+  and a non-trigger part (Charm, Tick, CH chain are the next candidates).
 
 ### 5.4 The builder (UI Studio, extended)
 The same canvas, with three layers: the game's windows (from A, later B/D), Zeal's windows, and
