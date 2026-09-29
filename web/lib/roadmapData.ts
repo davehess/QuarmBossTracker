@@ -46,7 +46,11 @@ export const releases: Release[] = [
     features: [
       {
         name: 'Screens changed? Mimic asks',
-        blurb: 'When a monitor goes away or turns, Mimic offers to bring the overlays that were on it to the screen EverQuest is on, each at the same spot. When the monitor comes back, it offers to put everything back where it was.',
+        blurb: 'When a monitor goes away or turns, Mimic offers to move the overlays that were on it, each at the same spot. Ones that sat with EverQuest follow EverQuest; ones on your other screen go to another screen you still have. When the monitor comes back, it offers to put everything back where it was.',
+      },
+      {
+        name: 'Overlays on a second monitor stay there',
+        blurb: 'Auto-arrange tidies each screen on its own, so overlays you keep on a second monitor are no longer pulled onto the game. This works whether EverQuest runs full screen or in a window.',
       },
       {
         name: 'Mimic knows where EverQuest is',

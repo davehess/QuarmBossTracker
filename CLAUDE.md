@@ -993,6 +993,12 @@ DECISIONS §80). Positions are remembered per screen setup (`cfg.overlayLayoutBy
 to `_onDisplaysChanged`, which asks "put them back" or "bring them to EQ's screen". Do not wire a
 display event straight to a mover again. Where EQ is comes from `_eqWindowGeometry()` (PowerShell +
 user32, on demand, cached) — never poll it.
+**An overlay keeps its side** (the guild lead, 2026-09-29: *"folks might want these overlays on a second
+monitor, it's up to us to know if they're on the same or a different monitor. or both"*; §80a): anything
+that moves overlays — auto-arrange, the screen-change question — keeps an overlay on EverQuest's screen
+or on another screen, whichever it was on. Only 🧲 Rescue gathers everything onto one screen, because that
+is what it is for. And overlays do NOT need a windowed EQ: a second screen works with any mode; only EQ's
+own screen under exclusive fullscreen is the problem case.
 
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the

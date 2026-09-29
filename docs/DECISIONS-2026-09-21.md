@@ -118,7 +118,7 @@ is ephemeral. It is a desktop-session job.
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
 | **Quest tab: warnings, give/get, faction, Quarm-only hand-ins** | **Beta + bot 3.1.171 (§74).** NPC text folded; ⚠ despawn / spawn / faction loss; GIVE / GET; every faction change; hand-ins from Quarm's own script; ProjectEQ-only ones flagged | the guild lead: pick the quest catalog shape (deep link page vs Quests overlay, §72 picked "its own overlay") |
 | **Bard charm + recharm call + clicky buffs** | **Beta, agent 3.7.40 (§75).** Class from Zeal; a bard's charm gets its song's duration; "recharm pet" at 4s left; clicky casts land on the pet with a timer | the guild lead: confirm on the next charm cycle |
-| **Screens changed → ask; EQ's real window; Zeal bars in UI Studio** | **Beta 2026-09-29 (§80).** Positions remembered per screen setup; a monitor coming back offers "put them back", a lost or reshaped screen offers "bring them to EQ's screen"; Mimic reads EQ's window from Windows; UI Studio moves `/raidbars` and `/assistbar` | the guild lead: pull a monitor's power with overlays on it, then plug it back, and answer both prompts; move the raid bars in UI Studio and relog |
+| **Screens changed → ask; EQ's real window; Zeal bars in UI Studio** | **Beta 2026-09-29 (§80).** Positions remembered per screen setup; a monitor coming back offers "put them back", a lost or reshaped screen offers "bring them to EQ's screen"; Mimic reads EQ's window from Windows; UI Studio moves `/raidbars` and `/assistbar`. **§80a (`f3e444dd`):** each overlay keeps its screen — auto-arrange works per screen, a side-screen overlay goes to another side screen; overlays do not need windowed EQ | the guild lead: pull a monitor's power with overlays on it, then plug it back, and answer both prompts; move the raid bars in UI Studio and relog |
 | **3.0: formats, anchoring to game windows, one product (R11–R15)** | **Recorded 2026-09-29 (§80).** Every part in horizontal / vertical / arc / circle / thin / thick / transparent / locked-to-a-window; know EQ's window shapes; charm parts around the pet window; HP over the target window; the dashboard folded into one product | the guild lead: say whether to file the Zeal "ui windows" ask now (R12–R14 depend on it); options for how the dashboard and the builder fit together come next |
 | **Timers canvas (option A, FB-33)** | **Beta 2026-09-29 (§79; agent 3.7.42).** One screen-sized click-through window: Callouts, Timers and Charm panels, each dragged and sized alone; ＋ more timer panels that claim groups or timers by name; the trigger window stays the voice | the guild lead: tray → Overlays → Timers canvas, place the three panels, run a pull; say what the next panel type should be (Charm tracker, Tick, CH chain) and whether it feels heavy on the raid machine |
 | **CH chain: drag stutter, overlap ✕, grey out who didn't pick up** | **Queued 2026-09-29 (§77).** Stutters back when dragged after EQ was active; a stale slot's ✕ is hard to hit on overlap; grey the slot-holder another cleric covered | next session: needs a Windows repro for the drag |
@@ -4118,8 +4118,9 @@ different screen and I have to rearrange it."*
   (rotation, resolution) get **"Bring them to the screen EverQuest is on, each at the same spot?"**;
   anything else gets no question. "Leave them" only rescues an overlay left fully off-screen.
   ⚠ Someone running EQ in exclusive fullscreen at a resolution other than the desktop's changes the screen
-  on every launch and alt-tab, and would be asked each time. Not seen in the guild (overlays need a
-  windowed EQ), but watch for it.
+  on every launch and alt-tab, and would be asked each time. How many raiders run that way is **not
+  measured** (the UI backups that carry `eqclient.ini` are encrypted). ~~Not seen in the guild (overlays
+  need a windowed EQ)~~ — corrected in §80a: overlays do not need a windowed EQ.
 - **The 3.0 requirements, recorded as R11–R15** in `DESIGN-mimic-3.0-overlay-builder.md` §2:
   - R11 every part in formats — horizontal, vertical, arc, circle, thin, thick, transparent, or locked to
     another window;
@@ -4133,6 +4134,32 @@ different screen and I have to rearrange it."*
   from a nice-to-have to the load-bearing ask; it should carry Zeal's own bars too.
 - **Not decided here:** how the dashboard and the builder fit together (R15). That is a design question,
   so it goes to the guild lead as options before any build.
+
+### 80a. Overlays keep their screen — with EverQuest, on another screen, or both (2026-09-29, Mimic beta `f3e444dd`)
+The guild lead: *"why do overlays need windowed mode? it won't work with full screen? folks might want these
+overlays on a second monitor, it's up to us to know if they're on the same or a different monitor. or both."*
+- **Correction: overlays do not need windowed EQ.** §80 said so; that was an assumption, and too strong.
+  What actually holds (general Windows behaviour, **not measured on our fleet**):
+  - on a **second screen**, overlays work whatever mode EverQuest runs in; clicking one moves focus off
+    EQ, and an exclusive-fullscreen EQ may minimize when it loses focus;
+  - on **EverQuest's own screen**, they show over EQ when it runs windowed or borderless; over
+    **exclusive** fullscreen, windows generally do not draw on top (Windows' fullscreen optimizations
+    change that on some machines, so it varies).
+  The crash runbook already recommends windowed or borderless for display-reset crashes, for a different
+  reason.
+- **It is on Mimic to know each overlay's side.** Built (beta):
+  - **Auto-arrange works screen by screen.** An overlay on a side screen is arranged on that screen; only
+    EverQuest's screen carries EQ's own windows and the keep-the-middle-clear rule. Before, everything was
+    packed onto one screen, and with tonight's live EQ reading that screen had become EQ's, pulling
+    second-screen overlays onto the game.
+  - **The screen-change question keeps sides.** Each remembered setup also records where EverQuest was;
+    an overlay that sat with EverQuest follows it, one that sat on another screen goes to another screen
+    that is not EverQuest's, and lands with EverQuest only when no other screen is left. The prompt names
+    which is which.
+- **Not built, proposed:** knowing EverQuest's display mode. The client's `eqclient.ini` should say
+  whether it runs windowed; the exact key on Quarm needs a local session to confirm before Mimic reads it.
+  With it, Mimic could warn when an overlay sits on EverQuest's screen while EQ runs exclusive fullscreen,
+  and skip the screen-change question that EQ's own resolution switch causes.
 
 
 

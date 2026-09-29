@@ -812,7 +812,12 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - **Screen changes:** display events call `_onDisplaysChanged` → `_askAboutDisplays` after they settle.
   Positions are remembered per `_screenSignature` in `cfg.overlayLayoutBySig` (`_persistBounds`, skipped
   while settling; `_snapshotLayout`). `_displayChangePlan` decides restore / bring / none;
-  `dialog.showMessageBox` asks; `_rescueOffscreenOverlays` is the "leave them" safety net.
+  `dialog.showMessageBox` asks; `_rescueOffscreenOverlays` is the "leave them" safety net. Each overlay
+  keeps its side: the memory also stores EverQuest's rect per setup, and the plan sends an overlay that
+  sat on another screen to another non-EQ screen (`_displayPlanText` words the question).
+- **Auto-arrange, per screen:** `_autoArrangeOverlays` groups overlays by the screen they are on and runs
+  `_arrangeOnScreen` for each; only the home (EverQuest's) screen gets EQ's windows as obstacles and the
+  keep-the-middle-clear rule.
 - **Zeal's bars:** UI Studio's `_zealBarWindows` / `_zealBarEdits` read and write `zeal.ini`
   `[RaidBars]` / `[AssistBar]`; main's `_zealBarRects` feeds auto-arrange. Test
   `test/zeal-bars-and-screens.test.js`. DECISIONS §80.

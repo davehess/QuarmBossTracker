@@ -176,7 +176,9 @@ next touch one rather than assuming a missing row means a missing doc.
   reshaped screen offers "bring them to EQ's screen" (no more silent snap to the primary). Mimic asks
   Windows where EQ's window is (3.0 plan §4 B). UI Studio moves Zeal's `/raidbars` box and `/assistbar`
   (zeal.ini); auto-arrange avoids them. 3.0 requirements R11–R15 recorded. `test/zeal-bars-and-screens.test.js`,
-  `DECISIONS-2026-09-21.md` §80.
+  `DECISIONS-2026-09-21.md` §80. **Beta `f3e444dd` (§80a):** overlays keep their screen — auto-arrange works
+  screen by screen, and the screen-change question sends side-screen overlays to another side screen, not
+  onto EverQuest. Overlays do not need windowed EQ (the §80 claim is corrected).
 - **⏳ Timers canvas — option A, first slice (agent 3.7.42 + Mimic beta `d6f9ccca`, 2026-09-29; FB-33).** One
   screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
   one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by
@@ -584,6 +586,13 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ Do NOT widen that to "any name in the NPC catalog": our parses contain a
   player called **Susanna** (47 rows, never a boss) and real players named
   Dread, Terror and Fright, all of which are also mob names.
+
+- **⚠ Needs a local session — how the Quarm client records windowed vs full screen (2026-09-29).**
+  Mimic should know whether EverQuest runs exclusive full screen, so it can warn when an overlay sits on
+  EQ's own screen (overlays generally cannot draw over exclusive full screen) and skip the screen-change
+  question EQ's own resolution switch causes. Wanted from `A:\EQ\eqclient.ini`: the section and key that
+  flip between windowed and full screen (believed `WindowedMode` — confirm, do not assume), its values in
+  each mode, and whether dgVoodoo's config overrides it. `DECISIONS-2026-09-21.md` §80a.
 
 - **⚠ Needs a local session — the pacify FAILURE message (one string).**
   Harmony is `resist_type 0` (unresistable), so the resist branch of
