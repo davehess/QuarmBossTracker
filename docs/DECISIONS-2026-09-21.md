@@ -4998,3 +4998,9 @@ bar you should be able to resize the entire group"*.
 - The ◢ on any grouped piece does the same; Alt-drag on it sizes only that piece.
 - `groupBox()` and `scaleGroup()` are pure functions and are tested for real in
   `test/canvas-pieces.test.js`.
+
+**Background on the Timers canvas** (beta `45e76402`). The guild lead: *"background on the timer canvas just
+makes the whole screen dark"*. The backdrop painted `<body>` on any overlay without a `#wrap` card. The
+canvas window covers the screen, so the whole screen went dark. On the canvas the plate now goes on each
+visible panel instead, in `preload.js`, marked by the canvas's own `#screenBtn`. The alpha picks it up by
+sync; the merge was checked and is clean.
