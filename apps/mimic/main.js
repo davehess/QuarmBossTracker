@@ -5352,11 +5352,29 @@ let _updateNagAt = 0;
 // path below would arm a fresh 15s timer on every presence poll.
 let _installArmed = false;
 
+// EQ being closed is not enough on its own: someone may be USING Mimic with
+// the game shut — reading the crash review after EQ went down, or after it
+// failed to start. Installing then closes the window under them, and the new
+// build comes back hidden in the tray, which looks exactly like a crash (a
+// member, 2026-09-29, mid-review with the guild lead). So the install waits
+// while the Mimic window is up and not minimized; the dashboard's update
+// banner offers it meanwhile, and the first poll after the window is hidden or
+// minimized installs it.
+let _installHeldFor = null;
+function _mimicWindowInUse() {
+  try { return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized()); }
+  catch { return false; }
+}
+
 function _installPendingUpdateOnEqClose() {
   if (!updatePending || !autoUpdater) return;
   if (_installArmed) return;
-  _installArmed = true;
   const ver = updatePending.version;
+  if (_mimicWindowInUse()) {
+    if (_installHeldFor !== ver) { _installHeldFor = ver; appendAgentLog(`[updater] v${ver} waits — the Mimic window is open; installs once it is hidden or minimized\n`); }
+    return;
+  }
+  _installArmed = true;
   appendAgentLog(`[updater] EQ closed with v${ver} pending — installing in ${EQ_CLOSE_INSTALL_GRACE_MS / 1000}s\n`);
   // Grace window: a crash-and-relaunch, or alt-F4 followed by starting EQ again,
   // must NOT get Mimic pulled out from under them. Re-check before committing.
@@ -5364,6 +5382,7 @@ function _installPendingUpdateOnEqClose() {
     _installArmed = false;
     if (_eqRunning)   { appendAgentLog('[updater] EQ came back — deferring install to the next close\n'); return; }
     if (!updatePending) return;
+    if (_mimicWindowInUse()) { _installHeldFor = ver; appendAgentLog('[updater] the Mimic window was opened — holding the install\n'); return; }
     appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
     // Mark the relaunch as unattended so the new instance starts to TRAY.
     // Written before quitAndInstall because that call does not return.
