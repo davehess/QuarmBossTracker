@@ -585,3 +585,9 @@ and the same never-refetch guarantee.
   by `Raid Alt`, level 60 and up (`web/lib/popRoster.ts`, DECISIONS
   2026-09-21 §100). Another guild's rank names and floor will differ, so both
   are config for the wizard, not constants.
+- **2026-09-29 — on Vercel Hobby, count the branches that build the site.**
+  Hobby allows 100 deployments a day and every push to every branch spends
+  one, a skipped build included. Our `web/vercel.json` builds main and beta
+  only (DECISIONS 2026-09-21 §101). A guild that adds sync-merged channel
+  branches, as we did with alpha, multiplies its pushes; the wizard should
+  write the same allow-list, not Vercel's default of every branch.
