@@ -2300,6 +2300,8 @@ let _blindStartMs  = 0;
 // all go dark — and the Me overlay is exactly that UI, so it comes up too.
 const _BLIND_FORCED_KEYS = ['mobinfo', 'charm', 'pets', 'triggers', 'me'];
 function _blindForceOpen(key) { return _blindActive && _BLIND_FORCED_KEYS.includes(key); }
+const _STATE_POLL_MAX_BYTES = 16 * 1024 * 1024;
+let _statePollTooBigLogged = false;
 function _pollBlindState() {
   // Idle gate (2026-07-07 review): blind auto-pop only matters in game — no
   // point fetching the full agent state blob at 1Hz on an idle desktop.
@@ -2308,8 +2310,19 @@ function _pollBlindState() {
   const req = http.get({
     host: '127.0.0.1', port: agentPort, path: '/api/state', timeout: 1500,
   }, (res) => {
+    // The whole state blob, which grows through a session (per-spell buff durations, per-character
+    // counters). It used to be dropped past 256 KB, silently — and this poll is the only source of
+    // the active character, so a long session left "Save layout" stuck on "no active character
+    // yet" (the guild lead, 2026-09-29: "Why doesn't this work"). Localhost, so the cap is only a
+    // runaway guard now; hitting it says so in the agent log.
     let body = '';
-    res.on('data', (c) => { body += c; if (body.length > 256 * 1024) { body = ''; req.destroy(); } });
+    res.on('data', (c) => {
+      body += c;
+      if (body.length > _STATE_POLL_MAX_BYTES) {
+        if (!_statePollTooBigLogged) { _statePollTooBigLogged = true; appendAgentLog(`[mimic] /api/state over ${_STATE_POLL_MAX_BYTES >> 20} MB — blind auto-show and per-character layouts skipped\n`); }
+        body = ''; req.destroy();
+      }
+    });
     res.on('end', () => {
       let s;
       try { s = JSON.parse(body || '{}'); } catch { return; }
@@ -2437,8 +2450,13 @@ function _applyCharProfile(charLower) {
 // too — launching as that toon restores their layout.
 function _onActiveCharacter(name) {
   const cl = name ? String(name).toLowerCase() : null;
-  _activeCharName = name || null;
-  if (!cl || cl === _lastProfileChar) return;
+  // Keep the last character through a quiet Zeal (zoning, camping, character select: the agent
+  // reports none after 60s without an update). Clearing it here, without a menu rebuild, let any
+  // other rebuild in that gap freeze "Save layout" disabled until the character CHANGED.
+  if (!cl) return;
+  const shownChanged = _activeCharName !== name;
+  _activeCharName = name;
+  if (cl === _lastProfileChar) { if (shownChanged) { try { buildTrayMenu(); } catch {} } return; }
   _lastProfileChar = cl;
   const cfg = loadConfig();
   // _applyCharProfile rebuilds the tray itself; when the feature is off we

@@ -1919,12 +1919,14 @@ const GAUGE_CHARM_DEBOUNCE_MS = 1500;
 // slot 16 is only ever the LOCAL client's pet, so name twins can't confuse
 // attribution). Class comes from the same whoData → raid-roster chain
 // /api/state uses; unknown class stays conservative (gates still apply).
+// ⚠ Class comes from _classOf: Zeal's own class label first. Before 2026-09-29 it was /who or the
+// raid roster only, so a bard out of a raid who had not /who'd themselves got no bypass, and a
+// named mob under Solon's Bewitching Bravura (Dragen Faux) never showed on the Charm tracker
+// unless the song was caught within the 12s pending window (the guild lead: "why is bard charm
+// tracking not working?").
 function _gaugeOwnerIsBard(name) {
-  const a = String(name || '').toLowerCase();
-  if (!a) return false;
-  const who = whoData.get(a);
-  const cls = (who && who.class) || _raidClassByName.get(a) || null;
-  return cls ? /^bard$/i.test(String(normalizeClass(String(cls)))) : false;
+  const cls = _classOf(name);
+  return cls ? /^bard$/i.test(cls) : false;
 }
 function _reconcileGaugeCharms() {
   const now = Date.now();
@@ -4382,6 +4384,23 @@ function _levelOf(character) {
   }
   const w = whoData.get(cl);
   return (w && Number(w.level) > 0) ? Number(w.level) : null;
+}
+// A character's class. Zeal's label 3 first: the client's own answer for a character on this
+// machine, there from login with no /who (the guild lead, 2026-09-29: "a character's class is
+// output by zeal pipes, on top of us knowing their class. we shouldn't need to rely on anything
+// else"). Then a /who row, then the raid roster, for everyone else. Normalised ("Bard").
+function _classOf(character) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() !== cl) continue;
+    const ci = Array.isArray(_zealState[ch].charInfo) ? _zealState[ch].charInfo : [];
+    const hit = ci.find(x => x && x.id === 3 && x.value);
+    if (hit) return normalizeClass(String(hit.value).trim());
+  }
+  const w = whoData.get(cl);
+  const cls = (w && w.class) || _raidClassByName.get(cl) || null;
+  return cls ? normalizeClass(String(cls)) : null;
 }
 // PvP: what YOUR drains took from a player this fight. Full strength (the NPC
 // cut is NPC-only) and an UPPER bound — the server only takes what they have,
@@ -15803,7 +15822,9 @@ function _serializeForDashboard() {
         //      singing a recognized-bard-only song (Lcea's, Anthem de Arms,
         //      Selo's, …). Resets on melody-idle (zone / char swap) so it
         //      can't carry across characters sharing a Mimic instance.
-        const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
+        // 2026-09-29: Zeal does pipe the class (label 3) — _classOf reads it first.
+        const isBardClass = /^bard$/i.test(String(_classOf(k) || ''))
+                         || !!(wd     && /^bard$/i.test(String(wd.class     || '')))
                          || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
                          || !!state.bardConfirmed;
         // Buff → info shape. When ticks is unknown (null/0) we still emit
@@ -28137,7 +28158,7 @@ function startWebDashboard(port) {
             // real spell/song name. Filters out one-off junk labels.
             if (newCasting.length > 4 && /[a-zA-Z]/.test(newCasting)) {
               _bumpBardMelody(character, newCasting, Date.now(),
-                { kind: (st.class === 'Bard' || /singing/i.test(newCasting)) ? 'song' : 'spell' });
+                { kind: (/^bard$/i.test(String(_classOf(character) || '')) || /singing/i.test(newCasting)) ? 'song' : 'spell' });
             }
           }
           try { _evaluateZealConditions(character, Date.now()); } catch (e) { void e; }
@@ -43057,7 +43078,7 @@ module.exports = {
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
-  _bumpCharmTick, _reconcileGaugeCharms,
+  _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
