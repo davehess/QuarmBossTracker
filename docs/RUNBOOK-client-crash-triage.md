@@ -170,6 +170,17 @@ build is 318,464 bytes (`/zeal version`: "eqgame.dll version: 7 (Jul 7 2026)").
 
 - **Fix:** put back `eqgame.dll` **from the original TAKP / Quarm client
   download**. That got the member playing (the guild lead, 2026-09-29).
+- **Known good, for comparing:** Quarm's `eqgame.dll` version 7, taken from the
+  guild lead's working install on 2026-09-29:
+  - 318,464 bytes; PE build time 2026-07-07 13:14:05 UTC; the version string
+    inside is `7 (Jul  7 2026 09:14:03)`;
+  - md5 `d45c9b22bbffe072519c108207319abe` (the same md5 as in the crash reports);
+  - sha256 `27d24bae2576024fc98354bddcbb4e9b079998ae242a4088a9e051cff3a90917`.
+  The file itself is not in the repo (it is the game client's, not ours).
+- **Which one is loaded now:** have them type `/zeal version` in game. Mimic's
+  Info tab then shows the Zeal, `eqw.dll` and `eqgame.dll` builds per character.
+  A healthy client shows `eqgame.dll version: 7 (Jul 7 2026 09:14:03)`. That
+  reading stays on their machine; only the Zeal version reaches us.
 - **How to spot it:** a shared crash report carries `system.files` with each
   game file's size, md5 and modified time. Compare `eqgame.dll` with other
   players' copies. A size nobody else has, or a modified time after the last
