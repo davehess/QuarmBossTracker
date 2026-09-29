@@ -689,6 +689,27 @@ be a confidently wrong number. The `vs catalog` ratio column is the answer
 instead: it is the focus effect **observed**, correct for Quarm's own tuning.
 Tests: `test/buff-durations.test.js`.
 
+### Dashboard: the Overlays tab, option C (agent 3.7.49, beta `b8c6b98c`, 2026-09-29)
+The guild lead picked option C of three mockups (DECISIONS §106–§107). The tab, top to bottom:
+- **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
+  "Save current layout for <character>" tile. Each tile lists the overlays that are on; saved layouts hold
+  no positions, so there is no sketch. The auto-switch checkbox is `#wpCharProfEn`.
+  ⚠ The old card read `s.charProfiles` from `/api/state`, which never carries them, so its list was always
+  empty. Tiles and checkbox now paint from `window.mimic.getStatus()` / `getConfig()`.
+- **Arrange bar**: `#wpOvArrangeBtn` ("✏ Arrange on screen" ↔ "✓ Done arranging"; `canvasEdit` where it
+  exists, else setup mode), Setup mode, lock/unlock, Auto-arrange, Rescue.
+- **On screen now**: ON, HIDDEN-by-hide-all and DOCKED overlays, each with a state dot, a one-line
+  description (`WP_OVERLAY_BLURB`; the full text on hover), its key as a keycap (`_wpKeycap`), Dock / Mini / 📌,
+  and ✕ (or "show" for a hidden one).
+- **Add an overlay**: OFF overlays as cards; a click turns one on.
+- **Keys strip**: the global keys in the same keycap. `_wpKeyClashes` / `_wpClashSummary` flag a key two
+  things share; `_wpHotkeyUsesOf` flags one another program holds.
+- **Look strip**: themes, opacity with backgrounds, size. Colour-blind themes, smooth slider and dock
+  scaling sit in `wpKeep('ov-look-more')`.
+- The hide-all banner is one line with "Show them".
+The section HTML is byte-stable across polls; state paints into placeholders. Test
+`test/overlays-tab-option-c.test.js` runs the render, painter, tiles and key helpers for real.
+
 ### Dashboard: the tab rail clears the sticky bar (agent 3.6.23)
 Regression from 3.6.21: the rail was already `position:sticky; top:8px`, so once
 the header became sticky the rail pinned itself UNDER it and the first four tabs
