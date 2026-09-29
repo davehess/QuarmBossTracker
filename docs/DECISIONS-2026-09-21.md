@@ -119,6 +119,8 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
+| **3.0: pieces (legos)** | **Alpha `994eb032` (§103).** 116 pieces in 12 categories in a movable 🧩 chooser; drag one (or one of its mode chips) onto the screen; today's 17 overlays as groups; Ctrl-drag moves a group, a plain drag pulls a piece out; Shift-click + 💾 saves your own group; right-click changes the mode | the guild lead: on the next alpha, arrange the canvas → 🧩 Pieces → drop the Tank group, pull a piece out, put down a few pieces from My info in different modes, save a group; say which pieces are missing or wrong |
+| **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
 | **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records" | the guild lead: open `b.wolfpack.quest/pop/guide?v=b` and `?v=c`, pick one |
@@ -4859,6 +4861,62 @@ this less of a lift, but the end goal is to incorporate the different views"*.
 - ⚠ **Known gap:** docking an overlay that is already on the canvas shows it in both places until one is
   removed. Only the canvas-to-Dock direction is guarded.
 - Alpha only, like all builder work. Tests `test/canvas-overlays.test.js`; the full alpha suite is green.
+
+### 103. 3.0 alpha: pieces — every data element on its own, by category, in the mode you pick (2026-09-29, alpha `994eb032`)
+The guild lead, the same day, after §102: *"break them up and put them into categorization like we did with
+the HUD. My Info, Group info, Raid info, target info, pet info, charm info, etc. Make it a persistent chooser
+that i can pull up and move things around, then select the mode for the data. break out every data element.
+when I'm designing this it should feel like i'm putting down individual legos instead of prebuilt pieces,
+then be able to save groups. Start with the groups of our overlays today and let me pull pieces out as
+well."* This supersedes §102 as the direction; the whole-overlay panels stay as one section of the chooser.
+- **116 pieces in 12 categories:** My info, Target, Group, Raid, Pet, Charm, Fight, Main tank, Healing,
+  Timers & ticks, Zone, Casting (`apps/mimic/parts.js`).
+  - Each piece reads one field of an agent endpoint the overlays already use: `/api/me`, `/api/state`,
+    `/api/tank-state`, `/api/command-center`, `/api/extended-target`, `/api/buff-queue`, `/api/timers`.
+  - Each has a kind: gauge, value, countdown or list.
+  - Each has a sample for building with no game running.
+  - Field paths come from the serializers themselves, not from the catalog's prose.
+- **Modes per kind**, a subset of the six display types (§83):
+  - gauge: bar, ring, readout, big number, pips;
+  - countdown: bar, ring, readout, big number;
+  - value: readout, big number;
+  - list: rows, chips.
+  - Timeline and the "locked to a window" anchor are still to come.
+- **The chooser** is a movable palette that remembers whether it is open, where it sits, and its tab.
+  - Drag a piece onto the screen, or drag one of its mode chips to place it in that mode.
+  - Every piece shows its live value in the list.
+  - The Groups tab holds today's 17 overlays as groups of pieces, laid out as the overlay had them, then
+    "my groups", then the whole overlays as today (§102).
+- **Legos:**
+  - A dropped group lands as separate pieces that share a group id.
+  - Ctrl-drag moves the group; a plain drag pulls one piece out.
+  - Shift-click selects; 💾 saves the selection as a group (`cfg.canvasGroups`, one list for every screen).
+  - Delete removes the selection; right-click a piece to change its mode, backing and size.
+- **Cost to watch:** a source is polled only while a placed piece, or the open chooser tab, needs it. A
+  piece's HTML is only written when it changes. But `/api/state` is multi-MB on a raid machine, and a piece
+  that reads it pulls the whole thing every second. **A slim endpoint per piece family is the next
+  performance step** once the pick of pieces settles.
+- Not measured on a raid machine. Alpha only. Tests `test/canvas-pieces.test.js` (the library run for real,
+  mutation-checked). A headless run against a fake agent showed live values, a Tank group dropped as 11
+  linked pieces, and a saved group.
+
+### 104. FB-37 reviewed: XP / AA per hour by zone, group composition, the best groups (2026-09-29)
+A member asked for XP per hour by zone, and for "best solo / best group XP per hour this week", in total XP
+not percent and per five levels. The guild lead added AA/hr, group composition and *"i see the number 1
+groups is doing X mob, i could do the number 2 grouping which is Y mobs"*. **Review only; the options wait
+on a pick** (`docs/DESIGN-xp-tracking.md`).
+- **Nothing about XP reaches the server today.** Zeal's XP/AA bars and the agent's own per-hour rate stay on
+  the machine. Experience lines are not parsed. Group membership and zone have no history.
+- **Total XP is exact, not estimated.** TAKP's `GetEXPForLevel` is (L−1)³ × 10 × race × a level band. So
+  the change in (level, %) plus the race from `/who` gives total XP per kill. Verify the band table and
+  Quarm's AA-per-point rule, and measure label 26's resolution for an evening, before building.
+- **Options** (four costs each in the design doc):
+  - A: local only (your own XP/AA per hour and total XP per zone, as pieces);
+  - B: a guild XP board (agent upload of one event per experience line, `xp_events`, a `/xp` page with
+    per-bracket solo and group tables, compositions and top mobs);
+  - C: B plus a live "best XP right now" piece.
+- **Recommendation:** A, then B.
+- **Questions:** retention (7 or 30 days), names (guild by name, others by class), and whether raid XP counts.
 
 
 
