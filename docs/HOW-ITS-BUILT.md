@@ -1950,7 +1950,14 @@ helper and `_overlayWanted` for real.
 ### Setup & onboarding (EQ-config writer)
 First-run **gate** lives in `loading.html` (steps: sign-in-or-local-only → EQ
 folder configured → engine up; `cfg.onboarded` flips returning users straight
-to the dashboard). The **"Set up for me"** one-click EQ configurator is a
+to the dashboard). **The setup walkthrough** (beta, DECISIONS §93) is
+`apps/mimic/welcome.html`: the same gate over one step registry in two layouts
+(`?v=a` trail, `?v=b` essentials + unlock cards), opened by `openWelcome(v)`
+(tray ✨ Setup walkthrough, dashboard Setup card ✨ Walkthrough A/B, a link on
+`loading.html`). It adds a main pick (`cfg.mainCharacter`), Zeal / Defender /
+clock state, the /me abilities, and at the finish reads the main's own logs
+through `welcome-optin` (main.js relays `import` / `backfill` to
+`/api/optin`). `loading.html` stays first-run until a layout is picked. The **"Set up for me"** one-click EQ configurator is a
 SEPARATE thing from that gate: the writer is `_applyEqSetup()` in the AGENT
 (`packages/wolfpack-logsync/index.js`), exposed at **`POST /api/eq-setup`**, and
 it writes `Log=TRUE` (eqclient.ini) + `PipeVerbose`/`ExportOnCamp`/`PipeDelay`
