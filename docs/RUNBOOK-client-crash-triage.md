@@ -157,6 +157,29 @@ one machine, and the mechanism is not known.
 - ⚠ Not a Zeal crash, so there may be no Zeal crash bundle for it (the failure can
   come before Zeal's handler is installed). The missing bundle is itself a hint.
 
+## 3c. Known cause — Intel graphics driver 31.0.101.2145 (2026-09-29)
+
+**Symptom:** on a machine with Intel 7th–10th Gen graphics (Intel UHD / HD), EQ
+crashes in game with the graphics driver resetting in the dump, and then will
+not start at all: EverQuest's own *"Failed to load the graphics DLL!"* box.
+
+**Cause:** Intel's graphics driver **31.0.101.2145** (released 2026-09-22),
+installed through Intel's driver assistant. Found by the guild lead with a member
+on 2026-09-29. The member's previous driver, **31.0.101.2141**, worked. One
+machine so far.
+
+- **Ask first** on Intel graphics: Intel Driver & Support Assistant → Install
+  History, or Device Manager → Display adapters → the Intel adapter → Driver →
+  Driver Version. Is it 31.0.101.2145?
+- **Fix:** Device Manager → the Intel adapter → Driver → **Roll Back Driver**, or
+  install 31.0.101.2141 from Intel's site. Then decline 2145 when Intel's
+  assistant offers it again.
+- Not fixed by compatibility mode, running as administrator, or removing
+  dgVoodoo's files (all tried).
+- The crash review's own file fingerprints showed the member's `eqgame.dll`
+  differing from other players' at the same time. It was a red herring for this
+  error, so don't lead with it when the driver is 2145.
+
 ## 4. "Blames Zeal" does not mean Zeal did it
 
 `crash_blames_zeal` is true whenever the report names a Zeal callback, which it
