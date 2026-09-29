@@ -38,14 +38,18 @@ export type Release = {
 export const releases: Release[] = [
   {
     key: 'pop-planner-mains-alts-2026-09-29',
-    title: 'Web 1.8.50',
-    version: 'Web 1.8.50',
+    title: 'Web 1.8.50–1.8.51',
+    version: 'Web 1.8.51',
     date: '2026-09-29',
-    headline: 'The PoP raid-night planner counts mains, with alts in brackets.',
+    headline: 'The PoP page counts the raid roster: raiders on Mains, raiders and raid alts on All characters.',
     features: [
       {
-        name: 'Mains (alts)',
-        blurb: 'Every number in the raid-night planner is now mains, with alts in brackets, ranked by mains.',
+        name: 'Only the raid roster',
+        blurb: 'Raiders (Pack Leader, Officer, Raid Pack, Recruit) and raid alts, active and level 46 or higher. Traders, inactive characters and other guilds are left out.',
+      },
+      {
+        name: 'Mains, or mains (alts)',
+        blurb: 'On Mains every count is raiders. On All characters the planner shows raiders with raid alts in brackets, ranked by raiders.',
       },
     ],
     fixes: [
