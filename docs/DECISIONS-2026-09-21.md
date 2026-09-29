@@ -4484,6 +4484,22 @@ him working"*. So the first lead was right, and switching off it was the mistake
   2026 09:14:03)`, which is Quarm's current build. It matches the guild lead's working copy (318,464 bytes,
   md5 `d45c9b22…`; full fingerprint in the runbook §3c).
 
+### 89. Rescue never relocates an overlay you can see (2026-09-29, Mimic beta `a12d157c`)
+The guild lead, on beta.15, which already had §82: *"make it so that rescue to screen only brings the
+overlays that were missing from the screen, not the ones that are already arranged"*.
+- **Why §82 still moved arranged ones.** Lost was "middle OR top-left corner on no screen", and the corner
+  half assumed every ✥ sits top-left. An overlay whose see-through edge hangs past a screen edge counted
+  as lost and was relocated. The clearest case is the HUD ring: its corners are transparent, and in the
+  ring layout its ✥ sits under the ring.
+- **Now:** lost means you cannot see it, i.e. its middle is on no screen or under half of it is on a screen.
+  Only those are brought back (remembered spot, else a free one), as before.
+- **A visible overlay whose ✥ is past the edge** is nudged just far enough that its top-left corner is on
+  its own screen, and the "No overlay was lost" note names it. For the HUD, either the top-left or the
+  spot under the ring counts as grabbable, so an arranged ring is left alone.
+- `test/rescue-overlays.test.js`: the old "top-left off the top is lost" case is now "moves only as far as
+  its ✥ needs". New cases cover under half showing (lost) and the HUD ring against the corner (untouched).
+  Each rule was mutation-checked.
+
 
 
 

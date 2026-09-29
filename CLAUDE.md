@@ -1017,9 +1017,12 @@ user32, on demand, cached) — never poll it.
 **An overlay keeps its side** (the guild lead, 2026-09-29: *"folks might want these overlays on a second
 monitor, it's up to us to know if they're on the same or a different monitor. or both"*; §80a): anything
 that moves overlays — auto-arrange, the screen-change question, 🧲 Rescue — keeps an overlay on EverQuest's
-screen or on another screen, whichever it was on. Rescue brings back only LOST overlays (middle or ✥ corner on
-no screen), each to its own spot, re-arranges nothing, and asks before touching ones on another screen
-(the guild lead, 2026-09-29: *"it puts them all into one spot which is dreadfully annoying"*; §82). And
+screen or on another screen, whichever it was on. Rescue brings back only LOST overlays (middle on no screen,
+or under half of it on one), each to its own spot, re-arranges nothing, and asks before touching ones on
+another screen (the guild lead, 2026-09-29: *"it puts them all into one spot which is dreadfully annoying"*;
+§82). An overlay you can see whose ✥ hangs past an edge is nudged just far enough to grab, never relocated —
+*"only brings the overlays that were missing from the screen, not the ones that are already arranged"* (§89;
+the HUD ring's ✥ sits under the ring, not top-left). And
 overlays do NOT need a windowed EQ: a second screen works with any mode; only EQ's own screen under
 exclusive fullscreen is the problem case.
 
