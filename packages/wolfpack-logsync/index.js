@@ -38667,12 +38667,18 @@ function _targetPlayerInfo(st, selfChar, cached) {
   // Nothing says it is a player yet: wait for the catalog lookup to come back empty.
   if (!who && !raidCls && !hist && !con && !(cached && !cached.mob)) return null;
   const liveWho = who && !who.anonymous ? who : null;
-  // A player's level comes from /who only — live, else the last one history
-  // saw. Their consider is not a level: the client's consider of a player does
-  // not follow the table (level-60 players read "quite a gamble", a yellow, to
-  // a level 60 — the guild lead, 2026-09-24), so a con range here was wrong.
+  // A player's level: live /who; else an EVEN con, which is your own level; else
+  // the last level history saw. The client's consider of a player does not
+  // follow the level table: level-60 players read "looks like quite a gamble"
+  // (a yellow by the table) to a level 60. So a con RANGE for a player stays
+  // wrong (the guild lead, 2026-09-24), but that phrase is the even one for a
+  // player (the guild lead, 2026-09-29: "Faedar conned even to me he should show
+  // up as level 60"). It outranks history, which can be weeks old.
   let level = null, level_min = null, level_max = null, level_src = null;
+  const conKey = con ? _conPhraseKey(con.phrase) : '';
+  const evenCon = con && con.my > 0 && (conKey === 'looks like quite a gamble' || conKey === 'looks like an even fight');
   if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
+  else if (evenCon) { level = con.my; level_src = 'con'; }
   else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
   const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
   const cls = clsRaw ? normalizeClass(String(clsRaw)) : null;
