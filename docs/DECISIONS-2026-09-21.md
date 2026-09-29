@@ -119,6 +119,7 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
+| **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
 | **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records" | the guild lead: open `b.wolfpack.quest/pop/guide?v=b` and `?v=c`, pick one |
 | **PoP checklist: Justice + Bastion of Thunder** | **Corrected live, web 1.8.48 + bot 3.1.176 (§86).** Six Marks per trial, the Mark is checked not taken, the wrong Tribunal location removed; Askr is three hand-ins; the Talisman is a flag from the Storms shrine and needs Justice; Symbol of Torden required; tower walk added; seven flag bosses now map | the guild lead: tell officers the page is corrected; decide the 9,846 hail rows in `pop_flags` (delete, or store them as evidence) |
@@ -4831,6 +4832,33 @@ website was not being built.
   `next=/pop`, so you landed on plain `/pop` and never saw the card. The redirect now keeps the query.
   It sat next to beta's Essences lines, so the beta merge was resolved by hand (`e107f523`).
 - **Tests:** `test/vercel-deploy-branches.test.js`; the redirect in `test/pop-planner-mains-alts.test.js`.
+
+### 102. 3.0 alpha: every overlay can live on the Timers canvas, as it is today (2026-09-29, alpha `d2dadf94`)
+The guild lead: *"i would like the next version of alpha to have all of the data elements from the current
+overlays. each current overlay's data elements can come in as they are today, no new modalities if that makes
+this less of a lift, but the end goal is to incorporate the different views"*.
+- **The least lift is the builder plan's "compat part":** each overlay's own page in an iframe, the way the
+  Dock already hosts panes. No fork, no new display type. The 15 are the Dock's 14 plus the HUD ring, which
+  a free screen can hold even though a grid cell cannot. The trigger overlay was already there as its
+  callouts and timers panels.
+- **One copy of each overlay.** While an overlay is on the canvas, it has no window of its own
+  (`_canvasHostedKeys` in `_overlayWanted`, ahead of every force-show), and it leaves the Dock. Adding one
+  switches its own flag on, so Remove gives its window back visible, the Dock's undock rule. Hiding a panel
+  keeps the overlay on the canvas and unloads its page. Turning the canvas off gives every overlay back to
+  its own switch.
+- **"Bring in the N on screen now"** moves every overlay that has a window or a Dock pane onto the canvas, at
+  its window's spot, size and zoom. So the first alpha looks like the raider's current setup, in one window.
+- **What the canvas owns:** the always-on ✥, size (A−/A+ scales the whole page), hide, remove. The page's own
+  ✥, ✕ and setup bar are hidden there (preload `WP_IN_CANVAS`); its buttons and tabs work through the hover
+  handshake as they do in its window.
+- **The end goal:** the six display types (§83) replace these panels one overlay at a time. Each overlay's
+  data becomes parts, and the compat panel goes.
+- ⚠ **Not measured:** the cost of 15 pages in one screen-sized transparent window on a raid machine. The Dock
+  shows iframes cost less memory than windows, but not the compositing cost of a full-screen surface. Watch
+  the tray's "Resource use — what Mimic costs this machine" on the alpha.
+- ⚠ **Known gap:** docking an overlay that is already on the canvas shows it in both places until one is
+  removed. Only the canvas-to-Dock direction is guarded.
+- Alpha only, like all builder work. Tests `test/canvas-overlays.test.js`; the full alpha suite is green.
 
 
 

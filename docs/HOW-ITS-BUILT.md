@@ -865,6 +865,13 @@ part's `_sampleTimers` holds one sample per group plus one per claimed name (`wp
 panels get `wpPartFlash`. `placeMenu` keeps the settings view whole on screen (§92).
 Test `test/timers-canvas.test.js`.
 Catalog entry in `docs/DESIGN-overlay-catalog.md`. DECISIONS §79.
+**Every overlay as a panel (Mimic 3.0 alpha `d2dadf94`, DECISIONS §102):** a third panel kind, `overlay`,
+is the overlay's own page in an iframe marked `?wpcanvas=1` (once per overlay; `_CANVAS_CATALOG` = the
+dock's catalog + the HUD ring). A hosted overlay has no window of its own: `_canvasHostedKeys(cfg)` makes
+`_overlayWanted` say no before any force-show, and the reaper frees the window; `canvas-save` switches a
+newly hosted overlay's flag on and takes it out of the Dock. Preload's `WP_IN_CANVAS` hides the page's own
+✥/✕/setup bar. "＋ Overlay" / "Bring in the N on screen now" in the canvas toolbar (`canvas-state` carries
+each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha only.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
 `feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first
