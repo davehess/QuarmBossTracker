@@ -146,7 +146,7 @@ export default function GuideChecklist(
   );
 }
 
-function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCard> }) {
+export function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCard> }) {
   return (
     <>
       {splitItems(text).map((p, n) => ('item' in p
@@ -164,7 +164,7 @@ function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCa
   );
 }
 
-function Place({ at }: { at: Loc }) {
+export function Place({ at }: { at: Loc }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 min-w-0">
       <span className="text-text">{at.npc}</span>
@@ -178,7 +178,7 @@ function Place({ at }: { at: Loc }) {
 // the full quest chain with minimize sections … Highlight stages where you will have
 // input/output"). The first item stays in view; the hand-ins (item in → item out, gold) and
 // the story fold away.
-function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
+export function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
   return (
     <div className="mt-2 space-y-1.5 text-[11px]">
       <div className="rounded border border-gold/60 bg-gold/10 px-2 py-1.5">

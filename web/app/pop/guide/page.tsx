@@ -15,18 +15,50 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import { guideItemIds } from '@/lib/popGuide';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
+import GuideRoute from './GuideRoute';
+import { loadRoute } from './routeData';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Checklist — Wolf Pack' };
 
 export default async function PopGuidePage(
-  { searchParams }: { searchParams: Promise<{ c?: string }> },
+  { searchParams }: { searchParams: Promise<{ c?: string; v?: string }> },
 ) {
-  const { c } = await searchParams;
+  const { c, v } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
   const mine = await ownedCharacters(user.id);
+
+  // Beta (the guild lead, 2026-09-29: "more detail, maps, who to turn things into, expectations and who
+  // you will go back to. a sidebar nav with sections"): two layouts to pick from, GuideRoute.tsx. No
+  // ?v= is this page as production has it.
+  if (v === 'b' || v === 'c') {
+    const [{ chars: routeChars, outlines }, { data: routeCards }] = await Promise.all([
+      loadRoute(mine),
+      supabaseAdmin().rpc('item_card_info', { p_item_ids: guideItemIds() }),
+    ]);
+    const rc: Record<number, ItemCard> = {};
+    for (const r of (routeCards ?? []) as ItemCard[]) rc[r.item_id] = r;
+    const pickedChar = c ? routeChars.find(ch => ch.name.toLowerCase() === c.toLowerCase()) : undefined;
+    const first = (pickedChar ?? routeChars.find(ch => ch.isMain) ?? routeChars[0])?.name ?? null;
+    return (
+      <div className="max-w-7xl mx-auto flex flex-col gap-4">
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-lg text-gold">Planes of Power: your checklist</h1>
+            <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
+          </div>
+          <p className="text-sm text-dim mt-1 max-w-3xl">
+            Where to start, what you can&apos;t skip, who you need, who takes what and who you go back to, with a
+            map for every stop. Steps Mimic saw you do, or that our records already show, tick themselves and
+            say which.
+          </p>
+        </section>
+        <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} />
+      </div>
+    );
+  }
   const names = mine.map(ch => ch.name);
   const admin = supabaseAdmin();
   const [{ data: tickRows }, { data: flagRows }, { data: cardRows }] = await Promise.all([
