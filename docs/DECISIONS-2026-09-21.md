@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
+| **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
@@ -4656,6 +4657,39 @@ tells me what gear scores i could replace"*.
   - **Timers that stay red until recast.**
   - **Mimic's own voice settings:** volume, speed, voice.
 - **Nothing is queued.** Waiting on the guild lead to say which gaps to build.
+
+### 95. PoP checklist: the Essences of Power quest (2026-09-29, web 1.8.49)
+The guild lead: *"https://www.eqprogression.com/essences-of-power-quest-pop-elemental-gods/ please consume
+this too and put it on the pop guide"*. Two optional steps on `/pop/guide`, each checked against the
+server's scripts rather than copied:
+- **Part 1, tier one (`essences_escort`, group).**
+  - **Start:** say "Quellious be my guide" by the big tree near the waterfall on Nightmare's upper
+    plateau (`/map -510 1687`).
+  - **Night only:** the hidden spawn that hears the phrase lives from 8 PM to 7 AM game time
+    (`EinoInvisNight`). EQProgression's "10 PM" is inside that window.
+  - **Repeats:** a start sets its respawn to 36 minutes.
+  - **The run:** four waves (4 banshees; 2 nightstalkers; 5 hobgoblins; 4 banshees + 4 bats), then The
+    Dreamkeeper (level 64, 40,000 HP, hits up to 622). Keep the waves off Aid Eino: level 50,
+    10,000 HP.
+  - **The reward:** hand him the Strand of Nightmare after "Hand me the strand from the beast". You get
+    the Tiny Gold Fist and 100,000 experience.
+  - **New over the source page — one Fist per run.** The Dreamkeeper drops one strand, and Eino depops
+    on the first hand-in. A group needs a run per person.
+- **Part 2, elemental planes (`essences_power`, raid).**
+  - **The Fist is the only gate.** Councilwoman Kerasha answers only while you carry it, and she checks no
+    flags. EQProgression's "you may have to be Elemental flagged" is not in her script.
+  - **The bowl:** "essences of power" gives the Sacred Bowl. It combines (recipe 9921) the four
+    essences: Fire (Fennin Ro), Wind (Xegony), Water (Coirnav), Earth (the Avatar of Earth). The result
+    is Power of the Planes.
+  - **The reward:** Power of the Planes buys the Jade Hoop of Speed. Handing a reward back cycles it
+    Hoop → Coin Purse → Cord → Mace → Ring → Hoop.
+  - **New over the source page — a loot call.** Each essence is lore and drops on 40% of its god's
+    kills, one per kill, so the guild has to decide who gets them. These are not the Plane of Time's
+    four (the Globe, Cloud, Sphere and Mound), and the step says so.
+- **Pinned in `test/pop-guide.test.js`, mutation-checked:** the phrases, the places, the item order
+  (reward cycle included) and the one-per-run line.
+- **Beta layouts:** their extras (what to expect, who you go back to, and the Fist ticking the box from an
+  inventory upload) follow on `beta` once the sync brings these steps over.
 
 
 

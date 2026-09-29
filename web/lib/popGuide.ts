@@ -65,6 +65,7 @@ export const ZONE_NAMES = {
   postorms: 'Plane of Storms',
   bothunder: 'Bastion of Thunder',
   hohonora: 'Halls of Honor',
+  ponightmare: 'Plane of Nightmare',
   droga: 'Droga',
 } as const;
 export type ZoneKey = keyof typeof ZONE_NAMES;
@@ -135,6 +136,12 @@ const L = {
   trydan: { npc: 'Trydan Faye', zone: 'hohonora', y: 2040, x: -1725, note: 'northeast trial' },
   rhaliq: { npc: 'Rhaliq Trell', zone: 'hohonora', y: 1374, x: 456, note: 'northwest trial' },
   alekson: { npc: 'Alekson Garn', zone: 'hohonora', y: -1724, x: -2330, note: 'southeast trial' },
+  // Essences of Power (EQProgression's quest page, checked against poknowledge/Aid_Eino,
+  // Councilwoman_Kerasha and ponightmare/Aid_Eino, EinoInvisNight). The tree is where the hidden
+  // night spawn stands; it answers "Quellious be my guide" within 30 of it.
+  einoPok: { npc: 'Aid Eino', zone: 'poknowledge', y: -11, x: 1005, note: 'top of the library elevator' },
+  einoTree: { npc: 'The big tree by the waterfall', zone: 'ponightmare', y: -510, x: 1687, note: 'upper plateau; say it right beside the tree' },
+  kerasha: { npc: 'Councilwoman Kerasha', zone: 'poknowledge', y: 0, x: 1003, note: 'top of the library elevator' },
 } satisfies Record<string, Loc>;
 
 const PROJECTION = 'Then hail A Planar Projection before anyone leaves.';
@@ -280,6 +287,14 @@ export const GUIDE_ITEMS: GuideItem[] = [
     says: [{ to: 'Adroha Jezith', text: 'Hail' }, { to: 'Adroha Jezith', text: 'tortured by nightmares' }], where: [L.adroha] },
   { key: 'flag_hedge', section: 't1', who: 'group', must: true, flag: 'hedge_event', title: 'Thelin’s hedge maze (Plane of Nightmare), then hail Thelin Poxbourne',
     detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule.', link: popZone('nightmare') },
+  // Essences of Power, part 1 (the guild lead, 2026-09-29: "consume this too and put it on the pop
+  // guide", eqprogression.com/essences-of-power-quest-pop-elemental-gods). Waves, times and the
+  // one-strand-per-run limit are read off ponightmare/Aid_Eino.lua and the Dreamkeeper's loot table.
+  { key: 'essences_escort', section: 't1', who: 'group', title: 'Optional: escort Aid Eino through Nightmare for the [[Tiny Gold Fist#16260]] (Essences of Power, part 1)',
+    detail: 'The start phrase works only at night in game (8 PM to 7 AM). Stand by the big tree near the waterfall on the upper plateau and say “Quellious be my guide”. Aid Eino steps out and walks the zone while four waves come for him: 4 tortured banshees; 2 nightstalkers; 5 hobgoblins; then 4 banshees and 4 bats. He sits for a few minutes, then The Dreamkeeper appears (level 64, 40,000 HP, hits up to 622, slowable). Keep everything off Eino: he is level 50 with 10,000 HP. Loot the [[Strand of Nightmare#16261]], follow him to the Tranquility portal, and when he says “Hand me the strand from the beast”, give it to him for the Fist and 100,000 experience. One strand drops and he leaves after the hand-in, so it is one Fist per run. The tree answers again 36 minutes after a start. Keep the Fist: part two needs it. Hailing Aid Eino in PoK first is optional; “help” is where he tells you all this.',
+    link: pqdiNpc(204467),
+    says: [{ to: 'The big tree in Nightmare', text: 'Quellious be my guide' }, { to: 'Aid Eino (PoK, optional)', text: 'help' }],
+    where: [L.einoTree, L.einoPok] },
 
   // ── Tier two ──────────────────────────────────────────────────────────────
   // Nightmare B
@@ -374,6 +389,13 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B.', link: popZone('earth') },
   { key: 'flag_rathe', section: 't4', who: 'raid', must: true, flag: 'rathe_dead', title: 'Kill the Rathe Council (the Avatar of Earth)',
     detail: 'Hail A Planar Projection to receive the [[Mound of Living Stone#29146]].', link: popZone('poeb') },
+  // Essences of Power, part 2 (poknowledge/Councilwoman_Kerasha.lua; the bowl recipe is tradeskill
+  // recipe 9921; each essence is 40% on its god's loot table, one per kill, and lore).
+  { key: 'essences_power', section: 't4', who: 'raid', title: 'Optional: the four Essences of Power for a [[Jade Hoop of Speed#32106]] or another reward (part 2)',
+    detail: 'Carry the [[Tiny Gold Fist#16260]]: Councilwoman Kerasha answers only while you have it, and checks no flags. Say “essences of power” for a [[Sacred Bowl#17183]]. Put in the [[Essence of Fire#16262]] (Fennin Ro), [[Essence of Wind#16263]] (Xegony), [[Essence of Water#16265]] (Coirnav) and [[Essence of Earth#32111]] (the Avatar of Earth, the Rathe Council), and combine for [[Power of the Planes#16266]]. Each god drops its essence on 40% of kills, one per kill, and you can hold only one of each, so they are a loot call. They are not the four the Plane of Time needs. Give her Power of the Planes for the Jade Hoop of Speed. To change it, hand the reward back for the next one, in this order: [[Frizzniks Endless Coin Purse#17209]], [[Cord of Invigoration#32107]], [[Mace of the Ancients#32108]], [[Ring of Farsight#32109]], then the Hoop again.',
+    link: pqdiNpc(202126),
+    says: [{ to: 'Councilwoman Kerasha', text: 'essences of power' }],
+    where: [L.kerasha] },
 
   // ── Time ──────────────────────────────────────────────────────────────────
   { key: 'time_vial', section: 'time', who: 'solo', title: 'Optional: craft an [[Odylic Vial#17186]]',
