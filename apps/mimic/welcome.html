@@ -316,6 +316,13 @@
     });
   }
 
+  function splitRecentChars(chars, main) {
+    var m = (main || '').toLowerCase();
+    var recent = chars.filter(function (c) { return (m && c.character.toLowerCase() === m) || (c.ago_days != null && c.ago_days <= 90); });
+    var older = chars.filter(function (c) { return recent.indexOf(c) < 0; });
+    return recent.length ? { recent: recent, older: older } : { recent: older, older: [] };
+  }
+
   function bChars(el) {
     if (!S.chars.length) {
       el.innerHTML = S.eqConfigured
@@ -325,8 +332,13 @@
         : '<div class="dim">Pick your EverQuest folder first — characters are found from its log files.</div>';
       return;
     }
-    var h = '<table class="chars"><thead><tr><th>★ Main</th><th>Character</th><th>Send</th><th style="text-align:right">Log</th><th>Last played</th></tr></thead><tbody>';
-    S.chars.forEach(function (c) {
+    // Characters played in the last 3 months (and the starred main) show; the rest fold into a
+    // collapsed "more" (the guild lead, 2026-09-29: "just show things that have been touched in
+    // the last 3 months and then a collapsed section with more"). Nothing recent → show them all.
+    var split = splitRecentChars(S.chars, S.main), recent = split.recent, older = split.older;
+    var head = '<table class="chars"><thead><tr><th>★ Main</th><th>Character</th><th>Send</th><th style="text-align:right">Log</th><th>Last played</th></tr></thead><tbody>';
+    var h = head;
+    var row = function (c) {
       var lc = c.character.toLowerCase();
       var ago = c.ago_days == null ? '—' : (c.ago_days >= 30 ? '<span class="warn">' + c.ago_days + ' days ago</span>' : c.ago_days >= 7 ? c.ago_days + ' days ago' : 'this week');
       h += '<tr' + (S.main && S.main.toLowerCase() === lc ? ' class="main"' : '') + '>'
@@ -334,11 +346,21 @@
         + '<td><b>' + esc(c.character) + '</b></td>'
         + '<td><input type="checkbox" data-tx="' + esc(c.character) + '"' + (S.excluded.has(lc) ? '' : ' checked') + ' aria-label="Send ' + esc(c.character) + '"></td>'
         + '<td class="num">' + size(c.log_size) + '</td><td>' + ago + '</td></tr>';
-    });
-    h += '</tbody></table>'
-      + '<div class="note dim">★ <b>Main</b> is the character whose old log the last step offers to read. '
+    };
+    recent.forEach(row);
+    h += '</tbody></table>';
+    if (older.length) {
+      h += '<details id="wCharsMore"' + (S.charsMore ? ' open' : '') + '><summary class="dim" style="cursor:pointer;margin:8px 0">'
+        + older.length + ' more · not played in 3 months</summary>' + head;
+      older.forEach(row);
+      h += '</tbody></table></details>';
+    }
+    h += '<div class="note dim">★ <b>Main</b> is the character whose old log the last step offers to read. '
       + '<b>Send</b> unticked means that character\'s log never leaves this PC — overlays still work for it. The engine restarts a moment after you change one.</div>';
     el.innerHTML = h;
+    // A repaint rebuilds the list, so remember whether "more" was open.
+    var more = $('#wCharsMore', el);
+    if (more) more.addEventListener('toggle', function () { S.charsMore = more.open; });
     el.querySelectorAll('[data-main]').forEach(function (r) {
       r.addEventListener('change', function () { S.main = r.dataset.main; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); changed('chars'); });
     });
