@@ -26411,6 +26411,8 @@ const COMMAND_HTML = `<!doctype html>
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
+  .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
+  .roll-row .rollCopy:hover{opacity:1;color:#e6edf3}
   .roll-row .rollDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
     flex-shrink:0;opacity:0.6}
   .roll-row .rollDismiss:hover{opacity:1;color:#f87171}
@@ -26586,6 +26588,39 @@ const COMMAND_HTML = `<!doctype html>
   // Stable across polls: a set keeps its range and its first-roll timestamp for
   // the 15 minutes it stays in the payload.
   function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
+
+  // 📋 on a deathroll (the guild lead, 2026-09-29: "add in a copy button for deathrolls"): the whole
+  // game as ONE chat line to paste in game, e.g. "Deathroll 32,000: A 26189 > B 24160 > ... > B 0.
+  // B loses." Plain ASCII (EQ's chat font has no dash or arrow glyphs) and at most 250 characters:
+  // past that the opening roll stays, the middle folds to "...", and as many of the last rolls as
+  // fit follow. The agent never types into chat; the clipboard is the only legal path (the DPS
+  // HUD's 📋 does the same).
+  var DR_COPY_MAX = 250;
+  function deathrollCopyLine(rs) {
+    var g = (rs && rs.deathroll) || {};
+    var steps = (g.steps || []).map(function(st){ return String(st.name) + ' ' + st.value; });
+    var head = 'Deathroll ' + Number(rs && rs.to).toLocaleString('en-US') + ': ';
+    var tail = g.done ? '. ' + g.loser + ' loses.'
+      : (rs && rs.open && g.next ? '. ' + (g.next.name ? g.next.name + ' to roll' : 'Next roll') + ' 0-' + g.next.to + '.' : '.');
+    var line = head + steps.join(' > ') + tail;
+    if (line.length <= DR_COPY_MAX || steps.length < 3) return line.slice(0, DR_COPY_MAX);
+    for (var keep = steps.length - 2; keep >= 1; keep--) {
+      line = head + steps[0] + ' > ... > ' + steps.slice(steps.length - keep).join(' > ') + tail;
+      if (line.length <= DR_COPY_MAX) return line;
+    }
+    return line.slice(0, DR_COPY_MAX);
+  }
+  // Which deathroll was just copied, so its 📋 reads ✓ for two seconds across the 1.5s repaints.
+  var _copiedRoll = null, _copiedUntil = 0;
+  function _copyText(text, done) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, done); return; }
+      var ta = document.createElement('textarea'); ta.value = text;
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) { void e; }
+    done();
+  }
 
   // #153 Collapsible sections — per-section collapse state persisted across
   // repaints AND restarts. It lives in this JS store (consulted by render()),
@@ -26824,6 +26859,8 @@ const COMMAND_HTML = `<!doctype html>
                 : '<span style="opacity:.6">stopped</span>');
               html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
                    +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
+                   +    '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
+                   +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>'
                    +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
                    +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
                    +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
@@ -26966,14 +27003,14 @@ const COMMAND_HTML = `<!doctype html>
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
@@ -26990,6 +27027,23 @@ const COMMAND_HTML = `<!doctype html>
       // 🎲 Rolls — expand / dismiss one set / dismiss all. Same shape as the
       // cure controls below: flip the local store, then re-render from the last
       // state so the click lands instantly instead of waiting for the poll.
+      var rcopy = e.target && e.target.closest ? e.target.closest('.rollCopy') : null;
+      if (rcopy) {
+        e.preventDefault(); e.stopPropagation();
+        var rcid = rcopy.getAttribute('data-roll-id');
+        var rset = null;
+        for (var rc = 0; _lastState && _lastState.rolls && rc < _lastState.rolls.length; rc++) {
+          if (_rollId(_lastState.rolls[rc]) === rcid) { rset = _lastState.rolls[rc]; break; }
+        }
+        if (rset) {
+          _copyText(deathrollCopyLine(rset), function(){
+            _copiedRoll = rcid; _copiedUntil = Date.now() + 2000;
+            if (_lastState) render(_lastState);
+            setTimeout(function(){ if (_lastState) render(_lastState); }, 2100);
+          });
+        }
+        return;
+      }
       var rmore = e.target && e.target.closest ? e.target.closest('.rollMore') : null;
       if (rmore) {
         e.preventDefault(); e.stopPropagation();
