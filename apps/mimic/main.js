@@ -3458,25 +3458,41 @@ async function _rescueOverlays() {
     .concat(sorted.home.map(e => pad(e.b)));
   const remembered = ((cfg.overlayLayoutBySig || {})[_screenSignature()] || {}).rects || {};
   const onTarget = (r) => r.x + r.width / 2 >= a.x && r.x + r.width / 2 < a.x + a.width && r.y >= a.y && r.y + 12 < a.y + a.height;
-  // place(list, wish): each entry takes its wished spot when that is on this
-  // screen and clear of everything placed so far; the rest get free spots.
-  const place = (list, wish) => {
+  // place(list, wish, fallback): each entry takes its wished spot when that is
+  // on this screen and clear of everything placed so far; the rest get free
+  // spots. One with no free spot left still lands on this screen, at its
+  // fallback spot, overlapping if it must — left where it was, it stays out of
+  // reach or on the other screen, which is what the raider pressed Rescue about
+  // (the guild lead, 2026-09-29: "rescue did not bring the extended target to
+  // the current monitor"). Returns how many landed overlapping.
+  const place = (list, wish, fallback) => {
     const free = [];
     for (const e of list) {
       const r = wish(e);
       if (r && onTarget(r) && !hits(r, occupied)) {
         try { e.win.setBounds(r); } catch { /* mid-close */ }
         occupied.push(pad(r));
-      } else free.push({ key: e.key, win: e.win, b: e.b });
+      } else free.push(e);
     }
-    return free.length ? _arrangeOnScreen(a, free, occupied, true, null, MARGIN, STEP).skipped : 0;
+    if (!free.length) return 0;
+    _arrangeOnScreen(a, free, occupied, true, null, MARGIN, STEP);
+    let overlapping = 0;
+    free.forEach((e, i) => {
+      let nb;
+      try { nb = e.win.getBounds(); } catch { return; }
+      if (onTarget(nb)) return;
+      try { e.win.setBounds(_projectRect(fallback(e, i), a, a)); overlapping++; } catch { /* mid-close */ }
+    });
+    return overlapping;
   };
+  const cascade = (e, i) => ({ x: a.x + 40 + 24 * i, y: a.y + 40 + 24 * i, width: e.b.width, height: e.b.height });
   const names = (list) => list.map(e => _OVERLAY_NAMES[e.key] || e.key).join(', ');
   const count = (n) => (n === 1 ? '1 overlay' : n + ' overlays');
-  let stuck = place(sorted.lost, (e) => {
+  const rememberedRect = (e) => {
     const r = e.bk && remembered[e.bk];
     return r ? { x: r.x, y: r.y, width: e.b.width, height: e.b.height } : null;
-  });
+  };
+  let stuck = place(sorted.lost, rememberedRect, (e, i) => rememberedRect(e) || cascade(e, i));
   let brought = 0;
   if (sorted.away.length) {
     let choice = 0;
@@ -3490,7 +3506,8 @@ async function _rescueOverlays() {
       choice = r.response;
     } catch { /* no dialog → leave them */ }
     if (choice === 1) {
-      stuck += place(sorted.away, (e) => _projectRect(e.b, e.from.workArea, a));
+      const same = (e) => _projectRect(e.b, e.from.workArea, a);
+      stuck += place(sorted.away, same, same);
       brought = sorted.away.length;
     }
   } else if (!sorted.lost.length) {
@@ -3508,7 +3525,7 @@ async function _rescueOverlays() {
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
     + ` · nudged ${sorted.nudge.length} [${sorted.nudge.map(e => e.key).join(', ')}]`
-    + ` · other screen ${sorted.away.length} (${brought ? 'brought' : 'left'}) · no free spot ${stuck}\n`
+    + ` · other screen ${sorted.away.length} (${brought ? 'brought' : 'left'}) · no free spot, placed overlapping ${stuck}\n`
     + (missing.length ? `[rescue]   NO WINDOW (disabled/gated — re-enable from tray → Overlays): ${missing.join(', ')}\n` : ''));
   return { moved: sorted.lost.length, nudged: sorted.nudge.length, brought, left: sorted.away.length - brought, display: `${disp.size.width}x${disp.size.height}`, missing };
 }
@@ -8264,6 +8281,46 @@ ipcMain.handle('auto-arrange-onshow-toggle', () => {
   saveConfig(cfg);
   return !!cfg.autoArrangeOnShow;
 });
+// Right-click → 🖥 Move to another screen (the guild lead, 2026-09-29: "rescue
+// did not bring the extended target to the current monitor. perhaps we add it to
+// the right click menu"). One row per other screen, named by where it sits from
+// this one, EverQuest's marked when Mimic has read where EQ is.
+function _screenWhere(from, to) {
+  const dx = (to.bounds.x + to.bounds.width / 2) - (from.bounds.x + from.bounds.width / 2);
+  const dy = (to.bounds.y + to.bounds.height / 2) - (from.bounds.y + from.bounds.height / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? 'the screen on the left' : 'the screen on the right';
+  return dy < 0 ? 'the screen above' : 'the screen below';
+}
+function _otherScreensFor(win) {
+  const all = screen.getAllDisplays();
+  if (all.length < 2 || !win || win.isDestroyed()) return [];
+  let cur;
+  try { cur = screen.getDisplayMatching(win.getBounds()); } catch { return []; }
+  let eqId = null;
+  try { const eq = _eqMainWindow(10 * 60_000); if (eq) eqId = screen.getDisplayMatching(eq.client).id; } catch { /* not known */ }
+  const out = all.filter(d => d.id !== cur.id).map(d => ({ id: d.id, where: _screenWhere(cur, d), size: d.size.width + '×' + d.size.height, eq: d.id === eqId }));
+  // Two screens both "on the right": the size tells them apart.
+  return out.map(s => ({ id: s.id, label: s.where + (out.filter(o => o.where === s.where).length > 1 ? ' (' + s.size + ')' : '') + (s.eq ? ' — EverQuest' : '') }));
+}
+ipcMain.handle('wp-move-to-display', (e, id) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    let key = null;
+    for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+    if (!key || key === 'canvas') return false;
+    const to = screen.getAllDisplays().find(d => String(d.id) === String(id));
+    if (!to) return false;
+    const b = win.getBounds();
+    const from = screen.getDisplayMatching(b);
+    // The same spot on the other screen, kept whole on it.
+    const r = _projectRect(b, from.workArea, to.workArea);
+    win.setBounds(r);
+    const bk = _boundsKeyForEntry(key, win);
+    if (bk) _persistBounds(bk, win);
+    appendAgentLog(`[screens] ${key} moved to display ${to.id} (${to.size.width}x${to.size.height}) from the right-click menu\n`);
+    return true;
+  } catch { return false; }
+});
 // State for the right-click chrome menu — which overlay this window is, its
 // backdrop flag, and the arrange-on-show setting (labels reflect state).
 ipcMain.handle('wp-overlay-menu-state', (e) => {
@@ -8273,6 +8330,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
   const cfg = loadConfig();
   return {
     key,
+    screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     growUp: _growUpSetting(cfg, key),
