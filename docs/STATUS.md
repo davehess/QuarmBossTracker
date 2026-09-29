@@ -209,6 +209,9 @@ next touch one rather than assuming a missing row means a missing doc.
   end) worked out from OpenDKP awards + Mimic loot + the live roster. Two layouts, `?v=b` by person and
   `?v=c` by essence, `&demo=1` for sample data. Waiting on the pick. `web/lib/essencesQueue.ts`,
   `test/essences-queue.test.js`. §96.
+- **✅ /pop reads every flag, not the first 1,000; planner shows mains (alts) (web 1.8.50, main
+  2026-09-29).** The 9,846 unmapped hail rows had filled the 1,000-row read, so real flags would never
+  have shown after the unlock. `test/pop-planner-mains-alts.test.js`. §99.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
 - **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for

@@ -4763,6 +4763,29 @@ Info had called "level unknown until a /who sees them out of anonymous".
   phrase learner (NPCs only), are as they were.
 - **Tests:** `test/mana-drain-and-con.test.js`.
 
+### 99. /pop read only its first 1,000 flag rows; the planner is now mains (alts) (2026-09-29, web 1.8.50)
+The guild lead, on the raid-night planner: *"make this mains and in parenths alts"*, then *"I see 1000
+unmapped grants so that's probably a database row restriction"*.
+- **The row cap was real, and worse than it looked.**
+  - **The data:** `pop_flags` holds 9,846 `unmapped` hail rows (the open item in §86) across 2,191
+    characters. Only 212 of them are ours, and every row is older than any real flag.
+  - **The bug:** the page read `pop_flags` once with `.limit(20000)`, and the API caps a read at 1,000
+    rows.
+  - **What that did:** "1000 unmapped grants"; about 456 mostly-foreign characters counted as able to
+    attend. After the 10/1 unlock, every real flag would sort after those rows and never be read.
+- **Fixed:**
+  - Real flags only are read, a page of 1,000 at a time.
+  - The unmapped rows are an exact count, not a download.
+  - The matrix's "+N?" is fetched only for characters with a real flag.
+  - The page's population is characters with a real flag; today there are none, so the planner says
+    "No flags recorded yet".
+- **Planner:** every number is mains, with alts in parentheses: attend, gain, and each unlock (alt names
+  listed apart). It is ranked by mains and ignores the Mains / All characters toggle, which still
+  governs the chart and matrix.
+- ⚠ **Every other `.limit(>1000)` read is the same trap.** `test/` keeps a baseline of 85 such sites
+  that may only shrink; this change removed one.
+- **Tests:** `test/pop-planner-mains-alts.test.js`.
+
 
 
 
