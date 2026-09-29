@@ -198,6 +198,11 @@ next touch one rather than assuming a missing row means a missing doc.
   💾 to save a group. **Round two (alpha `291ddcaa`, §105):** ✕ deletes with Undo; a drag moves the whole
   group or selection (Alt-drag pulls one out); click / Shift-click select, then 🔗 lock together or 💾 save;
   one click on ✥ opens settings; "Arrange the canvas" in every overlay's menu; `/pipe mimic edit`.
+  **Round three (alpha `a5532ace` + `ec8ad702`, §106–§107):** a selected group sizes as one; renamed Canvas;
+  Target Info's every tab as pieces (stats grid, specials, sight, PQDI, drops, spells, faction, quest,
+  vendor — quest/vendor from a new `npc` source keyed on the target); modes slim bar / upright bar / half
+  ring / badge / one line / columns; per-piece label, thickness, colour, alignment; the menu opens beside
+  the piece; a mode change fits the height; two clicks open settings.
   Next: slim endpoints for the /api/state pieces; timeline mode; anchoring to EQ windows.
   `test/canvas-pieces.test.js`. §103.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
