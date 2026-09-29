@@ -68,6 +68,10 @@ export const releases: Release[] = [
         name: 'Suggested triggers, per character',
         blurb: 'The Suggested triggers panel has a “For:” picker. Turn a trigger on for one character and it only fires on that character’s log; turn it off for one and it stays on for the rest.',
       },
+      {
+        name: 'See how much was the pet',
+        blurb: 'On the DPS HUD, “+pet” and the end of a raider’s bar are orange, so you can see their pet’s share. Click “+pet” for a line with the pet’s name, its damage and its spawn id.',
+      },
     ],
     fixes: [
       'Summoned pets on the DPS meter are named as pets, not raiders. When anyone in the raid saw the pet’s “My leader is …” line, the pet is credited to its owner on every Mimic; otherwise it is marked (pet) and left out of the parse you copy to /rs.',

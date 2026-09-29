@@ -1408,6 +1408,12 @@ is" lines (poll stream `pet_owners` → `_guildPetOwners`, live fights only); a
 pet nobody named whose name fits the server's pet-name generator
 (`_isGeneratedPetName`) is sent as `pet_summoned` and the DPS HUD labels it
 "(pet)" (FB-35, §84).
+The DPS HUD folds an owned pet into its owner (`_foldPetsIntoOwners`, row
+index 10 keeps each pet), draws the pet's share as the orange end of the row
+bar, and "+pet" (same orange) opens a line per pet with name, damage and
+`pet_spawn_id` — from `_petSpawnIdFor` (own Zeal `pet_id` / Zeal tag / own
+target / the bot's `pet_owners.ids` pool, which `addPetSpawnIds` fills from the
+per-pet upload rows' `spawn_id`). §85, `test/dps-hud-pet-breakdown.test.js`.
 Threat tracker (`recentTankHits`) records mob→player connects (player-name
 shape = letters only — backtick names are NPC/pets) — feeds MT resolution,
 off-tank surfacing, off-heal candidates, and `incoming_mob` on live-state.

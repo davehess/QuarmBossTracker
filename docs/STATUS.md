@@ -187,6 +187,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ 3.0 step 1 — overlay sets (alpha `e9e4f3d6`, 2026-09-29).** Save the layout under a name and switch
   with `/pipe mimic load|save|next|prev|lock`, the tray's 🗂 Overlay sets, or Settings. Kept locally. Next:
   the database backup (step 2), then sharing, then the display types Bar/Readout/Chips. §83a.
+- **⏳ DPS HUD +pet breakdown (agent 3.7.45 beta `672ff15e` + bot 3.1.175, 2026-09-29).** The pet's share of an
+  owner's bar and the "+pet" label share the pet orange; clicking +pet opens a line per pet with name, damage and
+  spawn id (provable only: the owner's Zeal `pet_id`, a Zeal /tag, our own target, or the bot's pool of ids the
+  owners' Mimics uploaded). §85.
 - **⏳ FB-34 suggested triggers per character · FB-35 pets on the meter (agent 3.7.44 beta `f857fa6f` + bot
   3.1.174, 2026-09-29).** A personal trigger may carry a character list; the Suggested panel's **For:** picker
   sets it, and a line fires it only from those characters' logs. The poll serves the bot's pooled pet owners
