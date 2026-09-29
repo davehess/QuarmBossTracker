@@ -188,6 +188,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ 3.0 step 1 — overlay sets (alpha `e9e4f3d6`, 2026-09-29).** Save the layout under a name and switch
   with `/pipe mimic load|save|next|prev|lock`, the tray's 🗂 Overlay sets, or Settings. Kept locally. Next:
   the database backup (step 2), then sharing, then the display types Bar/Readout/Chips. §83a.
+- **⏳ 3.0: every overlay on the canvas, as it is today (alpha `d2dadf94`, build `3.0.0-alpha.846`,
+  2026-09-29).** The Timers canvas holds any of the 15 overlays as a panel: ＋ Overlay adds one, "Bring in"
+  moves everything on screen at its spot and size. A hosted overlay has no window of its own; Remove gives it
+  back. The views come later, one overlay at a time. `test/canvas-overlays.test.js`. §102.
 - **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
   Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
   does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the
