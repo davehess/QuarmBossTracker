@@ -193,6 +193,10 @@ next touch one rather than assuming a missing row means a missing doc.
   Talisman is a flag from the Storms shrine that also needs Justice, the Symbol of Torden is required, the
   tower walk added. Seven flag bosses whose server names never matched now tick. `zone_outline()` SQL for
   step maps. Open: 9,846 hail rows stored as unmapped flags (§86).
+- **⏳ PoP checklist: two layouts on beta (`d0e69d49`, 2026-09-29).** `?v=b` (detail in place) and `?v=c` (list +
+  sticky detail panel): sidebar nav, per-step expectations / what to say / who takes what / who you go back to /
+  zone map (`zone_outline()`), and rows that fill themselves labelled "filled by Mimic" or "from our records"
+  (`web/lib/popGuideAuto.ts`). Waiting on the guild lead's pick. §86.
 - **⏳ DPS HUD +pet breakdown (agent 3.7.45 beta `672ff15e` + bot 3.1.175, 2026-09-29).** The pet's share of an
   owner's bar and the "+pet" label share the pet orange; clicking +pet opens a line per pet with name, damage and
   spawn id (provable only: the owner's Zeal `pet_id`, a Zeal /tag, our own target, or the bot's pool of ids the

@@ -1616,6 +1616,10 @@ hand-ins in order); `ChainView` renders it with folding sections. Willamina's Ne
 maps to a step by the boss that died just before it: the bot's `POP_FLAG_BY_BOSS` plus `_popBossKey`
 (catalog `#Name_With_Underscores` = log `Name With Underscores`). `zone_outline(zone)` (SQL) draws a
 zone from the server's own placement rows for step maps.
+**Beta layouts (`?v=b` / `?v=c`, §86, not on main yet):** `GuideRoute.tsx` (sidebar + rows + `StepDetail`),
+`ZoneMap.tsx` (SVG, north up, x mirrored), `routeData.ts` (the viewer's own characters' ticks + evidence +
+day-cached outlines), `web/lib/popGuideMore.ts` (expect / turnIn / back / auto per step key) and
+`web/lib/popGuideAuto.ts` (what fills itself in: `mimic` vs `database`). `test/pop-guide-more.test.js`.
 
 ### Target Info F/Q/V (Faction · Quest · Vendor)
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
