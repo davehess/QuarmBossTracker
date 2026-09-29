@@ -119,7 +119,7 @@ is ephemeral. It is a desktop-session job.
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
 | **Companion suite review, round two** | **Doc updated 2026-09-29 (§94).** 28 missing / 38 partial / 19 covered; gear upgrade finder written up | the guild lead: say which gaps to queue (gear finder, client version check, maps) |
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
-| **Overlays tab: option C** | **Picked 2026-09-29 (§107); being built on beta.** Layouts, what is on screen now with one key format, an Add drawer of overlay cards, Arrange on screen | the guild lead: try it on the next beta |
+| **Overlays tab: option C** | **Beta `b8c6b98c` (agent 3.7.49, §107) and alpha `703a6017`.** Layout tiles, Arrange on screen, what is on screen now with one keycap format (clashes red), an Add drawer of overlay cards, Keys and Look strips | the guild lead: open the dashboard's Overlays tab on the next beta or alpha; say what to change. Role filters on the Add drawer only if wanted (you pick the roles) |
 | **3.0: pieces (legos)** | **Alpha `994eb032` (§103) + round two `291ddcaa` (§105) + group sizing `a5532ace` (§106) + round three `ec8ad702` (§107): Target Info's every tab, HUD formats, per-piece look, menu beside the piece.** 116 pieces in 12 categories in a movable 🧩 chooser; today's 17 overlays as groups. ✕ deletes (Undo); a drag moves the whole group or selection, Alt-drag pulls one out; click/Shift-click to select, then lock together or save; ✥ click opens settings; "Arrange the canvas" in every overlay's right-click menu and `/pipe mimic edit` | the guild lead: on the next alpha, drop the Tank group and drag it whole, Alt-drag a piece out, lock two far-apart pieces and move them, save a set; say what still feels slow |
 | **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
@@ -5057,3 +5057,18 @@ beta.
 - Tests: `test/canvas-pieces.test.js` round three (modes, look options, resist colours, every target piece
   on real-shaped data, the npc source, the preset, sanitize, fit, clicks, two clicks) and
   `test/timers-canvas.test.js` (menuSpot on five placements). Full suite green.
+
+**The Overlays tab, option C, on beta** (`b8c6b98c`, agent 3.7.49; the Canvas rename `e2116fa2` rides with it).
+Layout tiles, an Arrange bar, what is on screen now, an Add drawer of overlay cards, and one keycap
+format everywhere with clashes in red. Every control of the old tab has a home in the new one; the list
+is in HOW-ITS-BUILT ("Dashboard: the Overlays tab, option C").
+- **A bug the old tab had**: its per-character layouts card read `charProfiles` from the agent's state,
+  which never carries them. So its saved list was always empty, and the auto-switch box was never shown
+  ticked. The new tiles read Mimic's own status.
+- **Left out, on purpose**:
+  - Sketches on the layout tiles: a saved layout records which overlays are on, not where they sit.
+    Tiles list the overlay names instead of inventing positions.
+  - Role filter pills: 12 of 18 overlays would land in "Everyone", and which overlay belongs to which role
+    is the guild lead's call.
+- **The alpha got it by a hand merge** (`703a6017`). The sync workflow failed, as expected: the tray label,
+  the canvas hint line and their test changed on both branches. The alpha kept its own wording.
