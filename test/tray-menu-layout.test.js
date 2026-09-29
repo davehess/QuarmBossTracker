@@ -22,7 +22,8 @@ const BEFORE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'tray
 const HEADERS = ['Behaviour', 'Mode', 'Account'];
 // The Updates container's label carries the pending version ("Updates — v9.9.9 ready"), so it is matched by prefix.
 const UPDATES_LABEL = /^Updates( — v\S+ ready)?$/;
-const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help'];
+// '🗂 Overlay sets' came over from alpha after layout B (the guild lead, 2026-10-14): a new submenu, not a moved item.
+const CONTAINERS = ['Settings', 'Updates', 'Open', 'Help', '🗂 Overlay sets'];
 const isContainer = (label) => CONTAINERS.includes(label) || UPDATES_LABEL.test(label);
 
 const shown = (items) => items.filter((i) => i.type !== 'separator' && i.visible !== false);
@@ -48,6 +49,7 @@ describe('top level is layout B', () => {
       '🐺 Wolf Pack Mimic v2.7.7 — Connected · :7777',
       'Show dashboard',
       'Overlays',
+      '🗂 Overlay sets',
       '🧲 Rescue overlays to this screen',
       '🔇 Quiet mode — no TTS audio or sounds (overlays still show)',
       'Settings',
@@ -96,7 +98,8 @@ describe('top level is layout B', () => {
       expect(v[0].type).not.toBe('separator');
       expect(v[v.length - 1].type).not.toBe('separator');
       v.forEach((i, n) => { if (i.type === 'separator') expect(v[n - 1].type).not.toBe('separator'); });
-      v.forEach((i) => { if (Array.isArray(i.submenu) && isContainer(i.label)) check(i.submenu); });
+      // (the harness stubs the Overlay sets list as empty; its own items are tested in overlay-sets.test.js)
+      v.forEach((i) => { if (Array.isArray(i.submenu) && i.submenu.length && isContainer(i.label)) check(i.submenu); });
     };
     for (const name of Object.keys(SCENARIOS)) check(top(name));
   });

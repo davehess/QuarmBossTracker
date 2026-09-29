@@ -49,6 +49,7 @@ export function buildTemplate(src, sc) {
     autoUpdater: { quitAndInstall() {} },
     _dockedKeys: () => [],
     _charProfileTrayItems: () => [],
+    _overlaySetTrayItems: () => [],
     _damageAlertHotkeyLabelNow: () => 'Ctrl+Shift+D',
     _hideAllHotkeyMenuLabel: () => 'Ctrl+Shift+H',
     _fmtPauseClock: () => '9:00',
