@@ -56,6 +56,11 @@ windows accordingly … in fact that will be 3.0."*
 | R20 | **Local first, backed up to the database**: a set works with the server down; a copy in our database carries it to another character or another computer | "stored locally in case of server issues, but backups will need to be saved to our database for portability. raiders will want to reuse the overlay designs between characters or computers" |
 | R21 | **Six display types, any data element**: Bar, Ring, Readout, Pips, Timeline, Chips — each with weight (thin/thick), direction (across/up), backing (clear/panel) and an anchor (screen or an EQ window). A list (DPS rows, raid HP) is a *container* of elements, not a seventh type | "render me 6 different display types for data elements we could build into this 3.0 master overlay and apply to any data element" — rendered on the canvas "Mimic 3.0 display types" |
 
+**Also built (2026-09-29, alpha `d2dadf94`, DECISIONS §102):** R7's compat parts — every overlay's own page
+can be a panel on the Timers canvas, as it is today (the guild lead: "no new modalities if that makes this
+less of a lift, but the end goal is to incorporate the different views"). The display types then replace
+those compat panels one overlay at a time.
+
 **Built so far:** R18 (sets, `/pipe mimic`, tray, Settings) and the local half of R20 — alpha `e9e4f3d6`,
 DECISIONS §83a. The build order from there: the database backup, sharing, then the display types
 (Bar, Readout, Chips; then Ring, Pips; Timeline last).
