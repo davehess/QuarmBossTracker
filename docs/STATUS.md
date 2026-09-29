@@ -179,6 +179,14 @@ next touch one rather than assuming a missing row means a missing doc.
   `DECISIONS-2026-09-21.md` §80. **Beta `f3e444dd` (§80a):** overlays keep their screen — auto-arrange works
   screen by screen, and the screen-change question sends side-screen overlays to another side screen, not
   onto EverQuest. Overlays do not need windowed EQ (the §80 claim is corrected).
+- **⏳ Mimic 3.0 alpha channel (Mimic beta `1cd1d423` + bot 3.1.173 + web 1.8.45, 2026-09-29).** An `alpha`
+  branch (beta + the overlay-builder work, kept in step by `sync-alpha.yml`) builds `3.0.0-alpha.N` onto one
+  rolling release, `mimic-alpha`, which alpha installs read directly (never the 10-entry release feed). Opt
+  in from the tray or the dashboard's α alpha; leaving goes back to beta. The bot and site count only
+  `-beta.N` tags as the beta. Agent changes still land on beta. `DECISIONS-2026-09-21.md` §81.
+- **⏳ 🧲 Rescue brings back only what is lost (Mimic beta `1cd1d423`, 2026-09-29).** No more pile in one
+  corner and no re-arrange: only overlays that cannot be reached move, each to its own spot; overlays on
+  another screen come only on a yes. §82.
 - **⏳ Timers canvas — option A, first slice (agent 3.7.42 + Mimic beta `d6f9ccca`, 2026-09-29; FB-33).** One
   screen-sized click-through window holding the trigger overlay's parts as panels placed and sized one by
   one: Callouts, Timers (catch-all), Charm, and any number of timer panels that claim groups or timers by

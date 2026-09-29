@@ -49,7 +49,8 @@ export async function GET(req: NextRequest) {
 
       // Prefer the latest prerelease; if none, fall through to the latest
       // stable so this link is never broken.
-      const betaRelease   = allMimicReleases.find(r => r.prerelease) || null;
+      // Only a -beta.N tag: the 3.0 alpha (`mimic-alpha`) is a prerelease too.
+      const betaRelease   = allMimicReleases.find(r => r.prerelease && /-beta\.\d+$/.test(r.tag_name)) || null;
       const stableRelease = allMimicReleases.find(r => !r.prerelease) || null;
       const latest = betaRelease || stableRelease;
       if (latest) {

@@ -788,8 +788,17 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
     focus.
   - The `set-beta-channel` IPC confirms first, then calls `setBetaChannel(on, source)`. That is the
     same function the tray's "Receive beta updates" checkbox calls.
+- **The Mimic 3.0 alpha track** (agent 3.7.43 + Mimic beta `1cd1d423`, §81):
+  - `_updateTrack(cfg, version)` → stable / beta / alpha; `_applyUpdaterChannel` points the updater at the
+    rolling `mimic-alpha` release (`_ALPHA_FEED`, a generic feed) only while on alpha, and back at GitHub
+    releases when leaving (downgrade allowed).
+  - Tray "Receive alpha updates (Mimic 3.0 builder)" and the dashboard's `wpAlpha` "α alpha" button both
+    call `setAlphaChannel`; IPC `get-alpha-channel` / `set-alpha-channel` (confirm first). ALPHA badge on
+    an alpha build.
+  - Built by `release-mimic.yml` from the `alpha` branch; `sync-alpha.yml` keeps alpha = beta + builder
+    work. The bot and site count only `-beta.N` tags as the beta (`test/alpha-release-isolation.test.js`).
 Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
-`test/dashboard-join-beta.test.js`.
+`test/dashboard-join-beta.test.js`, `test/mimic-alpha-channel.test.js`.
 
 ### Entity ticks: buffs fade on the mob's own beat (agent 3.7.32, §57)
 - Every NPC counts buff ticks on its own 6 s timer, started at spawn — not the server tick Zeal
@@ -818,6 +827,12 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - **Auto-arrange, per screen:** `_autoArrangeOverlays` groups overlays by the screen they are on and runs
   `_arrangeOnScreen` for each; only the home (EverQuest's) screen gets EQ's windows as obstacles and the
   keep-the-middle-clear rule.
+- **🧲 Rescue** (tray, dashboard Overlays tab, IPC `rescue-overlays`; §82): `_rescueSort` splits overlays
+  into lost (middle or top-left ✥ corner on no screen), on another screen, and fine. `_rescueOverlays`
+  moves only the lost ones — to their remembered spot for this screen setup, else through
+  `_arrangeOnScreen` with every other overlay and EQ's windows as obstacles — and asks before bringing
+  the other-screen ones (projected with `_projectRect`). Never re-arranges. Test
+  `test/rescue-overlays.test.js`.
 - **Zeal's bars:** UI Studio's `_zealBarWindows` / `_zealBarEdits` read and write `zeal.ini`
   `[RaidBars]` / `[AssistBar]`; main's `_zealBarRects` feeds auto-arrange. Test
   `test/zeal-bars-and-screens.test.js`. DECISIONS §80.

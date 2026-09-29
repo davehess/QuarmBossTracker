@@ -380,6 +380,8 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     compete with wolfpack.quest in search.
   ⚠ `web/vercel.json` is strict-schema — Vercel rejects unknown properties, so
   **never add a `comment` key** to it. Document here instead.
+- **`alpha`** — the Mimic 3.0 alpha channel (2026-09-29), and ONLY that: `beta` + the 3.0
+  overlay-builder work, kept current by `sync-alpha.yml`. See the channels table below.
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
@@ -445,6 +447,7 @@ for both branches, put the file on both.
 | Web (`web/`) | `main` (default — web still ships straight to main). To have a change reviewable first, land it on `beta` and read it at `b.wolfpack.quest/<same path>`, then graduate to `main` | `web/package.json` |
 | Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
 | Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (guild lead 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (guild lead 2026-07-09) |
+| Mimic 3.0 overlay-builder work | `alpha` | none — `apps/mimic/package.json` stays parked at 3.0.0 on alpha; each push builds `3.0.0-alpha.<run>`. Agent changes the builder needs go to `beta` first (alpha picks them up by sync) |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
@@ -487,14 +490,30 @@ titles, commit messages, announcements) without consulting the guild lead first;
 propose, they pick. Unnamed = plain version string.
 
 ### Mimic release channels — Linux (Deck) vs Windows (consult before routing a Mimic change)
-Mimic builds to THREE electron-updater channels, and they are deliberately
+Mimic builds to FOUR electron-updater channels, and they are deliberately
 isolated. Know which one a change targets before you push:
 
 | Channel | Ships from | Workflow | Version / feed | Audience |
 |---|---|---|---|---|
 | **Windows stable** | `main` | `release-mimic.yml` | plain `X.Y.Z` → `latest.yml` | whole Windows fleet |
 | **Windows beta** | `beta` | `release-mimic.yml` | auto `X.Y.Z-beta.N` → `beta.yml` | Windows beta testers |
+| **Windows alpha — Mimic 3.0** (2026-09-29) | `alpha` | `release-mimic.yml` | `<park>-alpha.<run_number>` → `alpha.yml` on ONE rolling release, tag `mimic-alpha` | 3.0 overlay-builder testers (opt in: tray or the dashboard's α alpha) |
 | **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch | `build-mimic-linux.yml` | `<parked>-linux.<run_number>` → `linux.yml` | Deck testers only |
+
+**The alpha is built to stay out of everyone else's way** (the guild lead, 2026-09-29: *"can we make an
+alpha channel for 3.0 testing as well?"*; DECISIONS §81):
+- `alpha` = `beta` + the 3.0 overlay-builder work. `sync-alpha.yml` merges beta and main into it on every
+  push to either; alpha keeps its park (`apps/mimic/package.json` at 3.0.0). **Agent changes land on
+  `beta`, never on alpha** — so the alpha's agent is always beta's and the alpha Mimic can hot-swap along
+  the beta agent line (`?channel=beta`) without a bot change.
+- Alpha installs read `alpha.yml` straight from the `mimic-alpha` release's download address
+  (`_ALPHA_FEED` in `main.js`), NOT through the release feed — the 10-entry feed would scroll an alpha out
+  within a day of beta pushes (the Linux lesson below). Every alpha build replaces that release's files,
+  so the alpha never takes more than one slot in the feed either.
+- Anything that picks "the newest prerelease" as the beta must require a `-beta.N` tag instead (the
+  #mimic-releases beta card, `utils/mimicReleases.js`, `/mimic/beta`, `/admin/agents`). A new consumer of
+  releases owes the same filter.
+- Leaving the alpha is a semver DOWNGRADE (3.0.0-alpha > every 2.x), which `_applyUpdaterChannel` allows.
 
 Load-bearing facts:
 - **The Linux/Deck build is isolated for what a client INSTALLS — but NOT for
@@ -995,10 +1014,12 @@ display event straight to a mover again. Where EQ is comes from `_eqWindowGeomet
 user32, on demand, cached) — never poll it.
 **An overlay keeps its side** (the guild lead, 2026-09-29: *"folks might want these overlays on a second
 monitor, it's up to us to know if they're on the same or a different monitor. or both"*; §80a): anything
-that moves overlays — auto-arrange, the screen-change question — keeps an overlay on EverQuest's screen
-or on another screen, whichever it was on. Only 🧲 Rescue gathers everything onto one screen, because that
-is what it is for. And overlays do NOT need a windowed EQ: a second screen works with any mode; only EQ's
-own screen under exclusive fullscreen is the problem case.
+that moves overlays — auto-arrange, the screen-change question, 🧲 Rescue — keeps an overlay on EverQuest's
+screen or on another screen, whichever it was on. Rescue brings back only LOST overlays (middle or ✥ corner on
+no screen), each to its own spot, re-arranges nothing, and asks before touching ones on another screen
+(the guild lead, 2026-09-29: *"it puts them all into one spot which is dreadfully annoying"*; §82). And
+overlays do NOT need a windowed EQ: a second screen works with any mode; only EQ's own screen under
+exclusive fullscreen is the problem case.
 
 ### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the

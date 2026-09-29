@@ -11530,7 +11530,9 @@ async function _announceMimicReleases() {
   // against — instead the channel keeps a single 🧪 card that always shows
   // the newest beta + its notes. Edits don't ping anyone; a deleted card
   // just gets re-posted once.
-  const beta = rels.find(r => r && r.prerelease && !r.draft) || null;
+  // Only a -beta.N tag is a beta: the 3.0 alpha (rolling `mimic-alpha`) and the
+  // Deck's -linux.N builds are prereleases too, and must not take this card.
+  const beta = rels.find(r => r && r.prerelease && !r.draft && /-beta\.\d+$/.test(r.tag_name || '')) || null;
   if (beta && beta.tag_name && beta.tag_name !== st.lastBetaTag) {
     const embB = new EmbedBuilder()
       .setColor(0xf0b429)

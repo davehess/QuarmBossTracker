@@ -727,7 +727,8 @@ export default async function AdminAgentsPage() {
           // x.y.z-beta.N build prerelease and every stable cut as not. The two
           // heads (stable + beta) are what officers need to see at a glance.
           const stable = mimicReleases.filter(r => !r.prerelease);
-          const betas  = mimicReleases.filter(r =>  r.prerelease);
+          // Only -beta.N tags: the 3.0 alpha (`mimic-alpha`) is a prerelease too.
+          const betas  = mimicReleases.filter(r =>  r.prerelease && /-beta\.\d+$/.test(r.tag_name));
           const latestStable = stable[0] ?? null;
           const latestBeta   = betas[0]  ?? null;
           // "Installer (MB)" stays anchored to whatever's at the very top of

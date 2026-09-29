@@ -29,9 +29,18 @@ name: Release Mimic (Electron)
 #      same plain version builds the plain tag.
 #   3. Manual workflow_dispatch with a tag input — for retrying a failed
 #      build, or rebuilding from a tag that was created some other way.
+#   4. Push to alpha touching Mimic or the agent → the Mimic 3.0 ALPHA (the
+#      guild lead, 2026-09-29: "can we make an alpha channel for 3.0 testing as
+#      well?"). The built version is <park>-alpha.<run number> (park the
+#      alpha branch at 3.0.0), and every build REPLACES the files of ONE
+#      rolling release, tag `mimic-alpha`. Alpha installs read its alpha.yml
+#      from that fixed address (apps/mimic/main.js _ALPHA_FEED), never from the
+#      release feed: the feed lists only the newest 10 releases and a day of
+#      beta pushes would scroll an alpha out of it (the 2026-07-30 Linux
+#      lesson). One release, replaced in place, also never crowds the feed.
 on:
   push:
-    branches: [main, beta]
+    branches: [main, beta, alpha]
     # Mimic bundles the agent, so agent-only fixes must also cut a beta
     # build. On main, pushes that don't change the version still no-op in
     # the resolve step below.
@@ -45,6 +54,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    # Alpha builds replace one release's files, so two must never interleave;
+    # every other run keeps its own group (unchanged behaviour).
+    concurrency: ${{ github.ref_name == 'alpha' && 'release-mimic-alpha' || github.run_id }}
     permissions:
       contents: write
     steps:
@@ -72,6 +84,16 @@ jobs:
           new_version=$(jq -r .version apps/mimic/package.json)
           prev_version=$(git show HEAD~1:apps/mimic/package.json 2>/dev/null \
                           | jq -r .version 2>/dev/null || echo "")
+          # ALPHA BRANCH (trigger 4): <park>-alpha.<run number>, published to
+          # the rolling `mimic-alpha` release by the alpha steps below.
+          if [ "${{ github.ref_name }}" = "alpha" ]; then
+            v="${new_version%%-*}-alpha.${{ github.run_number }}"
+            echo "Alpha branch → v$v on the rolling mimic-alpha release"
+            echo "name=v$v"   >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "alpha=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Plain semver tag (v-prefixed) so electron-updater can parse the
           # prerelease channel. NOT `mimic-v…` — that breaks the updater.
           tag="v$new_version"
@@ -219,7 +241,7 @@ jobs:
           echo "----- release-notes.md -----"; cat "$GITHUB_WORKSPACE/release-notes.md"
 
       - name: Publish release with installer
-        if: steps.tag.outputs.build == 'true'
+        if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name:         ${{ steps.tag.outputs.name }}
@@ -237,5 +259,40 @@ jobs:
           files: |
             apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
             apps/mimic/dist/Wolf-Pack-Mimic-*.zip
+            apps/mimic/dist/*.yml
+            apps/mimic/dist/*.blockmap
+
+      # ── Alpha (trigger 4): replace the rolling release's files in place ──
+      # Old files go first, so the release only ever holds this build (an alpha
+      # install fetches alpha.yml and the exe it names from the same place).
+      # The tag moves to this build's commit so the release page says what it is.
+      - name: Alpha — clear the rolling release
+        if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view mimic-alpha >/dev/null 2>&1; then
+            for a in $(gh release view mimic-alpha --json assets --jq '.assets[].name'); do
+              gh release delete-asset mimic-alpha "$a" -y
+            done
+          fi
+          git tag -f mimic-alpha "${{ github.sha }}"
+          git push -f origin refs/tags/mimic-alpha
+
+      - name: Alpha — publish to the rolling release
+        if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   mimic-alpha
+          name:       Mimic 3.0 alpha — ${{ steps.tag.outputs.name }}
+          # Prerelease, and not semver: stable installs (/releases/latest) and
+          # beta installs (which skip tags that are not semver) never see it,
+          # and the bot and site only count -beta.N tags as the beta.
+          prerelease: true
+          body_path:  ${{ github.workspace }}/release-notes.md
+          files: |
+            apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
             apps/mimic/dist/*.yml
             apps/mimic/dist/*.blockmap

@@ -60,9 +60,14 @@ export const releases: Release[] = [
         name: 'Zeal’s raid bars and assist bar in UI Studio',
         blurb: 'Move the /raidbars box and the /assistbar in UI Studio like any other window. Auto-arrange keeps overlays off them.',
       },
+      {
+        name: 'A Mimic 3.0 alpha, for testers',
+        blurb: 'The new overlay builder gets tried out on an alpha before it reaches the beta. Testers join with the α alpha button at the top of the dashboard, or from the tray, and can leave the same way.',
+      },
     ],
     fixes: [
       'Changing monitors no longer throws overlays onto your main screen at default spots.',
+      'Rescue only brings back overlays you cannot reach, each to its own spot. It no longer piles every overlay into one corner or rearranges the ones you placed, and it asks before moving overlays from your other screen.',
     ],
   },
   {

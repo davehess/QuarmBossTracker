@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
+| **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
 | **Quest tab: warnings, give/get, faction, Quarm-only hand-ins** | **Beta + bot 3.1.171 (§74).** NPC text folded; ⚠ despawn / spawn / faction loss; GIVE / GET; every faction change; hand-ins from Quarm's own script; ProjectEQ-only ones flagged | the guild lead: pick the quest catalog shape (deep link page vs Quests overlay, §72 picked "its own overlay") |
@@ -4160,6 +4162,49 @@ overlays on a second monitor, it's up to us to know if they're on the same or a 
   whether it runs windowed; the exact key on Quarm needs a local session to confirm before Mimic reads it.
   With it, Mimic could warn when an overlay sits on EverQuest's screen while EQ runs exclusive fullscreen,
   and skip the screen-change question that EQ's own resolution switch causes.
+
+### 81. A Mimic 3.0 alpha channel (2026-09-29, Mimic beta `1cd1d423`, bot 3.1.173, web 1.8.45)
+The guild lead: *"can we make an alpha channel for 3.0 testing as well? I'm sure we're going to do more beta
+releases before that, but I think I should test out the overlay builder soon after this new round of beta
+elements."*
+- **The branch.** `alpha` = `beta` + the 3.0 overlay-builder work. `sync-alpha.yml` merges beta and main
+  into it on every push to either (the sync-beta rule one step down); alpha keeps its park,
+  `apps/mimic/package.json` at 3.0.0. CI (`test.yml`, `golden-log.yml`) runs on it.
+- **Agent changes land on beta, not alpha.** So the alpha's agent is always beta's, and an alpha Mimic can
+  keep hot-swapping along the beta agent line (`?channel=beta`) with no bot change. Builder work that
+  needs the agent: agent part to beta first, Mimic part to alpha.
+- **The release.** Each push to alpha builds `3.0.0-alpha.<run number>` and REPLACES the files of one
+  rolling GitHub release, tag `mimic-alpha` (prerelease). Alpha installs read its `alpha.yml` from that
+  fixed download address (a generic feed, `_ALPHA_FEED`), never through GitHub's release feed.
+  **Why not a normal `-alpha.N` tag per build:** the feed lists only the newest 10 releases, and
+  electron-updater's alpha channel takes the newest non-custom entry — beta included — so a beta pushed
+  after an alpha would hide it (checked in electron-updater 6.8.9's `GitHubProvider`), and a day of beta
+  pushes would scroll it out of the feed entirely (the 2026-07-30 Linux lesson). One release, replaced
+  in place, also never takes more than one slot in the feed.
+- **Who gets it.** Opt in from the tray ("Receive alpha updates (Mimic 3.0 builder)") or the dashboard's
+  α alpha button — one function, `setAlphaChannel`, confirm first. An alpha build stays on alpha until
+  the raider leaves; leaving goes back to beta and is allowed to step down from 3.0.0. Revert-to-stable
+  clears the alpha opt-in. The header says ALPHA (purple) on an alpha build.
+- **Nothing else may mistake it for the beta.** The #mimic-releases beta card, the bot's beta download
+  link (`utils/mimicReleases.js`), `/mimic/beta` and `/admin/agents` all took "the newest prerelease";
+  each now takes only a `-beta.N` tag. Any new consumer of releases owes the same filter.
+- **Not announced.** The rolling release never reaches #mimic-releases. Alpha testers are told directly.
+- `test/mimic-alpha-channel.test.js`, `test/alpha-release-isolation.test.js`; CLAUDE.md channel table.
+
+### 82. 🧲 Rescue brings back only what is lost (2026-09-29, Mimic beta `1cd1d423`)
+The guild lead: *"not only does the rescue capture all of the overlays but it puts them all into one spot
+which is dreadfully annoying."*
+- **Cause.** Rescue parked every overlay whose middle was off the cursor's screen at the same corner,
+  24 px apart, then ran auto-arrange over the whole set — so overlays kept on a second screen were
+  captured, anything auto-arrange could not place stayed in the pile, and everything already placed got
+  re-arranged.
+- **Now.** Only a LOST overlay moves: its middle, or its top-left corner (where ✥ sits), is on no screen.
+  It goes back to where it last sat on this screen setup, else to the first free spot beside the
+  overlays already there and EverQuest's windows. Nothing else moves and nothing is re-arranged.
+- **Overlays on another screen** stay unless the raider says so: *"Bring them to this screen too, each at
+  the same spot?"*, default "Leave them there" (§80a's rule: keep each overlay's side). With nothing
+  lost and nothing elsewhere, Rescue says so instead of doing nothing silently.
+- `test/rescue-overlays.test.js` runs the real rescue over two fake screens.
 
 
 
