@@ -137,6 +137,16 @@
   body.edit .panel.part .tab{display:none}
   body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
   body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+  /* What is selected, and what can be done with it: lock together, save as a
+     group, remove. A row of its own under the toolbar, only while there is one. */
+  #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
+  #selbar.on{display:flex}
+  #selbar b{color:#d29922}
+  #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  /* ✕ on a piece deletes it; Undo stays here for a few seconds. */
+  #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
+    padding:6px 10px;font-size:12px;background:rgba(22,27,34,0.97);border:1px solid #d29922;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.5)}
+  #toast.on{display:flex}
 
   /* The chooser: a movable palette of every piece, by category, and of the
      groups — today's overlays first. Only while arranging. */
@@ -170,7 +180,7 @@
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
     <b>🧩 Timers canvas</b>
-    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · 🧩 Pieces: drag any data onto the screen · Ctrl-drag moves a piece's group · Shift-click selects · Shift while dragging: no snapping</span>
+    <span class="dim">drag a piece and its group comes with it · Alt-drag pulls one piece out · click selects, Shift- or Ctrl-click adds · double-click or right-click: settings · stretch from ◢ · Shift while dragging: no snapping</span>
     <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
     <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
@@ -178,8 +188,10 @@
     <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
     <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
     <button class="btn go" id="doneBtn" title="Finish arranging (locks overlays if they were unlocked)">✓ Done</button>
+    <div id="selbar"></div>
   </div>
   <div id="menu" data-wp-interact></div>
+  <div id="toast" data-wp-interact><span id="toastMsg"></span><button class="btn" id="undoBtn" title="Put it back (Ctrl+Z)">↶ Undo</button></div>
   <div id="chooser" data-wp-interact>
     <div class="ch-h" id="chHead"><b>🧩 Pieces</b><span class="dim">drag onto the screen</span><button class="btn" id="chClose" title="Put the chooser away (🧩 Pieces brings it back)">✕</button></div>
     <div class="ch-tabs" id="chTabs"></div>
@@ -274,6 +286,7 @@
           x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
           w: num(p.w, 80, 4000, 320), h: num(p.h, 36, 3000, 240),
           scale: num(p.scale, 0.5, 2.5, 1),
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
           off: !!p.off,
         });
         continue;
@@ -293,6 +306,8 @@
         w: num(p.w, 120, 4000, 340), h: num(p.h, 36, 3000, 160),
         scale: num(p.scale, 0.6, 2.5, 1),
         anchor: p.anchor === 'top' ? 'top' : 'bottom',
+        // Any panel can be locked together with pieces (the selection bar's 🔗).
+        grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
         off: !!p.off,
       });
     }
@@ -404,12 +419,16 @@
       startDrag(ev, p.id, 'move');
     });
     tab.querySelector('.gear').addEventListener('click', function (ev) { ev.stopPropagation(); openMenu(p.id, root); });
+    // ✕ on a piece deletes it (the guild lead, 2026-09-29: "I should be able to delete out the elements
+    // instead of hiding them"); Undo stays up a few seconds. Other panels still hide.
     tab.querySelector('.x').addEventListener('click', function (ev) {
       ev.stopPropagation();
       var q = panelById(p.id); if (!q) return;
+      if (q.kind === 'part') { removePanels([q.id]); return; }
       q.off = !q.off; save(); render();
     });
     root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
+    root.addEventListener('dblclick', function (ev) { if (_edit && !ev.target.closest('.ctl')) openMenu(p.id, root); });
     panelsEl.appendChild(root);
     return e;
   }
@@ -477,7 +496,7 @@
       e.tab.querySelector('.what').textContent = '· ' + claimText(p);
       var x = e.tab.querySelector('.x');
       x.textContent = p.off ? '👁' : '✕';
-      x.title = p.off ? 'Show this panel again' : 'Hide this panel';
+      x.title = p.kind === 'part' ? 'Delete this piece (Undo appears for a few seconds)' : p.off ? 'Show this panel again' : 'Hide this panel';
       applyFrame(e, p);
     });
     Object.keys(_els).forEach(function (id) {
@@ -486,6 +505,7 @@
     paintParts();
     syncSources();
     renderChooser();
+    renderSelbar();
   }
 
   var _saveT = null;
@@ -502,7 +522,7 @@
     if (e === _edit) return;
     _edit = e;
     document.body.classList.toggle('edit', e);
-    if (!e) closeMenu();
+    if (!e) { closeMenu(); _sel = {}; }
     render();
   }
   try { if (M.onOverlayLocked) M.onOverlayLocked(function (l) { _locked = !!l; setEdit(); }); } catch (e) {}
@@ -524,15 +544,20 @@
     if ((!_edit && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
-    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY, shift: ev.shiftKey,
+    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY, add: ev.shiftKey || ev.ctrlKey, alt: ev.altKey, fromMv: !!anyTime,
       x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
-    // Ctrl-drag moves the whole group a piece was placed with; a plain drag
-    // pulls the one piece out of its group's arrangement.
-    var me = panelById(id);
-    if (mode === 'move' && ev.ctrlKey && me && me.grp) {
+    // What moves together (the guild lead, 2026-09-29: "I should also be able to drag the whole group …
+    // instead of grabbing the top one and having it get disconnected"): the selection, if this panel is in
+    // it; else the group it was placed or locked with. Alt-drag moves this one alone and takes it out.
+    var ids = [];
+    if (mode === 'move' && !ev.altKey) ids = togetherWith(id);
+    if (ids.length > 1) {
       _drag.members = [];
-      _layout.panels.forEach(function (q) {
-        if (q.grp === me.grp && _els[q.id]) _drag.members.push({ id: q.id, x0: _els[q.id].root.offsetLeft, y0: _els[q.id].root.offsetTop });
+      _drag.skip = {};
+      ids.forEach(function (k) {
+        if (!_els[k]) return;
+        _drag.members.push({ id: k, x0: _els[k].root.offsetLeft, y0: _els[k].root.offsetTop });
+        _drag.skip[k] = true;
       });
     }
     e.root.classList.add('lift');
@@ -546,11 +571,19 @@
     for (var i = 0; i < targets.length; i++) { var d = Math.abs(targets[i] - v); if (d < bd) { bd = d; best = targets[i]; } }
     return best;
   }
-  function snapMove(id, x, y, w, h) {
+  // The panels that move with this one: the selection it belongs to, else its group.
+  function togetherWith(id) {
+    var sel = Object.keys(_sel).filter(function (k) { return panelById(k); });
+    if (_sel[id] && sel.length > 1) return sel;
+    var me = panelById(id);
+    if (me && me.grp) return _layout.panels.filter(function (q) { return q.grp === me.grp; }).map(function (q) { return q.id; });
+    return [id];
+  }
+  function snapMove(id, x, y, w, h, skip) {
     var W = window.innerWidth, H = window.innerHeight;
     var xs = [0, Math.round(W / 2 - w / 2), W - w], ys = [0, Math.round(H / 2 - h / 2), H - h];
     Object.keys(_els).forEach(function (k) {
-      if (k === id) return;
+      if (k === id || (skip && skip[k])) return;
       var r = _els[k].root, ox = r.offsetLeft, oy = r.offsetTop, ow = r.offsetWidth, oh = r.offsetHeight;
       xs.push(ox, ox + ow - w, ox + ow, ox - w);
       ys.push(oy, oy + oh - h, oy + oh, oy - h);
@@ -563,12 +596,20 @@
     if (!e) return;
     if (Math.abs(ev.clientX - d.sx) + Math.abs(ev.clientY - d.sy) > 3) d.moved = true;
     if (d.mode === 'move' && d.members) {
-      var dx = ev.clientX - d.sx, dy = ev.clientY - d.sy;
+      // The grabbed piece snaps (to anything outside its group); the rest keep
+      // their distance from it, and none leaves the screen.
+      var gx = d.x0 + ev.clientX - d.sx, gy = d.y0 + ev.clientY - d.sy;
+      if (!ev.shiftKey) { var gs = snapMove(d.id, gx, gy, d.w0, d.h0, d.skip); gx = gs.x; gy = gs.y; }
+      var dx = gx - d.x0, dy = gy - d.y0;
       d.members.forEach(function (m) {
-        var me2 = _els[m.id]; if (!me2) return;
-        m.x = Math.max(0, Math.min(W - me2.root.offsetWidth, m.x0 + dx));
-        m.y = Math.max(0, Math.min(H - me2.root.offsetHeight, m.y0 + dy));
-        me2.root.style.left = m.x + 'px'; me2.root.style.top = m.y + 'px';
+        var r = _els[m.id] && _els[m.id].root; if (!r) return;
+        dx = Math.min(Math.max(dx, -m.x0), W - r.offsetWidth - m.x0);
+        dy = Math.min(Math.max(dy, -m.y0), H - r.offsetHeight - m.y0);
+      });
+      d.members.forEach(function (m) {
+        var r = _els[m.id] && _els[m.id].root; if (!r) return;
+        m.x = m.x0 + dx; m.y = m.y0 + dy;
+        r.style.left = m.x + 'px'; r.style.top = m.y + 'px';
       });
     } else if (d.mode === 'move') {
       var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
@@ -594,8 +635,18 @@
     shield.classList.remove('on');
     var p = panelById(d.id);
     if (_els[d.id]) _els[d.id].root.classList.remove('lift');
-    // Shift-click without moving: select, for "save as a group".
-    if (!d.moved && d.shift && _edit && p) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
+    try { M.overlayHoverInteractive(false); } catch (err) {}
+    // A click, no drag. On the always-on ✥ while playing: that panel's settings,
+    // straight away. While arranging: select it (Shift or Ctrl adds / removes).
+    if (!d.moved && p) {
+      if (d.fromMv && !_edit) { render(); if (_els[p.id]) openMenu(p.id, _els[p.id].mv); return; }
+      if (_edit) {
+        if (d.add) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
+        else { _sel = {}; _sel[p.id] = true; }
+      }
+    }
+    // Alt-drag took this one out of its group.
+    if (d.moved && d.alt && p && p.grp) { p.grp = null; delete _sel[p.id]; save(); }
     if (d.members) {
       d.members.forEach(function (m) {
         var q = panelById(m.id);
@@ -605,7 +656,6 @@
     } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
     if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); save(); }
     render();
-    try { M.overlayHoverInteractive(false); } catch (err) {}
   }
   document.addEventListener('mouseup', endDrag);
   window.addEventListener('blur', endDrag);
@@ -637,6 +687,11 @@
     var pdef = p.kind === 'part' ? partDef(p) : null;
     var title = p.name || (pdef ? pdef.label : '');
     var h = '<div class="mh">' + esc(title) + '</div>';
+    // The way into editing from any panel, locked or not (the guild lead, 2026-09-29: "It needs to be
+    // something that i can get to from the right click menu in the top corner of the overlay panel").
+    h += '<div class="row">'
+      + (_edit ? '<button class="btn go" data-arrange="0">✓ Done arranging</button>' : '<button class="btn go" data-arrange="1" title="Arrange every panel and piece on the canvas">✏ Arrange the canvas</button>')
+      + '<button class="btn" data-pieces title="Open the chooser of every piece">🧩 Pieces</button></div>';
     h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(title) + '" placeholder="panel name"></div>';
     if (p.kind === 'part') {
       // Show as: every mode this kind of data can be drawn in (parts.js MODES).
@@ -649,9 +704,11 @@
         + '<button class="btn' + (!p.back ? ' on' : '') + '" data-back="0">Clear</button>'
         + '<button class="btn' + (p.back ? ' on' : '') + '" data-back="1">Panel</button></div>';
       if (p.grp) {
-        h += '<div class="sec">Group</div><div class="row">'
-          + '<button class="btn" data-selgrp title="Select every piece placed with this one (then 💾 in the chooser)">Select its group</button>'
-          + '<button class="btn" data-leave title="Ctrl-drag will no longer move it with the others">Leave the group</button></div>';
+        var gn = _layout.panels.filter(function (q) { return q.grp === p.grp; }).length;
+        h += '<div class="sec">Group · ' + gn + ' pieces move together</div><div class="row" style="flex-wrap:wrap">'
+          + '<button class="btn" data-selgrp title="Select every piece in this group (then save it as your own from the bar at the top)">Select its group</button>'
+          + '<button class="btn" data-leave title="It stops moving with the others (Alt-drag does the same)">Leave the group</button>'
+          + '<button class="btn warn" data-rmgrp title="Delete every piece in this group">Delete the group</button></div>';
       }
     } else if (p.kind === 'overlay') {
       var o = ovEntry(p.key);
@@ -814,6 +871,18 @@
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
+    if (t.hasAttribute('data-arrange')) {
+      closeMenu();
+      if (t.getAttribute('data-arrange') === '1') { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
+      else finishArranging();
+      return;
+    }
+    if (t.hasAttribute('data-pieces')) {
+      closeMenu();
+      chooserState().open = true; save();
+      if (!_edit) { try { if (M.canvasEdit) M.canvasEdit(true); } catch (err) {} }
+      render(); return;
+    }
     if (t.hasAttribute('data-test')) {
       if (p.kind === 'callouts') {
         try { var cw = _els[p.id].frame.contentWindow; if (cw && cw.wpPartFlash) cw.wpPartFlash('TEST — Death Touch on the main tank'); } catch (err) { /* page mid-load */ }
@@ -842,9 +911,10 @@
     else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
     else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
-    else if (t.hasAttribute('data-remove')) {
-      _layout.panels = _layout.panels.filter(function (q) { return q !== p; });
-      save(); closeMenu(); render(); return;
+    else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
+    else if (t.hasAttribute('data-rmgrp')) {
+      var gids = _layout.panels.filter(function (q) { return q.grp && q.grp === p.grp; }).map(function (q) { return q.id; });
+      closeMenu(); removePanels(gids); return;
     }
     else return;
     save(); render(); openMenu(p.id, _menuAnchor || _els[p.id].root);
@@ -1015,10 +1085,7 @@
       });
     }
     if (chList._html !== lh) { chList._html = lh; chList.innerHTML = lh; }
-    var n = Object.keys(_sel).filter(function (id) { var q = panelById(id); return q && q.kind === 'part'; }).length;
-    var fh = n
-      ? '<span>' + n + ' selected</span><input id="chName" maxlength="24" placeholder="group name"><button class="btn go" id="chSave">💾 Save group</button><button class="btn" id="chClear">Clear</button>'
-      : '<span class="dim">Shift-click pieces to select them · Delete removes the selected · Esc clears</span>';
+    var fh = '<span class="dim">Click a piece to select it, Shift- or Ctrl-click to add more; the bar at the top locks them together or saves them as a group.</span>';
     if (chFoot._html !== fh) { chFoot._html = fh; chFoot.innerHTML = fh; }
     placeChooser();
     paintChooserValues();
@@ -1205,10 +1272,78 @@
   document.addEventListener('keydown', function (ev) {
     if (!_edit || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
     if (ev.key === 'Delete' || ev.key === 'Backspace') {
-      if (!Object.keys(_sel).length) return;
-      _layout.panels = _layout.panels.filter(function (p) { return !(_sel[p.id] && p.kind === 'part'); });
-      _sel = {}; save(); render();
+      if (Object.keys(_sel).length) removePanels(Object.keys(_sel));
     } else if (ev.key === 'Escape') { _sel = {}; render(); }
+    else if ((ev.key === 'z' || ev.key === 'Z') && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); undoRemove(); }
+  });
+
+  // ── Removing, with Undo ──────────────────────────────────────────────────────
+  // The callouts panel and the catch-all timers panel are never removed (a
+  // callout or a countdown would have nowhere to show); everything else is.
+  var toastEl = document.getElementById('toast'), toastMsg = document.getElementById('toastMsg');
+  var _undo = null, _undoT = null;
+  function removable(q) { return q.kind === 'part' || q.kind === 'overlay' || (q.kind === 'timers' && !q.all); }
+  function removePanels(ids) {
+    var gone = [];
+    _layout.panels = _layout.panels.filter(function (q, i) {
+      if (ids.indexOf(q.id) >= 0 && removable(q)) { gone.push({ p: q, i: i }); return false; }
+      return true;
+    });
+    if (!gone.length) return;
+    ids.forEach(function (id) { delete _sel[id]; });
+    _undo = gone;
+    var nm = gone.length === 1 ? (gone[0].p.name || (partDef(gone[0].p) ? partDef(gone[0].p).label : 'panel')) : gone.length + ' pieces';
+    toastMsg.textContent = 'Deleted ' + nm;
+    toastEl.classList.add('on');
+    clearTimeout(_undoT);
+    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 8000);
+    save(); render();
+  }
+  function undoRemove() {
+    if (!_undo) return;
+    _undo.sort(function (a, b) { return a.i - b.i; }).forEach(function (g) {
+      _layout.panels.splice(Math.min(g.i, _layout.panels.length), 0, g.p);
+    });
+    _undo = null; clearTimeout(_undoT); toastEl.classList.remove('on');
+    save(); render();
+  }
+  document.getElementById('undoBtn').addEventListener('click', undoRemove);
+
+  // ── The selection bar: lock together, unlock, save as a group, delete ────────
+  // The guild lead, 2026-09-29: "I should be able to select multiple pieces, lock them together (and not
+  // necessarily touching) and move them at the same time. Should be able to save my own subsets."
+  var selbar = document.getElementById('selbar');
+  function selIds() { return Object.keys(_sel).filter(function (id) { return panelById(id); }); }
+  function renderSelbar() {
+    var ids = selIds();
+    selbar.classList.toggle('on', ids.length > 0);
+    if (!ids.length) { selbar._html = ''; selbar.innerHTML = ''; return; }
+    var grps = {};
+    ids.forEach(function (id) { var q = panelById(id); if (q.grp) grps[q.grp] = true; });
+    var locked = Object.keys(grps).length === 1 && ids.every(function (id) { return panelById(id).grp; })
+      && _layout.panels.filter(function (q) { return q.grp === Object.keys(grps)[0]; }).length === ids.length;
+    var parts = ids.filter(function (id) { return panelById(id).kind === 'part'; }).length;
+    var h = '<b>' + ids.length + ' selected</b>'
+      + (ids.length > 1 && !locked ? '<button class="btn go" data-sel="lock" title="They move together from now on, wherever they sit">🔗 Lock together</button>' : '')
+      + (locked ? '<span class="dim">locked together</span>' : '')
+      + (Object.keys(grps).length ? '<button class="btn" data-sel="unlock" title="Each moves on its own again">🔓 Unlock</button>' : '')
+      + (parts ? '<input id="selName" maxlength="24" placeholder="name it"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere">💾 Save as a group</button>' : '')
+      + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
+      + '<button class="btn" data-sel="clear">Clear</button>';
+    if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
+  }
+  selbar.addEventListener('click', function (ev) {
+    var a = ev.target.getAttribute && ev.target.getAttribute('data-sel');
+    if (!a) return;
+    var ids = selIds();
+    if (a === 'lock') { var g = newId('g'); ids.forEach(function (id) { panelById(id).grp = g; }); save(); render(); }
+    else if (a === 'unlock') { ids.forEach(function (id) { panelById(id).grp = null; }); save(); render(); }
+    else if (a === 'save') { var inp = document.getElementById('selName'); saveSelectionAsGroup(inp ? inp.value : ''); }
+    else if (a === 'delete') removePanels(ids);
+    else if (a === 'clear') { _sel = {}; render(); }
+  });
+  selbar.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.id === 'selName') { ev.preventDefault(); saveSelectionAsGroup(ev.target.value); }
   });
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
@@ -1249,11 +1384,12 @@
   document.getElementById('hideBtn').addEventListener('click', function () {
     try { M.hideThisOverlay(); } catch (e) {}
   });
-  document.getElementById('doneBtn').addEventListener('click', function () {
+  function finishArranging() {
     try { if (_arrange && M.canvasEdit) M.canvasEdit(false); } catch (e) {}
     try { if (_setup && M.setSetupMode) M.setSetupMode(false); } catch (e) {}
     try { if (!_locked && M.setOverlaysLocked) M.setOverlaysLocked(true); } catch (e) {}
-  });
+  }
+  document.getElementById('doneBtn').addEventListener('click', finishArranging);
 
   // ── State from main ─────────────────────────────────────────────────────────
   function loadState(st) {

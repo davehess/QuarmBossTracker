@@ -2749,6 +2749,12 @@ function _overlaySetCommand(cmd, char, quiet) {
     try { buildTrayMenu(); } catch { /* */ }
     return _setsSay({ ok: true, message: locked ? 'Overlays locked' : 'Overlays unlocked — drag to move' }, quiet);
   }
+  // `/pipe mimic edit` — arrange the Timers canvas without reaching for the tray.
+  if (cmd.verb === 'edit') {
+    const on = cmd.on == null ? !_canvasArrange : !!cmd.on;
+    _setCanvasArrange(on);
+    return _setsSay({ ok: true, message: on ? 'Arranging the canvas' : 'Done arranging' }, quiet);
+  }
   return { ok: false, message: 'Unknown overlay set command' };
 }
 // Tray: the sets by name (the active character's current one ticked), next,

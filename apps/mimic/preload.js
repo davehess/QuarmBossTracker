@@ -430,6 +430,9 @@ function _buildOverlayMenu(onClose, state) {
   // "Setup ALL" first — the most-used entry sits at the top.
   menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
   menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
+  // 3.0 alpha: the canvas editor from any overlay's corner (the guild lead, 2026-09-29: "I have no way of
+  // bringing up the overlay editing other than the taskbar now").
+  menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
   // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};

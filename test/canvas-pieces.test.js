@@ -148,11 +148,58 @@ describe('the canvas places pieces', () => {
     expect(Object.keys(run({ panels: [] }, true, 'charm'))).toEqual(['state']);
     expect(run({ panels: [] }, false, 'charm')).toEqual({});
   });
-  it('Ctrl-drag moves the group, Shift-click selects, and a selection saves as a group', () => {
+  // The guild lead, 2026-09-29 (round two): "I should also be able to drag the whole group … at the same
+  // time instead of grabbing the top one and having it get disconnected" and "select multiple pieces, lock
+  // them together (and not necessarily touching) and move them at the same time".
+  it('a drag moves the selection it is in, else its whole group, else just itself', () => {
+    const fn = sliceBlock(canvas, '  function togetherWith(id) {', '\n  }\n');
+    const run = (panels, sel, id) => new Function('_sel', '_layout', 'panelById',
+      fn + '\nreturn togetherWith(' + JSON.stringify(id) + ');')(sel, { panels }, (k) => panels.find(p => p.id === k) || null);
+    const P = [{ id: 'a', grp: 'g1' }, { id: 'b', grp: 'g1' }, { id: 'c', grp: 'g1' }, { id: 'd' }, { id: 'e' }];
+    expect(run(P, {}, 'b')).toEqual(['a', 'b', 'c']);
+    expect(run(P, {}, 'd')).toEqual(['d']);
+    expect(run(P, { d: true, e: true }, 'e')).toEqual(['d', 'e']);
+    expect(run(P, { d: true, e: true }, 'a')).toEqual(['a', 'b', 'c']);   // not in the selection: its group
+    expect(run(P, { d: true }, 'd')).toEqual(['d']);                        // a selection of one is just itself
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(mode === 'move' && ev\.ctrlKey && me && me\.grp\)/);
-    expect(c).toMatch(/if \(!d\.moved && d\.shift && _edit && p\) \{ if \(_sel\[p\.id\]\) delete _sel\[p\.id\]; else _sel\[p\.id\] = true; \}/);
-    expect(c).toMatch(/try \{ if \(M\.canvasGroupsSave\) M\.canvasGroupsSave\(_groups\); \} catch \(e\) \{\}\s*var grp = newId\('g'\);/);
+    expect(c).toMatch(/if \(mode === 'move' && !ev\.altKey\) ids = togetherWith\(id\);/);
+    expect(c).toMatch(/if \(d\.moved && d\.alt && p && p\.grp\) \{ p\.grp = null;/);
+  });
+  it('✕ on a piece deletes it, and Undo puts it back where it was', () => {
+    const block = sliceBlock(canvas, '  function removable(q) {', "  document.getElementById('undoBtn')");
+    const env = new Function('_layout', '_sel', 'toastEl', 'toastMsg', 'partDef', 'save', 'render',
+      'var _undo = null, _undoT = null;\n' + block.replace(/  document\.getElementById\('undoBtn'\)$/, '') + '\nreturn { removePanels, undoRemove };');
+    const layout = { panels: [{ id: 'callouts', kind: 'callouts' }, { id: 'all', kind: 'timers', all: true }, { id: 'p1', kind: 'part', part: 'me.hp' }, { id: 'p2', kind: 'part', part: 'me.mana' }] };
+    const toast = { classList: { add() {}, remove() {} } }, msg = {};
+    const r = env(layout, { p1: true }, toast, msg, () => ({ label: 'My health' }), () => {}, () => {});
+    r.removePanels(['p1', 'callouts', 'all']);
+    expect(layout.panels.map(p => p.id)).toEqual(['callouts', 'all', 'p2']);   // the two fixed panels stay
+    expect(msg.textContent).toBe('Deleted My health');
+    r.undoRemove();
+    expect(layout.panels.map(p => p.id)).toEqual(['callouts', 'all', 'p1', 'p2']);
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(q\.kind === 'part'\) \{ removePanels\(\[q\.id\]\); return; \}\s*q\.off = !q\.off;/);
+  });
+  it('the selection bar locks pieces together, unlocks them, saves them as a group, deletes them', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(a === 'lock'\) \{ var g = newId\('g'\); ids\.forEach\(function \(id\) \{ panelById\(id\)\.grp = g; \}\);/);
+    expect(c).toMatch(/else if \(a === 'unlock'\) \{ ids\.forEach\(function \(id\) \{ panelById\(id\)\.grp = null; \}\);/);
+    expect(c).toMatch(/else if \(a === 'save'\) \{ var inp = document\.getElementById\('selName'\); saveSelectionAsGroup\(/);
+    expect(c).toMatch(/if \(d\.add\) \{ if \(_sel\[p\.id\]\) delete _sel\[p\.id\]; else _sel\[p\.id\] = true; \}\s*else \{ _sel = \{\}; _sel\[p\.id\] = true; \}/);
+  });
+  // "I have no way of bringing up the overlay editing other than the taskbar now" and "I need a faster way
+  // to get to the editing mode for individual components".
+  it('editing is one click away: ✥ opens the settings, which can start arranging; every overlay\'s menu too; /pipe mimic edit', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/if \(d\.fromMv && !_edit\) \{ render\(\); if \(_els\[p\.id\]\) openMenu\(p\.id, _els\[p\.id\]\.mv\); return; \}/);
+    expect(c).toMatch(/data-arrange="1"[^']*✏ Arrange the canvas/);
+    expect(c).toMatch(/if \(t\.getAttribute\('data-arrange'\) === '1'\) \{ try \{ if \(M\.canvasEdit\) M\.canvasEdit\(true\); \}/);
+    expect(c).toMatch(/root\.addEventListener\('dblclick', function \(ev\) \{ if \(_edit && !ev\.target\.closest\('\.ctl'\)\) openMenu\(p\.id, root\); \}\);/);
+    expect(stripJs(preload)).toMatch(/mkItem\('🧩 Arrange the canvas \(pieces\)', '#1f3d57', \(\) => ipcRenderer\.invoke\('canvas-edit', true\)\)/);
+    const sets = require(path.join(ROOT, 'apps', 'mimic', 'overlaySets.js'));
+    expect(sets.parsePipeCommand('mimic edit')).toEqual({ verb: 'edit', on: null });
+    expect(sets.parsePipeCommand('mimic arrange done')).toEqual({ verb: 'edit', on: false });
+    expect(sliceBlock(stripJs(main), "  if (cmd.verb === 'edit') {", '\n  }\n')).toMatch(/_setCanvasArrange\(on\);/);
   });
 });
 

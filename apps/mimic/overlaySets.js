@@ -154,6 +154,13 @@ function parsePipeCommand(text) {
   if (verb === 'save') return { verb, name: cleanName(arg) };
   if (verb === 'next' || verb === 'prev') return { verb };
   if (verb === 'unlock') return { verb: 'lock', on: false };
+  // Arrange the Timers canvas (the pieces chooser opens with it): the fast way in from the game.
+  if (verb === 'edit' || verb === 'arrange') {
+    if (!arg) return { verb: 'edit', on: null };
+    if (/^(on|yes|1)$/i.test(arg)) return { verb: 'edit', on: true };
+    if (/^(off|no|0|done)$/i.test(arg)) return { verb: 'edit', on: false };
+    return null;
+  }
   if (verb === 'lock') {
     if (!arg) return { verb, on: null };
     if (/^(on|yes|1)$/i.test(arg)) return { verb, on: true };
