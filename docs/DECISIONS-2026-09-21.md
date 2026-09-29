@@ -4418,6 +4418,26 @@ on them which should be there at all times"*. Until now a panel moved only insid
 - `test/timers-canvas.test.js` pins the ✥, its any-time drag and that the panel body takes the mouse only
   while arranging; the guard was mutation-checked. Rendered headless, locked and arranging, before pushing.
 
+### 88. "Mimic just closed" during a crash review was an update installing itself (2026-09-29, Mimic beta `7c82aa0a`)
+The guild lead, live with a member: *"mimic just closed as we were reviewing his crash reporting"*.
+- **Not a crash.** The member's agent reported Mimic 2.7.2 at 12:35 UTC; the next screenshot showed 2.7.4.
+  Stable 2.7.4 had been downloaded and was waiting. EverQuest was not running: it had just failed to start
+  with its own "Failed to load the graphics DLL!" box. Since 2026-08-04, Mimic installs a waiting update
+  15 seconds after it sees EQ closed, and the new build starts hidden in the tray. So the window vanished
+  mid-review, and the new build sat hidden in the tray.
+- **The trap is who it hits:** people with Mimic open while EQ is shut are the people troubleshooting EQ.
+- **Fix (beta):** the install waits while the Mimic window is up and not minimized. The dashboard's update
+  banner still offers "restart now", and the first poll after the window is hidden or minimized installs
+  it. Stable users get this at the next stable cut. Until then, if it happens, Mimic is in the tray.
+- **The graphics DLL box is EverQuest's, not Mimic's.** Not diagnosed. It is what 32-bit EQ says when its
+  graphics layer cannot load, and the crash review had just suggested copying dgVoodoo2's `d3d8.dll` +
+  `ddraw.dll` from its `MS\x86` folder. A copy from the x64 folder would produce exactly this box. That is
+  the first thing to ask, not a finding.
+- Also seen: `AcLayers.dll` on the stack of the member's last EQ crash. That is the Windows compatibility
+  layer, so a compatibility-mode setting (or one Windows applied itself) is on for `eqgame.exe`. It is worth
+  checking against the XP-compat field issue in CLAUDE.md.
+- `test/update-on-eq-close.test.js` has three new cases, and both guards were mutation-checked.
+
 
 
 
