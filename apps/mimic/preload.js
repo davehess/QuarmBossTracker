@@ -774,6 +774,9 @@ contextBridge.exposeInMainWorld('mimic', {
   canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
   canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
   onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
+  // Saved groups of pieces (3.0 alpha), one list for every screen.
+  canvasGroups:      ()       => ipcRenderer.invoke('canvas-groups'),
+  canvasGroupsSave:  (groups) => ipcRenderer.invoke('canvas-groups-save', groups),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

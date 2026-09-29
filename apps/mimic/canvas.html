@@ -127,13 +127,51 @@
   .chip .cx{color:#6e7681}
   .chip:hover .cx{color:#f85149}
   .chip.add{color:#58a6ff}
+
+  /* ── Pieces (3.0 alpha): single data elements drawn by parts.js ─────────── */
+  .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
+  .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));border:1px solid #30363d;border-radius:5px;padding:3px 6px}
+  body.edit .panel.part.sample > .pbody{opacity:0.7}
+  /* Pieces sit close together, so a piece's tab shows only while the mouse is
+     on it (the piece itself drags; right-click opens its ⚙). */
+  body.edit .panel.part .tab{display:none}
+  body.edit .panel.part:hover .tab,body.edit .panel.part.lift .tab{display:flex;z-index:60}
+  body.edit .panel.sel{outline:2px solid #d29922;outline-offset:1px}
+
+  /* The chooser: a movable palette of every piece, by category, and of the
+     groups — today's overlays first. Only while arranging. */
+  #chooser{display:none;position:fixed;z-index:85;width:300px;max-height:70vh;box-sizing:border-box;
+    flex-direction:column;font-size:11px;background:rgba(22,27,34,0.97);border:1px solid #1f6feb;
+    border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.6)}
+  body.edit #chooser.open{display:flex}
+  #chooser .ch-h{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:move;border-bottom:1px solid #30363d}
+  #chooser .ch-h b{color:#e6edf3;flex:1}
+  #chooser .ch-tabs{display:flex;flex-wrap:wrap;gap:3px;padding:5px 6px;border-bottom:1px solid #30363d}
+  #chooser .ch-tab{padding:1px 6px;border-radius:9px;border:1px solid #30363d;cursor:pointer;color:#8b949e;background:#0d1117}
+  #chooser .ch-tab.on{color:#e6edf3;border-color:#1f6feb;background:rgba(31,111,235,0.25)}
+  #chooser .ch-list{overflow:auto;padding:4px 6px;flex:1;min-height:60px}
+  #chooser .ch-sec{margin:6px 0 3px;color:#6e7681;text-transform:uppercase;letter-spacing:0.06em;font-size:10px}
+  #chooser .pc{display:flex;align-items:center;gap:6px;padding:3px 4px;border:1px solid transparent;border-radius:4px;cursor:grab}
+  #chooser .pc:hover{border-color:#30363d;background:#0d1117}
+  #chooser .pc-l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  #chooser .pc-v{color:#6e7681;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #chooser .pc-m{padding:0 4px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab}
+  #chooser .pc-m:hover{border-color:#58a6ff}
+  #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
+  #chooser .pc .x:hover{color:#f85149}
+  #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  #chooser .ch-f input{flex:1;min-width:80px;font:inherit;font-size:11px;padding:2px 6px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
+  #chooser .dim{color:#6e7681}
+  #ghost{display:none;position:fixed;z-index:99;pointer-events:none;padding:3px 8px;font-size:11px;
+    background:rgba(31,111,235,0.85);color:#fff;border-radius:4px;white-space:nowrap}
 </style></head>
 <body data-wp-overlay>
   <div id="panels"></div>
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
     <b>🧩 Timers canvas</b>
-    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · ＋ Overlay brings any overlay in · Shift while dragging: no snapping</span>
+    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · 🧩 Pieces: drag any data onto the screen · Ctrl-drag moves a piece's group · Shift-click selects · Shift while dragging: no snapping</span>
+    <button class="btn" id="pcBtn" title="The pieces: every data element of every overlay, by category, and today's overlays as groups">🧩 Pieces</button>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
     <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
     <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
@@ -142,9 +180,19 @@
     <button class="btn go" id="doneBtn" title="Finish arranging (locks overlays if they were unlocked)">✓ Done</button>
   </div>
   <div id="menu" data-wp-interact></div>
+  <div id="chooser" data-wp-interact>
+    <div class="ch-h" id="chHead"><b>🧩 Pieces</b><span class="dim">drag onto the screen</span><button class="btn" id="chClose" title="Put the chooser away (🧩 Pieces brings it back)">✕</button></div>
+    <div class="ch-tabs" id="chTabs"></div>
+    <div class="ch-list" id="chList"></div>
+    <div class="ch-f" id="chFoot"></div>
+  </div>
+  <div id="ghost"></div>
+<script src="parts.js"></script>
 <script>
   var M = window.mimic || {};
   var PORT = 7779;
+  // The pieces' own stylesheet (parts.js), once.
+  if (window.WpParts) { var _pcss = document.createElement('style'); _pcss.textContent = WpParts.CSS; document.head.appendChild(_pcss); }
   try { if (M.getAgentPort) M.getAgentPort().then(function (p) { if (p) PORT = p; }).catch(function () {}); } catch (e) {}
   try { if (M.onAgentPort) M.onAgentPort(function (p) { PORT = p; }); } catch (e) {}
 
@@ -157,7 +205,7 @@
     ['tick',    'Server tick',        ''],
     ['loot',    'Loot bids',          ''],
   ];
-  var MAX_PANELS = 32;
+  var MAX_PANELS = 150;
 
   // Every overlay the canvas can host, from main (canvas-state): key, label,
   // the page to load, and where its own window is right now.
@@ -197,6 +245,24 @@
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
       var p = src[i];
       if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
+      // A piece: one data element (parts.js), in a mode, maybe one of a group
+      // it was placed with. The same piece may sit on the screen twice.
+      if (p.kind === 'part') {
+        var pid = String(p.part || '');
+        if (!/^[a-z]+\.[A-Za-z0-9_]+$/.test(pid)) continue;
+        seen[p.id] = true;
+        out.push({
+          id: p.id.slice(0, 24), kind: 'part', part: pid.slice(0, 40),
+          mode: /^[a-z]{2,10}$/.test(String(p.mode || '')) ? p.mode : '',
+          name: String(p.name || '').slice(0, 32),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 40, 4000, 200), h: num(p.h, 16, 3000, 30),
+          scale: num(p.scale, 0.5, 3, 1), back: !!p.back,
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
+          off: !!p.off,
+        });
+        continue;
+      }
       // An overlay's page, once each: two copies would be the same page twice.
       if (p.kind === 'overlay') {
         var key = String(p.key || '');
@@ -233,7 +299,14 @@
     var d = defaultLayout().panels;
     if (!haveCallouts) out.unshift(d[0]);
     if (!haveAll) out.push(d[1]);
-    return { panels: out };
+    var res = { panels: out };
+    // The chooser remembers whether it was open, where, and on which tab.
+    var ch = layout.chooser;
+    if (ch && typeof ch === 'object') {
+      res.chooser = { open: ch.open !== false, x: num(ch.x, 0, 1, 0.72), y: num(ch.y, 0, 1, 0.12),
+        tab: /^[a-z]{2,12}$/.test(String(ch.tab || '')) ? ch.tab : 'groups' };
+    }
+    return res;
   }
 
   var _layout = defaultLayout();
@@ -272,7 +345,15 @@
   var _edit = false, _locked = true, _setup = false, _arrange = false;
   var _bgAlpha = null;
 
+  function partDef(p) { return (window.WpParts && WpParts.byId[p.part]) || null; }
+  function pdefOf(p) { return p && p.kind === 'part' ? partDef(p) : null; }
+  function modeLabel(def, mode) {
+    var ms = def ? (WpParts.MODES[def.kind] || []) : [];
+    for (var i = 0; i < ms.length; i++) if (ms[i][0] === mode) return ms[i][1];
+    return ms.length ? ms[0][1] : '';
+  }
   function claimText(p) {
+    if (p.kind === 'part') { var d = partDef(p); return d ? modeLabel(d, p.mode).toLowerCase() + (p.grp ? ' · in a group' : '') : 'unknown piece'; }
     if (p.kind === 'overlay') return 'the overlay, as it is';
     if (p.kind === 'callouts') return 'what the voice says';
     if (p.all) return 'everything else';
@@ -291,10 +372,18 @@
     tab.innerHTML = '<span class="mv">✥</span><span class="nm"></span><span class="what"></span>'
       + '<span class="ctl gear" role="button" title="What this panel shows, its text size">⚙</span>'
       + '<span class="ctl x" role="button"></span>';
-    var fr = document.createElement('iframe');
-    fr.setAttribute('scrolling', 'no');
-    if (p.kind === 'overlay') root.classList.add('ov');
-    else fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    // A piece is drawn right here (parts.js); every other panel is a page.
+    var fr = null, body = null;
+    if (p.kind === 'part') {
+      root.classList.add('part');
+      body = document.createElement('div');
+      body.className = 'pbody';
+    } else {
+      fr = document.createElement('iframe');
+      fr.setAttribute('scrolling', 'no');
+      if (p.kind === 'overlay') root.classList.add('ov');
+      else fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    }
     var grip = document.createElement('span');
     grip.className = 'grip';
     grip.textContent = '◢';
@@ -305,9 +394,9 @@
     mv.textContent = '✥';
     mv.setAttribute('data-wp-interact', '');
     mv.title = 'Drag to move this panel · right-click for what it shows';
-    root.appendChild(fr); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv);
-    var e = { root: root, tab: tab, frame: fr, grip: grip, mv: mv };
-    fr.addEventListener('load', function () { var q = panelById(p.id); if (q) applyFrame(e, q); });
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv);
+    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv };
+    if (fr) fr.addEventListener('load', function () { var q = panelById(p.id); if (q) applyFrame(e, q); });
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
       if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
@@ -329,6 +418,7 @@
   // size, its stack direction, whether it is being arranged (sample rows),
   // and the card alpha the overlay-wide slider sets.
   function applyFrame(e, p) {
+    if (!e.frame) return;
     try {
       var doc = e.frame.contentDocument;
       if (!doc || !doc.body) return;
@@ -375,10 +465,15 @@
         var want = p.off ? 'about:blank' : (ovSrc(p.key) || 'about:blank');
         if (e.src !== want) { e.src = want; e.frame.setAttribute('src', want); }
       }
+      if (p.kind === 'part') {
+        e.root.style.setProperty('--ps', String(p.scale || 1));
+        e.root.classList.toggle('back', !!p.back);
+      }
+      e.root.classList.toggle('sel', !!_sel[p.id]);
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
       if (_edit) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
-      e.tab.querySelector('.nm').textContent = p.name;
+      e.tab.querySelector('.nm').textContent = p.name || (partDef(p) ? partDef(p).label : p.part || '');
       e.tab.querySelector('.what').textContent = '· ' + claimText(p);
       var x = e.tab.querySelector('.x');
       x.textContent = p.off ? '👁' : '✕';
@@ -388,6 +483,9 @@
     Object.keys(_els).forEach(function (id) {
       if (!keep[id]) { _els[id].root.remove(); delete _els[id]; }
     });
+    paintParts();
+    syncSources();
+    renderChooser();
   }
 
   var _saveT = null;
@@ -426,8 +524,17 @@
     if ((!_edit && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
-    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY,
+    _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY, shift: ev.shiftKey,
       x0: e.root.offsetLeft, y0: e.root.offsetTop, w0: e.root.offsetWidth, h0: e.root.offsetHeight };
+    // Ctrl-drag moves the whole group a piece was placed with; a plain drag
+    // pulls the one piece out of its group's arrangement.
+    var me = panelById(id);
+    if (mode === 'move' && ev.ctrlKey && me && me.grp) {
+      _drag.members = [];
+      _layout.panels.forEach(function (q) {
+        if (q.grp === me.grp && _els[q.id]) _drag.members.push({ id: q.id, x0: _els[q.id].root.offsetLeft, y0: _els[q.id].root.offsetTop });
+      });
+    }
     e.root.classList.add('lift');
     shield.classList.add('on');
     shield.style.cursor = mode === 'size' ? 'nwse-resize' : 'move';
@@ -454,7 +561,16 @@
     if (!_drag) return;
     var d = _drag, e = _els[d.id], W = window.innerWidth, H = window.innerHeight;
     if (!e) return;
-    if (d.mode === 'move') {
+    if (Math.abs(ev.clientX - d.sx) + Math.abs(ev.clientY - d.sy) > 3) d.moved = true;
+    if (d.mode === 'move' && d.members) {
+      var dx = ev.clientX - d.sx, dy = ev.clientY - d.sy;
+      d.members.forEach(function (m) {
+        var me2 = _els[m.id]; if (!me2) return;
+        m.x = Math.max(0, Math.min(W - me2.root.offsetWidth, m.x0 + dx));
+        m.y = Math.max(0, Math.min(H - me2.root.offsetHeight, m.y0 + dy));
+        me2.root.style.left = m.x + 'px'; me2.root.style.top = m.y + 'px';
+      });
+    } else if (d.mode === 'move') {
       var x = d.x0 + ev.clientX - d.sx, y = d.y0 + ev.clientY - d.sy;
       if (!ev.shiftKey) { var s = snapMove(d.id, x, y, d.w0, d.h0); x = s.x; y = s.y; }
       x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(0, Math.min(H - d.h0, y));
@@ -464,8 +580,9 @@
       d.x = x; d.y = y;
     } else {
       var dp = panelById(d.id);
-      var w = Math.max((dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
-      var h = Math.max(36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
+      var isPart = dp && dp.kind === 'part';
+      var w = Math.max(isPart ? 40 : (dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
+      var h = Math.max(isPart ? 16 : 36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
       e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
       if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
@@ -477,7 +594,15 @@
     shield.classList.remove('on');
     var p = panelById(d.id);
     if (_els[d.id]) _els[d.id].root.classList.remove('lift');
-    if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
+    // Shift-click without moving: select, for "save as a group".
+    if (!d.moved && d.shift && _edit && p) { if (_sel[p.id]) delete _sel[p.id]; else _sel[p.id] = true; }
+    if (d.members) {
+      d.members.forEach(function (m) {
+        var q = panelById(m.id);
+        if (q && m.x != null) { q.x = m.x / window.innerWidth; q.y = m.y / window.innerHeight; }
+      });
+      save();
+    } else if (p && d.mode === 'move' && d.x != null) { p.x = d.x / window.innerWidth; p.y = d.y / window.innerHeight; save(); }
     if (p && d.mode === 'size' && d.w != null) { p.w = Math.round(d.w); p.h = Math.round(d.h); save(); }
     render();
     try { M.overlayHoverInteractive(false); } catch (err) {}
@@ -509,9 +634,26 @@
     var p = panelById(id);
     if (!p) return;
     _menuFor = id;
-    var h = '<div class="mh">' + esc(p.name) + '</div>';
-    h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(p.name) + '" placeholder="panel name"></div>';
-    if (p.kind === 'overlay') {
+    var pdef = p.kind === 'part' ? partDef(p) : null;
+    var title = p.name || (pdef ? pdef.label : '');
+    var h = '<div class="mh">' + esc(title) + '</div>';
+    h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(title) + '" placeholder="panel name"></div>';
+    if (p.kind === 'part') {
+      // Show as: every mode this kind of data can be drawn in (parts.js MODES).
+      h += '<div class="note">' + esc(pdef ? (catName(pdef.cat) + ' · ' + (pdef.note || pdef.label)) : p.part) + '</div>';
+      h += '<div class="sec">Show as</div><div class="row" style="flex-wrap:wrap">';
+      (pdef ? (WpParts.MODES[pdef.kind] || []) : []).forEach(function (m) {
+        h += '<button class="btn' + ((p.mode || WpParts.MODES[pdef.kind][0][0]) === m[0] ? ' on' : '') + '" data-mode="' + m[0] + '">' + esc(m[1]) + '</button>';
+      });
+      h += '</div><div class="sec">Backing</div><div class="row">'
+        + '<button class="btn' + (!p.back ? ' on' : '') + '" data-back="0">Clear</button>'
+        + '<button class="btn' + (p.back ? ' on' : '') + '" data-back="1">Panel</button></div>';
+      if (p.grp) {
+        h += '<div class="sec">Group</div><div class="row">'
+          + '<button class="btn" data-selgrp title="Select every piece placed with this one (then 💾 in the chooser)">Select its group</button>'
+          + '<button class="btn" data-leave title="Ctrl-drag will no longer move it with the others">Leave the group</button></div>';
+      }
+    } else if (p.kind === 'overlay') {
       var o = ovEntry(p.key);
       h += '<div class="note">' + esc(o ? o.label : p.key) + ' as it is today: the same page, its own buttons and tabs. '
         + 'While it is on the canvas it has no window of its own.</div>';
@@ -540,7 +682,7 @@
     h += '<div class="sec">' + (p.kind === 'overlay' ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
-    if (p.kind !== 'overlay') {
+    if (p.kind !== 'overlay' && p.kind !== 'part') {
       h += '<div class="row" style="margin-top:8px">'
         + (p.kind === 'callouts'
           ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
@@ -552,6 +694,7 @@
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
       + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
+      + (p.kind === 'part' ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
       + '</div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
@@ -684,8 +827,20 @@
     if (chip && chip.hasAttribute('data-rm')) { var rm = chip.getAttribute('data-rm'); p.names = p.names.filter(function (x) { return x !== rm; }); }
     else if (chip && chip.hasAttribute('data-add')) { claimName(p, chip.getAttribute('data-add')); }
     else if (t.id === 'mAddBtn') { var inp = document.getElementById('mAdd'); if (inp) claimName(p, inp.value); }
+    else if (t.hasAttribute('data-mode')) {
+      // A new mode brings its own shape: a ring wants a square, rows want height.
+      var nm = t.getAttribute('data-mode'), sz = (pdefOf(p) && pdefOf(p).size && pdefOf(p).size[nm]) || WpParts.DEFAULT_SIZE[nm];
+      if (nm !== p.mode && sz) { p.w = sz[0]; p.h = sz[1]; }
+      p.mode = nm;
+    }
+    else if (t.hasAttribute('data-back')) { p.back = t.getAttribute('data-back') === '1'; }
+    else if (t.hasAttribute('data-leave')) { p.grp = null; }
+    else if (t.hasAttribute('data-selgrp')) {
+      _layout.panels.forEach(function (q) { if (q.grp && q.grp === p.grp) _sel[q.id] = true; });
+      closeMenu(); render(); return;
+    }
     else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
-    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), p.kind === 'overlay' ? 0.5 : 0.6, 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) {
       _layout.panels = _layout.panels.filter(function (q) { return q !== p; });
@@ -698,7 +853,8 @@
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
-    if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || p.name; }
+    // A piece left blank goes back to its own label.
+    if (t.id === 'mName') { p.name = String(t.value || '').trim().slice(0, 24) || (p.kind === 'part' ? '' : p.name); }
     else if (t.hasAttribute('data-g')) {
       var g = t.getAttribute('data-g');
       p.groups = p.groups.filter(function (x) { return x !== g; });
@@ -716,6 +872,344 @@
   // Opened from ✥ while locked, a click outside the menu lands in EQ, never
   // here — so leaving the menu closes it.
   menuEl.addEventListener('mouseleave', function () { if (!_edit) closeMenu(); });
+
+  // ── Pieces: data hub, painting, the chooser, groups (3.0 alpha) ─────────────
+  // Every data element is a piece (parts.js). The canvas polls an agent source
+  // only while a placed piece — or the chooser's open tab — needs it, and paints
+  // pieces itself: no iframe, no page per piece.
+  var _sel = {};                 // selected piece ids (Shift-click), for "save as a group"
+  var _src = {};                 // source key → { data, at, running }
+  var _groups = [];              // saved groups, one list for every screen (main: canvas-groups)
+  var STALE_MS = 10000;          // older than this and a source counts as silent
+  var MODE_ICON = { bar: '▭', ring: '◯', readout: 'ab', big: '12', pips: '⁞⁞', rows: '☰', chips: '◌◌' };
+
+  function catName(k) {
+    var c = window.WpParts ? WpParts.CATS : [];
+    for (var i = 0; i < c.length; i++) if (c[i][0] === k) return c[i][1];
+    return k;
+  }
+  function chooserState() {
+    if (!_layout.chooser) _layout.chooser = { open: true, x: 0.72, y: 0.12, tab: 'groups' };
+    return _layout.chooser;
+  }
+  function chooserShown() { return _edit && !!chooserState().open; }
+
+  function neededSources() {
+    var need = {};
+    if (!window.WpParts) return need;
+    _layout.panels.forEach(function (p) {
+      if (p.kind !== 'part' || p.off) return;
+      var d = partDef(p);
+      if (d) need[d.src] = true;
+    });
+    var tab = chooserState().tab;
+    if (chooserShown() && tab !== 'groups') WpParts.PARTS.forEach(function (d) { if (d.cat === tab) need[d.src] = true; });
+    return need;
+  }
+  function syncSources() {
+    var need = neededSources();
+    Object.keys(need).forEach(function (k) { if (!_src[k] || !_src[k].running) pollSource(k); });
+  }
+  function pollSource(k) {
+    var S = WpParts.SOURCES[k];
+    if (!S) return;
+    var s = _src[k] || (_src[k] = {});
+    s.running = true;
+    (function tick() {
+      if (!neededSources()[k]) { s.running = false; return; }
+      fetch('http://127.0.0.1:' + PORT + S.path, { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) { if (j) { s.data = j; s.at = Date.now(); } })
+        .catch(function () {})
+        .then(function () { paintParts(k); paintChooserValues(); setTimeout(tick, S.every); });
+    })();
+  }
+  function liveData(k) { var s = _src[k]; return (s && s.data && Date.now() - s.at < STALE_MS) ? s.data : null; }
+  // get(data, at): `at` is when the answer arrived, so a "ms left" in it
+  // becomes an end time the piece can count down to between polls.
+  function viewFor(d) {
+    var data = liveData(d.src);
+    if (!data) return null;
+    try { return d.get(data, _src[d.src].at) || null; } catch (e) { return null; }
+  }
+  function sampleFor(d, now) {
+    if (!d.sample) return null;
+    try { return typeof d.sample === 'function' ? d.sample(now) : d.sample; } catch (e) { return null; }
+  }
+  function setBody(e, html) { if (e.html !== html) { e.html = html; e.body.innerHTML = html; } }
+  // A piece repaints when its source answers; countdowns every 250 ms. The HTML
+  // is compared first, so a piece that did not change is never touched. With
+  // nothing live, a piece shows its sample while arranging and a dim dash in play.
+  function paintParts(onlySrc) {
+    if (!window.WpParts) return;
+    var now = Date.now();
+    _layout.panels.forEach(function (p) {
+      if (p.kind !== 'part') return;
+      var e = _els[p.id], d = partDef(p);
+      if (!e || !e.body) return;
+      if (!d) { setBody(e, '<div class="pt pt-none"><span class="pt-l">unknown piece</span></div>'); return; }
+      if (onlySrc && d.src !== onlySrc && d.kind !== 'countdown') return;
+      var v = viewFor(d), sample = false;
+      if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
+      e.root.classList.toggle('sample', sample);
+      setBody(e, WpParts.render(d, p.mode, v, now));
+    });
+  }
+  setInterval(function () {
+    if (!window.WpParts) return;
+    var any = _layout.panels.some(function (p) { var d = p.kind === 'part' && !p.off && partDef(p); return d && d.kind === 'countdown'; });
+    if (any) paintParts('__countdowns');
+  }, 250);
+
+  // ── The chooser ──
+  var chEl = document.getElementById('chooser'), chTabs = document.getElementById('chTabs');
+  var chList = document.getElementById('chList'), chFoot = document.getElementById('chFoot');
+  var chHead = document.getElementById('chHead'), ghost = document.getElementById('ghost');
+  function placeChooser() {
+    var st = chooserState(), W = window.innerWidth, H = window.innerHeight;
+    var w = chEl.offsetWidth || 300, h = chEl.offsetHeight || 300;
+    chEl.style.left = Math.max(0, Math.min(W - w, Math.round(st.x * W))) + 'px';
+    chEl.style.top = Math.max(0, Math.min(H - Math.min(h, 60), Math.round(st.y * H))) + 'px';
+  }
+  function presetById(id) { for (var i = 0; i < WpParts.PRESETS.length; i++) if (WpParts.PRESETS[i].id === id) return WpParts.PRESETS[i]; return null; }
+  function savedById(id) { for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) return _groups[i]; return null; }
+  function renderChooser() {
+    if (!window.WpParts) return;
+    var st = chooserState();
+    chEl.classList.toggle('open', !!st.open);
+    var th = '<span class="ch-tab' + (st.tab === 'groups' ? ' on' : '') + '" data-tab="groups">★ Groups</span>';
+    WpParts.CATS.forEach(function (c) {
+      if (!WpParts.PARTS.some(function (d) { return d.cat === c[0]; })) return;
+      th += '<span class="ch-tab' + (st.tab === c[0] ? ' on' : '') + '" data-tab="' + c[0] + '">' + esc(c[1]) + '</span>';
+    });
+    if (chTabs._html !== th) { chTabs._html = th; chTabs.innerHTML = th; }
+    var lh = '';
+    if (st.tab === 'groups') {
+      lh += '<div class="ch-sec">Today\'s overlays, as pieces</div>';
+      WpParts.PRESETS.forEach(function (g) {
+        lh += '<div class="pc" data-drag="preset:' + g.id + '" title="' + esc(g.note || 'Drag onto the screen: every piece of it, laid out as the overlay was. Ctrl-drag one to move them all; drag one alone to pull it out.') + '">'
+          + '<span class="pc-l">▦ ' + esc(g.name) + '</span><span class="pc-v">' + g.parts.length + ' pieces</span></div>';
+      });
+      lh += '<div class="ch-sec">My groups</div>';
+      if (!_groups.length) lh += '<div class="dim">Shift-click pieces on the screen, then 💾 below.</div>';
+      _groups.forEach(function (g) {
+        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">★ ' + esc(g.name) + '</span><span class="pc-v">' + g.parts.length + ' pieces</span>'
+          + '<span class="x" data-delgrp="' + g.id + '" title="Delete this group">' + (_delArm === g.id ? 'sure?' : '🗑') + '</span></div>';
+      });
+      var on = {};
+      _layout.panels.forEach(function (q) { if (q.kind === 'overlay') on[q.key] = true; });
+      var whole = _overlays.filter(function (o) { return !on[o.key]; });
+      if (whole.length) {
+        lh += '<div class="ch-sec">Whole overlays, as today</div>';
+        whole.forEach(function (o) { lh += '<div class="pc" data-drag="overlay:' + o.key + '"><span class="pc-l">▣ ' + esc(o.label) + '</span></div>'; });
+      }
+    } else {
+      WpParts.PARTS.forEach(function (d) {
+        if (d.cat !== st.tab) return;
+        lh += '<div class="pc" data-drag="part:' + d.id + '" title="' + esc(d.note || d.label) + '"><span class="pc-l">' + esc(d.label) + '</span>'
+          + '<span class="pc-v" data-val="' + d.id + '"></span>';
+        (WpParts.MODES[d.kind] || []).forEach(function (m) {
+          lh += '<span class="pc-m" data-drag="part:' + d.id + ':' + m[0] + '" title="Drag to place as ' + esc(m[1].toLowerCase()) + '">' + (MODE_ICON[m[0]] || m[0]) + '</span>';
+        });
+        lh += '</div>';
+      });
+    }
+    if (chList._html !== lh) { chList._html = lh; chList.innerHTML = lh; }
+    var n = Object.keys(_sel).filter(function (id) { var q = panelById(id); return q && q.kind === 'part'; }).length;
+    var fh = n
+      ? '<span>' + n + ' selected</span><input id="chName" maxlength="24" placeholder="group name"><button class="btn go" id="chSave">💾 Save group</button><button class="btn" id="chClear">Clear</button>'
+      : '<span class="dim">Shift-click pieces to select them · Delete removes the selected · Esc clears</span>';
+    if (chFoot._html !== fh) { chFoot._html = fh; chFoot.innerHTML = fh; }
+    placeChooser();
+    paintChooserValues();
+  }
+  function shortText(d, v) {
+    if (!v) return '';
+    if (d.kind === 'list') { var n = (v.items || []).length; return n + (n === 1 ? ' item' : ' items'); }
+    var r = WpParts.resolve(d.kind, v, Date.now());
+    if (!r) return '';
+    if (r.text != null) return String(r.text);
+    return r.pct != null ? Math.round(r.pct) + '%' : '';
+  }
+  // Each piece in the list shows its value now — live, or its sample in italics.
+  function paintChooserValues() {
+    if (!chooserShown() || !window.WpParts) return;
+    var els = chList.querySelectorAll('[data-val]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i], d = WpParts.byId[el.getAttribute('data-val')];
+      if (!d) continue;
+      var v = viewFor(d), t = v ? shortText(d, v) : '', it = false;
+      if (!t) { t = shortText(d, sampleFor(d, Date.now())); it = !!t; }
+      if (el.textContent !== t) el.textContent = t;
+      el.style.fontStyle = it ? 'italic' : '';
+    }
+  }
+
+  chTabs.addEventListener('click', function (ev) {
+    var t = ev.target.closest('[data-tab]');
+    if (!t) return;
+    chooserState().tab = t.getAttribute('data-tab');
+    save(); renderChooser(); syncSources();
+  });
+  document.getElementById('chClose').addEventListener('click', function () { chooserState().open = false; save(); render(); });
+  document.getElementById('pcBtn').addEventListener('click', function () {
+    var st = chooserState(); st.open = !st.open; save(); render();
+  });
+  chFoot.addEventListener('click', function (ev) {
+    if (ev.target.id === 'chSave') { var inp = document.getElementById('chName'); saveSelectionAsGroup(inp ? inp.value : ''); }
+    else if (ev.target.id === 'chClear') { _sel = {}; render(); }
+  });
+  chFoot.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter' && ev.target.id === 'chName') { ev.preventDefault(); saveSelectionAsGroup(ev.target.value); }
+  });
+  var _delArm = null, _delArmT = null;
+  chList.addEventListener('click', function (ev) {
+    var del = ev.target.closest('[data-delgrp]');
+    if (!del) return;
+    var id = del.getAttribute('data-delgrp');
+    if (_delArm !== id) {                       // two clicks: a group is an evening's arranging
+      _delArm = id; clearTimeout(_delArmT);
+      _delArmT = setTimeout(function () { _delArm = null; renderChooser(); }, 3000);
+      renderChooser(); return;
+    }
+    _delArm = null;
+    _groups = _groups.filter(function (g) { return g.id !== id; });
+    try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {}
+    renderChooser();
+  });
+
+  // Move the chooser by its header.
+  var _cd = null;
+  chHead.addEventListener('mousedown', function (ev) {
+    if (ev.button !== 0 || ev.target.closest('button')) return;
+    ev.preventDefault();
+    var r = chEl.getBoundingClientRect();
+    _cd = { dx: ev.clientX - r.left, dy: ev.clientY - r.top };
+    shield.classList.add('on'); shield.style.cursor = 'move';
+    try { M.overlayHoverInteractive(true); } catch (e) {}
+  });
+
+  // Put a piece down: drag it (or one of its mode chips) from the chooser onto
+  // the screen, or click it to drop it near the middle.
+  var _pd = null, _cascade = 0;
+  chList.addEventListener('mousedown', function (ev) {
+    if (ev.button !== 0 || ev.target.closest('[data-delgrp]')) return;
+    var el = ev.target.closest('[data-drag]');
+    if (!el) return;
+    ev.preventDefault();
+    _pd = { what: el.getAttribute('data-drag'), label: (el.closest('.pc') || el).querySelector('.pc-l').textContent, sx: ev.clientX, sy: ev.clientY, moved: false };
+    shield.classList.add('on'); shield.style.cursor = 'copy';
+    try { M.overlayHoverInteractive(true); } catch (e) {}
+  });
+  document.addEventListener('mousemove', function (ev) {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (_cd) {
+      var st = chooserState();
+      st.x = Math.max(0, Math.min(1, (ev.clientX - _cd.dx) / W));
+      st.y = Math.max(0, Math.min(1, (ev.clientY - _cd.dy) / H));
+      placeChooser();
+      return;
+    }
+    if (!_pd) return;
+    if (!_pd.moved && Math.abs(ev.clientX - _pd.sx) + Math.abs(ev.clientY - _pd.sy) > 4) {
+      _pd.moved = true;
+      ghost.textContent = '＋ ' + _pd.label;
+      ghost.style.display = 'block';
+    }
+    if (_pd.moved) { ghost.style.left = (ev.clientX + 12) + 'px'; ghost.style.top = (ev.clientY + 8) + 'px'; }
+  });
+  document.addEventListener('mouseup', function (ev) {
+    if (_cd) {
+      _cd = null; shield.classList.remove('on');
+      try { M.overlayHoverInteractive(false); } catch (e) {}
+      save(); return;
+    }
+    if (!_pd) return;
+    var pd = _pd; _pd = null;
+    ghost.style.display = 'none'; shield.classList.remove('on');
+    try { M.overlayHoverInteractive(false); } catch (e) {}
+    var r = chEl.getBoundingClientRect();
+    if (pd.moved && ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom) return;
+    dropThing(pd.what, pd.moved ? ev.clientX : null, pd.moved ? ev.clientY : null);
+  });
+
+  function newId(prefix) { return (prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)).slice(0, 24); }
+  function addPart(pid, mode, X, Y, grp, o) {
+    var d = WpParts.byId[pid];
+    if (!d || _layout.panels.length >= MAX_PANELS) return null;
+    var modes = WpParts.MODES[d.kind] || [];
+    if (!modes.some(function (m) { return m[0] === mode; })) mode = d.mode || (modes[0] ? modes[0][0] : '');
+    var sz = (o && o.w) ? [o.w, o.h] : ((d.size && d.size[mode]) || WpParts.DEFAULT_SIZE[mode] || [200, 30]);
+    var W = window.innerWidth, H = window.innerHeight;
+    var p = { id: newId('q'), kind: 'part', part: pid, mode: mode, name: '',
+      x: num(X / W, 0, 1, 0.3), y: num(Y / H, 0, 1, 0.3), w: num(sz[0], 40, 4000, 200), h: num(sz[1], 16, 3000, 30),
+      scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false };
+    _layout.panels.push(p);
+    return p;
+  }
+  // A group goes down as separate pieces that remember they came together:
+  // Ctrl-drag moves them as one, a plain drag pulls one out.
+  function placeGroup(pieces, X, Y) {
+    var grp = newId('g');
+    pieces.forEach(function (q) { addPart(q.part, q.mode, X + (q.dx || 0), Y + (q.dy || 0), grp, q); });
+  }
+  function presetPiece(a) { return { part: a[0], mode: a[1], dx: a[2], dy: a[3], w: a[4], h: a[5] }; }
+  function dropThing(what, X, Y) {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (X == null) {
+      _cascade = (_cascade + 1) % 8;
+      X = Math.round(W * 0.34) + _cascade * 26; Y = Math.round(H * 0.28) + _cascade * 26;
+    }
+    var bits = String(what).split(':');
+    if (bits[0] === 'part') addPart(bits[1], bits[2] || '', X, Y, null);
+    else if (bits[0] === 'preset') { var g = presetById(bits[1]); if (g) placeGroup(g.parts.map(presetPiece), X, Y); }
+    else if (bits[0] === 'group') { var sg = savedById(bits[1]); if (sg) placeGroup(sg.parts, X, Y); }
+    else if (bits[0] === 'overlay') {
+      var o = ovEntry(bits[1]);
+      var added = o ? addOverlay(o, 0) : null;
+      if (added) { added.x = num(X / W, 0, 1, 0.3); added.y = num(Y / H, 0, 1, 0.3); setTimeout(refresh, 600); }
+    }
+    save(); render();
+  }
+  function saveSelectionAsGroup(name) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var ps = _layout.panels.filter(function (p) { return _sel[p.id] && p.kind === 'part'; });
+    if (!ps.length) return;
+    var minX = Math.min.apply(null, ps.map(function (p) { return p.x * W; }));
+    var minY = Math.min.apply(null, ps.map(function (p) { return p.y * H; }));
+    var g = { id: newId('s'), name: String(name || '').trim().slice(0, 24) || ('Group ' + (_groups.length + 1)),
+      parts: ps.map(function (p) {
+        return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
+          w: p.w, h: p.h, scale: p.scale, back: p.back };
+      }) };
+    _groups.push(g);
+    _groups = _groups.slice(-60);
+    try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {}
+    // The selection is that group on the screen too.
+    var grp = newId('g');
+    ps.forEach(function (p) { p.grp = grp; });
+    _sel = {};
+    save(); render();
+  }
+  function sanitizeGroups(list) {
+    return (Array.isArray(list) ? list : []).filter(function (g) {
+      return g && typeof g.id === 'string' && Array.isArray(g.parts);
+    }).slice(-60).map(function (g) {
+      return { id: g.id.slice(0, 24), name: String(g.name || 'Group').slice(0, 24),
+        parts: g.parts.filter(function (q) { return q && /^[a-z]+\.[A-Za-z0-9_]+$/.test(String(q.part || '')); }).slice(0, 80) };
+    });
+  }
+  try { if (M.canvasGroups) M.canvasGroups().then(function (g) { _groups = sanitizeGroups(g); renderChooser(); }).catch(function () {}); } catch (e) {}
+
+  // Delete removes the selected pieces; Esc clears the selection.
+  document.addEventListener('keydown', function (ev) {
+    if (!_edit || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
+    if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      if (!Object.keys(_sel).length) return;
+      _layout.panels = _layout.panels.filter(function (p) { return !(_sel[p.id] && p.kind === 'part'); });
+      _sel = {}; save(); render();
+    } else if (ev.key === 'Escape') { _sel = {}; render(); }
+  });
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
   document.getElementById('addBtn').addEventListener('click', function () {

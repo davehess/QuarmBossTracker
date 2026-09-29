@@ -210,8 +210,8 @@ describe('Mimic wiring (the overlay checklist)', () => {
     expect(sliceBlock(m, 'function createCanvasWindow() {', '\n}')).toContain('nodeIntegrationInSubFrames: true');
     const save = sliceBlock(m, "ipcMain.handle('canvas-save', (e, layout) => {", '\n});');
     expect(save).toMatch(/BrowserWindow\.fromWebContents\(e\.sender\) !== canvasWindow\) return false;/);
-    expect(save).toMatch(/layout\.panels\.length > 40\) return false;/);
-    expect(save).toMatch(/json\.length > 64_000\) return false;/);
+    expect(save).toMatch(/layout\.panels\.length > 160\) return false;/);
+    expect(save).toMatch(/json\.length > 256_000\) return false;/);
   });
   // The guild lead, 2026-09-29: "they do not have a move button on them which
   // should be there at all times". The ✥ is the one part of a locked panel

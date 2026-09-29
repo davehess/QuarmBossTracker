@@ -8813,10 +8813,10 @@ ipcMain.handle('canvas-state', () => Object.assign(_canvasStatePayload(), { over
 // Bounded: a layout is a few dozen small panels, never a blob.
 ipcMain.handle('canvas-save', (e, layout) => {
   if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
-  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 40) return false;
+  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 160) return false;
   let json;
   try { json = JSON.stringify(layout); } catch { return false; }
-  if (json.length > 64_000) return false;
+  if (json.length > 256_000) return false;
   const res = _canvasStatePayload().res;
   const cfg = loadConfig();
   const before = _canvasHostedKeys(cfg);
@@ -8842,6 +8842,24 @@ ipcMain.handle('canvas-save', (e, layout) => {
     try { buildTrayMenu(); } catch { /* */ }
     pushStatus();
   }
+  return true;
+});
+// Saved groups of pieces (the guild lead, 2026-09-29: "be able to save groups").
+// One list for every resolution and screen — a group's pieces are placed
+// relative to where it is dropped. Only the canvas writes it; bounded.
+ipcMain.handle('canvas-groups', () => {
+  const cfg = loadConfig();
+  return Array.isArray(cfg.canvasGroups) ? cfg.canvasGroups : [];
+});
+ipcMain.handle('canvas-groups-save', (e, groups) => {
+  if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
+  if (!Array.isArray(groups) || groups.length > 60) return false;
+  let json;
+  try { json = JSON.stringify(groups); } catch { return false; }
+  if (json.length > 128_000) return false;
+  const cfg = loadConfig();
+  cfg.canvasGroups = JSON.parse(json);
+  saveConfig(cfg);
   return true;
 });
 ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
