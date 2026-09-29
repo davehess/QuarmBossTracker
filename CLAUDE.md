@@ -230,6 +230,16 @@ comment, and a sync-ordering test anchored to a comment's position.
   corpus smaller than the cap passes whether the cap exists or not. Mutation-
   check new assertions; green alone proves nothing.
 
+### Working rule — close reports by their FB number (guild lead, 2026-09-29)
+*"We need to start having referenceable IDs for each bug or enhancement request so the bot can update
+these when they get implemented."* Every bug or idea report has a handle **`FB-<n>`** (`feedback.ref`,
+on the Discord card and `/admin/feedback`). A commit that answers one says so **on its own line**:
+`Fixes FB-12` (or Implements / Closes / Resolves; several numbers per line is fine). Every 10 minutes the
+bot reads `beta` then `main`: a beta commit moves the report to 🧪 On beta, a main commit to ✅
+Implemented. It edits the card, notes the row and DMs the submitter. A mention without the word moves
+nothing, and a report never moves backwards (main merges into beta constantly). **A stable Mimic cut
+repeats the FB numbers it graduates**, or they stay at "on beta". `utils/feedbackRefs.js`.
+
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When

@@ -36,6 +36,7 @@ function harness({ feedbackRow = { id: 'f1', submitter_discord_id: '42', categor
     'discord.js': { EmbedBuilder: class {}, ActionRowBuilder: Row, ButtonBuilder: Btn, ButtonStyle: { Success: 3, Danger: 4, Primary: 1 } },
     './utils/supabase': supabase,
     './utils/roles': { hasOfficerRole: () => true, officerRolesList: () => 'Officer' },
+    './utils/feedbackRefs': require('../utils/feedbackRefs'),   // FB-<ref> in the DM (§78)
   };
   const req = (m) => fakes[m];
   const process = { env: { FEEDBACK_THREAD_ID: 'T' } };

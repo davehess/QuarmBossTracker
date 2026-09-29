@@ -164,6 +164,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Bard charm from Zeal's class, "recharm pet" at 4s, clicky buffs on the pet (agent 3.7.39–3.7.40 on
   beta, 2026-09-29).** `_classOf` reads Zeal label 3; a bard's gauge-opened charm gets its song's
   duration so the callouts speak; a clicky's glow line records its spell as a cast. §75.
+- **✅ Reports get numbers, closed by commits (bot 3.1.172, web 1.8.41, main 2026-09-29).** Every bug or
+  idea is FB-<n> on its card and in `/admin/feedback`; a commit line "Fixes FB-n" moves it to on beta
+  (beta) or implemented (main), edits the card and DMs the submitter. `utils/feedbackRefs.js`,
+  `test/feedback-refs.test.js`, rule in `CLAUDE.md`. `DECISIONS-2026-09-21.md` §78.
 - **⏳ Mimic: "Save layout" finds the character (beta, 2026-09-29).** State poll cap 256 KB → 16 MB,
   logged; the last character is kept through a quiet Zeal. §76.
 - **✅ PoP checklist: Willamina's whole chain (web 1.8.34–1.8.35, main 2026-09-28).** Starts at Agrakath

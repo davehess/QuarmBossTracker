@@ -127,7 +127,12 @@ module.exports = {
             discord_msg_id:       sent.id,
             discord_msg_link:     msgLink,
             ...(shotPaths.length ? { screenshot_paths: shotPaths } : {}),
-          }]).catch(err => console.warn('[feedback] supabase mirror failed:', err?.message));
+          }]).then((rows) => {
+            // The card was posted before the row existed; give it its FB-<ref> now (feedbackRefs).
+            const fbTag = require('../utils/feedbackRefs').tag(Array.isArray(rows) && rows[0] ? rows[0].ref : null);
+            if (!fbTag || !sent.embeds?.[0]) return;
+            return sent.edit({ embeds: [EmbedBuilder.from(sent.embeds[0]).setTitle(`📬 ${fbTag} — ${label}`)] });
+          }).catch(err => console.warn('[feedback] supabase mirror failed:', err?.message));
         }
       } catch (err) {
         console.warn('[feedback] supabase wrap failed:', err?.message);

@@ -803,6 +803,15 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
 - The catalog of every overlay and the 3.0 builder plan: `docs/DESIGN-overlay-catalog.md`,
   `docs/DESIGN-mimic-3.0-overlay-builder.md`.
 
+### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
+`feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first
+line (`_handleAgentFeedback`), the web relay's embed title (`relayWebFeedback`), and the `/feedback` card
+after its insert returns (`commands/feedback.js`); open cards were numbered once (`_backfillFeedbackRefsOnce`).
+`_feedbackCommitWatch` (every 10 min) reads the last 40 commits of `beta` then `main` from GitHub, keeps the
+last sha per branch in `bot_kv` (`fb_commit_seen_<branch>`), and `_feedbackAdvance` moves each closed ref
+forward only: status `on_beta` / `addressed`, a dated note, the card's status line, a DM. Logic in
+`utils/feedbackRefs.js`; `/admin/feedback` shows the number and the on-beta status. DECISIONS §78.
+
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
 One column, `feedback.screenshot_paths` (text[]), and one PRIVATE Storage bucket,
