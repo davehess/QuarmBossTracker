@@ -3070,7 +3070,14 @@ function _boundsOnScreen(b) {
 // (they click it on the monitor they're playing on — we can't ask Windows
 // where the EQ window is without native deps). Auto-arrange + the fullscreen
 // EQ scaler target this display; default = primary (pre-2026-07-15 behavior).
+// Since 2026-09-29 Mimic CAN ask Windows where EQ is (_eqWindowGeometry below),
+// so a recent answer wins over the stamped point.
 function _overlayHomeDisplay() {
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  let stampedAt = 0;
+  try { stampedAt = Number(loadConfig().overlayHomeAt) || 0; } catch { /* no stamp */ }
+  // A 🧲 Rescue clicked after the last EQ reading is the raider saying "this screen".
+  if (eq && stampedAt <= _eqGeom.at) { try { return screen.getDisplayMatching(eq.client); } catch { /* fall through */ } }
   try {
     const cfg = loadConfig();
     if (cfg.overlayHomePoint && Number.isFinite(cfg.overlayHomePoint.x)) {
@@ -3079,6 +3086,251 @@ function _overlayHomeDisplay() {
   } catch { /* fall through */ }
   return screen.getPrimaryDisplay();
 }
+
+// ── Where EverQuest's window really is (3.0 plan §4 option B) ───────────────
+// The guild lead, 2026-09-29: "add B". user32 GetWindowRect / GetClientRect for
+// each eqgame.exe, through the PowerShell Mimic already uses for exact memory: no
+// native dependency, roughly half a second to a second a call, run only when
+// something is being placed (a screen change, auto-arrange, the Timers canvas)
+// and cached between. The script makes itself DPI-aware so Windows answers in
+// physical pixels, which screenToDipRect turns into the coordinates every
+// BrowserWindow uses. Not Windows → no answer, and every caller falls back to
+// what it did before.
+const _EQ_GEOM_PS = [
+  'Add-Type -TypeDefinition @"',
+  'using System; using System.Runtime.InteropServices;',
+  'public static class WpEqWin {',
+  '  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }',
+  '  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }',
+  '  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();',
+  '  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+  '  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);',
+  '  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);',
+  '  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);',
+  '}',
+  '"@',
+  '[void][WpEqWin]::SetProcessDPIAware()',
+  'Get-Process eqgame -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {',
+  '  $h = $_.MainWindowHandle; $r = New-Object WpEqWin+RECT; $c = New-Object WpEqWin+RECT; $p = New-Object WpEqWin+POINT',
+  '  [void][WpEqWin]::GetWindowRect($h, [ref]$r); [void][WpEqWin]::GetClientRect($h, [ref]$c); [void][WpEqWin]::ClientToScreen($h, [ref]$p)',
+  '  "EQWIN|$($_.Id)|$($r.L)|$($r.T)|$($r.R)|$($r.B)|$($p.X)|$($p.Y)|$($c.R)|$($c.B)|$([int][WpEqWin]::IsIconic($h))"',
+  '}',
+].join('\n');
+let _eqGeom = { at: 0, wins: [], inFlight: null };
+// "EQWIN|pid|left|top|right|bottom|clientX|clientY|clientW|clientH|minimized" →
+// { pid, window, client, minimized }, in physical pixels.
+function _parseEqGeom(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const f = line.trim().split('|');
+    if (f[0] !== 'EQWIN' || f.length < 11) continue;
+    const n = f.slice(1, 11).map(Number);
+    if (!n.every(Number.isFinite)) continue;
+    const [pid, l, t, r, b, cx, cy, cw, ch, iconic] = n;
+    out.push({ pid, window: { x: l, y: t, width: r - l, height: b - t },
+      client: { x: cx, y: cy, width: cw, height: ch }, minimized: iconic === 1 });
+  }
+  return out;
+}
+function _eqWindowGeometry(maxAgeMs = 3000) {
+  if (process.platform !== 'win32') return Promise.resolve([]);
+  if (_eqGeom.at && (Date.now() - _eqGeom.at) < maxAgeMs) return Promise.resolve(_eqGeom.wins);
+  if (_eqGeom.inFlight) return _eqGeom.inFlight;
+  _eqGeom.inFlight = new Promise((resolve) => {
+    const done = (wins) => { _eqGeom = { at: Date.now(), wins, inFlight: null }; resolve(wins); };
+    try {
+      const { execFile } = require('child_process');
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', _EQ_GEOM_PS],
+        { timeout: 8000, windowsHide: true },
+        (err, stdout) => {
+          if (err) return done([]);
+          const toDip = (r) => { try { return screen.screenToDipRect(null, r); } catch { return r; } };
+          done(_parseEqGeom(stdout).map(w => Object.assign(w, { window: toDip(w.window), client: toDip(w.client) })));
+        });
+    } catch { done([]); }
+  });
+  return _eqGeom.inFlight;
+}
+// The EQ window that matters when several clients run: the biggest one showing.
+function _eqMainWindow(maxAgeMs = 3000) {
+  if (!_eqGeom.at || (Date.now() - _eqGeom.at) > maxAgeMs) return null;
+  const live = _eqGeom.wins.filter(w => !w.minimized && w.client.width > 0 && w.client.height > 0);
+  live.sort((a, b) => (b.client.width * b.client.height) - (a.client.width * a.client.height));
+  return live[0] || null;
+}
+ipcMain.handle('eq-window-geometry', async () => {
+  const wins = await _eqWindowGeometry(0);
+  return { wins, main: _eqMainWindow() };
+});
+
+// ── Screens changed: remember, then ASK (the guild lead, 2026-09-29) ─────────
+// "if the desktop orientation changes or the monitor setup changes, prompt the
+// user to bring the overlays back to the screen where EQ is … if I kick the power
+// out of my monitor it moves everything to a different screen and I have to
+// rearrange it." Two halves:
+//  • Memory: every overlay's position is remembered PER screen setup
+//    (cfg.overlayLayoutBySig, keyed by _screenSignature). Moves that land while
+//    the screens are settling — Windows shoving windows off a dead monitor — are
+//    not remembered, so the setup that went away keeps its real layout.
+//  • Asking: once the screens stop changing, a setup we remember gets "put them
+//    back where they were"; otherwise, overlays that sat on a screen that went
+//    away or changed shape (a rotation, a resolution) get "bring them to EQ's
+//    screen", each at the same relative spot. Nothing moves without a yes.
+const _LAYOUT_MEMORY_MAX = 6;
+let _displaySettleUntil = 0;
+let _displayLastSig = null;
+let _displayChangeTimer = null;
+let _displayPromptOpen = false;
+
+// "x,y,WxH|x,y,WxH" (a _screenSignature) → display rects.
+function _parseSigDisplays(sig) {
+  const out = [];
+  for (const part of String(sig || '').split('|')) {
+    const m = part.match(/^(-?\d+),(-?\d+),(\d+)x(\d+)$/);
+    if (m) out.push({ x: +m[1], y: +m[2], width: +m[3], height: +m[4] });
+  }
+  return out;
+}
+// Same relative spot on another screen: position by fraction, size kept, clamped inside.
+function _projectRect(r, from, to) {
+  const fx = from.width > 0 ? (r.x - from.x) / from.width : 0;
+  const fy = from.height > 0 ? (r.y - from.y) / from.height : 0;
+  const w = Math.min(r.width, to.width), h = Math.min(r.height, to.height);
+  const x = Math.max(to.x, Math.min(to.x + to.width - w, Math.round(to.x + fx * to.width)));
+  const y = Math.max(to.y, Math.min(to.y + to.height - h, Math.round(to.y + fy * to.height)));
+  return { x, y, width: w, height: h };
+}
+// o: { prevSig, curSig, memory, currentRects: {boundsKey: rect}, curDisplays: [{bounds}], target: {bounds, workArea} }
+// → { kind: 'restore' | 'bring' | 'none', moves: {boundsKey: rect} }
+function _displayChangePlan(o) {
+  const same = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+  const back = o.memory && o.memory[o.curSig] && o.memory[o.curSig].rects;
+  if (back) {
+    const moves = {};
+    for (const k of Object.keys(o.currentRects)) {
+      if (back[k] && !same(back[k], o.currentRects[k])) moves[k] = back[k];
+    }
+    if (Object.keys(moves).length) return { kind: 'restore', moves };
+    return { kind: 'none', moves: {} };
+  }
+  const prev = (o.memory && o.memory[o.prevSig] && o.memory[o.prevSig].rects) || {};
+  const oldDisplays = _parseSigDisplays(o.prevSig);
+  const stillThere = (d) => (o.curDisplays || []).some(c => same(c.bounds, d));
+  const moves = {};
+  for (const k of Object.keys(o.currentRects)) {
+    const was = prev[k] || o.currentRects[k];
+    const cx = was.x + was.width / 2, cy = was.y + was.height / 2;
+    const from = oldDisplays.find(d => cx >= d.x && cx < d.x + d.width && cy >= d.y && cy < d.y + d.height);
+    if (from && stillThere(from)) continue;   // its screen is unchanged: leave it where the raider put it
+    moves[k] = _projectRect(was, from || o.target.bounds, o.target.workArea);
+  }
+  return Object.keys(moves).length ? { kind: 'bring', moves } : { kind: 'none', moves: {} };
+}
+function _boundsKeyForEntry(key, win) {
+  if (key === 'canvas') return null;                 // it re-covers its own screen
+  return _boundsKeyForWindow(win) || (key === 'dock' ? 'dockBounds' : null);
+}
+function _overlayRectsNow() {
+  const out = {};
+  for (const [key, win] of _overlayEntries()) {
+    const bk = _boundsKeyForEntry(key, win);
+    if (bk) { try { out[bk] = win.getBounds(); } catch { /* mid-close */ } }
+  }
+  return out;
+}
+function _rememberLayout(cfg, sig, key, b) {
+  if (!sig || !key || !b) return;
+  const all = (cfg.overlayLayoutBySig && typeof cfg.overlayLayoutBySig === 'object') ? cfg.overlayLayoutBySig : {};
+  const cur = (all[sig] && all[sig].rects) ? all[sig] : { rects: {} };
+  cur.rects[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  cur.at = Date.now();
+  all[sig] = cur;
+  const sigs = Object.keys(all).sort((a, c) => (all[c].at || 0) - (all[a].at || 0));
+  for (const s of sigs.slice(_LAYOUT_MEMORY_MAX)) delete all[s];
+  cfg.overlayLayoutBySig = all;
+}
+function _snapshotLayout() {
+  if (Date.now() < _displaySettleUntil) return;
+  const sig = _screenSignature();
+  if (!sig) return;
+  const cfg = loadConfig();
+  for (const [k, b] of Object.entries(_overlayRectsNow())) _rememberLayout(cfg, sig, k, b);
+  saveConfig(cfg);
+}
+// Never leave an overlay where it cannot be seen or grabbed (the old
+// display-change behaviour, now the fallback when the answer is "leave them").
+function _rescueOffscreenOverlays() {
+  for (const [key, win] of _overlayEntries()) {
+    if (key === 'canvas' || !win || win.isDestroyed()) continue;
+    try {
+      const b = win.getBounds();
+      if (!_boundsOnScreen(b)) {
+        const a = _overlayHomeDisplay().workArea;
+        win.setBounds({ x: a.x + 40, y: a.y + 40, width: b.width, height: b.height });
+      }
+    } catch { /* mid-close */ }
+  }
+}
+function _onDisplaysChanged() {
+  _displaySettleUntil = Date.now() + 6000;
+  clearTimeout(_displayChangeTimer);
+  _displayChangeTimer = setTimeout(_askAboutDisplays, 3000);   // a monitor power-cycle is a burst of events
+}
+async function _askAboutDisplays() {
+  if (_displayPromptOpen) { _displayChangeTimer = setTimeout(_askAboutDisplays, 3000); return; }
+  const curSig = _screenSignature();
+  const prevSig = _displayLastSig;
+  _displayLastSig = curSig;
+  if (!curSig || curSig === prevSig) { _displaySettleUntil = 0; return; }
+  try { await _eqWindowGeometry(0); } catch { /* no answer → main screen */ }
+  const eqWin = _eqMainWindow();
+  let target;
+  try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); }
+  catch { target = screen.getPrimaryDisplay(); }
+  const cfg = loadConfig();
+  const plan = _displayChangePlan({
+    prevSig, curSig, memory: cfg.overlayLayoutBySig || {}, currentRects: _overlayRectsNow(),
+    curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds })),
+    target: { bounds: target.bounds, workArea: target.workArea },
+  });
+  const n = Object.keys(plan.moves).length;
+  if (plan.kind === 'none') {
+    _rescueOffscreenOverlays();
+    _displaySettleUntil = 0;
+    setTimeout(_snapshotLayout, 1500);
+    return;
+  }
+  const many = n === 1 ? '1 overlay' : n + ' overlays';
+  const opts = plan.kind === 'restore'
+    ? { message: 'Your screens are back the way they were.',
+        detail: 'Put ' + many + ' back where you had them on this screen setup?',
+        buttons: ['Put them back', 'Leave them'] }
+    : { message: 'Your screen setup changed.',
+        detail: many + ' sat on a screen that went away or changed shape. Bring '
+          + (n === 1 ? 'it' : 'them') + ' to ' + (eqWin ? 'the screen EverQuest is on' : 'your main screen')
+          + ', each at the same spot ' + (n === 1 ? 'it' : 'they') + ' had?',
+        buttons: ['Bring them over', 'Leave them'] };
+  _displayPromptOpen = true;
+  let choice = 1;
+  try {
+    const r = await dialog.showMessageBox(Object.assign({ type: 'question', title: 'Wolf Pack miMIC', defaultId: 0, cancelId: 1, noLink: true }, opts));
+    choice = r.response;
+  } catch { /* no dialog → leave them */ }
+  _displayPromptOpen = false;
+  if (choice === 0) {
+    for (const [key, win] of _overlayEntries()) {
+      const bk = _boundsKeyForEntry(key, win);
+      if (bk && plan.moves[bk]) { try { win.setBounds(plan.moves[bk]); } catch { /* mid-close */ } }
+    }
+    if (plan.kind === 'bring') { const c = loadConfig(); c.canvasDisplayId = target.id; saveConfig(c); }
+    _fitCanvasToDisplay();
+  } else {
+    _rescueOffscreenOverlays();
+  }
+  appendAgentLog(`[screens] ${plan.kind}: ${n} overlay(s) ${choice === 0 ? 'moved' : 'left'}\n`);
+  _displaySettleUntil = 0;
+  setTimeout(_snapshotLayout, 1500);   // after the moves' own persists land
+}
 // Gather every overlay window onto the display under the cursor, then
 // auto-arrange there. Stamps that display as home so future arranges (and
 // the resolution-change fallback) stay on it.
@@ -3086,6 +3338,7 @@ function _rescueOverlays() {
   const pt = screen.getCursorScreenPoint();
   const cfg = loadConfig();
   cfg.overlayHomePoint = { x: pt.x, y: pt.y };
+  cfg.overlayHomeAt = Date.now();   // outranks an older EQ window reading (_overlayHomeDisplay)
   saveConfig(cfg);
   const disp = screen.getDisplayNearestPoint(pt);
   const a = disp.workArea;
@@ -3160,6 +3413,9 @@ function _persistBounds(key, win) {
       const cfg = loadConfig();
       cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
       cfg[key + 'Sig'] = _screenSignature();
+      // Remembered per screen setup — but not while the screens are settling,
+      // or Windows' own shove off a dead monitor would overwrite the real layout.
+      if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
       saveConfig(cfg);
     } catch {}
   }, 400);
@@ -3464,7 +3720,10 @@ function _parseUiWindowRects() {
     for (const [k, n] of resCount) if (n > best) { best = n; res = k; }
     const rw = res ? parseInt(res.split('x')[0], 10) : null;
     const rh = res ? parseInt(res.split('x')[1], 10) : null;
-    const db = _overlayHomeDisplay().bounds;   // fullscreen EQ covers the HOME display (multi-monitor)
+    // EQ's own client area when Windows told us where it is (windowed or moved);
+    // else fullscreen EQ covering the HOME display (multi-monitor).
+    const eqWin = _eqMainWindow(10 * 60 * 1000);
+    const db = eqWin ? eqWin.client : _overlayHomeDisplay().bounds;
     const sx = rw > 0 ? db.width / rw : 1;
     const sy = rh > 0 ? db.height / rh : 1;
     const rects = [];
@@ -3484,11 +3743,52 @@ function _parseUiWindowRects() {
         w: Math.round(w * sx), h: Math.round(h * sy),
       });
     }
+    // Zeal's raid bars and assist bar live in zeal.ini, beside the UI ini.
+    try {
+      const zini = path.join(path.dirname(file), 'zeal.ini');
+      if (fs.existsSync(zini)) {
+        for (const r of _zealBarRects(fs.readFileSync(zini, 'utf8'), rw || db.width, rh || db.height)) {
+          rects.push({ name: r.name, x: Math.round(db.x + r.x * sx), y: Math.round(db.y + r.y * sy),
+            w: Math.round(r.w * sx), h: Math.round(r.h * sy) });
+        }
+      }
+    } catch { /* no Zeal bars to avoid */ }
     return { rects, file, resolution: res || null };
   } catch (e) {
     appendAgentLog('[auto-arrange] UI parse failed: ' + e.message + '\n');
     return null;
   }
+}
+// Zeal's own on-screen bars (the guild lead, 2026-09-29: "account for /raidbars
+// and /assistbar … as parts of zeal"). Not EQ windows: Zeal keeps them in
+// zeal.ini as screen pixels at the game's resolution — [RaidBars] Left/Top and
+// Right/Bottom (0 = runs to the screen edge), [AssistBar] Left/Top with a size
+// that follows its FontSize (estimated). Only bars switched on (Enabled=TRUE).
+// Same reading as UI Studio's _zealBarWindows.
+function _zealBarRects(text, resW, resH) {
+  const sec = {};
+  let cur = null;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const s = raw.trim();
+    const m = s.match(/^\[(.+)\]$/);
+    if (m) { cur = {}; sec[m[1].toLowerCase()] = cur; continue; }
+    const eq = s.indexOf('=');
+    if (cur && eq > 0) cur[s.slice(0, eq).trim().toLowerCase()] = s.slice(eq + 1).trim();
+  }
+  const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : d; };
+  const on = (v) => /^(true|1)$/i.test(String(v == null ? '' : v).trim());
+  const out = [];
+  const rb = sec.raidbars;
+  if (rb && on(rb.enabled)) {
+    const L = num(rb.left, 5), T = num(rb.top, 5), R = num(rb.right, 0), B = num(rb.bottom, 0);
+    out.push({ name: 'Zeal RaidBars', x: L, y: T, w: Math.max(16, (R > L ? R : resW) - L), h: Math.max(16, (B > T ? B : resH) - T) });
+  }
+  const ab = sec.assistbar;
+  if (ab && on(ab.enabled)) {
+    const fs = num(ab.fontsize, 16);
+    out.push({ name: 'Zeal AssistBar', x: num(ab.left, 5), y: num(ab.top, 30), w: Math.round(fs * 11), h: Math.round(fs * 2) + 4 });
+  }
+  return out;
 }
 function _autoArrangeOverlays(pinnedKey) {
   const t0 = Date.now();
@@ -4904,6 +5204,8 @@ function _canvasDisplay() {
   const all = screen.getAllDisplays();
   const byId = all.find(d => String(d.id) === String(cfg.canvasDisplayId));
   if (byId) return byId;
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  if (eq) { try { return screen.getDisplayMatching(eq.client); } catch { /* fall through */ } }
   const tb = cfg.triggerBounds;
   if (tb && Number.isFinite(tb.x) && Number.isFinite(tb.y)) {
     try { return screen.getDisplayMatching({ x: tb.x, y: tb.y, width: tb.width || 1, height: tb.height || 1 }); } catch { /* fall through */ }
@@ -7717,7 +8019,8 @@ function _toggleOverlay(name) {
 }
 
 // ── Overlay chrome-menu IPC (auto-arrange / backdrop / menu state) ───────────
-ipcMain.handle('auto-arrange-overlays', () => {
+ipcMain.handle('auto-arrange-overlays', async () => {
+  try { await _eqWindowGeometry(); } catch { /* arrange on what we know */ }
   try { return _autoArrangeOverlays(); } catch (e) { return { error: e.message }; }
 });
 // 🧲 Rescue — gather every overlay onto the display under the cursor (the
@@ -10025,32 +10328,17 @@ app.whenReady().then(async () => {
     } catch (e) { void e; }
   }, 6000);
 
-  // Rescue overlays if the monitor layout changes while running (unplug a
-  // second display, resolution switch, etc.). If an overlay ends up off the
-  // new screen, snap it back to its default position so it's never lost.
-  const _rescueOverlays = () => {
-    for (const [win, def] of [
-      [overlayWindow, { x: 40, y: 40, width: 320, height: 220 }],
-      [triggerWindow, { x: 700, y: 200, width: 600, height: 200 }],
-      [charmWindow,   { x: 700, y: 420, width: 300, height: 180 }],
-      [petsWindow,    { x: 700, y: 620, width: 300, height: 160 }],
-      [mobInfoWindow, { x: 700, y: 60,  width: 320, height: 200 }],
-      [whoWindow,     { x: 40,  y: 300, width: 320, height: 280 }],
-      [melodyWindow,  { x: 40,  y: 600, width: 280, height: 180 }],
-      [chChainWindow, { x: 40,  y: 540, width: 280, height: 240 }],
-    ]) {
-      if (!win || win.isDestroyed()) continue;
-      try {
-        if (!_boundsOnScreen(win.getBounds())) {
-          const p = screen.getPrimaryDisplay().workArea;
-          win.setBounds({ x: p.x + def.x, y: p.y + def.y, width: def.width, height: def.height });
-        }
-      } catch {}
-    }
-  };
-  screen.on('display-removed',          _rescueOverlays);
-  screen.on('display-metrics-changed',  _rescueOverlays);
-  // The Timers canvas re-covers its screen (the rescue above skips it).
+  // The monitor layout changed while running (a monitor unplugged or powered
+  // off, a rotation, a resolution switch): remember, then ASK before moving
+  // anything — see _onDisplaysChanged. This used to snap every off-screen
+  // overlay to a default spot on the primary screen straight away, which is
+  // what left a raider rearranging everything after a monitor lost power.
+  _displayLastSig = _screenSignature();
+  setTimeout(_snapshotLayout, 20000);   // seed this setup's memory once the windows are up
+  screen.on('display-added',            _onDisplaysChanged);
+  screen.on('display-removed',          _onDisplaysChanged);
+  screen.on('display-metrics-changed',  _onDisplaysChanged);
+  // The Timers canvas re-covers its screen straight away (it is not asked about).
   screen.on('display-added',            _fitCanvasToDisplay);
   screen.on('display-removed',          _fitCanvasToDisplay);
   screen.on('display-metrics-changed',  _fitCanvasToDisplay);

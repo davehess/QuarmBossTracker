@@ -409,6 +409,60 @@
     return { x: x, y: y, used: used };
   }
 
+  // ── Zeal's own bars (/raidbars, /assistbar) ──────────────────────────────
+  // The guild lead, 2026-09-29: "we need to account for /raidbars and /assistbar in
+  // uistudio as well, as parts of zeal." They are not EQ windows, so they carry
+  // no XPos<res>: Zeal keeps them in zeal.ini as screen pixels at the game's
+  // resolution — [RaidBars] Left/Top plus Right/Bottom (0 = the bars may run to
+  // the screen edge), [AssistBar] Left/Top with a size that follows FontSize.
+  // Positions remap to the target resolution like every window; sizes are
+  // pixels. The raid bars' box can be sized here (Right/Bottom); the assist bar
+  // cannot (its size is its text), so it is shown at an estimate. main.js's
+  // _zealBarRects reads them the same way for auto-arrange.
+  function _zealBarWindows(parsed, srcW, srcH, fxX, fxY){
+    var out = [];
+    var num = function(v, d){ var n = parseInt(v, 10); return isFinite(n) ? n : d; };
+    var on = function(v){ return /^(true|1)$/i.test(String(v == null ? '' : v).trim()); };
+    function mk(s, bar, label, x, y, w, h, extra, contents){
+      var X = Math.round(x * fxX), Y = Math.round(y * fxY);
+      var o = { section: s.name, label: label, kind: 'zeal', category: 'zeal', zealBar: bar,
+        contents: contents, props: s.props, hasWH: false, srcSuffix: '', chatMeta: null, xmlMax: null,
+        x: X, y: Y, w: w, h: h, origX: X, origY: Y, origW: w, origH: h };
+      for (var k in extra) o[k] = extra[k];
+      return o;
+    }
+    for (var i = 0; i < parsed.sections.length; i++) {
+      var s = parsed.sections[i], p = s.props || {};
+      if (/^raidbars$/i.test(s.name)) {
+        var L = num(p.Left, 5), T = num(p.Top, 5), R = num(p.Right, 0), B = num(p.Bottom, 0);
+        var toR = !(R > L), toB = !(B > T);
+        out.push(mk(s, 'raidbars', '🐺 Raid bars (/raidbars)' + (on(p.Enabled) ? '' : ' · off'),
+          L, T, Math.max(16, (toR ? srcW : R) - L), Math.max(16, (toB ? srcH : B) - T),
+          { toEdgeR: toR, toEdgeB: toB },
+          [{ label: 'Kept in', value: 'zeal.ini [RaidBars]' },
+           { label: 'Box', value: (toR || toB) ? 'runs to the screen edge until you size it here' : 'set by /raidbars position' }]));
+      } else if (/^assistbar$/i.test(s.name)) {
+        var fs = num(p.FontSize, 16);
+        out.push(mk(s, 'assistbar', '🐺 Assist bar (/assistbar)' + (on(p.Enabled) ? '' : ' · off'),
+          num(p.Left, 5), num(p.Top, 30), Math.round(fs * 11), Math.round(fs * 2) + 4,
+          { fixedSize: true },
+          [{ label: 'Kept in', value: 'zeal.ini [AssistBar]' },
+           { label: 'Size', value: 'follows its font size (' + fs + ') — shown here as an estimate' }]));
+      }
+    }
+    return out;
+  }
+  // What Save writes back for a Zeal bar: Left/Top always; the raid bars' box
+  // edge only where it had one or was sized here (0 keeps "to the edge").
+  function _zealBarEdits(w){
+    var e = { Left: w.x, Top: w.y };
+    if (w.zealBar === 'raidbars') {
+      if (!w.toEdgeR || w.sizeEdited) e.Right = w.x + w.w;
+      if (!w.toEdgeB || w.sizeEdited) e.Bottom = w.y + w.h;
+    }
+    return e;
+  }
+
   // ── Load + rescale ───────────────────────────────────────────────────────
   // Heuristic window classifier — derives a kind + icon + extracted
   // contents from a parsed [Section] block. The EQ INI format varies a
@@ -799,6 +853,12 @@
           origX: x, origY: y, origW: w, origH: h,
         });
       }
+      if (/^zeal\.ini$/i.test(fname)) {
+        _zealBarWindows(parsed, STATE.srcW, STATE.srcH, fxX, fxY).forEach(function(zw){
+          zw.id = 'w' + (seq++); zw.file = fname;
+          STATE.windows.push(zw);
+        });
+      }
     }
     var _dedup = _dedupeWindows(STATE.windows, STATE.character);
     STATE.windows     = _dedup.kept;
@@ -864,7 +924,7 @@
   // hide the high-count clutter (the ~50 bag windows + transient popups) and
   // show the persistent HUD + chat. `on` is the default-visible flag.
   var FILTER_CATEGORIES = [
-    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal/i.test(n); } },
+    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal|^raidbars$|^assistbar$/i.test(n); } },
     { key:'chat',    label:'💬 Chat',          on:true,  test:function(n){ return /chat/i.test(n); } },
     // Per-sender Tell windows — assigned via ChatManager (DefaultChannel 3),
     // NOT by name (they're named "Chat 11" etc. like real chats). test:false
@@ -1197,7 +1257,7 @@
             + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
             + '<span class="lbl">' + escapeHtml(lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
-            + (STATE.selected === i ? '<div class="grip se" data-grip="se"></div>' : '')
+            + (STATE.selected === i && !w.fixedSize ? '<div class="grip se" data-grip="se"></div>' : '')
             + '</div>';
     }
     stage.innerHTML = html;
@@ -1294,9 +1354,12 @@
     document.getElementById('fY').value = w.y;
     document.getElementById('fW').value = w.w;
     document.getElementById('fH').value = w.h;
+    // The assist bar's size is its text: nothing to type here.
+    document.getElementById('fW').disabled = !!w.fixedSize;
+    document.getElementById('fH').disabled = !!w.fixedSize;
     var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
-             + '<br>Read from: <b>' + escapeHtml(w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos') + '</b>'
+             + '<br>Read from: <b>' + escapeHtml(w.zealBar ? 'Left/Top (Zeal screen pixels)' : (w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos')) + '</b>'
              + (w.hasWH ? '' : (w.sizeEdited
                   ? '<br><span style="color:#56d364">size pinned — Save writes Width/Height</span>'
                   : '<br><span style="color:#8b949e">auto-size (no Width/Height in the ini) — resize it here to pin one</span>'))
@@ -1347,6 +1410,7 @@
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       if (!edits[w.file]) edits[w.file] = {};
+      if (w.zealBar) { edits[w.file][w.section] = _zealBarEdits(w); continue; }
       var e = {};
       e['XPos' + tgtSuffix] = w.x;
       e['YPos' + tgtSuffix] = w.y;
