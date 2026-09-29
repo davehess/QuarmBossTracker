@@ -22,6 +22,7 @@ function load({ target = null, who = [], whoRun = null, history = {}, raidClass 
   const pre = `
     const whoData = new Map(${JSON.stringify(who.map(w => [w.name.toLowerCase(), w]))});
     let _whoRun = ${whoRun ? `{ startedAt: Date.now(), names: new Set(${JSON.stringify(whoRun)}), complete: true }` : 'null'};
+    const _whoZoneSeen = new Map();
     const _whoLookupCache = new Map(${JSON.stringify(Object.entries(history).map(([k, v]) => [k, { at: 0, data: v }]))});
     for (const v of _whoLookupCache.values()) v.at = Date.now();
     const WHO_LOOKUP_TTL_MS = 5 * 60 * 1000;
@@ -145,7 +146,7 @@ describe('the overlay draws the guild under the name', () => {
   const html = readSource(path.join(ROOT, 'apps', 'mimic', 'who.html'));
   const esc = sliceBlock(html, 'function esc(s){', '}); }');
   const card = sliceBlock(html, 'function targetHtml(t){', '\n  }');
-  const { targetHtml } = evalBlock(esc + '\n' + card, ['targetHtml']);
+  const { targetHtml } = evalBlock('var _zoneCol = false;\n' + esc + '\n' + card, ['targetHtml']);
 
   it('name line first, then the guild on its own line', () => {
     const h = targetHtml({ name: 'Brackwyn', class: 'Bard', level: 60, guild: 'Dungeons and Dragons', guild_src: 'who' });

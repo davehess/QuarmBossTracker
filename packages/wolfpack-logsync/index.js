@@ -7501,7 +7501,7 @@ function recordWhoEvent(ev) {
   // entries; anyone still around re-registers on the next /who.
   if (whoData.size > 6000) {
     let n = 0;
-    for (const key of whoData.keys()) { whoData.delete(key); if (++n >= 1000) break; }
+    for (const key of whoData.keys()) { whoData.delete(key); _whoZoneSeen.delete(key); if (++n >= 1000) break; }
   }
   // Keep ALL /who rows in the transient registry so the overlay can render
   // everyone in the zone (Quarm pickup raids include L30-60 characters).
@@ -7533,6 +7533,10 @@ function recordWhoEvent(ev) {
   // Attribute this row to the in-progress /who run (for the overlay's "current"
   // vs "recently gone" split).
   _noteWhoRunName(ev.name);
+  if (ev.zone) {
+    _whoZoneSeen.set(k, ev.zone);
+    if (_whoRun && !_whoRun.complete && _whoRun.zoned) _whoRun.zoned.add(k);
+  }
 }
 
 // ── /who overlay state ───────────────────────────────────────────────────────
@@ -7542,17 +7546,31 @@ function recordWhoEvent(ev) {
 // "There are N players..." footer; we collect the rows between into a run set.
 // All local + instant — no upload. Anonymous rows are enriched on demand from
 // the bot's who history (last non-anon class/level/guild + Zek flag).
-let _whoRun = null;             // { startedAt, names:Set<lower>, complete } — in-progress/last
+let _whoRun = null;             // { startedAt, names:Set<lower>, zoned:Set<lower>, complete } — in-progress/last
+// The zone each player was in at their last /who, for the overlay's Zone column (the guild lead,
+// 2026-09-29: "lets include zone on /who overlay as toggleable column"). `/who all` puts the short
+// name on each row ("ZONE: wakening"); a plain /who has none on the rows, but its footer names the
+// zone they are all in ("There are 12 players in The Wakening Land."). Kept as the game printed it.
+// Overlay-only, apart from whoData, whose rows upload as they are.
+const _whoZoneSeen = new Map();  // lower → zone text, or null (a /who all row with no zone, e.g. /anon)
 const WHO_HEADER_RX = /^\[.+?\]\s+Players (?:in|on) EverQuest:/i;
 const WHO_FOOTER_RX = /^\[.+?\]\s+There (?:are|is) \d+ (?:player|players)\b/i;
+const WHO_FOOTER_ZONE_RX = /\bplayers? in (.+?)\.?\s*$/i;
 function applyWhoLine(line) {
   if (WHO_HEADER_RX.test(line)) {
     const ts = parseEqTimestamp(line);
-    _whoRun = { startedAt: ts ? ts.getTime() : Date.now(), names: new Set(), complete: false };
+    _whoRun = { startedAt: ts ? ts.getTime() : Date.now(), names: new Set(), zoned: new Set(), complete: false };
     return;
   }
   if (WHO_FOOTER_RX.test(line)) {
-    if (_whoRun) _whoRun.complete = true;
+    if (!_whoRun || _whoRun.complete) return;
+    _whoRun.complete = true;
+    const zm = WHO_FOOTER_ZONE_RX.exec(line);
+    const zone = zm && !/^EverQuest$/i.test(zm[1].trim()) ? zm[1].trim() : null;
+    for (const k of _whoRun.names) {
+      if (zone) _whoZoneSeen.set(k, zone);                       // Plain /who: all in this zone.
+      else if (!_whoRun.zoned.has(k)) _whoZoneSeen.set(k, null);  // /who all, row without a zone: unknown now.
+    }
   }
 }
 function _noteWhoRunName(name) {
@@ -7690,6 +7708,7 @@ function buildWhoSnapshot() {
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
+      zone: _whoZoneSeen.get(k) || null,
     };
     // Every row carries its Zek flag, for the overlay's Zek only mode (the guild lead, 2026-09-26).
     // Before, only an /anon row did (through entry.known), so a player showing <Zek> went unflagged.
