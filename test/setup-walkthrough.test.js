@@ -182,3 +182,25 @@ describe('the page', () => {
     expect(ess).toEqual(['account', 'folder', 'chars']);
   });
 });
+
+// The guild lead, 2026-09-29: "just show things that have been touched in the last 3 months and
+// then a collapsed section with more".
+describe('the characters step', () => {
+  const { splitRecentChars } = evalBlock(
+    sliceBlock(script, 'function splitRecentChars(chars, main) {', '\n  }\n'), ['splitRecentChars']);
+  const c = (character, ago_days) => ({ character, ago_days });
+  it('shows the last 3 months and the main; the rest go to "more"', () => {
+    const s = splitRecentChars([c('Aldenmar', 119), c('Brackwyn', 3), c('Corvale', 90), c('Rethlan', 91), c('Nyssara', null)], 'aldenmar');
+    expect(s.recent.map(x => x.character)).toEqual(['Aldenmar', 'Brackwyn', 'Corvale']);
+    expect(s.older.map(x => x.character)).toEqual(['Rethlan', 'Nyssara']);
+  });
+  it('shows everything when nothing is recent', () => {
+    const s = splitRecentChars([c('Rethlan', 200), c('Zarrin', 400)], null);
+    expect(s.recent.length).toBe(2);
+    expect(s.older.length).toBe(0);
+  });
+  it('the "more" section is collapsed and keeps its open state across repaints', () => {
+    expect(script).toMatch(/<details id="wCharsMore"' \+ \(S\.charsMore \? ' open' : ''\)/);
+    expect(script).toMatch(/more\.addEventListener\('toggle', function \(\) \{ S\.charsMore = more\.open; \}\)/);
+  });
+});
