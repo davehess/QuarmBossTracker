@@ -215,6 +215,9 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ /pop counts the raid roster (web 1.8.51–1.8.52, main 2026-09-29).** Raiders (Pack Leader, Officer,
   Raid Pack, Recruit) on Mains, plus raid alts on All; active, level 60+ on the last /who. Traders, inactive
   characters and other guilds are out; the planner follows the toggle. `web/lib/popRoster.ts`. §100.
+- **✅ Only main and beta build the website (2026-09-29).** Vercel Hobby caps deployments at 100 a day;
+  the alpha sync merges alone spent ~100, so beta went 90 minutes unbuilt. `web/vercel.json`
+  `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
 - **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for

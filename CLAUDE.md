@@ -318,7 +318,14 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   front of any page to see it as it stands on `beta`. Vercel had been building
   the branch anyway, but only onto a throwaway preview URL nobody could guess;
   this makes it addressable. Wiring:
-  - `web/vercel.json` → `"git": { "deploymentEnabled": { "beta": true } }`;
+  - `web/vercel.json` → `"git": { "deploymentEnabled": { "**": false, "main": true, "beta": true } }`.
+    ⚠ **Only main and beta build the website** (the guild lead, 2026-09-29; DECISIONS §101). Vercel is on
+    **Hobby: 100 deployments a day**, and every push to every branch spends one. The alpha branch's
+    sync merges alone spent ~100 that day and beta went 90 minutes unbuilt
+    ("Deployment rate limited — retry in 24 hours" on the commit's Vercel status, which is readable
+    unauthenticated at `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`). An Ignored Build Step
+    does NOT help — a skipped build still counts. A new branch that should build the site goes in this
+    map, and costs a slot per push;
   - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
     environment, then set Git Branch to `beta`.** There is no "beta"
     environment and there should not be — Vercel's environments are
