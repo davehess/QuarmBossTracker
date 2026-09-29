@@ -64,8 +64,13 @@ export const releases: Release[] = [
         name: 'A Mimic 3.0 alpha, for testers',
         blurb: 'The new overlay builder gets tried out on an alpha before it reaches the beta. Testers join with the α alpha button at the top of the dashboard, or from the tray, and can leave the same way.',
       },
+      {
+        name: 'Suggested triggers, per character',
+        blurb: 'The Suggested triggers panel has a “For:” picker. Turn a trigger on for one character and it only fires on that character’s log; turn it off for one and it stays on for the rest.',
+      },
     ],
     fixes: [
+      'Summoned pets on the DPS meter are named as pets, not raiders. When anyone in the raid saw the pet’s “My leader is …” line, the pet is credited to its owner on every Mimic; otherwise it is marked (pet) and left out of the parse you copy to /rs.',
       'Changing monitors no longer throws overlays onto your main screen at default spots.',
       'Rescue only brings back overlays you cannot reach, each to its own spot. It no longer piles every overlay into one corner or rearranges the ones you placed, and it asks before moving overlays from your other screen.',
     ],

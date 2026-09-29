@@ -1398,6 +1398,11 @@ the queue is pending / backfill running / fight live (Shift+U bypass).
 `parseEvent` + `EncounterBuilder` segment fights; kills require a literal
 slain line (no silence-guessing). Pets ride the DPS meter only when provably
 OURS (`petLeaders`/`_activeCharms`/charm tracker) and carry `pet_owner`.
+`petLeaders` also adopts owners from the bot's pool of every raider's "My leader
+is" lines (poll stream `pet_owners` → `_guildPetOwners`, live fights only); a
+pet nobody named whose name fits the server's pet-name generator
+(`_isGeneratedPetName`) is sent as `pet_summoned` and the DPS HUD labels it
+"(pet)" (FB-35, §84).
 Threat tracker (`recentTankHits`) records mob→player connects (player-name
 shape = letters only — backtick names are NPC/pets) — feeds MT resolution,
 off-tank surfacing, off-heal candidates, and `incoming_mob` on live-state.
@@ -1513,6 +1518,13 @@ gitignored** — it is now, along with `logsync.queue.json`.
 
 Guarded by `test/personal-trigger-bulk.test.js` (source-sliced from the shipped
 agent, so a rename fails loudly rather than passing on a stale copy).
+
+**Per character (FB-34, agent 3.7.44 beta, §84).** A personal row may carry
+`characters` (lowercase; none = every character). `_triggerOnFor(t, charLc)`
+gates the line evaluator (the log's own character, or Zeal's live one after a
+swap) and the Zeal gauge evaluator; timer-bar switches count as on while one of
+their characters is played (`_playingCharactersLc`). The Suggested panel's
+**For:** picker posts `char` with each tick. `test/per-character-triggers-and-pet-owners.test.js`.
 
 ### Timer bars — EQLogParser-style countdowns from tracked state (agent 3.7.24)
 
