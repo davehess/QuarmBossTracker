@@ -158,6 +158,14 @@ next touch one rather than assuming a missing row means a missing doc.
   Faction / Quest / Vendor. Quest reads the NPC's script: `/say` chips with replies, hand-ins, who's next
   with `/map`. Vendor only for merchants. `utils/questDialog.js`, `test/quest-dialog.test.js`,
   `test/npc-interact.test.js`, `test/target-info-fqv.test.js` (beta). `DECISIONS-2026-09-21.md` §70.
+  **2026-09-29 (bot 3.1.170–3.1.171, Mimic beta `013cca9d`):** NPC text folded behind "▸ says"; ⚠ on a
+  despawn, a spawn or a faction loss; GIVE / GET on hand-ins; every faction change; Quarm-only hand-ins
+  from its own script, ProjectEQ-only ones marked "not in Quarm's script". §74.
+- **⏳ Bard charm from Zeal's class, "recharm pet" at 4s, clicky buffs on the pet (agent 3.7.39–3.7.40 on
+  beta, 2026-09-29).** `_classOf` reads Zeal label 3; a bard's gauge-opened charm gets its song's
+  duration so the callouts speak; a clicky's glow line records its spell as a cast. §75.
+- **⏳ Mimic: "Save layout" finds the character (beta, 2026-09-29).** State poll cap 256 KB → 16 MB,
+  logged; the last character is kept through a quiet Zeal. §76.
 - **✅ PoP checklist: Willamina's whole chain (web 1.8.34–1.8.35, main 2026-09-28).** Starts at Agrakath
   Theric with the book from Myrist, then ten hand-ins (give → get) and the optional story, in folding sections. `test/pop-guide.test.js`.
   `DECISIONS-2026-09-21.md` §71.

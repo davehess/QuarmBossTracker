@@ -116,6 +116,11 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
+| **Quest tab: warnings, give/get, faction, Quarm-only hand-ins** | **Beta + bot 3.1.171 (§74).** NPC text folded; ⚠ despawn / spawn / faction loss; GIVE / GET; every faction change; hand-ins from Quarm's own script; ProjectEQ-only ones flagged | the guild lead: pick the quest catalog shape (deep link page vs Quests overlay, §72 picked "its own overlay") |
+| **Bard charm + recharm call + clicky buffs** | **Beta, agent 3.7.40 (§75).** Class from Zeal; a bard's charm gets its song's duration; "recharm pet" at 4s left; clicky casts land on the pet with a timer | the guild lead: confirm on the next charm cycle |
+| **Separate timers window (EQLogParser shape) → first freeform part** | **Asked 2026-09-29, not built (§77).** A member's picture separates charm timers, TTS callouts and debuff timers, each placed and sized alone; the guild lead asks whether one overlay with individually movable parts can do it, as the start of 3.0 | the guild lead: pick A (one freeform timers canvas, the 3.0 pilot) or B (split EQLogParser-style windows now) |
+| **CH chain: drag stutter, overlap ✕, grey out who didn't pick up** | **Queued 2026-09-29 (§77).** Stutters back when dragged after EQ was active; a stale slot's ✕ is hard to hit on overlap; grey the slot-holder another cleric covered | next session: needs a Windows repro for the drag |
+| **Trigger TTS "stopped working" (beta.3, a bard)** | **Open 2026-09-29 (§77).** Charm callouts no longer cancel shared speech; root cause unconfirmed | the member: send Mimic feedback with logs attached next time it goes quiet |
 | **/who overlay: Zone column** | **Beta 2026-09-29 (§73, agent 3.7.38).** `ZONE` in the title bar shows each player's zone from their last /who, off by default | the guild lead: try it after a `/who all`; say if it should be a filter or a sort too |
 | **Target Info F/Q/V (Faction · Quest · Vendor)** | **Stable in Mimic 2.7.3 (§70, §71a, §72; bot 3.1.168).** What to say with `/say` chips (every word a branch needs, "sit first" + `/sit` where the NPC checks), the hand-in, who's next with `/map`, a merchant's stock | the guild lead: forward/back through quest NPCs you targeted, as a tab or its own overlay (§72) |
 | **PoP checklist: Willamina's full chain** | **Live 2026-09-28 (§71, web 1.8.35).** Starts at Agrakath Theric with the book from Myrist; ten hand-ins and the story in folding sections | anyone: tell us which other chained steps deserve the same treatment |
@@ -3943,6 +3948,90 @@ The guild lead: *"lets include zone on /who overlay as toggleable column"*.
 - **Can follow on the same data:** a zone filter chip, or sort by zone.
 - `test/who-zone-column.test.js` runs the real /who tracking and row markup; mutation-checked (the /anon
   blanking and the off state).
+
+## 74. Quest tab: NPC text folded, warnings, give/get, faction; Quarm's own hand-ins (2026-09-29, bot 3.1.170–3.1.171, Mimic beta)
+The guild lead: *"we should be collapse the npc text and put a warning on anything that despawns a mob or
+spawns something else, or causes negative faction. If there are turn-in requirements or you get an item as
+output from a quest we should denote that"*, *"we should also track faction for these quests as well where
+it makes sense"*, then *"go out and get the missing script info"*.
+- **Folded:** what the NPC says sits behind "▸ says" per row (open rows kept per NPC in JS, so the 500ms
+  repaint keeps them).
+- **⚠ tags** from the script: the NPC despawns; it despawns another NPC; it spawns a mob (named, "may
+  attack" on hover); a faction loss (red, the factions on hover). `utils/questDialog.js` `effects()` reads
+  both the Lua mirror and the Perl turn-in snippets; the call forms are the ones the scripts actually use
+  (eq.depop() 646 scripts, eq.depop_with_timer() 480, e.other:Faction(e.self, id, n)).
+- **Items:** a say branch shows "needs <item>" (a HasItem in its own condition) and "get <item>"; a
+  hand-in reads GIVE / GET ("one of" for random, "· exp"). **Faction:** every change a branch or hand-in
+  makes, gains green and losses red.
+- **The script gap, measured** against a fresh clone of SecretsOTheP/quests (5,806 Lua files): every real
+  zone's count matches the mirror; the 87 skipped files are `iceclad2`, `lua_modules`, `global`,
+  `cshome2` and two `_tryout` folders, none quest NPCs. 16 files changed upstream since the 2026-09-20
+  sync (PoP events, the Timekeeper of Druzzil Ro's new dialogue, the Tribunal) and a manual run of
+  `sync-quarm.yml` pulled them in (run 47). ⚠ That step is `continue-on-error`, so a failing quest sync
+  still shows green; read its log line ("N new/changed").
+- **The real gap was the hand-in table:** `scripted_npc_turnins` is ProjectEQ's (every era), not
+  Quarm's. So each `check_turn_in` branch in Quarm's script with no ProjectEQ row is now added as a
+  hand-in (bot 3.1.171), and a ProjectEQ row with no branch in Quarm's script says "not in Quarm's
+  script" on the tab.
+- Tests: quest-dialog, npc-interact, target-info-fqv. Mutation-checked.
+
+## 75. Bard charm: the class comes from Zeal; the recharm callout speaks; clicky buffs on the pet (2026-09-29, agent 3.7.39–3.7.40 beta)
+The guild lead, a bard holding Dragen Faux under Solon's Bewitching Bravura: *"why is bard charm tracking not
+working?"*, *"a character's class is output by zeal pipes, on top of us knowing their class. we shouldn't
+need to rely on anything else"*, *"I SOWed my pet using my sow sword clicky and it did not register, and i
+did not get a recharm pet tts at 4 seconds left"*, *"i'm not hearing the recharm pet tts, where is that"*.
+- **Class from Zeal:** a pet with no a/an/the only counts as a charm when the owner is a bard or a charm
+  was just cast. The bard test read /who and the raid roster only. `_classOf()` now reads Zeal's class
+  label (3) first, then /who, then the raid roster; the charm test and the melody overlay's bard checks
+  use it (both also read a `zealSt.class` that was never filled in).
+- **Recharm:** a charm opened from the gauge had no duration, so the tracker showed "~" and kept its
+  callouts quiet. A bard's charm now takes the duration of the charm song in their twist, else Solon's
+  Bewitching Bravura. The bard last call now says **"recharm pet" at 4s left** (was "recharm now" at
+  3.1s); "charm breaking" at 12s and the user-set "recharm warn at N s" (setup bar, seconds since the
+  charm, 0 = off) are unchanged.
+- **Clicky:** "Your Blood Orchid Katana begins to glow." logs no "You begin casting", and SoW's landing
+  text on another target is shared by five spells, so the pet's SoW stayed "SOW (?)". The glow line now
+  records the item's click spell as a self-cast.
+- Tests: `bard-charm-zeal-class` (real agent, fake clock), mutation-checked.
+
+## 76. "Save layout" stuck on "no active character yet" (2026-09-29, Mimic beta)
+The guild lead: *"Why doesn't this work"*. Two causes, both fixed: Mimic's state poll, the only source of
+the active character, dropped any response over 256 KB without a word (a long session's state grows past
+that; cap now 16 MB, logged when hit); and a quiet Zeal (zoning, camping) cleared the character without
+rebuilding the menu, so another rebuild in that gap froze the item disabled. The last character is kept
+now. `test/char-profile-active.test.js`.
+
+## 77. The same evening's beta reports, and the timers question (2026-09-29)
+- **Charm tracker REMOVE** (the guild lead: *"It's hard to read the REMOVE"*): the button also carried the
+  corner ✕'s class, so it inherited its absolute top-right spot and 35% opacity, under the owner's name.
+  Back inline beside BROKE, full strength (beta `6a0931fe`).
+- **Trigger TTS "stopped working"** (a bard on beta.3, in Discord): not reproduced. The trigger queue has a
+  watchdog, so it cannot wedge for good. What changed that evening: bard charms became tracked, and the
+  Charm tracker called `speechSynthesis.cancel()` before every line, which may cut off another Mimic
+  window's speech if Chromium's engine is shared. It no longer cancels. The member's agent log records
+  trigger playback failures; the next report should come as Mimic feedback with logs.
+- **More reports from the same member on beta.1** (feedback table): "charm pet tracker not working"
+  (answered by §75), "click one of these and look at the settings it has set for it", "this NEEDS a loop
+  timer setting", "does not appear to work as intended when swapping characters" (likely §76). Their
+  screenshots sit in the private bucket and need the service key to open.
+- **Timers, individually placed** (a member's idea on beta.3: *"What if EVERY timer could be put on the
+  screen and resized how you wanted it to be?"*; the guild lead: *"would we be able to accomplish this
+  with a single overlay that lets us individually move components? That would be part of my vision for
+  3.0's UI/Overlay builder, but this seems like a good starting point"*). Yes — it is the "one freeform
+  window" branch of `DESIGN-mimic-3.0-overlay-builder.md` §5.3, and timers are the simplest part to pilot
+  it with. Options, costs as build / maintenance / runtime / change:
+  - **A. Freeform timers canvas (3.0 pilot):** one transparent click-through window per monitor; the
+    three groups in the picture (charm, callouts, debuff timers) are panels placed and sized inside it,
+    and any group or single timer can be pulled into its own panel later. Dragging moves an element, not
+    an OS window, so the EQ-focus drag fight (the CH chain's) cannot happen. Build 3–4 sessions;
+    maintenance medium (per-part hit-testing, per-resolution layouts); runtime one surface, but a
+    screen-sized transparent layer over EQ that must be measured on a raid machine first; change low —
+    it becomes the 3.0 engine.
+  - **B. Split windows now (EQLogParser's shape):** timers leave the trigger overlay for their own
+    window, and more timer windows can be made, each trigger assigned to one. Build 1–2 sessions;
+    maintenance medium (every window owes the parity checklist); runtime a renderer per window; change
+    medium — throwaway once A exists.
+  - Recommendation: A, scoped to timers, behind beta.
 
 
 
