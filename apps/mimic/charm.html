@@ -51,10 +51,15 @@
   /* Inline "remove" button next to the BROKE badge — bigger target than the
      ✕ corner dismiss for clearing stale broken-charm cards after a mez break
      or a botched cycle. Reuses the same data-dismiss path via class="dismiss". */
-  .charm .remove-broken{margin-left:6px;font-size:9px;padding:1px 6px;border-radius:3px;
-    background:#3d1d1d;color:#fca5a5;border:1px solid #5a2a2a;cursor:pointer;
-    font-family:inherit;letter-spacing:0.5px;text-transform:uppercase;line-height:1.3}
-  .charm .remove-broken:hover{background:#5a2a2a;color:#fff;border-color:#f87171}
+  /* It also carries .dismiss (for the shared click path), which made it inherit the corner ✕'s absolute
+     top-right spot, 14px box and 35% opacity — under the owner's name, near invisible on the red card
+     (the guild lead, 2026-09-29: "It's hard to read the REMOVE on the charm tracker"). The double class
+     outranks .charm .dismiss and puts it back inline, full strength. */
+  .charm .dismiss.remove-broken{position:static;width:auto;height:auto;opacity:1;display:inline-flex;
+    margin-left:6px;font-size:9px;padding:1px 6px;border-radius:3px;vertical-align:middle;
+    background:#2a0d0d;color:#ffd1d1;border:1px solid #f87171;cursor:pointer;
+    font-family:inherit;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;line-height:1.3}
+  .charm .dismiss.remove-broken:hover{background:#f85149;color:#fff;border-color:#fff}
   .tickbar{height:4px;background:rgba(255,255,255,0.14);border-radius:2px;overflow:hidden;margin-top:3px}
   .tickbar > div{height:100%;background:#a371f7;transition:width 100ms linear}
   /* Server tick + mob tick — two different 6s clocks, one row each (the guild
@@ -236,10 +241,14 @@
   if (warnAtEl) warnAtEl.addEventListener('change', function(){ try { localStorage.setItem('wpCharmWarnAt', warnAtEl.value || '0'); } catch (e) {} });
 
   function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
+  // No cancel() first: Chromium's speech engine may be one queue for every Mimic window, so a cancel
+  // here cuts off whatever the trigger overlay is saying. That became frequent once bard charms were
+  // tracked (agent 3.7.39) and a bard reported the trigger alerts' TTS "stopped working" the same
+  // evening (2026-09-29). A charm callout now waits its turn.
   function speak(text){
     if (_wpMutedNow()) return;
     try { if (!window.speechSynthesis) return; var u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.05; u.volume = 1; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); } catch (e) {}
+      u.rate = 1.05; u.volume = 1; window.speechSynthesis.speak(u); } catch (e) {}
   }
   function fmtElapsed(ms){ var s = Math.floor(ms/1000); var m = Math.floor(s/60); var r = s - m*60; return m + ':' + String(r).padStart(2,'0'); }
   // Elapsed-time red threshold — once a charm has been up this long, paint
