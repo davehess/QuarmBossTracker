@@ -21,6 +21,7 @@ export type MeCard = {
   header: React.ReactNode;   // always shown
   summary: React.ReactNode;  // buffs/zone — shown when collapsed
   details: React.ReactNode;  // full panel grid — shown when expanded
+  recent: boolean;           // touched in the last 3 months; the rest sit in a collapsed "more"
 };
 
 type Prefs = { order: string[]; hidden: string[]; collapsed: string[] };
@@ -154,7 +155,22 @@ export default function MeCharacterCards({ items, storageKey }: { items: MeCard[
         </div>
       )}
 
-      {visible.map(name => {
+      {visible.filter(n => byName.get(n)!.recent).map(renderCard)}
+
+      {visible.some(n => !byName.get(n)!.recent) && (
+        <details className="bg-panel/40 border border-border/60 rounded-lg">
+          <summary className="cursor-pointer select-none px-4 py-2 text-xs text-dim hover:text-text">
+            {visible.filter(n => !byName.get(n)!.recent).length} more · not played in 3 months
+          </summary>
+          <div className="space-y-4 p-2">
+            {visible.filter(n => !byName.get(n)!.recent).map(renderCard)}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+
+  function renderCard(name: string) {
         const card = byName.get(name)!;
         const isCollapsed = collapsed.has(name);
         return (
@@ -191,7 +207,5 @@ export default function MeCharacterCards({ items, storageKey }: { items: MeCard[
             </div>
           </section>
         );
-      })}
-    </div>
-  );
+  }
 }

@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'me-recent-characters-2026-09-29',
+    title: 'Web 1.8.54',
+    version: 'Web 1.8.54',
+    date: '2026-09-29',
+    headline: '/me shows the characters you played in the last 3 months first; the rest fold into a “more” section.',
+    features: [
+      {
+        name: 'Recent characters first',
+        blurb: 'Your character cards and the Mimic sync list show only characters with an upload in the last 3 months. Older ones, and ones that never uploaded, sit in a collapsed section you can open.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-planner-mains-alts-2026-09-29',
     title: 'Web 1.8.50–1.8.53',
     version: 'Web 1.8.53',
