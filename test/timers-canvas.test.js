@@ -210,8 +210,8 @@ describe('Mimic wiring (the overlay checklist)', () => {
     expect(sliceBlock(m, 'function createCanvasWindow() {', '\n}')).toContain('nodeIntegrationInSubFrames: true');
     const save = sliceBlock(m, "ipcMain.handle('canvas-save', (e, layout) => {", '\n});');
     expect(save).toMatch(/BrowserWindow\.fromWebContents\(e\.sender\) !== canvasWindow\) return false;/);
-    expect(save).toMatch(/layout\.panels\.length > 16\) return false;/);
-    expect(save).toMatch(/json\.length > 32_000\) return false;/);
+    expect(save).toMatch(/layout\.panels\.length > 40\) return false;/);
+    expect(save).toMatch(/json\.length > 64_000\) return false;/);
   });
   // The guild lead, 2026-09-29: "they do not have a move button on them which
   // should be there at all times". The ✥ is the one part of a locked panel
@@ -298,7 +298,7 @@ describe('🧪 test rows, and a settings view that stays on screen', () => {
 describe('tray ↔ dashboard parity', () => {
   it('the tray has the switch and Arrange; the dashboard has the row and Arrange, on the same internals', () => {
     const m = stripJs(main);
-    expect(m).toMatch(/label: 'Timers canvas \(place callouts \+ timer panels anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
+    expect(m).toMatch(/label: 'Timers canvas \(callouts, timers and any overlay, placed anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
     expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_setCanvasArrange\(!_canvasArrange\);/);
     expect(dash).toMatch(/\['canvas',\s+'Timers canvas',\s+'<button type="button" class="wp-ov-act" data-act="canvasArrange"/);
     expect(stripJs(dash)).toMatch(/if \(a === 'canvasArrange' && window\.mimic\.canvasEdit\) \{\s*window\.mimic\.canvasEdit\(true\)/);

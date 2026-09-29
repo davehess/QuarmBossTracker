@@ -24,13 +24,24 @@
 
      Layout: one per screen resolution, positions as fractions of the screen
      and sizes in px — the ini rule EQ uses, so a new resolution keeps the
-     arrangement's shape. */
+     arrangement's shape.
+
+     Overlay panels (Mimic 3.0 alpha; the guild lead, 2026-09-29: "the next
+     version of alpha [should] have all of the data elements from the current
+     overlays … as they are today, no new modalities"): any overlay's own page
+     as a panel, the way the dock hosts it — the builder plan's "compat part".
+     While it is here it has no window of its own (main.js _canvasHostedKeys);
+     Remove hands it back. Its size is the panel; its text size scales the
+     whole page. The different views come later, one overlay at a time. */
   html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,"Cascadia Code",Consolas,Menlo,monospace;color:#c9d1d9;user-select:none}
   #panels{position:fixed;inset:0}
   .panel{position:absolute;box-sizing:border-box}
   .panel > iframe{position:absolute;inset:0;width:100%;height:100%;border:0;
     background:transparent;display:block}
+  /* An overlay page keeps its own layout at its own size and is scaled as a
+     whole (place() sets the width/height to the panel ÷ scale). */
+  .panel.ov > iframe{inset:auto;left:0;top:0;transform-origin:0 0}
   /* A hidden panel keeps its page (a callouts panel is where a pinned callout
      lives); it is only invisible. */
   .panel.off{visibility:hidden}
@@ -122,8 +133,9 @@
   <div id="shield" data-wp-interact></div>
   <div id="bar" data-wp-interact>
     <b>🧩 Timers canvas</b>
-    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · Shift while dragging: no snapping</span>
+    <span class="dim">drag a panel · stretch it from ◢ · ⚙ picks what it shows · ＋ Overlay brings any overlay in · Shift while dragging: no snapping</span>
     <button class="btn" id="addBtn" title="A new panel for some of the countdowns">＋ Timers panel</button>
+    <button class="btn" id="ovBtn" title="Put any overlay on the canvas, as it is today">＋ Overlay</button>
     <button class="btn" id="screenBtn" title="Move the canvas to your next screen">⇆ Next screen</button>
     <button class="btn" id="resetBtn" title="Put the three starting panels back where they began">↺ Reset</button>
     <button class="btn" id="hideBtn" title="Turn the canvas off — the trigger overlay shows its timers and callouts again">✕ Turn off</button>
@@ -145,7 +157,17 @@
     ['tick',    'Server tick',        ''],
     ['loot',    'Loot bids',          ''],
   ];
-  var MAX_PANELS = 12;
+  var MAX_PANELS = 32;
+
+  // Every overlay the canvas can host, from main (canvas-state): key, label,
+  // the page to load, and where its own window is right now.
+  var _overlays = [];
+  function ovEntry(key) { for (var i = 0; i < _overlays.length; i++) if (_overlays[i].key === key) return _overlays[i]; return null; }
+  function ovSrc(key) {
+    var o = ovEntry(key);
+    if (!o || !o.src) return null;
+    return o.src + (o.src.indexOf('?') >= 0 ? '&' : '?') + 'wpcanvas=1';
+  }
 
   function defaultLayout() {
     return { panels: [
@@ -171,9 +193,25 @@
     var src = (layout && Array.isArray(layout.panels)) ? layout.panels : null;
     if (!src) return null;
     var out = [], seen = {}, haveCallouts = false, haveAll = false;
+    var seenKey = {};
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
       var p = src[i];
       if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
+      // An overlay's page, once each: two copies would be the same page twice.
+      if (p.kind === 'overlay') {
+        var key = String(p.key || '');
+        if (!/^[A-Za-z]{2,16}$/.test(key) || seenKey[key]) continue;
+        seen[p.id] = true; seenKey[key] = true;
+        out.push({
+          id: p.id.slice(0, 24), kind: 'overlay', key: key,
+          name: String(p.name || key).slice(0, 24),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 80, 4000, 320), h: num(p.h, 36, 3000, 240),
+          scale: num(p.scale, 0.5, 2.5, 1),
+          off: !!p.off,
+        });
+        continue;
+      }
       var kind = p.kind === 'callouts' ? 'callouts' : 'timers';
       if (kind === 'callouts' && haveCallouts) continue;
       var all = kind === 'timers' && !!p.all && !haveAll;
@@ -235,6 +273,7 @@
   var _bgAlpha = null;
 
   function claimText(p) {
+    if (p.kind === 'overlay') return 'the overlay, as it is';
     if (p.kind === 'callouts') return 'what the voice says';
     if (p.all) return 'everything else';
     var parts = [];
@@ -254,7 +293,8 @@
       + '<span class="ctl x" role="button"></span>';
     var fr = document.createElement('iframe');
     fr.setAttribute('scrolling', 'no');
-    fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
+    if (p.kind === 'overlay') root.classList.add('ov');
+    else fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
     var grip = document.createElement('span');
     grip.className = 'grip';
     grip.textContent = '◢';
@@ -292,8 +332,10 @@
     try {
       var doc = e.frame.contentDocument;
       if (!doc || !doc.body) return;
-      doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       if (_bgAlpha != null) doc.documentElement.style.setProperty('--bg-alpha', String(_bgAlpha));
+      // An overlay's page is left as it is; it is scaled from outside (place).
+      if (p.kind === 'overlay') return;
+      doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
       doc.body.classList.toggle('part-edit', _edit);
       var w = e.frame.contentWindow;
@@ -310,6 +352,16 @@
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
     e.root.classList.toggle('mvin', x < 18);
+    sizeFrame(e, p, w, h);
+  }
+  // An overlay page lays out at the panel's size ÷ its scale, then is scaled
+  // back up, so A+ makes the whole overlay bigger the way its window zoom did.
+  function sizeFrame(e, p, w, h) {
+    if (p.kind !== 'overlay') return;
+    var s = p.scale || 1;
+    e.frame.style.width = Math.round(w / s) + 'px';
+    e.frame.style.height = Math.round(h / s) + 'px';
+    e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
   }
 
   function render() {
@@ -317,6 +369,12 @@
     _layout.panels.forEach(function (p) {
       keep[p.id] = true;
       var e = _els[p.id] || (_els[p.id] = build(p));
+      // A hidden overlay panel unloads its page, so it stops polling; showing
+      // it again loads it fresh.
+      if (p.kind === 'overlay') {
+        var want = p.off ? 'about:blank' : (ovSrc(p.key) || 'about:blank');
+        if (e.src !== want) { e.src = want; e.frame.setAttribute('src', want); }
+      }
       place(e, p);
       e.root.classList.toggle('off', !!p.off);
       if (_edit) e.root.setAttribute('data-wp-interact', ''); else e.root.removeAttribute('data-wp-interact');
@@ -405,9 +463,11 @@
       e.root.classList.toggle('mvin', x < 18);
       d.x = x; d.y = y;
     } else {
-      var w = Math.max(120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
+      var dp = panelById(d.id);
+      var w = Math.max((dp && dp.kind === 'overlay') ? 80 : 120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
       var h = Math.max(36, Math.min(H - d.y0, d.h0 + ev.clientY - d.sy));
       e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
+      if (dp) sizeFrame(e, dp, w, h);
       d.w = w; d.h = h;
     }
   });
@@ -451,7 +511,11 @@
     _menuFor = id;
     var h = '<div class="mh">' + esc(p.name) + '</div>';
     h += '<div class="row"><input type="text" id="mName" maxlength="24" value="' + esc(p.name) + '" placeholder="panel name"></div>';
-    if (p.kind === 'callouts') {
+    if (p.kind === 'overlay') {
+      var o = ovEntry(p.key);
+      h += '<div class="note">' + esc(o ? o.label : p.key) + ' as it is today: the same page, its own buttons and tabs. '
+        + 'While it is on the canvas it has no window of its own.</div>';
+    } else if (p.kind === 'callouts') {
       h += '<div class="note">The text of every callout, where you want to read it. The voice is unchanged.</div>';
     } else if (p.all) {
       h += '<div class="note">Every countdown no other panel claims lands here, so nothing goes missing.</div>';
@@ -473,18 +537,21 @@
         + '<button class="btn' + (p.anchor !== 'top' ? ' on' : '') + '" data-anchor="bottom">↑ grows up</button>'
         + '<button class="btn' + (p.anchor === 'top' ? ' on' : '') + '" data-anchor="top">↓ grows down</button></div>';
     }
-    h += '<div class="sec">Text size</div><div class="row">'
+    h += '<div class="sec">' + (p.kind === 'overlay' ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
-    h += '<div class="row" style="margin-top:8px">'
-      + (p.kind === 'callouts'
-        ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
-        : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
-          + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
-      + '</div>';
+    if (p.kind !== 'overlay') {
+      h += '<div class="row" style="margin-top:8px">'
+        + (p.kind === 'callouts'
+          ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
+          : '<button class="btn' + (_isTesting(p.id) ? ' on' : '') + '" data-test title="A sample of every kind of countdown this panel shows, for 30 seconds">'
+            + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
+        + '</div>';
+    }
     h += '<div class="row">'
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
+      + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
       + '</div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
@@ -537,7 +604,70 @@
     if (p.names.indexOf(n) < 0 && p.names.length < 20) p.names.push(n);
   }
 
+  // ── ＋ Overlay ───────────────────────────────────────────────────────────────
+  // Any overlay not on the canvas yet, one click each; or every overlay that
+  // is on screen right now (its own window or a Dock pane) in one go, each
+  // where its window was, at its size and zoom. main then closes those
+  // windows (the page runs here now) and takes them out of the Dock.
+  var PICKER = '__picker';
+  function openPicker(anchor) {
+    _menuFor = PICKER;
+    var on = {};
+    _layout.panels.forEach(function (q) { if (q.kind === 'overlay') on[q.key] = true; });
+    var free = _overlays.filter(function (o) { return !on[o.key]; });
+    var showing = free.filter(function (o) { return o.showing || o.docked; });
+    var h = '<div class="mh">＋ Overlay</div>'
+      + '<div class="note">Any overlay as it is today: the same page, its own buttons and tabs. '
+      + 'It leaves its own window (or the Dock) while it is here; Remove in its ⚙ gives it back.</div>';
+    if (showing.length) {
+      h += '<div class="row" style="margin-top:6px"><button class="btn go" data-bringall>⇲ Bring in the '
+        + showing.length + ' on screen now</button></div>';
+    }
+    h += '<div class="sec">Add one</div><div class="chips">';
+    free.forEach(function (o) {
+      h += '<span class="chip add" data-ov="' + esc(o.key) + '">＋ ' + esc(o.label)
+        + (o.showing ? ' <span class="dim">· on screen</span>' : o.docked ? ' <span class="dim">· in the Dock</span>' : '') + '</span>';
+    });
+    if (!free.length) h += '<span class="dim">' + (_overlays.length ? 'every overlay is on the canvas' : 'still loading…') + '</span>';
+    h += '</div>';
+    menuEl.innerHTML = h;
+    menuEl.classList.add('show');
+    _menuAnchor = anchor;
+    placeMenu();
+  }
+  function addOverlay(o, n) {
+    if (!o || _layout.panels.length >= MAX_PANELS) return null;
+    for (var k = 0; k < _layout.panels.length; k++) {
+      if (_layout.panels[k].kind === 'overlay' && _layout.panels[k].key === o.key) return null;
+    }
+    var at = o.at || null, here = !!(at && at.x != null && at.y != null);
+    var step = Math.min(0.5, 0.03 * (n || 0));
+    var p = { id: ('o' + o.key.slice(0, 12) + Date.now().toString(36).slice(-5) + (n || 0)).slice(0, 24),
+      kind: 'overlay', key: o.key, name: String(o.label || o.key).slice(0, 24),
+      x: here ? num(at.x, 0, 1, 0.3) : 0.25 + step, y: here ? num(at.y, 0, 1, 0.3) : 0.2 + step,
+      w: num((at && at.w) || o.w, 80, 4000, 320), h: num((at && at.h) || o.h, 36, 3000, 240),
+      scale: num((at && at.zoom) || 1, 0.5, 2.5, 1), off: false };
+    _layout.panels.push(p);
+    return p;
+  }
+  function pickerClick(t) {
+    var chip = t.closest('.chip');
+    if (t.hasAttribute('data-bringall')) {
+      var n = 0;
+      _overlays.forEach(function (o) { if ((o.showing || o.docked) && addOverlay(o, n)) n++; });
+    } else if (chip && chip.hasAttribute('data-ov')) {
+      var n2 = 0;
+      _layout.panels.forEach(function (q) { if (q.kind === 'overlay') n2++; });
+      addOverlay(ovEntry(chip.getAttribute('data-ov')), n2);
+    } else return;
+    save(); render(); closeMenu();
+    // Where each overlay's window is has just changed (they close as panels
+    // take over); read the list again for the next ＋.
+    setTimeout(refresh, 600);
+  }
+
   menuEl.addEventListener('click', function (ev) {
+    if (_menuFor === PICKER) { pickerClick(ev.target); return; }
     var p = panelById(_menuFor);
     if (!p) return;
     var t = ev.target;
@@ -555,7 +685,7 @@
     else if (chip && chip.hasAttribute('data-add')) { claimName(p, chip.getAttribute('data-add')); }
     else if (t.id === 'mAddBtn') { var inp = document.getElementById('mAdd'); if (inp) claimName(p, inp.value); }
     else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
-    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), 0.6, 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), p.kind === 'overlay' ? 0.5 : 0.6, 2.5, 1) * 10) / 10; }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) {
       _layout.panels = _layout.panels.filter(function (q) { return q !== p; });
@@ -598,6 +728,11 @@
     save(); render();
     openMenu(p.id, _els[p.id].root);
   });
+  var ovBtn = document.getElementById('ovBtn');
+  ovBtn.addEventListener('click', function () {
+    if (_menuFor === PICKER) { closeMenu(); return; }
+    openPicker(ovBtn);
+  });
   var screenBtn = document.getElementById('screenBtn');
   screenBtn.addEventListener('click', function () {
     try { if (M.canvasNextDisplay) M.canvasNextDisplay().then(loadState); } catch (e) {}
@@ -629,6 +764,7 @@
   // ── State from main ─────────────────────────────────────────────────────────
   function loadState(st) {
     if (!st) return;
+    if (Array.isArray(st.overlays)) _overlays = st.overlays;
     var fresh = !st.layout;
     if (st.res !== _res || !_res) {
       _res = st.res;

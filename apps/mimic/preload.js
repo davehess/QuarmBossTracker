@@ -24,6 +24,25 @@ const WP_IS_DOCKED = (() => {
   try { return window.top !== window.self; } catch { return false; }
 })();
 
+// A pane on the Timers canvas (Mimic 3.0 alpha) is docked in every sense above,
+// and one more: the canvas gives each panel its own ✥, its size and its hide,
+// so the overlay's own corner ✥/✕ and its setup bar step aside — dragging the
+// page's own ✥ would try to move the screen-sized canvas window. The canvas
+// marks its panes with ?wpcanvas=1 (no overlay reads its own query string).
+const WP_IN_CANVAS = WP_IS_DOCKED && (() => {
+  try { return /[?&]wpcanvas=1(&|$)/.test(String(window.location.search || '')); } catch { return false; }
+})();
+if (WP_IN_CANVAS) {
+  document.addEventListener('DOMContentLoaded', function () {
+    try {
+      const st = document.createElement('style');
+      st.textContent = '#move-btn,#hide-btn,#drag-controls,#setupbar{display:none!important}';
+      document.head.appendChild(st);
+      document.body.classList.add('wp-in-canvas');
+    } catch (e) { /* page without a head — nothing to hide */ }
+  });
+}
+
 // A pane's identity is the file it was loaded from — the dock points each
 // iframe at that overlay's own .html.
 function _wpDockKey() {

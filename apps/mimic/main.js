@@ -2354,6 +2354,8 @@ function _pollBlindState() {
         applyPetsVisibility();
         applyTriggerVisibility();
         applyMeVisibility();
+        // One that lives on the Timers canvas shows there, not twice.
+        _reapDisabledOverlays();
       } else if (!nowOn && _blindActive) {
         _blindActive = false;
         appendAgentLog(`[blind] leaving blind mode (was ${_blindSource})\n`);
@@ -6348,6 +6350,45 @@ const _DOCK_CATALOG = [
 // resolves the same way the window does (see _dockStatePayload), so a docked
 // Command Center is never a silently stale copy.
 
+// ── Overlays on the Timers canvas (Mimic 3.0 alpha) ──────────────────────────
+// The guild lead, 2026-09-29: "the next version of alpha [should] have all of the
+// data elements from the current overlays. each current overlay's data
+// elements can come in as they are today". Each overlay's own page becomes a
+// canvas panel exactly as the dock hosts it (the builder plan's "compat part"),
+// plus the HUD ring, which a grid cell could not hold but a free screen can.
+// w/h are the overlay windows' own default sizes.
+const _CANVAS_CATALOG = _DOCK_CATALOG.map(c => Object.assign({}, c)).concat([
+  { key: 'me', label: 'HUD', file: 'me.html', flag: 'showMe' },
+]);
+const _CANVAS_SIZES = { hud: [320, 220], chchain: [280, 240], tank: [300, 280], buffQueue: [330, 260],
+  mobinfo: [320, 200], charm: [300, 180], pets: [300, 160], who: [320, 280], melody: [280, 180],
+  threat: [320, 200], exttarget: [320, 240], zeal: [280, 220], popraid: [440, 540], command: [320, 360],
+  me: [330, 300] };
+function _canvasSpec(key) { return _CANVAS_CATALOG.find(c => c.key === key) || null; }
+// Which overlays live on the canvas right now. Like a docked overlay, a hosted
+// one has no window of its own — its page runs in the canvas instead — so
+// _overlayWanted() says no and the reaper frees any window it had. A hidden
+// panel still hosts (hiding it on the canvas must not pop its window back);
+// "Remove" hands the overlay back. Only while the canvas is on: turn the
+// canvas off and every overlay's own switch decides again.
+function _canvasHostedKeys(cfg) {
+  if (!cfg || !cfg.showCanvas) return [];
+  const all = (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {};
+  let res = null;
+  try {
+    if (canvasWindow && !canvasWindow.isDestroyed()) {
+      const b = screen.getDisplayMatching(canvasWindow.getBounds()).bounds;
+      res = b.width + 'x' + b.height;
+    }
+  } catch { /* mid-close */ }
+  const layout = (res && all[res]) || all[cfg.canvasLastRes];
+  const out = [];
+  for (const p of (layout && Array.isArray(layout.panels)) ? layout.panels : []) {
+    if (p && p.kind === 'overlay' && _canvasSpec(p.key) && !out.includes(p.key)) out.push(p.key);
+  }
+  return out;
+}
+
 // Accepts a catalog key OR a page filename, because a pane's own ✕ knows only
 // the file it was loaded from (see _wpDockKey in preload.js) while the dock's
 // picker sends keys.
@@ -6451,6 +6492,8 @@ function _overlayWanted(cfg, e) {
     return !!cfg.showCanvas && (setupMode || cfg.overlaysLocked === false || _canvasArrange
       || (!cfg.hideOverlays && _eqGateOk(cfg)));
   }
+  // An overlay living on the canvas shows there, never also as its own window.
+  if (_canvasHostedKeys(cfg).includes(e.key)) return false;
   if (_overlayForcedOn(cfg, e)) return true;
   if (!cfg[e.flag]) return false;
   if (e.key === 'trigger') return true;
@@ -7285,7 +7328,7 @@ function buildTrayMenu() {
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
-    { label: 'Timers canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
+    { label: 'Timers canvas (callouts, timers and any overlay, placed anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
         _toggleOverlay('canvas');
         buildTrayMenu();
       } },
@@ -7998,6 +8041,9 @@ function scheduleAgentUpdates() {
 ipcMain.handle('overlay-drag-start', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
+    // An overlay page on the Timers canvas moves its panel, never the
+    // screen-sized canvas window (its own ✥ is hidden there; this is the backstop).
+    if (win && win === canvasWindow) return false;
     if (win) win.__wpPreMenuBounds = null;   // drag supersedes the menu-grow stash
     _startWindowDrag(win, _boundsKeyForWindow(win));
   } catch {}
@@ -8733,20 +8779,69 @@ ipcMain.handle('wp-mini-all', () => { try { toggleMinimizeAllOverlays(); return 
 // overlay we just close the window. The user re-enables named overlays from
 // the tray "Overlays" submenu.
 // ── Timers canvas IPC ───────────────────────────────────────────────────────
-ipcMain.handle('canvas-state', () => _canvasStatePayload());
+// Every overlay the canvas can host, and where its own window is right now —
+// as fractions of the canvas's screen, with its size and zoom — so "bring in
+// what's on screen" puts each panel where the window was. A window on another
+// screen, or a docked pane, has no spot here (at.x null) and is placed in a row.
+function _canvasOverlayList() {
+  const cfg = loadConfig();
+  let B;
+  try { B = ((canvasWindow && !canvasWindow.isDestroyed()) ? screen.getDisplayMatching(canvasWindow.getBounds()) : _canvasDisplay()).bounds; }
+  catch { B = screen.getPrimaryDisplay().bounds; }
+  const docked = _dockedKeys(cfg);
+  return _CANVAS_CATALOG.map(c => {
+    const e = _OVERLAY_WINDOWS.find(o => o.key === c.key);
+    const win = e && e.get();
+    let at = null;
+    try {
+      if (win && !win.isDestroyed() && win.isVisible()) {
+        const b = win.getBounds();
+        const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+        const here = cx >= B.x && cx < B.x + B.width && cy >= B.y && cy < B.y + B.height;
+        at = { x: here ? (b.x - B.x) / B.width : null, y: here ? (b.y - B.y) / B.height : null,
+          w: b.width, h: b.height, zoom: win.webContents.getZoomFactor() || 1 };
+      }
+    } catch { /* mid-close */ }
+    const size = _CANVAS_SIZES[c.key] || [320, 240];
+    return { key: c.key, label: c.label,
+      src: (c.agentPath && agentPort) ? `http://127.0.0.1:${agentPort}${c.agentPath}` : c.file,
+      showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1] };
+  });
+}
+ipcMain.handle('canvas-state', () => Object.assign(_canvasStatePayload(), { overlays: _canvasOverlayList() }));
 // Only the canvas itself saves its layout, keyed by the resolution it is on.
-// Bounded: a layout is a dozen small panels, never a blob.
+// Bounded: a layout is a few dozen small panels, never a blob.
 ipcMain.handle('canvas-save', (e, layout) => {
   if (!canvasWindow || canvasWindow.isDestroyed() || BrowserWindow.fromWebContents(e.sender) !== canvasWindow) return false;
-  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 16) return false;
+  if (!layout || !Array.isArray(layout.panels) || layout.panels.length > 40) return false;
   let json;
   try { json = JSON.stringify(layout); } catch { return false; }
-  if (json.length > 32_000) return false;
+  if (json.length > 64_000) return false;
   const res = _canvasStatePayload().res;
   const cfg = loadConfig();
+  const before = _canvasHostedKeys(cfg);
   cfg.canvasLayouts = Object.assign({}, (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? cfg.canvasLayouts : {}, { [res]: JSON.parse(json) });
   cfg.canvasLastRes = res;
+  const after = _canvasHostedKeys(cfg);
+  // An overlay newly on the canvas: its own switch goes on, so removing the
+  // panel later gives it its window back visible (undocking's rule), and it
+  // leaves the Dock — one copy of each page.
+  const added = after.filter(k => !before.includes(k));
+  if (added.length) {
+    const docked = _dockedKeys(cfg);
+    cfg.dockedPrev = (cfg.dockedPrev && typeof cfg.dockedPrev === 'object') ? cfg.dockedPrev : {};
+    for (const k of added) {
+      const spec = _canvasSpec(k);
+      if (spec) cfg[spec.flag] = true;
+      if (docked.includes(k)) { cfg.dockedOverlays = _dockedKeys(cfg).filter(d => d !== k); delete cfg.dockedPrev[k]; }
+    }
+  }
   saveConfig(cfg);
+  if (added.length || before.some(k => !after.includes(k))) {
+    try { applyAllVisibility(); } catch { /* */ }
+    try { buildTrayMenu(); } catch { /* */ }
+    pushStatus();
+  }
   return true;
 });
 ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
@@ -9508,6 +9603,8 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showMe           && !meWindow)        createMeOverlay();
   } catch (e) { void e; }
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
+  // An overlay living on the Timers canvas must not also open as a window.
+  try { _reapDisabledOverlays(); } catch { /* never break a save */ }
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.

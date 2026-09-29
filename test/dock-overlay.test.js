@@ -26,7 +26,9 @@ const preload = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'preload.js'), 
 const dock    = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'dock.html'), 'utf8');
 
 // Pull the catalog out of main.js so the tests below run against the real list.
-const CATALOG = [...main.matchAll(
+// Only the dock's own list: the Timers canvas adds the HUD ring to a copy of it.
+const _dockList = main.slice(main.indexOf('const _DOCK_CATALOG = ['), main.indexOf('\n];', main.indexOf('const _DOCK_CATALOG = [')));
+const CATALOG = [..._dockList.matchAll(
   /\{ key: '([^']+)',\s*label: '([^']+)',\s*file: '([^']+)',\s*flag: '([^']+)'[\s\S]{0,80}?\}/g,
 )].map(m => ({ key: m[1], label: m[2], file: m[3], flag: m[4] }));
 
