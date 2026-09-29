@@ -749,7 +749,9 @@
           ? (t.random ? 'one of ' : '') + t.outputs.map(function(x){ return esc(x.name); }).join(', ')
           : '';
         if (t.exp) gets += (gets ? ' · ' : '') + 'exp';
-        var extra = _qWarnTags(t.warn, t.faction) + _qToggle('t' + i, t.says);
+        // A ProjectEQ hand-in Quarm's own script does not have (bot 3.1.171) may not work here.
+        var extra = (t.unverified ? ' <span class="qtag gate" title="From ProjectEQ\'s quest scripts. Quarm\'s own script for this NPC has no such hand-in, so it may not work here.">not in Quarm\'s script</span>' : '')
+                  + _qWarnTags(t.warn, t.faction) + _qToggle('t' + i, t.says);
         return '<div class="qrow">'
              + '<div class="qline"><span class="qlbl">give</span><span>' + ins + '</span></div>'
              + '<div class="qline"><span class="qlbl">get</span><span class="qget">' + (gets || '<span class="qzone">nothing listed</span>') + '</span></div>'

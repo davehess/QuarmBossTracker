@@ -1928,6 +1928,19 @@ function _gaugeOwnerIsBard(name) {
   const cls = _classOf(name);
   return cls ? /^bard$/i.test(cls) : false;
 }
+// A bard's charm that was not caught being cast (the pet was already charmed when it was seen, or
+// the song began outside the 12s window) still gets a real duration: the charm song in their twist,
+// else Solon's Bewitching Bravura. Without one the tracker showed "~" and kept its callouts quiet
+// ("charm breaking", "recharm now" are off on a guessed duration) — the guild lead, 2026-09-29:
+// "i did not get a recharm pet tts at 4 seconds left". Null for anyone who is not a bard.
+function _bardCharmSongFor(owner) {
+  if (!_gaugeOwnerIsBard(owner)) return null;
+  const st = _bardMelody.get(String(owner || '').toLowerCase());
+  const names = (st && Array.isArray(st.order)) ? st.order.map((o) => o && o.name).filter(Boolean) : [];
+  const song = names.find((n) => CHARM_SPELLS.has(String(n).toLowerCase())) || "Solon's Bewitching Bravura";
+  const ci = CHARM_SPELLS.get(String(song).toLowerCase());
+  return ci ? { charm_class: ci.cls, duration_sec: ci.dur, charm_spell_name: song } : null;
+}
 function _reconcileGaugeCharms() {
   const now = Date.now();
   const gaugeOwners = new Set();              // ownerLower currently streaming a gauge
@@ -1976,7 +1989,7 @@ function _reconcileGaugeCharms() {
       if (firstSeen == null) {
         pendingByOwner.set(k, now);
       } else if ((now - firstSeen) >= GAUGE_CHARM_DEBOUNCE_MS) {
-        const pc = _consumePendingCharmSpell(ch, now) || {};     // attach spell duration/class if just cast
+        const pc = _consumePendingCharmSpell(ch, now) || _bardCharmSongFor(ch) || {};   // attach spell duration/class
         _bumpCharmTick(name, ch, 'land', firstSeen, pc);         // gauge-sourced land, anchor to first sighting
         pendingByOwner.delete(k);
       }
@@ -33743,6 +33756,14 @@ let _itemClickyByNameLower = new Map();
 let _itemClickyMeta = null;
 const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
 
+// A spell's name from its id, for the clicky catalog's clickeffect. A scan: clicks are rare.
+function _spellNameById(id) {
+  const n = Number(id);
+  if (!(n > 0)) return null;
+  for (const e of _spellByNameLower.values()) if (e && Number(e.id) === n) return e.name || null;
+  return null;
+}
+
 // Pending clicky cast — set when we see "Your <item> begins to glow."
 // in the log. When Zeal label 134 transitions within CLICKY_WINDOW_MS,
 // the resulting cast inherits the item's cast time. Cleared after use
@@ -42482,6 +42503,15 @@ async function main() {
             if (b.character) {
               _pendingClickies.set(b.character.toLowerCase(),
                 { itemName, castMs, atMs: Date.now() });
+            }
+            // A clicky logs no "You begin casting", so what it lands had nothing to match: SoW from
+            // a Blood Orchid Katana onto a charmed pet stayed an untimed "SOW (?)" (the guild lead,
+            // 2026-09-29: "I SOWed my pet using my sow sword clicky and it did not register").
+            // Record the item's spell the way that line would.
+            const clickSpell = (b.character && cat && cat.clickeffect) ? _spellNameById(cat.clickeffect) : null;
+            if (clickSpell) {
+              const stamp = /^\[[^\]]+\]/.exec(line);
+              try { noteSelfCast((stamp ? stamp[0] : '[]') + ' You begin casting ' + clickSpell + '.', b.character); } catch (e) { void e; }
             }
           }
         }

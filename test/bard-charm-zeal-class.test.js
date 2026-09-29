@@ -14,6 +14,8 @@
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { createRequire } from 'node:module';
+import path from 'node:path';
+import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
 
 let agent;
 beforeAll(() => { agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index.js'); });
@@ -40,6 +42,14 @@ describe('the owner\'s class from Zeal', () => {
     expect(c.owner).toBe('Nyssara');
   });
 
+  it('with no cast caught, the bard\'s charm still gets a real duration, so the callouts speak', () => {
+    // A "~" estimate mutes "charm breaking" and "recharm pet" (the guild lead, 2026-09-29: "i did
+    // not get a recharm pet tts at 4 seconds left").
+    const c = holdPet('Nyssara', 'Bard', 'Dragen Faux');
+    expect(c.charm_class).toBe('bard');
+    expect(c.duration_sec).toBe(60);    // Solon's Bewitching Bravura
+  });
+
   it('a magician\'s proper-named pet is a summon, not a charm', () => {
     expect(holdPet('Zarrin', 'Magician', 'Kabober')).toBeUndefined();
   });
@@ -52,5 +62,27 @@ describe('the owner\'s class from Zeal', () => {
     agent._setZealStateForTest('Brackwyn', { gauges: [], charInfo: [{ id: 3, value: 'Bard' }] });
     expect(agent._classOf('brackwyn')).toBe('Bard');
     agent._setZealStateForTest('Brackwyn', null);
+  });
+});
+
+// The guild lead, 2026-09-29: "I SOWed my pet using my sow sword clicky and it did not register".
+// A clicky logs "Your Blood Orchid Katana begins to glow." and no "You begin casting", so the pet's
+// "… is surrounded by a brief lupine aura." (shared by five spells) had nothing to match.
+describe('a clicky records its spell as a cast', () => {
+  const src = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+
+  it('the item\'s spell is found by id in the spell catalog', () => {
+    // eslint-disable-next-line no-new-func
+    const _spellNameById = new Function('_spellByNameLower', sliceBlock(src, 'function _spellNameById(id) {', '\n}') + '\nreturn _spellNameById;')(
+      new Map([['spirit of wolf', { id: 278, name: 'Spirit of Wolf' }], ['pack spirit', { id: 169, name: 'Pack Spirit' }]]));
+    expect(_spellNameById(278)).toBe('Spirit of Wolf');
+    expect(_spellNameById(99999)).toBe(null);
+    expect(_spellNameById(0)).toBe(null);
+  });
+
+  it('the glow line feeds noteSelfCast the way "You begin casting" does', () => {
+    const block = stripJs(sliceBlock(src, "const m = line.match(/\\]\\s+Your\\s+(.+?)\\s+begins\\s+to\\s+(?:glow", '// ── Camp-out early handoff'));
+    expect(block).toMatch(/_spellNameById\(cat\.clickeffect\)/);
+    expect(block).toMatch(/noteSelfCast\([^;]*' You begin casting ' \+ clickSpell \+ '\.'/);
   });
 });
