@@ -42,9 +42,13 @@ describe('the Save layout button', () => {
     expect(api.look(null)).toEqual({ text: '✗ Not saved — no character yet', color: '#f85149' });
   });
 
-  it('the card render and the click both go through it', () => {
+  // Option C (2026-09-29): the button is the "Save current layout" tile in Your layouts, painted
+  // from Mimic status, so its click rides the delegated handler. The tile itself is run for real in
+  // test/overlays-tab-option-c.test.js.
+  it('the tile render and the click both go through it', () => {
     const code = stripJs(html);
-    expect(code).toMatch(/id="wpCharProfSave" data-char="[\s\S]{0,300}?_wpCpSaveLook\(cpChar\)\.color[\s\S]{0,200}?_wpCpSaveLook\(cpChar\)\.text/);
-    expect(code).toMatch(/Promise\.resolve\(window\.mimic\.charProfileSave\(\)\)\.then\(done/);
+    const tiles = stripJs(sliceBlock(html, 'function _wpOvLaysHtml(st, cfg, flagOf) {', '\n}\n'));
+    expect(tiles).toMatch(/var look = _wpCpSaveLook\(act \|\| null\);[\s\S]{0,200}?id="wpCharProfSave"[\s\S]{0,200}?look\.color[\s\S]{0,120}?look\.text/);
+    expect(code).toMatch(/closest\('\.wp-charprof-save'\)[\s\S]{0,700}?Promise\.resolve\(window\.mimic\.charProfileSave\(\)\)\.then\(done/);
   });
 });

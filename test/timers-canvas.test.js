@@ -300,8 +300,14 @@ describe('tray ↔ dashboard parity', () => {
     const m = stripJs(main);
     expect(m).toMatch(/label: 'Canvas \(place callouts \+ timer panels anywhere\)'[\s\S]{0,200}_toggleOverlay\('canvas'\);/);
     expect(m).toMatch(/'  ↳ Arrange the canvas…'[\s\S]{0,160}_setCanvasArrange\(!_canvasArrange\);/);
-    expect(dash).toMatch(/\['canvas',\s+'Timers canvas',\s+'<button type="button" class="wp-ov-act" data-act="canvasArrange"/);
-    expect(stripJs(dash)).toMatch(/if \(a === 'canvasArrange' && window\.mimic\.canvasEdit\) \{\s*window\.mimic\.canvasEdit\(true\)/);
+    // The dashboard calls it "Canvas" (the guild lead, 2026-09-29: "change the name of the Timer
+    // Canvas to Canvas"); its Arrange is the Overlays tab's "✏ Arrange on screen", which toggles like
+    // the tray item (a second press is Done).
+    expect(dash).toMatch(/\['canvas',\s+'Canvas',\s+'/);
+    const d = stripJs(dash);
+    expect(d).toMatch(/class="wp-ov-act wp-btn pri" data-act="canvasArrange" id="wpOvArrangeBtn"/);
+    expect(d).toMatch(/if \(a === 'canvasArrange' && window\.mimic\.canvasEdit\) \{\s*window\.mimic\.canvasEdit\(!act\.classList\.contains\('on'\)\)/);
+    expect(d).toMatch(/arBtn\.className = 'wp-ov-act wp-btn pri' \+ \(st\.canvasArrange \? ' on' : ''\);/);
   });
 });
 
