@@ -210,7 +210,8 @@ next touch one rather than assuming a missing row means a missing doc.
   as a player. §84.
 - **⏳ 🧲 Rescue brings back only what is lost (Mimic beta `1cd1d423`, 2026-09-29).** No more pile in one
   corner and no re-arrange: only overlays that cannot be reached move, each to its own spot; overlays on
-  another screen come only on a yes. §82. **Tightened (beta `a12d157c`, §89):** "lost" is now "cannot be
+  another screen come only on a yes. §82. **Right-click 🖥 Move to another screen (beta `f494f41c`, §90)**,
+  and a brought or lost overlay now lands even with no free spot. **Tightened (beta `a12d157c`, §89):** "lost" is now "cannot be
   seen" (middle off-screen or under half showing); a visible overlay with its ✥ past an edge is nudged, not
   relocated, so an arranged HUD ring is left alone.
 - **⏳ An update never installs while the Mimic window is open (Mimic beta `7c82aa0a`, 2026-09-29).** A
