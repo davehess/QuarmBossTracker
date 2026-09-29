@@ -181,6 +181,9 @@ build is 318,464 bytes (`/zeal version`: "eqgame.dll version: 7 (Jul 7 2026)").
   Info tab then shows the Zeal, `eqw.dll` and `eqgame.dll` builds per character.
   A healthy client shows `eqgame.dll version: 7 (Jul 7 2026 09:14:03)`. That
   reading stays on their machine; only the Zeal version reaches us.
+  Confirmed on the member's client after the fix (2026-09-29): Zeal `1.4.7
+  (e24a3ed)`, `eqw.dll` `1.0.2 (Mar 25 2026 21:49:01)`, `eqgame.dll` `7 (Jul 7
+  2026 09:14:03)`.
 - **How to spot it:** a shared crash report carries `system.files` with each
   game file's size, md5 and modified time. Compare `eqgame.dll` with other
   players' copies. A size nobody else has, or a modified time after the last
