@@ -18363,6 +18363,30 @@ async function _tuningBundleFor(tune) {
   return { version: _pollTuningVersion(payload), ...payload };
 }
 
+// A member, 2026-09-29 (FB-35): "This doesn't show pets? maybe its only if they
+// dont use /pet leader". Right: a summoned pet names its owner only when the pet
+// says "My leader is <Owner>" (summon, or /pet leader), so a client that missed
+// that line cannot tell the pet from a raider. The bot already pools every
+// declaration any raider's agent uploaded (addPetOwners); this hands the pool
+// back. Summoned names only — one word, no article: a charm pet is a mob whose
+// owner changes by the minute, and a warder names its owner in its own name.
+// Latest declaration wins; anything older than 12 h is dropped.
+function _petOwnersForAgents(now) {
+  const t = now || Date.now();
+  const out = {};
+  let map = {};
+  try { map = getPetOwners() || {}; } catch { /* empty */ }
+  for (const [pet, val] of Object.entries(map)) {
+    if (!pet || /\s/.test(pet)) continue;
+    const list = petOwnerEntries(val);
+    const last = list[list.length - 1];
+    if (!last || !last.o || /\s/.test(last.o)) continue;
+    if (last.at && t - last.at > 12 * 3600_000) continue;
+    out[pet.toLowerCase()] = last.o;
+  }
+  return { owners: out };
+}
+
 async function _handleAgentPoll(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -18412,6 +18436,11 @@ async function _handleAgentPoll(req, res) {
   }
   if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
     out.streams.ui_edits = await _uiPendingEditsFor(chars);
+  }
+  // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
+  // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
+  if (_pollStreamDecision('pet_owners', want, tune, null, null) === 'send') {
+    out.streams.pet_owners = _petOwnersForAgents();
   }
 
   // Control plane (#74) rides every poll — the dormancy/floor channel, fresh even
