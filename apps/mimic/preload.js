@@ -652,6 +652,10 @@ contextBridge.exposeInMainWorld('mimic', {
   hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
+  // ✨ Setup walkthrough (welcome.html, layout 'a' or 'b') and its relay for the two agent
+  // POSTs it makes: 'import' old logs, 'backfill' the main's log.
+  openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
+  welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
   // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
   // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
   captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),

@@ -7523,6 +7523,12 @@ function buildTrayMenu() {
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
       } },
     updateItem,
+    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
+    // as the dashboard Setup card's two buttons.
+    { label: '✨ Setup walkthrough', submenu: [
+        { label: 'A · one step at a time', click: () => openWelcome('a') },
+        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
+      ] },
     { label: 'Settings…', click: openSettings },
     { label: 'Quit Mimic', click: _quitMimic },
   ]);
@@ -9559,6 +9565,39 @@ ipcMain.handle('eq-setup-for-me', () => new Promise((resolve) => {
   req.on('error', (e) => resolve({ ok: false, message: 'Could not reach the engine: ' + (e && e.message || e) }));
   req.on('timeout', () => { req.destroy(); resolve({ ok: false, message: 'The engine did not respond in time.' }); });
   req.end();
+}));
+// The setup walkthrough (welcome.html, DECISIONS §93): open it in the main window as layout
+// a or b, and relay its two agent POSTs — a file:// page cannot read the agent's reply to a
+// POST, the same reason eq-setup-for-me exists. Only the two actions the page needs pass:
+// `import` (old logs, exactly the dashboard's importer) and `backfill` (the main's log).
+function openWelcome(v) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.loadFile('welcome.html', { query: { v: v === 'b' ? 'b' : 'a' } });
+  try { mainWindow.show(); mainWindow.focus(); } catch { /* */ }
+  return true;
+}
+ipcMain.handle('open-welcome', (_e, v) => openWelcome(v));
+ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => {
+  if (action !== 'import' && action !== 'backfill') return resolve({ ok: false, error: 'unsupported action' });
+  const list = (Array.isArray(paths) ? paths : []).filter(p => typeof p === 'string' && p && p.length <= 1024).slice(0, 200);
+  if (!list.length) return resolve({ ok: false, error: 'no paths' });
+  if (!agentPort) return resolve({ ok: false, error: 'The parser engine is not running yet.' });
+  const body = JSON.stringify({ action, paths: list });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: '/api/optin', method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 15000,
+  }, (res) => {
+    let buf = '';
+    res.on('data', (c) => { buf += c; });
+    res.on('end', () => {
+      try { const j = JSON.parse(buf); resolve({ ok: j.ok !== false, results: j.results || [] }); }
+      catch { resolve({ ok: res.statusCode === 200, results: [] }); }
+    });
+  });
+  req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+  req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'The engine did not respond in time.' }); });
+  appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
+  req.end(body);
 }));
 ipcMain.handle('relaunch-agent', async () => {
   appendAgentLog('[mimic] relaunch-agent requested by a renderer (Settings/Setup save)\n');
