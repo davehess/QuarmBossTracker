@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Mimic 3.0 alpha channel** | **Built 2026-09-29 (§81).** `alpha` branch = beta + builder work (synced automatically); builds replace one rolling release, `mimic-alpha`; opt in from the tray or the dashboard's α alpha. First alpha = today's beta, to prove the path | the guild lead: click α alpha, restart, check the header says ALPHA; then α again to leave. Sessions: builder work → `alpha`, agent parts → `beta` first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
+| **DPS HUD +pet breakdown** | **Beta `672ff15e` (agent 3.7.45) + bot 3.1.175 (§85).** Pet's share of the bar in pet orange, "+pet" in the same colour; click for name, damage, spawn id | the guild lead: on a pet class's row, check the orange end reads apart from the row colour (gold on your own row); click +pet. Say if orange should be purple |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
 | **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
@@ -4288,6 +4289,31 @@ Two member reports the same morning.
     folding generator-named pets on the bot side is a separate call (it would touch every parse card).
 - Tests: `per-character-triggers-and-pet-owners` (beta; the agent runs for real, every rule
   mutation-checked) and `pet-owners-stream` (main).
+
+### 85. DPS HUD +pet: the pet's share on the bar; click for name, damage, spawn id (2026-09-29, agent 3.7.45 beta `672ff15e`, bot 3.1.175)
+The guild lead: *"show the +pet on the DPS hud, then the color of the +pet and the section of the bar that
+is highlighted should match to distinguish how much was the player vs the pet, and if you click on +pet it
+should open a line below to show the pets name and damage and spawnid. we should be able to get this when
+someone does pet leader and has zeal tags on"*
+- **Built as asked, one design.** The request named the design, so there were no variants to offer.
+  The one open choice was the colour: the pet's end of the row bar and the "+pet" label are the
+  dashboard's pet orange `#f0883e`. The owner's part keeps its row colour: blue, red on the Tank tab,
+  gold on your row. If orange next to your gold reads too close in the 2 px bar, purple `#a371f7` is
+  the alternative.
+- **Click +pet** → a line per pet under the owner: name, damage, its share of the owner's number, and
+  the spawn id, or "spawn id unknown" with a tooltip. The locked HUD takes the mouse only over a +pet,
+  so the rest of the scoreboard stays click-through to EverQuest.
+- **Where the spawn id comes from — provable only, best first** (`_petSpawnIdFor`):
+  1. this machine runs the owner, and Zeal's pet gauge names that pet → Zeal's `pet_id` (1.4.6+);
+  2. a fresh Zeal `/tag` on the pet (the tag line carries the id);
+  3. one of this machine's characters has it targeted;
+  4. the owner's own Mimic uploaded (1) with the pet's damage, and the bot pooled it beside the
+     "My leader is" owner (bot 3.1.175: `addPetSpawnIds`, served as `ids` on the `pet_owners` poll,
+     one hour max, since an id lasts one zone and one summon).
+  So "when someone does pet leader and has Zeal" works through (1) and (4): the owner's Mimic knows the
+  id, and the declaration names the owner for everyone else. Otherwise the line says unknown; it never
+  guesses.
+- Tests: `dps-hud-pet-breakdown` (beta) and `pet-owners-stream` (main), each rule mutation-checked.
 
 
 

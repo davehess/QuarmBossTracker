@@ -242,6 +242,7 @@ const {
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners, petOwnerEntries,
+  addPetSpawnIds, getPetSpawnIds,
   mergeWhoData, applyKnownZekTips,
   clearAllPendingLoot,
   getAllLiveKills, clearLiveKill,
@@ -18384,7 +18385,18 @@ function _petOwnersForAgents(now) {
     if (last.at && t - last.at > 12 * 3600_000) continue;
     out[pet.toLowerCase()] = last.o;
   }
-  return { owners: out };
+  // …and each named pet's spawn id, when its owner's Mimic uploaded one within
+  // the hour (an id lasts one zone and one summon; every fight re-sends it).
+  // The DPS HUD shows it under +pet (the guild lead, 2026-09-29).
+  const ids = {};
+  let idMap = {};
+  try { idMap = getPetSpawnIds() || {}; } catch { /* empty */ }
+  for (const [pet, v] of Object.entries(idMap)) {
+    const k = pet.toLowerCase();
+    if (!out[k] || !v || !(Number(v.id) > 0) || !v.at || t - v.at > 3600_000) continue;
+    ids[k] = Number(v.id);
+  }
+  return { owners: out, ids };
 }
 
 async function _handleAgentPoll(req, res) {
@@ -19545,6 +19557,16 @@ async function _handleAgentUpload(req, res) {
   // from different characters. The persistent map is cleared at midnight.
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
+  // Each pet row may carry the spawn id the OWNER's Mimic read off its own Zeal
+  // (pet_id). Pooled beside the owner so every DPS HUD's +pet line can show it.
+  try {
+    const petIds = {};
+    for (const p of Array.isArray(encounter.pets) ? encounter.pets : []) {
+      const id = Number(p && p.spawn_id);
+      if (p && p.name && !/\s/.test(String(p.name)) && Number.isInteger(id) && id > 0) petIds[String(p.name).toLowerCase()] = id;
+    }
+    addPetSpawnIds(petIds);
+  } catch {}
   // Normalise petLeaders to { petNameLower: [{o, at}, …] } — timestamped
   // declarations (petOwnerEntries upgrades legacy string shapes with at:0).
   // Build by starting from state then layering in the upload's claims stamped
