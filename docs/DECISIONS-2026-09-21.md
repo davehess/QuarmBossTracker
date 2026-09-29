@@ -4460,20 +4460,26 @@ his crash report carried (`crash_reports.system.files`, hashed at upload, 12:35 
   the fleet and say "your eqgame.dll differs from everyone else's". The data to do that is already
   uploaded.
 
-**Cause, found by the guild lead with the member: the Intel graphics driver 31.0.101.2145.** From Intel's
-own driver assistant, install history: *"Intel 7th–10th Gen Processor Graphics — Windows"*, driver
-**31.0.101.2145**, released 2026-09-22, installed **2026-09-27 9:24 AM**; before it, 31.0.101.2141
-(2026-04-06). The guild lead: *"THE TOP ONE BROKE HIS SYSTEM"*.
-- **The ranking above was wrong.** I put the driver down as explaining only the in-game crashes and led
-  with `eqgame.dll`. The driver explains both: it went in the day before the first crash, the crash shows
-  the driver resetting, and "Failed to load the graphics DLL!" is where EQ's graphics setup lands. The
-  `eqgame.dll` difference is still unexplained, but it is no longer the lead.
-- **Fix:** roll the display driver back to 31.0.101.2141. Then keep 2145 from coming back: decline it in
-  Intel's assistant, and watch Windows Update's driver list. Recorded as a known field issue in
-  `docs/RUNBOOK-client-crash-triage.md` §3c, beside KB5124010.
-- **The rest of the guild:** crash reports carry the GPU driver only for players who share them. One other
-  player on Intel graphics has ever sent one (UHD 630, driver 2140, in August), so how many are on 2145 is
-  unknown.
+**Then the driver was blamed, and the driver fix did not work.** From Intel's own driver assistant, install
+history: *"Intel 7th–10th Gen Processor Graphics — Windows"*, driver **31.0.101.2145**, released 2026-09-22,
+installed **2026-09-27 9:24 AM**; before it, 31.0.101.2141 (2026-04-06). The guild lead: *"THE TOP ONE BROKE
+HIS SYSTEM"*. I switched the lead to the driver on that call. Installing 2141 then did not work.
+
+**Resolved: `eqgame.dll`.** The guild lead: *"He replaced the eqgame.dll FROM THE ORIGINAL takp and that got
+him working"*. So the first lead was right, and switching off it was the mistake.
+- **The likely sequence:** driver 2145 went in on 9/27. An in-game crash with driver resets followed on
+  9/28 at 6:39 PM ET. At 9:43 PM ET a different `eqgame.dll` landed in the folder, most likely swapped in
+  to chase that crash. From then on, EQ would not start.
+- **Where the swapped file came from is still unknown.** If a guide or a Discord post is handing it out,
+  others will hit this.
+- **The lesson,** now in the runbook: "Failed to load the graphics DLL!" is a file-in-the-folder problem
+  first. The fingerprint comparison that found it took one query. The runbook's §3c is now this cause, and
+  the driver moved to §3d as a suspect for the in-game crash only.
+- **The rest of the guild's drivers:** crash reports carry the GPU driver only for players who share them.
+  One other player on Intel graphics has ever sent one (UHD 630, driver 2140, in August).
+- **The build idea above earns its place:** the crash review comparing a player's game files with everyone
+  else's would have said "your eqgame.dll is not the one the guild has" on the first look. The data is
+  already uploaded. It is the guild lead's call (it is UI, so options on beta first).
 
 
 
