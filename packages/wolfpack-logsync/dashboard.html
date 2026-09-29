@@ -3634,7 +3634,7 @@ function renderOverlays(s) {
   h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     + '<b>💾 Per-character overlay layouts</b>'
     + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpCharProfEn" type="checkbox"' + (cpOn ? ' checked' : '') + ' style="cursor:pointer" /> Swap layouts automatically as you switch characters</label>'
-    + '<button type="button" id="wpCharProfSave"' + (cpChar ? '' : ' disabled') + ' style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">💾 Save current layout' + (cpChar ? ' for ' + _cpEsc(cpChar) : '') + '</button>'
+    + '<button type="button" id="wpCharProfSave" data-char="' + _cpEsc(cpChar || '') + '"' + (cpChar ? '' : ' disabled') + ' style="background:#21262d;color:' + _wpCpSaveLook(cpChar).color + ';border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">' + _cpEsc(_wpCpSaveLook(cpChar).text) + '</button>'
     + (cpChar ? '' : '<span class="dim" style="font-size:11px">no active character yet &mdash; log a toon in and this saves for them</span>');
   if (cpList.length) {
     h += '<span style="flex-basis:100%"></span><span class="dim" style="font-size:11px">Saved:</span>';
@@ -3812,6 +3812,26 @@ function wpWireBqPref() {
 // at least one modifier required so a bare letter cannot eat normal typing.
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+// 💾 Save layout says whether it worked (the guild lead, 2026-09-29: "this button has no feedback").
+// A first save pushes fresh status and the whole card is rebuilt, which would wipe a label set on
+// the button, so the result lives here and the render reads it; a timer puts the label back.
+var _WP_CP_FLASH_MS = 2500;
+var _wpCpFlash = null;   // { ok, at }
+function _wpCpSaveLook(cpChar) {
+  var f = _wpCpFlash;
+  if (f && (Date.now() - f.at) < _WP_CP_FLASH_MS) {
+    return f.ok ? { text: '✓ Saved' + (cpChar ? ' for ' + cpChar : ''), color: '#56d364' }
+                : { text: '✗ Not saved — no character yet', color: '#f85149' };
+  }
+  return { text: '💾 Save current layout' + (cpChar ? ' for ' + cpChar : ''), color: '#7ee787' };
+}
+function _wpCpSavePaint(cpChar) {
+  var b = document.getElementById('wpCharProfSave');
+  if (!b) return;
+  var look = _wpCpSaveLook(cpChar);
+  b.textContent = look.text;
+  b.style.color = look.color;
+}
 function wpWireHideHotkey() {
   // Opacity (the whole overlay) and Background (the card) — each seeded from
   // what is saved, taking the overlays' common value (the first one, if they
@@ -3891,7 +3911,13 @@ function wpWireHideHotkey() {
   var cpSave = document.getElementById('wpCharProfSave');
   if (cpSave && window.mimic && window.mimic.charProfileSave) {
     _bindOnce(cpSave, 'click', function(){
-      try { window.mimic.charProfileSave(); } catch (e) {}
+      var who = cpSave.getAttribute('data-char') || null;
+      var done = function(ok){
+        _wpCpFlash = { ok: !!ok, at: Date.now() };
+        _wpCpSavePaint(who);
+        setTimeout(function(){ _wpCpSavePaint(who); }, _WP_CP_FLASH_MS + 100);
+      };
+      try { Promise.resolve(window.mimic.charProfileSave()).then(done, function(){ done(false); }); } catch (e) { done(false); }
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
