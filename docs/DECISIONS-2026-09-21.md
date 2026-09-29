@@ -4688,8 +4688,11 @@ server's scripts rather than copied:
     four (the Globe, Cloud, Sphere and Mound), and the step says so.
 - **Pinned in `test/pop-guide.test.js`, mutation-checked:** the phrases, the places, the item order
   (reward cycle included) and the one-per-run line.
-- **Beta layouts:** their extras (what to expect, who you go back to, and the Fist ticking the box from an
-  inventory upload) follow on `beta` once the sync brings these steps over.
+- **Beta layouts (`beta` `7670ade4`):** each step gets what to expect, who you go back to and
+  Kerasha's hand-ins.
+  - **Auto-fill:** the Tiny Gold Fist in an inventory upload ticks part one. Any ONE of the five rewards
+    ticks part two; she swaps them, so requiring all five would never tick. A held-item rule can now say
+    `any`.
 
 
 
