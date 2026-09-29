@@ -37,6 +37,33 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'quest-bard-charm-2026-09-29',
+    title: 'Agent 3.7.40',
+    version: 'Agent 3.7.40 · Bot 3.1.171',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Quest tab warns before a hand-in goes wrong, and bard charms get their callouts.',
+    features: [
+      {
+        name: 'Quest tab warnings',
+        blurb: 'Target Info’s Quest tab marks anything that despawns the NPC, spawns a mob, or costs faction. Hand-ins read GIVE and GET, every faction change shows in green or red, and what the NPC says folds away until you open it.',
+      },
+      {
+        name: 'Quarm’s own quests',
+        blurb: 'Hand-ins that only Quarm has now show up, read from its own quest scripts, and ones that may not exist here are marked.',
+      },
+      {
+        name: '“Recharm pet” for bards',
+        blurb: 'The Charm tracker knows you are a bard from the game itself, tracks named mobs you charm, and says “recharm pet” with 4 seconds left.',
+      },
+    ],
+    fixes: [
+      'A clicky cast on your pet, like Spirit of Wolf from a sword, now shows on the pet with a timer.',
+      '“Save layout” no longer sticks on “no active character yet”.',
+      'The REMOVE button on a broken charm is readable, and charm callouts no longer cut off trigger speech.',
+    ],
+  },
+  {
     key: 'who-zone-2026-09-29',
     title: 'Agent 3.7.38',
     version: 'Agent 3.7.38',

@@ -1544,6 +1544,11 @@ NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dr
 `scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
 and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
 3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
+**What a branch does (bot 3.1.170–3.1.171, §74):** `questDialog.effects()` (Lua + Perl) → despawn / spawn /
+faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()` splits `event_trade` per
+`check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
+Quarm-only branches, flags unmatched rows `unverified`, and names NPCs / factions / items in one round. The
+overlay folds the NPC text (`_qOpen`), draws ⚠ tags (`_qWarnTags`), GIVE / GET and the faction line.
 
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),
