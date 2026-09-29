@@ -39,6 +39,9 @@ import {
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import SpellbookSubmit from './SpellbookSubmit';
+import EssencesQueue from './EssencesQueue';
+import { loadEssenceQueue } from './essencesData';
+import { demoEssenceQueue } from '@/lib/essencesQueue';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags (Preview) — Wolf Pack' };
@@ -101,12 +104,17 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo } = await searchParams;
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop');
+  // 💠 The Essences of Power queue, two layouts on beta until one is picked (DECISIONS §96). No ?v= is
+  // production as it was. &demo=1 swaps in labelled sample data, to compare the layouts before any drop.
+  const essLayout: 'b' | 'c' | null = v === 'b' || v === 'c' ? v : null;
+  const essDemo = demo === '1';
+  const essences = essLayout ? (essDemo ? demoEssenceQueue() : await loadEssenceQueue()) : null;
 
   // PoP spell needs + the viewer's own characters (for the submit widget and
   // the My Characters view — that one deliberately ignores `scope`, see the
@@ -340,6 +348,8 @@ export default async function PopFlagsPage(
           </span>
         </div>
       </section>
+
+      {essLayout && essences && <EssencesQueue layout={essLayout} demo={essDemo} {...essences} />}
 
       {selected ? (
         // ── Zone detail: who's in, who's missing what ─────────────────────────
