@@ -59,6 +59,20 @@
   body.edit .grip{display:block;position:absolute;right:0;bottom:0;width:16px;height:16px;
     line-height:16px;text-align:center;font-size:11px;color:#58a6ff;cursor:nwse-resize}
 
+  /* ✥ on every panel, all the time (the guild lead, 2026-09-29: "they do not
+     have a move button on them which should be there at all times"). Locked,
+     it is the only part of a panel that takes the mouse (the hover handshake
+     arms on it), so a panel can be moved mid-play without unlocking and the
+     rest of the canvas stays click-through. It sits just outside the top-left
+     corner so it never covers a timer; at the screen's left edge it tucks
+     inside. While arranging, the panel's tab carries ✥ instead. */
+  .mvbtn{position:absolute;top:0;right:100%;width:16px;height:16px;line-height:16px;
+    text-align:center;font-size:12px;color:#58a6ff;background:rgba(13,17,23,0.6);
+    border-radius:3px 0 0 3px;opacity:0.6;cursor:move}
+  .mvbtn:hover{opacity:1}
+  .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
+  body.edit .mvbtn{display:none}
+
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
      still lands its mouseup here instead of in EQ. */
@@ -244,11 +258,17 @@
     grip.textContent = '◢';
     grip.setAttribute('data-wp-interact', '');
     grip.title = 'Drag to size this panel';
-    root.appendChild(fr); root.appendChild(tab); root.appendChild(grip);
-    var e = { root: root, tab: tab, frame: fr, grip: grip };
+    var mv = document.createElement('span');
+    mv.className = 'mvbtn';
+    mv.textContent = '✥';
+    mv.setAttribute('data-wp-interact', '');
+    mv.title = 'Drag to move this panel · right-click for what it shows';
+    root.appendChild(fr); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv);
+    var e = { root: root, tab: tab, frame: fr, grip: grip, mv: mv };
     fr.addEventListener('load', function () { var q = panelById(p.id); if (q) applyFrame(e, q); });
     root.addEventListener('mousedown', function (ev) {
       if (ev.target.closest('.ctl')) return;
+      if (ev.target === mv) { startDrag(ev, p.id, 'move', true); return; }
       if (ev.target === grip) { startDrag(ev, p.id, 'size'); return; }
       startDrag(ev, p.id, 'move');
     });
@@ -258,7 +278,7 @@
       var q = panelById(p.id); if (!q) return;
       q.off = !q.off; save(); render();
     });
-    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit) openMenu(p.id, root); });
+    root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, root); });
     panelsEl.appendChild(root);
     return e;
   }
@@ -287,6 +307,7 @@
     e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
     e.root.style.width = w + 'px'; e.root.style.height = h + 'px';
     e.root.classList.toggle('tabin', y < 22);
+    e.root.classList.toggle('mvin', x < 18);
   }
 
   function render() {
@@ -340,8 +361,9 @@
   // to the other panels' edges, within 8px; Shift turns it off.
   var SNAP = 8;
   var _drag = null;
-  function startDrag(ev, id, mode) {
-    if (!_edit || ev.button !== 0) return;
+  // anyTime: the always-on ✥, which moves a panel even while locked.
+  function startDrag(ev, id, mode, anyTime) {
+    if ((!_edit && !anyTime) || ev.button !== 0) return;
     ev.preventDefault(); ev.stopPropagation();
     var e = _els[id];
     _drag = { id: id, mode: mode, sx: ev.clientX, sy: ev.clientY,
@@ -378,6 +400,7 @@
       x = Math.max(0, Math.min(W - d.w0, x)); y = Math.max(0, Math.min(H - d.h0, y));
       e.root.style.left = x + 'px'; e.root.style.top = y + 'px';
       e.root.classList.toggle('tabin', y < 22);
+      e.root.classList.toggle('mvin', x < 18);
       d.x = x; d.y = y;
     } else {
       var w = Math.max(120, Math.min(W - d.x0, d.w0 + ev.clientX - d.sx));
@@ -515,6 +538,9 @@
   document.addEventListener('mousedown', function (ev) {
     if (menuEl.classList.contains('show') && !menuEl.contains(ev.target) && !(ev.target.closest && ev.target.closest('.gear'))) closeMenu();
   }, true);
+  // Opened from ✥ while locked, a click outside the menu lands in EQ, never
+  // here — so leaving the menu closes it.
+  menuEl.addEventListener('mouseleave', function () { if (!_edit) closeMenu(); });
 
   // ── Toolbar ─────────────────────────────────────────────────────────────────
   document.getElementById('addBtn').addEventListener('click', function () {
