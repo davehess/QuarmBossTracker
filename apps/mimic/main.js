@@ -3367,10 +3367,40 @@ async function _askAboutDisplays() {
   _displaySettleUntil = 0;
   setTimeout(_snapshotLayout, 1500);   // after the moves' own persists land
 }
-// Gather every overlay window onto the display under the cursor, then
-// auto-arrange there. Stamps that display as home so future arranges (and
-// the resolution-change fallback) stay on it.
-function _rescueOverlays() {
+// 🧲 Rescue brings back LOST overlays only (the guild lead, 2026-09-29: "not only
+// does the rescue capture all of the overlays but it puts them all into one spot
+// which is dreadfully annoying"). Lost = its middle is on no screen, or its
+// top-left corner (where ✥ sits) is on no screen, so it cannot be grabbed. The
+// "middle" test is the 2026-07-15 fix: a window straddling a monitor edge had
+// only a sliver showing and was counted as fine. An overlay sitting whole on
+// another screen is where the raider keeps it (§80a), so it is not lost.
+// → { lost, away: [{…entry, from: display}], home }
+const _OVERLAY_NAMES = {
+  dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+  pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
+  who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
+  chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Timers canvas',
+};
+function _rescueSort(entries, displays, targetId) {
+  const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+  const on = (x, y) => displays.find(d => inside(d.bounds, x, y)) || null;
+  const out = { lost: [], away: [], home: [] };
+  for (const e of entries) {
+    const b = e.b;
+    const mid = on(b.x + b.width / 2, b.y + b.height / 2);
+    if (!mid || !on(b.x + 12, b.y + 12)) out.lost.push(e);
+    else if (mid.id !== targetId) out.away.push(Object.assign({}, e, { from: mid }));
+    else out.home.push(e);
+  }
+  return out;
+}
+// Rescue onto the screen under the cursor, and stamp it as home so future
+// arranges stay on it. Each lost overlay goes back to where the raider last had
+// it on this screen setup, else to the first free spot among the others.
+// Nothing that was fine moves, and nothing is re-arranged. Overlays on another
+// screen come only on a yes, each at the same spot on this screen.
+async function _rescueOverlays() {
   const pt = screen.getCursorScreenPoint();
   const cfg = loadConfig();
   cfg.overlayHomePoint = { x: pt.x, y: pt.y };
@@ -3378,8 +3408,7 @@ function _rescueOverlays() {
   saveConfig(cfg);
   const disp = screen.getDisplayNearestPoint(pt);
   const a = disp.workArea;
-  let moved = 0;
-  const report = [];
+  const entries = [];
   const present = new Set();
   for (const [key, win] of _overlayEntries()) {
     // The Timers canvas covers its whole screen and places its own panels —
@@ -3387,38 +3416,67 @@ function _rescueOverlays() {
     if (key === 'canvas') continue;
     try {
       present.add(key);
-      const b = win.getBounds();
-      // "Already home" = the window's CENTER sits on the home display. The
-      // first cut tested for a mere sliver of overlap, so a window straddling
-      // the monitor boundary (a member, 2026-07-15: CH chain never came back)
-      // was counted as home and skipped — still mostly lost off-screen.
-      const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
-      const onHome = cx >= a.x && cx < a.x + a.width && cy >= a.y && cy < a.y + a.height;
-      if (onHome) { report.push(`${key}: kept (${b.x},${b.y} ${win.isVisible() ? 'visible' : 'hidden'})`); continue; }
-      // Park inside the home display; auto-arrange below finds real spots.
-      win.setBounds({
-        x: Math.max(a.x + 8, Math.min(a.x + a.width  - b.width  - 8, a.x + 40 + (moved * 24))),
-        y: Math.max(a.y + 8, Math.min(a.y + a.height - b.height - 8, a.y + 40 + (moved * 24))),
-        width: b.width, height: b.height,
+      entries.push({ key, win, bk: _boundsKeyForEntry(key, win), b: win.getBounds() });
+    } catch { /* mid-close */ }
+  }
+  const sorted = _rescueSort(entries, screen.getAllDisplays(), disp.id);
+  const MARGIN = 8, STEP = 16;
+  const pad = (r) => ({ x: r.x - MARGIN, y: r.y - MARGIN, w: r.width + MARGIN * 2, h: r.height + MARGIN * 2 });
+  const hits = (r, list) => list.some(o => o.x < r.x + r.width && o.x + o.w > r.x && o.y < r.y + r.height && o.y + o.h > r.y);
+  const ui = _parseUiWindowRects();
+  // What stays put blocks: EQ's own windows and every overlay already on this screen.
+  const occupied = (ui ? ui.rects.map(r => pad({ x: r.x, y: r.y, width: r.w, height: r.h })) : [])
+    .concat(sorted.home.map(e => pad(e.b)));
+  const remembered = ((cfg.overlayLayoutBySig || {})[_screenSignature()] || {}).rects || {};
+  const onTarget = (r) => r.x + r.width / 2 >= a.x && r.x + r.width / 2 < a.x + a.width && r.y >= a.y && r.y + 12 < a.y + a.height;
+  // place(list, wish): each entry takes its wished spot when that is on this
+  // screen and clear of everything placed so far; the rest get free spots.
+  const place = (list, wish) => {
+    const free = [];
+    for (const e of list) {
+      const r = wish(e);
+      if (r && onTarget(r) && !hits(r, occupied)) {
+        try { e.win.setBounds(r); } catch { /* mid-close */ }
+        occupied.push(pad(r));
+      } else free.push({ key: e.key, win: e.win, b: e.b });
+    }
+    return free.length ? _arrangeOnScreen(a, free, occupied, true, null, MARGIN, STEP).skipped : 0;
+  };
+  const names = (list) => list.map(e => _OVERLAY_NAMES[e.key] || e.key).join(', ');
+  const count = (n) => (n === 1 ? '1 overlay' : n + ' overlays');
+  let stuck = place(sorted.lost, (e) => {
+    const r = e.bk && remembered[e.bk];
+    return r ? { x: r.x, y: r.y, width: e.b.width, height: e.b.height } : null;
+  });
+  let brought = 0;
+  if (sorted.away.length) {
+    let choice = 0;
+    try {
+      const r = await dialog.showMessageBox({
+        type: 'question', title: 'Wolf Pack miMIC', noLink: true, defaultId: 0, cancelId: 0,
+        message: sorted.lost.length ? 'Brought back ' + count(sorted.lost.length) + ' that could not be reached: ' + names(sorted.lost) + '.' : 'No overlay was lost.',
+        detail: count(sorted.away.length) + ' on your other screen: ' + names(sorted.away) + '. Bring ' + (sorted.away.length === 1 ? 'it' : 'them') + ' to this screen too, each at the same spot?',
+        buttons: ['Leave them there', 'Bring them here'],
       });
-      moved++;
-      report.push(`${key}: moved from (${b.x},${b.y}) ${win.isVisible() ? 'visible' : 'HIDDEN'}`);
-    } catch (e) { report.push(`${key}: error ${e.message}`); }
+      choice = r.response;
+    } catch { /* no dialog → leave them */ }
+    if (choice === 1) {
+      stuck += place(sorted.away, (e) => _projectRect(e.b, e.from.workArea, a));
+      brought = sorted.away.length;
+    }
+  } else if (!sorted.lost.length) {
+    try { await dialog.showMessageBox({ type: 'info', title: 'Wolf Pack miMIC', noLink: true, message: 'No overlay was lost.', detail: 'Every overlay can be reached where it is, so nothing moved.' }); } catch { /* no dialog */ }
   }
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
   const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
   const missing = KNOWN.filter(k => !present.has(k));
-  // Re-evaluate every show/hide gate BEFORE arranging so anything that should
-  // be visible on the home display participates in the packing.
   try { applyAllVisibility(); } catch { /* best effort */ }
-  let arranged = null;
-  try { arranged = _autoArrangeOverlays(); } catch { /* best effort */ }
-  appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · moved ${moved}\n`
-    + report.map(r => `[rescue]   ${r}`).join('\n') + '\n'
+  appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
+    + ` · other screen ${sorted.away.length} (${brought ? 'brought' : 'left'}) · no free spot ${stuck}\n`
     + (missing.length ? `[rescue]   NO WINDOW (disabled/gated — re-enable from tray → Overlays): ${missing.join(', ')}\n` : ''));
-  return { moved, display: `${disp.size.width}x${disp.size.height}`, missing, arranged };
+  return { moved: sorted.lost.length, brought, left: sorted.away.length - brought, display: `${disp.size.width}x${disp.size.height}`, missing };
 }
 
 // Resolve the starting bounds for an overlay: use the saved rect only if the
@@ -7064,6 +7122,16 @@ function buildTrayMenu() {
     enabled: !!autoUpdater,
     click: (mi) => setBetaChannel(!!mi.checked, 'tray'),
   };
+  // The 3.0 alpha — same shape as the beta checkbox, same function as the
+  // dashboard's α alpha button (tray ↔ dashboard parity). Ticked means on the
+  // alpha track now: opted in, or running an alpha build that has not left it.
+  const alphaChannelItem = {
+    label: 'Receive alpha updates (Mimic 3.0 builder)',
+    type: 'checkbox',
+    checked: _updateTrack(loadConfig(), String(app.getVersion() || '')) === 'alpha',
+    enabled: !!autoUpdater,
+    click: (mi) => setAlphaChannel(!!mi.checked, 'tray'),
+  };
   // Revert-to-stable — only offered while the beta track is actually in
   // effect (beta build or opt-in, and not already pinned to stable).
   const _revertEligible = !!autoUpdater
@@ -7106,10 +7174,10 @@ function buildTrayMenu() {
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
     // Multi-monitor rescue — run from the tray on the monitor you play on;
-    // every overlay gathers there and auto-arranges (a member, 2026-07-15:
+    // lost overlays come back there, the rest stay put (a member, 2026-07-15:
     // "lost several overlays off my window and cannot find them").
     { label: '🧲 Rescue overlays to this screen', click: () => {
-        try { _rescueOverlays(); } catch (e) { appendAgentLog('[rescue] failed: ' + e.message + '\n'); }
+        _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
       } },
     { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
@@ -7164,6 +7232,7 @@ function buildTrayMenu() {
     { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
     updatePopupItem,
     betaChannelItem,
+    alphaChannelItem,
     revertStableItem,
     crashReportsItem,
     // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
@@ -7438,10 +7507,31 @@ async function checkAgentUpdate(opts) {
 // publishes both latest.yml and beta.yml (generateUpdatesFilesForAllChannels),
 // so the beta channel sees stable too — opting OUT just stops the flow of new
 // betas; the user keeps whatever they have until stable catches up.
+//
+// The 3.0 ALPHA track (the guild lead, 2026-09-29: "can we make an alpha channel
+// for 3.0 testing as well?") sits above beta. Alpha builds come from the `alpha`
+// branch as 3.0.0-alpha.N and live on ONE rolling GitHub release, tag
+// `mimic-alpha`, whose files every alpha build replaces. The updater reads that
+// release's alpha.yml from its fixed download address and never goes through
+// GitHub's release feed: the feed only lists the newest 10 releases, and a day
+// of beta pushes would push an alpha out of it (the 2026-07-30 Linux lesson).
+// Same two inputs as beta: an alpha build stays on alpha until the raider
+// leaves it (cfg.alphaChannel === false), and anyone can opt in.
+const _ALPHA_FEED  = { provider: 'generic', url: 'https://github.com/davehess/QuarmBossTracker/releases/download/mimic-alpha/', channel: 'alpha' };
+const _GITHUB_FEED = { provider: 'github', owner: 'davehess', repo: 'QuarmBossTracker' };
+let _alphaFeedSet = false;
+// → 'alpha' | 'beta' | 'stable'
+function _updateTrack(cfg, version) {
+  if (cfg.forceStable === true) return 'stable';
+  if (cfg.alphaChannel === true || (/-alpha\./.test(version) && cfg.alphaChannel !== false)) return 'alpha';
+  if (/-/.test(version) || cfg.betaChannel === true) return 'beta';
+  return 'stable';
+}
 function _applyUpdaterChannel() {
   if (!autoUpdater) return false;
   const cfg = loadConfig();
-  const _buildIsBeta = /-/.test(String(app.getVersion() || ''));
+  const version = String(app.getVersion() || '');
+  const _buildIsBeta = /-/.test(version);
   // forceStable (the guild lead, 2026-07-16: raid-night testers stuck on beta could
   // not get back to the stable release everyone else was fixed by): an
   // explicit "revert to stable" overrides even the installed-a-beta-build
@@ -7450,11 +7540,16 @@ function _applyUpdaterChannel() {
   // is exactly the trap). Cleared automatically once a stable build is
   // running, or when the user re-opts into betas.
   const forceStable  = cfg.forceStable === true;
-  const userOptedIn  = !!cfg.betaChannel;
-  const wantBeta     = !forceStable && (_buildIsBeta || userOptedIn);
+  const track        = _updateTrack(cfg, version);
+  const wantBeta     = track !== 'stable';
+  // Only swap the feed when the alpha is involved, so a beta or stable
+  // install keeps the configuration it was built with.
+  if (track === 'alpha' && !_alphaFeedSet) { autoUpdater.setFeedURL(_ALPHA_FEED); _alphaFeedSet = true; }
+  else if (track !== 'alpha' && _alphaFeedSet) { autoUpdater.setFeedURL(_GITHUB_FEED); _alphaFeedSet = false; }
   autoUpdater.allowPrerelease = wantBeta;
-  autoUpdater.channel         = wantBeta ? 'beta' : 'latest';
-  autoUpdater.allowDowngrade  = forceStable && _buildIsBeta;
+  autoUpdater.channel         = track === 'alpha' ? 'alpha' : (wantBeta ? 'beta' : 'latest');
+  // 3.0.0-alpha sorts above every 2.x, so leaving the alpha is a downgrade too.
+  autoUpdater.allowDowngrade  = (forceStable && _buildIsBeta) || (track !== 'alpha' && /-alpha\./.test(version));
   return wantBeta;
 }
 
@@ -7467,6 +7562,7 @@ async function revertToStable(source) {
   const cfg = loadConfig();
   cfg.forceStable = true;
   cfg.betaChannel = false;
+  cfg.alphaChannel = false;   // or the alpha opt-in would pull a stable install straight back up
   saveConfig(cfg);
   appendAgentLog(`[updater] revert to stable requested (${source || 'unknown'}) — pinning channel to stable and checking…\n`);
   _applyUpdaterChannel();
@@ -7487,6 +7583,23 @@ function setBetaChannel(on, source) {
   if (autoUpdater) {
     _applyUpdaterChannel();
     appendAgentLog(`[updater] beta channel ${cfg.betaChannel ? 'enabled' : 'disabled'} (${source || 'unknown'}) — checking…\n`);
+    safeCheckForUpdates(true);
+  }
+  pushStatus();
+}
+
+// Join / leave the 3.0 alpha — the tray's "Receive alpha updates" and the
+// dashboard's α alpha button both land here. Leaving an alpha build goes back
+// to the beta (a prerelease build is on the beta track); leaving an opt-in that
+// never installed goes back to whatever the raider had.
+function setAlphaChannel(on, source) {
+  const cfg = loadConfig();
+  cfg.alphaChannel = !!on;
+  if (cfg.alphaChannel) delete cfg.forceStable;
+  saveConfig(cfg);
+  if (autoUpdater) {
+    _applyUpdaterChannel();
+    appendAgentLog(`[updater] alpha channel ${cfg.alphaChannel ? 'enabled' : 'disabled'} (${source || 'unknown'}) — checking…\n`);
     safeCheckForUpdates(true);
   }
   pushStatus();
@@ -8084,12 +8197,13 @@ ipcMain.handle('auto-arrange-overlays', async () => {
   try { await _eqWindowGeometry(); } catch { /* arrange on what we know */ }
   try { return _autoArrangeOverlays(); } catch (e) { return { error: e.message }; }
 });
-// 🧲 Rescue — gather every overlay onto the display under the cursor (the
-// monitor the user is looking at when they click the button), stamp it as
-// the overlay HOME display, and auto-arrange there. The fix for "I've lost
-// overlays somewhere on my other monitors" (a member, 2026-07-15).
-ipcMain.handle('rescue-overlays', () => {
-  try { return _rescueOverlays(); } catch (e) { return { error: e.message }; }
+// 🧲 Rescue — bring LOST overlays back onto the display under the cursor (the
+// monitor the user is looking at when they click the button) and stamp it as
+// the overlay HOME display; overlays on another screen come only on a yes. The
+// fix for "I've lost overlays somewhere on my other monitors" (a member,
+// 2026-07-15), minus the pile-up (the guild lead, 2026-09-29).
+ipcMain.handle('rescue-overlays', async () => {
+  try { return await _rescueOverlays(); } catch (e) { return { error: e.message }; }
 });
 ipcMain.handle('auto-arrange-onshow-toggle', () => {
   const cfg = loadConfig();
@@ -10124,6 +10238,35 @@ ipcMain.handle('set-beta-channel', async (_e, on) => {
   setBetaChannel(join, 'dashboard');
   return true;
 });
+// α alpha from the dashboard — the dashboard half of the tray's "Receive alpha
+// updates". Same shape as ⤴ beta: the confirm lives here, the work is
+// setAlphaChannel().
+ipcMain.handle('get-alpha-channel', () => {
+  const version = String(app.getVersion() || '');
+  return {
+    optedIn:   _updateTrack(loadConfig(), version) === 'alpha',
+    running:   /-alpha\./.test(version),
+    available: !!autoUpdater,
+  };
+});
+ipcMain.handle('set-alpha-channel', async (_e, on) => {
+  const join = !!on;
+  const back = _updateTrack(Object.assign({}, loadConfig(), { alphaChannel: false }), String(app.getVersion() || ''));
+  const res = await dialog.showMessageBox({
+    type: 'question',
+    buttons: [join ? 'Join the alpha' : 'Leave the alpha', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Wolf Pack miMIC — alpha updates',
+    message: join ? 'Try the Mimic 3.0 alpha?' : 'Leave the alpha?',
+    detail: join
+      ? 'Mimic will download the newest alpha and install it on your next restart. The alpha is where the 3.0 overlay builder is tried first: expect rough edges, and now and then something that does not work. Your settings, overlays, and login are untouched. You can leave any time from the same button.'
+      : 'Mimic goes back to ' + (back === 'beta' ? 'beta' : 'stable') + ' builds and installs the newest one on your next restart. Your settings, overlays, and login are untouched.',
+  });
+  if (res.response !== 0) return false;
+  setAlphaChannel(join, 'dashboard');
+  return true;
+});
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
   try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
@@ -10251,13 +10394,7 @@ function _windowLabelsByPid() {
     } catch { /* window mid-close */ }
   };
   let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
-  const NAMES = {
-    dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
-    pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
-    who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
-    chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-    command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Timers canvas',
-  };
+  const NAMES = _OVERLAY_NAMES;
   for (const e of _OVERLAY_WINDOWS) {
     // Flag the ones that are alive despite being switched off — that pairing is
     // the whole reason someone opens this window.

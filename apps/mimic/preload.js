@@ -841,6 +841,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // ⤴ beta (dashboard, stable builds): { optedIn, available } / confirm + join or leave.
   getBetaChannel:  ()   => ipcRenderer.invoke('get-beta-channel'),
   setBetaChannel:  (on) => ipcRenderer.invoke('set-beta-channel', !!on),
+  // α alpha (dashboard, any build): { optedIn, running, available } / confirm + join or leave.
+  getAlphaChannel: ()   => ipcRenderer.invoke('get-alpha-channel'),
+  setAlphaChannel: (on) => ipcRenderer.invoke('set-alpha-channel', !!on),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
