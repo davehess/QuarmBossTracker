@@ -23,7 +23,7 @@ const row = (name, rank, level, active = true) => ({ name, rank, level, active }
 describe('who the page counts (popRoster, run for real)', () => {
   it('raiders are the mains, raid alts the alts; traders, inactive and non-raid alts are out', () => {
     const r = popRoster([
-      row('Aldenmar', 'Raid Pack', 60), row('Brackwyn', 'Officer', 60), row('Corvale', 'Recruit', 55),
+      row('Aldenmar', 'Raid Pack', 60), row('Brackwyn', 'Officer', 60), row('Corvale', 'Recruit', 60),
       row('Rethlan', 'Pack Leader', 60), row('Nyssara', 'Raid Alt', 60),
       row('Zarrin', 'Trader', 60), row('Tovrin', 'Inactive', 60), row('Vellis', 'Non-raid Alt', 60), row('Orrin', null, 60),
     ]);
@@ -31,9 +31,10 @@ describe('who the page counts (popRoster, run for real)', () => {
       ['Aldenmar', true], ['Brackwyn', true], ['Corvale', true], ['Rethlan', true], ['Nyssara', false],
     ]);
   });
-  it(`only at level ${POP_MIN_LEVEL} and above, and only active characters`, () => {
+  it('only at level 60 and above, and only active characters', () => {
+    expect(POP_MIN_LEVEL).toBe(60);
     const r = popRoster([
-      row('Aldenmar', 'Raid Alt', 45), row('Brackwyn', 'Raid Alt', POP_MIN_LEVEL), row('Corvale', 'Raid Pack', 30),
+      row('Aldenmar', 'Raid Alt', 59), row('Brackwyn', 'Raid Alt', 60), row('Corvale', 'Raid Pack', 55),
       row('Rethlan', 'Raid Pack', 60, false),
     ]);
     expect(r.map(m => m.name)).toEqual(['Brackwyn']);
