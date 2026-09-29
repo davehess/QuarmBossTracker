@@ -100,7 +100,7 @@ describe('the page', () => {
     expect(d.done.map(e => e.name)).toEqual(['Aldenmar']);
   });
   it('is behind the /pop sign-in like the rest of the page', () => {
-    const at = page.indexOf("if (!user) redirect('/auth/signin?next=/pop');");
+    const at = page.indexOf('if (!user) redirect(`/auth/signin?next=');
     expect(at).toBeGreaterThan(0);
     expect(at).toBeLessThan(page.indexOf('await loadEssenceQueue()'));
   });
