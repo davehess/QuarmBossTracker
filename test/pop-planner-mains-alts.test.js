@@ -51,6 +51,10 @@ describe('the page', () => {
     expect(body).toMatch(/sb\.from\('who_directory'\)\.select\('character_key, level'\)/);
     expect(body).toMatch(/const chars: CharFlags\[\] = members\s*\.map\(m => \(\{ name: m\.name, flags: byChar\.get\(m\.name\.toLowerCase\(\)\)\?\.flags \?\? new Set<string>\(\)/);
   });
+  it('keeps the link\'s query through sign-in (a signed-out ?v=b&demo=1 used to land on bare /pop)', () => {
+    expect(body).toMatch(/redirect\(`\/auth\/signin\?next=\$\{encodeURIComponent\('\/pop\?' \+ new URLSearchParams\(await searchParams/);
+    expect(body).not.toMatch(/next=\/pop'/);
+  });
   it('Mains means the raiders; All characters adds the raid alts', () => {
     expect(body).toMatch(/const scopedChars = scope === 'all' \? chars : chars\.filter\(c => c\.main\);/);
   });

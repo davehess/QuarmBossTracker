@@ -108,7 +108,8 @@ export default async function PopFlagsPage(
   const { zone: zoneKey, view, scope: scopeParam } = await searchParams;
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/pop');
+  // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
+  if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
 
   // PoP spell needs + the viewer's own characters (for the submit widget and
   // the My Characters view — that one deliberately ignores `scope`, see the
