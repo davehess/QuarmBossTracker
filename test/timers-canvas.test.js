@@ -213,6 +213,21 @@ describe('Mimic wiring (the overlay checklist)', () => {
     expect(save).toMatch(/layout\.panels\.length > 16\) return false;/);
     expect(save).toMatch(/json\.length > 32_000\) return false;/);
   });
+  // The guild lead, 2026-09-29: "they do not have a move button on them which
+  // should be there at all times". The ✥ is the one part of a locked panel
+  // that takes the mouse; the rest stays click-through.
+  it('every panel has a ✥ that moves it any time, and nothing else of a locked panel takes the mouse', () => {
+    const c = stripJs(canvas);
+    expect(c).toMatch(/mv\.className = 'mvbtn';\s*mv\.textContent = '✥';\s*mv\.setAttribute\('data-wp-interact', ''\);/);
+    expect(c).toMatch(/if \(ev\.target === mv\) \{ startDrag\(ev, p\.id, 'move', true\); return; \}/);
+    expect(c).toMatch(/if \(\(!_edit && !anyTime\) \|\| ev\.button !== 0\) return;/);
+    expect(c).toMatch(/if \(_edit\) e\.root\.setAttribute\('data-wp-interact', ''\); else e\.root\.removeAttribute\('data-wp-interact'\);/);
+    expect(c).toMatch(/\.mvbtn\{position:absolute;/);
+    expect(c).toContain('.tab,.grip{display:none}');
+    expect(c).toContain('body.edit .mvbtn{display:none}');
+    expect(c).toMatch(/if \(_edit \|\| ev\.target === mv\) openMenu\(p\.id, root\);/);
+    expect(c).toMatch(/menuEl\.addEventListener\('mouseleave', function \(\) \{ if \(!_edit\) closeMenu\(\); \}\);/);
+  });
   it('the canvas page counts as an overlay for the hover handshake', () => {
     expect(stripJs(preload)).toContain("_wpIsOverlayDoc = !!document.getElementById('move-btn') || document.body.hasAttribute('data-wp-overlay');");
     expect(canvas).toContain('<body data-wp-overlay>');
