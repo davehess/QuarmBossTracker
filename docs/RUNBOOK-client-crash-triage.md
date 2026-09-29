@@ -157,23 +157,42 @@ one machine, and the mechanism is not known.
 - ⚠ Not a Zeal crash, so there may be no Zeal crash bundle for it (the failure can
   come before Zeal's handler is installed). The missing bundle is itself a hint.
 
-## 3c. Known cause — Intel graphics driver 31.0.101.2145 (2026-09-29)
+## 3c. Known cause — a replaced `eqgame.dll`: "Failed to load the graphics DLL!" (2026-09-29)
 
-**Symptom:** on a machine with Intel 7th–10th Gen graphics (Intel UHD / HD), EQ
-crashes in game with the graphics driver resetting in the dump, and then will
-not start at all: EverQuest's own *"Failed to load the graphics DLL!"* box.
+**Symptom:** EQ will not start. EverQuest's own box says *"Failed to load the
+graphics DLL!"* and nothing else happens. Compatibility mode, running as
+administrator and removing dgVoodoo's files do not help (all tried).
 
-**Cause:** Intel's graphics driver **31.0.101.2145** (released 2026-09-22),
-installed through Intel's driver assistant. Found by the guild lead with a member
-on 2026-09-29. The member's previous driver, **31.0.101.2141**, worked. One
-machine so far.
+**Cause:** `eqgame.dll` beside `eqgame.exe` is not the client's own. The
+member's was 241,664 bytes, written the evening before, three hours after an
+in-game crash, so most likely swapped in while chasing that crash. Quarm's July
+build is 318,464 bytes (`/zeal version`: "eqgame.dll version: 7 (Jul 7 2026)").
 
-- **Ask first** on Intel graphics: Intel Driver & Support Assistant → Install
-  History, or Device Manager → Display adapters → the Intel adapter → Driver →
-  Driver Version. Is it 31.0.101.2145?
-- **Fix:** Device Manager → the Intel adapter → Driver → **Roll Back Driver**, or
-  install 31.0.101.2141 from Intel's site. Then decline 2145 when Intel's
-  assistant offers it again.
+- **Fix:** put back `eqgame.dll` **from the original TAKP / Quarm client
+  download**. That got the member playing (the guild lead, 2026-09-29).
+- **How to spot it:** a shared crash report carries `system.files` with each
+  game file's size, md5 and modified time. Compare `eqgame.dll` with other
+  players' copies. A size nobody else has, or a modified time after the last
+  good session, is the tell. A launch failure writes no new crash bundle, but
+  the next report from that machine fingerprints the folder as it is at upload.
+- **Ask what they put there and where it came from.** If a guide or a Discord
+  post is handing out an `eqgame.dll`, others will hit this too.
+
+## 3d. Suspect, not proven — Intel graphics driver 31.0.101.2145 (2026-09-29)
+
+The same member's in-game crash the day before came with the graphics driver
+resetting in the dump, one day after Intel's assistant installed driver
+**31.0.101.2145** (released 2026-09-22) over **31.0.101.2141** on Intel 7th–10th
+Gen graphics. The guild lead called the driver as the cause mid-triage. The
+launch failure then turned out to be `eqgame.dll` (§3c), so what the driver did,
+if anything, is the in-game crash, and even that is unconfirmed. One machine.
+
+- **Ask** on Intel graphics with driver resets in the dump: Intel Driver &
+  Support Assistant → Install History, or Device Manager → the Intel adapter →
+  Driver → Driver Version. Is it 31.0.101.2145?
+- **If rolling back is wanted:** Device Manager → the Intel adapter → Driver →
+  **Roll Back Driver**, or install 31.0.101.2141 from Intel's site. Then decline
+  2145 when Intel's assistant offers it again.
 - **If that install does not take** (the member's first try did not, 2026-09-29),
   in rising order of effort:
   1. Device Manager → the Intel adapter → **Update driver → Browse my computer →
@@ -186,18 +205,11 @@ machine so far.
   3. **Clean install:** DDU in Safe Mode, then install 2141. If its `.exe`
      refuses, use Intel's `.zip` of the same driver and point *Let me pick →
      Have Disk* at the `.inf` inside its `Graphics` folder.
-- **If 2141 is in and EQ still says "Failed to load the graphics DLL!"**, the
-  driver was not the whole story:
-  - check `winver` for build 26200.9550 (KB5124010, §3b);
-  - run a **fresh Quarm client in a new folder**. If it starts, the old folder's
-    files are the problem (see the next bullet). If it fails the same way, the
-    problem is the machine.
-- Not fixed by compatibility mode, running as administrator, or removing
-  dgVoodoo's files (all tried).
-- The crash review's own file fingerprints showed the member's `eqgame.dll`
-  differing from other players' at the same time (241,664 bytes, against Quarm's
-  318,464-byte July build). Don't lead with it when the driver is 2145, but it is
-  the first file suspect if the right driver does not fix the launch.
+- ⚠ **Lesson from this one:** "Failed to load the graphics DLL!" is a
+  file-in-the-folder problem first (§3c). Go to the driver after the files check
+  out. A fresh Quarm client in a new folder splits the two: if it starts, the
+  old folder's files are the problem; if it fails the same way, it is the machine.
+  Also check `winver` for build 26200.9550 (KB5124010, §3b).
 
 ## 4. "Blames Zeal" does not mean Zeal did it
 
