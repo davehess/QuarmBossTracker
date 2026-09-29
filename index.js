@@ -15121,8 +15121,22 @@ async function _npcInteract(npcId) {
       fx.faction = t.faction_changes.filter((f) => Number(f?.delta)).map((f) => ({ id: Number(f.faction_id), delta: Number(f.delta) }));
     }
     const says = br ? br.replies : qd._replies(String(t.raw_snippet || ''));
-    return { t, fx, says };
+    // The table is ProjectEQ's (every era). A hand-in Quarm's own script lacks, or on an NPC Quarm
+    // has no script for, may not exist here; the overlay says so.
+    return { t, fx, says, br, unverified: !br };
   });
+  // Hand-ins only Quarm has (its custom quests, the PoP changes) are in its script and not in
+  // ProjectEQ's table (the guild lead, 2026-09-29: "go out and get the missing script info").
+  // Items from check_turn_in (a repeat is a count), rewards from what the branch gives.
+  for (const b of tradeBr) {
+    if (turnList.some((x) => x.br === b)) continue;
+    const counts = new Map();
+    for (const id of b.items) counts.set(id, (counts.get(id) || 0) + 1);
+    turnList.push({
+      t: { inputs: [...counts].map(([item_id, qty]) => ({ item_id, qty })), outputs: b.fx.gives.map((item_id) => ({ item_id })), exp_award: null, random_outputs: b.fx.givesRandom },
+      fx: b.fx, says: b.replies, br: b, unverified: false, quarmOnly: true,
+    });
+  }
   const itemIds = new Set(), fxNpcIds = new Set(), factionIds = new Set();
   for (const { t } of turnList) {
     for (const x of [...(t.inputs || []), ...(t.outputs || [])]) if (Number.isInteger(x?.item_id)) itemIds.add(x.item_id);
@@ -15236,13 +15250,14 @@ async function _npcInteract(npcId) {
       needs: needs.length ? needs.map(itemRef) : undefined,
     })),
     trade: trade.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })),
-    turnins: turnList.map(({ t, fx, says }) => ({
+    turnins: turnList.map(({ t, fx, says, unverified }) => ({
       inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
       outputs: (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => itemRef(x.item_id)),
       exp: t.exp_award || null,
       random: !!t.random_outputs || fx.givesRandom || undefined,
       ...fxOut(fx),
       says: says.length ? says.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })) : undefined,
+      unverified: unverified || undefined,
     })).filter((t) => t.inputs.length),
     next,
     vendor: (Array.isArray(vendorRows) ? vendorRows : []).filter((v) => items.has(v.item))

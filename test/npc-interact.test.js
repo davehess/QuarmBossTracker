@@ -168,6 +168,20 @@ describe('F/Q/V data for one NPC', () => {
     expect(other.warn).toEqual({ despawn: true });
     expect(other.faction).toEqual([{ id: 1505, name: 'Dark Reflection', delta: -5 }]);
     expect(other.says).toEqual([{ kind: 'say', text: 'Leave, <you>.' }]);
+    // ProjectEQ's row with no branch in Quarm's script may not exist here.
+    expect(other.unverified).toBe(true);
+    expect(two.unverified).toBeUndefined();
+  });
+
+  it('a hand-in only Quarm\'s script has still shows, built from the script', async () => {
+    // The table is ProjectEQ's; Quarm's custom hand-ins are only in its own script (the guild lead,
+    // 2026-09-29: "go out and get the missing script info").
+    const { fn } = load();
+    const n = await fn(202300);
+    const quarmOnly = n.turnins.find((t) => t.inputs[0].id === 15013);
+    expect(quarmOnly).toMatchObject({ inputs: [{ id: 15013, name: 'Spell: Complete Healing', qty: 1 }], outputs: [{ id: 15392, name: 'Spell: Resurrection' }] });
+    expect(quarmOnly.unverified).toBeUndefined();
+    expect(n.turnins).toHaveLength(3);
   });
 
   it('an unknown id is null', async () => {
