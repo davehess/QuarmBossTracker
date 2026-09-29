@@ -58,7 +58,8 @@ function _exprText(expr) {
   }).join('').replace(/\s+/g, ' ').trim();
 }
 
-const REPLY_RX = /e\.self:(Say|Emote|Shout)\s*\(|e\.other:Message\s*\(/g;
+// Lua e.self:Say(…), and the Perl the turn-in snippets are in: quest::say("… $name …").
+const REPLY_RX = /e\.self:(Say|Emote|Shout)\s*\(|quest::(say|emote|shout)\s*\(|e\.other:Message\s*\(/g;
 
 // Every NPC line in a stretch of script, in order.
 function _replies(seg) {
@@ -68,7 +69,7 @@ function _replies(seg) {
   while ((m = REPLY_RX.exec(seg))) {
     const open = m.index + m[0].length - 1;
     let args = _callArgs(seg, open);
-    const kind = m[1] ? m[1].toLowerCase() : 'message';
+    const kind = (m[1] || m[2]) ? (m[1] || m[2]).toLowerCase() : 'message';
     if (kind === 'message') {
       const parts = _splitTop(args, ',');
       if (parts.length < 2) continue;
@@ -76,7 +77,7 @@ function _replies(seg) {
       if (Number(parts[0].trim()) === 15) continue;
       args = parts.slice(1).join(',');
     }
-    let text = _exprText(args);
+    let text = _exprText(args).replace(/\$name\b/g, '<you>');
     // Scripts that print their own tell: "Maelin tells you, '...'" → the words inside.
     const tell = /^[A-Za-z`' ]+? tells you, '([\s\S]*)'$/.exec(text);
     if (tell) text = tell[1];
@@ -86,6 +87,73 @@ function _replies(seg) {
 }
 
 const GATE_RX = /\bqglobals\b|:HasItem\s*\(|:GetFaction|:GetLevel\s*\(|:GetClass\s*\(|:GetRace\s*\(|:GetDeity\s*\(|FactionValue/;
+
+// What a stretch of script does besides talking, for the Quest tab's warnings and item labels (the
+// guild lead, 2026-09-29: "put a warning on anything that despawns a mob or spawns something else,
+// or causes negative faction. If there are turn-in requirements or you get an item as output from a
+// quest we should denote that"). Reads the Lua scripts and the Perl the turn-in snippets are in.
+// Ids only; the bot names them.
+//   depopSelf  the NPC itself leaves (eq.depop(), quest::depop_withtimer(), e.self:Depop())
+//   depops     NPC type ids it removes (eq.depop(12345), quest::depopall(12345))
+//   spawns     NPC type ids it puts up; spawnOther = a spawn whose id the script computes
+//   faction    [{ id, delta }] in script order, gains and losses
+//   gives      item ids you can get; givesRandom = one of them, picked at random
+function effects(code) {
+  const s = String(code || '');
+  const out = { depopSelf: false, depops: [], spawns: [], spawnOther: false, faction: [], gives: [], givesRandom: false };
+  const add = (list, n) => { if (n > 0 && !list.includes(n)) list.push(n); };
+  for (const m of s.matchAll(/(?:\beq\.|quest::)depop(?:_?all|_with_?timer)?\s*\(\s*(\d*)\s*[,)]/gi)) {
+    if (m[1]) add(out.depops, Number(m[1])); else out.depopSelf = true;
+  }
+  if (/e\.self:Depop(?:WithTimer)?\s*\(/.test(s)) out.depopSelf = true;
+  for (const m of s.matchAll(/(?:\beq\.|quest::)(?:spawn2|unique_spawn|spawn)\s*\(\s*([^,)]*)/gi)) {
+    if (/^\d+$/.test(m[1].trim())) add(out.spawns, Number(m[1].trim())); else out.spawnOther = true;
+  }
+  if (/(?:\beq\.|quest::)spawn_from_spawn2\s*\(/i.test(s)) out.spawnOther = true;   // Takes a spawn point, not an NPC id.
+  // Lua e.other:Faction(e.self, 262, -1, 0) or e.other:Faction(262, -50, 0); Perl quest::faction(291, -20).
+  for (const m of s.matchAll(/(?::Faction|quest::faction)\s*\(\s*(?:e\.self\s*,\s*)?(\d+)\s*,\s*(-?\d+)/g)) {
+    if (Number(m[2]) !== 0) out.faction.push({ id: Number(m[1]), delta: Number(m[2]) });
+  }
+  // Items: SummonItem(id) / quest::summonitem(id); QuestReward's item slot, written positionally
+  // (e.self, copper, silver, gold, platinum, item, exp) or as a table ({itemid = id, items = {…}});
+  // eq.ChooseRandom(a, b, c) / quest::ChooseRandom(…) in either means one of them.
+  for (const m of s.matchAll(/(?::SummonItem|quest::summonitem|QuestReward)\s*\(/g)) {
+    const args = _callArgs(s, m.index + m[0].length - 1);
+    const rnd = /ChooseRandom\s*\(([^)]*)\)/.exec(args);
+    if (rnd) {
+      out.givesRandom = true;
+      for (const n of rnd[1].match(/\d+/g) || []) add(out.gives, Number(n));
+      continue;
+    }
+    if (!/QuestReward/.test(m[0])) {
+      const first = /^\s*(\d+)/.exec(args);
+      if (first) add(out.gives, Number(first[1]));
+      continue;
+    }
+    const one = /\bitemid\s*=\s*(\d+)/.exec(args);
+    if (one) add(out.gives, Number(one[1]));
+    const many = /\bitems\s*=\s*\{([^}]*)\}/.exec(args);
+    if (many) for (const n of many[1].match(/\d+/g) || []) add(out.gives, Number(n));
+    if (!one && !many) {
+      const parts = _splitTop(args, ',');
+      if (parts.length >= 6 && /^\s*\d+\s*$/.test(parts[5])) add(out.gives, Number(parts[5]));
+    }
+  }
+  return out;
+}
+
+// Items the NPC checks you carry before a branch answers at all: HasItem(id) in the branch's own
+// condition, not negated. (A HasItem deeper in the branch only picks which reply you get; that is
+// the "depends on you" tag.)
+function needsItems(cond) {
+  const c = String(cond || '');
+  const out = [];
+  for (const m of c.matchAll(/:HasItem\s*\(\s*(\d+)\s*\)/g)) {
+    if (/\bnot\s*\(?\s*[\w.]*$/.test(c.slice(0, m.index))) continue;
+    if (!out.includes(Number(m[1]))) out.push(Number(m[1]));
+  }
+  return out;
+}
 
 // One entry per findi branch of event_say, in script order:
 //   { keywords, replies: [{kind, text}], gated, flag, clears, hints }
@@ -134,6 +202,8 @@ function parseDialog(body) {
       flag: /set_global\s*\(|received a character flag/i.test(seg),
       clears: /delete_global\s*\(/.test(seg) && !/set_global\s*\(/.test(seg),
       hints,
+      fx: effects(seg),              // despawns, spawns, faction, items you get
+      needs: needsItems(b.cond),     // items it checks you carry before answering
     };
   }).filter((b) => !b.gm && (b.replies.length || b.flag || b.clears)).map(({ gm, ...b }) => b);
 }
@@ -146,6 +216,26 @@ function tradeReplies(body) {
   if (start < 0) return [];
   const next = src.indexOf('\nfunction ', start + 10);
   return _replies(src.slice(start, next < 0 ? src.length : next));
+}
+
+// event_trade split into one entry per hand-in: the item ids check_turn_in wants (a repeat means
+// that many), what the NPC says, and what the hand-in does (effects). A branch runs until the
+// next check_turn_in, the same way a say branch runs until the next keyword.
+function tradeBranches(body) {
+  const src = String(body || '');
+  const start = src.search(/function\s+event_trade\s*\(/);
+  if (start < 0) return [];
+  const next = src.indexOf('\nfunction ', start + 10);
+  const tr = src.slice(start, next < 0 ? src.length : next);
+  const heads = [];
+  for (const m of tr.matchAll(/check_turn_in\s*\(/g)) {
+    const args = _callArgs(tr, m.index + m[0].length - 1);
+    heads.push({ at: m.index, items: [...args.matchAll(/\bitem\d+\s*=\s*(\d+)/g)].map((x) => Number(x[1])) });
+  }
+  return heads.filter((h) => h.items.length).map((h, n, all) => {
+    const seg = tr.slice(h.at, n + 1 < all.length ? all[n + 1].at : tr.length);
+    return { items: h.items, replies: _replies(seg), fx: effects(seg) };
+  });
 }
 
 // Names worth looking up as "who to talk to next": runs of Capitalised words (with the
@@ -198,4 +288,4 @@ const displayName = (n) => String(n || '').replace(/^#+/, '').replace(/_/g, ' ')
 // filenames cannot hold written as "-" (Seer_Mal_Nae`Shi → Seer_Mal_Nae-Shi.lua).
 const scriptPath = (zoneShort, npcName) => `${zoneShort}/${String(npcName).replace(/`/g, '-')}.lua`;
 
-module.exports = { parseDialog, tradeReplies, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies };
+module.exports = { parseDialog, tradeReplies, tradeBranches, effects, needsItems, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies };

@@ -129,6 +129,77 @@ describe('what to say', () => {
   });
 });
 
+// What a branch does besides talking (the guild lead, 2026-09-29: "put a warning on anything that
+// despawns a mob or spawns something else, or causes negative faction. If there are turn-in
+// requirements or you get an item as output from a quest we should denote that"). The call forms
+// are the ones the mirror actually uses, counted across all 5,719 scripts: eq.depop() (646),
+// eq.depop_with_timer() (480), eq.spawn2(id, …), e.other:Faction(e.self, id, n[, 0]),
+// e.other:Faction(id, n, 0), QuestReward positional / table / eq.ChooseRandom; and the Perl in
+// the turn-in snippets.
+describe('what a branch does', () => {
+  it('Lua: the NPC leaves, another NPC is removed, a mob is spawned', () => {
+    const fx = q.effects('eq.spawn2(55392,0,0,e.self:GetX(),e.self:GetY(),e.self:GetZ(),0);\n eq.depop_with_timer();\n eq.depop(202223);');
+    expect(fx.depopSelf).toBe(true);
+    expect(fx.depops).toEqual([202223]);
+    expect(fx.spawns).toEqual([55392]);
+    expect(q.effects('e.self:Depop();').depopSelf).toBe(true);
+    expect(q.effects('eq.unique_spawn(npc_id, 0, 0, x, y, z);').spawnOther).toBe(true);   // Computed id: still a spawn.
+    expect(q.effects('eq.spawn_condition("hole", 1, 1);').spawnOther).toBe(false);          // Not a spawn call.
+  });
+
+  it('Lua and Perl faction, gains and losses, in order', () => {
+    expect(q.effects('e.other:Faction(e.self,262,-1,0);\n e.other:Faction(265,50,0);').faction)
+      .toEqual([{ id: 262, delta: -1 }, { id: 265, delta: 50 }]);
+    expect(q.effects('quest::faction(291,-20); # Merchants of Qeynos').faction).toEqual([{ id: 291, delta: -20 }]);
+  });
+
+  it('items you get: SummonItem, QuestReward by position or table, and random picks', () => {
+    expect(q.effects('e.other:SummonItem(14107);').gives).toEqual([14107]);
+    expect(q.effects('e.other:QuestReward(e.self,{itemid = 15958, exp = 100});').gives).toEqual([15958]);
+    expect(q.effects('e.other:QuestReward(e.self,0,0,0,0,0,1000);').gives).toEqual([]);      // Exp only.
+    const rnd = q.effects('e.other:QuestReward(e.self,0,0,0,0,eq.ChooseRandom(10028, 10037),300000);');
+    expect(rnd.gives).toEqual([10028, 10037]);
+    expect(rnd.givesRandom).toBe(true);
+    expect(q.effects('quest::summonitem(24073); quest::depop_withtimer();')).toMatchObject({ gives: [24073], depopSelf: true });
+  });
+
+  it('an item the NPC checks you carry, unless the check is "not"', () => {
+    expect(q.needsItems(' e.message:findi("sword") and e.other:HasItem(1234) ')).toEqual([1234]);
+    expect(q.needsItems(' e.message:findi("sword") and not e.other:HasItem(1234) ')).toEqual([]);
+  });
+
+  it('each say branch carries what it does', () => {
+    const d = q.parseDialog('function event_say(e)\n\tif(e.message:findi("fight") and e.other:HasItem(1234)) then\n\t\te.self:Say("Guards!");\n\t\teq.spawn2(202401,0,0,1,2,3,0);\n\tend\nend\n');
+    expect(d[0].fx.spawns).toEqual([202401]);
+    expect(d[0].needs).toEqual([1234]);
+  });
+
+  it('a hand-in per check_turn_in: its items (a repeat means two), words and effects', () => {
+    const t = q.tradeBranches(`function event_trade(e)
+	if(item_lib.check_turn_in(e.self, e.trade, {item1 = 22519, item2 = 22519})) then
+		e.self:Say("Two of them.");
+		e.other:Faction(e.self,1505,-25);
+	elseif(item_lib.check_turn_in(e.self, e.trade, {item1 = 15958})) then
+		e.other:QuestReward(e.self,{itemid = 15959});
+		eq.depop();
+	end
+	item_lib.return_items(e.self, e.other, e.trade)
+end
+`);
+    expect(t.map((b) => b.items)).toEqual([[22519, 22519], [15958]]);
+    expect(t[0].replies).toEqual([{ kind: 'say', text: 'Two of them.' }]);
+    expect(t[0].fx.faction).toEqual([{ id: 1505, delta: -25 }]);
+    expect(t[0].fx.depopSelf).toBe(false);          // The second branch's depop stays with it.
+    expect(t[1].fx).toMatchObject({ gives: [15959], depopSelf: true });
+  });
+
+  it('Perl lines in a turn-in snippet read the same way, $name as you', () => {
+    expect(q._replies('quest::say("Great work, $name!");\n quest::emote("bows.");')).toEqual([
+      { kind: 'say', text: 'Great work, <you>!' }, { kind: 'emote', text: 'bows.' },
+    ]);
+  });
+});
+
 describe('who to talk to next', () => {
   it('the hand-in reply names the next NPC', () => {
     const t = q.tradeReplies(TARERD);

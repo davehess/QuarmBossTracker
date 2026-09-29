@@ -15103,23 +15103,58 @@ async function _npcInteract(npcId) {
   }
   const say = script ? qd.parseDialog(script.body) : [];
   const trade = script ? qd.tradeReplies(script.body) : [];
+  const tradeBr = script ? qd.tradeBranches(script.body) : [];
 
   const turnRows = await supabase.select('scripted_npc_turnins',
-    `npc_id=eq.${npcId}&is_duplicate=eq.false&select=inputs,outputs,cash,exp_award&limit=20`).catch(() => []);
+    `npc_id=eq.${npcId}&is_duplicate=eq.false&select=inputs,outputs,cash,exp_award,faction_changes,random_outputs,raw_snippet&limit=20`).catch(() => []);
   const vendorRows = npc.merchant_id
     ? await supabase.select('eqemu_merchantlist', `merchantid=eq.${npc.merchant_id}&select=item,slot&order=slot.asc&limit=300`).catch(() => [])
     : [];
-  const itemIds = new Set();
-  for (const t of (Array.isArray(turnRows) ? turnRows : [])) {
+  // Each hand-in's effects (despawns, spawns, faction) come from its own branch of the script,
+  // matched on the items it takes; without a match, from the importer's snippet (800 chars, so a
+  // late depop can be cut off) and its faction list (Perl only).
+  const turnList = (Array.isArray(turnRows) ? turnRows : []).map((t) => {
+    const ids = (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).flatMap((x) => Array(x.qty || 1).fill(x.item_id)).sort((a, b) => a - b);
+    const br = tradeBr.find((b) => b.items.length === ids.length && [...b.items].sort((a, c) => a - c).every((v, i) => v === ids[i]));
+    const fx = br ? br.fx : qd.effects(t.raw_snippet);
+    if (!br && !fx.faction.length && Array.isArray(t.faction_changes)) {
+      fx.faction = t.faction_changes.filter((f) => Number(f?.delta)).map((f) => ({ id: Number(f.faction_id), delta: Number(f.delta) }));
+    }
+    const says = br ? br.replies : qd._replies(String(t.raw_snippet || ''));
+    return { t, fx, says };
+  });
+  const itemIds = new Set(), fxNpcIds = new Set(), factionIds = new Set();
+  for (const { t } of turnList) {
     for (const x of [...(t.inputs || []), ...(t.outputs || [])]) if (Number.isInteger(x?.item_id)) itemIds.add(x.item_id);
   }
-  for (const v of (Array.isArray(vendorRows) ? vendorRows : [])) if (Number.isInteger(v.item)) itemIds.add(v.item);
-  const items = new Map();
-  if (itemIds.size) {
-    const rows = await supabase.select('eqemu_items', `id=in.(${[...itemIds].join(',')})&select=id,name,price&limit=1000`).catch(() => []);
-    for (const r of (Array.isArray(rows) ? rows : [])) items.set(r.id, r);
+  for (const fx of [...say.map((b) => b.fx), ...turnList.map((x) => x.fx)]) {
+    for (const id of [...fx.spawns, ...fx.depops]) fxNpcIds.add(id);
+    for (const f of fx.faction) factionIds.add(f.id);
   }
+  for (const b of say) for (const id of [...b.fx.gives, ...b.needs]) itemIds.add(id);
+  for (const v of (Array.isArray(vendorRows) ? vendorRows : [])) if (Number.isInteger(v.item)) itemIds.add(v.item);
+  const [itemRows, fxNpcRows, factionRows] = await Promise.all([
+    itemIds.size ? supabase.select('eqemu_items', `id=in.(${[...itemIds].join(',')})&select=id,name,price&limit=1000`).catch(() => []) : [],
+    fxNpcIds.size ? supabase.select('eqemu_npc_types', `id=in.(${[...fxNpcIds].join(',')})&select=id,name&limit=200`).catch(() => []) : [],
+    factionIds.size ? supabase.select('eqemu_faction_list_full', `id=in.(${[...factionIds].join(',')})&select=id,name&limit=200`).catch(() => []) : [],
+  ]);
+  const items = new Map((Array.isArray(itemRows) ? itemRows : []).map((r) => [r.id, r]));
+  const npcNames = new Map((Array.isArray(fxNpcRows) ? fxNpcRows : []).map((r) => [r.id, qd.displayName(r.name)]));
+  const factionNames = new Map((Array.isArray(factionRows) ? factionRows : []).map((r) => [r.id, r.name]));
   const itemRef = (id) => ({ id, name: items.get(id)?.name || `Item ${id}` });
+  // What a branch or hand-in does, named, for the Quest tab (the guild lead, 2026-09-29: warn on
+  // despawns, spawns and faction losses; "we should also track faction for these quests as well").
+  // Empty parts are left out so a plain NPC's payload stays small.
+  const fxOut = (fx) => {
+    const npcRef = (id) => ({ id, name: npcNames.get(id) || `NPC ${id}` });
+    const warn = {};
+    if (fx.depopSelf) warn.despawn = true;
+    if (fx.depops.length) warn.despawns = fx.depops.map(npcRef);
+    if (fx.spawns.length) warn.spawns = fx.spawns.map(npcRef);
+    if (fx.spawnOther) warn.spawn_other = true;
+    const faction = fx.faction.map((f) => ({ id: f.id, name: factionNames.get(f.id) || `Faction ${f.id}`, delta: f.delta }));
+    return { warn: Object.keys(warn).length ? warn : undefined, faction: faction.length ? faction : undefined };
+  };
 
   // Who to talk to next: named NPCs (capitalised, not "a sarnak") that the replies mention.
   // Full names anywhere; a bare surname ("Thiran") only in this zone ("Vicar Thiran").
@@ -15192,12 +15227,22 @@ async function _npcInteract(npcId) {
   const clip = (s) => (s.length > 600 ? s.slice(0, 597) + '…' : s);
   return {
     id: npcId, name: display, zone_short: zone ? zone.short_name : null, script: script ? script.path : null,
-    say: say.slice(0, 30).map((b) => ({ ...b, replies: b.replies.slice(0, 6).map((r) => ({ kind: r.kind, text: clip(r.text) })) })),
+    say: say.slice(0, 30).map(({ fx, needs, ...b }) => ({
+      ...b,
+      replies: b.replies.slice(0, 6).map((r) => ({ kind: r.kind, text: clip(r.text) })),
+      ...fxOut(fx),
+      gives: fx.gives.length ? fx.gives.map(itemRef) : undefined,
+      gives_random: fx.givesRandom || undefined,
+      needs: needs.length ? needs.map(itemRef) : undefined,
+    })),
     trade: trade.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })),
-    turnins: (Array.isArray(turnRows) ? turnRows : []).map((t) => ({
+    turnins: turnList.map(({ t, fx, says }) => ({
       inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
       outputs: (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => itemRef(x.item_id)),
       exp: t.exp_award || null,
+      random: !!t.random_outputs || fx.givesRandom || undefined,
+      ...fxOut(fx),
+      says: says.length ? says.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })) : undefined,
     })).filter((t) => t.inputs.length),
     next,
     vendor: (Array.isArray(vendorRows) ? vendorRows : []).filter((v) => items.has(v.item))
