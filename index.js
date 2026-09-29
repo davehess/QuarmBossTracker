@@ -476,6 +476,11 @@ client.once(Events.ClientReady, async (readyClient) => {
   setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
   setTimeout(() => _backfillMimicFeedbackButtonsOnce(readyClient)
     .catch(err => console.warn('[feedback] button backfill:', err?.message)), 20_000);
+  setTimeout(() => _backfillFeedbackRefsOnce(readyClient)
+    .catch(err => console.warn('[feedback-ref] card backfill:', err?.message)), 45_000);
+  // Reports closed by commits ("Fixes FB-12"): every 10 minutes, two unauthenticated GitHub calls.
+  setTimeout(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 90_000);
+  setInterval(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 10 * 60_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -1561,7 +1566,7 @@ async function _feedbackRowForMsg(msgId) {
     const supabase = require('./utils/supabase');
     if (!supabase.isEnabled() || !msgId) return null;
     const rows = await supabase.select('feedback',
-      `discord_msg_id=eq.${encodeURIComponent(msgId)}&select=id,submitter_discord_id,category&limit=1`);
+      `discord_msg_id=eq.${encodeURIComponent(msgId)}&select=id,ref,submitter_discord_id,category&limit=1`);
     return Array.isArray(rows) && rows[0] ? rows[0] : null;
   } catch { return null; }
 }
@@ -1576,7 +1581,7 @@ async function _feedbackRowUpdate(row, patch) {
 // at the end would read as part of the report.
 function _feedbackStatusContent(content, status) {
   const lines = String(content || '').split('\n');
-  lines[0] = lines[0].replace(/ · (?:📬|✅|❌) .*$/u, '') + ' · ' + status;
+  lines[0] = lines[0].replace(/ · (?:📬|✅|❌|🧪) .*$/u, '') + ' · ' + status;
   return lines.join('\n').slice(0, 2000);
 }
 
@@ -1595,7 +1600,8 @@ async function handleFeedbackRecv(interaction) {
     if (row?.submitter_discord_id) {
       try {
         const user = await interaction.client.users.fetch(row.submitter_discord_id);
-        await user.send(`📬 Your ${row.category === 'bug' ? 'bug report' : 'idea'} from Mimic has been received by leadership. Thank you!`);
+        const fbTag = require('./utils/feedbackRefs').tag(row.ref);
+        await user.send(`📬 Your ${row.category === 'bug' ? 'bug report' : 'idea'}${fbTag ? ' ' + fbTag : ''} from Mimic has been received by leadership. Thank you!`);
       } catch { /* DMs may be closed */ }
     }
     await msg.edit({ content: _feedbackStatusContent(msg.content, `📬 Acknowledged by ${reviewerName}`), components: [_feedbackAckRow()] });
@@ -18028,9 +18034,11 @@ async function _handleAgentFeedback(req, res) {
         `${m.removed ? ` (${m.removed} private lines removed)` : ''}` +
         `${m.truncated ? ' \u2014 truncated' : ''}`
       : '';
+    // FB-<ref>: the handle commits and people use for it (feedbackRefs).
+    const fbTag = require('./utils/feedbackRefs').tag(Array.isArray(saved) && saved[0] ? saved[0].ref : null);
     const sent = await ch.send({
       content:
-        `${tag} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
+        `${tag}${fbTag ? ' ' + fbTag : ''} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
         `>>> ${message.slice(0, 1500)}${attached}`,
       files: shotsMod.discordFiles(shots),
       components: [_feedbackRecvRow()],
@@ -18471,6 +18479,124 @@ async function _backfillMimicFeedbackButtonsOnce(readyClient) {
   return 'done';
 }
 
+// Reports closed by commits move on by themselves (utils/feedbackRefs.js; the guild lead, 2026-09-29:
+// "referenceable IDs for each bug or enhancement request so the bot can update these when they get
+// implemented"). A commit on beta saying "Fixes FB-12" marks report 12 on beta; one on main marks it
+// implemented. The row, the Discord card and the submitter all hear. Reads the public repo's commit
+// list, no token; the last sha seen per branch sits in bot_kv, so a restart neither misses nor repeats
+// one, and a re-read is harmless because a report only moves forward. Beta first, so a commit that
+// reached both in one pass ends at implemented.
+function _githubJson(pathname) {
+  return new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: pathname,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(res.statusCode === 200 ? JSON.parse(b) : null); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+}
+async function _feedbackAdvance(readyClient, ref, branch, sha) {
+  const supabase = require('./utils/supabase');
+  const fr = require('./utils/feedbackRefs');
+  const rows = await supabase.select('feedback',
+    `ref=eq.${ref}&select=id,ref,status,category,submitter_discord_id,discord_msg_id,notes&limit=1`).catch(() => null);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  const next = row ? fr.advance(row.status, branch) : null;
+  if (!next) return;
+  const line = fr.statusLine(next, sha);
+  const now = new Date().toISOString();
+  const patch = { status: next, notes: [row.notes, `${now.slice(0, 10)} ${line}`].filter(Boolean).join('\n') };
+  if (next === 'addressed') { patch.addressed_by = `commit ${String(sha).slice(0, 7)}`; patch.addressed_at = now; }
+  await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
+    .catch(err => console.warn('[feedback-ref] row update failed:', err?.message));
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  if (threadId && row.discord_msg_id) {
+    try {
+      const ch = await readyClient.channels.fetch(threadId);
+      const msg = await ch.messages.fetch(row.discord_msg_id);
+      const components = next === 'addressed' ? [] : msg.components;   // Beta keeps the buttons.
+      if (msg.embeds?.[0]) {
+        const e = _EB2.from(msg.embeds[0])
+          .setFields(...(msg.embeds[0].fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: line, inline: false });
+        await msg.edit({ embeds: [e], components });
+      } else {
+        await msg.edit({ content: _feedbackStatusContent(msg.content, line), components });
+      }
+    } catch (err) { console.warn('[feedback-ref] card edit failed:', err?.message); }
+  }
+  if (row.submitter_discord_id) {
+    try {
+      const text = fr.dmText(row.ref, row.category, next);
+      if (text) await (await readyClient.users.fetch(row.submitter_discord_id)).send(text);
+    } catch { /* DMs may be closed */ }
+  }
+  console.log(`[feedback-ref] FB-${ref} → ${next} (${branch} ${String(sha).slice(0, 7)})`);
+}
+async function _feedbackCommitWatch(readyClient) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const fr = require('./utils/feedbackRefs');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  for (const branch of ['beta', 'main']) {
+    const key = `fb_commit_seen_${branch}`;
+    const kv = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`).catch(() => null);
+    const seen = Array.isArray(kv) && kv[0] && kv[0].value ? kv[0].value.sha : null;
+    const commits = await _githubJson(`/repos/davehess/QuarmBossTracker/commits?sha=${branch}&per_page=40`);
+    if (!Array.isArray(commits) || !commits.length) continue;
+    const fresh = [];
+    for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
+    for (const c of fresh.reverse()) {
+      for (const ref of fr.refsIn(c.commit && c.commit.message)) {
+        await _feedbackAdvance(readyClient, ref, branch, c.sha).catch(err => console.warn('[feedback-ref] failed:', err?.message));
+      }
+    }
+    await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: commits[0].sha }, updated_at: new Date().toISOString() }],
+      'guild_id,key').catch(() => {});
+  }
+}
+
+// One-shot: the reports still open when FB numbers arrived get theirs on the card, so they can be named
+// too. A Mimic post's first line gains it after "Bug"/"Idea"; an embed's title swaps "Feedback" for it.
+// Latched in bot_kv like the button backfill above.
+const _FB_REFS_BACKFILL_KEY = 'feedback_refs_backfill_v1';
+async function _backfillFeedbackRefsOnce(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const latch = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FB_REFS_BACKFILL_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(latch)) return kvLatch.latchState(latch) === 'unknown' ? 'unknown' : 'latched';
+  const rows = await supabase.select('feedback',
+    'status=neq.addressed&ref=not.is.null&discord_msg_id=not.is.null&select=ref,discord_msg_id&order=ref.asc&limit=100');
+  if (!Array.isArray(rows)) return 'unknown';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return 'no-thread';
+  const fr = require('./utils/feedbackRefs');
+  let tagged = 0;
+  for (const r of rows) {
+    const m = await thread.messages.fetch(r.discord_msg_id).catch(() => null);
+    if (!m) continue;
+    const t = fr.tag(r.ref);
+    let edit = null;
+    if (m.embeds?.[0]) {
+      const title = m.embeds[0].title || '';
+      if (!title.includes(t)) edit = { embeds: [_EB2.from(m.embeds[0]).setTitle(title.replace(/Feedback/, t) === title ? `${t} — ${title}` : title.replace(/Feedback/, t))] };
+    } else if (m.content && !m.content.includes(t)) {
+      const lines = m.content.split('\n');
+      lines[0] = lines[0].replace(/^(\S+ (?:Bug|Idea))/u, `$1 ${t}`);
+      edit = { content: lines.join('\n') };
+    }
+    if (edit && await m.edit(edit).then(() => true).catch(() => false)) tagged++;
+  }
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FB_REFS_BACKFILL_KEY, value: { ran_at: new Date().toISOString(), tagged }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log(`[feedback-ref] numbered ${tagged} open report card(s)`);
+  return 'done';
+}
+
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
 // thread, mirroring the /feedback command's embed + buttons, then stamp the
 // row's discord_msg_id/link so it's posted exactly once. Called on an interval
@@ -18494,7 +18620,7 @@ async function relayWebFeedback(readyClient) {
     rows = await supabase.select(
       'feedback',
       `discord_msg_id=is.null&or=(client.is.null,submitted_at.lt.${encodeURIComponent(clientGraceIso)})` +
-      '&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
+      '&order=submitted_at.asc&limit=10&select=id,ref,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
     );
   } catch { return; }
   if (!Array.isArray(rows) || rows.length === 0) return;
@@ -18508,7 +18634,7 @@ async function relayWebFeedback(readyClient) {
       const cat = r.category || 'general';
       const embed = new EmbedBuilder()
         .setColor(0x5865f2)
-        .setTitle(`📬 Feedback — ${cat}`)
+        .setTitle(`📬 ${require('./utils/feedbackRefs').tag(r.ref) || 'Feedback'} — ${cat}`)
         .setDescription(String(r.message || '(no message)').slice(0, 4000))
         .addFields({ name: 'Submitted by', value: r.submitter_name || 'web (anonymous)', inline: true })
         .setFooter({ text: r.submitter_discord_id ? `uid:${r.submitter_discord_id} · via web` : 'via wolfpack.quest' })

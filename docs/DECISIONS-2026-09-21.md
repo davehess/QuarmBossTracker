@@ -4033,6 +4033,25 @@ now. `test/char-profile-active.test.js`.
     medium — throwaway once A exists.
   - Recommendation: A, scoped to timers, behind beta.
 
+## 78. Reports get numbers: FB-<n>, closed by commits (2026-09-29, bot 3.1.172, web 1.8.41)
+The guild lead: *"We need to start having referenceable IDs for each bug or enhancement request so the bot
+can update these when they get implemented"*.
+- **The number:** `feedback.ref`, a sequence (migration `20260929020000_feedback_ref`, applied); the 33
+  existing reports were numbered in submission order, FB-1 … FB-33. New cards carry it: a Mimic post's
+  first line ("🐞 Bug FB-34 from …"), a web or `/feedback` embed's title; the open cards were numbered in
+  place once (`_backfillFeedbackRefsOnce`, latched in bot_kv). `/admin/feedback` shows it.
+- **Closing by commit:** every 10 minutes the bot reads the public repo's last 40 commits on `beta`,
+  then `main` (no token; last sha seen per branch in bot_kv). A line saying fixes / implements / closes /
+  resolves and FB-n moves report n: beta → `on_beta` (🧪 On beta, buttons kept), main → `addressed`
+  (✅ Implemented, buttons removed). The card is edited, the row gets a dated note, the submitter a DM.
+  A mention alone moves nothing; a report never moves backwards, and won't-fix / duplicate stay closed.
+  Rule in `CLAUDE.md`; logic in `utils/feedbackRefs.js`, `test/feedback-refs.test.js`.
+- **Open reports that earlier work looks to have answered** (for the guild lead to confirm, not closed
+  here): FB-9 (the /who fixed size + scroll, 2026-09-26), FB-10 (pasting screenshots into feedback),
+  FB-13 (the server tick as its own timer: the Tick overlay), FB-19 (timers can start at the top, agent
+  3.7.34), FB-3 / FB-4 (June's PvP kill reports), and tonight FB-27 / FB-25 (bard charm, §75) and FB-32
+  (switching characters, §76) pending a beta check.
+
 
 
 

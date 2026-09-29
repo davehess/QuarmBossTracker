@@ -28,6 +28,7 @@ type FeedbackRow = {
   discord_msg_id: string | null;
   discord_msg_link: string | null;
   status: string;
+  ref: number | null;
   acked_by: string | null;
   acked_at: string | null;
   addressed_by: string | null;
@@ -73,6 +74,7 @@ async function updateStatus(formData: FormData) {
 function statusChip(s: string): { label: string; cls: string } {
   if (s === 'new')       return { label: '🆕 new',          cls: 'text-blue' };
   if (s === 'acked')     return { label: '👀 acknowledged', cls: 'text-orange' };
+  if (s === 'on_beta')   return { label: '🧪 on beta',      cls: 'text-purple' };
   if (s === 'addressed') return { label: '✅ addressed',    cls: 'text-green' };
   if (s === 'wont_fix')  return { label: '🚫 won’t fix',    cls: 'text-dim' };
   if (s === 'duplicate') return { label: '👯 duplicate',    cls: 'text-dim' };
@@ -99,7 +101,7 @@ export default async function AdminFeedbackPage({
   const admin = supabaseAdmin();
   let q: any = admin
     .from('feedback')
-    .select('id, submitted_at, submitter_discord_id, submitter_name, category, message, discord_msg_id, discord_msg_link, status, acked_by, acked_at, addressed_by, addressed_at, notes, screenshot_paths')
+    .select('id, ref, submitted_at, submitter_discord_id, submitter_name, category, message, discord_msg_id, discord_msg_link, status, acked_by, acked_at, addressed_by, addressed_at, notes, screenshot_paths')
     .order('submitted_at', { ascending: false })
     .limit(300);
   if (p.status && p.status !== 'all') q = q.eq('status', p.status);
@@ -182,6 +184,8 @@ export default async function AdminFeedbackPage({
               <section key={r.id} className="bg-panel border border-border rounded-lg p-4">
                 <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
                   <div className="flex items-center gap-2 flex-wrap text-xs">
+                    {/* FB-<ref>: the handle a commit closes it by ("Fixes FB-12"; utils/feedbackRefs.js). */}
+                    {r.ref != null && <span className="font-bold text-text">FB-{r.ref}</span>}
                     <span className={`${chip.cls}`}>{chip.label}</span>
                     {r.category && <span className="text-dim">· {r.category}</span>}
                     <span className="text-dim">· {fmtTs(r.submitted_at)}</span>
@@ -220,6 +224,7 @@ export default async function AdminFeedbackPage({
                       className="bg-bg border border-border rounded px-2 py-1 text-xs">
                       <option value="new">new</option>
                       <option value="acked">acked</option>
+                      <option value="on_beta">on beta</option>
                       <option value="addressed">addressed</option>
                       <option value="wont_fix">won't fix</option>
                       <option value="duplicate">duplicate</option>
