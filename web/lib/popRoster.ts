@@ -5,11 +5,12 @@
 // By OpenDKP rank on `characters`, which is how the guild already sorts its roster:
 //   mains — Pack Leader, Officer, Raid Pack, Recruit;
 //   alts  — Raid Alt.
-// Traders, Inactive, Non-raid Alts and unknown ranks are out. Only active characters, at PoP's own entry
-// level or above on their last /who. A raider rank never seen on /who still counts (every raider is at
-// level); an alt needs a seen level, since that is where the low and trader toons hide.
+// Traders, Inactive, Non-raid Alts and unknown ranks are out. Only active characters, level 60 or above on
+// their last /who (the guild lead, same day: "for us it's 60. Recruits are raider, include them"). A raider
+// rank never seen on /who still counts; an alt needs a seen level, since that is where the low and trader
+// toons hide.
 
-export const POP_MIN_LEVEL = 46;
+export const POP_MIN_LEVEL = 60;
 export const RAIDER_RANKS = ['Pack Leader', 'Officer', 'Raid Pack', 'Recruit'];
 export const RAID_ALT_RANKS = ['Raid Alt'];
 
