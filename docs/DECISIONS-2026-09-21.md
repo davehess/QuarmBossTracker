@@ -4810,6 +4810,28 @@ raiders and raid alts, pack members toons at level and above"*. Partly reverses 
   is our guild's floor, not a rule of the game (self-host epic, §3).
 - **Tests:** `test/pop-planner-mains-alts.test.js` runs `popRoster` for real.
 
+### 101. Only main and beta build the website; Vercel's 100-a-day cap (2026-09-29, web 1.8.53)
+The guild lead, on the Essences card: *"still not showing for me"*. The code was on beta and built; the
+website was not being built.
+- **Cause: Vercel's Hobby plan allows 100 deployments a day, and every push to every branch spends one.**
+  Each commit's Vercel status read *"Deployment rate limited — retry in 24 hours"*. In the 24 hours before,
+  alpha took 103 pushes, beta 87 and main 57. Alpha began that morning (§81), and `sync-alpha.yml` merges
+  into it on every main and beta push. So b.wolfpack.quest was stuck on a 15:47 build, seven minutes
+  before the Essences card, and production missed 1.8.52 too.
+- **Picked by the guild lead:** only main and beta build the site. `web/vercel.json`:
+  `"deploymentEnabled": { "**": false, "main": true, "beta": true }`. Alpha, `claude/*`, dependabot and
+  task branches stop building. Mimic's alpha builds are GitHub Actions and are unaffected. Offered and
+  not picked: Vercel Pro ($20 a month, 6,000 a day), both, or leaving it.
+- ⚠ **An Ignored Build Step does not help:** Vercel counts a skipped build as a deployment. A docs-only
+  push to main still spends one; that is accepted.
+- **How to check next time:** a commit's Vercel status is readable without a token at
+  `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`. The Vercel connector in the session needed
+  authorising, so this was the only window.
+- **Also fixed (web 1.8.53):** a signed-out visit to `/pop?v=b&demo=1` sent you to sign-in with
+  `next=/pop`, so you landed on plain `/pop` and never saw the card. The redirect now keeps the query.
+  It sat next to beta's Essences lines, so the beta merge was resolved by hand (`e107f523`).
+- **Tests:** `test/vercel-deploy-branches.test.js`; the redirect in `test/pop-planner-mains-alts.test.js`.
+
 
 
 
