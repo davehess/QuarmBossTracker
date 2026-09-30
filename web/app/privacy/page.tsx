@@ -305,6 +305,42 @@ export default function PrivacyPage() {
         </p>
       </Section>
 
+      {/* The guild lead, 2026-09-30: "privacy page gets updated with the NPC messages in an exceptions
+          section that's collapsed". npcSpeechLine in the agent (3.7.54) is the code this describes. */}
+      <details className="rounded-lg border border-border bg-panel px-4 py-3">
+        <summary className="cursor-pointer text-lg text-orange">Exceptions: NPC speech that triggers can hear</summary>
+        <div className="space-y-3 pt-3">
+          <p>
+            Mimic keeps says, shouts and tells away from triggers. Since agent 3.7.54 it makes one
+            exception: <B>lines spoken by NPCs</B>, so guild triggers can call out scripted raid events. A
+            speaker counts as an NPC when its name has a space in it (a player&apos;s name never does), or
+            when it is one of the named one-word NPCs below. A pet&apos;s name has a space too, so pet lines
+            count.
+          </p>
+          <Bullets>
+            <li>
+              These lines stay on your PC. A trigger that fires sends only its name and what it matched, the
+              same as any trigger. They are never uploaded as chat, and they are left out of log excerpts
+              attached to feedback.
+            </li>
+            <li>
+              A player&apos;s tells, <code>/say</code>, shouts, OOC, auctions, group chat and custom channels
+              stay hidden from triggers.
+            </li>
+            <li>Named one-word NPCs: <B>Etumer</B> (Plane of Nightmare).</li>
+          </Bullets>
+          <p>The NPC lines guild triggers watch today:</p>
+          <Bullets>
+            <li><B>The Tribunal</B> and <B>Agent of The Tribunal</B>: trial starts, a trial already running, a finished trial (Plane of Justice).</li>
+            <li><B>Thelin Poxbourne</B> and <B>Etumer</B>: the escort and the port to Mujaki (Plane of Nightmare).</li>
+            <li><B>Nitram Anizok</B>: the walk to Xanamech (Plane of Innovation).</li>
+            <li><B>The Avatars of Dust, Mist, Smoke and Wind</B>: their spawn shouts (Plane of Air).</li>
+            <li><B>Coirnav the Avatar of Water</B>: minion calls, the named call and the banish (Plane of Water).</li>
+            <li><B>A grimling warder</B>: the Ring of Fire reset (Acrylia Caverns).</li>
+          </Bullets>
+        </div>
+      </details>
+
       <Section title="What other raiders' Mimic records about you">
         <p>Even if you never install Mimic, raiders who run it record what their game shows them:</p>
         <Bullets>

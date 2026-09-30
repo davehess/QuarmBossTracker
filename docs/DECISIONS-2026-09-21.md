@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PoP trigger pack (opens 2026-10-01)** | **§112. Reviewed, not imported.** 551 triggers: 463 ready, 24 events with tested corrected patterns, 53 recast timers to decide, 8 that need the agent to let triggers see NPC speech, 3 unverified. Private review page (owner's artifact list, "PoP Trigger Review") | the guild lead: make the four calls and the per-zone picks on the page. Then a session imports the chosen rows and, on a yes, ships the NPC-speech change to beta and a stable. Main is frozen 19:30–00:30 ET on raid nights |
+| **PoP trigger pack (opens 2026-10-01)** | **§112–§113. Imported and live.** 374 guild-trigger rows (`pop-2026-10`), server recasts, corrected event patterns. NPC speech reaches triggers from agent 3.7.54, stable Mimic 2.7.6. Ring of Fire (Acrylia) pack of 5. No formal raids until 10/14 | the guild lead: in a PoP zone, run the boss short-name lookup once to see which command prints the "not online" reply the stat cards fire on. Raiders: update to 2.7.6 for the NPC-speech callouts |
 | **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
 | **PvP: NPC rows gone; Glory-worthy kills now read** | **§109.** 24 assists, 1 kill and 20 `pvp_deaths` rows deleted on the guild lead's yes. The missed kill was a Glory-worthy one the agent could not parse: agent 3.7.51 (beta `3f0dd0a3`) reads it, and the kill is restored by hand | Glory-worthy kills are missed by every Mimic below 3.7.51, so cut a stable soon. Raiders: after updating, run Opt-in Logs over nights with a Glory kill |
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
@@ -5219,3 +5219,44 @@ imported yet. Our library had no PoP triggers (131 rows, 0 overlap).
 - **Delivery:** imported triggers are guild-trigger rows, which reach raiders in about two minutes with no
   release. Only the NPC-speech change needs a Mimic update.
 - The alpha Canvas work (HUD shapes, chat feeds; task list) is paused for this; nothing of it was written.
+- **Imported, same day, on the guild lead's calls** (stat cards on, corrected event patterns, server
+  recast, NPC speech yes; every zone kept): **374 guild-trigger rows**, `source_pack = 'pop-2026-10'`,
+  tagged `pop` + zone + tier, all enabled. 150 recast timers, 134 stat cards, 58 event callouts, 32
+  "on you" alerts. 118 of the 551 were left out: 43 "audible" rows that repeat a "Self" alert for the same
+  spell, 32 timers whose spell the server recasts instantly, and 43 whose server recast is under 6 s (the
+  bar would restart on every cast). Pack triggers that share one pattern across bosses became one row.
+  Timer and spell patterns were rebuilt from our catalog's own landing, resist and fade text; landing
+  texts too generic to name a spell ("staggers." and 16 others) were dropped from the "someone else" half.
+  Checked by row count and checksum after insert.
+
+### 113. NPC speech reaches triggers; stable 2.7.6; Ring of Fire; no raids until 10/14 (2026-09-30)
+The guild lead: *"yes to NPC speech, privacy page gets updated with the NPC messages in an exceptions
+section that's collapsed / we have no formal raid tonight, or any night until 10/14. / the guild will be
+encountering the Ring of Fire event in Acrylia Caverns"*.
+- **NPC speech (agent 3.7.54, beta `685bb5db`):** `npcSpeechLine` lets a `says`/`shouts`/`tells you` line
+  reach the trigger engine when the speaker's name has a space in it, or is a one-word NPC on a short
+  list (Etumer). Pets count (their names have a space). It is ORed in at the live trigger gate and in the
+  golden replay only; `triggerVisibleLine` and the feedback log excerpt are unchanged, so player chat
+  stays where it was and NPC lines never leave the PC in a feedback report.
+  `test/npc-speech-triggers.test.js`.
+- **Privacy:** `/privacy` gets a collapsed "Exceptions: NPC speech that triggers can hear" section listing
+  the rule and the NPC lines watched; `docs/PRIVACY.md` has the same section.
+- **Stable Mimic 2.7.6 (agent 3.7.54)**, cut the same evening so the PoP event triggers fire on the whole
+  fleet when the zones open. It also carries the update-gate fix (agent 3.7.53). Beta re-parked at 2.7.7.
+- **No formal raids until 2026-10-14**, so the 19:30–00:30 ET freeze does not hold main pushes until
+  then. The freeze itself is unchanged.
+- **Acrylia Caverns, the Ring of Fire** (server script `acrylia/RingOfFire`): 5 guild triggers,
+  `source_pack = 'acrylia-ring-of-fire'`, tagged `acrylia`, `ring-of-fire`, `luclin`:
+  - *first wave*: on the start emote, a 70 s bar (waves come 70–80 s after start), ended early by the reset;
+  - *boss wave*: an 800 s bar (13 min 20 s, the shortest the script allows) to the 10th wave, warned at
+    60 s;
+  - *ring reset*: the warder's shout when the ring empties;
+  - *Curse of Eternal Suffering on you*: the bosses' proc (spell 2934);
+  - *possessed mob completely healed*: a priest healed its group.
+  How it runs, from the script: waves alternate 70–80 s and 90–100 s apart, three mobs each (possessed
+  corpses, wizards, priests, or a Battlemaster / Battlelord miniboss at 58, unslowable); every 10th wave
+  adds one of four level-63 bosses (200k–500k HP, summon, flurry, magic-only melee). Unengaged trash
+  depops after 60 s. **The event ends the moment no living, un-feigned player stands in the ring**
+  (checked every 2 s) — the bosses depop and the warder shouts the reset. So: keep someone alive and
+  standing in the ring the whole time, interrupt or kill the priests first, and do not feign death as the
+  last one in. The ring's own speech needs agent 3.7.54, so the reset trigger fires on 2.7.6 and later.

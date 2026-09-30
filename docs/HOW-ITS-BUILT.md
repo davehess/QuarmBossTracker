@@ -1863,6 +1863,24 @@ Cross-Mimic relay: detecting agent POSTs `trigger-relay`, others poll
 Fires live in an **in-memory ring buffer** — nothing durable, so "has this
 trigger ever fired?" is currently unanswerable (`DESIGN-callout-overlay.md`).
 
+### Triggers hear NPC speech (`npcSpeechLine`, agent 3.7.54) — 2026-09-30
+`triggerVisibleLine` (the privacy list) drops every `says,` / `shouts,` /
+`tells you,` line, which also hid scripted boss speech from triggers.
+`npcSpeechLine` lets such a line through when the speaker's name has a space
+in it, or is a one-word NPC in `NPC_SPEECH_ONE_WORD` (Etumer). It is ORed in at
+the live trigger gate and in `_replayWorker` only — `triggerVisibleLine` and
+`_feedbackLineAllowed` are unchanged, so feedback excerpts still drop it.
+Public copy: the collapsed exceptions section on `/privacy` and in
+`docs/PRIVACY.md`. `test/npc-speech-triggers.test.js`. DECISIONS §113.
+
+### Guild trigger packs: PoP and the Ring of Fire (`guild_triggers.source_pack`) — 2026-09-30
+Imported straight into `guild_triggers`, no code: `pop-2026-10` (374 rows —
+recast bars on the server's NPC spell-list recast, boss stat cards, event
+callouts corrected against `eqemu_quest_scripts`, "on you" alerts; tagged
+`pop` + zone + tier) and `acrylia-ring-of-fire` (5 rows). `/admin/triggers`
+filters by category only, so switching a whole pack off is a `source_pack`
+update in the database. DECISIONS §112–§113.
+
 ### Trigger pattern anchoring — the `^` trap (#190) — 2026-08-04, revised 2026-08-09
 `evaluateTriggersAgainstLine` matches the **raw** line (`[Sun Aug 02 21:10:01
 2026] <message>`) with flags `i`, **no `m`** — so a bare `^` anchors before the
