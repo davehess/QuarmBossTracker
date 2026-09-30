@@ -1389,6 +1389,14 @@ Backfilled (`--since`) kills record but never post/predict.
   gave no guild, the name is in `eqemu_npc_types`, and `/who` never saw it with a class or a guild.
   `test/pvp-assist-npc-victim.test.js`.
 
+**Rallosian Glory kills** (PoP patch, 2026-09-28): the server names no guilds on these lines. The agent's
+`parseGloryKill` reads both wordings, "Rallos Zek watches as X spills Y's blood in Z, but finds no worthy
+conquest" (`glory: false`) and, since agent 3.7.51, "Rallos Zek marks X with his favor for spilling Y's
+blood in Z. X now bears N of 10 measures of Rallosian Glory" (`glory: true`, `PVP_GLORY_WORTHY_RX`). Before
+that the worthy kills went to the local `logsync.pvp-unmatched.json` and never uploaded. The bot's
+`_resolveGloryGuilds` fills the guilds from `/who`, else the roster. `test/pvp-glory.test.js`,
+`test/pvp-glory-bot.test.js`.
+
 **Fight sizes** (§57, migration `20260927040000`): `pvp_fights` returns `zek_players`, `ally_players`
 and `players_by_guild` — everyone a Wolf Pack log saw on the field (the dead, their killers, the
 assisters ±3 min, /who in the zone from 4 min before to 1 min after), one row per name with the best
