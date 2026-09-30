@@ -213,6 +213,11 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **⏳ Update gate: no more "active fight in progress" while idle (agent 3.7.53, beta `df881a7e`, 2026-09-30).**
+  flush()'s early exits (under 10 events, a player or no target) never stamped the live snapshot flushed, so a
+  few stray hits blocked updates until the next real fight. A fight now counts as live only while it has
+  published in the last 150 s (`LIVE_FIGHT_QUIET_MS`, `_liveFightActive`). Stable 2.7.5 still has the bug:
+  pressing OK on the prompt while idle is safe. `test/update-gate-stale-fight.test.js`.
 - **✅ Stable Mimic 2.7.5 (agent 3.7.52, main, 2026-09-30).** Everything on beta since 2.7.4, promoted byte for
   byte from beta `fadf95f8`: Glory-worthy PvP kills, the Canvas, the Overlays tab option C, screens and Rescue,
   per-character suggested triggers, pets on the meter, bard charm, Quest tab warnings, and the FB-38/39/41/42
