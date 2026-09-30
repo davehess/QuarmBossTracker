@@ -18400,8 +18400,9 @@ function wpWireFixerButtons(s) {
       }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
     });
   });
+  // The walkthrough's two unpicked layouts show on beta and alpha builds only, as in the tray.
   document.querySelectorAll('.wp-welcome').forEach(function (wBtn) {
-    if (!(window.mimic && window.mimic.openWelcome)) return;
+    if (!(window.mimic && window.mimic.openWelcome) || !${JSON.stringify(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')))}) return;
     wBtn.style.display = '';
     if (wBtn.dataset.wired) return;
     wBtn.dataset.wired = '1';
