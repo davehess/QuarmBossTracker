@@ -7329,11 +7329,13 @@ function buildTrayMenu() {
       } },
     updateItem,
     // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
-    // as the dashboard Setup card's two buttons.
-    { label: '✨ Setup walkthrough', submenu: [
+    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
+    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
+    // be the beta byte for byte.
+    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
         { label: 'A · one step at a time', click: () => openWelcome('a') },
         { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
-      ] },
+      ] }] : []),
     { label: 'Settings…', click: openSettings },
     { label: 'Quit Mimic', click: _quitMimic },
   ]);

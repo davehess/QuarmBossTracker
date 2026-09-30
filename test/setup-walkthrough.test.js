@@ -161,6 +161,12 @@ describe('reachable from the tray and the dashboard (tray ↔ dashboard parity)'
     expect(d).toMatch(/class="wp-welcome" data-v="b"/);
     expect(d).toMatch(/window\.mimic\.openWelcome\(wBtn\.dataset\.v\)/);
   });
+  // Two layouts still waiting on the guild lead's pick must not reach the stable fleet, and a stable
+  // cut is the beta byte for byte, so both entry points show only on a prerelease build (2026-09-30).
+  it('both entry points show on beta and alpha builds only', () => {
+    expect(stripJs(main)).toContain("...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [");
+    expect(stripJs(dash)).toContain("if (!(window.mimic && window.mimic.openWelcome) || !{{WP:JSON.stringify(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')))}}) return;");
+  });
   it('preload sends the layouts through open-welcome and the relay through welcome-optin', () => {
     const p = stripJs(preload);
     expect(p).toMatch(/openWelcome:\s+\(v\)\s+=> ipcRenderer\.invoke\('open-welcome', v === 'b' \? 'b' : 'a'\)/);
