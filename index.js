@@ -5692,6 +5692,31 @@ async function _handleAgentPvpAssists(req, res) {
     return found || agentSaidNpc;
   }
 
+  // An assist on an NPC is not a PvP assist. The server announces a boss kill in the same words as a
+  // player kill ("Aldenmar of <Wolf Pack> has killed Trakanon in Ruins of Sebilis!"), so the agent
+  // credited every raider on the boss (the guild lead, 2026-09-30: "flag any pvp kills that are probably
+  // an NPC name. trakanon is an NPC"). A victim is an NPC when the broadcast gave it no guild, its name
+  // is in the NPC catalog, and /who has never shown it with a class or a guild — a real player who
+  // shares a boss's name has both.
+  const victimNpcCache = new Map();
+  async function _victimIsNpc(victimName, victimGuild) {
+    if (victimGuild) return false;
+    const key = victimName.toLowerCase();
+    if (victimNpcCache.has(key)) return victimNpcCache.get(key);
+    let npc = false;
+    try {
+      const inCatalog = await supabase.select('eqemu_npc_types',
+        `name=ilike.${encodeURIComponent(victimName.replace(/\s+/g, '_'))}&select=id&limit=1`);
+      if (Array.isArray(inCatalog) && inCatalog.length) {
+        const asPlayer = await supabase.select('who_observations',
+          `character=ilike.${encodeURIComponent(victimName)}&or=(class.not.is.null,guild_name.not.is.null)&select=id&limit=1`);
+        npc = !(Array.isArray(asPlayer) && asPlayer.length);
+      }
+    } catch (e) { void e; }
+    victimNpcCache.set(key, npc);
+    return npc;
+  }
+
   const rows = [];
   let dropped = 0;
   for (const a of assists) {
@@ -5700,6 +5725,7 @@ async function _handleAgentPvpAssists(req, res) {
     const killedAtRaw = a?.killed_at ? new Date(a.killed_at) : null;
     if (!assister || !victim || !killedAtRaw || isNaN(killedAtRaw.getTime())) { dropped++; continue; }
     if (!rosterLower.has(assister.toLowerCase())) { dropped++; continue; }
+    if (await _victimIsNpc(victim, a?.victim_guild ? String(a.victim_guild) : null)) { dropped++; continue; }
     const killedAt = killedAtRaw.toISOString();
     const secondIso = killedAt.slice(0, 19);
     const killerName = a?.killer ? String(a.killer).slice(0, 64) : null;
