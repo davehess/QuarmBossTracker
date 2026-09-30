@@ -41,7 +41,8 @@ describe('pickAndMergeMobRows', () => {
 
 describe('mob-info reports the pair, not the winner as fact', () => {
   const bot = stripJs(readSource(BOT_INDEX));
-  const handler = bot.slice(bot.indexOf('async function _handleAgentMobInfo('), bot.indexOf('\nasync function ', bot.indexOf('async function _handleAgentMobInfo(') + 10));
+  // The handler plus _buildMobInfo, which holds the lookup since the zone packs needed it.
+  const handler = bot.slice(bot.indexOf('async function _handleAgentMobInfo('), bot.indexOf('\nasync function ', bot.indexOf('async function _buildMobInfo(') + 10));
 
   it('fetches race and gender with the row', () => {
     expect(handler).toMatch(/see_improved_hide,race,gender&limit=200/);

@@ -1873,6 +1873,16 @@ the live trigger gate and in `_replayWorker` only — `triggerVisibleLine` and
 Public copy: the collapsed exceptions section on `/privacy` and in
 `docs/PRIVACY.md`. `test/npc-speech-triggers.test.js`. DECISIONS §113.
 
+### Target Info from disk: zone packs (`/api/agent/mob-pack` · `mobinfo-cache/`) — 2026-09-30
+Bot: `_buildMobInfo` (the mob-info lookup, shared by the live endpoint and the
+packs) and `_handleAgentMobPack`, which builds every NPC name in a zone's id
+block, keeps the pack a week in memory and `bot_kv` (`mob_pack:<zone>`), and
+serves it with an ETag and gzip; `?pinned=1` lists zone ids 200–223. Agent:
+`_mobPack*` beside `fetchMobInfo`, one file per zone in `mobinfo-cache/`,
+fetched on arrival in a zone and for the pinned list, revalidated daily,
+evicted after 90 unvisited days or past 80 MB. `fetchMobInfo` checks the pack
+before the network. DECISIONS §114.
+
 ### Guild trigger packs: PoP and the Ring of Fire (`guild_triggers.source_pack`) — 2026-09-30
 Imported straight into `guild_triggers`, no code: `pop-2026-10` (374 rows —
 recast bars on the server's NPC spell-list recast, boss stat cards, event

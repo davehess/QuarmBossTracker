@@ -213,6 +213,11 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **⏳ Target Info: mob info kept on the member's machine (bot 3.1.179 main; agent 3.7.55, beta `effdc609`, 2026-09-30).**
+  The bot builds a pack per zone (`/api/agent/mob-pack`, a week's life, ETag, gzip); the agent keeps the Planes
+  of Power (zone ids 200–223) and every zone its characters visit in `mobinfo-cache/`, and answers Target Info
+  from disk before any network call. Open: `/api/state` still carries 591 KB of guild triggers that Target Info
+  re-reads twice a second. `test/mob-pack.test.js`, `test/mob-pack-agent.test.js`. §114–§115.
 - **✅ PoP trigger pack + Ring of Fire (guild triggers, live 2026-09-30).** 374 rows for every PoP zone
   (`source_pack = 'pop-2026-10'`): recast bars on the server's own recast, boss stat cards, event callouts on
   patterns corrected against the quest scripts, "on you" alerts. Plus 7 for the Acrylia Ring of Fire

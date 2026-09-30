@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-55-2026-09-30',
+    title: 'Target Info from your own machine',
+    version: 'Agent 3.7.55 · Bot 3.1.179 · Web 1.8.60',
+    date: '2026-09-30',
+    channel: 'beta',
+    headline: 'Target Info keeps mob details on your computer, so a mob in a zone you know shows straight away.',
+    features: [
+      {
+        name: 'Mob details kept on your machine',
+        blurb: 'Every Planes of Power zone is saved ahead of time, and any zone you visit is saved when you arrive. Target Info then shows stats, loot and spells without waiting on the guild server, even after a restart or an update.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-7-6-2026-09-30',
     title: 'Mimic 2.7.6',
     version: 'Mimic 2.7.6 · agent 3.7.54 · Web 1.8.59',
