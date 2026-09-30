@@ -749,8 +749,11 @@
         // (any row carries tanks), debuffs arrive PER INSTANCE and render on
         // their own rows; unplaceable ones come pre-dimmed (attributed:false).
         // Pooling was only ever the honest fallback for "can't tell which".
+        // Rows split by SPAWN ID are attributed too (FB-39, the guild lead, 2026-09-30: "the spawnids
+        // are varied and the buffs should have been associated but they weren't"): the bot places each
+        // landing by the id the Mimic that saw it reported, and dims the ones it cannot place.
         var attributed = false;
-        for (var aj = 0; aj < grp.length; aj++) { if (grp[aj].tanks && grp[aj].tanks.length) { attributed = true; break; } }
+        for (var aj = 0; aj < grp.length; aj++) { if ((grp[aj].tanks && grp[aj].tanks.length) || grp[aj].id_proven) { attributed = true; break; } }
         if (attributed) {
           for (var j2 = 0; j2 < grp.length; j2++) html += rowHtml(grp[j2], false);
         } else {

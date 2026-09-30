@@ -69,10 +69,16 @@ describe('it reads the bot’s flag rather than assuming', () => {
     expect(clean).not.toMatch(/id_proven[^;\n]*ambiguous\s*=\s*false/);
   });
 
-  it('leaves the same-name debuff pooling alone for now', () => {
-    // Un-pooling proven rows is the next step, but it needs real multi-reporter
-    // id data to validate against — nobody but the author runs a patched Zeal
-    // yet, and wrong per-mob debuffs are worse than pooled ones.
+  it('still groups same-name rows, so unproven ones keep their pooled block', () => {
     expect(clean).toContain('if (gt.ambiguous || (gt.same_name_count && gt.same_name_count > 1))');
+  });
+
+  // FB-39 (the guild lead, 2026-09-30): two Mimics, two froglok krup shamans, rows split by spawn id,
+  // and the debuffs still pooled into "on one of these 2". The bot now places each landing by its
+  // spawn id (bot 3.1.178), so a proven group shows each row's own debuffs.
+  it('a group split by spawn id shows each row its own debuffs', () => {
+    expect(clean).toContain('if ((grp[aj].tanks && grp[aj].tanks.length) || grp[aj].id_proven) { attributed = true; break; }');
+    const i = clean.indexOf('if (attributed) {');
+    expect(clean.slice(i, i + 120)).toContain('rowHtml(grp[j2], false)');
   });
 });
