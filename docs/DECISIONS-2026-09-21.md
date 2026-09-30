@@ -5245,11 +5245,11 @@ encountering the Ring of Fire event in Acrylia Caverns"*.
   fleet when the zones open. It also carries the update-gate fix (agent 3.7.53). Beta re-parked at 2.7.7.
 - **No formal raids until 2026-10-14**, so the 19:30–00:30 ET freeze does not hold main pushes until
   then. The freeze itself is unchanged.
-- **Acrylia Caverns, the Ring of Fire** (server script `acrylia/RingOfFire`): 5 guild triggers,
+- **Acrylia Caverns, the Ring of Fire** (server script `acrylia/RingOfFire`): 7 guild triggers,
   `source_pack = 'acrylia-ring-of-fire'`, tagged `acrylia`, `ring-of-fire`, `luclin`:
   - *first wave*: on the start emote, a 70 s bar (waves come 70–80 s after start), ended early by the reset;
-  - *boss wave*: an 800 s bar (13 min 20 s, the shortest the script allows) to the 10th wave, warned at
-    60 s;
+  - *boss 1, 2, 3*: bars to waves 10, 20 and 30, each warned at 60 s. Bosses 2 and 3 show only in their
+    last 5 minutes (`display_threshold_sec = 300`);
   - *ring reset*: the warder's shout when the ring empties;
   - *Curse of Eternal Suffering on you*: the bosses' proc (spell 2934);
   - *possessed mob completely healed*: a priest healed its group.
@@ -5260,3 +5260,15 @@ encountering the Ring of Fire event in Acrylia Caverns"*.
   (checked every 2 s) — the bosses depop and the warder shouts the reset. So: keep someone alive and
   standing in the ring the whole time, interrupt or kill the priests first, and do not feign death as the
   last one in. The ring's own speech needs agent 3.7.54, so the reset trigger fires on 2.7.6 and later.
+- **Ring of Fire boss cadence: every 10 waves** (the guild lead, same evening: *"the boss waves are
+  supposed to change to every 10 waves instead of 30 to start then 15 after"*). Our copy of the script
+  (synced 2026-09-29) already reads `wave % 10 == 0`, so bosses come at waves 10, 20, 30 and on. The
+  first import timed only the first boss, and at 800 s, which was 20 s late:
+  - The gap after each wave flips between 70–80 s and 90–100 s, off a toggle the script never resets
+    between events. Wave 10 therefore lands 780–880 s after the start emote when the toggle starts false
+    (a fresh zone), and 800–900 s when it starts true.
+  - Every later boss is ten gaps on, five of each length, so 800–900 s after the one before. Boss 2 lands
+    1,580–1,800 s after the start, boss 3 2,380–2,700 s.
+  - The bars run to the earliest time (780, 1,580 and 2,380 s), because no log line marks a wave.
+  - If the server still ran the old cadence (first boss at wave 30, then every 15), boss 1's bar would
+    end about half an hour early. So if no boss shows by around 15 minutes, the change is not live yet.
