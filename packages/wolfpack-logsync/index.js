@@ -33462,6 +33462,7 @@ function startReporterHeartbeat() {
   setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
   // True-time reference, independent of the bot — see _refreshNtpOffset.
   startNtpRefresh();
+  startMobPacks();   // mob info kept on this machine; needs the bot, like the heartbeat
 }
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
@@ -37919,15 +37920,210 @@ function _mobCaseKey(n) {
 function _mobInfoCacheKey(name, zoneId) {
   return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name);
 }
-function fetchMobInfo(name, selfChar, zoneId) {
+// ── Mob info kept on this machine: zone packs ────────────────────────────────
+// The guild lead, 2026-09-30, on Target Info loading slowly: "keep all of the PoP mobs
+// cached on a user's machine, as well as zones that the user frequents". The bot's
+// /api/agent/mob-pack?zone=<id> answers every mob in a zone, built the same way as a
+// single mob-info lookup. They are kept in mobinfo-cache/ beside this file, one file a
+// zone plus index.json, so a target in a cached zone shows with no round trip to the
+// bot, across restarts and updates.
+//   • Pinned: the zones the bot lists (?pinned=1, the Planes of Power) are fetched in
+//     the background, one per tick, and never evicted.
+//   • Visited: a zone any character stands in is fetched on arrival and kept while it
+//     keeps being visited; one not visited for 90 days is dropped, and past 80 MB the
+//     least recently visited go first.
+//   • A held pack is revalidated once a day with its ETag, so an unchanged one costs a 304.
+//   • A name the pack does not hold (a pet, a mob from another zone) still takes the
+//     live lookup below, as before.
+const MOB_PACK_DIR           = path.join(__dirname, 'mobinfo-cache');
+const MOB_PACK_INDEX         = path.join(MOB_PACK_DIR, 'index.json');
+const MOB_PACK_TICK_MS       = 20 * 1000;
+const MOB_PACK_REVALIDATE_MS = 24 * 60 * 60 * 1000;
+const MOB_PACK_UNVISITED_MS  = 90 * 24 * 60 * 60 * 1000;
+const MOB_PACK_MAX_BYTES     = 80 * 1024 * 1024;
+let _mobPackIndex = null;               // zone id (string) → { etag, fetchedAt, visitedAt, bytes, pinned, retryAt }
+const _mobPackMobs = new Map();         // zone id (string) → { caseKey: mob }, read from disk on first use
+const _mobPackInflight = new Set();
+let _mobPackPinned = [];                // zone ids from the bot, refreshed every 6h
+let _mobPackPinnedAt = 0;
+let _mobPackEvictedAt = Date.now();     // the first sweep waits an hour, until the pinned list is known
+let _mobPackSaveTimer = null;
+
+function _mobPackIdx() {
+  if (!_mobPackIndex) {
+    try { _mobPackIndex = JSON.parse(fs.readFileSync(MOB_PACK_INDEX, 'utf8')) || {}; }
+    catch { _mobPackIndex = {}; }
+  }
+  return _mobPackIndex;
+}
+function _mobPackSaveIndex() {
+  if (_mobPackSaveTimer) return;
+  _mobPackSaveTimer = setTimeout(() => {
+    _mobPackSaveTimer = null;
+    try {
+      fs.mkdirSync(MOB_PACK_DIR, { recursive: true });
+      fs.writeFileSync(MOB_PACK_INDEX + '.tmp', JSON.stringify(_mobPackIdx()));
+      fs.renameSync(MOB_PACK_INDEX + '.tmp', MOB_PACK_INDEX);
+    } catch (e) { console.warn('[mob-pack] index save failed:', e && e.message); }
+  }, 5000);
+  if (_mobPackSaveTimer.unref) _mobPackSaveTimer.unref();
+}
+function _mobPackZoneMobs(zoneId) {
+  const k = String(zoneId);
+  if (_mobPackMobs.has(k)) return _mobPackMobs.get(k);
+  const e = _mobPackIdx()[k];
+  if (!e || !e.bytes) return null;
+  try {
+    const mobs = JSON.parse(fs.readFileSync(path.join(MOB_PACK_DIR, k + '.json'), 'utf8')).mobs;
+    if (mobs && typeof mobs === 'object') { _mobPackMobs.set(k, mobs); return mobs; }
+  } catch { /* gone or torn: fetch it again */ }
+  e.bytes = 0; e.etag = null;
+  _mobPackSaveIndex();
+  return null;
+}
+function _mobPackLookup(name, zoneId) {
+  if (zoneId == null) return null;
+  const mobs = _mobPackZoneMobs(zoneId);
+  return (mobs && mobs[_mobCaseKey(name)]) || null;
+}
+function _mobPackDue(e, now) {
+  if (e.retryAt && now < e.retryAt) return false;
+  return !e.bytes || !e.fetchedAt || (now - e.fetchedAt) >= MOB_PACK_REVALIDATE_MS;
+}
+function _mobPackGet(query, etag, done) {
   const opts = _uploadOpts;
-  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-pack') + query;
+  const u = new URL(url);
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`, 'Accept-Encoding': 'gzip' };
+  if (etag) headers['If-None-Match'] = etag;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 30000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      try {
+        let buf = Buffer.concat(chunks);
+        if (/gzip/i.test(String(res.headers['content-encoding'] || '')) && buf.length) buf = zlib.gunzipSync(buf);
+        done(null, res.statusCode, buf, res.headers.etag || null);
+      } catch (e) { done(e); }
+    });
+  });
+  req.on('error',   (e) => done(e));
+  req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
+  req.end();
+}
+function _mobPackFetch(zoneId) {
+  const k = String(zoneId);
+  if (_mobPackInflight.has(k)) return;
+  const idx = _mobPackIdx();
+  const e = idx[k] || (idx[k] = {});
+  _mobPackInflight.add(k);
+  try {
+    _mobPackGet('?zone=' + encodeURIComponent(k), e.bytes ? e.etag : null, (err, status, buf, etag) => {
+      _mobPackInflight.delete(k);
+      const now = Date.now();
+      try {
+        if (err || !(status === 200 || status === 304)) {
+          // 202: the bot is building it; anything else, back off longer.
+          e.retryAt = now + (status === 202 ? 2 * 60 * 1000 : 30 * 60 * 1000);
+        } else if (status === 304) {
+          e.fetchedAt = now; e.retryAt = 0;
+        } else {
+          const body = JSON.parse(buf.toString('utf8'));
+          if (!body || !body.mobs || typeof body.mobs !== 'object') throw new Error('no mobs');
+          fs.mkdirSync(MOB_PACK_DIR, { recursive: true });
+          const file = path.join(MOB_PACK_DIR, k + '.json');
+          fs.writeFileSync(file + '.tmp', buf);
+          fs.renameSync(file + '.tmp', file);
+          _mobPackMobs.set(k, body.mobs);
+          Object.assign(e, { etag, fetchedAt: now, bytes: buf.length, retryAt: 0 });
+        }
+      } catch (e2) {
+        e.retryAt = now + 30 * 60 * 1000;
+        console.warn(`[mob-pack] zone ${k}:`, e2 && e2.message);
+      }
+      _mobPackSaveIndex();
+    });
+  } catch { _mobPackInflight.delete(k); }
+}
+function _mobPackFetchPinned() {
+  try {
+    _mobPackGet('?pinned=1', null, (err, status, buf) => {
+      if (err || status !== 200) return;
+      try {
+        const zones = (JSON.parse(buf.toString('utf8')).zones || []).map(String);
+        _mobPackPinned = zones;
+        const idx = _mobPackIdx();
+        for (const z of zones) if (!idx[z]) idx[z] = {};
+        for (const [z, e] of Object.entries(idx)) e.pinned = zones.includes(z);
+        _mobPackSaveIndex();
+      } catch { /* try again next refresh */ }
+    });
+  } catch { /* bad bot URL: the live lookup still works */ }
+}
+function _mobPackEvict(now) {
+  const idx = _mobPackIdx();
+  const drop = (z) => {
+    try { fs.unlinkSync(path.join(MOB_PACK_DIR, z + '.json')); } catch { /* already gone */ }
+    delete idx[z];
+    _mobPackMobs.delete(z);
+  };
+  for (const [z, e] of Object.entries(idx)) {
+    if (!e.pinned && (!e.visitedAt || now - e.visitedAt > MOB_PACK_UNVISITED_MS)) drop(z);
+  }
+  let total = Object.values(idx).reduce((s, e) => s + (e.bytes || 0), 0);
+  const oldestFirst = Object.keys(idx).filter(z => !idx[z].pinned)
+    .sort((a, b) => (idx[a].visitedAt || 0) - (idx[b].visitedAt || 0));
+  while (total > MOB_PACK_MAX_BYTES && oldestFirst.length) {
+    const z = oldestFirst.shift();
+    total -= idx[z].bytes || 0;
+    drop(z);
+  }
+  _mobPackSaveIndex();
+}
+function _mobPackTick() {
+  try {
+    const opts = _uploadOpts;
+    if (!opts || !opts.botUrl || !opts.token || _controlStandDown().down) return;
+    const now = Date.now();
+    const idx = _mobPackIdx();
+    // Where each character stands now: record the visit, fetch or revalidate the pack.
+    for (const st of Object.values(_zealState)) {
+      const z = Number(st && st.zone);
+      if (!(z > 0)) continue;
+      const e = idx[z] || (idx[z] = {});
+      if (!e.visitedAt || now - e.visitedAt > 60 * 60 * 1000) { e.visitedAt = now; _mobPackSaveIndex(); }
+      if (_mobPackDue(e, now)) _mobPackFetch(z);
+    }
+    if (now - _mobPackPinnedAt > 6 * 60 * 60 * 1000) { _mobPackPinnedAt = now; _mobPackFetchPinned(); }
+    // The pinned zones, one a tick, so a first run spreads over a few minutes.
+    for (const z of _mobPackPinned) {
+      if (_mobPackInflight.has(z)) break;
+      if (_mobPackDue(idx[z] || (idx[z] = { pinned: true }), now)) { _mobPackFetch(z); break; }
+    }
+    if (now - _mobPackEvictedAt > 60 * 60 * 1000) { _mobPackEvictedAt = now; _mobPackEvict(now); }
+  } catch (e) { console.warn('[mob-pack] tick failed:', e && e.message); }
+}
+let _mobPacksOn = false;
+function startMobPacks() {
+  if (_mobPacksOn) return;
+  _mobPacksOn = true;
+  const t = setInterval(_mobPackTick, MOB_PACK_TICK_MS);
+  if (t.unref) t.unref();
+}
+
+function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId);
   if (_mobInfoInflight.has(key)) return;
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
+  // Kept on this machine (a zone pack above): no round trip, and it works offline.
+  const packed = _mobPackLookup(name, zoneId);
+  if (packed) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); return; }
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
   _mobInfoInflight.add(key);
   // #141 — send the requesting character so the bot zone-scopes the catalog row
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
@@ -38986,8 +39182,11 @@ function buildMobInfo() {
   for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
   const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
   const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
-  const cached = _mobInfoByName.get(mobKey);
-  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, selfChar, myZoneId);
+  let cached = _mobInfoByName.get(mobKey);
+  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) {
+    fetchMobInfo(st.target_name, selfChar, myZoneId);
+    cached = _mobInfoByName.get(mobKey) || cached;   // a zone-pack hit lands at once, so show it this poll
+  }
   // Prefer authoritative Zeal buffs when the target is one of our own
   // characters (covers self + group members running Mimic — Mask of the
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
