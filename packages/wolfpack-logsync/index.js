@@ -8437,6 +8437,9 @@ class EncounterBuilder {
       targetName: this.bossName || _topTarget,
       startedAt: this.startedAt,
       flushedAt: null,
+      // When this fight last published, so a fight that is never flushed stops counting as live
+      // (_liveFightActive).
+      publishedAt: Date.now(),
       // The character whose log file this builder is reading. Lets the
       // damage overlay clear when the active EQ window switches to a
       // different character — without this the meter "sticks" to whichever
@@ -16290,14 +16293,20 @@ function _updateBlockedReason() {
   // Active fight check: any tail-mode EncounterBuilder with events that
   // haven't been flushed yet. We don't have a direct registry; instead
   // check stats.currentEncounterThreat — the agent updates this on every
-  // damage event, and it's cleared when the fight ends. If it's set and
-  // recent (last threat publish < 60s ago) we're mid-fight.
-  const et = stats.currentEncounterThreat;
-  if (et && !et.flushedAt) {
+  // damage event, and it's cleared when the fight ends. _liveFightActive
+  // also requires it to be recent: see LIVE_FIGHT_QUIET_MS.
+  if (_liveFightActive()) {
     return 'active fight in progress';
   }
   return null;
 }
+// A fight counts as live until it is flushed, and only while it is still publishing. flush()'s early
+// exits (under 10 events, a player or no target, an "eye of" pet) reset the builder without stamping
+// flushedAt, so a few stray hits left a "live" fight behind for good and the update gate said "active
+// fight in progress" to someone standing still (the guild lead, 2026-09-30, with a screenshot). The
+// comment above always promised a recency check; there was none. 150 s: tickIdle flushes any real
+// fight 120 s after its last event, so a fight still going is never older than that.
+const LIVE_FIGHT_QUIET_MS = 150_000;
 
 // ⚠️ ESCAPE HAZARD — READ BEFORE EDITING THE DASHBOARD JS BELOW ⚠️
 // This whole dashboard (HTML + browser-side <script>) is a single backtick
@@ -41853,11 +41862,11 @@ const REPLAY_MAX_GAP_MS  = 6000;    // real-time pacing caps idle gaps so lulls 
 const REPLAY_FAST_GAP_MS = 550;     // fast pacing: fixed pause AFTER a fire so each TTS is audible
 const _sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms | 0)));
 
-// Live-fight signal — mirrors the fight branch of _updateBlockedReason() so a
-// replay can't fire ⏪ callouts on top of a real fight's live callouts.
+// Live-fight signal — the fight branch of _updateBlockedReason() calls it, and a
+// replay checks it so it can't fire ⏪ callouts on top of a real fight's live callouts.
 function _liveFightActive() {
   const et = stats.currentEncounterThreat;
-  return !!(et && !et.flushedAt);
+  return !!(et && !et.flushedAt && (!et.publishedAt || Date.now() - et.publishedAt < LIVE_FIGHT_QUIET_MS));
 }
 
 // Singleton replay status. `stop` is the cooperative-cancel flag the STOP
