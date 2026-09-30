@@ -114,8 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 (target mana, one ✥ per group, labels) on alpha `f7881fc3` | the guild lead: for FB-39, say which overlay the screenshot shows. The member behind FB-38: set XS, restart Mimic, confirm it stays |
-| **PvP rows that are NPCs** | **§109; bot 3.1.177 stops new ones.** 1 kill (Lord of Ire) and 24 assists (19 on Trakanon; Fright, Terror, Dread) flagged | the guild lead: say yes to delete them. For the missing kill: the victim's name and the time or zone |
+| **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
+| **PvP rows that are NPCs** | **§109. Deleted 2026-09-30** (24 assists, 1 kill). 20 NPC victims in `pvp_deaths` found after, not deleted | the guild lead: yes or no on the 20 `pvp_deaths` rows. For the missing kill: the victim's name and the time or zone |
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
 | **Essences of Power loot queue on /pop** | **Beta `7b942d11` (§96).** The guild's rule as code: one bid buys the set, the next drop goes to the first in line who lacks it and is there, else bid and join the end. `?v=b` by person, `?v=c` by essence, `&demo=1` sample data | the guild lead: open `b.wolfpack.quest/pop?v=b&demo=1` and `?v=c&demo=1`, pick one. Officers: record every piece in OpenDKP (bid, then 0 DKP hand-outs); name the set bid "Essences of Power" |
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
@@ -5123,6 +5123,12 @@ The guild lead: *"query and flag any pvp kills that are probably an NPC name. tr
 - **Missing kill (same night):** no kill row for any of the guild lead's characters in the last 7 days,
   and their agent's PvP uploads were healthy. To find it: the victim's name and the time or zone, or the
   log line.
+- **Deleted 2026-09-30 on the guild lead's yes:** the 24 assists and the one kill above, nothing else (no
+  assist pointed at the kill). A re-run of the NPC check found none added since bot 3.1.177.
+- **Found after, NOT deleted:** 20 rows in `pvp_deaths` whose victim is an NPC (Aten Ha Ra, Emperor
+  Ssraeshza, Shik`nar mobs, Fright, Dread…), all from the table's 30-day backfill at its creation
+  (2026-09-26). They feed the fight history (2+ deaths = a fight). Not in the approved list; waits for a
+  yes.
 
 ### 110. Feedback round FB-38 to FB-42 (2026-09-30)
 - **FB-38 (stable 2.7.4): XS not remembered after a restart.** XS is 200 px; twelve overlays had a 220–300 px
@@ -5138,10 +5144,18 @@ The guild lead: *"query and flag any pvp kills that are probably an NPC name. tr
 - **FB-40 (alpha): Canvas target mana, move icons, labels.** Target mana was blank until the agent saw the
   mob cast; it now shows the catalog pool as a full bar ("no casts seen"), as Target Info does. A group
   shows one ✥ (its top-left piece), which moves the group. "Its …" labels read "Target …". Alpha `f7881fc3`.
-- **FB-39 (alpha): two mobs not told apart — waiting.** The screenshot is in the private
-  `feedback-screenshots` bucket, which this session cannot read, and the report does not say which
-  overlay. The log shows two `froglok krup shaman` alive at once (spawn ids 1296 and 1329) while the
-  duo was on different targets, and the guild lead's agent uploaded spawn id 0 on landings the partner's
-  agent tagged with the real id (it only knows an id when its own Zeal target is that mob). Anything
-  that falls back to the NAME when the id is 0 will merge the two. Next: the guild lead says which
-  overlay, then the fix goes where that overlay keys its rows.
+- **FB-39: Extended Target did not tell two same-name mobs' debuffs apart.** The guild lead, after the
+  first round: *"FB-39 is extended target. You can see the spawnids are varied and the buffs should have
+  been associated but they weren't, even though both of us were using miMIC."* Three causes, all fixed:
+  1. The bot never selected `buff_casts.target_id`; debuffs came from a NAME-keyed map.
+  2. That map kept one entry per spell (the newest landing), so a slow on one of two same-name mobs
+     vanished when the other was slowed.
+  3. The overlay drew per-row debuffs only when a row carried position-clustering tank labels; rows
+     split by spawn id went into the pooled "on one of these N" block.
+  Bot 3.1.178 (main): `_extDebuffInstances` makes one entry per spell per mob, pooling a cast seen by
+  several Mimics and trusting neither id when two disagree (a bystander's agent stamps its OWN target's
+  id when the names match, `_provableTargetId`); `_extAttributeDebuffs` places by id first. Overlay: beta
+  `dde2f702`. Evidence: two `froglok krup shaman` alive at once (spawn ids 1296 and 1329); the guild
+  lead's agent sent id 0 on landings the partner's agent tagged. K=1 rows are unchanged.
+  ⚠ Open, not fixed: `_provableTargetId` can stamp a wrong id when a bystander targets another mob of
+  the same name. The bot now distrusts disagreeing ids; a lone wrong one still places wrongly.

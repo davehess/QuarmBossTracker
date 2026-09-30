@@ -2327,7 +2327,13 @@ raiders in both; splits an equal-HP band position proves is two mobs; with no
 instances returns the INPUT array — the K=1 byte-identity anchor),
 `_extAttributeDebuffs` (observer-is-tank → that row; casting observer's
 target-HP matches ONE band → that row; else dimmed `attributed:false` on every
-row — never guess). Engagement evidence: fresh `incoming_mob` (whole fleet) +
+row — never guess). **Since bot 3.1.178 (FB-39) a landing's own spawn id comes
+first:** `buff_casts.target_id` is selected, `_extDebuffInstances` makes one entry
+per spell per mob (one cast seen by several Mimics pools; two different ids for
+one cast are trusted as neither), and an id that matches a row's id (its own, or
+its targeters') places it; an id no row has, when every row has one, is dropped.
+The overlay (`extarget.html`, beta) shows an id-proven group per row instead of
+pooling it. Test `test/ext-target-debuff-ids.test.js`. Engagement evidence: fresh `incoming_mob` (whole fleet) +
 `observed_tanks` (beta agents — every mob→player connect the observer's log
 saw); positions from `live_state.loc_*` + the type-5 `raid_roster` loc forward
 (gate on `loc_at`, NEVER `captured_at`). **Clustering runs for CAPITALIZED npc

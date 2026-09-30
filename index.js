@@ -13183,10 +13183,31 @@ function _extMergeByAgreedId(rows, idOf, hpOf) {
 // live, which is when anyone looks at the overlay.
 //
 // `observerInfo`: Map(observerLower → { targetsName: bool, targetHp: n|null }).
-function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
+//
+// Rule 0, before all of those: the landing's own SPAWN ID (FB-39, the guild lead, 2026-09-30:
+// "the spawnids are varied and the buffs should have been associated but they weren't, even though
+// both of us were using miMIC"). A row's id is its own, or the one id its targeters report — the
+// rule _extPlaceTags uses. An id that matches no row, when every row has one, is a mob none of these
+// rows is, so the debuff is not shown on them at all. `spawnOfRaider`: Map(raiderLower → spawn id).
+function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol, spawnOfRaider) {
   if (rows.length <= 1) return;   // K=1 — debuffs stay exactly as they are
   for (const row of rows) row.debuffs = [];
+  const rowIds = rows.map(c => {
+    const ids = new Set();
+    if (c.spawn_id != null) ids.add(c.spawn_id);
+    for (const r of (c.raiders || [])) {
+      const s = spawnOfRaider && spawnOfRaider.get(String(r).toLowerCase());
+      if (s != null) ids.add(s);
+    }
+    return ids;
+  });
+  const allHaveIds = rowIds.every(s => s.size === 1);
   for (const d of debuffEntries) {
+    if (d.spawn_id != null) {
+      const i = rowIds.findIndex(s => s.size === 1 && s.has(d.spawn_id));
+      if (i >= 0) { rows[i].debuffs.push({ name: d.name, remaining_secs: d.remaining_secs }); continue; }
+      if (allHaveIds) continue;
+    }
     let target = null;
     for (const obs of (d.observers || [])) {
       const ol = String(obs || '').toLowerCase();
@@ -13204,6 +13225,39 @@ function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
     else for (const row of rows) row.debuffs.push({ name: d.name, remaining_secs: d.remaining_secs, attributed: false });
   }
   for (const row of rows) row.debuffs = row.debuffs.slice(0, 12);
+}
+
+// The landings on one mob NAME → one debuff entry per spell per MOB, for _extAttributeDebuffs (FB-39).
+// The name-keyed map above keeps only the newest landing of each spell, so a slow on one of two
+// same-name mobs vanished when the other was slowed. Here:
+//   · landings of one spell within 5 s are one cast seen by several Mimics: observers pool, ids pool;
+//   · a cast whose Mimics report exactly one spawn id is that mob's; none, or two that disagree, is
+//     unknown (a bystander's Mimic stamps its OWN target's id when the name matches, so two ids for one
+//     cast means one of them is another mob of that name — neither is trusted);
+//   · newest cast per (spell, mob) wins, and an id-less cast older than an id'd one of the same spell
+//     is dropped rather than repeated dimmed on every row.
+// `landings`: [{ spell, castMs, durSecs, observer, sid }], newest first. Returns entries newest first.
+function _extDebuffInstances(landings) {
+  const casts = [];
+  for (const l of (landings || [])) {
+    if (!l || !l.spell) continue;
+    const sk = String(l.spell).toLowerCase();
+    let c = casts.find(x => x.sk === sk && Math.abs(x.castMs - l.castMs) <= 5000);
+    if (!c) { c = { sk, name: l.spell, castMs: l.castMs, durSecs: l.durSecs, observers: [], ids: new Set() }; casts.push(c); }
+    if (l.observer && !c.observers.some(o => o.toLowerCase() === String(l.observer).toLowerCase())) c.observers.push(String(l.observer));
+    if (l.sid != null) c.ids.add(l.sid);
+  }
+  const out = [], seen = new Set(), idSpells = new Set();
+  for (const c of casts) {
+    const sid = c.ids.size === 1 ? [...c.ids][0] : null;
+    const k = c.sk + '#' + (sid == null ? '?' : sid);
+    if (seen.has(k)) continue;
+    if (sid == null && idSpells.has(c.sk)) continue;
+    seen.add(k);
+    if (sid != null) idSpells.add(c.sk);
+    out.push({ name: c.name, castMs: c.castMs, durSecs: c.durSecs, observers: c.observers, spawn_id: sid });
+  }
+  return out;
 }
 
 // Previously-targeted mobs that drop off everyone's target gauge (an
@@ -13526,7 +13580,7 @@ async function _handleAgentExtendedTarget(req, res) {
         `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
       supabase.select('buff_casts',
         `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
+        `&select=target,target_id,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
       // #194: raid-wide position from the type-5 forward (beta agents). One
       // Mimic in the raid covers every member's loc; rows without loc_at are
       // pre-forwarding uploads and are skipped at use time. Best-effort — the
@@ -13605,6 +13659,10 @@ async function _handleAgentExtendedTarget(req, res) {
     // splits into multiple mobs we can't say WHICH, so it rides on all of them
     // (the ambiguous asterisk is the caveat).
     const debuffsByTarget = new Map();
+    // FB-39: every landing with its spawn id, for per-mob attribution at K≥2 (_extDebuffInstances).
+    // An id is a slot in its ZONE's table, so one from a Mimic in another zone is dropped.
+    const landingsByTarget = new Map();
+    const zoneOfChar = new Map(live.map(r => [r.character.toLowerCase(), r.zone_name || null]));
     for (const b of (buffRows || [])) {
       if (!b || !b.target || !b.spell_name) continue;
       if (_isJunkSpellName(b.spell_name)) continue;   // hide phantom "Kneel Test"
@@ -13612,6 +13670,10 @@ async function _handleAgentExtendedTarget(req, res) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
       if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;   // expired
       const k = String(b.target).toLowerCase();
+      const obsZone = b.observer ? zoneOfChar.get(String(b.observer).toLowerCase()) : null;
+      const sid = (Number(b.target_id) > 0 && !(scopeZone && obsZone && obsZone !== scopeZone)) ? Number(b.target_id) : null;
+      if (!landingsByTarget.has(k)) landingsByTarget.set(k, []);
+      landingsByTarget.get(k).push({ spell: String(b.spell_name), castMs, durSecs, observer: b.observer ? String(b.observer) : null, sid });
       if (!debuffsByTarget.has(k)) debuffsByTarget.set(k, new Map());
       const m = debuffsByTarget.get(k);
       const sk = String(b.spell_name).toLowerCase();
@@ -13637,13 +13699,14 @@ async function _handleAgentExtendedTarget(req, res) {
         remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
       })).slice(0, 12);
     };
-    // #194: same map, with observers retained — the attribution input at K≥2.
+    // #194: the attribution input at K≥2 — one entry per spell per mob, with observers and the
+    // spawn id when the Mimics that saw it agree on one (FB-39).
     const debuffEntriesFor = (key) => {
-      const m = debuffsByTarget.get(key); if (!m) return [];
-      return [...m.values()].map(d => ({
+      return _extDebuffInstances(landingsByTarget.get(key)).map(d => ({
         name: d.name,
         remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
         observers: d.observers || [],
+        spawn_id: d.spawn_id,
       })).slice(0, 24);
     };
 
@@ -13873,6 +13936,8 @@ async function _handleAgentExtendedTarget(req, res) {
       rows = _extMergeByAgreedId(rows, idOfRaider, hpOfRaider);
       const multi = rows.length > 1;         // proven duplicate same-name mobs
       const debuffs = debuffsFor(g.key);
+      const spawnOfRaider = new Map(g.obs.filter(o => o.spawn_id != null)
+        .map(o => [String(o.raider).toLowerCase(), o.spawn_id]));
       if (multi) {
         // Per-instance debuff attribution — the actual #194 payoff. Sets
         // c.debuffs per row; unplaceable landings appear on every row with
@@ -13883,7 +13948,7 @@ async function _handleAgentExtendedTarget(req, res) {
           if (t2 === g.key) observerInfo.set(r2.character.toLowerCase(),
             { targetsName: true, targetHp: r2.target_hp_pct != null ? Number(r2.target_hp_pct) : null });
         }
-        _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol);
+        _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol, spawnOfRaider);
       }
       // ── #194 Zeal tags: label rows, pool what can't be welded ────────────
       // A tag welds to a row when its text mentions that row's tank by name
@@ -13898,8 +13963,6 @@ async function _handleAgentExtendedTarget(req, res) {
       // that would be fabulous"): a tagged SINGLE-instance mob does show its
       // tag — the assist-arrow-on-the-boss case is mostly a K=1 case. Additive
       // fields only; with no tags present the K=1 payload is byte-identical.
-      const spawnOfRaider = new Map(g.obs.filter(o => o.spawn_id != null)
-        .map(o => [String(o.raider).toLowerCase(), o.spawn_id]));
       const tagPool = _extPlaceTags(rows, tagsByName.get(g.key), spawnOfRaider);
       rows.forEach((c, idx) => {
         targets.push({
