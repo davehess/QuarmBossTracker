@@ -213,6 +213,18 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **⏳ FB-38 · FB-41 · FB-42 (agent 3.7.50, beta `0d782606`, 2026-09-30).** An overlay set to XS stays XS
+  after a restart (every overlay's minimum width is now XS's 200, `_OVERLAY_MIN_W`); the slow callout says
+  "Ree slow"; a killed mob leaves the HUD's hit totals after 10 s, not 90. `test/overlay-resize-presets.test.js`,
+  `test/slow-callout-target.test.js`, `test/me-hud-timers.test.js`. §110.
+- **⏳ FB-40 Canvas: target mana, one ✥ per group, labels (alpha `f7881fc3`, 2026-09-30).** Target mana shows
+  the catalog pool before any cast is seen; a group shows one ✥ (top-left piece); "Its …" → "Target …".
+  `test/canvas-pieces.test.js`. §110.
+- **📋 FB-39 same-name mobs not told apart — waiting on which overlay (2026-09-30).** The screenshot is in a
+  private bucket; the log shows two same-named mobs alive at once and one agent uploading spawn id 0. §110.
+- **✅ PvP: an assist on an NPC is dropped (bot 3.1.177, main `82521c3b`, 2026-09-30).** Boss kill broadcasts
+  read like player kills, so raiders on Trakanon got PvP assists. `_victimIsNpc`; 1 kill + 24 assists already
+  stored are flagged, deleting them waits for a yes. `test/pvp-assist-npc-victim.test.js`. §109.
 - **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
   Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
   does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the
