@@ -29,7 +29,7 @@ const { _extHeadingPoint, _extPosCluster, _extBindInstances, _extAttributeDebuff
   sliceBlock(src, 'function _extHeadingPoint(m, reach, scale) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extPosCluster(engaged, units, hOpts) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extBindInstances(hpClusters, posInstances) {', '\n}') + '\n'
-  + sliceBlock(src, 'function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {', '\n}'),
+  + sliceBlock(src, 'function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol, spawnOfRaider) {', '\n}'),
   ['_extHeadingPoint', '_extPosCluster', '_extBindInstances', '_extAttributeDebuffs'],
 );
 
