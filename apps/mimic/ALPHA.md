@@ -13,6 +13,14 @@ work here.
 - **Nothing here is merged back as a branch.** When the builder is ready for the beta, its
   files are promoted to `beta` one by one, the same way beta graduates to `main`.
 - This file is excluded from the installed app (`!**/*.md` in the build config).
+- **A sync never builds the alpha.** `sync-alpha.yml` pushes with `GITHUB_TOKEN`, which starts no
+  workflow, so beta and main changes reach alpha testers only with the next alpha push. The agent
+  arrives anyway (the alpha takes the beta agent line); Mimic's own files do not. To hand testers a
+  stable cut or a beta fix without builder work, push a change under `apps/mimic/` here: an edit to
+  this file is enough, and costs nothing in the app. Last done 2026-09-30, after stable 2.7.5
+  (Extended Target per-mob debuffs, the walkthrough gate).
+- **No re-park after a stable cut.** `3.0.0-alpha.N` sorts above every 2.x stable and beta, so the
+  3.0.0 park only moves when a stable reaches 3.0.
 
 ## What the alpha has that beta does not
 
