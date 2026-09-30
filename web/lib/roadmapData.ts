@@ -37,6 +37,47 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-5-2026-09-30',
+    title: 'Mimic 2.7.5',
+    version: 'Mimic 2.7.5 · agent 3.7.52 · Web 1.8.57',
+    date: '2026-09-30',
+    headline: 'Glory-worthy PvP kills are recorded, the Canvas puts every timer where you want it, and Mimic asks before moving overlays when your screens change.',
+    features: [
+      {
+        name: 'Canvas',
+        blurb: 'Turn it on from Overlays. The callouts, the timers and the charm timers each become a panel you drag and size on their own. The ✥ on each panel moves it even while overlays are locked.',
+      },
+      {
+        name: 'A new Overlays page',
+        blurb: 'Your saved layouts as tiles, what is on screen now, an Add drawer of overlays, and every hotkey in one format, with clashes in red.',
+      },
+      {
+        name: 'Screens and Rescue',
+        blurb: 'When a monitor goes away or comes back, Mimic asks before moving anything and can put everything back. Overlays stay on the screen they were on. Rescue brings back only the overlays you cannot reach, and the ✥ right-click menu can move one to your other screen.',
+      },
+      {
+        name: 'Pets and triggers',
+        blurb: 'Pets count under their owner on the damage meter (owners type /pet leader once a night), and the pet’s share shows on the bar. Suggested triggers can be turned on for one character only.',
+      },
+      {
+        name: 'Bards, Target Info, Extended Target',
+        blurb: 'A bard’s charm gets the right length and says “recharm pet” at 4 seconds. The Quest tab warns before a hand-in that makes the person vanish, spawns a mob or costs faction. Same-name mobs on Extended Target each show their own debuffs.',
+      },
+      {
+        name: 'Smaller things',
+        blurb: 'UI Studio moves Zeal’s raid bars and assist bar. The /who overlay has a Zone column. The Command Center’s 📋 copies a deathroll as one chat line.',
+      },
+    ],
+    fixes: [
+      'A PvP kill that earned Rallosian Glory was never recorded. It is now; run Opt-in Logs over any night since September 28 with a Glory kill to get it back.',
+      'An overlay set to XS came back wider after a restart; it now stays XS.',
+      'The slow callout says “Ree slow”, not “Reh slow”.',
+      'A mob you killed stayed on the HUD’s hit totals for 90 seconds; it now leaves after 10.',
+      'The per-character Save layout button now finds your character and says whether it saved.',
+      'Charm callouts no longer cut off other trigger speech, and an update never installs while the Mimic window is open.',
+    ],
+  },
+  {
     key: 'feedback-38-42-2026-09-30',
     title: 'Five reports answered',
     version: 'Bot 3.1.178 · Web 1.8.56 · Mimic beta',

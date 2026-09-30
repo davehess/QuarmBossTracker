@@ -131,7 +131,7 @@ is ephemeral. It is a desktop-session job.
 | **DPS HUD +pet breakdown** | **Beta `672ff15e` (agent 3.7.45) + bot 3.1.175 (§85).** Pet's share of the bar in pet orange, "+pet" in the same colour; click for name, damage, spawn id | the guild lead: on a pet class's row, check the orange end reads apart from the row colour (gold on your own row); click +pet. Say if orange should be purple |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
 | **🧲 Rescue** | **Beta `1cd1d423` (§82).** Only lost overlays move, each to its own spot; nothing re-arranged; other-screen overlays only on a yes | the guild lead: drag an overlay half off a screen, Rescue, check nothing else moved |
-| **Stable Mimic 2.7.3** | **Cut 2026-09-28 (§72; agent 3.7.37):** everything on beta since 2.7.2. F/Q/V, UI pack checkboxes, Rallos Zek kills, your DPS row, per-mob tick fades, instant charm break. Beta re-parked at 2.7.4 | the guild lead: accept the update and try F/Q/V on a quest NPC; the quest-history question (§72) |
+| **Stable Mimic 2.7.5** | **Cut 2026-09-30 (§111; agent 3.7.52):** everything on beta since 2.7.4, including Glory-worthy PvP kills, the Canvas, the new Overlays tab, screens and Rescue. The setup walkthrough stays beta-only until its layout is picked. Beta re-parked at 2.7.6 | the guild lead: accept the update; tell raiders to run Opt-in Logs over nights since Sep 28 with a Glory kill |
 | **Rallosian Glory PvP kills** | **Whole fleet with Mimic 2.7.3 (§66, §72); bot 3.1.164.** The new "Rallos Zek watches as X spills Y's blood" line is read, guilds come from `/who` and the roster, and the old and new wordings of one kill post once. Kills from about 19:50–21:30 UTC on 2026-09-28 were missed: the uploading machines still ran 3.7.35 (§66a) | the guild lead: run Opt-in Logs over that afternoon to recover them; anyone: paste the first "worthy conquest" line when one appears |
 | **Quest tab: warnings, give/get, faction, Quarm-only hand-ins** | **Beta + bot 3.1.171 (§74).** NPC text folded; ⚠ despawn / spawn / faction loss; GIVE / GET; every faction change; hand-ins from Quarm's own script; ProjectEQ-only ones flagged | the guild lead: pick the quest catalog shape (deep link page vs Quests overlay, §72 picked "its own overlay") |
 | **Bard charm + recharm call + clicky buffs** | **Beta, agent 3.7.40 (§75).** Class from Zeal; a bard's charm gets its song's duration; "recharm pet" at 4s left; clicky casts land on the pet with a timer | the guild lead: confirm on the next charm cycle |
@@ -5168,3 +5168,21 @@ The guild lead: *"query and flag any pvp kills that are probably an NPC name. tr
   lead's agent sent id 0 on landings the partner's agent tagged. K=1 rows are unchanged.
   ⚠ Open, not fixed: `_provableTargetId` can stamp a wrong id when a bystander targets another mob of
   the same name. The bot now distrusts disagreeing ids; a lone wrong one still places wrongly.
+
+### 111. Stable Mimic 2.7.5 (2026-09-30, agent 3.7.52)
+The guild lead: *"new stable now please"*, after the Glory-worthy kill fix (§109) landed on beta. Every
+Mimic below agent 3.7.51 misses those kills, so the stable was the fix's real delivery.
+- **What:** everything on beta since 2.7.4 — the Canvas (§79, §87, §106), the Overlays tab option C
+  (§107), screens and Rescue (§80, §80a, §82, §89), per-character suggested triggers and pets on the meter
+  (§84, §85), bard charm (§75), the Quest tab warnings (§74), the /who Zone column (§73), UI Studio's Zeal
+  bars (§80), the α alpha opt-in (§81), and today's fixes (§109, §110). FB-33, 34, 35, 38, 39, 41, 42.
+- **How:** file-level promotion, as every cut: `apps/mimic/`, `packages/wolfpack-logsync/` and their 44
+  tests copied from beta `fadf95f8`, byte-identical (a diff of those two trees against beta is empty).
+  Seven tests for beta-only website pages stayed behind. Full gate on the promoted tree: 352 test files,
+  lint and the dashboard check clean. Roadmap entry and web 1.8.57 in the commit below the stable one, so
+  the release body comes from the stable commit's player notes.
+- **Held back:** the setup walkthrough's two layouts (§93) still wait on a pick, and unpicked UI variants
+  do not go to production. Rather than let main drift from beta, beta `fadf95f8` (agent 3.7.52) shows its
+  tray entry and dashboard buttons on prerelease builds only, so the stable carries the page but offers no
+  way in. When a layout is picked, it becomes the first-run page and the gate goes.
+- **Beta re-parked at 2.7.6** above the stable, in the same session.
