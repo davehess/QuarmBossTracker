@@ -3744,6 +3744,14 @@ async function _rescueOverlays() {
 // screen signature still matches what it was saved under AND it's on-screen;
 // otherwise use the default. This is the "persist position unless resolution
 // changes" rule.
+// No overlay may be narrower than XS, and XS may not be narrower than any
+// overlay's minimum (FB-38, a member 2026-09-29: "When you set an individual
+// window size, like setting it to XS, it does not remember the size after
+// logout"). XS is 200, but twelve overlays were built with a 220–300 minimum.
+// A locked window takes XS anyway — Electron pins a non-resizable window's
+// minimum to whatever it is set to — so 200 was saved; the next launch built
+// the window with its own minimum and it came back wider. One number now.
+const _OVERLAY_MIN_W = 200;
 function _resolveBounds(boundsKey, sigKey, def) {
   const cfg = loadConfig();
   const saved = cfg[boundsKey];
@@ -4436,7 +4444,7 @@ function createTriggerOverlay() {
   triggerWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Triggers overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 240, minHeight: 80,
+    minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
@@ -5741,7 +5749,7 @@ function createBuffQueueOverlay() {
   buffQueueWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Buff queue overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 240, minHeight: 100,
+    minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Buff queue'),
@@ -5777,7 +5785,7 @@ function createPopRaidOverlay() {
   popRaidWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — PoP raids overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 300, minHeight: 160,
+    minWidth: _OVERLAY_MIN_W, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('PoP raids'),
@@ -5812,7 +5820,7 @@ function createMeOverlay() {
   meWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — HUD overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 220, minHeight: 90,
+    minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Me'),
@@ -5843,7 +5851,7 @@ function createMobInfoOverlay() {
   mobInfoWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Target Info overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 230, minHeight: 90,
+    minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Mob Info'),
@@ -5874,7 +5882,7 @@ function createWhoOverlay() {
   whoWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — /who overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 220, minHeight: 100,
+    minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('/who'),
@@ -5942,7 +5950,7 @@ function createZealHealthOverlay() {
   zealWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Tick overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 220, minHeight: 100,
+    minWidth: _OVERLAY_MIN_W, minHeight: 100,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Tick'),
@@ -5979,7 +5987,7 @@ function createTankOverlay() {
   tankWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Tank overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 240, minHeight: 120,
+    minWidth: _OVERLAY_MIN_W, minHeight: 120,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Tank HUD'),
@@ -6014,7 +6022,7 @@ function createThreatMeterOverlay() {
   threatWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Threat meter overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 240, minHeight: 80,
+    minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Threat meter'),
@@ -6049,7 +6057,7 @@ function createExtTargetOverlay() {
   extTargetWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Extended Target overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 240, minHeight: 80,
+    minWidth: _OVERLAY_MIN_W, minHeight: 80,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Extended target'),
@@ -6130,7 +6138,7 @@ function createCommandOverlay() {
   commandWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Command Center',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 260, minHeight: 160,
+    minWidth: _OVERLAY_MIN_W, minHeight: 160,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Command center'),
@@ -6168,7 +6176,7 @@ function createChChainOverlay() {
   chChainWindow = new BrowserWindow({
     title: 'Wolf Pack Mimic — CH chain overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 220, minHeight: 90,
+    minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true,
     // focusable: false → on Windows this sets WS_EX_NOACTIVATE on the
@@ -6214,7 +6222,7 @@ function createDockWindow() {
   dockWindow = new BrowserWindow({
     title: 'Wolf Pack Mimic — Dock',
     width: b.width, height: b.height, x: b.x, y: b.y,
-    minWidth: 220, minHeight: 140,
+    minWidth: _OVERLAY_MIN_W, minHeight: 140,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true,
@@ -8324,7 +8332,7 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
     // L is 420, not 400: at 400 the DPS HUD's title row (−/+, DPS, Tank,
     // History) ran under the ✕ (a member, 2026-09-24: "the large 400px preset
     // cuts off a bit on the dps window. and the xl is just a bit too wide").
-    const widths = { xs: 200, sm: 260, md: 320, lg: 420, xl: 500 };
+    const widths = { xs: _OVERLAY_MIN_W, sm: 260, md: 320, lg: 420, xl: 500 };
     const w = widths[String(preset || '').toLowerCase()];
     if (!w) return false;
     const b = win.getBounds();

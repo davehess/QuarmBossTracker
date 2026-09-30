@@ -71,7 +71,8 @@ describe('the callouts carry the mob; speech stays short', () => {
     const h = build({});
     h._announceSlowDrop("Turgur's Insects", 'A Plagued Soriz #4745');
     expect(h.pushed[0].text).toMatch(/^🐌 Slow dropped on A Plagued Soriz #4745 — reslow \(/);
-    expect(h.pushed[0].tts).toBe('Slow dropped. Reslow.');
+    // Spelled for the voice (FB-41: "says REH-SLOW instead of REE-Slow"); the text keeps "reslow".
+    expect(h.pushed[0].tts).toBe('Slow dropped. Ree slow.');
   });
 });
 
