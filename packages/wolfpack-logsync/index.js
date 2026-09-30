@@ -524,6 +524,22 @@ function triggerVisibleLine(line, drops = DEFAULT_DROP_PATTERNS, priorityKeeps =
   return true;
 }
 
+// NPC speech the trigger engine may also see (the guild lead, 2026-09-30: "yes to NPC speech"). The drop
+// list above removes every says / shouts / tells-you line, which also hid scripted boss events: the
+// Tribunal's trials, Mavuin's flag, Coirnav's and the Air avatars' shouts, Thelin, Etumer, Nitram. A
+// player's name is one word, so a speaker with a space in it is an NPC or a pet; the few one-word NPCs a
+// trigger needs are named here. Player tells, group, guild, raid, channels and a player's /say stay hidden.
+// Used by the trigger engine and its replay ONLY: the feedback log excerpt keeps triggerVisibleLine alone,
+// so NPC speech is never uploaded with a report. Listed on the privacy page's exceptions.
+const NPC_SPEECH_ONE_WORD = new Set(['etumer']);
+const NPC_SPEECH_RX = /^\[[^\]]+\]\s+([^,'"\]:]+?)\s+(?:says|shouts|tells you),?\s*['"]/;
+function npcSpeechLine(line) {
+  const m = NPC_SPEECH_RX.exec(line);
+  if (!m) return false;
+  const who = m[1].trim();
+  return /\s/.test(who) || NPC_SPEECH_ONE_WORD.has(who.toLowerCase());
+}
+
 // A spaceless, lowercase token ("to", "a", "the", "and", "of", "by"…) is never
 // a real combat attacker. Real player names + single-word NPC/boss names are
 // capitalized; multi-word NPCs ("a sentinel") legitimately start lowercase but
@@ -41963,7 +41979,7 @@ async function _replayWorker(st) {
       if (tsMs < st.fromMs) return;
       if (tsMs > st.toMs) { past = true; return; }
       scanned++;
-      if (triggerVisibleLine(raw) && lines.length < REPLAY_LINE_CAP) {
+      if ((triggerVisibleLine(raw) || npcSpeechLine(raw)) && lines.length < REPLAY_LINE_CAP) {
         lines.push({ raw, tsMs });
       }
     },
@@ -43565,8 +43581,9 @@ async function main() {
         // so keep-list MISSES (ENRAGED, snared, mesmerized, fizzles, cures…)
         // still fire; triggerVisibleLine() drops only the privacy/public-chat/
         // system lines so nothing private ever reaches a trigger. Cheap:
-        // precompiled regex set; usually < 50 entries, < 50µs each.
-        if (triggerVisibleLine(line, dropPatterns)) {
+        // precompiled regex set; usually < 50 entries, < 50µs each. NPC speech
+        // is let through as well (npcSpeechLine), for scripted boss events.
+        if (triggerVisibleLine(line, dropPatterns) || npcSpeechLine(line)) {
           try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
         }
         // A DoT's repeating damage lands on the mob's own 6s tick — the charm
