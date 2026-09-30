@@ -6927,7 +6927,9 @@ function _announceSlowLand(best, mob) {
 function _announceSlowDrop(name, mob) {
   _pushOverlay({
     text:        '🐌 Slow dropped ' + (mob ? 'on ' + mob + ' ' : '') + '— reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
-    tts:         'Slow dropped. Reslow.',
+    // Spelled for the voice, not the eye: "Reslow" was read "REH-slow" (the guild lead, 2026-09-30, FB-41:
+    // "The Reslow trigger says REH-SLOW instead of REE-Slow"). The on-screen text keeps "reslow".
+    tts:         'Slow dropped. Ree slow.',
     color:       'red',
     duration_ms: 6000,
     shownAt:     Date.now(),
@@ -6983,7 +6985,7 @@ function _tickSlowCallouts() {
       if (warnDue) {
         const mob = _slowCalloutMob(prev.display, targetLower);
         _pushOverlay({ text: '🐌 Slow fading ' + (mob ? 'on ' + mob + ' ' : '') + '— re-slow soon (' + _slowShortName(best.name) + ')',
-                       tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
+                       tts: 'Ree slow soon.', color: 'amber', duration_ms: 5000,
                        shownAt: Date.now(), firedAt: Date.now(),
                        trigger: 'Slow fading', scope: 'slow', test: false });
       }
@@ -13169,11 +13171,14 @@ function _meCombatSince(cl, sinceMs, now) {
 // well, then drop out after each mob" · "Have the damage shield hits roll into
 // a total"). Same-named mobs are told apart by death: a hit belongs to the
 // life that ends at the first death of that name at or after it. A live total
-// stays while the mob was hit in the last 30 s. A dead one stays 90 s — the
+// stays while the mob was hit in the last 30 s. A dead one stays 10 s — the
 // HUD shows it as a dim "ghost" of the fight until the next fight starts in
 // that column (round seven: "Then after the fight a ghost of those shows up").
+// It was 90 s, which read as the kill never registering (the guild lead,
+// 2026-09-30, FB-42: "I saw the kill but it is still on my screen for a long
+// time - it took 90 seconds for it to drop off").
 const _meMobDeaths = new Map();   // mobLower → [death times, oldest first]
-const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 90_000;
+const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 10_000;
 function _meNoteMobDeath(name, t) {
   const k = String(name || '').trim().toLowerCase();
   if (!k) return;
