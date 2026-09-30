@@ -613,14 +613,17 @@ describe('per-mob totals', () => {
     expect(t.map(x => [x.out, x.dead_at])).toEqual([[30, null], [100, deadAt]]);
   });
   // Round seven: "Then after the fight a ghost of those shows up" — a dead
-  // mob's total stays 90 s (the HUD shows it dim until the next fight).
-  it('a quiet mob\'s total drops after 30 s; a dead one stays 90 s as the fight\'s ghost', () => {
+  // mob's total stays briefly, dim. It was 90 s until FB-42 (2026-09-30: "I saw
+  // the kill but it is still on my screen for a long time"); now 10 s.
+  it('a dead mob\'s total stays 10 s as the fight\'s ghost; a quiet live one 30 s', () => {
     const h = load();
     hitOut(h, 'a gnoll', 100); hitOut(h, 'a bat', 5);
     say(h, 'Aldenmar', 'a gnoll has been slain by Brackwyn!');
-    clock += 30_001;
-    expect(h._meMobTallies('aldenmar', clock).map(x => x.name)).toEqual(['a gnoll']);
-    clock += 60_000;
+    clock += 9_000;
+    expect(h._meMobTallies('aldenmar', clock).map(x => x.name).sort()).toEqual(['a bat', 'a gnoll']);
+    clock += 2_000;
+    expect(h._meMobTallies('aldenmar', clock).map(x => x.name)).toEqual(['a bat']);
+    clock += 20_000;
     expect(h._meMobTallies('aldenmar', clock)).toEqual([]);
   });
   it('ride along on the HUD snapshot', () => {

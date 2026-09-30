@@ -149,7 +149,7 @@ describe('⇅ timers start at the top', () => {
     const cls = new Set();
     const document = { body: { classList: { toggle: (c, on) => (on ? cls.add(c) : cls.delete(c)) } } };
     // eslint-disable-next-line no-new-func
-    const apply = new Function('document', fn + '\nreturn applyTimersOrder;')(document);
+    const apply = new Function('document', 'var PART = null;\n' + fn + '\nreturn applyTimersOrder;')(document);
     apply({ triggerTimersTopDown: true });
     expect(cls.has('timers-topdown')).toBe(true);
     apply({});

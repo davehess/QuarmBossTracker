@@ -87,6 +87,9 @@
   .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden}
   .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;width:34px;text-align:left}
   .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:#6e7681}
+  /* Zone column, behind the title bar's ZONE switch (the guild lead, 2026-09-29). As the game printed
+     it: the short name from /who all, the full name from a plain /who's footer. */
+  .r .zn{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
   .gone .r{opacity:0.85}
@@ -143,7 +146,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span><button id="zek-btn" class="zekbtn" aria-pressed="false" title="Zek only: show just the players known to be Zek">ZEK</button><button class="fbtn" data-fbtn="class" title="Filter by class">CLASS</button><button class="fbtn" data-fbtn="guild" title="Filter by guild">GUILD</button><button class="fbtn" data-fbtn="sort" title="Sort order: click to change">⇅ seen</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span><button id="zek-btn" class="zekbtn" aria-pressed="false" title="Zek only: show just the players known to be Zek">ZEK</button><button class="fbtn" data-fbtn="class" title="Filter by class">CLASS</button><button class="fbtn" data-fbtn="guild" title="Filter by guild">GUILD</button><button id="zone-btn" class="fbtn" aria-pressed="false" title="Zone column: where each player was at their last /who (/who all shows everyone's)">ZONE</button><button class="fbtn" data-fbtn="sort" title="Sort order: click to change">⇅ seen</button></div>
     <div id="fpanel"></div>
     <div id="body"></div>
     <div id="empty">run <b>/who</b> in game</div>
@@ -375,6 +378,7 @@
     var klassTxt = (klass && !showPicker) ? esc(klass) : '';
     var col = '<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + klassTxt + '</span>';
     col    += '<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">' + (lvl ? 'L' + lvl : '') + '</span>';
+    if (_zoneCol) col += zoneColHtml(p.zone);
     if (gone)  col += '<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>';
     return '<div class="' + cls + '"><span class="left">' + left + '</span>' + col + '</div>';
   }
@@ -471,6 +475,30 @@
     });
   }
 
+  // Zone column (the guild lead, 2026-09-29: "lets include zone on /who overlay as toggleable column").
+  // Off until switched on; remembered on this machine. The agent sends each row's zone from its last
+  // /who: /who all names everyone's, a plain /who names yours.
+  var _zoneCol = false;
+  try { _zoneCol = localStorage.getItem('wp:who:zoneCol') === '1'; } catch (e) {}
+  function zoneColHtml(zone){
+    return '<span class="zn"' + (zone ? ' title="' + esc(zone) + '"' : '') + '>' + esc(zone || '') + '</span>';
+  }
+  var zoneBtn = document.getElementById('zone-btn');
+  function _paintZoneBtn(){
+    if (!zoneBtn) return;
+    zoneBtn.classList.toggle('on', _zoneCol);
+    zoneBtn.setAttribute('aria-pressed', _zoneCol ? 'true' : 'false');
+  }
+  _paintZoneBtn();
+  if (zoneBtn) {
+    zoneBtn.addEventListener('click', function(){
+      _zoneCol = !_zoneCol;
+      try { localStorage.setItem('wp:who:zoneCol', _zoneCol ? '1' : '0'); } catch (e) {}
+      _paintZoneBtn();
+      renderWho(_lastWho);
+    });
+  }
+
   // The targeted player's card: name, 🐺 / (main) / flags, class + level columns, then the guild on its
   // own line under the name when we know it. The agent has already taken them out of the lists below.
   function targetHtml(t){
@@ -482,6 +510,7 @@
     if (t.zek)       left += '<span class="flag zek">ZEK</span>';
     var col = '<span class="klass' + (t.class_src === 'history' ? ' deanon' : '') + '">' + esc(t.class || '') + '</span>';
     col    += '<span class="lvl'   + (t.level_src === 'history' ? ' deanon' : '') + '">' + (t.level ? 'L' + t.level : '') + '</span>';
+    if (_zoneCol) col += zoneColHtml(null);   // Holds the column so the card lines up with the list.
     var h = '<div class="sec tgt"><div class="sec-h">Target</div><div class="rowlist">';
     h += '<div class="r' + (t.zek ? ' zek' : '') + '"><span class="left">' + left + '</span>' + col + '</div>';
     if (t.guild) {

@@ -1494,6 +1494,43 @@ function confirmPlayer(name) {
 // petNameLower → Set<ownerName>  (one-to-many: charm pets can cycle through owners)
 const knownPetOwners = new Map();
 
+// Pets the rest of the guild has named (FB-35, a member, 2026-09-29: "This doesn't
+// show pets? maybe its only if they dont use /pet leader"). A summoned pet names
+// its owner only in "My leader is <Owner>." (at summon, or on /pet leader), so a
+// client that missed that line cannot tell the pet from a raider. The bot pools
+// every declaration uploaded by any raider and serves it on the poll
+// (`pet_owners`); each EncounterBuilder reads it the first time the pet attacks.
+// petNameLower → OwnerName.
+const _guildPetOwners = new Map();
+// …and the pet's spawn id, when the owner's own Mimic knew it (Zeal pet_id)
+// and uploaded it with the pet's damage. petNameLower → spawn id.
+const _guildPetIds = new Map();
+function _applyPetOwnersResponse(resp) {
+  const owners = resp && resp.owners;
+  if (!owners || typeof owners !== 'object') return;
+  _guildPetOwners.clear();
+  _guildPetIds.clear();
+  for (const [pet, owner] of Object.entries(owners)) {
+    if (pet && owner && !/\s/.test(pet) && /^[A-Z][a-z]+$/.test(String(owner))) _guildPetOwners.set(pet.toLowerCase(), String(owner));
+  }
+  for (const [pet, id] of Object.entries((resp.ids && typeof resp.ids === 'object') ? resp.ids : {})) {
+    const n = Number(id);
+    if (_guildPetOwners.has(String(pet).toLowerCase()) && Number.isInteger(n) && n > 0) _guildPetIds.set(String(pet).toLowerCase(), n);
+  }
+}
+// The server's own pet-name generator (EQMacEmu zone/pets.cpp GetRandPetName):
+// G|J|K|L|V|X|Z + (""|ab|ar|as|eb|en|ib|ob|on) + (""|an|ar|ek|ob) + (ab|er|n|tik),
+// "tik" forced when both middles are empty, never "tik" after "ek". Kebantik,
+// Gobeker, Jarn. A name of this shape that /who and the raid window have never
+// shown is a summoned pet whose owner we have not learned, not a raider.
+const _PET_NAME_RX = /^([GJKLVXZ])(ab|ar|as|eb|en|ib|ob|on)?(an|ar|ek|ob)?(ab|er|n|tik)$/;
+function _isGeneratedPetName(name) {
+  const m = _PET_NAME_RX.exec(String(name || ''));
+  if (!m) return false;
+  if (!m[2] && !m[3]) return m[4] === 'tik';
+  return !(m[3] === 'ek' && m[4] === 'tik');
+}
+
 // ── Vision eyes are never damage-dealing pets ───────────────────────────────
 // EQ's Eye of Zomm summons a scout named "Eye of <Owner>". It is a VISION pet:
 // no attacks, no procs, zero damage, ever. But it IS a pet by every other
@@ -1919,12 +1956,27 @@ const GAUGE_CHARM_DEBOUNCE_MS = 1500;
 // slot 16 is only ever the LOCAL client's pet, so name twins can't confuse
 // attribution). Class comes from the same whoData → raid-roster chain
 // /api/state uses; unknown class stays conservative (gates still apply).
+// ⚠ Class comes from _classOf: Zeal's own class label first. Before 2026-09-29 it was /who or the
+// raid roster only, so a bard out of a raid who had not /who'd themselves got no bypass, and a
+// named mob under Solon's Bewitching Bravura (Dragen Faux) never showed on the Charm tracker
+// unless the song was caught within the 12s pending window (the guild lead: "why is bard charm
+// tracking not working?").
 function _gaugeOwnerIsBard(name) {
-  const a = String(name || '').toLowerCase();
-  if (!a) return false;
-  const who = whoData.get(a);
-  const cls = (who && who.class) || _raidClassByName.get(a) || null;
-  return cls ? /^bard$/i.test(String(normalizeClass(String(cls)))) : false;
+  const cls = _classOf(name);
+  return cls ? /^bard$/i.test(cls) : false;
+}
+// A bard's charm that was not caught being cast (the pet was already charmed when it was seen, or
+// the song began outside the 12s window) still gets a real duration: the charm song in their twist,
+// else Solon's Bewitching Bravura. Without one the tracker showed "~" and kept its callouts quiet
+// ("charm breaking", "recharm now" are off on a guessed duration) — the guild lead, 2026-09-29:
+// "i did not get a recharm pet tts at 4 seconds left". Null for anyone who is not a bard.
+function _bardCharmSongFor(owner) {
+  if (!_gaugeOwnerIsBard(owner)) return null;
+  const st = _bardMelody.get(String(owner || '').toLowerCase());
+  const names = (st && Array.isArray(st.order)) ? st.order.map((o) => o && o.name).filter(Boolean) : [];
+  const song = names.find((n) => CHARM_SPELLS.has(String(n).toLowerCase())) || "Solon's Bewitching Bravura";
+  const ci = CHARM_SPELLS.get(String(song).toLowerCase());
+  return ci ? { charm_class: ci.cls, duration_sec: ci.dur, charm_spell_name: song } : null;
 }
 function _reconcileGaugeCharms() {
   const now = Date.now();
@@ -1974,7 +2026,7 @@ function _reconcileGaugeCharms() {
       if (firstSeen == null) {
         pendingByOwner.set(k, now);
       } else if ((now - firstSeen) >= GAUGE_CHARM_DEBOUNCE_MS) {
-        const pc = _consumePendingCharmSpell(ch, now) || {};     // attach spell duration/class if just cast
+        const pc = _consumePendingCharmSpell(ch, now) || _bardCharmSongFor(ch) || {};   // attach spell duration/class
         _bumpCharmTick(name, ch, 'land', firstSeen, pc);         // gauge-sourced land, anchor to first sighting
         pendingByOwner.delete(k);
       }
@@ -4383,6 +4435,23 @@ function _levelOf(character) {
   const w = whoData.get(cl);
   return (w && Number(w.level) > 0) ? Number(w.level) : null;
 }
+// A character's class. Zeal's label 3 first: the client's own answer for a character on this
+// machine, there from login with no /who (the guild lead, 2026-09-29: "a character's class is
+// output by zeal pipes, on top of us knowing their class. we shouldn't need to rely on anything
+// else"). Then a /who row, then the raid roster, for everyone else. Normalised ("Bard").
+function _classOf(character) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  for (const ch of Object.keys(_zealState || {})) {
+    if (String(ch).toLowerCase() !== cl) continue;
+    const ci = Array.isArray(_zealState[ch].charInfo) ? _zealState[ch].charInfo : [];
+    const hit = ci.find(x => x && x.id === 3 && x.value);
+    if (hit) return normalizeClass(String(hit.value).trim());
+  }
+  const w = whoData.get(cl);
+  const cls = (w && w.class) || _raidClassByName.get(cl) || null;
+  return cls ? normalizeClass(String(cls)) : null;
+}
 // PvP: what YOUR drains took from a player this fight. Full strength (the NPC
 // cut is NPC-only) and an UPPER bound — the server only takes what they have,
 // which nobody can see. Resets after five quiet minutes.
@@ -4775,6 +4844,37 @@ function _petIdForOwner(ownerLower) {
     if (st && Number.isFinite(st.pet_id)) return st.pet_id;
   }
   return null;
+}
+// The spawn id of a pet on the DPS meter (the guild lead, 2026-09-29: "if you
+// click on +pet it should open a line below to show the pets name and damage
+// and spawnid"). Only when it is provably THAT pet, best first:
+//   1. this machine runs the owner, and Zeal's pet gauge names this pet → pet_id;
+//   2. someone tagged it with a Zeal /tag (the tag line carries the id);
+//   3. one of this machine's characters is targeting it → target_id;
+//   4. the owner's own Mimic knew it and the bot pooled it (_guildPetIds).
+// Null otherwise — a wrong id is worse than none. _ownPetSpawnId is step 1
+// alone: the only id this machine may upload as fact.
+function _ownPetSpawnId(petName, ownerName) {
+  const ol = String(ownerName || '').toLowerCase();
+  const pn = ol ? _petNameForOwner(ol) : null;
+  if (!pn || _normMobName(pn) !== _normMobName(petName)) return null;
+  const id = _petIdForOwner(ol);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+function _petSpawnIdFor(petName, ownerName) {
+  const want = _normMobName(petName);
+  if (!want) return null;
+  const own = _ownPetSpawnId(petName, ownerName);
+  if (own) return own;
+  const now = Date.now();
+  for (const t of _zealTags.values()) {
+    if (t && t.spawn_id > 0 && now - (t.tsMs || 0) < _TAG_FRESH_MS
+      && (_normMobName(t.mob) === want || _normMobName(t.mobDisplay) === want)) return t.spawn_id;
+  }
+  for (const st of Object.values(_zealState)) {
+    if (st && Number.isInteger(st.target_id) && st.target_id > 0 && _normMobName(st.target_name) === want) return st.target_id;
+  }
+  return _guildPetIds.get(String(petName).toLowerCase()) || null;
 }
 function notePetBuffWornOff(line, character) {
   if (!line || !character) return;
@@ -6827,7 +6927,9 @@ function _announceSlowLand(best, mob) {
 function _announceSlowDrop(name, mob) {
   _pushOverlay({
     text:        '🐌 Slow dropped ' + (mob ? 'on ' + mob + ' ' : '') + '— reslow' + (name ? ' (' + _slowShortName(name) + ')' : ''),
-    tts:         'Slow dropped. Reslow.',
+    // Spelled for the voice, not the eye: "Reslow" was read "REH-slow" (the guild lead, 2026-09-30, FB-41:
+    // "The Reslow trigger says REH-SLOW instead of REE-Slow"). The on-screen text keeps "reslow".
+    tts:         'Slow dropped. Ree slow.',
     color:       'red',
     duration_ms: 6000,
     shownAt:     Date.now(),
@@ -6883,7 +6985,7 @@ function _tickSlowCallouts() {
       if (warnDue) {
         const mob = _slowCalloutMob(prev.display, targetLower);
         _pushOverlay({ text: '🐌 Slow fading ' + (mob ? 'on ' + mob + ' ' : '') + '— re-slow soon (' + _slowShortName(best.name) + ')',
-                       tts: 'Re-slow soon.', color: 'amber', duration_ms: 5000,
+                       tts: 'Ree slow soon.', color: 'amber', duration_ms: 5000,
                        shownAt: Date.now(), firedAt: Date.now(),
                        trigger: 'Slow fading', scope: 'slow', test: false });
       }
@@ -7501,7 +7603,7 @@ function recordWhoEvent(ev) {
   // entries; anyone still around re-registers on the next /who.
   if (whoData.size > 6000) {
     let n = 0;
-    for (const key of whoData.keys()) { whoData.delete(key); if (++n >= 1000) break; }
+    for (const key of whoData.keys()) { whoData.delete(key); _whoZoneSeen.delete(key); if (++n >= 1000) break; }
   }
   // Keep ALL /who rows in the transient registry so the overlay can render
   // everyone in the zone (Quarm pickup raids include L30-60 characters).
@@ -7533,6 +7635,10 @@ function recordWhoEvent(ev) {
   // Attribute this row to the in-progress /who run (for the overlay's "current"
   // vs "recently gone" split).
   _noteWhoRunName(ev.name);
+  if (ev.zone) {
+    _whoZoneSeen.set(k, ev.zone);
+    if (_whoRun && !_whoRun.complete && _whoRun.zoned) _whoRun.zoned.add(k);
+  }
 }
 
 // ── /who overlay state ───────────────────────────────────────────────────────
@@ -7542,17 +7648,31 @@ function recordWhoEvent(ev) {
 // "There are N players..." footer; we collect the rows between into a run set.
 // All local + instant — no upload. Anonymous rows are enriched on demand from
 // the bot's who history (last non-anon class/level/guild + Zek flag).
-let _whoRun = null;             // { startedAt, names:Set<lower>, complete } — in-progress/last
+let _whoRun = null;             // { startedAt, names:Set<lower>, zoned:Set<lower>, complete } — in-progress/last
+// The zone each player was in at their last /who, for the overlay's Zone column (the guild lead,
+// 2026-09-29: "lets include zone on /who overlay as toggleable column"). `/who all` puts the short
+// name on each row ("ZONE: wakening"); a plain /who has none on the rows, but its footer names the
+// zone they are all in ("There are 12 players in The Wakening Land."). Kept as the game printed it.
+// Overlay-only, apart from whoData, whose rows upload as they are.
+const _whoZoneSeen = new Map();  // lower → zone text, or null (a /who all row with no zone, e.g. /anon)
 const WHO_HEADER_RX = /^\[.+?\]\s+Players (?:in|on) EverQuest:/i;
 const WHO_FOOTER_RX = /^\[.+?\]\s+There (?:are|is) \d+ (?:player|players)\b/i;
+const WHO_FOOTER_ZONE_RX = /\bplayers? in (.+?)\.?\s*$/i;
 function applyWhoLine(line) {
   if (WHO_HEADER_RX.test(line)) {
     const ts = parseEqTimestamp(line);
-    _whoRun = { startedAt: ts ? ts.getTime() : Date.now(), names: new Set(), complete: false };
+    _whoRun = { startedAt: ts ? ts.getTime() : Date.now(), names: new Set(), zoned: new Set(), complete: false };
     return;
   }
   if (WHO_FOOTER_RX.test(line)) {
-    if (_whoRun) _whoRun.complete = true;
+    if (!_whoRun || _whoRun.complete) return;
+    _whoRun.complete = true;
+    const zm = WHO_FOOTER_ZONE_RX.exec(line);
+    const zone = zm && !/^EverQuest$/i.test(zm[1].trim()) ? zm[1].trim() : null;
+    for (const k of _whoRun.names) {
+      if (zone) _whoZoneSeen.set(k, zone);                       // Plain /who: all in this zone.
+      else if (!_whoRun.zoned.has(k)) _whoZoneSeen.set(k, null);  // /who all, row without a zone: unknown now.
+    }
   }
 }
 function _noteWhoRunName(name) {
@@ -7690,6 +7810,7 @@ function buildWhoSnapshot() {
     const entry = {
       name: v.name, level: v.level || null, class: v.class || null, race: v.race || null,
       guild: v.guild || null, anonymous: !!v.anonymous, gm: !!v.gm, observedAt: v.observedAt || null,
+      zone: _whoZoneSeen.get(k) || null,
     };
     // Every row carries its Zek flag, for the overlay's Zek only mode (the guild lead, 2026-09-26).
     // Before, only an /anon row did (through entry.known), so a player showing <Zek> went unflagged.
@@ -8293,6 +8414,14 @@ class EncounterBuilder {
         // whitelisted on the meter but rendered "(charmed)", never credited
         // to a specific raider (undefined when not applicable, keeps payload flat).
         pet_charm:  petCharm || undefined,
+        // A summoned pet whose owner no one has named yet (FB-35): its name
+        // came out of the server's pet-name generator and /who and the raid
+        // window have never shown it. Rendered "(pet)", not as a raider.
+        pet_summoned: (!petOwner && !petCharm && _isGeneratedPetName(name)
+          && !whoData.has(nl) && !_raidRosterHas(name)) || undefined,
+        // The owned pet's spawn id when it is provable (_petSpawnIdFor) — the
+        // DPS HUD's +pet line shows it.
+        pet_spawn_id: (petOwner && _petSpawnIdFor(name, petOwner)) || undefined,
         procDetail: t.procDetail || {},
       };
     }
@@ -8589,6 +8718,16 @@ class EncounterBuilder {
 
   add(event) {
     if (!event) return;
+
+    // ── A pet some other raider's agent has already named (FB-35) ──────────
+    // Live builders only: a replay of an old log must not borrow tonight's owners.
+    if (!this.silent && event.attacker && _guildPetOwners.size) {
+      const _gk = String(event.attacker).toLowerCase();
+      if (!this.petLeaders[_gk]) {
+        const _go = _guildPetOwners.get(_gk);
+        if (_go && !_isVisionEyePet(event.attacker)) this.petLeaders[_gk] = _go;
+      }
+    }
 
     // ── Possessive-named pet, self-owned — auto-populate petLeaders ────────
     // A member (Beastlord) 2026-07-03: "the DPS meter never reads my pet."
@@ -10212,7 +10351,15 @@ class EncounterBuilder {
         r.hits   += 1;
       }
       for (const r of _petAcc.values()) {
-        if (r.damage > 0) { r.damage = Math.round(r.damage); _petRows.push(r); }
+        if (r.damage > 0) {
+          r.damage = Math.round(r.damage);
+          // Only an id this machine's own Zeal gave for its own pet ships as
+          // fact — the bot pools it for every HUD's +pet line. Never on a
+          // replay: the live pet is not the one in an old log.
+          const sid = this.silent ? null : _ownPetSpawnId(r.name, r.pet_owner);
+          if (sid) r.spawn_id = sid;
+          _petRows.push(r);
+        }
       }
       _petRows.sort((a, b) => b.damage - a.damage);
     }
@@ -13024,11 +13171,14 @@ function _meCombatSince(cl, sinceMs, now) {
 // well, then drop out after each mob" · "Have the damage shield hits roll into
 // a total"). Same-named mobs are told apart by death: a hit belongs to the
 // life that ends at the first death of that name at or after it. A live total
-// stays while the mob was hit in the last 30 s. A dead one stays 90 s — the
+// stays while the mob was hit in the last 30 s. A dead one stays 10 s — the
 // HUD shows it as a dim "ghost" of the fight until the next fight starts in
 // that column (round seven: "Then after the fight a ghost of those shows up").
+// It was 90 s, which read as the kill never registering (the guild lead,
+// 2026-09-30, FB-42: "I saw the kill but it is still on my screen for a long
+// time - it took 90 seconds for it to drop off").
 const _meMobDeaths = new Map();   // mobLower → [death times, oldest first]
-const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 90_000;
+const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 10_000;
 function _meNoteMobDeath(name, t) {
   const k = String(name || '').trim().toLowerCase();
   if (!k) return;
@@ -15784,7 +15934,9 @@ function _serializeForDashboard() {
         //      singing a recognized-bard-only song (Lcea's, Anthem de Arms,
         //      Selo's, …). Resets on melody-idle (zone / char swap) so it
         //      can't carry across characters sharing a Mimic instance.
-        const isBardClass = !!(wd     && /^bard$/i.test(String(wd.class     || '')))
+        // 2026-09-29: Zeal does pipe the class (label 3) — _classOf reads it first.
+        const isBardClass = /^bard$/i.test(String(_classOf(k) || ''))
+                         || !!(wd     && /^bard$/i.test(String(wd.class     || '')))
                          || !!(zealSt && /^bard$/i.test(String(zealSt.class || '')))
                          || !!state.bardConfirmed;
         // Buff → info shape. When ticks is unknown (null/0) we still emit
@@ -16256,19 +16408,81 @@ tr:hover td { background:#1f242c }
    the body's 16px padding. In a plain browser the gap is just empty. */
 #wpTopRight { margin-left:auto; margin-right:40px; display:inline-flex; gap:6px; align-items:center;
               font-size:12px; font-weight:normal; }
-.wp-ov-toggle { min-width:42px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
-.wp-ov-toggle:hover { border-color:var(--blue); color:var(--text); }
-.wp-ov-toggle.on { background:#196c2e; border-color:#2ea043; color:#fff; }
+/* The Overlays tab, option C (the guild lead, 2026-09-29: "Go with C"): your layouts on top, what is
+   on screen beside what you can add, then one strip of keys and one of looks. One key format on the
+   whole page: .wp-key — a keycap; dashed when there is none; red when it clashes. */
+.wp-lbl { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+.wp-ovhd { display:flex; flex-wrap:wrap; gap:4px 10px; align-items:center; justify-content:space-between; margin:0 0 6px; font-size:11px; }
+.wp-key { display:inline-block; border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:0 6px; font-family:inherit; font-size:11px; line-height:17px; background:#0b0f15; color:var(--text); white-space:nowrap; }
+.wp-key.empty { border-style:dashed; border-bottom-width:1px; color:var(--dim); background:transparent; }
+.wp-key.clash { border-color:var(--red); color:var(--red); }
+.wp-key.capturing { border-color:#f0b429; color:#f0b429; }
+button.wp-key { cursor:pointer; }
+button.wp-key:hover { border-color:var(--blue); }
+.wp-btn { border:1px solid var(--border); background:#21262d; color:var(--text); border-radius:5px; padding:3px 10px; font-family:inherit; font-size:11px; cursor:pointer; }
+.wp-btn:hover { border-color:var(--blue); }
+.wp-btn.pri { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+.wp-btn.pri.on { background:#196c2e; border-color:#2ea043; }
+.wp-btn.ghost { background:transparent; }
+.wp-ovbanner { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; justify-content:space-between; border:1px solid var(--gold); color:var(--gold); background:#2a2210; border-radius:5px; padding:4px 10px; font-size:11px; margin:0 0 10px; }
+.wp-lays { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px; margin:0 0 10px; }
+.wp-lay { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px; display:grid; gap:4px; align-content:start; font-size:11px; min-width:0; }
+.wp-lay.act { border-color:#1f6feb; }
+.wp-layhd { display:flex; gap:6px; align-items:center; }
+.wp-layhd b { font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wp-layhd .wp-charprof-del { margin-left:auto; background:none; border:none; color:var(--dim); cursor:pointer; font-size:11px; padding:0 4px; }
+.wp-layhd .wp-charprof-del:hover { color:var(--red); }
+.wp-layovs { color:var(--dim); line-height:1.35; }
+.wp-lay.new { border-style:dashed; place-content:center; text-align:center; min-height:72px; cursor:pointer; font-family:inherit; }
+.wp-lay.new:hover:not(:disabled) { border-color:var(--blue); }
+.wp-lay.new:disabled { cursor:default; opacity:.7; }
+.wp-st { font-size:10px; border-radius:3px; padding:0 6px; border:1px solid var(--border); color:var(--dim); }
+.wp-st.on { border-color:var(--green); color:var(--green); }
+.wp-cta { display:flex; gap:8px 10px; align-items:center; flex-wrap:wrap; background:#10233f; border:1px solid #1f6feb; border-radius:6px; padding:10px 12px; margin:0 0 10px; }
+.wp-cta p { margin:0; font-size:11.5px; line-height:1.45; flex:1 1 360px; }
+.wp-cta > span { display:flex; flex-wrap:wrap; gap:6px; flex:0 1 auto; }
+.wp-ovsplit { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(0, 1fr); gap:10px; align-items:start; }
+@media (max-width: 1200px) { .wp-ovsplit { grid-template-columns:minmax(0, 1fr); } }
+.wp-ovlist, .wp-ovdrawer { background:var(--bg); border:1px solid var(--border); border-radius:6px; min-width:0; }
+/* Fixed key and control columns, so the keys line up down the list. */
+.wp-ovli { display:grid; grid-template-columns:12px minmax(0, 1fr) minmax(104px, auto) 166px 40px; gap:8px; align-items:center; padding:5px 10px; border-top:1px solid var(--border); font-size:12px; }
+.wp-ovli.hd { border-top:0; background:#0b0f15; padding-top:4px; padding-bottom:4px; }
+.wp-ovli[hidden], .wp-ovcard[hidden] { display:none; }
+.wp-ovli .sub { display:block; color:var(--dim); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wp-ovnm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wp-ovdot { color:var(--green); font-size:10px; }
+.wp-ovdot.hid { color:var(--orange); }
+.wp-ovdot.dock { color:#a371f7; }
+.wp-ovst { color:var(--orange); }
+.wp-ovst:not(:empty) { margin-right:6px; }
+.wp-ovst.dock { color:#a371f7; }
+.wp-ovli > .wp-key { justify-self:start; }
+@media (max-width: 560px) {
+  .wp-ovli { grid-template-columns:12px minmax(0, 1fr) 40px; }
+  .wp-ovli > .wp-key, .wp-ovli > .wp-ovctl { grid-column:2; justify-self:start; }
+  .wp-ovli.hd > span:nth-child(n+3) { display:none; }
+}
+.wp-ovctl { display:flex; gap:4px; align-items:center; justify-content:flex-end; white-space:nowrap; }
+.wp-ov-toggle { justify-self:end; background:transparent; border:1px solid transparent; color:var(--dim); border-radius:4px; cursor:pointer; font-family:inherit; font-size:12px; padding:0 6px; min-width:24px; }
+.wp-ov-toggle:hover { border-color:var(--red); color:var(--red); }
+.wp-ov-toggle:disabled { opacity:.35; cursor:default; border-color:transparent; color:var(--dim); }
+.wp-ovdrawer { padding:8px; display:grid; gap:8px; align-content:start; }
+.wp-addg { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; }
+.wp-ovcard { border:1px solid var(--border); border-radius:4px; background:var(--panel); padding:6px; display:grid; gap:4px; align-content:space-between; }
+.wp-ovcard:hover { border-color:var(--blue); }
+.wp-ov-add { background:none; border:none; padding:0; text-align:left; cursor:pointer; font-family:inherit; font-size:10.5px; color:var(--dim); display:grid; gap:2px; line-height:1.3; }
+.wp-ov-add b { color:var(--text); font-size:11.5px; }
+.wp-strip { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:11px; margin:10px 0 0; }
+.wp-kcell { display:inline-flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.wp-strip input[type=range] { width:110px; cursor:pointer; vertical-align:middle; }
+.wp-theme-pick { border:1px solid var(--border); background:#21262d; border-radius:999px; padding:1px 10px; font-family:inherit; font-size:11px; color:var(--text); cursor:pointer; }
+.wp-more { flex-basis:100%; }
+.wp-more > summary { cursor:pointer; color:var(--blue); }
+.wp-more > div { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; padding:8px 0 0; }
+.wp-more label { display:flex; align-items:center; gap:6px; cursor:pointer; }
 .wp-ov-dock { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; letter-spacing:0.5px; }
 .wp-ov-dock:hover { border-color:#a371f7; color:var(--text); }
 .wp-ov-dock.on { background:#2a1d3d; border-color:#a371f7; color:#d2a8ff; }
-.wp-ov-hk { min-width:52px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap; }
-.wp-ov-hk:hover { border-color:var(--blue); color:var(--text); }
-.wp-ov-hk.set { color:var(--blue); }
-.wp-ov-hk.blocked { color:var(--red); border-color:var(--red); }
-.wp-ov-hk.capturing { color:#f0b429; border-color:#f0b429; }
-.wp-ovtop { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:0 10px; align-items:start; }
-.wp-ovcol { min-width:0; }
 .wp-ov-mini { min-width:58px; background:#21262d; color:var(--dim); border:1px solid var(--border); border-radius:5px; padding:2px 9px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; }
 .wp-ov-mini:hover { border-color:#39c5bb; color:var(--text); }
 .wp-ov-mini.on { background:#123d3a; border-color:#39c5bb; color:#9ff0e8; }
@@ -16399,7 +16613,7 @@ body.wp-overlay-mode .wp-overlay-target table td:nth-child(2),
 body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right !important; }
 </style></head><body>
 <div id="wpTopBar">
-<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' <span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span> <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')}<span id="wpTopRight">
+<h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;row-gap:2px"><img src="data:image/png;base64,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" alt="" style="height:48px;width:48px;flex:none"><span style="white-space:nowrap">Wolf Pack ${process.env.WOLFPACK_CLIENT === 'mimic' ? 'mi<span style="letter-spacing:0.5px">MIC</span>' : 'EQ — Parser'}</span><span style="font-size:13px;font-weight:normal;color:#8b949e;vertical-align:middle">${process.env.WOLFPACK_APP_VERSION ? '(v' + process.env.WOLFPACK_APP_VERSION + ') ' : ''}(agent ${AGENT_VERSION})</span><span id="wpUpdSlot"></span>${(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')) ? ' ' + (String(process.env.WOLFPACK_APP_VERSION || '').indexOf('-alpha.') >= 0 ? '<span title="Running an alpha build: the Mimic 3.0 overlay builder, tried first" style="font-size:10px;font-weight:600;color:#1a0f2e;background:#a371f7;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">ALPHA</span>' : '<span title="Running a beta (pre-release) build" style="font-size:10px;font-weight:600;color:#1f1300;background:#f0b429;border-radius:3px;padding:2px 5px;margin-left:6px;vertical-align:middle;letter-spacing:0.5px">BETA</span>') + ' <button id="wpRevertStable" title="Switch back to the stable release — Mimic confirms before doing anything" style="font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">↩ stable</button>' : (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpJoinBeta" title="Get beta builds of Mimic — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">⤴ beta</button>' : '')) + (process.env.WOLFPACK_APP_VERSION ? ' <button id="wpAlpha" title="Try the Mimic 3.0 alpha — Mimic confirms before doing anything" style="display:none;font-size:10px;color:#8b949e;background:none;border:1px solid #30363d;border-radius:3px;padding:1px 6px;margin-left:4px;vertical-align:middle;cursor:pointer;font-family:inherit">α alpha</button>' : '')}<span id="wpTopRight">
     <button id="wpMailBtn" type="button" style="display:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;position:relative"
        title="Notices from the Wolf Pack team">✉<span id="wpMailDot" style="display:none;position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--red,#f87171)"></span></button>
     <button id="wpReload" class="wp-gear" title="Reload the dashboard — reconnect to the parser engine (use this if panels are blank after an update)" onclick="if(window.mimic&&window.mimic.openDashboard){window.mimic.openDashboard()}else{location.reload()}">🔄 Reload</button>
@@ -18083,6 +18297,10 @@ function renderSetupChecks(s) {
      + '<button class="wp-clock-fix" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px">🕐 Fix Windows clock sync</button>'
      + '<button class="wp-import-dir" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Old EverQuest logs kept outside your EQ folder — read once for backfill, never tailed">🗂 Add old log folder…</button>'
      + '<button class="wp-import-files" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Pick eqlog_*_pq.proj.txt files from anywhere on this PC">📄 Add old log files…</button>'
+     // ✨ The setup walkthrough, both layouts until one is picked (DECISIONS §93). Mimic-only;
+     // the tray's ✨ Setup walkthrough opens the same page.
+     + '<button class="wp-welcome" data-v="a" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup, one step at a time">✨ Walkthrough A</button>'
+     + '<button class="wp-welcome" data-v="b" style="display:none;background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px" title="Setup: three essentials, then everything else as cards">✨ Walkthrough B</button>'
      + '<span class="dim" style="font-size:11px">Writes <b>Log=TRUE</b> (eqclient.ini) + <b>ExportOnCamp</b> / <b>PipeDelay</b> / <b>PipeVerbose</b> (zeal.ini). <b>EQ must be CLOSED</b> — it overwrites eqclient.ini on exit. Live in-game: <code>/log on</code> starts logging this session; the Zeal settings apply when EQ restarts.</span>'
      + '</div>'
      + '<div class="wp-fixer-note dim" style="display:none;font-size:11px;margin-top:6px"></div>';
@@ -18181,6 +18399,14 @@ function wpWireFixerButtons(s) {
         say('Failed: ' + ((e && e.message) || e), 'var(--red,#f87171)');
       }).then(function () { iBtn.disabled = false; iBtn.textContent = orig; });
     });
+  });
+  // The walkthrough's two unpicked layouts show on beta and alpha builds only, as in the tray.
+  document.querySelectorAll('.wp-welcome').forEach(function (wBtn) {
+    if (!(window.mimic && window.mimic.openWelcome) || !${JSON.stringify(/-/.test(String(process.env.WOLFPACK_APP_VERSION || '')))}) return;
+    wBtn.style.display = '';
+    if (wBtn.dataset.wired) return;
+    wBtn.dataset.wired = '1';
+    wBtn.addEventListener('click', function () { window.mimic.openWelcome(wBtn.dataset.v); });
   });
   var cBtn = document.querySelector('.wp-clock-fix');
   if (cBtn && window.mimic && window.mimic.clockResync) {
@@ -19643,16 +19869,18 @@ function renderTriggers(s) {
 }
 
 // ── Overlays tab ───────────────────────────────────────────────────────────
-// Inventory of every overlay window Mimic could show, with per-overlay
-// visibility + opacity slider. Acts on tray-menu config when Mimic is the
-// host; falls back to a hint when loaded from a non-Mimic browser. The HUD
-// + Trigger overlays are first-class; panel overlays are listed beneath.
+// Every overlay window Mimic could show: saved layouts, what is on screen,
+// what can be added, their keys and their look. Acts on tray-menu config when
+// Mimic is the host; falls back to a hint when loaded from a non-Mimic browser.
 // Built-in overlays the dashboard Overlays tab can toggle. key matches the
 // status flag (showHud / enableTriggerTts / showCharm / showPets / showMobInfo)
 // resolved in wpRefreshOverlayToggles + the Mimic 'toggle-overlay' IPC handler.
+// The third field is the full description; the tab shows it on hover and shows
+// the one-liner from WP_OVERLAY_BLURB below.
 var WP_OVERLAY_ROWS = [
-  ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use the DOCK buttons below (or + Panes on the dock itself) to pick what lives in it.'],
+  ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use each overlay\\'s DOCK button (or + Panes on the dock itself) to pick what lives in it.'],
   ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['canvas',  'Canvas',              'The trigger overlay taken apart: the callouts and the timers become panels you place and size anywhere on the screen, one by one. Add timer panels of your own — charm timers, lulls, one debuff by name — and each takes those countdowns out of the main stack. The voice is unchanged. Arrange it with ✏ Arrange on screen. Beta.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
   ['pet',     'Pet tracker',         'Summoned-pet HP + buff counters + current target (mage / necro / beastlord / charm).'],
@@ -19670,6 +19898,30 @@ var WP_OVERLAY_ROWS = [
   ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
+// One line per overlay for the Overlays tab's list and Add cards (option C, the
+// guild lead, 2026-09-29): "right now it's just a wall of text". The full
+// description above stays one hover away.
+var WP_OVERLAY_BLURB = {
+  dock:      'One window that holds several overlays as panes.',
+  hud:       'Session DPS, top damage, current fight.',
+  canvas:    'Callouts and timers as panels you place anywhere.',
+  trigger:   'Big-text alerts from triggers, spoken aloud.',
+  charm:     'Charm timer and mob tick; lingers 5m after a break.',
+  pet:       'Summoned pet HP, buffs and target.',
+  mobinfo:   'HP, resists, special attacks, drops, Harm Touch.',
+  buffQueue: 'Buffs, debuffs and cures the raid needs, by severity.',
+  who:       'Latest /who in zone, recently gone.',
+  melody:    'Bard twist queue with cast bar and buff windows.',
+  zeal:      'Server tick for each character, plus your charm tick.',
+  threat:    'Per-fight aggro, stacked by swing, proc and heal.',
+  chchain:   'Complete Heal rotation: order, who is next, countdown.',
+  tank:      'MT HP, their buffs, enrage, rampage, DA countdown.',
+  exttarget: 'Every mob the raid is on, with HP and who is on it.',
+  command:   'Raid board: boss, MT, rampage, enrage, healer mana.',
+  popraid:   'Encounter slides, callouts, drops, shared checklist.',
+  me:        'Your character: HP, mana, ticks, cooldowns, target.',
+};
+
 // Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
 // nine with a mini rendition; the pet tracker is 'pets' there.
 var WP_MINI_KEY_OF = { hud: 'hud', tank: 'tank', mobinfo: 'mobinfo', chchain: 'chchain', charm: 'charm',
@@ -19686,193 +19938,150 @@ function renderOverlays(s) {
     setSectionHTML('overlays', h);
     return;
   }
-  h += '<div class="dim" style="font-size:12px;margin-bottom:8px">Toggle any overlay on or off here — same as the tray menu (right-click the wolf in the system tray → <b>Overlays</b>), which also has lock/unlock, <b>Setup mode</b> placement, and per-overlay opacity.</div>';
-  // Two columns (the guild lead, 2026-09-24: "Make the top section of the overlays
-  // dashboard into two columns and put the opacity slider with the background
-  // button"): how overlays LOOK on the left, the all-overlay keys and placement
-  // on the right. One column when the window is narrow (.wp-ovtop).
-  h += '<div class="wp-ovtop"><div class="wp-ovcol">';
-  // 🎨 Theme picker (the guild lead, 2026-07-12) — direct pick instead of cycling
-  // the chrome-menu item. Buttons call wp-theme-set via the bridge; the
-  // active one highlights from status.overlayTheme.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
-  h += '<b>🎨 Theme</b><span class="dim">applies to all overlays</span>';
-  var thCur = (s && s.overlayTheme) || 'default';
-  // The colour-blind three (the guild lead, 2026-09-24) sit on their own line.
-  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast'],
-    null, ['deutan','Deuteranopia (red-green)'],['protan','Protanopia (red-green)'],['tritan','Tritanopia (blue-yellow)']];
-  for (var ti = 0; ti < THEMES.length; ti++) {
-    if (!THEMES[ti]) { h += '<span style="flex-basis:100%"></span><span class="dim">colour-blind:</span>'; continue; }
-    var on = THEMES[ti][0] === thCur;
-    h += '<button class="wp-theme-pick" data-th="' + THEMES[ti][0] + '" style="font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer;border:1px solid ' + (on ? '#a371f7' : 'var(--border)') + ';background:' + (on ? 'rgba(163,113,247,0.25)' : '#21262d') + ';color:' + (on ? '#e9d5ff' : '#c9d1d9') + '">' + THEMES[ti][1] + '</button>';
-  }
-  h += '</div>';
-  // 🔅 Opacity and backgrounds, together. Opacity fades the whole overlay —
-  // what it shows, its background with it (the guild lead, 2026-09-24:
-  // "Currently opacity only works on backgrounds, not on the actual
-  // content"); the background slider is the old one, the card behind the
-  // content, 100% = solid. Both set every overlay; the setup bar fine-tunes one.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b>🔅 Opacity</b><span class="dim" style="font-size:11px">the whole overlay</span>'
-    + '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
-    + '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<b>🌫 Background</b><span class="dim" style="font-size:11px">the card behind it</span>'
-    + '<input id="wpAllBgAlpha" type="range" min="0.15" max="1" step="0.05" value="1" style="flex:1;min-width:120px;cursor:pointer" />'
-    + '<span id="wpAllBgAlphaVal" style="font-variant-numeric:tabular-nums">100%</span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<button type="button" class="wp-ov-act" data-act="backdrops" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🌫 Toggle backgrounds now</button>'
-    + '<span class="dim" style="font-size:11px">hotkey</span>'
-    + '<code id="wpBdHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpBdHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpBdHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<span id="wpBdHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<span class="dim" style="font-size:11px">both set every overlay at once — fine-tune one in its setup bar</span>'
-    + '</div>';
-  // 🔍 Overlay scale (a member's 5K monitor). Global slider here; each overlay
-  // also carries its own "size" slider in its setup bar that overrides this.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b>🔍 Size — all overlays</b>'
-    + '<input id="wpAllScale" type="range" min="50" max="200" step="5" value="100" style="flex:1;min-width:120px;cursor:pointer" />'
-    + '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span>'
-    + '<span class="dim" style="font-size:11px">50%&ndash;200% for high-DPI screens &mdash; single overlays can override with the size slider in their setup bar</span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
-    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
-    + '</div>';
-  h += '</div><div class="wp-ovcol">';   // right column: the all-overlay keys and placement
-  // How to move them. Convention is consistent across every overlay so users
-  // build muscle memory: ✥ in the TOP-RIGHT corner = drag handle (hover to
-  // grab + drag — works while locked); ✕ in the TOP-LEFT = hide that overlay.
-  // Stated here once so it's discoverable from the dashboard instead of having
-  // to read the icons' tooltips.
-  // Show/hide-ALL hotkey — current binding + rebind capture. The accelerator
-  // is registered globally by Mimic (registerHideAllHotkey); saving
-  // hideAllHotkey via saveConfig re-registers live.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--gold)">Show / hide ALL overlays:</b>'
-    + '<code id="wpHideHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpHideHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpHideHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<span id="wpHideHotkeyHint" class="dim" style="font-size:11px"></span>'
-    // Tray parity (the guild lead, 2026-08-19): lock/unlock, setup mode, and hide-all
-    // live here too, not just in the tray. Stateful labels start as … and are
-    // painted by wpRefreshOverlayToggles so the render string stays byte-stable.
-    + '<span style="flex-basis:100%"></span>'
-    + '<button type="button" class="wp-ov-act" data-act="hideall" id="wpOvHideAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
-    + '<button type="button" class="wp-ov-act" data-act="lock" id="wpOvLockBtn" style="background:#21262d;color:#58a6ff;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
-    + '<button type="button" class="wp-ov-act" data-act="setup" style="background:#21262d;color:#d6a922;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🛠 Setup mode — place all overlays</button>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<button type="button" class="wp-ov-act" data-act="arrange" style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">✨ Auto-arrange overlays now</button>'
-    + '<button type="button" class="wp-ov-act" data-act="rescue" title="Lost an overlay on another monitor? Gathers every overlay onto the screen this window is on and re-arranges there. That screen becomes the overlays\\' home for future arranges." style="background:#21262d;color:#f8b87b;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">🧲 Rescue overlays to this screen</button>'
-    + '<span class="dim" style="font-size:11px">arranging only ever runs when you click it — never automatically</span>'
-    + '</div>';
-  // 💥 Damage-taken audio alert (the guild lead, 2026-07-31). Not an overlay — an opt-in
-  // spoken cue — but its hotkey belongs with the other global hotkeys, so it
-  // shares this block. Default OFF; the ON/OFF button and the rebind row both
-  // write Mimic config, and main.js pushes the flag to the agent on save.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--gold)">💥 Damage-taken alert:</b>'
-    + '<button type="button" id="wpDmgAlertBtn" style="border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:#c9d1d9">…</button>'
-    + '<span class="dim" style="font-size:11px">speaks once every ~5s while something is hitting you</span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<span class="dim" style="font-size:11px">Hotkey:</span>'
-    + '<code id="wpDmgHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpDmgHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpDmgHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<span id="wpDmgHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '</div>';
-  // ▭ Minimize ALL — the fourth all-overlay key (Ctrl+Shift+M), which had no
-  // row here: the tray-parity rule (CLAUDE.md) applies to hotkeys too.
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b style="color:var(--gold)">▭ Minimize ALL overlays:</b>'
-    + '<code id="wpMiniHotkeyCur" style="background:#0d1117;padding:2px 10px;border-radius:3px;border:1px solid var(--border)">…</code>'
-    + '<button type="button" id="wpMiniHotkeyBtn" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">Change…</button>'
-    + '<button type="button" id="wpMiniHotkeyEn" style="background:#21262d;color:var(--red)"></button>'
-    + '<button type="button" class="wp-ov-act" data-act="miniall" id="wpOvMiniAllBtn" style="background:#21262d;color:#c9d1d9;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">…</button>'
-    + '<span id="wpMiniHotkeyHint" class="dim" style="font-size:11px"></span>'
-    + '<span style="flex-basis:100%"></span>'
-    + '<span class="dim" style="font-size:11px">Takes every overlay that has a mini down to it; press again to put them back, except the ones with a 📌 in the table below.</span>'
-    + '</div>';
-  // 💾 Per-character overlay layouts — tray parity (the guild lead, 2026-08-19:
-  // "Overlay layouts should be saves and in the overlay tab"). Baked from
-  // the Mimic status object, so the card re-renders when a save/forget or
-  // character switch pushes fresh status — same pattern as the theme picker.
-  var _cpEsc = function(x){ return String(x == null ? "" : x).replace(/[&<>"]/g, function(c){ return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]; }); };
-  var cpOn = !!(s && s.charProfilesEnabled);
-  var cpChar = (s && s.activeCharacter) ? String(s.activeCharacter) : null;
-  var cpList = (s && Array.isArray(s.charProfiles)) ? s.charProfiles : [];
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<b>💾 Per-character overlay layouts</b>'
-    + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer;color:#c9d1d9"><input id="wpCharProfEn" type="checkbox"' + (cpOn ? ' checked' : '') + ' style="cursor:pointer" /> Swap layouts automatically as you switch characters</label>'
-    + '<button type="button" id="wpCharProfSave"' + (cpChar ? '' : ' disabled') + ' style="background:#21262d;color:#7ee787;border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px">💾 Save current layout' + (cpChar ? ' for ' + _cpEsc(cpChar) : '') + '</button>'
-    + (cpChar ? '' : '<span class="dim" style="font-size:11px">no active character yet &mdash; log a toon in and this saves for them</span>');
-  if (cpList.length) {
-    h += '<span style="flex-basis:100%"></span><span class="dim" style="font-size:11px">Saved:</span>';
-    for (var cpi = 0; cpi < cpList.length; cpi++) {
-      var cpn = String(cpList[cpi].name || '');
-      h += '<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;color:#c9d1d9">'
-        + _cpEsc(cpn.charAt(0).toUpperCase() + cpn.slice(1))
-        + '<span class="dim">' + (cpList[cpi].shown || 0) + ' on</span>'
-        + '<button type="button" class="wp-charprof-del" data-char="' + _cpEsc(cpn) + '" title="Forget this saved layout" style="background:none;color:var(--red);border:none;cursor:pointer;font-size:11px;padding:0 4px">✕</button>'
-        + '</span>';
-    }
-  }
-  h += '</div>';
-  h += '</div></div>';   // end of the two columns
-  h += '<div style="font-size:12px;padding:8px 10px;background:#161b22;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">'
-    + '<b style="color:var(--blue)">How to move an overlay:</b> hover the small <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✥</code> icon in the <b>top-left corner</b> of any overlay and drag. Works whether the overlays are locked or unlocked &mdash; same in every overlay so the muscle memory carries. The <code style="background:#0d1117;padding:1px 5px;border-radius:3px">✕</code> in the <b>top-right</b> hides that overlay (turn it back on from this page or the tray). The HUD ring keeps both at its <b>bottom</b>, under its tick and swing bars.'
-    + '</div>';
-  h += '</div>';
-
-  // Interactive built-in overlay toggles. Buttons carry data-ov="<key>"; a
-  // single delegated click handler (wired once) calls window.mimic.toggleOverlay.
-  // State is refreshed from window.mimic.getStatus() after render + after each
-  // toggle. No inline onclick (keeps the dashboard template free of escaped
-  // quotes — see the WEB_HTML escape-hazard note).
-  h += '<div class="card wide"><h2>Built-in overlays</h2>';
-  // Volatile — filled by wpRefreshOverlayToggles. Kept out of the render string
-  // so the section stays byte-stable across polls (see the morphInto note).
+  // Option C (the guild lead, 2026-09-29: "Go with C", picked from three mockups
+  // for "a new overlays tab that can build these overlays faster, right now it's
+  // just a wall of text and toggles, then mismatched keybinds"): your layouts,
+  // the way into the on-screen builder, what is on screen beside what can be
+  // added, then one strip of keys and one of looks. Same switches as the tray
+  // menu. Nothing here reads \`s\` or Mimic status: everything that changes is
+  // painted afterwards by wpRefreshOverlayToggles / wpRefreshOverlayHotkeys, so
+  // the section HTML is byte-stable across polls (see the morphInto note).
+  // One line, filled by wpRefreshOverlayToggles while hide-all is on.
   h += '<div id="wpHideAllBanner"></div>';
-  h += '<table style="font-size:12px"><tr><th>Overlay</th><th>State</th><th>Dock</th><th>Hotkey</th><th>Mini</th><th>Description</th></tr>';
+  // 💾 Your layouts — the per-character saves, tray parity (the guild lead,
+  // 2026-08-19: "Overlay layouts should be saves and in the overlay tab"). A
+  // saved layout is WHICH overlays are on; where they sit is per screen setup
+  // and shared by every character, so the tiles carry no sketch.
+  h += '<div class="wp-ovhd"><span><span class="wp-lbl">Your layouts</span> <span class="dim">which overlays are on, saved per character &mdash; where they sit is shared</span></span>'
+    + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text)"><input id="wpCharProfEn" type="checkbox" style="cursor:pointer" /> switch automatically with the character you log in on</label></div>';
+  h += '<div id="wpOvLays" class="wp-lays"></div>';
+  // ✏ The way into the builder, which lives on the real screen: the Canvas's
+  // Arrange (same internals as the tray's "Arrange the canvas…"). The rest of
+  // placement — setup mode, lock, auto-arrange, rescue — sits beside it (tray
+  // parity, the guild lead, 2026-08-19). Stateful labels start as … and are
+  // painted by wpRefreshOverlayToggles.
+  h += '<div class="wp-cta">'
+    + '<p><b>✏ Arrange on screen</b> lays out the Canvas over EverQuest: its callout and timer panels move and size live, where you will read them (it turns the Canvas on). Any other overlay moves by the <b>✥</b> at its top-left (right-click the ✥ for sizes and setup) and hides with the <b>✕</b> at its top-right; the HUD ring keeps both at its bottom.</p>'
+    + '<span>'
+    + '<button type="button" class="wp-ov-act wp-btn pri" data-act="canvasArrange" id="wpOvArrangeBtn">✏ Arrange on screen</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="setup">🛠 Setup mode — place all overlays</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="lock" id="wpOvLockBtn">…</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
+    + '</span>'
+    + '</div>';
+  // On screen now | Add. Every overlay is written into BOTH — a row in the list
+  // and a card in the drawer — and the painter shows exactly one of the two, so
+  // switching an overlay on or off never changes the section HTML.
   // The Dock and trigger alerts (TTS) first, the overlays alphabetically under
   // them (the guild lead, 2026-09-24) — "/who" sorts as "who".
   var ovRows = WP_OVERLAY_ROWS.filter(function(r){ return r[0] === 'dock' || r[0] === 'trigger'; })
     .concat(WP_OVERLAY_ROWS.filter(function(r){ return r[0] !== 'dock' && r[0] !== 'trigger'; })
       .sort(function(a, b){ return a[1].replace(/^\\W+/, '').localeCompare(b[1].replace(/^\\W+/, ''), 'en', { sensitivity: 'base' }); }));
+  var ovList = '', ovAdd = '';
   for (var i = 0; i < ovRows.length; i++) {
-    var key = ovRows[i][0], label = ovRows[i][1], desc = ovRows[i][2];
+    var key = ovRows[i][0], label = ovRows[i][1], desc = ovRows[i][2], blurb = WP_OVERLAY_BLURB[key] || '';
     // Dock button beside the on/off toggle (the guild lead, 2026-08-14). Trigger alerts
     // are not dockable — #97 fires their TTS from a HIDDEN window, so a pane
     // would tie the callouts to being on screen. The dock can't dock itself.
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')
-      ? '<td class="dim" style="font-size:11px">&mdash;</td>'
-      : '<td><button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button></td>';
+    // The Canvas covers the screen and is a host itself.
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')
+      ? ''
+      : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
     // Mini-mode overlays in here. Those need to go in") — the same switch and
     // 📌 as the overlay's right-click menu, for the nine that have a mini.
-    // Painted from status; a row without one shows a dash.
     var miniKey = WP_MINI_KEY_OF[key];
     var miniCell = miniKey
-      ? '<td style="white-space:nowrap"><button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
-        + ' <button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button></td>'
-      : '<td class="dim" style="font-size:11px">&mdash;</td>';
-    // ⌨ Its own show/hide hotkey (the guild lead, 2026-09-24: "Each overlay
-    // should get its own hotkey config as well"). Label painted post-render
-    // by wpRefreshOverlayHotkeys, like the toggles, for byte-stability.
-    h += '<tr><td style="color:var(--text)">' + label + '</td>'
-      +  '<td><button type="button" class="wp-ov-toggle" data-ov="' + key + '">…</button></td>'
-      +  dockCell
-      +  '<td><button type="button" class="wp-ov-hk" data-ov="' + key + '">…</button></td>'
-      +  miniCell
-      +  '<td class="dim">' + desc + '</td></tr>';
+      ? '<button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
+        + '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>'
+      : '';
+    // ⌨ Its own show/hide key (the guild lead, 2026-09-24: "Each overlay
+    // should get its own hotkey config as well") — one keycap, in the row and
+    // on the card, painted post-render by wpRefreshOverlayHotkeys.
+    var keyCap = '<button type="button" class="wp-ov-hk wp-key" data-ov="' + key + '">…</button>';
+    ovList += '<div class="wp-ovli" data-ovrow="' + key + '" hidden>'
+      + '<span class="wp-ovdot">●</span>'
+      + '<span class="wp-ovnm" title="' + esc(desc) + '">' + label + '<span class="sub"><span class="wp-ovst"></span>' + blurb + '</span></span>'
+      + keyCap
+      + '<span class="wp-ovctl">' + dockCell + miniCell + '</span>'
+      + '<button type="button" class="wp-ov-toggle" data-ov="' + key + '">✕</button>'
+      + '</div>';
+    ovAdd += '<div class="wp-ovcard" data-ovadd="' + key + '" hidden>'
+      + '<button type="button" class="wp-ov-add" data-ov="' + key + '" title="' + esc(desc) + '"><b>' + label + '</b>' + blurb + '</button>'
+      + '<span>' + keyCap + '</span>'
+      + '</div>';
   }
-  h += '</table>';
-  h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Hotkey: click a row&rsquo;s button, then press the keys (Ctrl, Alt or Shift + a key). Backspace clears it, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
-  h += '<div class="dim" style="font-size:11px;margin-top:8px">Lock/Setup placement live in the tray.</div>';
+  h += '<div class="wp-ovsplit">'
+    + '<div class="wp-ovlist" aria-label="On screen now">'
+    +   '<div class="wp-ovli hd"><span></span><span class="wp-lbl">On screen now</span><span class="wp-lbl">key</span><span></span><span></span></div>'
+    +   ovList
+    +   '<div class="wp-ovli" id="wpOvNone" hidden><span></span><span class="dim">Nothing on screen &mdash; pick one from Add.</span></div>'
+    + '</div>'
+    + '<div class="wp-ovdrawer" aria-label="Add an overlay">'
+    +   '<div class="wp-ovhd" style="margin:0"><span class="wp-lbl">Add an overlay</span><span class="dim">click one to turn it on</span></div>'
+    +   '<div class="wp-addg">' + ovAdd + '</div>'
+    +   '<div id="wpOvAllOn" class="dim" style="font-size:11px" hidden>Every overlay is on.</div>'
+    + '</div>'
+    + '</div>';
+  h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Keys: click one, then press Ctrl, Alt or Shift + a key. Backspace clears an overlay&rsquo;s key, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
+  // ⌨ Keys: the all-overlay keys, each beside what it does, in the same keycap
+  // as the overlays' own (painted by wpRefreshOverlayHotkeys, which also counts
+  // clashes). Mimic registers them globally (registerHideAllHotkey); saving
+  // through saveConfig re-registers live. 💥 The damage-taken alert (the guild
+  // lead, 2026-07-31) is not an overlay — an opt-in spoken cue, default OFF —
+  // but its key belongs with the other global keys. ▭ Minimize ALL is the
+  // fourth (Ctrl+Shift+M): the tray-parity rule applies to hotkeys too.
+  var GKEYS = [
+    ['wpHideHotkey', 'Show / hide all', '<button type="button" class="wp-ov-act wp-btn" data-act="hideall" id="wpOvHideAllBtn">…</button>'],
+    ['wpBdHotkey',   'Backgrounds',     ''],
+    ['wpMiniHotkey', 'Minimize all',    '<button type="button" class="wp-ov-act wp-btn" data-act="miniall" id="wpOvMiniAllBtn" title="Takes every overlay that has a mini down to it; press again to put them back, except the ones with a 📌.">…</button>'],
+    ['wpDmgHotkey',  'Damage-taken alert', '<button type="button" id="wpDmgAlertBtn" class="wp-btn" title="Speaks once every ~5s while something is hitting you.">…</button>'],
+  ];
+  h += '<div class="wp-strip wp-keys"><span class="wp-lbl">Keys</span>';
+  for (var gk = 0; gk < GKEYS.length; gk++) {
+    var gp = GKEYS[gk][0];
+    h += '<span class="wp-kcell">' + GKEYS[gk][1]
+      + ' <code id="' + gp + 'Cur" class="wp-key">…</code>'
+      + '<button type="button" id="' + gp + 'Btn" class="wp-btn ghost">Change…</button>'
+      + '<button type="button" id="' + gp + 'En" class="wp-btn ghost"></button>'
+      + GKEYS[gk][2]
+      + '<span id="' + gp + 'Hint" class="dim"></span></span>';
+  }
+  h += '<span id="wpOvClash" class="dim"></span></div>';
+  // 🎨 Look. Theme (the guild lead, 2026-07-12) — a direct pick; the active one
+  // highlights from status.overlayTheme. Opacity sits with the background
+  // button (2026-09-24: "put the opacity slider with the background button"):
+  // opacity fades the whole overlay — what it shows, its background with it
+  // ("Currently opacity only works on backgrounds, not on the actual
+  // content") — and Background is the card behind it, 100% = solid. Size is
+  // for high-DPI screens (a member's 5K monitor). All three set every overlay;
+  // each overlay's setup bar fine-tunes one. The colour-blind themes (the guild
+  // lead, 2026-09-24) and the two size options sit under More….
+  var THEMES = [['default','Wolf (dark)'],['light','Light'],['bright','Vivid'],['soft','Muted'],['contrast','High contrast']];
+  var CVD_THEMES = [['deutan','Deuteranopia (red-green)'],['protan','Protanopia (red-green)'],['tritan','Tritanopia (blue-yellow)']];
+  var themePick = function(t){ return '<button type="button" class="wp-theme-pick" data-th="' + t[0] + '">' + t[1] + '</button>'; };
+  h += '<div class="wp-strip wp-look"><span class="wp-lbl">Look</span>'
+    + '<span class="wp-kcell">' + THEMES.map(themePick).join('') + '</span>'
+    + '<span class="wp-kcell" title="The whole overlay: what it shows, and its background with it">🔅 Opacity'
+    +   '<input id="wpAllOpacity" type="range" min="0.15" max="1" step="0.05" value="1" />'
+    +   '<span id="wpAllOpacityVal" style="font-variant-numeric:tabular-nums">100%</span></span>'
+    + '<span class="wp-kcell" title="The card behind the content; 100% = solid">🌫 Background'
+    +   '<input id="wpAllBgAlpha" type="range" min="0.15" max="1" step="0.05" value="1" />'
+    +   '<span id="wpAllBgAlphaVal" style="font-variant-numeric:tabular-nums">100%</span>'
+    +   '<button type="button" class="wp-ov-act wp-btn" data-act="backdrops">🌫 Toggle backgrounds now</button></span>'
+    + '<span class="wp-kcell" title="50%–200%, for high-DPI screens">🔍 Size'
+    +   '<input id="wpAllScale" type="range" min="50" max="200" step="5" value="100" />'
+    +   '<span id="wpAllScaleVal" style="font-variant-numeric:tabular-nums">100%</span></span>'
+    + '<details ' + wpKeep('ov-look-more') + ' class="wp-more"><summary>More…</summary><div>'
+    +   '<span class="wp-kcell"><span class="dim">colour-blind:</span>' + CVD_THEMES.map(themePick).join('') + '</span>'
+    +   '<label><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
+    +   '<label><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
+    +   '<span class="dim">Opacity, Background and Size set every overlay at once &mdash; fine-tune one with the sliders in its setup bar. Size runs 50%&ndash;200% for high-DPI screens.</span>'
+    + '</div></details>'
+    + '</div>';
   h += '</div>';
 
   // #113 Extended Target options — a per-user filter that changes what we ASK
@@ -19984,6 +20193,73 @@ function wpWireBqPref() {
 // at least one modifier required so a bare letter cannot eat normal typing.
 var _wpHotkeyCapturing = false;
 function _wpFmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+// 💾 Save layout says whether it worked (the guild lead, 2026-09-29: "this button has no feedback").
+// A first save pushes fresh status and the whole card is rebuilt, which would wipe a label set on
+// the button, so the result lives here and the render reads it; a timer puts the label back.
+var _WP_CP_FLASH_MS = 2500;
+var _wpCpFlash = null;   // { ok, at }
+var _wpCpEnAt = 0;       // last click on "switch automatically"; the status paint waits past it
+function _wpCpSaveLook(cpChar) {
+  var f = _wpCpFlash;
+  if (f && (Date.now() - f.at) < _WP_CP_FLASH_MS) {
+    return f.ok ? { text: '✓ Saved' + (cpChar ? ' for ' + cpChar : ''), color: '#56d364' }
+                : { text: '✗ Not saved — no character yet', color: '#f85149' };
+  }
+  return { text: '💾 Save current layout' + (cpChar ? ' for ' + cpChar : ''), color: '#7ee787' };
+}
+function _wpCpSavePaint(cpChar) {
+  var b = document.getElementById('wpCharProfSave');
+  if (!b) return;
+  var look = _wpCpSaveLook(cpChar);
+  (b.querySelector('.wp-laysave') || b).textContent = look.text;
+  b.style.color = look.color;
+}
+// 💾 The "Your layouts" tiles (option C), from Mimic status + config — the
+// agent's /api/state never carries the saved layouts, so the render cannot
+// bake them. One tile per saved layout, the active character's first; each
+// names the overlays it turns on (cfg.charProfiles[name].show) and keeps its
+// ✕ forget. No sketch: a layout saves WHICH overlays are on, not where they
+// sit — positions are per screen setup and shared by every character, so a
+// drawn sketch would be invented. Last, the save tile for the active
+// character, the same button (and the same feedback) the old card had.
+// flagOf is wpRefreshOverlayToggles' row key → config flag map.
+function _wpOvLaysHtml(st, cfg, flagOf) {
+  st = st || {}; cfg = cfg || {};
+  var act = st.activeCharacter ? String(st.activeCharacter) : '';
+  var actLc = act.toLowerCase();
+  var saved = (cfg.charProfiles && typeof cfg.charProfiles === 'object') ? cfg.charProfiles : {};
+  var labelOf = {};
+  for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) labelOf[flagOf[WP_OVERLAY_ROWS[i][0]]] = WP_OVERLAY_ROWS[i][1];
+  var cap = function(n){ return n.charAt(0).toUpperCase() + n.slice(1); };
+  var list = (Array.isArray(st.charProfiles) ? st.charProfiles : []).slice().sort(function(a, b){
+    var an = String(a && a.name || ''), bn = String(b && b.name || '');
+    if (an === actLc) return -1;
+    if (bn === actLc) return 1;
+    return an.localeCompare(bn);
+  });
+  var h = '';
+  for (var j = 0; j < list.length; j++) {
+    var n = String(list[j] && list[j].name || '');
+    if (!n) continue;
+    var show = (saved[n] && saved[n].show) || {}, names = [];
+    for (var f in show) if (show[f] && labelOf[f]) names.push(labelOf[f]);
+    names.sort(function(a, b){ return a.replace(/^\\W+/, '').localeCompare(b.replace(/^\\W+/, ''), 'en', { sensitivity: 'base' }); });
+    var at = list[j].savedAt ? new Date(list[j].savedAt) : null;
+    var when = (at && !isNaN(at.getTime())) ? ' · saved ' + at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+    h += '<div class="wp-lay' + (n === actLc ? ' act' : '') + '">'
+      + '<div class="wp-layhd"><b>' + esc(cap(n)) + '</b>' + (n === actLc ? '<span class="wp-st on">active</span>' : '')
+      + '<button type="button" class="wp-charprof-del" data-char="' + esc(n) + '" title="Forget ' + esc(cap(n)) + '’s saved layout">✕</button></div>'
+      + '<span class="dim">' + (list[j].shown || 0) + ' on' + when + '</span>'
+      + '<span class="wp-layovs">' + (names.length ? esc(names.join(' · ')) : 'nothing on') + '</span>'
+      + '</div>';
+  }
+  var look = _wpCpSaveLook(act || null);
+  h += '<button type="button" class="wp-lay new wp-charprof-save" id="wpCharProfSave" data-char="' + esc(act) + '"' + (act ? '' : ' disabled')
+    + ' style="color:' + look.color + '"><span class="wp-laysave">' + esc(look.text) + '</span>'
+    + '<span class="dim">' + (!act ? 'no active character yet &mdash; log one in and this saves for them'
+      : (saved[actLc] ? 'replaces ' + esc(cap(act)) + '’s saved one' : 'saves which overlays are on now')) + '</span></button>';
+  return h;
+}
 function wpWireHideHotkey() {
   // Opacity (the whole overlay) and Background (the card) — each seeded from
   // what is saved, taking the overlays' common value (the first one, if they
@@ -20052,18 +20328,16 @@ function wpWireHideHotkey() {
       } catch (e) {}
     });
   }
-  // 💾 Per-character overlay layouts (tray parity). The forget buttons ride
-  // the delegated click handler; these two are id-bound like the rest.
+  // 💾 Per-character overlay layouts (tray parity). The save and forget
+  // buttons live in the painted #wpOvLays tiles, so they ride the delegated
+  // click handler; the switch is id-bound like the rest, and its checked state
+  // is painted from Mimic status (held off briefly after a click so a poll in
+  // flight cannot flip it back).
   var cpEn = document.getElementById('wpCharProfEn');
   if (cpEn && window.mimic && window.mimic.charProfilesEnable) {
     _bindOnce(cpEn, 'change', function(){
+      _wpCpEnAt = Date.now();
       try { window.mimic.charProfilesEnable(!!cpEn.checked); } catch (e) {}
-    });
-  }
-  var cpSave = document.getElementById('wpCharProfSave');
-  if (cpSave && window.mimic && window.mimic.charProfileSave) {
-    _bindOnce(cpSave, 'click', function(){
-      try { window.mimic.charProfileSave(); } catch (e) {}
     });
   }
   _wpWireHotkeyRow('wpHideHotkey', 'hideAllHotkey', 'hideAllHotkeyEnabled', 'CommandOrControl+Shift+H');
@@ -20082,7 +20356,7 @@ function wpWireDamageAlert() {
   function paint(cfg) {
     var on = !!(cfg && cfg.damageAlert);
     btn.textContent = on ? 'ON' : 'OFF';
-    btn.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (on ? '#7ee787' : '#c9d1d9');
+    btn.style.color = on ? '#7ee787' : '';
   }
   window.mimic.getConfig().then(paint).catch(function(){});
   _bindOnce(btn, 'click', function(){
@@ -20095,36 +20369,32 @@ function wpWireDamageAlert() {
 }
 // One hotkey row: chip + Change… capture + Enable/Disable kill switch. The
 // enable flag re-registers live via saveConfig (registerHideAllHotkey runs
-// on every config apply and skips disabled hotkeys).
+// on every config apply and skips disabled hotkeys). The chip itself is
+// painted by wpRefreshOverlayHotkeys with every other key on the tab, so all
+// of them share one keycap and one clash check; this registers the row there.
+var _wpGlobalKeys = {};   // cfgKey → { prefix, enKey, def }, in wiring order
 function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
+  _wpGlobalKeys[cfgKey] = { prefix: prefix, enKey: enKey, def: defAccel };
   var cur = document.getElementById(prefix + 'Cur');
   var btn = document.getElementById(prefix + 'Btn');
   var en  = document.getElementById(prefix + 'En');
   var hint = document.getElementById(prefix + 'Hint');
   if (!cur || !btn || !window.mimic || !window.mimic.getConfig) return;
   function paint(cfg) {
-    var a = (cfg && typeof cfg[cfgKey] === 'string' && cfg[cfgKey].trim()) ? cfg[cfgKey].trim() : defAccel;
     var enabled = !cfg || cfg[enKey] !== false;
-    cur.textContent = enabled ? _wpFmtAccel(a) : 'disabled';
-    cur.style.opacity = enabled ? '1' : '0.5';
     if (en) {
       en.textContent = enabled ? 'Disable' : 'Enable';
-      en.style.cssText = 'border:1px solid var(--border);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:3px;background:#21262d;color:' + (enabled ? 'var(--red)' : '#7ee787');
+      en.style.color = enabled ? 'var(--red)' : '#7ee787';
     }
   }
-  window.mimic.getConfig().then(paint).catch(function(){ cur.textContent = _wpFmtAccel(defAccel); });
-  // A key the OS refused (another program holds it) is shown red, as in the table.
-  if (window.mimic.getStatus) window.mimic.getStatus().then(function(st){
-    var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
-    cur.style.color = blocked ? 'var(--red)' : '';
-    cur.title = blocked ? 'Another program already uses this key, so it does nothing here — Change… to pick another.' : '';
-  }).catch(function(){});
+  window.mimic.getConfig().then(paint).catch(function(){});
   if (en) _bindOnce(en, 'click', function(){
     window.mimic.getConfig().then(function(cfg){
       var next = !(cfg && cfg[enKey] !== false);
       var patch = {}; patch[enKey] = next;
       window.mimic.saveConfig(patch).then(function(){
         window.mimic.getConfig().then(paint).catch(function(){});
+        wpRefreshOverlayHotkeys();
         if (hint) { hint.textContent = next ? 'Hotkey enabled.' : 'Hotkey disabled.'; setTimeout(function(){ hint.textContent = ''; }, 3000); }
       }).catch(function(){});
     }).catch(function(){});
@@ -20138,12 +20408,12 @@ function _wpWireHotkeyRow(prefix, cfgKey, enKey, defAccel) {
     var started = _wpCaptureAccel(say, function(accel){
       var patch2 = {}; patch2[cfgKey] = accel;
       window.mimic.saveConfig(patch2).then(function(){
-        cur.textContent = _wpFmtAccel(accel);
-        // The save re-registers every key; read back whether the OS took it.
+        // The save re-registers every key; repaint, and read back whether the OS took it.
+        wpRefreshOverlayHotkeys();
         return window.mimic.getStatus().then(function(st){
           var blocked = st && st.hotkeysBlocked && st.hotkeysBlocked[cfgKey];
-          if (blocked) { cur.style.color = 'var(--red)'; say('Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — pick a different one.'); }
-          else { cur.style.color = ''; say('Saved — active immediately.', true); }
+          if (blocked) say('Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — pick a different one.');
+          else say('Saved — active immediately.', true);
         });
       }).catch(function(){ say('Save failed.', true); });
     }, null, cfgKey);
@@ -20237,23 +20507,104 @@ function _wpCaptureAccel(say, onAccel, onClear, selfId) {
   document.addEventListener('keyup', onUp, true);
   return true;
 }
-// ⌨ The Overlays table's Hotkey column: each overlay's own show/hide key,
-// saved in Mimic's cfg.overlayHotkeys and bound there as a global shortcut
-// that runs the same toggle as the row's ON/OFF button. A key another app
-// already holds is shown in red: the OS refused it, so it does nothing.
+// ⌨ One key format on the whole Overlays tab (option C; the guild lead,
+// 2026-09-29, on the old one: "then mismatched keybinds"). Every key — the
+// four all-overlay keys and each overlay's own (cfg.overlayHotkeys, bound by
+// Mimic as a global shortcut that runs the same toggle as the tab's switches)
+// — is a keycap: dashed "+ key" when an overlay has none, red when it clashes.
+// A clash is two Mimic controls on one key (only one of them can work), or a
+// key the OS refused because another program holds it. The capture already
+// refuses a NEW duplicate (_wpCaptureAccel); this shows the ones already saved.
+// The list mirrors main.js _mimicHotkeyUses.
+function _wpHotkeyUsesOf(cfg) {
+  var c = cfg || {}, uses = [], id, i;
+  for (id in _wpGlobalKeys) {
+    var g = _wpGlobalKeys[id];
+    if (c[g.enKey] === false) continue;
+    uses.push({ id: id, accel: (typeof c[id] === 'string' && c[id].trim()) ? c[id].trim() : g.def });
+  }
+  var map = (c.overlayHotkeys && typeof c.overlayHotkeys === 'object') ? c.overlayHotkeys : {};
+  for (i = 0; i < WP_OVERLAY_ROWS.length; i++) {
+    var k = WP_OVERLAY_ROWS[i][0];
+    if (typeof map[k] === 'string' && map[k].trim()) uses.push({ id: 'overlay:' + k, accel: map[k].trim() });
+  }
+  return uses;
+}
+// id → { accel, with: [the other ids on that key] } for a shared key, or
+// { accel, taken: true } for one the OS refused (Mimic status reports those).
+function _wpKeyClashes(uses, st) {
+  var byKey = {}, out = {}, i, j, n;
+  for (i = 0; i < uses.length; i++) {
+    n = _wpAccelNorm(uses[i].accel);
+    (byKey[n] = byKey[n] || []).push(uses[i]);
+  }
+  for (n in byKey) {
+    var grp = byKey[n];
+    if (grp.length < 2) continue;
+    for (i = 0; i < grp.length; i++) {
+      var others = [];
+      for (j = 0; j < grp.length; j++) if (j !== i) others.push(grp[j].id);
+      out[grp[i].id] = { accel: grp[i].accel, with: others };
+    }
+  }
+  var gb = (st && st.hotkeysBlocked) || {}, ob = (st && st.overlayHotkeysBlocked) || {};
+  for (i = 0; i < uses.length; i++) {
+    var u = uses[i];
+    var refused = u.id.indexOf('overlay:') === 0 ? ob[u.id.slice(8)] : gb[u.id];
+    if (refused && !out[u.id]) out[u.id] = { accel: u.accel, taken: true };
+  }
+  return out;
+}
+function _wpKeycap(accel, clash, plainTitle) {
+  if (!accel) return { text: '+ key', cls: 'wp-key empty', title: 'No key yet — click to give it one.' };
+  var t = _wpFmtAccel(accel);
+  if (!clash) return { text: t, cls: 'wp-key', title: plainTitle || '' };
+  return { text: t, cls: 'wp-key clash', title: clash.taken
+    ? 'Another program already uses ' + t + ', so it does nothing here — pick a different one.'
+    : t + ' is also ' + clash.with.map(_wpHotkeyUseLabel).join(' and ') + ' — only one of them can work. Pick a different one.' };
+}
+// "1 clash: Ctrl+Shift+T" — counted in keys, not in the controls sharing one.
+function _wpClashSummary(clashes) {
+  var seen = {}, keys = [];
+  for (var id in clashes) {
+    var n = _wpAccelNorm(clashes[id].accel);
+    if (!seen[n]) { seen[n] = 1; keys.push(_wpFmtAccel(clashes[id].accel)); }
+  }
+  if (!keys.length) return '';
+  return keys.length + (keys.length === 1 ? ' clash: ' : ' clashes: ') + keys.join(', ');
+}
 function wpRefreshOverlayHotkeys() {
   if (!(window.mimic && window.mimic.getConfig && window.mimic.getStatus)) return;
   Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
-    var map = (r[0] && r[0].overlayHotkeys) || {}, blocked = (r[1] && r[1].overlayHotkeysBlocked) || {};
+    var cfg = r[0] || {}, st = r[1] || {};
+    var map = (cfg.overlayHotkeys && typeof cfg.overlayHotkeys === 'object') ? cfg.overlayHotkeys : {};
+    var clashes = _wpKeyClashes(_wpHotkeyUsesOf(cfg), st);
     var bs = document.querySelectorAll('.wp-ov-hk');
     for (var i = 0; i < bs.length; i++) {
       var b = bs[i], k = b.getAttribute('data-ov');
       if (b.classList.contains('capturing')) continue;
-      var a = typeof map[k] === 'string' ? map[k] : '';
-      b.textContent = a ? _wpFmtAccel(a) : 'set…';
-      b.className = 'wp-ov-hk' + (a ? (blocked[k] ? ' blocked' : ' set') : '');
-      b.title = a ? (blocked[k] ? 'Another app already uses this key — pick a different one.' : 'Press it anywhere to show or hide this overlay. Click to change.')
-                  : 'Give this overlay its own show/hide key.';
+      var a = typeof map[k] === 'string' ? map[k].trim() : '';
+      var cap = _wpKeycap(a, clashes['overlay:' + k], 'Press it anywhere to show or hide this overlay. Click to change.');
+      b.textContent = cap.text;
+      b.className = 'wp-ov-hk ' + cap.cls;
+      b.title = cap.title;
+    }
+    for (var id in _wpGlobalKeys) {
+      var g = _wpGlobalKeys[id], cur = document.getElementById(g.prefix + 'Cur');
+      if (!cur) continue;
+      if (cfg[g.enKey] === false) {
+        cur.textContent = 'off'; cur.className = 'wp-key empty'; cur.title = 'Disabled — Enable turns it back on.';
+        continue;
+      }
+      var ga = (typeof cfg[id] === 'string' && cfg[id].trim()) ? cfg[id].trim() : g.def;
+      var gc = _wpKeycap(ga, clashes[id], 'Press it anywhere. Change… picks another.');
+      cur.textContent = gc.text; cur.className = gc.cls; cur.title = gc.title;
+    }
+    var sum = document.getElementById('wpOvClash');
+    if (sum) {
+      var said = _wpClashSummary(clashes);
+      sum.textContent = said || 'no clashes';
+      sum.style.color = said ? 'var(--red)' : '';
     }
   }).catch(function(){});
 }
@@ -20315,36 +20666,65 @@ function wpToggleOverlay(name) {
     }
   } catch (e) { void e; }
 }
-// Paint each .wp-ov-toggle button from the live Mimic status.
+// Paint the Overlays tab from the live Mimic status (+ config, for the saved
+// layouts): which overlays sit under On screen now and which under Add, their
+// state, the dock / mini switches, the placement labels, the hide-all line and
+// the layout tiles. None of it is in the render string (byte-stability).
 function wpRefreshOverlayToggles() {
   if (!(window.mimic && window.mimic.getStatus)) return;
   try {
-    window.mimic.getStatus().then(function(st){
-      st = st || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe };
+    var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
+    Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
+      var st = res[0] || {}, cfg = res[1] || {};
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
-      var hidCount = 0;
-      var btns = document.querySelectorAll('.wp-ov-toggle');
-      for (var i = 0; i < btns.length; i++) {
-        var b = btns[i]; var k = b.getAttribute('data-ov'); var isOn = !!on[k];
+      var hidCount = 0, nListed = 0, nOff = 0;
+      var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
+      // Each overlay is in the render string twice — a row under On screen now
+      // and a card under Add — and exactly one of them shows. ON, HIDDEN (on,
+      // parked by hide-all) and DOCKED are all yours, so they are listed; OFF
+      // is a card to add.
+      for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) {
+        var k = WP_OVERLAY_ROWS[i][0]; var isOn = !!on[k];
         var wasOn = !isOn && !!hidPrev && !!hidPrev[flagOf[k]];
+        var inDock = dockedList.indexOf(k) >= 0;
         if (wasOn) hidCount++;
-        b.textContent = isOn ? 'ON' : (wasOn ? 'HIDDEN' : 'OFF');
-        b.className = 'wp-ov-toggle' + (isOn ? ' on' : '');
+        var word = inDock ? 'DOCKED' : (isOn ? 'ON' : (wasOn ? 'HIDDEN' : 'OFF'));
+        var listed = word !== 'OFF';
+        if (listed) nListed++; else nOff++;
+        var card = document.querySelector('.wp-ovcard[data-ovadd="' + k + '"]');
+        if (card) card.hidden = listed;
+        var row = document.querySelector('.wp-ovli[data-ovrow="' + k + '"]');
+        if (!row) continue;
+        row.hidden = !listed;
+        var dot = row.querySelector('.wp-ovdot'), stw = row.querySelector('.wp-ovst'), b = row.querySelector('.wp-ov-toggle');
         // Amber, distinct from both the green ON and the plain OFF: this one is
         // yours, it is just parked until you release the hide-all hotkey.
-        b.style.borderColor = wasOn ? '#f0b429' : '';
-        b.style.color       = wasOn ? '#f0b429' : '';
-        b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Releasing hide-all brings it back.' : '';
+        if (dot) {
+          dot.className = 'wp-ovdot' + (word === 'HIDDEN' ? ' hid' : (word === 'DOCKED' ? ' dock' : ''));
+          dot.title = word;
+        }
+        if (stw) {
+          stw.textContent = word === 'HIDDEN' ? 'HIDDEN by hide-all' : (word === 'DOCKED' ? 'in the Dock' : '');
+          stw.className = 'wp-ovst' + (word === 'DOCKED' ? ' dock' : '');
+        }
+        if (b) {
+          // The same toggle as ever: on a HIDDEN overlay it brings that one back now.
+          b.textContent = wasOn ? 'show' : '✕';
+          b.title = wasOn ? 'Switched ON — hidden right now by the hide-all hotkey. Click to bring this one back now; releasing hide-all brings them all back.'
+                          : 'Turn it off (it moves to Add).';
+        }
       }
+      var none = document.getElementById('wpOvNone'), allOn = document.getElementById('wpOvAllOn');
+      if (none) none.hidden = nListed > 0;
+      if (allOn) allOn.hidden = nOff > 0;
       // Dock buttons. A docked overlay's on/off toggle is meaningless (its
       // window no longer exists), so grey that one out rather than letting
       // someone flip a flag with no effect.
-      var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
       var dbs = document.querySelectorAll('.wp-ov-dock');
       for (var di = 0; di < dbs.length; di++) {
         var db = dbs[di]; var dk = db.getAttribute('data-ov');
@@ -20357,7 +20737,6 @@ function wpRefreshOverlayToggles() {
         var tb2 = document.querySelector('.wp-ov-toggle[data-ov="' + dk + '"]');
         if (tb2) {
           tb2.disabled = isDocked;
-          tb2.style.opacity = isDocked ? '0.4' : '';
           if (isDocked) tb2.title = 'Docked — the Dock controls its visibility now.';
         }
       }
@@ -20372,6 +20751,12 @@ function wpRefreshOverlayToggles() {
       if (haBtn2) haBtn2.textContent = st.hideAllActive
         ? '👁 Show overlays (undo hide-all)'
         : '🙈 Hide all overlays';
+      // ✏ Arrange on screen ↔ ✓ Done, as the tray's "Arrange the canvas…" item.
+      var arBtn = document.getElementById('wpOvArrangeBtn');
+      if (arBtn) {
+        arBtn.textContent = st.canvasArrange ? '✓ Done arranging' : '✏ Arrange on screen';
+        arBtn.className = 'wp-ov-act wp-btn pri' + (st.canvasArrange ? ' on' : '');
+      }
       // ▭ Mini: each capable row's switch and 📌, and the Minimize ALL button.
       var miniMap = st.overlayMini || {}, pinMap = st.overlayMiniPinned || {};
       var mbs = document.querySelectorAll('.wp-ov-mini');
@@ -20389,15 +20774,22 @@ function wpRefreshOverlayToggles() {
       var maBtn = document.getElementById('wpOvMiniAllBtn');
       if (maBtn) maBtn.textContent = st.miniAllActive ? '▭ Restore overlays (undo minimize-all)' : '▭ Minimize all now';
 
+      // Hide-all, one line (option C). morphInto, not innerHTML: an unchanged
+      // line must not rebuild its button under the pointer every poll.
       var hb = document.getElementById('wpHideAllBanner');
       if (hb) {
-        hb.innerHTML = hidPrev
-          ? '<div style="font-size:12px;padding:8px 10px;background:rgba(240,180,41,0.12);border:1px solid #f0b429;border-radius:6px;margin-bottom:8px;color:#f0b429">'
-            + '<b>Hide-all is on.</b> ' + hidCount + ' overlay(s) marked <b>HIDDEN</b> are switched ON and parked &mdash; press the hide-all hotkey again (or the tray item) to bring them back. '
-            + 'Their windows are freed while hidden, so they reopen with fresh data rather than whatever was on screen before.'
+        morphInto(hb, hidPrev
+          ? '<div class="wp-ovbanner" title="Their windows are freed while hidden, so they reopen with fresh data. The hide-all key or the tray item brings them back too.">'
+            + '<span>🙈 <b>Hide-all is on</b> &middot; ' + hidCount + ' overlay' + (hidCount === 1 ? '' : 's') + ' parked (marked HIDDEN below)</span>'
+            + '<button type="button" class="wp-ov-act wp-btn" data-act="hideall">Show them</button>'
             + '</div>'
-          : '';
+          : '');
       }
+      // 💾 Your layouts, and the switch that swaps them with the character.
+      var lays = document.getElementById('wpOvLays');
+      if (lays) morphInto(lays, _wpOvLaysHtml(st, cfg, flagOf));
+      var cpEn2 = document.getElementById('wpCharProfEn');
+      if (cpEn2 && Date.now() - _wpCpEnAt > 1500) cpEn2.checked = !!st.charProfilesEnabled;
       // Theme picker highlight — driven from Mimic status (st.overlayTheme),
       // not the render's state blob (which never carries it).
       var tcur = st.overlayTheme || 'default';
@@ -20418,6 +20810,15 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     var t = e.target;
     var b = (t && t.closest) ? t.closest('.wp-ov-toggle') : null;
     if (b) { var name = b.getAttribute('data-ov'); if (name) wpToggleOverlay(name); return; }
+    // An Add card: the same toggle. The card hides at once so a double click
+    // cannot switch the overlay straight back off before the repaint.
+    var ad = (t && t.closest) ? t.closest('.wp-ov-add') : null;
+    if (ad) {
+      var an = ad.getAttribute('data-ov'), ac = ad.closest('.wp-ovcard');
+      if (ac) ac.hidden = true;
+      if (an) wpToggleOverlay(an);
+      return;
+    }
     var d = (t && t.closest) ? t.closest('.wp-ov-dock') : null;
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
@@ -20450,6 +20851,14 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
         }).catch(function(){});
       }
       if (a === 'setup' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same internals as the tray's "Arrange the canvas…" (turns it on too),
+      // and like that item a second press is "Done". A Mimic without the
+      // Canvas falls back to setup mode, which places every overlay.
+      if (a === 'canvasArrange' && window.mimic.canvasEdit) {
+        window.mimic.canvasEdit(!act.classList.contains('on')).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      } else if (a === 'canvasArrange' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
       if (a === 'miniall' && window.mimic.toggleMiniAll) {
         window.mimic.toggleMiniAll().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
@@ -20462,9 +20871,25 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
       }
       return;
     }
+    // 💾 The save tile — the tray's "Save current layout for <character>" —
+    // says whether it worked (the guild lead, 2026-09-29: "this button has no
+    // feedback"): the result lives in _wpCpFlash so the next repaint keeps it.
+    var cps = (t && t.closest) ? t.closest('.wp-charprof-save') : null;
+    if (cps && window.mimic && window.mimic.charProfileSave) {
+      var who = cps.getAttribute('data-char') || null;
+      var done = function(ok){
+        _wpCpFlash = { ok: !!ok, at: Date.now() };
+        _wpCpSavePaint(who);
+        wpRefreshOverlayToggles();
+        setTimeout(function(){ _wpCpSavePaint(who); }, _WP_CP_FLASH_MS + 100);
+      };
+      try { Promise.resolve(window.mimic.charProfileSave()).then(done, function(){ done(false); }); } catch (e3) { done(false); }
+      return;
+    }
     var cpd = (t && t.closest) ? t.closest('.wp-charprof-del') : null;
     if (cpd && window.mimic && window.mimic.charProfileForget) {
-      window.mimic.charProfileForget(cpd.getAttribute('data-char'));
+      Promise.resolve(window.mimic.charProfileForget(cpd.getAttribute('data-char')))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
       return;
     }
     var th = (t && t.closest) ? t.closest('.wp-theme-pick') : null;
@@ -23004,6 +23429,42 @@ refresh(); setInterval(refresh, 2000);
       jb.disabled = false;
       if (accepted) paint(join);
     }).catch(function () { jb.disabled = false; });
+  };
+  read();
+  window.addEventListener('focus', read);
+})();
+// α alpha — the Mimic 3.0 alpha (the guild lead, 2026-09-29: "can we make an
+// alpha channel for 3.0 testing as well?"), and the dashboard half of the
+// tray's "Receive alpha updates". Same shape as ⤴ beta; on an alpha build it
+// is the way back out.
+(function () {
+  var ab = document.getElementById('wpAlpha');
+  var m = window.mimic;
+  if (!ab || !(m && m.getAlphaChannel && m.setAlphaChannel)) return;
+  var running = false;
+  function paint(on) {
+    ab.dataset.on = on ? '1' : '';
+    ab.textContent = on ? (running ? '↩ leave alpha' : '✓ alpha on next restart') : 'α alpha';
+    ab.style.color = on && !running ? '#a371f7' : '#8b949e';
+    ab.title = on
+      ? (running ? 'Leave the alpha — Mimic confirms before doing anything' : 'Joined the alpha — the newest alpha installs on your next restart. Click to leave.')
+      : 'Try the Mimic 3.0 alpha — Mimic confirms before doing anything';
+  }
+  function read() {
+    m.getAlphaChannel().then(function (st) {
+      if (!st || !st.available) { ab.style.display = 'none'; return; }
+      running = !!st.running;
+      paint(!!st.optedIn);
+      ab.style.display = '';
+    }).catch(function () { /* keep whatever is showing */ });
+  }
+  ab.onclick = function () {
+    var join = !ab.dataset.on;
+    ab.disabled = true;
+    m.setAlphaChannel(join).then(function (accepted) {
+      ab.disabled = false;
+      if (accepted) paint(join);
+    }).catch(function () { ab.disabled = false; });
   };
   read();
   window.addEventListener('focus', read);
@@ -25830,20 +26291,50 @@ async function dismissTopDamage(key) {
 (function setupSuggestedTriggers(){
   var mounted = false;
   var listEl = null;
+  // Per character (FB-34, a member, 2026-09-29: "Can these be made to per
+  // character triggers and not across the board?"). '' = every character, the
+  // old behaviour; a lowercase name = ticks apply to that character only.
+  var forChar = '';
+  try { forChar = localStorage.getItem('wp:sugChar') || ''; } catch (e) { void e; }
+  // Ticked for this view? Every-character view: on for everyone. One character: on for them.
+  function onFor(t){
+    if (!t.enabled) return false;
+    if (!forChar) return !t.characters;
+    return !t.characters || t.characters.indexOf(forChar) >= 0;
+  }
   function badge(cat){
     var color = ({ buff:'#7ee787', debuff:'#ff7b72', mob:'#f0883e',
                    self:'#d2a8ff', utility:'#79c0ff', timer:'#a371f7' })[cat] || '#8b949e';
     return '<span style="font-size:9px;color:' + color + ';background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">' + cat + '</span>';
   }
   function rowHtml(t){
+    var on = onFor(t);
+    // Set for some characters only: say for whom, so the every-character view
+    // never shows a row as simply off when it is on for an alt.
+    var who = (t.enabled && t.characters)
+      ? '<div style="color:#79c0ff;font-size:10px;margin-top:2px">on for: ' + t.characters.map(function(c){ return c.charAt(0).toUpperCase() + c.slice(1); }).join(', ') + '</div>'
+      : '';
     return '<tr data-tid="' + t.id + '">'
-         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (t.enabled ? 'checked' : '') + '></td>'
+         + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div></td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
-           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS)" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
+           : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
          + '</tr>';
+  }
+  function pickerHtml(chars){
+    var opts = '<option value="">Every character</option>';
+    var seen = false;
+    for (var i = 0; i < chars.length; i++) {
+      var lc = String(chars[i]).toLowerCase();
+      if (lc === forChar) seen = true;
+      opts += '<option value="' + lc + '"' + (lc === forChar ? ' selected' : '') + '>' + chars[i] + '</option>';
+    }
+    if (forChar && !seen) opts += '<option value="' + forChar + '" selected>' + forChar.charAt(0).toUpperCase() + forChar.slice(1) + '</option>';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim)">For'
+         + '<select id="trgSugFor" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + opts + '</select>'
+         + '<span style="font-size:11px">' + (forChar ? 'ticks here apply to this character only' : 'ticks here apply to every character') + '</span></label>';
   }
   function groupHtml(category, label, items){
     if (!items || items.length === 0) return '';
@@ -25865,7 +26356,7 @@ async function dismissTopDamage(key) {
       if (triggers.length === 0) { listEl.innerHTML = '<div style="color:var(--dim);font-size:12px">No suggested triggers configured.</div>'; return; }
       var groups = { buff:[], debuff:[], mob:[], self:[], utility:[], timer:[] };
       for (var i=0;i<triggers.length;i++){ var t = triggers[i]; (groups[t.category] || (groups.utility)).push(t); }
-      var html = '';
+      var html = pickerHtml((j && j.chars) || []);
       html += groupHtml('timer',   '⏱ Timer bars (EQLogParser-style, in the trigger overlay)', groups.timer);
       html += groupHtml('buff',    '✨ Your buffs dropping',  groups.buff);
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
@@ -25873,15 +26364,22 @@ async function dismissTopDamage(key) {
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
       html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
       listEl.innerHTML = html;
+      var sel = document.getElementById('trgSugFor');
+      if (sel) sel.addEventListener('change', function(){
+        forChar = sel.value || '';
+        try { localStorage.setItem('wp:sugChar', forChar); } catch (e) { void e; }
+        fetchAndRender();
+      });
       // Wire toggles. Both flips POST to the same endpoint with partial state;
       // missing fields preserve current values server-side.
       listEl.querySelectorAll('tr[data-tid]').forEach(function(tr){
         var id = tr.getAttribute('data-tid');
         var en = tr.querySelector('.trgEn');
         var tts = tr.querySelector('.trgTts');
+        if (en && en.getAttribute('data-partial')) en.indeterminate = true;   // on for some characters
         if (en) en.addEventListener('change', async function(){
           tr.style.opacity = '0.5';
-          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked }) }); }
+          try { await fetch('/api/triggers/suggested', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: en.checked, char: forChar || undefined }) }); }
           catch (e) {}
           tr.style.opacity = '1';
           // The personal list holds the copy this created or removed; its redraw redraws this panel too.
@@ -26146,6 +26644,8 @@ const COMMAND_HTML = `<!doctype html>
   .rollClearAll:hover{opacity:1;color:#f87171;border-color:#f87171}
   .roll-row .rollMore{cursor:pointer;color:#8b949e;font-size:9px;flex-shrink:0;opacity:0.8;user-select:none}
   .roll-row .rollMore:hover{opacity:1;color:#e6edf3}
+  .roll-row .rollCopy{cursor:pointer;color:#8b949e;font-size:10px;flex-shrink:0;opacity:0.8;user-select:none;margin-right:4px}
+  .roll-row .rollCopy:hover{opacity:1;color:#e6edf3}
   .roll-row .rollDismiss{margin-left:6px;cursor:pointer;color:#8b949e;font-size:11px;line-height:1;
     flex-shrink:0;opacity:0.6}
   .roll-row .rollDismiss:hover{opacity:1;color:#f87171}
@@ -26321,6 +26821,39 @@ const COMMAND_HTML = `<!doctype html>
   // Stable across polls: a set keeps its range and its first-roll timestamp for
   // the 15 minutes it stays in the payload.
   function _rollId(r){ return r ? (r.from + '-' + r.to + '@' + (r.started_at_ms || 0)) : null; }
+
+  // 📋 on a deathroll (the guild lead, 2026-09-29: "add in a copy button for deathrolls"): the whole
+  // game as ONE chat line to paste in game, e.g. "Deathroll 32,000: A 26189 > B 24160 > ... > B 0.
+  // B loses." Plain ASCII (EQ's chat font has no dash or arrow glyphs) and at most 250 characters:
+  // past that the opening roll stays, the middle folds to "...", and as many of the last rolls as
+  // fit follow. The agent never types into chat; the clipboard is the only legal path (the DPS
+  // HUD's 📋 does the same).
+  var DR_COPY_MAX = 250;
+  function deathrollCopyLine(rs) {
+    var g = (rs && rs.deathroll) || {};
+    var steps = (g.steps || []).map(function(st){ return String(st.name) + ' ' + st.value; });
+    var head = 'Deathroll ' + Number(rs && rs.to).toLocaleString('en-US') + ': ';
+    var tail = g.done ? '. ' + g.loser + ' loses.'
+      : (rs && rs.open && g.next ? '. ' + (g.next.name ? g.next.name + ' to roll' : 'Next roll') + ' 0-' + g.next.to + '.' : '.');
+    var line = head + steps.join(' > ') + tail;
+    if (line.length <= DR_COPY_MAX || steps.length < 3) return line.slice(0, DR_COPY_MAX);
+    for (var keep = steps.length - 2; keep >= 1; keep--) {
+      line = head + steps[0] + ' > ... > ' + steps.slice(steps.length - keep).join(' > ') + tail;
+      if (line.length <= DR_COPY_MAX) return line;
+    }
+    return line.slice(0, DR_COPY_MAX);
+  }
+  // Which deathroll was just copied, so its 📋 reads ✓ for two seconds across the 1.5s repaints.
+  var _copiedRoll = null, _copiedUntil = 0;
+  function _copyText(text, done) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, done); return; }
+      var ta = document.createElement('textarea'); ta.value = text;
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch (e) { void e; }
+    done();
+  }
 
   // #153 Collapsible sections — per-section collapse state persisted across
   // repaints AND restarts. It lives in this JS store (consulted by render()),
@@ -26559,6 +27092,8 @@ const COMMAND_HTML = `<!doctype html>
                 : '<span style="opacity:.6">stopped</span>');
               html += '<div class="row roll-row"><span class="nm">☠️ <b>' + Number(rs.to).toLocaleString('en-US') + '</b> — '
                    +    (dn.length === 2 ? dn[0] + ' vs ' + dn[1] : dn.join(', ')) + ' · ' + dState + '</span>'
+                   +    '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy this deathroll as one line to paste in game">'
+                   +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>'
                    +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
                    +      (expanded ? 'Hide' : 'Show') + ' every roll in this deathroll">'
                    +      (expanded ? '▾' : '▸') + ' ' + (dg.steps || []).length + ' rolls</span>'
@@ -26701,14 +27236,14 @@ const COMMAND_HTML = `<!doctype html>
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
@@ -26725,6 +27260,23 @@ const COMMAND_HTML = `<!doctype html>
       // 🎲 Rolls — expand / dismiss one set / dismiss all. Same shape as the
       // cure controls below: flip the local store, then re-render from the last
       // state so the click lands instantly instead of waiting for the poll.
+      var rcopy = e.target && e.target.closest ? e.target.closest('.rollCopy') : null;
+      if (rcopy) {
+        e.preventDefault(); e.stopPropagation();
+        var rcid = rcopy.getAttribute('data-roll-id');
+        var rset = null;
+        for (var rc = 0; _lastState && _lastState.rolls && rc < _lastState.rolls.length; rc++) {
+          if (_rollId(_lastState.rolls[rc]) === rcid) { rset = _lastState.rolls[rc]; break; }
+        }
+        if (rset) {
+          _copyText(deathrollCopyLine(rset), function(){
+            _copiedRoll = rcid; _copiedUntil = Date.now() + 2000;
+            if (_lastState) render(_lastState);
+            setTimeout(function(){ if (_lastState) render(_lastState); }, 2100);
+          });
+        }
+        return;
+      }
       var rmore = e.target && e.target.closest ? e.target.closest('.rollMore') : null;
       if (rmore) {
         e.preventDefault(); e.stopPropagation();
@@ -28118,7 +28670,7 @@ function startWebDashboard(port) {
             // real spell/song name. Filters out one-off junk labels.
             if (newCasting.length > 4 && /[a-zA-Z]/.test(newCasting)) {
               _bumpBardMelody(character, newCasting, Date.now(),
-                { kind: (st.class === 'Bard' || /singing/i.test(newCasting)) ? 'song' : 'spell' });
+                { kind: (/^bard$/i.test(String(_classOf(character) || '')) || /singing/i.test(newCasting)) ? 'song' : 'spell' });
             }
           }
           try { _evaluateZealConditions(character, Date.now()); } catch (e) { void e; }
@@ -28343,10 +28895,13 @@ function startWebDashboard(port) {
             // User-state slice
             enabled:    !!(row && row.enabled),
             tts:        _suggestedHasTts(row),
+            characters: (row && row.characters) || null,   // null = every character (FB-34)
           };
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ triggers: items }));
+        // The characters this machine has logs for, and who is playing now, so
+        // the panel can offer "For: <character>" and start on the one in use.
+        return res.end(JSON.stringify({ triggers: items, chars: _watchedCharacters(), playing: _playingCharactersLc() }));
       }
       // POST /api/triggers/suggested — body { id, enabled?, tts? }. Toggles
       // a specific suggested trigger by id; missing fields preserve current
@@ -28369,8 +28924,23 @@ function startWebDashboard(port) {
         const existing = existingIdx >= 0 ? _personalTriggers[existingIdx] : null;
         // Resolve desired final state: enabled defaults to existing-or-true;
         // tts defaults to existing-or-tpl.tts_default.
-        const finalEnabled = wantEnabled != null ? wantEnabled : !!existing;
+        let finalEnabled   = wantEnabled != null ? wantEnabled : !!existing;
         const finalTts     = wantTts     != null ? wantTts     : (existing ? _suggestedHasTts(existing) : !!tpl.tts_default);
+        // Per character (FB-34). `char` = the toggle is for that one character;
+        // none = for every character, as before. `chars` null = every character.
+        const charLc = _normCharList([payload.char]) ? String(payload.char).trim().toLowerCase() : '';
+        let chars = existing && existing.characters ? existing.characters.slice() : null;
+        if (charLc && wantEnabled === true) {
+          if (!existing) chars = [charLc];
+          else if (chars && !chars.includes(charLc)) chars.push(charLc);   // no list = already on for everyone
+        } else if (charLc && wantEnabled === false && existing) {
+          // Off for one: a row that was on for everyone stays on for the others.
+          if (!chars) chars = _watchedCharacters().map(c => String(c).toLowerCase());
+          chars = chars.filter(c => c !== charLc);
+          finalEnabled = chars.length > 0;
+        } else if (!charLc && wantEnabled === true) {
+          chars = null;   // ticked for every character
+        }
         if (!finalEnabled) {
           // Disable → drop the row entirely. The user can re-toggle the
           // checkbox to restore (with template defaults).
@@ -28383,13 +28953,14 @@ function startWebDashboard(port) {
         }
         // Enabled — instantiate from the template, then compile + save.
         const row = _templateToPersonalRow(tpl, { tts: finalTts });
+        if (chars) row.characters = chars;
         try {
           const compiled = _compilePersonalTrigger(row);
           if (existingIdx >= 0) _personalTriggers[existingIdx] = compiled;
           else                  _personalTriggers.push(compiled);
           savePersonalTriggers();
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: true, enabled: true, tts: finalTts }));
+          return res.end(JSON.stringify({ ok: true, enabled: true, tts: finalTts, characters: compiled.characters || null }));
         } catch (err) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'compile failed: ' + (err.message || String(err)) }));
@@ -28594,6 +29165,18 @@ function startWebDashboard(port) {
         if (res.writableEnded || res.destroyed) return;
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify({ fires }));
+      }
+      // GET /api/timers — the three fields the trigger overlay reads out of
+      // /api/state, and nothing else. The Timers canvas runs one trigger page
+      // per panel; each polling the whole multi-MB state every 700 ms would
+      // multiply that parse by the panel count on a raid machine.
+      if (req.url === '/api/timers' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({
+          activeTimers:       _activeTimersSnapshot(),
+          recentTriggerFires: _activeOverlays.map(_fireForWeb),
+          blindEvents:        _blindEvents.slice(-20),
+        }));
       }
       if (req.url === '/api/timers/cancel' && req.method === 'POST') {
         const body = await _readBody(req).catch(() => '');
@@ -31853,8 +32436,28 @@ const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?
 // carry commas of their own ("Doomfire, the Burning Lands").
 const PVP_GLORY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek watches as (\w+) spills (\w+)'s blood in (.+?)[.!]?\s*$/;
 const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
+// A Glory-WORTHY kill is worded differently, and until 2026-09-30 it went to the unmatched capture, so
+// the kill never reached the bot (the guild lead, with a screenshot of one: "[PVP] Rallos Zek marks
+// Aldenmar with his favor for spilling Brackwyn's blood in Ruins of Sebilis. Aldenmar now bears 1 of 10
+// measures of Rallosian Glory."). The zone ends at the sentence break before "<name> now bears".
+const PVP_GLORY_WORTHY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek marks (\w+) with his favor for spilling (\w+)'s blood in (.+?)\.\s+(\w+ now bears .+?)\s*$/;
 function parseGloryKill(line) {
-  if (line.indexOf('Rallos Zek watches as') === -1) return null;   // cheap gate
+  if (line.indexOf('Rallos Zek') === -1) return null;   // cheap gate
+  const w = PVP_GLORY_WORTHY_RX.exec(line);
+  if (w) {
+    const ts = parseEqTimestamp(line);
+    return {
+      ts: ts ? ts.toISOString() : new Date().toISOString(),
+      text: line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim(),
+      killType: 'pvp',
+      source: 'rallos_glory',
+      killer: w[2], killerGuild: null,
+      victim: w[3], victimGuild: null,
+      zone: w[4].trim(),
+      glory: true,
+      gloryText: w[5].trim(),
+    };
+  }
   const m = PVP_GLORY_RX.exec(line);
   if (!m) return null;
   const ts = parseEqTimestamp(line);
@@ -33703,6 +34306,14 @@ let _itemClickyByNameLower = new Map();
 let _itemClickyMeta = null;
 const ITEM_CLICKY_FILE = path.join(__dirname, 'logsync.item-clickies.json');
 
+// A spell's name from its id, for the clicky catalog's clickeffect. A scan: clicks are rare.
+function _spellNameById(id) {
+  const n = Number(id);
+  if (!(n > 0)) return null;
+  for (const e of _spellByNameLower.values()) if (e && Number(e.id) === n) return e.name || null;
+  return null;
+}
+
 // Pending clicky cast — set when we see "Your <item> begins to glow."
 // in the log. When Zeal label 134 transitions within CLICKY_WINDOW_MS,
 // the resulting cast inherits the item's cast time. Cleared after use
@@ -34847,6 +35458,39 @@ function _watchedCharacters() {
   return out;
 }
 
+// Per-character triggers (FB-34, a member, 2026-09-29: "Can these be made to per
+// character triggers and not across the board?"). A personal trigger may carry
+// `characters`: the lowercase names it is on for. No list = every character,
+// which is what every trigger did before.
+function _normCharList(v) {
+  if (!Array.isArray(v)) return null;
+  const out = [];
+  for (const c of v) {
+    const s = String(c == null ? '' : c).trim().toLowerCase();
+    if (/^[a-z]{2,20}$/.test(s) && !out.includes(s)) out.push(s);
+  }
+  return out.length ? out.slice(0, 50) : null;
+}
+function _triggerOnFor(t, charLc) {
+  return !(t && t.characters && t.characters.length) || (!!charLc && t.characters.includes(charLc));
+}
+// Who is being played right now, lowercase: Zeal's live characters, else the
+// logs written in the last three minutes. For switches with no log line of
+// their own to say whose they are (the timer bars).
+function _playingCharactersLc(now) {
+  const t = now || Date.now();
+  const out = [];
+  for (const ch of Object.keys(_zealState || {})) {
+    const st = _zealState[ch];
+    if (st && (t - (st.updatedAt || 0)) <= 90_000) out.push(ch.toLowerCase());
+  }
+  if (out.length) return out;
+  for (const w of (stats.watchedLogs || [])) {
+    if (w && w.character && w.lastSeen && (t - w.lastSeen) <= 3 * 60_000) out.push(String(w.character).toLowerCase());
+  }
+  return out;
+}
+
 // The single compile entry point. Returns { regex, conditions, aliases,
 // anchorsRewritten, warnings, source } and throws only when the final RegExp
 // is genuinely unusable.
@@ -35810,7 +36454,8 @@ function _compilePersonalTrigger(t) {
     regex = c.regex; conditions = c.conditions; aliases = c.aliases;
     for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
-  return { ...t, _regex: regex, _conditions: conditions, _aliases: aliases,
+  const characters = _normCharList(t.characters);   // per-character scope (FB-34); none = every character
+  return { ...t, characters: characters || undefined, _regex: regex, _conditions: conditions, _aliases: aliases,
            _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
@@ -35991,7 +36636,7 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 // (EQLogParser imports set the first three; guild-parity rows the rest).
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns'];
+  'display_threshold_sec', 'exclude_patterns', 'characters'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
@@ -36967,9 +37612,10 @@ const POLL_TRIG_MS       = 2 * 60_000;
 const POLL_PREFS_MS      = 10 * 60_000;
 const POLL_BACKFILL_MS   = 5 * 60_000;
 const POLL_UI_MS         = 5 * 60_000;
+const POLL_PETS_MS       = 60_000;       // pooled pet owners (FB-35): a minute while fights run, five idle
 const POLL_TUNING_IDLE_MS = 20_000;   // idle: still refresh tuning/control this often
 const POLL_DORMANT_MS     = 15_000;   // dormant: poll the tuning/kill channel this often
-const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0 };
+const _pollLast = { tuning: 0, triggers: 0, prefs: 0, backfill: 0, ui_edits: 0, pet_owners: 0 };
 function _multiplexActive() { return _pollSupported !== false; }
 function _pollFellBack(reason) {
   if (_pollSupported === false) return;
@@ -37001,6 +37647,7 @@ async function _pollMultiplexed() {
     if (active) want.push('recent_fires');
     if (active || (now - _pollLast.tuning >= POLL_TUNING_IDLE_MS)) want.push('tuning');
     if (now - _pollLast.triggers >= POLL_TRIG_MS) want.push('triggers');
+    if (now - _pollLast.pet_owners >= (active ? POLL_PETS_MS : 5 * POLL_PETS_MS)) want.push('pet_owners');
     if (chars.length) {
       if (now - _pollLast.prefs    >= POLL_PREFS_MS)    want.push('prefs');
       if (now - _pollLast.backfill >= POLL_BACKFILL_MS) want.push('backfill');
@@ -37050,6 +37697,7 @@ async function _pollMultiplexed() {
       _pollLast.tuning = now;
     }
     if (want.includes('triggers')) { if (s.triggers) _applyGuildTriggersResponse(s.triggers); _pollLast.triggers = now; }
+    if (want.includes('pet_owners')) { if (s.pet_owners) _applyPetOwnersResponse(s.pet_owners); _pollLast.pet_owners = now; }
     if (want.includes('prefs'))    { if (s.prefs)    _applyCharacterPrefsResponse(s.prefs);   _pollLast.prefs = now; }
     if (want.includes('backfill')) { if (s.backfill) _applyBackfillResponse(s.backfill);      _pollLast.backfill = now; }
     if (want.includes('ui_edits')) {
@@ -38272,12 +38920,18 @@ function _targetPlayerInfo(st, selfChar, cached) {
   // Nothing says it is a player yet: wait for the catalog lookup to come back empty.
   if (!who && !raidCls && !hist && !con && !(cached && !cached.mob)) return null;
   const liveWho = who && !who.anonymous ? who : null;
-  // A player's level comes from /who only — live, else the last one history
-  // saw. Their consider is not a level: the client's consider of a player does
-  // not follow the table (level-60 players read "quite a gamble", a yellow, to
-  // a level 60 — the guild lead, 2026-09-24), so a con range here was wrong.
+  // A player's level: live /who; else an EVEN con, which is your own level; else
+  // the last level history saw. The client's consider of a player does not
+  // follow the level table: level-60 players read "looks like quite a gamble"
+  // (a yellow by the table) to a level 60. So a con RANGE for a player stays
+  // wrong (the guild lead, 2026-09-24), but that phrase is the even one for a
+  // player (the guild lead, 2026-09-29: "Faedar conned even to me he should show
+  // up as level 60"). It outranks history, which can be weeks old.
   let level = null, level_min = null, level_max = null, level_src = null;
+  const conKey = con ? _conPhraseKey(con.phrase) : '';
+  const evenCon = con && con.my > 0 && (conKey === 'looks like quite a gamble' || conKey === 'looks like an even fight');
   if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
+  else if (evenCon) { level = con.my; level_src = 'con'; }
   else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
   const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
   const cls = clsRaw ? normalizeClass(String(clsRaw)) : null;
@@ -39552,6 +40206,7 @@ function _evaluateZealConditions(character, tsMs) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   for (const t of all) {
     if (t.enabled === false) continue;   // unticked on the dashboard = off (see evaluateTriggersAgainstLine)
+    if (!_triggerOnFor(t, String(character).toLowerCase())) continue;   // set for other characters (FB-34)
     const cond = t.zeal_condition;
     if (!cond || !cond.field || !cond.op || cond.value == null) continue;
     const fv = _zealFieldValue(state, cond.field);
@@ -40207,7 +40862,15 @@ const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short D
 const _builtinTimerHidden = new Set();
 function _builtinTimerKindsOn() {
   const on = new Set();
-  for (const t of _personalTriggers) if (t && t.builtin_timer && t.enabled !== false) on.add(t.builtin_timer);
+  let playing = null;   // resolved once, only when a switch is set for some characters (FB-34)
+  for (const t of _personalTriggers) {
+    if (!t || !t.builtin_timer || t.enabled === false) continue;
+    if (t.characters && t.characters.length) {
+      if (!playing) playing = _playingCharactersLc();
+      if (!playing.some(c => t.characters.includes(c))) continue;
+    }
+    on.add(t.builtin_timer);
+  }
   return on;
 }
 function _builtinTimerRows(now) {
@@ -40233,7 +40896,7 @@ function _builtinTimerRows(now) {
       const into = ((now - mt.at) % 6000 + 6000) % 6000;
       push({ id: 'bt|recharm|' + k + '|' + (c.started_at || 0), name: c.pet + ' - Recharm tick',
              target: c.pet, effect: 'Recharm tick', remaining_ms: 6000 - into, duration_sec: 6,
-             cycle_ms: 6000, bar_color: '#a371f7', pinned: true });
+             cycle_ms: 6000, bar_color: '#a371f7', pinned: true, group: 'charm' });
     }
   }
   if (on.has('server_tick')) {
@@ -40247,7 +40910,7 @@ function _builtinTimerRows(now) {
     if (at != null) {
       const left = ((at - now) % 6000 + 6000) % 6000 || 6000;
       push({ id: 'bt|servertick', name: 'Server tick', target: null, effect: 'Server tick',
-             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true });
+             remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true, group: 'tick' });
     }
   }
   if (on.has('lull') || on.has('my_spells')) {
@@ -40264,9 +40927,13 @@ function _builtinTimerRows(now) {
         if (!(remMs > 0)) continue;
         const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
         if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
+        // group: which Timers-canvas panel claims the row (a charm spell sits
+        // with the recharm tick, a lull with the lulls, the rest are spells).
+        const group = CHARM_SPELLS.has(String(b.name || '').toLowerCase()) ? 'charm'
+                    : _isPacifySpell(b.name) ? 'lull' : 'spell';
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
                target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
-               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped });
+               remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
       }
     }
   }
@@ -40311,6 +40978,7 @@ function _activeTimersSnapshot() {
       kind:         t.kind || null,
       dismissible:  !!t.dismissible,
       test:         t.test,
+      group:        t.kind === 'loot' ? 'loot' : 'trigger',   // Timers-canvas panel routing
     });
   }
   try { for (const r of _builtinTimerRows(now)) out.push(r); }
@@ -40696,15 +41364,23 @@ function _rehearseTrigger(t, opts) {
 }
 
 // Hot-path: called for every kept log line in the tail loop.
-function evaluateTriggersAgainstLine(line, tsMs) {
+function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
+  let charLc;   // whose line this is — resolved once, only when a trigger is set per character
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
     // fire path read `enabled` (a bard, 2026-09-26). Guild rows arrive already
     // filtered by the bot, so this only ever skips a personal one.
     if (t.enabled === false) continue;
+    // Set for some characters only (FB-34): the line is theirs when it came
+    // from their log — or, after a character swap on one client, from the
+    // character Zeal says is really playing (_resolveSelfChatSpeaker).
+    if (t.characters && t.characters.length) {
+      if (charLc === undefined) charLc = String((fileChar && _resolveSelfChatSpeaker(fileChar)) || fileChar || '').toLowerCase();
+      if (!_triggerOnFor(t, charLc)) continue;
+    }
     // End-early check runs FIRST so a single log line containing the end
     // phrase cancels the timer before the same line could (also) re-trigger
     // the start pattern. Per-target: if the end pattern matches and there
@@ -42443,6 +43119,15 @@ async function main() {
               _pendingClickies.set(b.character.toLowerCase(),
                 { itemName, castMs, atMs: Date.now() });
             }
+            // A clicky logs no "You begin casting", so what it lands had nothing to match: SoW from
+            // a Blood Orchid Katana onto a charmed pet stayed an untimed "SOW (?)" (the guild lead,
+            // 2026-09-29: "I SOWed my pet using my sow sword clicky and it did not register").
+            // Record the item's spell the way that line would.
+            const clickSpell = (b.character && cat && cat.clickeffect) ? _spellNameById(cat.clickeffect) : null;
+            if (clickSpell) {
+              const stamp = /^\[[^\]]+\]/.exec(line);
+              try { noteSelfCast((stamp ? stamp[0] : '[]') + ' You begin casting ' + clickSpell + '.', b.character); } catch (e) { void e; }
+            }
           }
         }
 
@@ -42873,7 +43558,7 @@ async function main() {
         // system lines so nothing private ever reaches a trigger. Cheap:
         // precompiled regex set; usually < 50 entries, < 50µs each.
         if (triggerVisibleLine(line, dropPatterns)) {
-          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now()); } catch {}
+          try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
         }
         // A DoT's repeating damage lands on the mob's own 6s tick — the charm
         // overlay's "mob tick" (_noteDotTickLine).
@@ -43038,11 +43723,17 @@ module.exports = {
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
-  _bumpCharmTick, _reconcileGaugeCharms,
+  _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
+  // FB-34 per-character triggers / FB-35 pooled pet owners — exported for their tests.
+  _normCharList, _triggerOnFor, _playingCharactersLc, _builtinTimerKindsOn,
+  _applyPetOwnersResponse, _isGeneratedPetName, _guildPetOwners, whoData,
+  _liveThreatForTest: () => stats.currentEncounterThreat,
+  // +pet spawn ids on the DPS HUD — exported for their test.
+  _petSpawnIdFor, _ownPetSpawnId, _guildPetIds, _zealTagsForTest: _zealTags,
   _uploadQueueLenForTest: () => _uploadQueue.length,
 };
 

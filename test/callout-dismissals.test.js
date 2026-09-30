@@ -233,7 +233,8 @@ const renderBlock = sliceBlock(
 );
 function render() {
    
-  return new Function(renderBlock + '\nreturn { timerEffectClass, collapseTimers, splitVisible, MAX_TIMER_ROWS };')();
+  // PART: the trigger window itself (a Timers-canvas part sizes its own cap).
+  return new Function('var PART = null;\n' + renderBlock + '\nreturn { timerEffectClass, collapseTimers, splitVisible, MAX_TIMER_ROWS };')();
 }
 const CHIP = (over = {}) => ({ id: 'x', target: 'A Shissar Templar', effect: 'Shaman Slow landed', remaining_ms: 60_000, ...over });
 

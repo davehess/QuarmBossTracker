@@ -67,7 +67,9 @@ let _wpHoverArmed = false;
 let _wpIsOverlayDoc = null;
 function _wpOverlayDoc() {
   if (_wpIsOverlayDoc === null && document.body) {
-    _wpIsOverlayDoc = !!document.getElementById('move-btn');
+    // The Timers canvas has no ✥ of its own (it is the screen; its panels
+    // move), so it says it is an overlay with body[data-wp-overlay].
+    _wpIsOverlayDoc = !!document.getElementById('move-btn') || document.body.hasAttribute('data-wp-overlay');
   }
   return _wpIsOverlayDoc === true;
 }
@@ -263,7 +265,11 @@ document.addEventListener('DOMContentLoaded', function () {
     st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92)) !important;border-radius:8px}'
       // (on <body> itself, so the opacity fade of its children cannot reach
       // it — the overlay's opacity is folded into the alpha instead)
-      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      + 'body.wp-backdrop:not(:has(#wrap)):not(:has(#screenBtn)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      // The Timers canvas is a screen-sized window, so a plate on its <body> blacked out the whole screen
+      // (the guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark").
+      // There each panel gets the plate instead. #screenBtn is the canvas's own toolbar button.
+      + 'body.wp-backdrop:has(#screenBtn) #panels > .panel:not(.off){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}'
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
@@ -440,6 +446,10 @@ function _buildOverlayMenu(onClose, state) {
     () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
+  // 🖥 One row per other screen, only when there is one (main's _otherScreensFor).
+  (st.screens || []).forEach(function (s) {
+    menu.appendChild(mkItem('🖥 Move to ' + s.label, '#1f3a57', () => ipcRenderer.invoke('wp-move-to-display', s.id)));
+  });
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
@@ -646,6 +656,10 @@ contextBridge.exposeInMainWorld('mimic', {
   hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
+  // ✨ Setup walkthrough (welcome.html, layout 'a' or 'b') and its relay for the two agent
+  // POSTs it makes: 'import' old logs, 'backfill' the main's log.
+  openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
+  welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
   // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
   // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
   captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),
@@ -735,6 +749,16 @@ contextBridge.exposeInMainWorld('mimic', {
     // dock". It goes back to being its own floating window, still visible.
     ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
     : ipcRenderer.invoke('hide-overlay')),
+
+  // ── Timers canvas (canvas.html) ───────────────────────────────────────────
+  // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores
+  // it for the screen's resolution; canvasEdit(on) is the tray's "Arrange";
+  // onCanvasEdit hears it flip from anywhere.
+  canvasState:       ()       => ipcRenderer.invoke('canvas-state'),
+  canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
+  canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
+  canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
@@ -829,6 +853,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // ⤴ beta (dashboard, stable builds): { optedIn, available } / confirm + join or leave.
   getBetaChannel:  ()   => ipcRenderer.invoke('get-beta-channel'),
   setBetaChannel:  (on) => ipcRenderer.invoke('set-beta-channel', !!on),
+  // α alpha (dashboard, any build): { optedIn, running, available } / confirm + join or leave.
+  getAlphaChannel: ()   => ipcRenderer.invoke('get-alpha-channel'),
+  setAlphaChannel: (on) => ipcRenderer.invoke('set-alpha-channel', !!on),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),

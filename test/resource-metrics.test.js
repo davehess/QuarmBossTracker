@@ -233,7 +233,8 @@ describe('_windowLabelsByPid', () => {
       const resourcesWindow = ${extra.resources ? '__win(' + extra.resources + ')' : 'null'};
     `;
     void win;
-    const h = evalBlock(prelude + sliceBlock(src, 'function _windowLabelsByPid() {', '\n}'), ['_windowLabelsByPid']);
+    const h = evalBlock(prelude + sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};') + '\n'
+      + sliceBlock(src, 'function _windowLabelsByPid() {', '\n}'), ['_windowLabelsByPid']);
     return Object.fromEntries(h._windowLabelsByPid());
   }
 
@@ -282,10 +283,10 @@ describe('_windowLabelsByPid', () => {
   it('every lifecycle key has a human name', () => {
     // A missing entry falls back to the raw key ('chchain'), which is the kind
     // of thing that ships unnoticed.
-    const names = sliceBlock(src, '  const NAMES = {', '\n  };');
+    const names = sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};');
     const table = new Function('return ' + names.slice(names.indexOf('{')))();
     const keys = [...src.matchAll(/\{ key: '([a-zA-Z]+)',\s+flag:/g)].map(m => m[1]);
-    expect(keys.length).toBe(17);   // 16 overlays (Me, 2026-09-24) + the Dock
+    expect(keys.length).toBe(18);   // 17 overlays (Timers canvas, 2026-09-29) + the Dock
     for (const k of keys) expect(table[k], `${k} has no display name`).toBeTruthy();
   });
 });

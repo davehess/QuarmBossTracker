@@ -1,0 +1,808 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Wolf Pack miMIC — set up</title>
+<!--
+  The setup walkthrough (the guild lead, 2026-09-29, reviewing another companion app's onboarding:
+  "i like the clickthrough. Build out a version of this for mimic instead of the single setup view.
+  It shouldn't look the same, and should show some of the optional setup pieces that we have for
+  /me and the abilities that entails"). DECISIONS §93.
+
+  Two layouts over ONE step registry, so they differ in shape and never in what they do:
+    ?v=a  the trail — a rail of every step on the left, one step at a time, Back / Skip / Next;
+    ?v=b  essentials + unlocks — the three steps that gate the dashboard as a short stepper, then
+          every optional piece as a card you open in any order.
+  loading.html stays the first-run page until the guild lead picks one; this page is reached from
+  the tray (✨ Setup walkthrough) and the dashboard's Setup card.
+
+  Every action goes through the same bridge calls the classic page and the dashboard use — no new
+  write path. The two agent POSTs (old-log import, the main's backfill) go through main.js
+  (welcome-optin), because a file:// page cannot read a POST reply from the agent.
+-->
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#6e7681;
+    --blue:#58a6ff; --gold:#d29922; --green:#56d364; --red:#f85149; --orange:#ffa657;
+    --purple:#a371f7; --accent:#1f6feb; --ink:#0b0f14;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font:13px/1.55 'Cascadia Code',Consolas,ui-monospace,monospace}
+  a{color:var(--blue)}
+  button{font:inherit;cursor:pointer;border-radius:5px;padding:6px 12px;border:1px solid var(--border);background:#21262d;color:var(--text)}
+  button:hover:not(:disabled){border-color:var(--blue)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.discord{background:#5865f2;border-color:#5865f2;color:#fff;font-weight:600}
+  button.link{background:none;border:0;padding:0;color:var(--blue);text-decoration:underline}
+  button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+  code{background:var(--ink);border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:12px}
+  .dim{color:var(--dim)}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .note{margin-top:8px;font-size:12px}
+  .ok{color:var(--green)} .warn{color:var(--orange)} .bad{color:var(--red)}
+  .chip{display:inline-block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:3px;border:1px solid var(--border);color:var(--dim)}
+  .chip.req{border-color:var(--blue);color:var(--blue)}
+  .chip.rec{border-color:var(--gold);color:var(--gold)}
+  label.tick{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--panel);cursor:pointer}
+  label.tick input{margin-top:3px}
+  label.tick .d{display:block;color:var(--dim);font-size:11px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px}
+  .box{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:10px 12px;margin:10px 0}
+  .box h3{margin:0 0 4px;font-size:12px}
+
+  /* THE signature element: what a step switches on, in plain words. Every optional step leads
+     with the payoff rather than the chore, because the chore is the part people skip. */
+  .turns-on{margin:12px 0;border:1px solid #1f6feb66;border-left:3px solid var(--blue);border-radius:6px;background:#0f1a2b;padding:8px 12px}
+  .turns-on .t{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--blue);margin-bottom:4px}
+  .turns-on ul{margin:0;padding-left:18px}
+  .turns-on li{margin:2px 0}
+  .turns-on li b{color:#e6edf3}
+
+  /* characters table */
+  table.chars{width:100%;border-collapse:collapse;margin-top:6px}
+  table.chars th{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);text-align:left;font-weight:normal;padding:4px 6px;border-bottom:1px solid var(--border)}
+  table.chars td{padding:5px 6px;border-bottom:1px solid #21262d}
+  table.chars tr.main td{background:#1f6feb14}
+  table.chars td.num{text-align:right;color:var(--dim)}
+
+  /* link code */
+  .code{font-size:22px;letter-spacing:.3em;color:var(--gold);font-weight:bold;background:var(--ink);border:1px solid var(--border);border-radius:4px;padding:4px 12px}
+
+  /* ── Layout A: the trail ─────────────────────────────────────────────── */
+  .a-shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+  .rail{background:var(--panel);border-right:1px solid var(--border);padding:18px 0 70px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow:auto}
+  .rail .brand{padding:0 18px 14px;font-weight:600;color:#e6edf3}
+  .rail .brand span{display:block;font-weight:normal;color:var(--dim);font-size:11px}
+  .rail ol{list-style:none;margin:0;padding:0;flex:1}
+  .rail li button{display:flex;width:100%;gap:10px;align-items:center;text-align:left;border:0;border-radius:0;background:none;padding:7px 18px;color:var(--text)}
+  .rail li button:hover{background:#1c2129}
+  .rail li.cur button{background:#1f6feb22;box-shadow:inset 3px 0 0 var(--blue)}
+  .rail .dot{width:18px;text-align:center;flex:none}
+  .rail li.done .dot{color:var(--green)}
+  .rail li.todo .dot{color:var(--dim)}
+  .rail li.need .dot{color:var(--orange)}
+  .rail .k{margin-left:auto}
+  .rail .foot{padding:12px 18px 0;border-top:1px solid var(--border);font-size:11px}
+  .stage{padding:26px 34px 90px;max-width:860px}
+  .kicker{font-size:11px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+  .stage h1{margin:4px 0 6px;font-size:20px;color:#e6edf3}
+  .lede{color:var(--dim);margin:0 0 12px}
+  .a-nav{position:fixed;left:230px;right:0;bottom:0;display:flex;gap:8px;align-items:center;padding:12px 34px;border-top:1px solid var(--border);background:var(--bg)}
+  .a-nav .gap{flex:1}
+  .a-nav .hint{font-size:12px;color:var(--dim)}
+
+  /* ── Layout B: essentials + unlocks ──────────────────────────────────── */
+  .b-shell{max-width:980px;margin:0 auto;padding:24px 22px 96px}
+  .b-shell h1{margin:0;font-size:20px;color:#e6edf3}
+  .b-shell h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:normal;margin:26px 0 8px}
+  .ess{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:14px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .ess button{border:0;border-radius:0;border-right:1px solid var(--border);background:var(--panel);padding:10px 12px;text-align:left}
+  .ess button:last-child{border-right:0}
+  .ess button.cur{background:#1f6feb22;box-shadow:inset 0 -3px 0 var(--blue)}
+  .ess .n{color:var(--dim);font-size:11px;display:block}
+  .ess .done .n{color:var(--green)}
+  .ess-body{border:1px solid var(--border);border-top:0;border-radius:0 0 6px 6px;padding:14px 16px;margin-top:-1px;background:var(--bg)}
+  .deck{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
+  .card{border:1px solid var(--border);border-radius:6px;background:var(--panel)}
+  .card > button{display:block;width:100%;text-align:left;border:0;background:none;padding:12px 14px}
+  .card .ct{display:flex;gap:8px;align-items:center;font-weight:600;color:#e6edf3}
+  .card .ct .st{margin-left:auto;font-weight:normal;font-size:11px}
+  .card .cs{color:var(--dim);font-size:12px;margin-top:3px}
+  .card.open{grid-column:1/-1;border-color:var(--blue)}
+  .card .cb{padding:0 16px 14px}
+  .b-foot{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--border);background:var(--bg)}
+  .b-foot .in{max-width:980px;margin:0 auto;padding:12px 22px;display:flex;gap:10px;align-items:center}
+  .b-foot .hint{flex:1;font-size:12px;color:var(--dim)}
+
+  @media (max-width:720px){
+    .a-shell{grid-template-columns:1fr}
+    .rail{display:none}
+    .a-nav{left:0;padding:10px 16px}
+    .stage{padding:18px 16px 90px}
+    .ess{grid-template-columns:1fr}
+    .ess button{border-right:0;border-bottom:1px solid var(--border)}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(function () {
+  'use strict';
+  // Outside Mimic (a browser preview, the headless render) there is no bridge. A stub with
+  // plausible answers lets the page draw; inside Mimic window.mimic is always present.
+  var M = window.mimic || _previewBridge();
+  var V = /[?&]v=b\b/.test(location.search) ? 'b' : 'a';
+  document.body.dataset.v = V;
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function norm(p) { return String(p || '').replace(/[\\/]+/g, '\\').replace(/\\+$/, '').toLowerCase(); }
+  function size(n) { if (!n) return '0'; if (n < 1048576) return Math.max(1, Math.round(n / 1024)) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  var S = {
+    cfg: {}, status: null,
+    signedIn: false, localOnly: false,
+    eqConfigured: false, agentReady: false, engineFailed: false, port: 7779, clockOffsetMs: null,
+    found: [], checked: new Set(), manual: [], excludedFound: new Set(), scanned: [],
+    chars: [], excluded: new Set(), main: null,
+    zeal: null, zealLatest: null, eqSetup: null, defender: null, clock: null,
+    backfill: true, imported: [], visited: new Set(),
+  };
+
+  // The dashboard gate, identical to the classic page's: connected (or local-only by choice),
+  // an EQ folder, and the engine up.
+  function gateOk(s) { return !!((s.signedIn || s.localOnly) && s.eqConfigured && s.agentReady); }
+
+  // Which of the optin list's files are the main's own logs. Their live log counts (a backfill
+  // from byte 0 re-sends what the tail already sent, and the server dedups it); a main the
+  // player told us not to send gets nothing.
+  function mainBackfillPaths(optin, main, excluded) {
+    if (!main || !optin) return [];
+    var want = String(main).toLowerCase();
+    if (excluded && excluded.has && excluded.has(want)) return [];
+    return (optin.files || []).filter(function (f) {
+      return f && f.path && String(f.character || '').toLowerCase() === want && !f.active;
+    }).map(function (f) { return f.path; });
+  }
+
+  // ── Steps ─────────────────────────────────────────────────────────────────
+  // kind: 'req' gates the dashboard, 'rec' is worth doing, '' is optional. `ess` = one of the
+  // three essentials layout B puts in its stepper; the rest become its unlock cards.
+  var STEPS = [
+    { id: 'welcome',  icon: '🐺', title: 'Welcome',              onlyA: true, body: bWelcome },
+    { id: 'account',  icon: '🔑', title: 'Wolf Pack account',    kind: 'req', ess: true, body: bAccount,
+      lede: 'Signing in is what puts your fights, tells and characters on wolfpack.quest. Local-only works too — nothing leaves this PC.' },
+    { id: 'folder',   icon: '📁', title: 'EverQuest folder',     kind: 'req', ess: true, body: bFolder,
+      lede: 'Mimic reads the log files EverQuest writes. Tick the folder you play from.' },
+    { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', ess: true, body: bChars,
+      lede: 'Every character with a log in that folder. Star your main; untick any you would rather keep to yourself.' },
+    { id: 'zeal',     icon: '📡', title: 'Zeal',                 kind: 'rec', body: bZeal,
+      summary: 'Live HP, mana, raid groups and charm breaks — the things the log never says.',
+      lede: 'Zeal is a free add-on for the Quarm client: one file, Zeal.asi, in your EverQuest folder. It hands Mimic what the game knows but never writes down.' },
+    { id: 'eq',       icon: '🔧', title: 'Set up EverQuest',     kind: 'rec', body: bEq,
+      summary: 'Logging on, exports on camp, and the two Windows fixes raiders trip over.',
+      lede: 'Three one-click fixes. Each says what it changes before it changes it.' },
+    { id: 'overlays', icon: '🪟', title: 'Overlays',             body: bOverlays,
+      summary: 'Pick what floats over EverQuest. Change it any time from the tray.',
+      lede: 'Windows that sit over the game. Start with a few — each one can be moved, resized and hidden later.' },
+    { id: 'me',       icon: '🌐', title: 'Your /me page',        body: bMe,
+      summary: 'Tells on your phone, every item on every character, UI backups, corpse DMs.',
+      lede: 'What your account adds on wolfpack.quest. Nothing to set up here — this is where to find it.' },
+    { id: 'history',  icon: '📜', title: 'Old fights and chat',  body: bHistory,
+      summary: 'Read your main\'s whole log once, so past raids count.',
+      lede: 'Mimic only reads new lines as you play. This reads what came before, once, in the background.' },
+    { id: 'done',     icon: '✓',  title: 'Ready',                onlyA: true, body: bDone },
+  ];
+  function step(id) { for (var i = 0; i < STEPS.length; i++) if (STEPS[i].id === id) return STEPS[i]; return null; }
+
+  // done | need (a required step not finished) | todo
+  function stepState(id) {
+    switch (id) {
+      case 'account':  return (S.signedIn || S.localOnly) ? 'done' : 'need';
+      case 'folder':   return S.eqConfigured ? 'done' : 'need';
+      case 'chars':    return S.chars.length ? 'done' : (S.eqConfigured ? 'need' : 'todo');
+      case 'zeal':     return (S.zeal && S.zeal.hasZealAsi) ? 'done' : 'todo';
+      case 'eq':       return (S.eqSetup && S.eqSetup.ok) ? 'done' : 'todo';
+      case 'history':  return S.imported.length ? 'done' : 'todo';
+      case 'done':     return gateOk(S) ? 'done' : 'todo';
+      default:         return S.visited.has(id) ? 'done' : 'todo';
+    }
+  }
+
+  function turnsOn(items) {
+    return '<div class="turns-on"><div class="t">What this turns on</div><ul>'
+      + items.map(function (x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>';
+  }
+
+  // ── Bodies (shared by both layouts) ─────────────────────────────────────
+  function bWelcome(el) {
+    el.innerHTML = '<p>Mimic reads your EverQuest log and turns it into overlays, timers and callouts while you play — '
+      + 'and, if you sign in, into your parses, tells and characters on wolfpack.quest.</p>'
+      + '<div class="box"><h3>Three steps are needed</h3><div class="dim">Your account (or local-only), your EverQuest folder, and a look at your characters. About a minute.</div></div>'
+      + '<div class="box"><h3>Everything after that is optional</h3><div class="dim">Zeal, the EverQuest fixes, overlays, your /me page and old logs. Skip any of them — the dashboard\'s Setup card has every one of them later.</div></div>';
+  }
+
+  function bAccount(el) {
+    var st = S.status || {}, linking = st.mimicLinking, session = st.mimicSession;
+    var h = '';
+    if (linking) {
+      h += '<div class="box"><div class="dim" style="font-size:11px">Paste this code at <span style="color:var(--blue)">'
+        + esc(String(linking.verification_url || 'wolfpack.quest/auth/mimic-link').replace(/^https?:\/\//, ''))
+        + '</span> — we opened it in your browser</div>'
+        + '<div class="row" style="margin-top:6px"><span class="code" id="wCode">' + esc(linking.user_code) + '</span>'
+        + '<button data-a="copy">Copy</button><button data-a="cancel">Cancel</button></div></div>';
+    } else if (S.signedIn) {
+      h += '<div class="box" style="border-color:#1a7f37;background:#0f2a1a">✓ Signed in'
+        + (session ? ' as <b class="ok">' + esc(session.display_name || session.discord_id) + '</b>' : '')
+        + ' <button data-a="signout" style="margin-left:10px">Sign out</button></div>';
+    } else {
+      h += '<div class="row"><button class="discord" data-a="signin">Sign in with Discord</button>'
+        + '<button class="link" data-a="local">Run local-only for now</button></div>'
+        + (S.localOnly ? '<div class="note ok">✓ Local-only. Overlays and triggers work; nothing uploads. Sign in later from the tray.</div>' : '');
+    }
+    h += turnsOn([
+      '<b>Your parses</b> on wolfpack.quest, and your part in every raid review',
+      '<b>Officer raid callouts</b> arrive by themselves, within two minutes of being saved',
+      '<b>Your /me page</b>: tells, buffs, inventory and UI backups from any device',
+      'Local-only keeps <b>overlays, your own triggers and the dashboard</b> — just nothing online',
+    ]);
+    el.innerHTML = h;
+    wire(el, {
+      signin: function (b) { b.disabled = true; b.textContent = 'Opening your browser…'; Promise.resolve(M.mimicLinkStart()).catch(function () {}).then(function () { b.disabled = false; }); },
+      copy:   function () { try { navigator.clipboard.writeText($('#wCode', el).textContent); } catch (e) { void e; } },
+      cancel: function () { Promise.resolve(M.mimicLinkCancel()).catch(function () {}); },
+      signout:function () { Promise.resolve(M.mimicLinkSignOut()).catch(function () {}); },
+      local:  function () { S.localOnly = true; changed('account'); },
+    });
+  }
+
+  function bFolder(el) {
+    var h = '';
+    if (!S.found.length) h += '<div class="dim">No EverQuest folder found on its own. Browse to the one with <code>eqgame.exe</code> in it.</div>';
+    else h += '<div class="dim">Found — tick the folder(s) to read:</div>';
+    h += '<div style="display:grid;gap:6px;margin-top:6px">';
+    S.found.forEach(function (c, i) {
+      var meta = [];
+      if (c.hasEqgame) meta.push('<span class="ok">eqgame.exe</span>');
+      meta.push(c.hasLogs ? (c.logCount || 0) + ' log file' + (c.logCount === 1 ? '' : 's') : '<span class="dim">no logs yet</span>');
+      h += '<label class="tick"><input type="checkbox" data-found="' + i + '"' + (S.checked.has(norm(c.path)) ? ' checked' : '') + '>'
+        + '<span><code>' + esc(c.path) + '</code><span class="d">' + meta.join(' · ') + '</span></span></label>';
+    });
+    S.manual.forEach(function (p, i) {
+      h += '<div class="row"><code>' + esc(p) + '</code><button data-rm="' + i + '">✕ Remove</button></div>';
+    });
+    h += '</div><div class="row" style="margin-top:10px"><button data-a="browse">📁 Browse…</button>'
+      + '<button class="primary" data-a="save">Save folder</button><span class="note" id="wFolderNote"></span></div>';
+    if (!(S.checked.size + S.manual.length)) h += '<div class="note warn">Nothing ticked yet — Mimic needs at least one folder.</div>';
+    el.innerHTML = h;
+    el.querySelectorAll('[data-found]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var p = norm(S.found[+cb.dataset.found].path);
+        if (cb.checked) { S.checked.add(p); S.excludedFound.delete(p); } else { S.checked.delete(p); S.excludedFound.add(p); }
+      });
+    });
+    el.querySelectorAll('[data-rm]').forEach(function (b) {
+      b.addEventListener('click', function () { S.manual.splice(+b.dataset.rm, 1); changed('folder'); });
+    });
+    wire(el, {
+      browse: function () {
+        Promise.resolve(M.pickEqDir()).then(function (picked) {
+          if (!picked) return;
+          var np = norm(picked);
+          if (S.found.some(function (c) { return norm(c.path) === np; })) { S.checked.add(np); S.excludedFound.delete(np); }
+          else if (!S.manual.some(function (p) { return norm(p) === np; })) S.manual.push(picked);
+          changed('folder');
+        }).catch(function () {});
+      },
+      save: function (b) {
+        var paths = [];
+        S.found.forEach(function (c) { if (S.checked.has(norm(c.path))) paths.push(c.path); });
+        S.manual.forEach(function (p) { paths.push(p); });
+        b.disabled = true; b.textContent = 'Saving…';
+        Promise.resolve(M.saveConfig({ eqPaths: paths, eqPathsExcluded: Array.from(S.excludedFound), eqPath: null }))
+          .then(function () { return M.relaunchAgent(); })
+          .then(function () {
+            S.eqConfigured = paths.length > 0; S.agentReady = false;
+            loadChars(); pollEngine();
+            changed('folder');
+            var n = $('#wFolderNote', el); if (n) { n.className = 'note ok'; n.textContent = '✓ Saved — the engine is restarting.'; }
+          })
+          .catch(function (e) { var n = $('#wFolderNote', el); if (n) { n.className = 'note bad'; n.textContent = '✕ ' + ((e && e.message) || e); } b.disabled = false; b.textContent = 'Save folder'; });
+      },
+    });
+  }
+
+  function splitRecentChars(chars, main) {
+    var m = (main || '').toLowerCase();
+    var recent = chars.filter(function (c) { return (m && c.character.toLowerCase() === m) || (c.ago_days != null && c.ago_days <= 90); });
+    var older = chars.filter(function (c) { return recent.indexOf(c) < 0; });
+    return recent.length ? { recent: recent, older: older } : { recent: older, older: [] };
+  }
+
+  function bChars(el) {
+    if (!S.chars.length) {
+      el.innerHTML = S.eqConfigured
+        ? '<div class="box" style="border-color:#6b5320;background:#2a2010;color:#f6c365">The folder is fine — EverQuest just has not been told to write logs yet. '
+          + 'In game, type <code>/log on</code> once; characters appear here as soon as they write a line. '
+          + 'Or let the <b>Set up EverQuest</b> step switch logging on for good.</div>'
+        : '<div class="dim">Pick your EverQuest folder first — characters are found from its log files.</div>';
+      return;
+    }
+    // Characters played in the last 3 months (and the starred main) show; the rest fold into a
+    // collapsed "more" (the guild lead, 2026-09-29: "just show things that have been touched in
+    // the last 3 months and then a collapsed section with more"). Nothing recent → show them all.
+    var split = splitRecentChars(S.chars, S.main), recent = split.recent, older = split.older;
+    var head = '<table class="chars"><thead><tr><th>★ Main</th><th>Character</th><th>Send</th><th style="text-align:right">Log</th><th>Last played</th></tr></thead><tbody>';
+    var h = head;
+    var row = function (c) {
+      var lc = c.character.toLowerCase();
+      var ago = c.ago_days == null ? '—' : (c.ago_days >= 30 ? '<span class="warn">' + c.ago_days + ' days ago</span>' : c.ago_days >= 7 ? c.ago_days + ' days ago' : 'this week');
+      h += '<tr' + (S.main && S.main.toLowerCase() === lc ? ' class="main"' : '') + '>'
+        + '<td><input type="radio" name="wMain" data-main="' + esc(c.character) + '"' + (S.main && S.main.toLowerCase() === lc ? ' checked' : '') + ' aria-label="Main: ' + esc(c.character) + '"></td>'
+        + '<td><b>' + esc(c.character) + '</b></td>'
+        + '<td><input type="checkbox" data-tx="' + esc(c.character) + '"' + (S.excluded.has(lc) ? '' : ' checked') + ' aria-label="Send ' + esc(c.character) + '"></td>'
+        + '<td class="num">' + size(c.log_size) + '</td><td>' + ago + '</td></tr>';
+    };
+    recent.forEach(row);
+    h += '</tbody></table>';
+    if (older.length) {
+      h += '<details id="wCharsMore"' + (S.charsMore ? ' open' : '') + '><summary class="dim" style="cursor:pointer;margin:8px 0">'
+        + older.length + ' more · not played in 3 months</summary>' + head;
+      older.forEach(row);
+      h += '</tbody></table></details>';
+    }
+    h += '<div class="note dim">★ <b>Main</b> is the character whose old log the last step offers to read. '
+      + '<b>Send</b> unticked means that character\'s log never leaves this PC — overlays still work for it. The engine restarts a moment after you change one.</div>';
+    el.innerHTML = h;
+    // A repaint rebuilds the list, so remember whether "more" was open.
+    var more = $('#wCharsMore', el);
+    if (more) more.addEventListener('toggle', function () { S.charsMore = more.open; });
+    el.querySelectorAll('[data-main]').forEach(function (r) {
+      r.addEventListener('change', function () { S.main = r.dataset.main; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); changed('chars'); });
+    });
+    el.querySelectorAll('[data-tx]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var lc = cb.dataset.tx.toLowerCase();
+        if (cb.checked) S.excluded.delete(lc); else S.excluded.add(lc);
+        var out = S.chars.filter(function (c) { return S.excluded.has(c.character.toLowerCase()); }).map(function (c) { return c.character; });
+        Promise.resolve(M.saveConfig({ excludedCharacters: out })).catch(function () {}).then(restartSoon);
+      });
+    });
+  }
+  // The engine reads the don't-send list when it starts, so an untick means nothing until it
+  // restarts — and until then that character's log is still being sent. Restart once the ticking
+  // stops, not on every click.
+  var _restartT = null;
+  function restartSoon() {
+    clearTimeout(_restartT);
+    _restartT = setTimeout(function () {
+      S.agentReady = false; changed();
+      Promise.resolve(M.relaunchAgent()).catch(function () {}).then(pollEngine);
+    }, 2500);
+  }
+
+  function bZeal(el) {
+    var z = S.zeal || {}, L = S.zealLatest;
+    var line = !z.eqDir ? '<span class="dim">Pick your EverQuest folder first.</span>'
+      : z.hasZealAsi ? '<span class="ok">✓ Zeal is installed</span>' + (z.installedTag ? ' <span class="dim">(' + esc(z.installedTag) + ')</span>' : '')
+      : '<span class="warn">Not installed in ' + esc(z.eqDir) + '</span>';
+    var h = '<div class="box"><div>' + line + '</div>'
+      + (L ? '<div class="note">' + (L.ok ? (L.updateAvailable ? 'Newest is <b>' + esc(L.latestTag) + '</b>.' : '<span class="ok">✓ Current (' + esc(L.installedTag || L.latestTag) + ').</span>') : '<span class="bad">' + esc(L.error || 'Could not check.') + '</span>') + '</div>' : '')
+      + '<div class="row" style="margin-top:8px"><button data-a="check"' + (z.eqDir ? '' : ' disabled') + '>Check for the newest</button>'
+      + (L && L.ok && L.updateAvailable ? '<button class="primary" data-a="install">' + (z.hasZealAsi ? 'Update Zeal' : 'Install Zeal') + '</button>' : '')
+      + '<span class="note" id="wZealNote"></span></div>'
+      + '<div class="note dim">Close EverQuest first — the game holds Zeal.asi open. Anything replaced is backed up next to it.</div></div>';
+    h += turnsOn([
+      '<b>Live HP and mana</b> for you, your target and your pet — Target Info, the HUD and Extended Target read it',
+      '<b>Your raid\'s groups and health</b>, live, on wolfpack.quest/raid',
+      '<b>Charm breaks</b> the moment they happen, not when the log gets round to it',
+      '<b>Every item and spell</b> saved each time you camp, for your inventory and missing-spells pages (with the next step)',
+      '<b>Mob tags</b> (<code>/tag</code>) the whole raid sees',
+    ]);
+    el.innerHTML = h;
+    wire(el, {
+      check: function (b) {
+        b.disabled = true; b.textContent = 'Checking…';
+        Promise.resolve(M.zealCheckUpdate()).then(function (r) { S.zealLatest = r || { ok: false }; changed('zeal'); })
+          .catch(function (e) { S.zealLatest = { ok: false, error: (e && e.message) || String(e) }; changed('zeal'); });
+      },
+      install: function (b) {
+        b.disabled = true; b.textContent = 'Installing…';
+        Promise.resolve(M.zealInstallUpdate()).then(function (r) {
+          if (r && r.ok) { S.zealLatest = null; return refreshZeal(); }
+          var n = $('#wZealNote', el); if (n) { n.className = 'note bad'; n.textContent = (r && r.error) || 'Install failed.'; }
+          b.disabled = false; b.textContent = 'Try again';
+        }).catch(function () {});
+      },
+    });
+  }
+
+  function bEq(el) {
+    var r = S.eqSetup, d = S.defender, c = S.clock, off = S.clockOffsetMs;
+    var setupLine = !r ? '' : r.ok
+      ? '<div class="note ok">✓ Done' + (r.folders && r.folders.length > 1 ? ' in ' + r.folders.length + ' folders' : '') + '. Takes effect the next time EverQuest starts.</div>'
+      : '<div class="note ' + (r.eqRunning ? 'warn' : 'bad') + '">' + esc(r.message || 'Did not apply.') + '</div>';
+    var defPaths = (d && d.paths) || [];
+    var defLeft = defPaths.filter(function (p) { return !p.excluded; }).length;
+    var defLine = !d ? '<span class="dim">Checking…</span>'
+      : d.unsupported ? '<span class="dim">Windows only.</span>'
+      : !d.ok ? '<span class="dim">' + esc(d.error || 'Could not read Windows Defender.') + '</span>'
+      : !defPaths.length ? '<span class="dim">Pick your EverQuest folder first.</span>'
+      : defLeft ? '<span class="warn">' + defLeft + ' of ' + defPaths.length + ' folders are still scanned on every write</span>'
+      : '<span class="ok">✓ All ' + defPaths.length + ' folders excluded</span>';
+    var drift = (typeof off === 'number' && Math.abs(off) >= 2000) ? Math.round(Math.abs(off) / 1000) + 's ' + (off > 0 ? 'behind' : 'ahead') : null;
+    var clockLine = !c ? '<span class="dim">Checking…</span>'
+      : c.unsupported ? '<span class="dim">Windows only.</span>'
+      : drift ? '<span class="warn">Your clock is ' + drift + '</span>'
+      : (c.ok && c.running && c.automatic) ? '<span class="ok">✓ Windows keeps this clock in sync</span>'
+      : '<span class="warn">Windows is not keeping this clock in sync' + (c.startType ? ' (time service: ' + esc(c.startType) + ')' : '') + '</span>';
+    el.innerHTML =
+        '<div class="box"><h3>1 · EverQuest and Zeal settings</h3>'
+      + '<div class="dim">Turns EverQuest\'s log on for good, has Zeal save your inventory and spellbook every time you camp, '
+      + 'sets Zeal to send live data, switches on mob tags, and joins the guild\'s chat channels. <b>Close EverQuest first</b> — it rewrites its settings when it exits.</div>'
+      + '<div class="row" style="margin-top:8px"><button class="primary" data-a="setup">Set up EverQuest for me</button></div>' + setupLine + '</div>'
+      + '<div class="box"><h3>2 · Windows Defender</h3>'
+      + '<div class="dim">Defender scans every line EverQuest writes to its log. Excluding the EverQuest and Mimic folders stops that — Windows asks your permission first.</div>'
+      + '<div class="note">' + defLine + '</div>'
+      + '<div class="row" style="margin-top:6px"><button data-a="defender"' + (d && d.ok && defLeft ? '' : ' disabled') + '>Add the exclusions</button><span class="note" id="wDefNote"></span></div></div>'
+      + '<div class="box"><h3>3 · Your clock</h3>'
+      + '<div class="dim">A clock a few seconds off puts your kills and deaths in the wrong place for the whole raid. This makes Windows keep it right — Windows asks your permission first.</div>'
+      + '<div class="note">' + clockLine + '</div>'
+      + '<div class="row" style="margin-top:6px"><button data-a="clock"' + (c && !c.unsupported ? '' : ' disabled') + '>Fix the clock</button><span class="note" id="wClockNote"></span></div></div>';
+    wire(el, {
+      setup: function (b) {
+        b.disabled = true; b.textContent = 'Writing…';
+        Promise.resolve(M.eqSetupForMe()).then(function (res) { S.eqSetup = res || { ok: false }; changed('eq'); })
+          .catch(function (e) { S.eqSetup = { ok: false, message: (e && e.message) || String(e) }; changed('eq'); });
+      },
+      defender: function (b) {
+        b.disabled = true; b.textContent = 'Waiting for Windows…';
+        Promise.resolve(M.defenderAddExclusions()).then(function (res) {
+          var n = $('#wDefNote', el);
+          if (res && res.ok) return refreshDefender();
+          if (n) { n.className = 'note ' + (res && res.cancelled ? 'dim' : 'bad'); n.textContent = (res && (res.error || (res.failed || []).join('; '))) || 'Did not apply.'; }
+          b.disabled = false; b.textContent = 'Add the exclusions';
+        }).catch(function () {});
+      },
+      clock: function (b) {
+        b.disabled = true; b.textContent = 'Waiting for Windows…';
+        Promise.resolve(M.clockResync()).then(function (res) {
+          var n = $('#wClockNote', el);
+          if (n) { n.className = 'note ' + (res && res.ok ? 'ok' : res && res.cancelled ? 'dim' : 'bad'); n.textContent = res && res.ok ? '✓ Synced, and Windows will keep it synced.' : ((res && (res.error || (res.steps || []).join(' | '))) || 'Did not sync.'); }
+          b.disabled = false; b.textContent = 'Fix the clock';
+          refreshClock();
+        }).catch(function () {});
+      },
+    });
+  }
+
+  var OVERLAYS = [
+    ['showHud',          '⚔️ DPS HUD',          'Live damage for the fight you are in.'],
+    ['enableTriggerTts', '⚡ Trigger alerts',     'Speaks and flashes raid callouts; debuff timers.'],
+    ['showMobInfo',      '👁 Target Info',        'Your target\'s stats, loot, spells and buffs.'],
+    ['showCharm',        '🔮 Charm tracker',      'Recharm countdown for charm classes.'],
+    ['showPets',         '🐾 Pet tracker',        'Your summoned pet\'s health and buffs.'],
+    ['showBuffQueue',    '🛡 Buff queue',          'Who in the raid is missing your buffs.'],
+    ['showWho',          '📜 /who',               'The zone roster from your last /who.'],
+    ['showMelody',       '🎶 Casting tracker',    'Melody for bards; spell casts for everyone else.'],
+    ['showThreat',       '🎯 Threat meter',       'Live hate ranking for the current fight.'],
+  ];
+  function bOverlays(el) {
+    S.visited.add('overlays');
+    el.innerHTML = '<div class="grid2">' + OVERLAYS.map(function (o) {
+      return '<label class="tick"><input type="checkbox" data-ov="' + o[0] + '"' + (S.cfg[o[0]] ? ' checked' : '') + '><span>' + o[1] + '<span class="d">' + esc(o[2]) + '</span></span></label>';
+    }).join('') + '</div>'
+      + '<label class="tick" style="margin-top:10px"><input type="checkbox" data-quiet' + (S.cfg.quietMode ? ' checked' : '') + '><span>🔕 Start quiet<span class="d">Overlays stay hidden and nothing speaks until you turn Mimic on from the tray.</span></span></label>'
+      + '<div class="note dim">They appear the moment you tick them. The first time you finish, Mimic packs them into the free space around your EverQuest windows.</div>';
+    el.querySelectorAll('[data-ov]').forEach(function (cb) {
+      cb.addEventListener('change', function () { var o = {}; o[cb.dataset.ov] = cb.checked; S.cfg[cb.dataset.ov] = cb.checked; M.saveConfig(o).catch(function () {}); });
+    });
+    var q = $('[data-quiet]', el);
+    q.addEventListener('change', function () { S.cfg.quietMode = q.checked; Promise.resolve(M.setQuietMode(q.checked)).catch(function () {}); });
+  }
+
+  var ME = [
+    ['💬', 'Tells, anywhere',      'Every /tell to any of your characters, on your phone — with a browser alert if you want one.', '/me/tells'],
+    ['🎒', 'Every item you own',   'Search bags, bank and shared bank across all your characters. Filled in each time you camp (with Zeal).', '/me/inventory'],
+    ['🪟', 'UI backups',           'Your window layouts and socials, backed up. Edit them on the web; Mimic puts them in place after you log out.', '/me/ui'],
+    ['⚔️', 'Your parses',          'Damage and healing for every fight, and your line in each raid\'s review.', '/parses'],
+    ['🚩', 'Planes of Power flags', 'Where each of your characters stands, ticked off from what Mimic saw.', '/pop/guide'],
+    ['☠️', 'Corpse finder',        'Die, and Discord messages you the zone and /loc of your corpse.', null],
+  ];
+  function bMe(el) {
+    S.visited.add('me');
+    var off = !S.signedIn;
+    el.innerHTML = (off ? '<div class="box warn">These need a signed-in account — the Wolf Pack account step.</div>' : '')
+      + '<div class="grid2">' + ME.map(function (m) {
+        return '<div class="box" style="margin:0"><h3>' + m[0] + ' ' + esc(m[1]) + '</h3><div class="dim" style="font-size:12px">' + esc(m[2]) + '</div>'
+          + (m[3] ? '<div style="margin-top:6px"><button class="link" data-url="' + m[3] + '"' + (off ? ' disabled' : '') + '>wolfpack.quest' + m[3] + ' →</button></div>' : '') + '</div>';
+      }).join('') + '</div>'
+      + '<div class="row" style="margin-top:10px"><button data-a="studio">Open UI Studio on this PC</button></div>'
+      + '<label class="tick" style="margin-top:10px"><input type="checkbox" data-crash' + (S.cfg.crashReports === true ? ' checked' : '') + '>'
+      + '<span>🧯 Send crash reports<span class="d">When EverQuest crashes, send the crash file so an officer can help. Off unless you tick it.</span></span></label>';
+    el.querySelectorAll('[data-url]').forEach(function (b) {
+      b.addEventListener('click', function () { Promise.resolve(M.openExternal('https://wolfpack.quest' + b.dataset.url)).catch(function () {}); });
+    });
+    wire(el, { studio: function () { Promise.resolve(M.openUiStudio()).catch(function () {}); } });
+    var cr = $('[data-crash]', el);
+    cr.addEventListener('change', function () { S.cfg.crashReports = cr.checked; Promise.resolve(M.toggleCrashReports(cr.checked)).catch(function () {}); });
+  }
+
+  function bHistory(el) {
+    var can = S.signedIn && !!S.main && !S.excluded.has(String(S.main || '').toLowerCase());
+    var why = !S.signedIn ? 'Needs a signed-in account.' : !S.main ? 'Star a main in Your characters first.' : !can ? 'Your main is set not to send.' : '';
+    el.innerHTML =
+        '<label class="tick"><input type="checkbox" data-bf' + (can && S.backfill ? ' checked' : '') + (can ? '' : ' disabled') + '>'
+      + '<span>When I finish, read <b>' + esc(S.main || 'my main') + '</b>\'s whole log'
+      + '<span class="d">Past raids join the parses pages, old guild and raid chat joins the guild\'s history, old /who sightings fill in who was where. '
+      + 'Runs in the background — stop it any time from the dashboard\'s Logsync tab.' + (why ? ' <span class="warn">' + esc(why) + '</span>' : '') + '</span></span></label>'
+      + '<div class="box"><h3>Logs from an old PC or a backup folder?</h3>'
+      + '<div class="dim">Add them here. They are read once, the same way, and never watched.</div>'
+      + '<div style="margin-top:6px">' + (S.imported.length ? S.imported.map(function (p) { return '<div><code>' + esc(p) + '</code></div>'; }).join('') : '<span class="dim">None added — fine for most people.</span>') + '</div>'
+      + '<div class="row" style="margin-top:8px"><button data-a="dir"' + (S.agentReady ? '' : ' disabled') + '>🗂 Add a folder…</button><button data-a="files"' + (S.agentReady ? '' : ' disabled') + '>📄 Add log files…</button>'
+      + '<span class="note" id="wImpNote">' + (S.agentReady ? '' : '<span class="dim">Waiting for the engine…</span>') + '</span></div></div>';
+    var bf = $('[data-bf]', el);
+    bf.addEventListener('change', function () { S.backfill = bf.checked; });
+    function pick(kind) {
+      Promise.resolve(M.pickLogBackups(kind)).then(function (paths) {
+        if (!paths || !paths.length) return null;
+        return M.welcomeOptin('import', paths).then(function (r) {
+          var ok = ((r && r.results) || []).filter(function (x) { return x.ok; });
+          ok.forEach(function (x) { if (S.imported.indexOf(x.path) < 0) S.imported.push(x.path); });
+          changed('history');
+          var n = $('#wImpNote', el), bad = ((r && r.results) || []).filter(function (x) { return !x.ok; });
+          if (n && bad.length) { n.className = 'note warn'; n.textContent = 'Skipped: ' + bad.map(function (x) { return x.path + ' (' + x.error + ')'; }).join('; '); }
+        });
+      }).catch(function () {});
+    }
+    wire(el, { dir: function () { pick('dir'); }, files: function () { pick('files'); } });
+  }
+
+  function bDone(el) {
+    var rows = STEPS.filter(function (s) { return !s.onlyA; }).map(function (s) {
+      var st = stepState(s.id);
+      return '<div class="row" style="padding:3px 0"><span style="width:18px" class="' + (st === 'done' ? 'ok' : st === 'need' ? 'warn' : 'dim') + '">' + (st === 'done' ? '✓' : st === 'need' ? '!' : '·') + '</span>'
+        + s.icon + ' ' + esc(s.title) + (st === 'done' ? '' : ' <button class="link" data-go="' + s.id + '">' + (st === 'need' ? 'finish' : 'open') + '</button>') + '</div>';
+    }).join('');
+    el.innerHTML = '<div class="box">' + rows + '</div>'
+      + (gateOk(S) ? '<p>That is everything. The dashboard\'s Setup card keeps every one of these for later.</p>' : '<p class="warn">' + esc(gateHint()) + '</p>');
+    el.querySelectorAll('[data-go]').forEach(function (b) { b.addEventListener('click', function () { go(b.dataset.go); }); });
+  }
+
+  function wire(el, acts) {
+    el.querySelectorAll('[data-a]').forEach(function (b) {
+      var f = acts[b.dataset.a];
+      if (f) b.addEventListener('click', function (e) { e.preventDefault(); f(b); });
+    });
+  }
+
+  function gateHint() {
+    if (!(S.signedIn || S.localOnly)) return 'Sign in, or choose local-only, to continue.';
+    if (!S.eqConfigured) return 'Pick and save your EverQuest folder to continue.';
+    if (S.engineFailed) return 'The engine did not start.';
+    if (!S.agentReady) return 'Starting the engine…';
+    return '';
+  }
+
+  // ── Finish ──────────────────────────────────────────────────────────────
+  var _finishing = false, _finishWhenUp = false;
+  function finish() {
+    // A don't-send change still waiting for its restart: restart now, finish once the engine is back.
+    if (_restartT) {
+      clearTimeout(_restartT); _restartT = null; _finishWhenUp = true;
+      S.agentReady = false; changed();
+      Promise.resolve(M.relaunchAgent()).catch(function () {}).then(pollEngine);
+      return;
+    }
+    if (_finishing || !gateOk(S)) return;
+    _finishing = true;
+    if (!S.main && S.chars.length) { S.main = S.chars[0].character; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); }
+    Promise.resolve(M.markOnboarded()).catch(function () {})
+      .then(function () {
+        if (!(S.backfill && S.signedIn && S.main)) return null;
+        return fetch('http://127.0.0.1:' + S.port + '/api/optin', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (o) { var p = mainBackfillPaths(o, S.main, S.excluded); return p.length ? M.welcomeOptin('backfill', p) : null; })
+          .catch(function () { return null; });
+      })
+      .then(function () { return M.openDashboard(); })
+      .catch(function () { _finishing = false; });
+  }
+
+  // ── Layout A: the trail ─────────────────────────────────────────────────
+  var cur = 'welcome';
+  var aSteps = STEPS;
+  function renderA() {
+    var i = aSteps.indexOf(step(cur)), s = aSteps[i];
+    var reqLeft = !!(s.kind === 'req' && stepState(s.id) === 'need');
+    var last = i === aSteps.length - 1;
+    $('#app').innerHTML =
+        '<div class="a-shell"><nav class="rail" aria-label="Setup steps"><div class="brand">🐺 Wolf Pack miMIC<span>setup</span></div><ol>'
+      + aSteps.map(function (x, j) {
+          var st = x.id === 'welcome' ? 'done' : stepState(x.id);
+          return '<li class="' + st + (x.id === cur ? ' cur' : '') + '"><button data-go="' + x.id + '"' + (x.id === cur ? ' aria-current="step"' : '') + '>'
+            + '<span class="dot">' + (st === 'done' ? '✓' : st === 'need' ? '!' : (j)) + '</span>' + esc(x.title)
+            + (x.kind === 'req' ? '<span class="k chip req">req</span>' : x.kind === 'rec' ? '<span class="k chip rec">rec</span>' : '') + '</button></li>';
+        }).join('')
+      + '</ol><div class="foot">' + engineLine() + '<div style="margin-top:6px"><a href="loading.html">Classic setup page</a></div></div></nav>'
+      + '<main class="stage"><div class="kicker">' + (s.onlyA ? '&nbsp;' : 'Step ' + i + ' of ' + (aSteps.length - 2) + (s.kind === 'req' ? ' · needed' : s.kind === 'rec' ? ' · recommended' : ' · optional')) + '</div>'
+      + '<h1>' + s.icon + ' ' + esc(s.title) + '</h1>' + (s.lede ? '<p class="lede">' + esc(s.lede) + '</p>' : '')
+      + '<div id="body"></div></main>'
+      + '<footer class="a-nav"><button data-nav="back"' + (i === 0 ? ' disabled' : '') + '>← Back</button><span class="gap"></span>'
+      + '<span class="hint">' + (last ? esc(gateHint()) : reqLeft ? 'Needed before the dashboard opens.' : '') + '</span>'
+      + (!last && !s.kind && !s.onlyA ? '<button data-nav="skip">Skip</button>' : '')
+      + (last ? '<button class="primary" data-nav="finish"' + (gateOk(S) ? '' : ' disabled') + '>Open the dashboard →</button>'
+              : '<button class="primary" data-nav="next"' + (reqLeft ? ' disabled' : '') + '>Next →</button>')
+      + '</footer></div>';
+    mount(s.id, $('#body'));
+    document.querySelectorAll('[data-go]').forEach(function (b) { b.addEventListener('click', function () { go(b.dataset.go); }); });
+    document.querySelectorAll('[data-nav]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var n = b.dataset.nav;
+        if (n === 'back') go(aSteps[Math.max(0, i - 1)].id);
+        else if (n === 'next' || n === 'skip') go(aSteps[Math.min(aSteps.length - 1, i + 1)].id);
+        else if (n === 'finish') finish();
+      });
+    });
+  }
+
+  // ── Layout B: essentials + unlocks ──────────────────────────────────────
+  var ess = null, open = null;
+  function renderB() {
+    var E = STEPS.filter(function (s) { return s.ess; });
+    var U = STEPS.filter(function (s) { return !s.ess && !s.onlyA; });
+    if (!ess) { ess = 'account'; for (var k = 0; k < E.length; k++) if (stepState(E[k].id) !== 'done') { ess = E[k].id; break; } }
+    var essCur = step(ess);
+    $('#app').innerHTML =
+        '<div class="b-shell"><h1>🐺 Three things and you are in.</h1>'
+      + '<div class="dim" style="margin-top:4px">Everything under them is optional — do it now, later, or never. ' + engineLine() + ' · <a href="loading.html">classic setup page</a></div>'
+      + '<div class="ess" role="tablist">' + E.map(function (s, j) {
+          var st = stepState(s.id);
+          return '<button role="tab" data-ess="' + s.id + '" class="' + (s.id === ess ? 'cur ' : '') + (st === 'done' ? 'done' : '') + '"' + (s.id === ess ? ' aria-selected="true"' : '') + '>'
+            + '<span class="n">' + (st === 'done' ? '✓ done' : st === 'need' ? (j + 1) + ' · needed' : (j + 1) + ' · waiting') + '</span>' + s.icon + ' ' + esc(s.title) + '</button>';
+        }).join('') + '</div>'
+      + '<div class="ess-body"><div class="dim" style="margin-bottom:8px">' + esc(essCur.lede || '') + '</div><div id="essBody"></div></div>'
+      + '<h2>Unlock more</h2><div class="deck">' + U.map(function (s) {
+          var st = stepState(s.id), isOpen = s.id === open;
+          return '<div class="card' + (isOpen ? ' open' : '') + '"><button data-card="' + s.id + '" aria-expanded="' + isOpen + '">'
+            + '<div class="ct">' + s.icon + ' ' + esc(s.title) + (s.kind === 'rec' ? ' <span class="chip rec">recommended</span>' : '')
+            + '<span class="st ' + (st === 'done' ? 'ok' : 'dim') + '">' + (st === 'done' ? '✓' : isOpen ? '▾' : '▸') + '</span></div>'
+            + '<div class="cs">' + esc(isOpen ? (s.lede || '') : (s.summary || '')) + '</div></button>'
+            + (isOpen ? '<div class="cb" id="cardBody"></div>' : '') + '</div>';
+        }).join('') + '</div></div>'
+      + '<footer class="b-foot"><div class="in"><span class="hint">' + esc(gateHint() || 'Ready. Anything left above waits on the dashboard\'s Setup card.') + '</span>'
+      + '<button class="primary" data-a="finish"' + (gateOk(S) ? '' : ' disabled') + '>Open the dashboard →</button></div></footer>';
+    mount(ess, $('#essBody'));
+    if (open) mount(open, $('#cardBody'));
+    document.querySelectorAll('[data-ess]').forEach(function (b) { b.addEventListener('click', function () { ess = b.dataset.ess; render(); }); });
+    document.querySelectorAll('[data-card]').forEach(function (b) { b.addEventListener('click', function () { open = open === b.dataset.card ? null : b.dataset.card; render(); }); });
+    $('[data-a="finish"]').addEventListener('click', finish);
+  }
+
+  function engineLine() {
+    return S.agentReady ? '<span class="ok">● engine ready</span>'
+      : S.engineFailed ? '<span class="bad">● engine did not start</span> — <a href="loading.html">see why</a>'
+      : '<span class="dim">● engine starting…</span>';
+  }
+
+  // Bodies are mounted by id so a background change (sign-in finished, characters loaded)
+  // redraws the step on screen and nothing else.
+  var mounted = {};
+  function mount(id, el) { mounted = {}; if (!el) return; mounted[id] = el; step(id).body(el); }
+  function go(id) {
+    if (V === 'b') { var s = step(id); if (s && s.ess) ess = id; else if (s && !s.onlyA) open = id; }
+    else cur = id;
+    render(); window.scrollTo(0, 0);
+  }
+  function render() { if (V === 'b') renderB(); else renderA(); }
+  // A state change redraws the chrome (rail, stepper, footer) and whichever body is showing.
+  // Typed input would be lost to a redraw — no step has a text field, on purpose.
+  function changed() { render(); }
+
+  // ── Loading ─────────────────────────────────────────────────────────────
+  function pollEngine() {
+    Promise.resolve(M.getAgentPort()).then(function (p) { if (p) S.port = p; }).catch(function () {});
+    S.engineFailed = false;
+    var tries = 0;
+    var id = setInterval(function () {
+      tries++;
+      fetch('http://127.0.0.1:' + S.port + '/api/state', { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+        .then(function (st) {
+          clearInterval(id);
+          S.agentReady = true;
+          S.clockOffsetMs = st && typeof st.clockOffsetMs === 'number' ? st.clockOffsetMs : null;
+          changed();
+          if (_finishWhenUp) { _finishWhenUp = false; finish(); }
+        })
+        .catch(function () {
+          if (tries > 80) { clearInterval(id); S.engineFailed = true; changed(); }
+        });
+    }, 500);
+  }
+  function loadFolders() {
+    return Promise.all([Promise.resolve(M.getConfig()).catch(function () { return {}; }), Promise.resolve(M.findEqInstalls()).catch(function () { return { found: [] }; })])
+      .then(function (a) {
+        var c = a[0] || {}, disc = a[1] || {};
+        S.found = disc.found || []; S.scanned = disc.scanned || [];
+        var cfgPaths = Array.isArray(c.eqPaths) ? c.eqPaths : (c.eqPath ? [c.eqPath] : []);
+        var cfgLower = new Set(cfgPaths.map(norm)), excl = new Set((c.eqPathsExcluded || []).map(norm));
+        S.checked = new Set(); S.excludedFound = new Set();
+        S.found.forEach(function (f) {
+          var np = norm(f.path);
+          if (excl.has(np)) S.excludedFound.add(np);
+          else if (cfgLower.has(np)) S.checked.add(np);
+          else if (f.hasEqgame && !cfgPaths.length) S.checked.add(np);   // first-run prefill, as the classic page
+        });
+        var foundSet = new Set(S.found.map(function (f) { return norm(f.path); }));
+        S.manual = cfgPaths.filter(function (p) { return !foundSet.has(norm(p)); });
+        changed();
+      });
+  }
+  function loadChars() {
+    return Promise.resolve(M.getConfig()).catch(function () { return {}; }).then(function (c) {
+      S.excluded = new Set((c.excludedCharacters || []).map(function (s) { return String(s || '').toLowerCase(); }));
+      return Promise.resolve(M.listEqCharacters()).catch(function () { return []; });
+    }).then(function (list) {
+      S.chars = Array.isArray(list) ? list : [];
+      if (!S.main) {
+        var pick = S.chars.filter(function (c) { return !S.excluded.has(c.character.toLowerCase()); })[0];
+        if (pick) S.main = pick.character;
+      }
+      changed();
+    });
+  }
+  function refreshZeal() { return Promise.resolve(M.zealStatus()).then(function (z) { S.zeal = z || {}; changed(); }).catch(function () {}); }
+  function refreshDefender() { return Promise.resolve(M.defenderStatus()).then(function (d) { S.defender = d || { ok: false }; changed(); }).catch(function () {}); }
+  function refreshClock() { return Promise.resolve(M.clockStatus()).then(function (c) { S.clock = c || { ok: false }; changed(); }).catch(function () {}); }
+
+  function onStatus(st) {
+    S.status = st || {};
+    if (st && st.localOnly === false) { S.signedIn = true; S.localOnly = false; }
+    else if (st && st.localOnly === true && !st.mimicSession) S.signedIn = false;
+    changed();
+  }
+
+  // ── Boot ────────────────────────────────────────────────────────────────
+  Promise.resolve(M.getConfig()).catch(function () { return {}; }).then(function (cfg) {
+    S.cfg = cfg || {};
+    if (S.cfg.connected) S.signedIn = true;
+    var saved = Array.isArray(S.cfg.eqPaths) ? S.cfg.eqPaths : (S.cfg.eqPath ? [S.cfg.eqPath] : []);
+    S.eqConfigured = saved.length > 0;
+    if (S.cfg.mainCharacter) S.main = S.cfg.mainCharacter;
+    if (V === 'a' && S.cfg.onboarded) cur = 'account';
+    render();
+    loadFolders(); loadChars(); refreshZeal(); refreshDefender(); refreshClock();
+    Promise.resolve(M.getStatus()).then(onStatus).catch(function () {});
+    try { M.onStatus(onStatus); } catch (e) { void e; }
+    pollEngine();
+  });
+
+  // Exposed for the tests (they run these for real).
+  window.wpWelcome = { gateOk: gateOk, mainBackfillPaths: mainBackfillPaths, STEPS: STEPS, stepState: stepState, S: S };
+
+  function _previewBridge() {
+    var ok = function (v) { return function () { return Promise.resolve(v); }; };
+    return {
+      getConfig: ok({ eqPaths: ['C:\\TAKP'], showHud: true, enableTriggerTts: true, showMobInfo: true }),
+      getStatus: ok({ localOnly: false, mimicSession: { display_name: 'Aldenmar' } }), onStatus: function () {},
+      findEqInstalls: ok({ found: [{ path: 'C:\\TAKP', hasEqgame: true, hasLogs: true, logCount: 4 }] }),
+      listEqCharacters: ok([{ character: 'Aldenmar', log_size: 48e6, ago_days: 0 }, { character: 'Brackwyn', log_size: 9e6, ago_days: 3 }, { character: 'Corvale', log_size: 2e5, ago_days: 41 }]),
+      zealStatus: ok({ eqDir: 'C:\\TAKP', hasZealAsi: false, installedTag: null }),
+      defenderStatus: ok({ ok: true, paths: [{ path: 'C:\\TAKP', excluded: false }, { path: 'C:\\Users\\you\\AppData\\Roaming\\wolfpack-mimic', excluded: true }] }),
+      clockStatus: ok({ ok: true, running: true, automatic: true }),
+      getAgentPort: ok(7779), saveConfig: ok(true), relaunchAgent: ok(true), markOnboarded: ok(true), openDashboard: ok(true),
+      pickEqDir: ok(null), pickLogBackups: ok([]), zealCheckUpdate: ok({ ok: true, updateAvailable: true, latestTag: 'v1.4.6' }),
+      zealInstallUpdate: ok({ ok: true }), eqSetupForMe: ok({ ok: true, folders: [{}] }), defenderAddExclusions: ok({ ok: true }),
+      clockResync: ok({ ok: true }), setQuietMode: ok(true), toggleCrashReports: ok(true), openUiStudio: ok(true), openExternal: ok(true),
+      mimicLinkStart: ok(true), mimicLinkCancel: ok(true), mimicLinkSignOut: ok(true), welcomeOptin: ok({ ok: true, results: [] }),
+    };
+  }
+})();
+</script>
+</body>
+</html>

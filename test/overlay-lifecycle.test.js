@@ -54,7 +54,13 @@ const PAIRS = [
   ['commandWindow',   'createCommandOverlay'],
   ['popRaidWindow',   'createPopRaidOverlay'],
   ['meWindow',        'createMeOverlay'],
+  // The Timers canvas (2026-09-29) is the one entry setup / unlock do NOT
+  // conjure: it is an alternative home for the trigger overlay's visuals, so
+  // placing everything would show every timer twice. See PLACED below.
+  ['canvasWindow',    'createCanvasWindow'],
 ];
+// What setup / unlock build: every window except the canvas.
+const PLACED = PAIRS.length - 1;
 
 // Stand up the sliced code over fake windows. `alive` seeds windows that
 // already exist (i.e. "before" state); everything else starts null.
@@ -70,6 +76,7 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     function loadConfig() { return __cfg; }
     function appendAgentLog(s) { __log.push(s); }
     let setupMode = ${JSON.stringify(setupMode)};
+    let _canvasArrange = false;
     let _hideAllActive = ${JSON.stringify(hideAll)};
     const __blind = ${JSON.stringify(blind)};
     function _blindForceOpen(k) { return __blind.includes(k); }
@@ -190,16 +197,37 @@ describe('materialize: an overlay that is on gets a window', () => {
     expect(h.__created, 'an existing window must not be recreated').toEqual([]);
   });
 
-  it('builds ALL of them in setup mode', () => {
+  it('builds ALL of them in setup mode (the canvas only when it is on)', () => {
     const h = harness({ cfg: { overlaysLocked: true }, setupMode: true });
     h._materializeEnabledOverlays();
-    expect(h.__live()).toHaveLength(PAIRS.length);
+    expect(h.__live()).toHaveLength(PLACED);
+    expect(h.__live()).not.toContain('canvasWindow');
+    const on = harness({ cfg: { overlaysLocked: true, showCanvas: true }, setupMode: true });
+    on._materializeEnabledOverlays();
+    expect(on.__live()).toHaveLength(PAIRS.length);
   });
 
-  it('builds ALL of them while unlocked for placement', () => {
+  it('builds ALL of them while unlocked for placement (the canvas only when it is on)', () => {
     const h = harness({ cfg: { overlaysLocked: false } });
     h._materializeEnabledOverlays();
-    expect(h.__live()).toHaveLength(PAIRS.length);
+    expect(h.__live()).toHaveLength(PLACED);
+    expect(h.__live()).not.toContain('canvasWindow');
+  });
+
+  it('the Timers canvas: on means on (EQ gate aside while placing), off means off', () => {
+    // It is an alternative home for the trigger overlay's visuals, so setup and
+    // unlock must never conjure it — every timer would show twice.
+    const off = harness({ cfg: { overlaysLocked: false }, setupMode: true });
+    off._materializeEnabledOverlays();
+    expect(off.__live()).not.toContain('canvasWindow');
+    // On, it follows the EQ gate like any overlay…
+    const closed = harness({ cfg: { overlaysLocked: true, showCanvas: true }, eqRunning: false });
+    closed._materializeEnabledOverlays();
+    expect(closed.__live()).toEqual([]);
+    // …except while it is being placed.
+    const placing = harness({ cfg: { overlaysLocked: false, showCanvas: true }, eqRunning: false });
+    placing._materializeEnabledOverlays();
+    expect(placing.__live()).toContain('canvasWindow');
   });
 
   it('does NOT keep windows alive just because hide-all is active', () => {
@@ -293,14 +321,17 @@ describe('reap: an overlay that is off hands its renderer back', () => {
     expect(h.__live()).toEqual([]);
   });
 
-  it('frees nothing in setup mode', () => {
+  it('frees nothing in setup mode (but an OFF Timers canvas)', () => {
     const h = harness({ cfg: { overlaysLocked: true }, setupMode: true, alive: PAIRS.map(p => p[0]) });
     h._reapDisabledOverlays();
-    expect(h.__destroyed).toEqual([]);
+    expect(h.__destroyed).toEqual(['canvasWindow']);
+    const on = harness({ cfg: { overlaysLocked: true, showCanvas: true }, setupMode: true, alive: PAIRS.map(p => p[0]) });
+    on._reapDisabledOverlays();
+    expect(on.__destroyed).toEqual([]);
   });
 
   it('frees nothing while unlocked for placement', () => {
-    const h = harness({ cfg: { overlaysLocked: false }, alive: PAIRS.map(p => p[0]) });
+    const h = harness({ cfg: { overlaysLocked: false, showCanvas: true }, alive: PAIRS.map(p => p[0]) });
     h._reapDisabledOverlays();
     expect(h.__destroyed).toEqual([]);
   });
@@ -423,7 +454,7 @@ describe('a hidden overlay holds no renderer', () => {
     // do, and _eqGateOk is bypassed there for exactly that reason.
     const h = harness({ cfg: { overlaysLocked: false }, eqRunning: false });
     h._materializeEnabledOverlays();
-    expect(h.__live()).toHaveLength(PAIRS.length);
+    expect(h.__live()).toHaveLength(PLACED);
   });
 
   it('materialize and reap agree about every case', () => {

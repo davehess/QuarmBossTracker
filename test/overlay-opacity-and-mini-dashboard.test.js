@@ -85,8 +85,10 @@ describe('dashboard: mini mode on the Overlays page', () => {
     const rows = [...dash.slice(dash.indexOf('var WP_OVERLAY_ROWS = ['), dash.indexOf('];', dash.indexOf('var WP_OVERLAY_ROWS = [')))
       .matchAll(/^\s+\['(\w+)',/gm)].map(m => m[1]);
     for (const k of Object.keys(keys)) expect(rows, k).toContain(k);
-    expect(dash).toContain('<th>Mini</th>');
-    expect(dash).toContain("'<td style=\"white-space:nowrap\"><button type=\"button\" class=\"wp-ov-mini\" data-mini=\"' + miniKey + '\">…</button>'");
+    // Option C (2026-09-29): the switch and the 📌 sit in the row's controls under On screen now.
+    const code = stripJs(dash);
+    expect(code).toContain("? '<button type=\"button\" class=\"wp-ov-mini\" data-mini=\"' + miniKey + '\">…</button>'");
+    expect(code).toContain("+ '<span class=\"wp-ovctl\">' + dockCell + miniCell + '</span>'");
   });
 
   it('the switch, the pin and Minimize ALL drive Mimic\'s own mini internals', () => {
@@ -107,7 +109,7 @@ describe('the HUD ring is not dockable', () => {
     const catalog = stripJs(sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', '\n];'));
     expect(catalog).not.toMatch(/key: 'me'/);
     expect(catalog).toMatch(/key: 'mobinfo'/);                        // the others stay
-    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me')");
+    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')");
   });
   it('a HUD that was docked gets its own window back — as undocking it would have', () => {
     // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.
@@ -137,11 +139,18 @@ describe('dashboard: the Overlays page layout', () => {
     expect(order).toHaveLength(rows.length);
   });
 
-  it('two columns that fold to one on a narrow window; the opacity sliders sit with the backgrounds button', () => {
-    expect(dash).toMatch(/\.wp-ovtop \{ display:grid; grid-template-columns:repeat\(auto-fit, minmax\(min\(380px, 100%\), 1fr\)\)/);
-    const top = dash.slice(dash.indexOf("h += '<div class=\"wp-ovtop\"><div class=\"wp-ovcol\">';"), dash.indexOf("h += '</div></div>';   // end of the two columns"));
-    const box = top.slice(top.indexOf('🔅 Opacity'), top.indexOf("+ '</div>';", top.indexOf('🔅 Opacity')));
-    for (const bit of ['id="wpAllOpacity"', 'id="wpAllBgAlpha"', 'data-act="backdrops"', 'id="wpBdHotkeyCur"']) expect(box, bit).toContain(bit);
+  // Option C (2026-09-29) replaced the two columns: the list and the Add drawer sit side by side and
+  // fold to one column on a narrow window, and the looks are one strip — where the opacity slider
+  // still sits with the backgrounds button. The backgrounds KEY joined the other keys in the Keys strip.
+  it('list and drawer fold to one column on a narrow window; the opacity sliders sit with the backgrounds button', () => {
+    expect(dash).toMatch(/\.wp-ovsplit \{ display:grid; grid-template-columns:minmax\(0, 1\.3fr\) minmax\(0, 1fr\);/);
+    expect(dash).toMatch(/@media \(max-width: 1200px\) \{ \.wp-ovsplit \{ grid-template-columns:minmax\(0, 1fr\); \} \}/);
+    const render = sliceBlock(dash, 'function renderOverlays(s) {', '\n}\n');
+    const look = render.slice(render.indexOf('<div class="wp-strip wp-look">'), render.indexOf("<details '"));
+    for (const bit of ['id="wpAllOpacity"', 'id="wpAllBgAlpha"', 'data-act="backdrops"']) expect(look, bit).toContain(bit);
+    const keys = render.slice(render.indexOf('var GKEYS = ['), render.indexOf('<div class="wp-strip wp-look">'));
+    expect(keys).toContain("['wpBdHotkey',   'Backgrounds',");
+    expect(keys).toContain("' <code id=\"' + gp + 'Cur\" class=\"wp-key\">…</code>'");
     expect((dash.match(/data-act="backdrops"/g) || []).length).toBe(1);   // moved, not copied
   });
 });
