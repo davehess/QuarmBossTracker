@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PoP trigger pack (opens 2026-10-01)** | **§112. Reviewed, not imported.** 551 triggers: 463 ready, 24 events with tested corrected patterns, 53 recast timers to decide, 8 that need the agent to let triggers see NPC speech, 3 unverified. Private review page (owner's artifact list, "PoP Trigger Review") | the guild lead: make the four calls and the per-zone picks on the page. Then a session imports the chosen rows and, on a yes, ships the NPC-speech change to beta and a stable. Main is frozen 19:30–00:30 ET on raid nights |
 | **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
 | **PvP: NPC rows gone; Glory-worthy kills now read** | **§109.** 24 assists, 1 kill and 20 `pvp_deaths` rows deleted on the guild lead's yes. The missed kill was a Glory-worthy one the agent could not parse: agent 3.7.51 (beta `3f0dd0a3`) reads it, and the kill is restored by hand | Glory-worthy kills are missed by every Mimic below 3.7.51, so cut a stable soon. Raiders: after updating, run Opt-in Logs over nights with a Glory kill |
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
@@ -5192,3 +5193,29 @@ Mimic below agent 3.7.51 misses those kills, so the stable was the fix's real de
   `apps/mimic/ALPHA.md` (not shipped) to build one; ALPHA.md now says so. The stable push's own alpha sync
   failed on add/add conflicts (main had the Canvas files by file copy, alpha its own); the beta sync a minute
   later carried main in cleanly, so alpha lost nothing.
+
+### 112. The PoP trigger pack: checked against our own data, reviewed before import (2026-09-30)
+The guild lead, the day before Planes of Power opens, sent a 551-trigger PoP pack from another guild's
+public material and asked for its triggers, timers, boss info and strategy *"so that we can bring them in
+directly"* — reviewed first, and **not attributed in this repository**. The review is a private page
+(owner-only, its link kept out of the repo); choices made on it save to that page's own store. Nothing is
+imported yet. Our library had no PoP triggers (131 rows, 0 overlap).
+- **Spell triggers (354):** every pattern matches the landing, resist and fade text in our spell catalog.
+  **53 recast timers disagree with the server:** the pack times each spell by its own recast, while the
+  server's NPC spell lists (`eqemu_npc_spells_entries.recast_delay`) often set another, from 2 s vs 60 s to
+  30 s vs 8 s. The guild lead picks: server recast, pack numbers, or leave them out.
+- **Boss stat cards (139):** 138 match `eqemu_npc_types` exactly (level, MR/CR/FR); the last is a spelling
+  variant. Which command prints the "is not online at this time" reply on Quarm is untested.
+- **Event callouts (58):** rebuilt from the quest scripts' say, shout, emote and message calls
+  (`eqemu_quest_scripts`). **25 never fire on our server as written**: the pack anchors `^…$` on words that
+  sit inside a longer zone emote or shout (Bertoxxulous, Fennin Ro's Doomfire, Coirnav, the Air avatars,
+  Earth A's rings, the Halls of Honor flag) or keeps one space where the script prints two. Each has a
+  corrected pattern tested against the script's line. 6 texts are not in our copy of the scripts.
+- **8 triggers are dead in our engine whatever the pattern:** `triggerVisibleLine` drops every `says,` and
+  `tells you,` line (the privacy list), which includes NPC speech — the Tribunal's trial lines, Mavuin's
+  flag, Thelin, Etumer and Nitram. Proposed: let triggers see NPC speech only (speaker name with a space,
+  plus Etumer by name); player tells stay hidden. An agent change, so beta then a stable cut. Waiting on
+  the guild lead's yes.
+- **Delivery:** imported triggers are guild-trigger rows, which reach raiders in about two minutes with no
+  release. Only the NPC-speech change needs a Mimic update.
+- The alpha Canvas work (HUD shapes, chat feeds; task list) is paused for this; nothing of it was written.
