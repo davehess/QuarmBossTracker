@@ -880,7 +880,8 @@ group claim → catch-all) using the `group` the agent stamps on timer rows (`_b
 (`canvasOwnsTriggers`). Layout `cfg.canvasLayouts[<W>x<H>]` via `canvas-state` / `canvas-save`; arrange via
 `canvas-edit` (tray "↳ Arrange the canvas…", dashboard ✥ Arrange). Every panel also carries an always-on
 `.mvbtn` ✥ (`data-wp-interact`, `startDrag(…, anyTime)`) that moves it and opens its settings while locked;
-the panel body takes the mouse only while arranging (DECISIONS §87). 🧪 test rows: the settings button sets
+the panel body takes the mouse only while arranging (DECISIONS §87). On the alpha a group shows one ✥:
+`markGroupMovers()` gives every member but the top-left one `.mvtail`, and that ✥ drags the group (FB-40, §110). 🧪 test rows: the settings button sets
 `_testing[id]` for 30 s, `applyFrame` passes `_edit || _isTesting(id)` to the part's `wpPartSample`, and the
 part's `_sampleTimers` holds one sample per group plus one per claimed name (`wpCanvasPanelNames`); callouts
 panels get `wpPartFlash`. `placeMenu` keeps the settings view whole on screen (§92).
@@ -1383,6 +1384,10 @@ Backfilled (`--since`) kills record but never post/predict.
 - The bot keeps only `characters`-roster names, then `_pvpUnseen` / `_pvpNeighbours` drop a report of
   an assist another witness already stored (same assister and victim within ±30 s). A kill replayed from
   an old log goes through the same check on the killer (§55).
+- An assist on an NPC is dropped (bot 3.1.177, §109): a boss kill broadcast reads like a player kill, so
+  every raider on Trakanon got a PvP assist. `_victimIsNpc` in `_handleAgentPvpAssists`: the broadcast
+  gave no guild, the name is in `eqemu_npc_types`, and `/who` never saw it with a class or a guild.
+  `test/pvp-assist-npc-victim.test.js`.
 
 **Fight sizes** (§57, migration `20260927040000`): `pvp_fights` returns `zek_players`, `ally_players`
 and `players_by_guild` — everyone a Wolf Pack log saw on the field (the dead, their killers, the
@@ -3460,8 +3465,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   = `#tabDps` over `#tabTank`. Both columns carry `wp-mini-hide`. Tests:
   `test/dps-header-stack.test.js`.
 - **Overlay size presets** — `overlay-resize-preset` in `main.js` (XS 200 · S 260
-  · M 320 · L 420 · XL 500), labels in `preload.js`'s chrome menu. Tests:
-  `test/overlay-resize-presets.test.js`.
+  · M 320 · L 420 · XL 500), labels in `preload.js`'s chrome menu. XS is
+  `_OVERLAY_MIN_W`, and every overlay window's `minWidth` is at or under it (FB-38,
+  agent 3.7.50 beta): a larger minimum let a locked window take XS but rebuilt it
+  wider on the next launch. Tests: `test/overlay-resize-presets.test.js`.
 - **Mob mana drains + PvP drain tally (agent 3.7.4, beta)** — catalog `drain`
   (bot 3.1.147, `_manaDrain`); agent `_drainAmount` / `_npcInstantDrainCut` /
   `_addDrain` / `_noteManaDrainLanding` on both landing paths, `npcManaState`
