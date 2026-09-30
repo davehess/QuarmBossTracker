@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Target Info: mob info kept on disk; the state payload** | **§114–§115.** Bot 3.1.179 builds zone packs; agent 3.7.55 (beta `effdc609`) keeps the Planes of Power and every visited zone on disk. The likelier cause of the slowness is untouched: `/api/state` carries 591 KB of guild triggers, and Target Info reads it twice a second | the guild lead: on the beta, target something in a PoP zone and say whether it is instant. Then pick whether to slim the payload (a Target-Info-only endpoint, or trigger notes out of `/api/state`). Raid hold: `flag_raid_hold = 0` if updates should land on raid-schedule evenings before 10/14 |
 | **PoP trigger pack (opens 2026-10-01)** | **§112–§113. Imported and live.** 374 guild-trigger rows (`pop-2026-10`), server recasts, corrected event patterns. NPC speech reaches triggers from agent 3.7.54, stable Mimic 2.7.6. Ring of Fire (Acrylia) pack of 5. No formal raids until 10/14 | the guild lead: in a PoP zone, run the boss short-name lookup once to see which command prints the "not online" reply the stat cards fire on. Raiders: update to 2.7.6 for the NPC-speech callouts |
 | **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
 | **PvP: NPC rows gone; Glory-worthy kills now read** | **§109.** 24 assists, 1 kill and 20 `pvp_deaths` rows deleted on the guild lead's yes. The missed kill was a Glory-worthy one the agent could not parse: agent 3.7.51 (beta `3f0dd0a3`) reads it, and the kill is restored by hand | Glory-worthy kills are missed by every Mimic below 3.7.51, so cut a stable soon. Raiders: after updating, run Opt-in Logs over nights with a Glory kill |
@@ -5272,3 +5273,41 @@ encountering the Ring of Fire event in Acrylia Caverns"*.
   - The bars run to the earliest time (780, 1,580 and 2,380 s), because no log line marks a wave.
   - If the server still ran the old cadence (first boss at wave 30, then every 15), boss 1's bar would
     end about half an hour early. So if no boss shows by around 15 minutes, the change is not live yet.
+
+### 114. Target Info: mob info kept on the member's machine (2026-09-30, bot 3.1.179, agent 3.7.55 beta `effdc609`)
+The guild lead, on Target Info loading slowly, picked the disk cache (option B of four) and widened it:
+*"keep all of the PoP mobs cached on a user's machine, as well as zones that the user frequents"*.
+- **What was slow, measured:** the bot's `mob-info` answer is flat over the week (median 110–240 ms, p95
+  0.5–1 s, p99 up to 2.6 s, 10,691 calls in 7 days), so Railway did not get slower. Target Info reads the
+  agent's whole `/api/state` twice a second to use two fields from it, and that payload now carries every
+  guild trigger with its notes: **591 KB, 457 KB of it added by the PoP and Ring of Fire imports (§112–§113)**.
+  That is the likelier cause and this change does not touch it (open item below).
+- **Bot:** `_buildMobInfo` is the mob-info lookup lifted out of its handler unchanged. `GET
+  /api/agent/mob-pack?zone=<id>` builds every NPC name in the zone's id block (`zoneid*1000 + n`, so
+  scripted spawns come too) with that zone as the requester's, keyed by `_mobCaseKey`. A pack is built once
+  a week, one zone at a time and three lookups at a time, kept in memory (up to 120 zones) and in `bot_kv`
+  (`mob_pack:<zone>`, stored as the exact string served, so the ETag survives a deploy), and served gzipped
+  with an ETag (304 on a match). Not built yet: 202, built in the background. A build where most lookups
+  failed is not saved, so a database hiccup cannot pin a hollow pack for a week. `?pinned=1` lists zone
+  ids 200–223, the Planes of Power: codecay and pojustice carry expansion 0 in our mirror, so the id range
+  is used rather than the flag. `test/mob-pack.test.js`.
+- **Agent:** `mobinfo-cache/` beside the agent, one file per zone. `fetchMobInfo` answers from it before
+  any network call, and Target Info shows the hit on the same poll. Every 20 s the agent records each
+  character's zone and fetches its pack, and fetches one pinned zone. A held pack revalidates daily.
+  Eviction drops unpinned zones unvisited for 90 days, then the oldest past 80 MB. Mimic updates replace
+  only the agent's three code files, so the cache survives them. `test/mob-pack-agent.test.js`.
+- **Size:** PoP is about 1,800 distinct mob names across 24 zones. Deployment cost: DESIGN-selfhost-wizard §3.
+- **Not built:** loading one tab at a time. It would show Stats sooner on a first lookup but make every tab
+  click wait on the bot; with the pack on disk, one call is the better trade.
+
+### 115. Two things found in the guild lead's `/api/state` paste (2026-09-30)
+- **The DPS HUD and the player HUD's Σ count different things.** The DPS HUD's damage (`currentEncounterThreat.perPlayer[].dmg`)
+  includes damage-shield hits. The player HUD's Σ is the `out` lane of `_meMobTallies`, which puts DS in its
+  own `ds` lane. On the screenshot's fight that is 4,072 against 3,938. The 134 difference is thorns plus any
+  small hit the HUD judged to be DS. The second DPS HUD row, named after the mob, is the total row, not a
+  mis-parsed attacker. No change made; the fix, if wanted, is to label the Σ as "your hits, DS apart" or add
+  the DS lane into it.
+- **The raid hold is on every Sun/Wed/Thu 19:00–00:30 ET, raid or not.** The paste showed
+  `updateBlocked: raid hold — the bot reports an active raid` on a no-raid Wednesday. `_raidHoldNow` is
+  schedule-driven; with no formal raids until 10/14 (§113), agent updates and background scans wait on those
+  evenings unless an officer sets `flag_raid_hold = 0` in /admin/overlays, and clears it before 10/14.

@@ -15425,6 +15425,22 @@ async function _handleAgentMobInfo(req, res) {
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, mob: null })); }
+  const mob = await _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender });
+  if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
+  // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
+  // is right for catalog rows (they never change between weekly syncs) but
+  // catastrophic for nulls, because a single transient failure — a Supabase
+  // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
+  // target" for six hours on a mob whose row exists and whose query works.
+  // A member hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
+  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, mob }));
+}
+
+// The lookup itself, lifted out of the handler unchanged so a zone pack
+// (/api/agent/mob-pack) builds every mob exactly the way a live lookup does.
+async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender }) {
   let mob = null;
   try {
     // Case-insensitive exact match on the normalized (underscored) name.
@@ -15784,16 +15800,146 @@ async function _handleAgentMobInfo(req, res) {
   } catch (err) {
     console.warn('[mob-info] lookup failed:', err?.message);
   }
-  if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
-  // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
-  // is right for catalog rows (they never change between weekly syncs) but
-  // catastrophic for nulls, because a single transient failure — a Supabase
-  // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
-  // target" for six hours on a mob whose row exists and whose query works.
-  // A member hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
-  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, mob }));
+  return mob;
+}
+
+// ── Zone packs: every mob in a zone, for Mimic to keep on disk ──────────────
+// The guild lead, 2026-09-30: "keep all of the PoP mobs cached on a user's machine, as
+// well as zones that the user frequents". GET /api/agent/mob-pack?zone=<id> answers
+// every NPC name whose id sits in the zone's block (id = zoneid*1000 + n, so scripted
+// event spawns come too, which spawn2 would miss), each built by _buildMobInfo with that
+// zone as the requester's, keyed by _mobCaseKey. ?pinned=1 lists the zones every Mimic
+// keeps: the Planes of Power, zone ids 200 to 223 (codecay and pojustice are tagged
+// expansion 0 in our mirror, so the id range, not the flag).
+// A pack is built once and kept a week, in memory and in bot_kv so a deploy does not
+// rebuild it, and served with an ETag so a Mimic revalidating what it holds gets a 304.
+// A pack not built yet answers 202 and builds in the background: one zone at a time,
+// three lookups at a time, so a fleet booting together cannot flood the database.
+const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
+const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz }
+const _mobPackQueue = [];             // zone ids waiting to build
+let _mobPackBuilding = null;          // the zone id being built
+
+function _mobPackFrom(body, builtAt) {
+  return {
+    etag: '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"',
+    builtAt, body, gz: require('zlib').gzipSync(body),
+  };
+}
+
+const _mobPackKvMiss = new Map();    // zoneId → when bot_kv last had nothing for it
+async function _mobPackLoad(zoneId) {
+  if (_mobPacks.has(zoneId)) return _mobPacks.get(zoneId);
+  // Until a first build lands, every Mimic in the zone asks; one bot_kv read a minute is enough.
+  if (Date.now() - (_mobPackKvMiss.get(zoneId) || 0) < 60 * 1000) return null;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.mob_pack:${zoneId}&select=value&limit=1`);
+    const v = Array.isArray(rows) && rows[0] && rows[0].value;
+    // The body is stored as the exact string served, so the ETag survives a deploy.
+    if (v && typeof v.body === 'string' && v.built_at) {
+      const pack = _mobPackFrom(v.body, Date.parse(v.built_at) || 0);
+      _mobPackKeep(zoneId, pack);
+      return pack;
+    }
+    _mobPackKvMiss.set(zoneId, Date.now());
+  } catch (e) { console.warn('[mob-pack] load failed:', e?.message); }
+  return null;
+}
+// About 1 MB a zone plus its gzip; 120 zones is far past what a guild visits in a week.
+function _mobPackKeep(zoneId, pack) {
+  _mobPacks.delete(zoneId);
+  _mobPacks.set(zoneId, pack);
+  if (_mobPacks.size > 120) _mobPacks.delete(_mobPacks.keys().next().value);
+  _mobPackKvMiss.delete(zoneId);
+}
+
+async function _mobPackBuild(zoneId) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const lo = zoneId * 1000;
+  const rows = await supabase.select('eqemu_npc_types', `id=gte.${lo}&id=lte.${lo + 999}&select=name&limit=1000`);
+  const names = new Map();   // case-kept key → a catalog spelling of it
+  for (const r of rows || []) {
+    const n = String((r && r.name) || '');
+    if (!/[a-z]/i.test(n)) continue;   // the "_" placeholder names
+    const ck = _mobCaseKey(n);
+    if (!names.has(ck)) names.set(ck, n);
+  }
+  const list = [...names.entries()];
+  const mobs = {};
+  let next = 0, found = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const [ck, n] = list[next++];
+      const mob = await _buildMobInfo(supabase, { name: n, norm: _normMobName(n), caseKey: ck, reqZoneId: zoneId, reqGender: null });
+      if (mob) { mobs[ck] = mob; found++; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  // A lookup that fails reads as "no such mob", so a build during a database hiccup
+  // would pin a hollow pack for a week. Keep the old one instead and try again later.
+  if (list.length >= 10 && found < list.length / 2) {
+    console.warn(`[mob-pack] zone ${zoneId}: only ${found}/${list.length} mobs built — not saved`);
+    return;
+  }
+  const builtAt = new Date().toISOString();
+  const body = JSON.stringify({ ok: true, zone_id: zoneId, built_at: builtAt, mobs });
+  _mobPackKeep(zoneId, _mobPackFrom(body, Date.now()));
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: `mob_pack:${zoneId}`, value: { built_at: builtAt, body }, updated_at: builtAt }],
+      'guild_id,key');
+  } catch (e) { console.warn('[mob-pack] save failed:', e?.message); }
+  console.log(`[mob-pack] zone ${zoneId}: ${found}/${list.length} mobs, ${Math.round(body.length / 1024)} KB`);
+}
+
+function _mobPackEnqueue(zoneId) {
+  if (_mobPackBuilding === zoneId || _mobPackQueue.includes(zoneId) || _mobPackQueue.length >= 64) return;
+  _mobPackQueue.push(zoneId);
+  if (_mobPackBuilding != null) return;
+  (async () => {
+    while (_mobPackQueue.length) {
+      _mobPackBuilding = _mobPackQueue.shift();
+      try { await _mobPackBuild(_mobPackBuilding); }
+      catch (e) { console.warn(`[mob-pack] zone ${_mobPackBuilding} build failed:`, e?.message); }
+    }
+    _mobPackBuilding = null;
+  })();
+}
+
+async function _handleAgentMobPack(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const sp = new URL(req.url, 'http://x').searchParams;
+  if (sp.get('pinned')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, zones: _MOB_PACK_PINNED }));
+  }
+  const zoneId = parseInt(sp.get('zone'), 10);
+  if (!(zoneId >= 1 && zoneId <= 999)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'zone required' }));
+  }
+  const pack = await _mobPackLoad(zoneId);
+  if (!pack || (Date.now() - pack.builtAt) >= _MOB_PACK_TTL_MS) _mobPackEnqueue(zoneId);
+  if (!pack) {
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, building: true, retry_after_sec: 120 }));
+  }
+  if (req.headers['if-none-match'] === pack.etag) {
+    res.writeHead(304, { 'ETag': pack.etag });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': pack.etag },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? pack.gz : pack.body);
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -21154,6 +21300,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentIncomplete(req, res); }
     catch (err) {
       console.error('[incomplete] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/mob-pack')) {
+    try { return await _handleAgentMobPack(req, res); }
+    catch (err) {
+      console.error('[mob-pack] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

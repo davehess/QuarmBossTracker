@@ -499,6 +499,18 @@ and the same never-refetch guarantee.
   wizard can leave the PvP pieces out entirely.
 - `pvp_kills` (Wolf Pack on one side) stays as it is; the leaderboard reads it.
 
+### Mob info kept on members' machines (2026-09-30)
+- **Target Info's catalog data is built per zone on the bot and kept on each member's
+  disk** (`/api/agent/mob-pack`, DECISIONS §114). The bot builds a zone once a week
+  (about 10 database lookups per mob name, three at a time) and stores it in `bot_kv`,
+  roughly 0.3–1 MB per zone. Each Mimic keeps the Planes of Power and every zone it
+  visits in `mobinfo-cache/`, up to 80 MB.
+- The cost lands as database reads during the weekly build and bot egress when a
+  member first downloads a zone (gzipped, about a fifth of the size). After that, a
+  daily revalidation is a 304. On an on-prem box the build reads are free.
+- The pinned list (zone ids 200–223) is ours. The wizard should derive it from
+  whatever expansion the guild is heading into, not copy it.
+
 ## 4. Open questions for whoever builds it
 
 - **What does the wizard run as?** A CLI in the repo, a page in the local web
