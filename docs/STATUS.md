@@ -215,8 +215,8 @@ next touch one rather than assuming a missing row means a missing doc.
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
 - **✅ PoP trigger pack + Ring of Fire (guild triggers, live 2026-09-30).** 374 rows for every PoP zone
   (`source_pack = 'pop-2026-10'`): recast bars on the server's own recast, boss stat cards, event callouts on
-  patterns corrected against the quest scripts, "on you" alerts. Plus 5 for the Acrylia Ring of Fire
-  (`acrylia-ring-of-fire`). No release needed; they reach raiders on the 2-minute poll. Open: which command
+  patterns corrected against the quest scripts, "on you" alerts. Plus 7 for the Acrylia Ring of Fire
+  (`acrylia-ring-of-fire`), with a bar to each of the first three bosses (every 10 waves). No release needed; they reach raiders on the 2-minute poll. Open: which command
   prints the "not online" reply the stat cards fire on is untested. §112–§113.
 - **✅ Triggers hear NPC speech (agent 3.7.54, beta `685bb5db`; stable Mimic 2.7.6, 2026-09-30).** A
   `says`/`shouts`/`tells you` line reaches triggers when the speaker's name has a space (or is Etumer);

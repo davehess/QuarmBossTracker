@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'mimic-2-7-6-2026-09-30',
     title: 'Mimic 2.7.6',
-    version: 'Mimic 2.7.6 · agent 3.7.54 · Web 1.8.58',
+    version: 'Mimic 2.7.6 · agent 3.7.54 · Web 1.8.59',
     date: '2026-09-30',
     headline: 'Planes of Power triggers for every zone, and guild triggers can now hear what raid NPCs say and shout.',
     features: [
@@ -53,7 +53,7 @@ export const releases: Release[] = [
       },
       {
         name: 'Ring of Fire',
-        blurb: 'Acrylia Caverns: a bar to the first wave and to the 10th-wave boss, a callout when the ring resets, and one when a possessed priest lands a Complete Heal.',
+        blurb: 'Acrylia Caverns: a bar to the first wave and to each of the first three bosses (one every 10 waves), a callout when the ring resets, and one when a possessed priest lands a Complete Heal.',
       },
     ],
     fixes: [
