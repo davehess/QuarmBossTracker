@@ -220,11 +220,14 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ FB-40 Canvas: target mana, one ✥ per group, labels (alpha `f7881fc3`, 2026-09-30).** Target mana shows
   the catalog pool before any cast is seen; a group shows one ✥ (top-left piece); "Its …" → "Target …".
   `test/canvas-pieces.test.js`. §110.
-- **📋 FB-39 same-name mobs not told apart — waiting on which overlay (2026-09-30).** The screenshot is in a
-  private bucket; the log shows two same-named mobs alive at once and one agent uploading spawn id 0. §110.
+- **⏳ FB-39 Extended Target: each same-name mob keeps its own debuffs (bot 3.1.178 + beta `dde2f702`,
+  2026-09-30).** The bot reads each landing's spawn id (`_extDebuffInstances`, rule 0 in
+  `_extAttributeDebuffs`) and no longer keeps one entry per spell per NAME; the overlay shows an id-proven
+  group row by row. `test/ext-target-debuff-ids.test.js`, `test/ext-target-overlay-proven.test.js`. §110.
 - **✅ PvP: an assist on an NPC is dropped (bot 3.1.177, main `82521c3b`, 2026-09-30).** Boss kill broadcasts
-  read like player kills, so raiders on Trakanon got PvP assists. `_victimIsNpc`; 1 kill + 24 assists already
-  stored are flagged, deleting them waits for a yes. `test/pvp-assist-npc-victim.test.js`. §109.
+  read like player kills, so raiders on Trakanon got PvP assists. `_victimIsNpc`; the 1 kill + 24 assists
+  already stored were deleted on the guild lead's yes. 20 NPC victims in `pvp_deaths` (the 2026-09-26
+  backfill) wait for their own yes. `test/pvp-assist-npc-victim.test.js`. §109.
 - **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
   Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
   does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the

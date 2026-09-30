@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.178': [
+    '**Extended Target puts each debuff on the right mob.** When two mobs share a name and Zeal tells them apart, a slow or a tash now shows on the mob it landed on, going by the mob number the caster’s Mimic saw, instead of on whichever one you happen to be targeting. Shows on the beta Mimic first.',
+  ],
   '3.1.165': [
     '**Quest NPCs no longer arrive as tells.** Some NPCs, like Grand Librarian Maelin in the Plane of Knowledge library, print their lines the way a tell looks, and those were being DM’d to you. They are not any more. Real tells from players are untouched.',
   ],

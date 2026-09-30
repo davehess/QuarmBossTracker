@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'feedback-38-42-2026-09-30',
+    title: 'Five reports answered',
+    version: 'Bot 3.1.178 · Web 1.8.55 · Mimic beta',
+    date: '2026-09-30',
+    channel: 'beta',
+    headline: 'Extended Target keeps same-name mobs’ debuffs apart, the slow callout says “Ree slow”, and an XS overlay stays XS.',
+    features: [
+      {
+        name: 'Debuffs on the right mob',
+        blurb: 'When two mobs share a name, Extended Target shows each slow or tash on the mob it landed on, going by the mob number the caster’s Mimic saw.',
+      },
+    ],
+    fixes: [
+      'The slow callout said “Reh slow”; it now says “Ree slow”. The words on screen still say reslow.',
+      'A mob you killed stayed on the HUD’s hit totals for 90 seconds; it now leaves after 10.',
+      'An overlay set to XS came back wider the next time Mimic started; it now stays XS.',
+      'Raiders on a boss like Trakanon were getting a PvP assist for the boss kill. The bot no longer counts those, and the old ones are removed.',
+    ],
+  },
+  {
     key: 'me-recent-characters-2026-09-29',
     title: 'Web 1.8.54',
     version: 'Web 1.8.54',
