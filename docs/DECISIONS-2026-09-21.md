@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 (target mana, one ✥ per group, labels) on alpha `f7881fc3` | the guild lead: for FB-39, say which overlay the screenshot shows. The member behind FB-38: set XS, restart Mimic, confirm it stays |
+| **PvP rows that are NPCs** | **§109; bot 3.1.177 stops new ones.** 1 kill (Lord of Ire) and 24 assists (19 on Trakanon; Fright, Terror, Dread) flagged | the guild lead: say yes to delete them. For the missing kill: the victim's name and the time or zone |
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
 | **Essences of Power loot queue on /pop** | **Beta `7b942d11` (§96).** The guild's rule as code: one bid buys the set, the next drop goes to the first in line who lacks it and is there, else bid and join the end. `?v=b` by person, `?v=c` by essence, `&demo=1` sample data | the guild lead: open `b.wolfpack.quest/pop?v=b&demo=1` and `?v=c&demo=1`, pick one. Officers: record every piece in OpenDKP (bid, then 0 DKP hand-outs); name the set bid "Essences of Power" |
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
@@ -5103,3 +5105,43 @@ on Sep 26, and climbed again.
 - **Offered, not done:** deleting merged `task/*` and `claude/*` branches (about 40 of the 50) so their
   last builds can expire. Deleting branches cannot be undone, so it waits for a yes. Also offered:
   replacing the 23 MB GIF with a video of a few MB.
+- **2026-09-30:** the guild lead said yes to both. Neither landed from the cloud session: the git proxy
+  refused the remote branch deletes (403) and further attempts were then blocked. Both are the guild
+  lead's to do on GitHub or from a local session.
+
+### 109. An assist on an NPC is not a PvP assist (2026-09-30, bot 3.1.177)
+The guild lead: *"query and flag any pvp kills that are probably an NPC name. trakanon is an NPC"*.
+- **Why it happened:** the server announces a boss kill in the same words as a player kill ("<name> of
+  <guild> has killed Trakanon in Ruins of Sebilis!"). Kills were already handled; the ASSIST path
+  (`_checkPvpAssists`, §54) credited every raider who hit the boss with a PvP assist.
+- **Found, flagged, not deleted:** `pvp_kills` id 10 (Lord of Ire); `pvp_assists` on Trakanon 162–171
+  (2026-09-29 22:49 ET), 126–132, 82 and 83; on Fright 80, 81, 86; Terror 85; Dread 84. A player who
+  shares a boss's name was checked by `/who` and kept. Deleting the rows waits for the guild lead's yes.
+- **Fix:** `_victimIsNpc` in `_handleAgentPvpAssists` drops an assist whose victim had no guild in the
+  broadcast, is in `eqemu_npc_types`, and was never seen in `/who` with a class or a guild. Cached per
+  name per request. `test/pvp-assist-npc-victim.test.js` runs it against a stub.
+- **Missing kill (same night):** no kill row for any of the guild lead's characters in the last 7 days,
+  and their agent's PvP uploads were healthy. To find it: the victim's name and the time or zone, or the
+  log line.
+
+### 110. Feedback round FB-38 to FB-42 (2026-09-30)
+- **FB-38 (stable 2.7.4): XS not remembered after a restart.** XS is 200 px; twelve overlays had a 220–300 px
+  minimum width. A locked window takes XS anyway (Electron pins a non-resizable window's minimum to its
+  new size), so 200 was saved, and the next launch built the window at its own minimum. Every overlay's
+  minimum is now `_OVERLAY_MIN_W` (200), the same number as XS. Beta `0d782606` (agent 3.7.50). Not
+  reproduced on Windows; the report does not name the overlay, so the member should confirm after the
+  update.
+- **FB-41: "Reslow" spoken as REH-slow.** The built-in slow callouts now speak "Ree slow" and "Ree slow
+  soon"; the text on screen still says reslow. Beta `0d782606`.
+- **FB-42: a kill stayed on the HUD for 90 s.** The HUD kept a dead mob's hit tally as a dim ghost for
+  90 s (`_ME_TALLY_DEAD_MS`); now 10 s. Beta `0d782606`.
+- **FB-40 (alpha): Canvas target mana, move icons, labels.** Target mana was blank until the agent saw the
+  mob cast; it now shows the catalog pool as a full bar ("no casts seen"), as Target Info does. A group
+  shows one ✥ (its top-left piece), which moves the group. "Its …" labels read "Target …". Alpha `f7881fc3`.
+- **FB-39 (alpha): two mobs not told apart — waiting.** The screenshot is in the private
+  `feedback-screenshots` bucket, which this session cannot read, and the report does not say which
+  overlay. The log shows two `froglok krup shaman` alive at once (spawn ids 1296 and 1329) while the
+  duo was on different targets, and the guild lead's agent uploaded spawn id 0 on landings the partner's
+  agent tagged with the real id (it only knows an id when its own Zeal target is that mob). Anything
+  that falls back to the NAME when the id is 0 will merge the two. Next: the guild lead says which
+  overlay, then the fix goes where that overlay keys its rows.
