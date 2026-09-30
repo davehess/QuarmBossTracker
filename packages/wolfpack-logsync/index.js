@@ -32435,8 +32435,28 @@ const PVP_BARE_BOSS_GUILDLESS_RX = /^\[(.+?)\]\s+\[PVP\]\s+(\w+) has killed (.+?
 // carry commas of their own ("Doomfire, the Burning Lands").
 const PVP_GLORY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek watches as (\w+) spills (\w+)'s blood in (.+?)[.!]?\s*$/;
 const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
+// A Glory-WORTHY kill is worded differently, and until 2026-09-30 it went to the unmatched capture, so
+// the kill never reached the bot (the guild lead, with a screenshot of one: "[PVP] Rallos Zek marks
+// Aldenmar with his favor for spilling Brackwyn's blood in Ruins of Sebilis. Aldenmar now bears 1 of 10
+// measures of Rallosian Glory."). The zone ends at the sentence break before "<name> now bears".
+const PVP_GLORY_WORTHY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek marks (\w+) with his favor for spilling (\w+)'s blood in (.+?)\.\s+(\w+ now bears .+?)\s*$/;
 function parseGloryKill(line) {
-  if (line.indexOf('Rallos Zek watches as') === -1) return null;   // cheap gate
+  if (line.indexOf('Rallos Zek') === -1) return null;   // cheap gate
+  const w = PVP_GLORY_WORTHY_RX.exec(line);
+  if (w) {
+    const ts = parseEqTimestamp(line);
+    return {
+      ts: ts ? ts.toISOString() : new Date().toISOString(),
+      text: line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim(),
+      killType: 'pvp',
+      source: 'rallos_glory',
+      killer: w[2], killerGuild: null,
+      victim: w[3], victimGuild: null,
+      zone: w[4].trim(),
+      glory: true,
+      gloryText: w[5].trim(),
+    };
+  }
   const m = PVP_GLORY_RX.exec(line);
   if (!m) return null;
   const ts = parseEqTimestamp(line);

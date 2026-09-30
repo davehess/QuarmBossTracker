@@ -14,6 +14,7 @@ const block = [
   sliceBlock(agent, 'function parseEqTimestamp(line) {', '\n}'),
   sliceBlock(agent, 'const PVP_GLORY_RX = ', ';'),
   sliceBlock(agent, 'const PVP_GLORY_CLAUSE_RX = ', ';'),
+  sliceBlock(agent, 'const PVP_GLORY_WORTHY_RX = ', ';'),
   sliceBlock(agent, 'function parseGloryKill(line) {', '\n}'),
 ].join('\n');
 // eslint-disable-next-line no-new-func
@@ -44,6 +45,22 @@ describe('Rallosian Glory kill broadcast', () => {
     expect(r).toMatchObject({ zone: 'Kael Drakkel', glory: null, gloryText: 'and is pleased' });
     const bare = parseGloryKill("[Mon Sep 28 16:22:06 2026] [PVP] Rallos Zek watches as Kyinen spills Sweetums's blood in Kael Drakkel.");
     expect(bare).toMatchObject({ zone: 'Kael Drakkel', glory: null, gloryText: null });
+  });
+
+  // The guild lead, 2026-09-30, with a screenshot of a kill that never reached the bot. Names invented;
+  // the wording is the server's.
+  it('reads a Glory-worthy kill, which Rallos Zek words differently', () => {
+    const r = parseGloryKill("[Tue Sep 29 22:55:44 2026] [PVP] Rallos Zek marks Aldenmar with his favor for spilling Brackwyn's blood in Ruins of Sebilis. Aldenmar now bears 1 of 10 measures of Rallosian Glory.");
+    expect(r).toMatchObject({
+      killType: 'pvp', source: 'rallos_glory',
+      killer: 'Aldenmar', killerGuild: null, victim: 'Brackwyn', victimGuild: null,
+      zone: 'Ruins of Sebilis', glory: true,
+      gloryText: 'Aldenmar now bears 1 of 10 measures of Rallosian Glory.',
+    });
+    expect(r.ts.startsWith('2026-09-')).toBe(true);
+    // A name that already ends in s keeps the server's "s's", and a zone with a comma stays whole.
+    const s = parseGloryKill("[Tue Sep 29 22:55:44 2026] [PVP] Rallos Zek marks Aldenmar with his favor for spilling Corvales's blood in Doomfire, the Burning Lands. Aldenmar now bears 2 of 10 measures of Rallosian Glory.");
+    expect(s).toMatchObject({ victim: 'Corvales', zone: 'Doomfire, the Burning Lands', glory: true });
   });
 
   it('ignores lines that only look similar', () => {
