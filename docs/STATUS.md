@@ -213,6 +213,15 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **✅ PoP trigger pack + Ring of Fire (guild triggers, live 2026-09-30).** 374 rows for every PoP zone
+  (`source_pack = 'pop-2026-10'`): recast bars on the server's own recast, boss stat cards, event callouts on
+  patterns corrected against the quest scripts, "on you" alerts. Plus 5 for the Acrylia Ring of Fire
+  (`acrylia-ring-of-fire`). No release needed; they reach raiders on the 2-minute poll. Open: which command
+  prints the "not online" reply the stat cards fire on is untested. §112–§113.
+- **✅ Triggers hear NPC speech (agent 3.7.54, beta `685bb5db`; stable Mimic 2.7.6, 2026-09-30).** A
+  `says`/`shouts`/`tells you` line reaches triggers when the speaker's name has a space (or is Etumer);
+  player chat stays hidden and NPC lines stay out of feedback excerpts. `/privacy` has a collapsed
+  exceptions section. `test/npc-speech-triggers.test.js`. §113.
 - **⏳ Update gate: no more "active fight in progress" while idle (agent 3.7.53, beta `df881a7e`, 2026-09-30).**
   flush()'s early exits (under 10 events, a player or no target) never stamped the live snapshot flushed, so a
   few stray hits blocked updates until the next real fight. A fight now counts as live only while it has

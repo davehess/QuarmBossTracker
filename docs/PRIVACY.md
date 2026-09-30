@@ -169,6 +169,39 @@ that was said. This is evidence of a possible flag, never proof, and is shown
 that way. A player greeting another player the same way ("Hail, friend") is
 stored too — we can't tell them apart.
 
+## Exceptions: NPC speech that triggers can hear
+
+*(Collapsed on the website, by the guild lead's call, 2026-09-30.)*
+
+Mimic keeps says, shouts and tells away from triggers. Since agent 3.7.54 it
+makes one exception: **lines spoken by NPCs**, so guild triggers can call out
+scripted raid events. A speaker counts as an NPC when its name has a space in it
+(a player's name never does), or when it is one of the named one-word NPCs
+below. A pet's name has a space too, so pet lines count.
+
+- These lines stay on your PC. A trigger that fires sends only its name and what
+  it matched, the same as any trigger. They are never uploaded as chat, and they
+  are left out of log excerpts attached to feedback.
+- A player's tells, `/say`, shouts, OOC, auctions, group chat and custom channels
+  stay hidden from triggers.
+- Named one-word NPCs: **Etumer** (Plane of Nightmare).
+
+The NPC lines guild triggers watch today:
+
+- **The Tribunal** and **Agent of The Tribunal**: trial starts, a trial already
+  running, a finished trial (Plane of Justice).
+- **Thelin Poxbourne** and **Etumer**: the escort and the port to Mujaki (Plane
+  of Nightmare).
+- **Nitram Anizok**: the walk to Xanamech (Plane of Innovation).
+- **The Avatars of Dust, Mist, Smoke and Wind**: their spawn shouts (Plane of Air).
+- **Coirnav the Avatar of Water**: minion calls, the named call and the banish
+  (Plane of Water).
+- **A grimling warder**: the Ring of Fire reset (Acrylia Caverns).
+
+In code: `npcSpeechLine` in the agent, ORed in at the live trigger gate and the
+trigger replay only; `triggerVisibleLine` (which the feedback excerpt uses) is
+unchanged.
+
 ## What other raiders' Mimic records about you
 
 Even if you never install Mimic, raiders who run it record what their game
