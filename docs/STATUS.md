@@ -213,6 +213,11 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **✅ Stable Mimic 2.7.5 (agent 3.7.52, main, 2026-09-30).** Everything on beta since 2.7.4, promoted byte for
+  byte from beta `fadf95f8`: Glory-worthy PvP kills, the Canvas, the Overlays tab option C, screens and Rescue,
+  per-character suggested triggers, pets on the meter, bard charm, Quest tab warnings, and the FB-38/39/41/42
+  fixes. The setup walkthrough is gated to prerelease builds until its layout is picked. Beta re-parked at 2.7.6.
+  §111.
 - **⏳ FB-38 · FB-41 · FB-42 (agent 3.7.50, beta `0d782606`, 2026-09-30).** An overlay set to XS stays XS
   after a restart (every overlay's minimum width is now XS's 200, `_OVERLAY_MIN_W`); the slow callout says
   "Ree slow"; a killed mob leaves the HUD's hit totals after 10 s, not 90. `test/overlay-resize-presets.test.js`,
