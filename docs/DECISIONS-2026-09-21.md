@@ -5186,3 +5186,9 @@ Mimic below agent 3.7.51 misses those kills, so the stable was the fix's real de
   tray entry and dashboard buttons on prerelease builds only, so the stable carries the page but offers no
   way in. When a layout is picked, it becomes the first-run page and the gate goes.
 - **Beta re-parked at 2.7.6** above the stable, in the same session.
+- **The alpha needs no re-park** (the guild lead asked): `3.0.0-alpha.N` sorts above every 2.x. But a
+  sync never builds the alpha (it pushes with `GITHUB_TOKEN`), so alpha testers stay on the last alpha
+  build until something is pushed to `alpha` under `apps/mimic/`. After this cut, alpha `640018c0` touched
+  `apps/mimic/ALPHA.md` (not shipped) to build one; ALPHA.md now says so. The stable push's own alpha sync
+  failed on add/add conflicts (main had the Canvas files by file copy, alpha its own); the beta sync a minute
+  later carried main in cleanly, so alpha lost nothing.
