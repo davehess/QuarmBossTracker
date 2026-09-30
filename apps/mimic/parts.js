@@ -512,7 +512,7 @@
     { pct: 37, label: 'a burning guardian', color: C.orange }, { short: 'Target HP' });
   P('target.tot', 'target', 'Target\'s target', 'me', 'value',
     function (d) { var t = meT(d), o = t && t.tot; return o && o.name ? { text: '→ ' + o.name, sub: num(o.hp_pct) != null ? Math.round(o.hp_pct) + '%' : '' } : null; },
-    { text: '→ Brackwyn', sub: '71%' }, { short: 'Its target' });
+    { text: '→ Brackwyn', sub: '71%' }, { short: 'Target\'s target' });
   P('target.slow', 'target', 'Slow', 'me', 'value',
     function (d) {
       var t = meT(d); if (!t) return null;
@@ -535,10 +535,19 @@
     },
     { items: [{ name: 'summons', color: C.orange }, { name: 'rampage', color: C.dim }] }, { short: 'Abilities', mode: 'chips' });
   P('target.resists', 'target', 'Target resists', 'me', 'list', function (d) { var t = meT(d); return t ? resistChips(t.resists) : null; },
-    { items: [{ name: 'MR', text: 150 }, { name: 'FR', text: 250 }, { name: 'CR', text: 90 }] }, { short: 'Its resists', mode: 'chips' });
+    { items: [{ name: 'MR', text: 150 }, { name: 'FR', text: 250 }, { name: 'CR', text: 90 }] }, { short: 'Target resists', mode: 'chips' });
+  // The agent keeps a ledger only once it has seen the mob cast or be drained, so before that
+  // there was nothing and the piece stayed blank on every mob with mana (the guild lead, 2026-09-30,
+  // FB-40: "Canvas target mana doesn't work for each mob that has mana"). Until then the estimate is
+  // the catalog pool, untouched — Target Info's own "max mana" line, drawn as a full bar.
   P('target.mana', 'target', 'Target mana (estimate)', 'state', 'gauge',
-    function (d) { var m = d.mobInfo && d.mobInfo.target_mana; return m && num(m.pct) != null ? { pct: m.pct, text: '~' + Math.round(m.pct) + '%', sub: m.drained ? 'drained ' + fmtNum(m.drained) : '' } : null; },
-    { pct: 58, text: '~58%' }, { short: 'Its mana', color: C.blue });
+    function (d) {
+      var m = d.mobInfo && d.mobInfo.target_mana;
+      if (m && num(m.pct) != null) return { pct: m.pct, text: '~' + Math.round(m.pct) + '%', sub: m.drained ? 'drained ' + fmtNum(m.drained) : '' };
+      var c = mob(d);
+      return c && num(c.mana) > 0 ? { pct: 100, text: '~100%', sub: fmtNum(c.mana) + ' · no casts seen' } : null;
+    },
+    { pct: 58, text: '~58%' }, { short: 'Target mana', color: C.blue });
   P('target.lastcast', 'target', 'Target\'s last cast', 'state', 'value',
     function (d) { var c = d.mobInfo && d.mobInfo.target_lastcast; return c && c.spell ? { text: (c.confidence === 'guess' ? '? ' : '') + c.spell, sub: ago(Date.now() - c.atMs) } : null; },
     { text: 'Lava Breath', sub: '12s ago' }, { short: 'Last cast' });
@@ -550,7 +559,7 @@
     { items: [{ name: 'Tashanian', text: '1:31', pct: 60, color: C.red }, { name: 'Turgur\'s Insects', text: '2:02', pct: 80, color: C.red }] }, { short: 'Debuffs' });
   P('target.buffs', 'target', 'Buffs on the target', 'state', 'list',
     function (d) { var b = d.mobInfo && d.mobInfo.target_buffs; if (!Array.isArray(b)) return null; return { items: buffRows(b.filter(function (x) { return x.good !== 0; })), empty: 'no buffs' }; },
-    { items: [{ name: 'Shield of Lava', text: '5:10', pct: 90, color: C.green }] }, { short: 'Its buffs' });
+    { items: [{ name: 'Shield of Lava', text: '5:10', pct: 90, color: C.green }] }, { short: 'Target buffs' });
   P('target.pacify', 'target', 'Pacified', 'state', 'value',
     function (d) { var b = d.mobInfo && d.mobInfo.target_buffs; if (!Array.isArray(b)) return null; for (var i = 0; i < b.length; i++) if (b[i].pacified) return { text: b[i].name + (b[i].pacify_ae ? ' (AE — still aggros close)' : ''), sub: secsText(b[i].remaining_secs), color: C.purple }; return { text: 'not pacified', color: C.dim }; },
     { text: 'Harmony (AE — still aggros close)', sub: '1:20', color: C.purple }, { short: 'Lull' });
@@ -582,10 +591,10 @@
   P('target.level', 'target', 'Level and class (catalog)', 'state', 'value',
     function (d) { var m = mob(d); if (!m || m.level == null) return null; return { text: 'L' + m.level + (m.maxlevel != null && m.maxlevel > m.level ? '–' + m.maxlevel : ''), sub: m['class'] || '' }; },
     { text: 'L60', sub: 'Warrior' }, { short: 'Level' });
-  P('target.zone', 'target', 'Its zone', 'state', 'value',
+  P('target.zone', 'target', 'Target zone', 'state', 'value',
     function (d) { var m = mob(d); return m && m.zone ? { text: '@ ' + m.zone } : null; },
     { text: '@ Plane of Mischief' }, { short: 'Zone' });
-  P('target.hpmax', 'target', 'Its hit points', 'state', 'value',
+  P('target.hpmax', 'target', 'Target hit points', 'state', 'value',
     function (d) {
       var mi = d.mobInfo, m = mob(d);
       if (mi && num(mi.target_hp_cur) != null && num(mi.target_hp_max) != null) return { text: fmtNum(mi.target_hp_cur) + ' / ' + fmtNum(mi.target_hp_max) + ' HP' };
@@ -595,7 +604,7 @@
   P('target.dmg', 'target', 'How hard it hits', 'state', 'value',
     function (d) { var m = mob(d); return m && m.mindmg != null && m.maxdmg != null ? { text: m.mindmg + '–' + m.maxdmg, sub: 'dmg' } : null; },
     { text: '104–471', sub: 'dmg' }, { short: 'Hits' });
-  P('target.ac', 'target', 'Its armour class', 'state', 'value',
+  P('target.ac', 'target', 'Target armour class', 'state', 'value',
     function (d) { var m = mob(d); return m && m.ac != null ? { text: String(m.ac), color: '#d2a8ff' } : null; },
     { text: '200', color: '#d2a8ff' }, { short: 'AC' });
   // The overlay's grid: AC, then each resist, green / orange / red by how hard it is to land on.

@@ -83,6 +83,8 @@
   .mvbtn:hover{opacity:1}
   .panel.mvin .mvbtn{right:auto;left:0;border-radius:0 0 3px 0}
   body.edit .mvbtn{display:none}
+  /* One ✥ per group: the top-left piece carries it and moves them all. */
+  .panel.mvtail .mvbtn{display:none}
 
   /* The drag shield: while a panel moves, one screen-sized interactive layer
      keeps the window taking the mouse, so a fast drag that outruns the panel
@@ -524,11 +526,30 @@
     Object.keys(_els).forEach(function (id) {
       if (!keep[id]) { _els[id].root.remove(); delete _els[id]; }
     });
+    markGroupMovers();
     paintParts();
     syncSources();
     renderChooser();
     renderSelbar();
     placeGbox();
+  }
+
+  // One ✥ per group (the guild lead, 2026-09-30, FB-40: "Some huds will want to be closer and overlap
+  // like thin hp and mana and then we end up seeing multiple 'move' icons. When groups there should only
+  // be one move icon for that group"). The top-left piece keeps it; dragging it moves the group
+  // (togetherWith). Alt-drag on a piece still takes that one out, from the arranging tab.
+  function markGroupMovers() {
+    var lead = {};
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (!p.grp || !e || p.off) return;
+      var l = lead[p.grp], x = e.root.offsetLeft, y = e.root.offsetTop;
+      if (!l || y < l.y || (y === l.y && x < l.x)) lead[p.grp] = { id: p.id, x: x, y: y };
+    });
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (e) e.root.classList.toggle('mvtail', !!(p.grp && lead[p.grp] && lead[p.grp].id !== p.id));
+    });
   }
 
   var _saveT = null;

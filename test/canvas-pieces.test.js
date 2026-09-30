@@ -392,3 +392,47 @@ describe('the chooser stays readable', () => {
     expect(r.sanitize({ panels: [], chooser: { open: true, x: 0.1, y: 0.1, tab: 'target' } }).chooser.w).toBeUndefined();
   });
 });
+
+// FB-40 (the guild lead, 2026-09-30): "Canvas target mana doesn't work for each mob that has mana.
+// Some huds will want to be closer and overlap like thin hp and mana and then we end up seeing multiple
+// 'move' icons. When groups there should only be one move icon for that group. 'Its mana' is not a good
+// label."
+describe('FB-40: target mana on every mob with mana, one ✥ per group, labels', () => {
+  const mana = () => W.byId['target.mana'];
+  it('a mob with mana shows its pool before the agent has seen it cast', () => {
+    const v = mana().get({ mobInfo: { mob: { mana: 5200 } } }, Date.now());
+    expect(v).toMatchObject({ pct: 100, text: '~100%' });
+    expect(v.sub).toMatch(/no casts seen/);
+  });
+  it('the agent\'s estimate wins once there is one; a mob with no mana shows nothing', () => {
+    expect(mana().get({ mobInfo: { mob: { mana: 5200 }, target_mana: { pct: 58, drained: 0 } } }, Date.now())).toMatchObject({ pct: 58, text: '~58%' });
+    expect(mana().get({ mobInfo: { mob: { mana: 0 } } }, Date.now())).toBeNull();
+    expect(mana().get({ mobInfo: {} }, Date.now())).toBeNull();
+  });
+  it('no target piece is labelled "Its …"', () => {
+    for (const d of W.PARTS.filter(p => p.cat === 'target')) {
+      expect(d.short || '', d.id).not.toMatch(/^Its\b/);
+      expect(d.label, d.id).not.toMatch(/^Its\b/);
+    }
+    expect(mana().short).toBe('Target mana');
+  });
+  it('a group shows one ✥ — on its top-left piece — and a lone piece keeps its own', () => {
+    const els = {};
+    const mk = (id, x, y) => { const on = new Set(); els[id] = { root: { offsetLeft: x, offsetTop: y, classList: { toggle: (c, v) => (v ? on.add(c) : on.delete(c)), has: c => on.has(c) } } }; };
+    mk('hp', 100, 200); mk('mana', 100, 206); mk('name', 140, 190); mk('solo', 500, 500); mk('other', 300, 10);
+    const layout = { panels: [
+      { id: 'hp', grp: 'g1' }, { id: 'mana', grp: 'g1' }, { id: 'name', grp: 'g1' }, { id: 'solo', grp: null }, { id: 'other', grp: 'g2' },
+    ] };
+    // eslint-disable-next-line no-new-func
+    const run = new Function('_layout', '_els', sliceBlock(canvas, '  function markGroupMovers() {', '\n  }\n') + '\nmarkGroupMovers();');
+    run(layout, els);
+    const tail = id => els[id].root.classList.has('mvtail');
+    expect(tail('name')).toBe(false);   // topmost of g1 (y 190) carries the ✥
+    expect(tail('hp')).toBe(true);
+    expect(tail('mana')).toBe(true);
+    expect(tail('solo')).toBe(false);
+    expect(tail('other')).toBe(false);  // a group of one keeps its ✥
+    expect(canvas).toMatch(/\.panel\.mvtail \.mvbtn\{display:none\}/);
+    expect(stripJs(canvas)).toMatch(/markGroupMovers\(\);\s*paintParts\(\);/);
+  });
+});
