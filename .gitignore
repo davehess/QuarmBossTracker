@@ -42,6 +42,8 @@ packages/wolfpack-logsync/logsync.pid.json
 packages/wolfpack-logsync/logsync.queue.json
 packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.pet-state.json
+# Target Info's zone packs (agent 3.7.55, DECISIONS §114). Catalog data, but a local cache.
+packages/wolfpack-logsync/mobinfo-cache/
 # Loot-bidding local state. `beta` has ignored these since agent 3.3.100 and
 # main never picked them up — the entries were added on the branch the feature
 # was built on and no graduation carried a .gitignore. logsync.opendkp.json is
