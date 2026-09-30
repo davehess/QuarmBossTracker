@@ -524,6 +524,22 @@ function triggerVisibleLine(line, drops = DEFAULT_DROP_PATTERNS, priorityKeeps =
   return true;
 }
 
+// NPC speech the trigger engine may also see (the guild lead, 2026-09-30: "yes to NPC speech"). The drop
+// list above removes every says / shouts / tells-you line, which also hid scripted boss events: the
+// Tribunal's trials, Mavuin's flag, Coirnav's and the Air avatars' shouts, Thelin, Etumer, Nitram. A
+// player's name is one word, so a speaker with a space in it is an NPC or a pet; the few one-word NPCs a
+// trigger needs are named here. Player tells, group, guild, raid, channels and a player's /say stay hidden.
+// Used by the trigger engine and its replay ONLY: the feedback log excerpt keeps triggerVisibleLine alone,
+// so NPC speech is never uploaded with a report. Listed on the privacy page's exceptions.
+const NPC_SPEECH_ONE_WORD = new Set(['etumer']);
+const NPC_SPEECH_RX = /^\[[^\]]+\]\s+([^,'"\]:]+?)\s+(?:says|shouts|tells you),?\s*['"]/;
+function npcSpeechLine(line) {
+  const m = NPC_SPEECH_RX.exec(line);
+  if (!m) return false;
+  const who = m[1].trim();
+  return /\s/.test(who) || NPC_SPEECH_ONE_WORD.has(who.toLowerCase());
+}
+
 // A spaceless, lowercase token ("to", "a", "the", "and", "of", "by"…) is never
 // a real combat attacker. Real player names + single-word NPC/boss names are
 // capitalized; multi-word NPCs ("a sentinel") legitimately start lowercase but
@@ -8437,6 +8453,9 @@ class EncounterBuilder {
       targetName: this.bossName || _topTarget,
       startedAt: this.startedAt,
       flushedAt: null,
+      // When this fight last published, so a fight that is never flushed stops counting as live
+      // (_liveFightActive).
+      publishedAt: Date.now(),
       // The character whose log file this builder is reading. Lets the
       // damage overlay clear when the active EQ window switches to a
       // different character — without this the meter "sticks" to whichever
@@ -16290,14 +16309,20 @@ function _updateBlockedReason() {
   // Active fight check: any tail-mode EncounterBuilder with events that
   // haven't been flushed yet. We don't have a direct registry; instead
   // check stats.currentEncounterThreat — the agent updates this on every
-  // damage event, and it's cleared when the fight ends. If it's set and
-  // recent (last threat publish < 60s ago) we're mid-fight.
-  const et = stats.currentEncounterThreat;
-  if (et && !et.flushedAt) {
+  // damage event, and it's cleared when the fight ends. _liveFightActive
+  // also requires it to be recent: see LIVE_FIGHT_QUIET_MS.
+  if (_liveFightActive()) {
     return 'active fight in progress';
   }
   return null;
 }
+// A fight counts as live until it is flushed, and only while it is still publishing. flush()'s early
+// exits (under 10 events, a player or no target, an "eye of" pet) reset the builder without stamping
+// flushedAt, so a few stray hits left a "live" fight behind for good and the update gate said "active
+// fight in progress" to someone standing still (the guild lead, 2026-09-30, with a screenshot). The
+// comment above always promised a recency check; there was none. 150 s: tickIdle flushes any real
+// fight 120 s after its last event, so a fight still going is never older than that.
+const LIVE_FIGHT_QUIET_MS = 150_000;
 
 // ⚠️ ESCAPE HAZARD — READ BEFORE EDITING THE DASHBOARD JS BELOW ⚠️
 // This whole dashboard (HTML + browser-side <script>) is a single backtick
@@ -41853,11 +41878,11 @@ const REPLAY_MAX_GAP_MS  = 6000;    // real-time pacing caps idle gaps so lulls 
 const REPLAY_FAST_GAP_MS = 550;     // fast pacing: fixed pause AFTER a fire so each TTS is audible
 const _sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms | 0)));
 
-// Live-fight signal — mirrors the fight branch of _updateBlockedReason() so a
-// replay can't fire ⏪ callouts on top of a real fight's live callouts.
+// Live-fight signal — the fight branch of _updateBlockedReason() calls it, and a
+// replay checks it so it can't fire ⏪ callouts on top of a real fight's live callouts.
 function _liveFightActive() {
   const et = stats.currentEncounterThreat;
-  return !!(et && !et.flushedAt);
+  return !!(et && !et.flushedAt && (!et.publishedAt || Date.now() - et.publishedAt < LIVE_FIGHT_QUIET_MS));
 }
 
 // Singleton replay status. `stop` is the cooperative-cancel flag the STOP
@@ -41954,7 +41979,7 @@ async function _replayWorker(st) {
       if (tsMs < st.fromMs) return;
       if (tsMs > st.toMs) { past = true; return; }
       scanned++;
-      if (triggerVisibleLine(raw) && lines.length < REPLAY_LINE_CAP) {
+      if ((triggerVisibleLine(raw) || npcSpeechLine(raw)) && lines.length < REPLAY_LINE_CAP) {
         lines.push({ raw, tsMs });
       }
     },
@@ -43556,8 +43581,9 @@ async function main() {
         // so keep-list MISSES (ENRAGED, snared, mesmerized, fizzles, cures…)
         // still fire; triggerVisibleLine() drops only the privacy/public-chat/
         // system lines so nothing private ever reaches a trigger. Cheap:
-        // precompiled regex set; usually < 50 entries, < 50µs each.
-        if (triggerVisibleLine(line, dropPatterns)) {
+        // precompiled regex set; usually < 50 entries, < 50µs each. NPC speech
+        // is let through as well (npcSpeechLine), for scripted boss events.
+        if (triggerVisibleLine(line, dropPatterns) || npcSpeechLine(line)) {
           try { evaluateTriggersAgainstLine(line, ts ? ts.getTime() : Date.now(), b.character); } catch {}
         }
         // A DoT's repeating damage lands on the mob's own 6s tick — the charm
