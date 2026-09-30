@@ -1877,7 +1877,8 @@ Public copy: the collapsed exceptions section on `/privacy` and in
 Imported straight into `guild_triggers`, no code: `pop-2026-10` (374 rows —
 recast bars on the server's NPC spell-list recast, boss stat cards, event
 callouts corrected against `eqemu_quest_scripts`, "on you" alerts; tagged
-`pop` + zone + tier) and `acrylia-ring-of-fire` (5 rows). `/admin/triggers`
+`pop` + zone + tier) and `acrylia-ring-of-fire` (7 rows; the later boss
+bars use `display_threshold_sec` to stay hidden until their last 5 minutes). `/admin/triggers`
 filters by category only, so switching a whole pack off is a `source_pack`
 update in the database. DECISIONS §112–§113.
 
