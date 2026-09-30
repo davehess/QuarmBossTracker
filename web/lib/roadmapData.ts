@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'feedback-38-42-2026-09-30',
     title: 'Five reports answered',
-    version: 'Bot 3.1.178 · Web 1.8.55 · Mimic beta',
+    version: 'Bot 3.1.178 · Web 1.8.56 · Mimic beta',
     date: '2026-09-30',
     channel: 'beta',
     headline: 'Extended Target keeps same-name mobs’ debuffs apart, the slow callout says “Ree slow”, and an XS overlay stays XS.',
@@ -54,6 +54,7 @@ export const releases: Release[] = [
       'A mob you killed stayed on the HUD’s hit totals for 90 seconds; it now leaves after 10.',
       'An overlay set to XS came back wider the next time Mimic started; it now stays XS.',
       'Raiders on a boss like Trakanon were getting a PvP assist for the boss kill. The bot no longer counts those, and the old ones are removed.',
+      'A PvP kill that earned Rallosian Glory was never recorded, because Mimic only knew the “no worthy conquest” wording. The beta Mimic now records it; run Opt-in Logs over a night with a Glory kill to get it back.',
     ],
   },
   {

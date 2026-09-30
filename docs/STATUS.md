@@ -226,8 +226,13 @@ next touch one rather than assuming a missing row means a missing doc.
   group row by row. `test/ext-target-debuff-ids.test.js`, `test/ext-target-overlay-proven.test.js`. §110.
 - **✅ PvP: an assist on an NPC is dropped (bot 3.1.177, main `82521c3b`, 2026-09-30).** Boss kill broadcasts
   read like player kills, so raiders on Trakanon got PvP assists. `_victimIsNpc`; the 1 kill + 24 assists
-  already stored were deleted on the guild lead's yes. 20 NPC victims in `pvp_deaths` (the 2026-09-26
-  backfill) wait for their own yes. `test/pvp-assist-npc-victim.test.js`. §109.
+  already stored were deleted on the guild lead's yes, and so were 20 NPC victims in `pvp_deaths` (the
+  2026-09-26 backfill). `test/pvp-assist-npc-victim.test.js`. §109.
+- **⏳ PvP: Glory-worthy kills are read (agent 3.7.51, beta `3f0dd0a3`, 2026-09-30).** "Rallos Zek marks X
+  with his favor for spilling Y's blood in Z. X now bears N of 10 measures of Rallosian Glory." went to the
+  local unmatched file, so every Glory-worthy kill since the PoP patch was missed. The guild lead's missed
+  kill is restored by hand (`pvp_kills` 779). Stable fleet still misses them until the next stable.
+  `test/pvp-glory.test.js`. §109.
 - **✅ PoP checklist: Justice + Bastion of Thunder corrected (web 1.8.48 + bot 3.1.176, main 2026-09-29).**
   Reviewed against the server's quest scripts: six Marks per trial win, the Tribunal checks the Mark and
   does not take it, the wrong Tribunal location removed, the Seventh Hammer added; Askr is three hand-ins, the

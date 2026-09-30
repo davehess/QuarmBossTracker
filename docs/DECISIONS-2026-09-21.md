@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
-| **PvP rows that are NPCs** | **§109. Deleted 2026-09-30** (24 assists, 1 kill). 20 NPC victims in `pvp_deaths` found after, not deleted | the guild lead: yes or no on the 20 `pvp_deaths` rows. For the missing kill: the victim's name and the time or zone |
+| **PvP: NPC rows gone; Glory-worthy kills now read** | **§109.** 24 assists, 1 kill and 20 `pvp_deaths` rows deleted on the guild lead's yes. The missed kill was a Glory-worthy one the agent could not parse: agent 3.7.51 (beta `3f0dd0a3`) reads it, and the kill is restored by hand | Glory-worthy kills are missed by every Mimic below 3.7.51, so cut a stable soon. Raiders: after updating, run Opt-in Logs over nights with a Glory kill |
 | **Mimic setup walkthrough: two layouts** | **Beta `a9f2db26` + `bbfe59e6` (§93; agent 3.7.46).** A: one step at a time. B: three essentials, then cards. Main pick, Zeal / Defender / clock state, the /me abilities, the main's old log at the finish | the guild lead: tray → ✨ Setup walkthrough → try A and B, pick one; it then becomes the first-run page |
 | **Essences of Power loot queue on /pop** | **Beta `7b942d11` (§96).** The guild's rule as code: one bid buys the set, the next drop goes to the first in line who lacks it and is there, else bid and join the end. `?v=b` by person, `?v=c` by essence, `&demo=1` sample data | the guild lead: open `b.wolfpack.quest/pop?v=b&demo=1` and `?v=c&demo=1`, pick one. Officers: record every piece in OpenDKP (bid, then 0 DKP hand-outs); name the set bid "Essences of Power" |
 | **PoP checklist: Essences of Power** | **Live, web 1.8.49 (§95).** Nightmare escort (one Fist per run) + the four essences in Kerasha's bowl for a reward she cycles | the guild lead: read it on `/pop/guide`; say who gets essences when they drop (a loot call) |
@@ -5125,10 +5125,19 @@ The guild lead: *"query and flag any pvp kills that are probably an NPC name. tr
   log line.
 - **Deleted 2026-09-30 on the guild lead's yes:** the 24 assists and the one kill above, nothing else (no
   assist pointed at the kill). A re-run of the NPC check found none added since bot 3.1.177.
-- **Found after, NOT deleted:** 20 rows in `pvp_deaths` whose victim is an NPC (Aten Ha Ra, Emperor
-  Ssraeshza, Shik`nar mobs, Fright, Dread…), all from the table's 30-day backfill at its creation
-  (2026-09-26). They feed the fight history (2+ deaths = a fight). Not in the approved list; waits for a
-  yes.
+- **Found after, then deleted on a second yes (2026-09-30):** 20 rows in `pvp_deaths` whose victim is an
+  NPC (Aten Ha Ra, Emperor Ssraeshza, Shik`nar mobs, Fright, Dread…), all from the table's 30-day backfill
+  at its creation (2026-09-26). They fed the fight history (2+ deaths = a fight).
+- **The missing kill was a Glory-worthy one, and the agent could not read that wording.** The guild lead,
+  with a screenshot: killed a player of another guild in Ruins of Sebilis, 2026-09-29 22:55:44 ET. The line was
+  *"[PVP] Rallos Zek marks <killer> with his favor for spilling <victim>'s blood in Ruins of Sebilis.
+  <killer> now bears 1 of 10 measures of Rallosian Glory."* `parseGloryKill` only knew the "watches as …
+  finds no worthy conquest" wording (§66), so this line went to the local unmatched capture and no kill,
+  death or assist uploaded. Every Glory-worthy kill since the PoP patch was missed the same way.
+  Agent 3.7.51 (beta `3f0dd0a3`) reads it (`PVP_GLORY_WORTHY_RX`, `glory: true`); no bot change. The kill
+  was written by hand: `pvp_kills` 779, `pvp_deaths` 1816, source `log_backfill`, with the bot's own dedup
+  keys so an Opt-in Logs rerun collapses onto them. Other raiders' missed Glory kills come back only through
+  Opt-in Logs on 3.7.51+.
 
 ### 110. Feedback round FB-38 to FB-42 (2026-09-30)
 - **FB-38 (stable 2.7.4): XS not remembered after a restart.** XS is 200 px; twelve overlays had a 220–300 px
