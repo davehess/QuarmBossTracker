@@ -1,10 +1,12 @@
 # Zeal PR draft: tag pictures from a folder (`^I<name>^`)
 
 *Drafted 2026-09-26 on top of the tag-shapes branch (`3c02f65`). Branch **`tag-icon-files`**
-on the guild lead's fork (github.com/davehess/zeal/tree/tag-icon-files, one commit,
-`ac5d177`); the same change is `0001-tag-pictures.patch` here. It is merged into
-`test-all` (`d32bed1`). The steps to try it are in `../zeal-tag-shapes/TRY-IN-GAME.md` →
-"Pictures".*
+on the guild lead's fork (github.com/davehess/zeal/tree/tag-icon-files), now on Zeal 1.4.8
+(`e8254ec`, 2026-10-01: the `custom` folder, banner pictures and whole-key names were added
+that day). `0001-tag-pictures.patch` here is the branch's change on top of `tag-shapes`. It is
+merged into `test-all` (`da88716`), which GitHub builds into the `test-all-build` prerelease;
+Mimic beta installs that from Settings → Zeal → Test build. The steps to try it are in
+`../zeal-tag-shapes/TRY-IN-GAME.md` → "Pictures".*
 
 ## Why
 
@@ -18,12 +20,19 @@ some"*.
 - **Anyone can add more**, the way target ring textures work: drop a file in a folder.
   No code change and no Zeal release per guild.
 
-## What changes (254 lines added, 5 removed; four files plus the README)
+## What changes (298 lines added, 5 removed; four files plus the README)
 
 **The folder.** `uifiles/zeal/tagicons/<name>.png` or `.tga`, beside `targetrings/`.
 - `<name>` is 1 to 6 letters or digits, in any case.
-- `^I<name>^` draws that picture.
+- `^I<name>^` draws that picture. It may also be named for the whole key, `I<name>.png`;
+  Windows allows no file called `CON.png`, so `ICON.png` is the only way to picture `^ICON^`.
 - The folder is read on first use, and again on `/tag icons`.
+
+**A player's own folder.** `uifiles/zeal/tagicons/custom/` is read too. Nothing installs
+into it, and a picture there wins over a shipped one under either name, so a player can add
+pictures or replace one that came with a UI or a build and keep it through updates.
+`/tag icons` creates the folder if it is missing, prints where it is and marks a player's
+own pictures "(yours)".
 
 **Drawing.** `TagArrows::QueueTagImage` draws a textured quad facing the camera. It uses
 the same camera-facing transform as the 3-D nameplate text (`SpriteFont::render_queue`),
@@ -35,6 +44,8 @@ so it turns with the text and cannot read backwards.
 **Precedence and fallback:**
 - A picture takes over from a built-in guild icon with the same code. With `EUR.png`,
   `^IEUR^` shows the picture instead of the built-in €.
+- A picture named for a guild's banner key takes over from that banner: `BEUR.png` for
+  `^BEUR^`. Only real guild codes count, so a stray `B<name>.png` changes no banner.
 - If the file will not load, the tag draws the built-in shape. For a name that is not a
   guild, it draws a white arrow.
 - A viewer without the file sees the guild's built-in shape, or only the text. Tag
@@ -77,12 +88,17 @@ The built-in 3-D marks remain for anyone who wants a crisp symbol.
   - It extracts the key parser and folder scan from `nameplate.cpp`, and the header check
     from `tag_arrows.cpp`, verbatim, and runs them.
   - Covered: folder rules, lookup in any case, guild precedence, rescan, a missing folder,
-    PNG/TGA sizes including a 2^31 width, and refused formats.
+    PNG/TGA sizes including a 2^31 width, and refused formats. Since 2026-10-01 also: the
+    `custom` folder winning under either name, a picture only in `custom`, the whole-key
+    name (`ICON.png`), banner pictures and a non-guild `B<name>.png` changing nothing.
   - **Mutation-checked:** eight deliberate breaks (key parser, length cap, extension,
-    directories, rescan, TGA type, TGA width, character set) each fail it.
+    directories, rescan, TGA type, TGA width, character set) each fail it; so do three
+    more (shipped searched before custom, banners off, no whole-key name).
+- **Compiled:** the fork's GitHub build of `test-all` (windows-2022, msbuild) passes with
+  this branch merged (`727cee6`; `da88716` adds only a comment alignment).
 - **clang-format:** with Zeal's `.clang-format`, it reports nothing on the four files.
-- **Not compiled or run here:** the D3D draw path needs the Windows build. In-game steps
-  are in TRY-IN-GAME.md → "Pictures".
+- **Not run in game yet:** the D3D draw path needs EverQuest. In-game steps are in
+  TRY-IN-GAME.md → "Pictures".
 - **Orientation:** the orientation card (`test-pictures/UP.png`, red left, blue right,
   arrow up) is there to catch a mirrored or upside-down quad on the first look.
 

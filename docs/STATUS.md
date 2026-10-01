@@ -222,7 +222,9 @@ next touch one rather than assuming a missing row means a missing doc.
   first run green, so the merges compile); no local Visual Studio needed. Mimic beta `0e5eb23b` installs it on
   request: Settings → Zeal → Test build (default stays Official). Bandolier filter shipped upstream (#238). The pipe's new target fields (#239) reviewed and an
   adoption planned, not built. Mimic beta `567c5911`: Zeal/UI-pack installs stop backing up unchanged files and
-  clear the identical old copies. Open: tag pictures as files that add to or override the built-ins. §117.
+  clear the identical old copies. Tag pictures, option A: `tagicons\custom\` wins over shipped pictures,
+  banners can be replaced too (`B<code>.png`), and the build ships `tagicons\README.txt` plus all 30 guilds'
+  icon and banner as editable templates (`test-all` `da88716`). §117.
 - **⏳ FB-45: a new loot call with the same numbers starts new rolls (agent 3.7.56, beta `2020a8c4`, 2026-10-01).**
   A later raid call that puts a roll number on a different item closes the old set and starts a new one under
   the new name; a repost of the same item keeps the set. Shown closed at once on the Rolls card and the Command

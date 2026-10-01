@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
-| **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) on Mimic beta, Settings → Zeal → Test build → Install (Mimic beta `0e5eb23b`), and try it in game; (2) say when to build the pipe-field adoption; (3) pick the tag-picture scope in §117 "Open" |
+| **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) on Mimic beta, Settings → Zeal → Test build → Install (Mimic beta `0e5eb23b`), and try it in game, including the custom-folder steps 10–15 in `zeal-tag-shapes/TRY-IN-GAME.md`; (2) say when to build the pipe-field adoption. Tag pictures: option A built (custom folder, banners, 60 templates + README, `test-all` `da88716`) |
 | **FB-45: a new loot call with the same numbers starts new rolls** | **§116.** Agent 3.7.56 on beta `2020a8c4`: a later call that puts a roll number on a different item closes the old set and starts a new one under the new name | the guild lead: on the beta, post two loot calls a few minutes apart reusing the numbers and check the Rolls card shows two batches. Raiders on stable get it at the next stable cut, which must repeat "Fixes FB-45" |
 | **Target Info: mob info kept on disk; the state payload** | **§114–§115.** Bot 3.1.179 builds zone packs; agent 3.7.55 (beta `effdc609`) keeps the Planes of Power and every visited zone on disk. The likelier cause of the slowness is untouched: `/api/state` carries 591 KB of guild triggers, and Target Info reads it twice a second | the guild lead: on the beta, target something in a PoP zone and say whether it is instant. Then pick whether to slim the payload (a Target-Info-only endpoint, or trigger notes out of `/api/state`). Raid hold: `flag_raid_hold = 0` if updates should land on raid-schedule evenings before 10/14 |
 | **PoP trigger pack (opens 2026-10-01)** | **§112–§113. Imported and live.** 374 guild-trigger rows (`pop-2026-10`), server recasts, corrected event patterns. NPC speech reaches triggers from agent 3.7.54, stable Mimic 2.7.6. Ring of Fire (Acrylia) pack of 5. No formal raids until 10/14 | the guild lead: in a PoP zone, run the boss short-name lookup once to see which command prints the "not online" reply the stat cards fire on. Raiders: update to 2.7.6 for the NPC-speech callouts |
@@ -5381,7 +5381,29 @@ zeal repo's build as an option"*. Settings → Zeal now has two choices, Officia
 The choice saves at once and re-runs Check; Install, the 12-hour reminder, the dashboard's Zeal button and
 the setup walkthrough all follow it. The test release keeps one tag, so a build is named by its commit,
 `testall-<hash>` (the label Zeal's options window shows), and every push to `test-all` reads as a new
-version. Going back is "Official" then Install. `test/zeal-source.test.js`. `bandolier-chat-filter` is merged upstream and
+version. Going back is "Official" then Install. `test/zeal-source.test.js`.
+
+**Tag pictures: option A, plus every guild mark as an editable picture (fork `tag-icon-files` `e8254ec`,
+`test-all` `da88716`).** The guild lead picked A: *"A"*, then *"output the current set of guild tag images as
+tgas or pngs as well so if someone wanted to override they could edit and drop in"* and *"a readme in the
+folder about it"*.
+- **Zeal (`tag-icon-files`, upstreamable):** `uifiles/zeal/tagicons/custom/` is read too; nothing installs
+  into it and a picture there wins over a shipped one under either name. A picture can now replace a guild's
+  **banner** as well (`BEUR.png` for `^BEUR^`, real guild codes only), and an icon's picture may be named for
+  the whole key (`IEUR.png`). The whole-key name is required, not cosmetic: Windows allows no file called
+  `CON.png`, so `ICON.png` is the only way to picture the CON guild. `/tag icons` creates `custom`, prints its
+  path and marks a player's own pictures "(yours)".
+- **The build (`test-all` only, so no upstream PR carries guild marks):** `tagicons/README.txt` (the three
+  folders, how to change a mark, the rules, the Windows-reserved names) and `tagicons/templates/`, all 30
+  guilds' icon (`I<code>.png`) and banner (`B<code>.png`), 160×160 RGBA. They are the gallery's face-on renders
+  of the real meshes. Zeal does not read `templates`, so shipping them changes nothing until a player copies
+  one into `custom`.
+- **What broke on the way:** the first push named the CON icon `CON.png`, and the Windows build failed at
+  checkout. The rename to `I<code>.png` fixed it, and the next build passed (`727cee6`).
+- **Tested:** the off-client test (`docs/upstream/zeal-tag-icon-files/test/`, g++ against the real
+  functions) covers custom-wins under either name, whole-key names, banners and a non-guild `B<name>.png`.
+  Three deliberate breaks (shipped searched first, banners off, no whole-key name) each fail it.
+  clang-format is clean. In-game steps 10–15 are in `zeal-tag-shapes/TRY-IN-GAME.md`. `bandolier-chat-filter` is merged upstream and
 `pipe-spawn-id` (unrelated history; spawn ids shipped in 1.4.6) is obsolete; neither was touched.
 
 **The new pipe fields, reviewed.** `target_name`, `target_type` (0 player, 1 NPC, 2 NPC corpse, 3 player
@@ -5403,8 +5425,7 @@ installer, same helper) backed up every file it wrote. Now a file that already h
 and that installer's old copies identical to the file are deleted (only exact matches; a copy of a different,
 older file stays). `test/install-no-identical-backups.test.js`.
 
-**Open: tag pictures as files, the way target rings are.** The guild lead: *"I would prefer to allow for
-additional tags in this way or overrides of the ones that are defaulted in from our repo."* Today
-(`tag-icon-files`): a `.png`/`.tga` in `uifiles/zeal/tagicons` is a new `^I<name>^`, and overrides a guild's
-built-in icon with the same code. Not yet: a file overriding the other built-ins (symbols, badges, paws,
-banners, the wolf), and Mimic installing our default pictures there without overwriting a member's own.
+**Tag pictures as files, the way target rings are (decided: A, built below).** The guild lead: *"I would
+prefer to allow for additional tags in this way or overrides of the ones that are defaulted in from our
+repo."* Built later the same day: a `custom` folder that wins, banners overridable, templates shipped. Still
+not overridable by a picture: the symbols, badges, paws and the wolf (they have no `I`/`B` key).
