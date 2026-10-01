@@ -7203,6 +7203,19 @@ function uploadRollSets() {
   enqueueUpload('rolls', { agent_version: AGENT_VERSION, sets });
 }
 
+// A set is superseded when a loot call made after it started gives its number to a
+// different item. A labelled set: any other name. An unlabelled set: only a call made
+// well after it went quiet, because a call often follows the first rolls by up to a
+// minute (measured: 54 s and 10 s late) and that one names this set, not a new one.
+// The same item posted again (a reminder) never starts a new set.
+const ROLL_RELABEL_QUIET_MS = 2 * 60 * 1000;
+function _rollSetSuperseded(s, linked) {
+  if (!linked || linked.atMs <= s.startMs) return false;
+  const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  if (s.item) return !same(s.item, linked.item);
+  return (linked.atMs - s.lastMs) > ROLL_RELABEL_QUIET_MS;
+}
+
 function trackRollLine(line, character) {
   if (!line || !character) return;
   const cl = String(character).toLowerCase();
@@ -7225,10 +7238,20 @@ function trackRollLine(line, character) {
   if (!pending || Math.abs(atMs - pending.atMs) > 2000) return;
   const from = parseInt(m[1], 10), to = parseInt(m[2], 10), value = parseInt(m[3], 10);
   if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return;
+  // Only the NEWEST set of this range can take the roll, and not once a later loot call
+  // has given the number to something else (FB-45). The guild lead, 2026-10-01: "when we do
+  // rolls way later we should post the new items - we had a long time in between these
+  // rolls and we should have made them separate rolls even if it's the same numbers".
+  // One call put 111/222/333 on three items at 22:08, the next put the same numbers on
+  // three new ones at 22:15, and the second wave's rolls joined the first wave's sets
+  // under the old names. Stopping at the newest set matters too: walking further back
+  // would hand a third call that reuses an older item's name the older set.
   let set = null;
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     const s = _rollSets[i];
-    if (s.from === from && s.to === to && (atMs - s.lastMs) <= ROLL_SET_GAP_MS) { set = s; break; }
+    if (s.from !== from || s.to !== to) continue;
+    if ((atMs - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(to))) set = s;
+    break;
   }
   if (!set) {
     set = { from, to, item: null, qty: null, rolls: [], startMs: atMs, lastMs: atMs };
@@ -7591,7 +7614,8 @@ function rollSetsSnapshot(maxAgeMs) {
       from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
       players: firstByName.size,
       winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
-      open: (now - s.lastMs) <= ROLL_SET_GAP_MS,
+      // A later call that gave this number to another item closes it (FB-45).
+      open: (now - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(s.to)),
       started_at_ms: s.startMs, last_at_ms: s.lastMs,
       rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
     });
