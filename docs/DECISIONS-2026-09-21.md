@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) add `eqmimic.quest` (and `www` as a redirect) to the Vercel project that builds the hesstastic repo, set DNS at the registrar, check the domain shows the page and not hesstastic.com; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
 | **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) on Mimic beta, Settings → Zeal → Test build → Install (Mimic beta `0e5eb23b`), and try it in game, including the custom-folder steps 10–15 in `zeal-tag-shapes/TRY-IN-GAME.md`; (2) say when to build the pipe-field adoption. Tag pictures: option A built (custom folder, banners, 60 templates + README, `test-all` `da88716`) |
 | **FB-45: a new loot call with the same numbers starts new rolls** | **§116.** Agent 3.7.56 on beta `2020a8c4`: a later call that puts a roll number on a different item closes the old set and starts a new one under the new name | the guild lead: on the beta, post two loot calls a few minutes apart reusing the numbers and check the Rolls card shows two batches. Raiders on stable get it at the next stable cut, which must repeat "Fixes FB-45" |
@@ -5429,3 +5430,74 @@ older file stays). `test/install-no-identical-backups.test.js`.
 prefer to allow for additional tags in this way or overrides of the ones that are defaulted in from our
 repo."* Built later the same day: a `custom` folder that wins, banners overridable, templates shipped. Still
 not overridable by a picture: the symbols, badges, paws and the wolf (they have no `I`/`B` key).
+
+### 118. Local mode: Mimic for players outside the guild; eqmimic.quest (2026-10-01)
+
+The guild lead: *"i'm getting a lot of interest in individual users using this just for the overlays - can we
+make a purely local version work?"* Picked A: *"I think A makes sense to begin with here"*. A means: stop
+the leak and the nags, label the guild-only overlays, and ship the spell and item data inside the installer.
+
+**A leak, closed (agent 3.7.58, beta `0ec64fef`, `v2.7.7-beta.7`).** With no token, the agent still posted
+the upload queue and the live state (zone, buffs, pet) to the bot. Each post was refused with a 401, but the
+data had already left the machine. It also polled the version endpoint every 10 minutes. Now `_localOnly()`
+(started with no token): `enqueueUpload` drops, `_postLiveState` returns, and the drain and the version poll
+are never started. Anything queued in an earlier signed-in session waits on disk for the next one. The
+dashboard state carries `localOnly` (its "(local-only)" tag already read it; nothing set it before).
+- **No nag.** `cfg.localOnly` is the saved choice: setup's "Run local-only", the welcome screen and the
+  banner's new **Stay local-only** set it through the `set-local-only` IPC; `_setupIssue` treats it as
+  finished; signing in clears it. `checkAgentUpdate` does not ask the bot without a token, because a local
+  Mimic gets its agent inside Mimic's own releases, from GitHub.
+- **Guild-only overlays say so.** Buff queue and Extended Target showed "loading" forever; now *"guild
+  feature: it needs your raid's Mimics, so sign in to use it"*. Mob Info has no local source (the bot builds
+  it) and stays empty in local mode; the eqmimic.quest pages list it under "needs a guild server".
+- **What leaves the machine in local mode:** nothing to the guild server. Mimic still checks GitHub for its
+  own updates and Zeal's. Checked by listing every host the agent and the Mimic shell contact; the rest are
+  links a player clicks.
+
+**Spell and item data in the installer (bot 3.1.180 `301a1274`; Mimic beta).** A local install never
+fetches the catalogs, so without this its spell timers and buff names had nothing to read.
+- `GET /api/public/catalog/<spell-catalog|item-clickies|item-catalog>` serves the agent routes' cached,
+  ETag'd bodies without sign-in. Safe to publish: every row is from the `eqemu_*` mirror, already readable
+  with the site's public key, and a hit is served from memory (no database read).
+- `apps/mimic/scripts/stage-catalog.js` runs as `predist`, writes the three into `staged-agent/catalog/`
+  under the agent's own cache names, and never fails the build (no snapshot = how every installer before
+  shipped). On launch `seedBundledCatalog` copies each into the agent folder when it is newer than the copy
+  there, so a signed-in install keeps what it fetched itself.
+- beta.7's build log: 3,933 spells, 26,972 clicky items, and an item catalog of **1,000**, which is wrong:
+
+**Found on the way: the wishlist item catalog served 1,000 of 11,104 items (bot 3.1.181 `f4557341`).** The
+handler asked for pages of 2,000; PostgREST answers at most 1,000, so the first page came back "short" and
+ended the loop. Every agent's on-disk item catalog has held only the 1,000 lowest item ids since it shipped
+on 2026-08-30. **No player saw it:** nothing calls the agent's `/api/item-search` (the local wishlist search
+was built, but no screen was ever wired to it), so the cost was this snapshot. The bot 3.1.181 commit
+message says players' searches were affected; that is wrong, and this entry is the correction. `PAGE =
+1000`; the test runs the real handler against a fake database with the 1,000 cap (2,500 in, 2,500 out; the
+old value returns 1,000). The next beta build's snapshot carries the full list.
+
+**eqmimic.quest.** The guild lead: *"And also a generic miMIC without all of the Wolf Pack detail would work,
+we have eqmimic.quest domain now. Does a branch of the parser make sense?"*, then *"lets set this up to work
+on eqmimic.quest please, vercel restricts me per project, perhaps this is something that can exist in the
+hesstastic project"*.
+- **Two page designs, in the hesstastic repo (`7b70545`), not yet picked.** A, demo-led: mock overlays
+  over a scene, then the two lists and the steps (`hesstastic.com/eqmimic/`). B, ledger-led: "On your PC"
+  beside "Needs a guild server", then privacy in three lines and a short FAQ (`hesstastic.com/eqmimic/b/`).
+  Both noindex until picked. The download button asks GitHub for the newest installer with local mode
+  (2.7.7-beta.7 or later, the newest stable once one exists) and falls back to the releases page.
+  Costs: A builds slower and its mock drifts from the real overlays (maintenance and change: medium);
+  B is cheaper on every count (all low). Runtime is the same: one page, inline styles, one GitHub request.
+- **Hosting.** The hesstastic repo is a GitHub Pages site, and a Pages site carries one custom domain
+  (already hesstastic.com), so Pages cannot serve eqmimic.quest from it. `vercel.json` there routes the
+  eqmimic.quest host to `eqmimic/` for the Vercel project that builds that repo. It uses `routes`, not
+  `rewrites`, because Vercel serves a matching file before a rewrite, and `/` would hit hesstastic's own
+  `index.html`. **Unverified:** that a Vercel project builds that repo (the Vercel connector needs sign-in
+  in this session), and the route itself until the domain is added.
+- **A branch of the parser: no (recommendation, not yet decided).** A branch rots the way beta did
+  (79,199 lines behind before the sync rule) and every fix has to land twice. Recommended instead: one
+  codebase with a build-time edition switch. Mimic built as plain "Mimic" with its own app id (so it
+  installs beside Wolf Pack Mimic), local mode as the default, the Wolf Pack surfaces hidden (sign-in,
+  wolfpack.quest links, guild tabs), and its own update channel. That channel must follow the alpha's
+  pattern, one rolling release, because GitHub's release feed keeps only 10 entries and Deck builds once
+  pushed the Windows betas out of it. Four costs: build about 2 days (Wolf Pack surfaces are many and
+  spread across `main.js`, the dashboard and setup); maintenance low-to-medium (every new guild feature
+  needs the edition check); runtime none; change low. Until then, today's installer works for anyone
+  in local mode, and the pages say why it is named Wolf Pack Mimic.
