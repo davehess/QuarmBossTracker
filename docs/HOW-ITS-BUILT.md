@@ -2590,6 +2590,13 @@ when Zeal is current; the synthetic notice id derives from the TAG so a later
 release resurfaces; `launchAgent` re-pushes 8s after spawn because the agent
 holds it in memory.
 
+**Installing leaves unchanged files alone (Mimic beta, 2026-10-01).**
+`ghDownload.backupAndWriteBinary`, shared by the Zeal installer and the UI-pack
+installer, skips a file that already holds the new bytes (no `.zealbak`/`.uibak`
+copy, no write) and deletes that installer's old copies byte-identical to the
+file. Before this, every Zeal update added a copy of each target ring.
+`test/install-no-identical-backups.test.js`. DECISIONS §117.
+
 ## Web features
 
 - **Zeal tag icons gallery (`/zeal-icons`, on `beta` as a preview, 2026-09-26)**:
@@ -3245,6 +3252,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   number to a different item (an item-less set: only a call 2+ min after its
   last roll); `trackRollLine` then opens a new set and `rollSetsSnapshot` reports
   the old one `open: false`. `test/roll-sets-new-call.test.js`. DECISIONS §116.
+- **Threat meter: cast hate, fizzles, zoning (agent 3.7.57, beta)** — `CAST_HATE`
+  holds flat hate per self-cast, valued from each spell's own SPA 92 (Concussion
+  −400, Ancient: Greater Concussion −600, Jolt and Cinder Jolt −500). Stamped at cast
+  begin; `EncounterBuilder._threatLine` (called by the live tail before
+  `shouldKeep`) hands it back on a fizzle/interrupt inside the cast time, and on
+  "LOADING, PLEASE WAIT..." (zoning, evac spells) zeroes your and your pets' hate
+  buckets. A resisted `CAST_HATE` spell earns no extra resist hate. Your own meter
+  only. `test/threat-concussion-zoning.test.js`. DECISIONS §117.
 - **Loot announce (#107)** — `noteLootAuction` → TTS + auction countdown chips.
 - **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
   `DISC_LINES`/`_matchDiscLine` → `timeline_events`.
