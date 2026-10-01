@@ -10122,9 +10122,11 @@ function _decodeSpellEffects(r) {
 
 // ── Spell catalog endpoint ──────────────────────────────────────────────────
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
-async function _handleAgentSpellCatalog(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+async function _handleAgentSpellCatalog(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
 
   const fresh = _spellCatalogCache && (Date.now() - _spellCatalogCache.fetchedAt) < _SPELL_CATALOG_TTL_MS;
   if (!fresh) {
@@ -10427,9 +10429,11 @@ async function _handleAgentSpellCatalog(req, res) {
 // catalog instead of 500ing so the agent can still operate.
 let _itemClickyCache    = null;
 const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
-async function _handleAgentItemClickies(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+async function _handleAgentItemClickies(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
   const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
   if (!fresh) {
     const entries = [];
@@ -10495,9 +10499,11 @@ async function _handleAgentItemClickies(req, res) {
 // cheaper. Do not lower it without a reason.
 const _ITEM_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
 let _itemCatalogCache = null;        // { fetchedAt, body, etag }
-async function _handleAgentItemCatalog(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+async function _handleAgentItemCatalog(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
 
   const fresh = _itemCatalogCache && (Date.now() - _itemCatalogCache.fetchedAt) < _ITEM_CATALOG_TTL_MS;
   if (!fresh) {
@@ -21419,6 +21425,28 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentItemCatalog(req, res); }
     catch (err) {
       console.error('[item-catalog] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // The same three catalogs without sign-in, so the Mimic build can bundle them
+  // for local-mode installs (the guild lead, 2026-10-01; DECISIONS §118). Safe to
+  // publish: every row comes from the eqemu_* mirror, which anyone can already read
+  // with the site's public key. Each body is cached and ETag'd, so a hit costs no
+  // database read.
+  if (req.method === 'GET' && req.url.startsWith('/api/public/catalog/')) {
+    const which = req.url.slice('/api/public/catalog/'.length).split(/[?#]/)[0];
+    const handler = which === 'spell-catalog' ? _handleAgentSpellCatalog
+      : which === 'item-clickies' ? _handleAgentItemClickies
+      : which === 'item-catalog' ? _handleAgentItemCatalog : null;
+    if (!handler) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unknown catalog' }));
+    }
+    try { return await handler(req, res, true); }
+    catch (err) {
+      console.error('[public-catalog] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { BOT_INDEX, readSource, sliceBlock, stripSql } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
-const handler = sliceBlock(src, 'async function _handleAgentItemCatalog(req, res)', '\n}');
+const handler = sliceBlock(src, 'async function _handleAgentItemCatalog(req, res', '\n}');
 const ROOT = path.dirname(BOT_INDEX);
 
 describe('item catalog endpoint', () => {
