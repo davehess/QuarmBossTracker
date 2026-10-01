@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-zeal-test-build-2026-10-01',
+    title: 'Try the next Zeal early',
+    version: 'Mimic 2.7.7 beta · Web 1.8.63',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'Mimic can install the guild’s Zeal test build, so testers get the new tag marks without building anything.',
+    features: [
+      {
+        name: 'Zeal test build in Settings',
+        blurb: 'Settings → Zeal now lets you pick Official Zeal or the Test build: the current Zeal plus the tag changes we are testing (shapes, pictures, corpses, tags that survive zoning). Mimic offers each new test build as it comes out. Pick Official and install to go back.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'agent-3-7-57-2026-10-01',
     title: 'Threat for the non-tanks',
     version: 'Agent 3.7.57 · Mimic 2.7.7 beta · Web 1.8.62',

@@ -2603,8 +2603,13 @@ on its `test-all` branch. `.github/workflows/build-test-all.yml` (on `test-all`
 only) builds every push on a Windows runner with upstream's msbuild line and
 replaces `zeal_test-all.zip` on one rolling prerelease, tag `test-all-build`.
 The build reports itself as `testall-<hash>` in Zeal's options window. To refresh
-the test build: merge the feature branches into `test-all` and push. Mimic does
-not install it (it installs CoastalRedwood's latest release). DECISIONS §117.
+the test build: merge the feature branches into `test-all` and push.
+**Mimic installs it on request (Mimic beta `0e5eb23b`):** Settings → Zeal → "Test
+build" sets `cfg.zealSource = 'test'` (IPC `zeal-set-source`, saved at once);
+`zealUpdater.ZEAL_SOURCES` maps it to the `test-all-build` release, and the build
+is named `testall-<hash>` from the release name, so each push reads as a new
+version for Check, Install and the 12-hour reminder. Default stays `official`.
+`test/zeal-source.test.js`. DECISIONS §117.
 
 ## Web features
 
