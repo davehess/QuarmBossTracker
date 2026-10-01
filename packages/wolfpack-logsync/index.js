@@ -5220,16 +5220,33 @@ function conLevelFor(character, target) {
   return (rec && Date.now() - rec.at <= 6 * 3_600_000) ? rec : null;
 }
 
-// PoP flag grant — "You have received a character flag!" The line never
-// names the flag, so attach context: the character's current zone (Zeal)
-// and the most recent boss kill (threat snapshot). The bot maps
-// (zone, boss) -> flag_key; unmapped combos are preserved for launch-week
-// catalog fixes. Pre-built for the 2026-10-01 PoP unlock — harmless before.
+// PoP flags (DECISIONS §119; the guild lead, 2026-10-01: "POP is open, we need the flags to start
+// updating"). The grant line never names the flag, but the server's scripts always print a fixed line
+// from the flag NPC just before it, so that line names it. Three kinds of event, all from this one
+// function (it sees every line on the live, backfill and opt-in paths):
+//   grant     "You have received a character flag!" (Elder Poxbourne's reads "You receive a ...")
+//   checklist "You have received a new checklist flag!" (a kill before its step; the Seer converts it)
+//   recital   one of Seer Mal Nae`Shi's guided-meditation sentences, one per flag the character holds
+// The line before a grant is sent ONLY when it opens like one of the flag NPCs below, so a player's own
+// words never leave with it. The bot names the flag (utils/popFlagStages.js); zone and boss stay as
+// context for older catalogs.
+const _POP_GRANT_RX = /^You (?:have received|receive) a (new checklist|character) flag!/i;
+const _POP_PREV_RX = /^(?:Mavuin |The Tribunal |Adler Fuirstel |Elder Fuirstel |Adroha Jezith |Thelin |Fahlia Shadyglade |Miak the Searedsoul|You recognize the |Milyk Fuirstel's |Tarkil Adan |Giwin Mirakon|Giwin's invitation|Nitram Anizok |You realize that the image |Maelin|Tylis |The Planar Projection|A Planar Projection |Karana begins|Askr |An aura of soft light|As you place your hand on the burning cauldron|For a moment you pause|You have learned the meaning|You black out for a moment|You focus back to your battle|You feel the searing pain|The Cipher on your arm|As you think back to your meeting|An Image of Mithaniel)/;
+const _POP_RECITAL_RX = /^(?:Your soul has formed a bond|The History translated for you|Learning of Zebuxoruk|The information obtained from (?:Mithaniel|Karana)|You have shown your prowess|You have obtained the Talisman|The Cipher of the Divine Language|Saryrn been destroyed|Mithaniel has been bested|You have (?:completed all of Honor|beaten Rydda|saved the villagers|defeated the nomads)|You have bested Aerin|The evidence of Mavuin|Having endured the trials|Mavuin is grateful|Tylis (?:is being tortured|has been removed)|Thelin (?:being tormented|has completed his pact)|Terris Thule's grasp|Saved from a world|Alder Fuirstel wishes|Grummus has been destroyed|Milyk has been saved|Bertoxxulous has been slain|Saved from certain doom|Now that Grummus has been destroyed|The portal into the Plane of Fire|Xuzl's arcane|Arlyxir's wealth|The power of Dresolik|Rizlona's song|Jiva's strength|The true route to the Plane of Fire|Giwin would like you|The pack of notes from|The words of Maelin echo|The parchments of Rallos|You remember Nitram's words)/;
+const _popPrevLine = new Map();   // character (lowercase) → the message of the line before this one
 function parsePopFlagLine(line, character) {
-  if (!character || line.indexOf('received a character flag') === -1) return null;
-  if (!/\]\s+You have received a character flag!/i.test(line)) return null;
-  const ts = parseEqTimestamp(line);
+  if (!character || !line) return null;
   const cl = String(character).toLowerCase();
+  const msg = String(line).replace(/^\[[^\]]*\]\s*/, '');
+  const prev = _popPrevLine.get(cl) || null;
+  _popPrevLine.set(cl, msg);
+  let kind = null;
+  let text = null;
+  const g = msg.indexOf(' flag!') !== -1 ? _POP_GRANT_RX.exec(msg) : null;
+  if (g) kind = /checklist/i.test(g[1]) ? 'checklist' : 'grant';
+  else if (_POP_RECITAL_RX.test(msg)) { kind = 'recital'; text = msg.slice(0, 160); }
+  if (!kind) return null;
+  const ts = parseEqTimestamp(line);
   let zone = null;
   for (const ch of Object.keys(_zealState)) {
     if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
@@ -5241,6 +5258,9 @@ function parsePopFlagLine(line, character) {
     zone:  zone ? String(zone).slice(0, 64) : null,
     boss:  boss ? boss.slice(0, 64) : null,
     ts:    ts ? ts.toISOString() : new Date().toISOString(),
+    kind,
+    prev:  kind !== 'recital' && prev && _POP_PREV_RX.test(prev) ? prev.slice(0, 160) : null,
+    text,
   };
 }
 

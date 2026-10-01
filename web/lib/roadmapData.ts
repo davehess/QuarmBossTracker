@@ -37,6 +37,35 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-flags-2026-10-01',
+    title: 'PoP flags that fill in',
+    version: 'Agent 3.7.59 · Bot 3.1.182 · Web 1.8.65',
+    date: '2026-10-01',
+    headline: 'Your Planes of Power flags now land on the PoP page as you earn them, and the gates match Quarm’s.',
+    features: [
+      {
+        name: 'Every flag named',
+        blurb: 'Mimic reads what the flag NPC tells you just before “You have received a character flag!”, so each flag is recorded by name: Mavuin, the Tribunal, the projections, Maelin, all of them.',
+      },
+      {
+        name: 'Ask the Seer',
+        blurb: 'Sit down by Seer Mal Nae`Shi in the Plane of Knowledge and say “guided meditation”. Mimic records every flag she lists for you, including ones you earned before today.',
+      },
+      {
+        name: 'Justice marks',
+        blurb: 'The PoP page shows which trial marks each character holds: Execution, Flame, Hanging, Lashing, Stoning and Torture.',
+      },
+      {
+        name: 'Quarm’s real gates',
+        blurb: 'The chart now uses the server’s own portal rules. Storms needs the Justice flag like Valor, Torment needs both Tranquility thank-yous, and there is no level bypass.',
+      },
+    ],
+    fixes: [
+      'The PoP page showed everyone able to enter the Plane of Storms. It now needs the Justice flag.',
+      'No flag had been recorded since PoP opened. They are now, and Elder Poxbourne’s flag (worded differently) is caught too.',
+    ],
+  },
+  {
     key: 'agent-3-7-58-local-mode-2026-10-01',
     title: 'Mimic on your own',
     version: 'Agent 3.7.58 · Mimic 2.7.7 beta · Web 1.8.64',

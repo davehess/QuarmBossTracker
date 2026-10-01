@@ -270,6 +270,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
@@ -9140,14 +9141,9 @@ async function _handleAgentPopFlags(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = [];
   const seen = new Set();
-  for (const e of events) {
-    if (!e || !e.character || !e.ts) continue;
-    const ts = new Date(e.ts);
-    if (isNaN(ts.getTime())) continue;
-    const bossLower = _popBossKey(e.boss);
-    const flagKey = POP_FLAG_BY_BOSS[bossLower] || 'unmapped';
-    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts.toISOString()}`;
-    if (seen.has(key)) continue;
+  const push = (e, ts, flagKey, extra) => {
+    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts}`;
+    if (seen.has(key)) return;
     seen.add(key);
     rows.push({
       guild_id:  guildId,
@@ -9156,8 +9152,35 @@ async function _handleAgentPopFlags(req, res) {
       zone:      e.zone ? String(e.zone).slice(0, 64) : null,
       boss:      e.boss ? String(e.boss).slice(0, 64) : null,
       source:    'event',
-      earned_at: ts.toISOString(),
+      earned_at: ts,
+      stage:     null,
+      npc:       null,
+      ...extra,
     });
+  };
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    const iso = ts.toISOString();
+    // A hail the agent WITNESSED is evidence someone talked to an NPC, not a flag. It used to be
+    // stored as an 'unmapped' grant with the NPC thrown away (DECISIONS §119).
+    if (e.source === 'hail_witnessed') {
+      push(e, iso, 'hail', { source: 'hail_witnessed', npc: e.npc ? String(e.npc).slice(0, 64) : null });
+      continue;
+    }
+    const bossLower = _popBossKey(e.boss);
+    // The server's own flag step first (utils/popFlagStages.js), then what it proves in the catalog's
+    // terms; the boss map is the fallback for anything the step tables do not name.
+    const hit = popFlagStages.resolveStage(e, bossLower);
+    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist' : 'event');
+    if (hit) {
+      push(e, iso, hit.stage, { source, stage: hit.stage });
+      for (const k of popFlagStages.STAGE_IMPLIES[hit.stage] || []) push(e, iso, k, { source, stage: hit.stage });
+      continue;
+    }
+    if (e.kind === 'recital') continue;   // a sentence the tables do not know proves nothing
+    push(e, iso, POP_FLAG_BY_BOSS[bossLower] || 'unmapped', { source });
   }
   let written = 0;
   if (rows.length) {

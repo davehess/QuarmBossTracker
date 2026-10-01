@@ -34,7 +34,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
-  POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS,
+  POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
@@ -157,9 +157,10 @@ export default async function PopFlagsPage(
   async function mappedFlagRows(): Promise<FlagRow[]> {
     const out: FlagRow[] = [];
     for (let from = 0; from < 50_000; from += 1000) {
+      // 'hail' rows are witnessed hails (who talked to which NPC), evidence and not flags (§119).
       const { data } = await sb.from('pop_flags')
         .select('character, flag_key, earned_at, boss, zone')
-        .neq('flag_key', 'unmapped')
+        .not('flag_key', 'in', '(unmapped,hail)')
         .order('earned_at', { ascending: true }).order('id', { ascending: true })
         .range(from, from + 999);
       const rows = (data ?? []) as FlagRow[];
@@ -168,7 +169,57 @@ export default async function PopFlagsPage(
     }
     return out;
   }
-  const [flagRows, { count: unmappedCount }, { data: rosterRaw }, { count: rosterCount }] = await Promise.all([
+  // Justice trial marks each character holds (the guild lead, 2026-10-01: "For Justice capture the Marks
+  // they have based on the one that they did"). A mark looted in the Plane of Justice counts for anyone;
+  // a mark in an uploaded inventory counts unless that character opted out of inventory (exclude_inventory).
+  async function marksByChar(): Promise<Map<string, Set<string>>> {
+    const out = new Map<string, Set<string>>();
+    const add = (name: string, mark: string) => {
+      const k = name.toLowerCase();
+      if (!out.has(k)) out.set(k, new Set());
+      out.get(k)!.add(mark);
+    };
+    const byName = new Map<string, string>(JUSTICE_MARKS.map(m => [m.name, m.name]));
+    byName.set(MARK_OF_JUSTICE.name, MARK_OF_JUSTICE.name);
+    const byId = new Map<number, string>(JUSTICE_MARKS.map(m => [m.id, m.name]));
+    byId.set(MARK_OF_JUSTICE.id, MARK_OF_JUSTICE.name);
+    // A page at a time: the API returns at most 1,000 rows a request, whatever limit is asked.
+    async function paged<T>(q: (from: number) => PromiseLike<{ data: unknown[] | null }>): Promise<T[]> {
+      const rows: T[] = [];
+      for (let from = 0; from < 20_000; from += 1000) {
+        const { data } = await q(from);
+        const page = (data ?? []) as T[];
+        rows.push(...page);
+        if (page.length < 1000) break;
+      }
+      return rows;
+    }
+    const [loots, inv] = await Promise.all([
+      paged<{ looter_character: string; item_name: string }>(from => sb.from('looted_items')
+        .select('looter_character, item_name')
+        .eq('guild_id', 'wolfpack').eq('zone', '201').in('item_name', [...byName.keys()])
+        .order('id', { ascending: true }).range(from, from + 999)),
+      paged<{ character_name: string; item_id: number }>(from => sb.from('character_inventory')
+        .select('character_name, item_id')
+        .eq('guild_id', 'wolfpack').in('item_id', [...byId.keys()])
+        .order('id', { ascending: true }).range(from, from + 999)),
+    ]);
+    for (const r of loots) add(r.looter_character, r.item_name);
+    const invRows = inv;
+    if (invRows.length) {
+      const names = [...new Set(invRows.map(r => r.character_name))];
+      const { data: optedOut } = await sb.from('characters').select('name')
+        .eq('guild_id', 'wolfpack').eq('exclude_inventory', true).in('name', names).limit(1000);
+      const hidden = new Set(((optedOut ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
+      for (const r of invRows) {
+        const mark = byId.get(r.item_id);
+        if (mark && !hidden.has(r.character_name.toLowerCase())) add(r.character_name, mark);
+      }
+    }
+    return out;
+  }
+
+  const [flagRows, { count: unmappedCount }, { data: rosterRaw }, { count: rosterCount }, marks] = await Promise.all([
     mappedFlagRows(),
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
@@ -179,7 +230,13 @@ export default async function PopFlagsPage(
     sb.from('characters')
       .select('name', { count: 'exact', head: true })
       .eq('guild_id', 'wolfpack'),
+    marksByChar(),
   ]);
+  const marksOf = (name: string): string[] => {
+    const s = marks.get(name.toLowerCase());
+    return s ? JUSTICE_MARKS.filter(m => s.has(m.name)).map(m => m.trial) : [];
+  };
+  const hasMarkOfJustice = (name: string) => !!marks.get(name.toLowerCase())?.has(MARK_OF_JUSTICE.name);
 
   // Levels from each character's last /who (who_directory), a hundred names a request.
   const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null }[];
@@ -218,6 +275,9 @@ export default async function PopFlagsPage(
   // Counts.
   const flagCount = new Map<string, number>();
   for (const c of scopedChars) for (const f of c.flags) flagCount.set(f, (flagCount.get(f) ?? 0) + 1);
+  // Justice marks held across the scoped roster, one count per trial.
+  const markCount = new Map<string, number>();
+  for (const c of scopedChars) for (const t of marksOf(c.name)) markCount.set(t, (markCount.get(t) ?? 0) + 1);
   const eligibleCount = new Map<string, number>();
   const eligibleChars = new Map<string, CharFlags[]>();
   for (const z of POP_ZONES) {
@@ -294,6 +354,18 @@ export default async function PopFlagsPage(
   const navCls = (active: boolean) =>
     `px-2 py-0.5 rounded border ${active ? 'border-gold text-gold' : 'border-border hover:text-text'}`;
 
+  // The trials a character has a mark from, shown beside their name on the Justice page.
+  function markTag(name: string) {
+    if (selected?.key !== 'justice') return null;
+    const t = marksOf(name);
+    if (!t.length && !hasMarkOfJustice(name)) return null;
+    return (
+      <span className="text-[11px] text-gold" title="Justice trial marks held">
+        {' '}· {t.join(', ')}{hasMarkOfJustice(name) ? `${t.length ? ', ' : ''}Mark of Justice` : ''}
+      </span>
+    );
+  }
+
   // ── Card renderer (server-side JSX helper) ────────────────────────────────
   function ZoneCard({ z }: { z: PopNode }) {
     const color = TIER_COLORS[z.tier];
@@ -333,6 +405,15 @@ export default async function PopFlagsPage(
             );
           })}
         </ul>
+        {z.key === 'justice' && (
+          <div className="flex flex-wrap gap-1" title="Trial marks held: looted in Justice, or in an uploaded inventory">
+            {JUSTICE_MARKS.map(m => (
+              <span key={m.trial} className="text-[10px] px-1.5 py-0.5 rounded bg-black/30 border border-border text-dim">
+                {m.trial} <b className={(markCount.get(m.trial) ?? 0) > 0 ? 'text-gold' : 'text-dim'}>{markCount.get(m.trial) ?? 0}</b>
+              </span>
+            ))}
+          </div>
+        )}
         {z.levelBypass && (
           <div className="text-[10px] text-dim">classic: enter unflagged at {z.levelBypass}+</div>
         )}
@@ -355,10 +436,11 @@ export default async function PopFlagsPage(
         </h2>
         <p className="text-sm text-dim leading-6">
           The guild&apos;s road to <b className="text-text">Quarm</b> — every gate, who&apos;s through it, and what to
-          raid next to move the most people forward. Counts update automatically from flag grants the agents see
-          (&quot;You have received a character flag!&quot;). PoP unlocks <b className="text-text">2026-10-01</b>; until
-          then this is the map. Zones marked <b className="text-text">*</b> follow the classic chart and get verified
-          (or corrected — Quarm&apos;s QoL changes will be documented) at launch.
+          raid next to move the most people forward. Counts update from the flags Mimic sees: each grant is named by
+          what the flag NPC said just before it, and sitting with Seer Mal Nae`Shi in Knowledge (say &quot;guided
+          meditation&quot;) records everything a character holds. The gates are Quarm&apos;s own, read from the
+          server&apos;s portal script; there is no level bypass. Zones marked <b className="text-text">*</b> are not
+          yet confirmed that way.
         </p>
         <div className="flex flex-wrap gap-4 mt-3 text-xs text-dim items-center">
           <span>
@@ -404,7 +486,7 @@ export default async function PopFlagsPage(
               <div className="text-xs text-green mb-1">✓ Can enter ({(eligibleChars.get(selected.key) ?? []).length})</div>
               <ul className="space-y-0.5">
                 {(eligibleChars.get(selected.key) ?? []).map(c => (
-                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link></li>
+                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}</li>
                 ))}
               </ul>
             </div>
@@ -415,6 +497,7 @@ export default async function PopFlagsPage(
                   <li key={c.name} className="text-dim">
                     <Link href={`/character/${encodeURIComponent(c.name)}`} className="hover:underline">{c.name}</Link>
                     <span className="text-xs"> — {missingFor(selected, c.flags).map(f => POP_FLAGS[f]?.label ?? f).join(', ')}</span>
+                    {markTag(c.name)}
                   </li>
                 ))}
               </ul>
@@ -483,6 +566,7 @@ export default async function PopFlagsPage(
                     <th className="py-1 pr-3">Character</th>
                     <th className="py-1 pr-3">Class</th>
                     {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
+                    <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
                     <th className="py-1 pl-2 text-right">Flags</th>
                   </tr>
                 </thead>
@@ -504,6 +588,9 @@ export default async function PopFlagsPage(
                             {zoneAccess(z, f.flags) ? <span className="text-green">✓</span> : <span className="text-dim">—</span>}
                           </td>
                         ))}
+                        <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
+                          {[...marksOf(c.name), ...(hasMarkOfJustice(c.name) ? ['Mark of Justice'] : [])].join(', ') || <span className="text-dim">—</span>}
+                        </td>
                         <td className="py-1.5 pl-2 text-right text-dim text-xs">{f.flags.size}</td>
                       </tr>
                     );
