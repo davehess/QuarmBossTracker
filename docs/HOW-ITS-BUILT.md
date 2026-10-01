@@ -1699,6 +1699,16 @@ it as `sheet` on the `/api/state` petHealth row when its pet is the row's pet.
 Charmed-mob sheets expire with the 30-min pet TTL. Display in `pets.html` /
 `charm.html` not built yet (agent 3.7.35 beta; DECISIONS 2026-09-21 §63).
 
+### PoP flags (`pop_flags`, `/pop`) — named the server's way (2026-10-01, §119)
+The agent's `parsePopFlagLine` (every log path) sends grant / checklist / Seer-recital events, a grant
+carrying the line before it when that line opens like a flag NPC (`_POP_PREV_RX`). The bot's
+`_handleAgentPopFlags` names each with `utils/popFlagStages.js` (NPC line → stage, recital → stage,
+single-grant zones, Tactics checklist by boss), writes the stage row plus the catalog flags it proves
+(`STAGE_IMPLIES`), and keeps `POP_FLAG_BY_BOSS` as the fallback; witnessed hails are `flag_key 'hail'`
+with `npc`. Gates in `web/lib/popFlags.ts` follow `potranquility/player.lua`. Justice marks on `/pop`
+come from `looted_items` (zone 201) and `character_inventory` (`JUSTICE_MARKS`). Tests:
+`test/pop-flag-stages.test.js`, `test/pop-flag-agent.test.js`.
+
 ### PoP checklist (`/pop/guide`)
 Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
 `flag` → a `POP_FLAGS` key, `says` → copyable `/say`, `where` → copyable `/map Y X` from the
