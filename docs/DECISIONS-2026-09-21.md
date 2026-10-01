@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, staged on `claude/sharp-lamport-dC0TW` during the Thursday raid freeze; lands on `main` after 00:30 ET | the guild lead: after it lands (and the 6 h cache turns over), target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
 | **PoP flags now record by name; Quarm's real gates; Justice marks** | **§119.** Agent 3.7.59 on `main` (stable Mimics hot-swap it), bot 3.1.182, web 1.8.65. Every grant is named from the flag NPC's line or the Seer's recital; Storms now needs the Justice flag; marks show on `/pop`. Today's 42 earlier grants stay unmapped until re-read | the guild lead: (1) tell raiders: sit by Seer Mal Nae`Shi in Knowledge, say "guided meditation", and every flag they hold records; (2) or re-run Opt-in Logs over today's log; (3) check `/pop` Justice shows the 7 Marks of Execution |
 | **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) add `eqmimic.quest` (and `www` as a redirect) to the Vercel project that builds the hesstastic repo, set DNS at the registrar, check the domain shows the page and not hesstastic.com; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
@@ -5551,3 +5552,21 @@ each character on the Justice page, and a Marks column on My Characters.
 
 **Privacy.** A grant now carries one NPC line, only from the allow-listed flag NPCs, and the Seer's
 sentences. `docs/PRIVACY.md` and `/privacy` say so.
+
+### 120. Quest tab: lines kept in a table; hand-ins that give a flag (2026-10-01, bot 3.1.183)
+
+The guild lead, on Askr the Lost's Quest tab: *"This is missing the actual instructions"* — the tab
+listed three hand-ins with "GET nothing listed" and no dialogue.
+
+**Why.** Quarm's `pofire`-era Askr script keeps every line in `local RESPONSES = { … }` and says them with
+`e.other:Message(0, RESPONSES[11])` or `RESPONSES[state]`; the reader only knew string literals. His
+rewards are `SummonCursorItem` (the bag) and `set_global` (the Thunder flag steps), neither of which the
+reader counted as "gives", and his three giant-head hand-ins sit in one `or` condition, so two of them
+got an empty branch.
+
+**The fix (`utils/questDialog.js`, `_npcInteract`).** String tables are read; a fixed index resolves, and
+a variable index gives one line per value the `if`/`elseif` above allows. `SummonCursorItem` and
+QuestReward's exp count. `or`-joined hand-ins share the branch, carry the same `group`, and the bot shows
+a group's identical hand-ins once. A branch that sets a flag lists "a character flag" under GET. No
+overlay change: GET already prints whatever outputs carry. Checked against a trimmed copy of the script
+(`test/quest-dialog.test.js`); not yet against the live row, which needs a fresh `npc-interact` (6 h cache).

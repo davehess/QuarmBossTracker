@@ -63,6 +63,7 @@ export const releases: Release[] = [
     fixes: [
       'The PoP page showed everyone able to enter the Plane of Storms. It now needs the Justice flag.',
       'No flag had been recorded since PoP opened. They are now, and Elder Poxbourne’s flag (worded differently) is caught too.',
+      'Target Info’s Quest tab showed Askr the Lost’s hand-ins but not what he says. His whole conversation shows now, and the bag and medallion hand-ins say they give a character flag.',
     ],
   },
   {

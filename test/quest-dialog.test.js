@@ -229,3 +229,126 @@ describe('who to talk to next', () => {
     expect(q.scriptPath('poknowledge', 'Seer_Mal_Nae`Shi')).toBe('poknowledge/Seer_Mal_Nae-Shi.lua');
   });
 });
+
+// postorms/Askr_the_Lost.lua, trimmed (RESPONSES shortened to their openings, the timer and
+// state bookkeeping cut). Every line lives in a table, some read through a variable index, and
+// the giant heads are three alternatives in one condition (the guild lead, 2026-10-01: "This is
+// missing the actual instructions").
+const ASKR = `local stateTable = {};
+local RESPONSES = {
+	"Askr looks up at you. 'Leave me alone to my ale and my misery.'",
+	"Askr the Lost says 'Did you not hear me?'",
+	"Askr raises an eyebrow your way.",
+	"",
+	"The drunken stupor vanishes. 'Was it you who severed the head?'",
+	"Askr the Lost says 'Are you paying attention?'",
+	"Askr the Lost says 'Mount Grenidor.' [continue]",
+	"Askr the Lost says 'The three factions.' [continue]",
+	"Askr the Lost says 'Seal them in this bag and return them to me.'",
+	"",
+	"Askr looks over the remnants of the storm giants in his hands.",
+	"Askr the Lost says 'Seal two pieces of the medallion in this bag.'",
+	"",
+	"Askr the Lost says 'You have retrieved the pieces!'",
+	"Askr the Lost says 'A hearty welcome back to you, friend.'",
+	"Askr the Lost says 'You have returned to me, but for what purpose?'",
+	"Askr points drunkenly towards the exit of the cave.",
+	"Askr the Lost says 'You did well defeating one giant.'",
+	"Askr the Lost says 'Seek me out that which I require.'",
+	"Askr merely glances at you with a questioning look.",
+};
+
+function event_say(e)
+	local qglobals = eq.get_qglobals(e.other);
+	local karana = tonumber(qglobals.karana or 0);
+	local state = GetState(name, karana);
+	if ( karana == 0 ) then
+		if ( e.message:findi("hail") ) then
+			if ( headTable[name] ) then
+				e.other:Message(0, RESPONSES[18]);
+			end
+			if ( state <= 3 ) then
+				e.other:Message(0, RESPONSES[state]);
+			end
+		elseif ( e.message:findi("it was me") ) then
+			if ( state == 6 ) then
+				e.other:Message(0, RESPONSES[state]);
+			end
+		elseif ( e.message:findi("continue") ) then
+			if ( state == 8 or state == 9 ) then
+				e.other:Message(0, RESPONSES[state]);
+				if ( state == 9 ) then
+					e.other:SummonCursorItem(17192); -- Askr's Bag of Verity
+				end
+			elseif ( state > 9 ) then
+				e.other:Message(0, RESPONSES[19]);
+			end
+		end
+	end
+end
+
+function event_trade(e)
+	local item_lib = require("items");
+	if ( item_lib.check_turn_in(e.self, e.trade, { item1 = 28749 }) -- wind giant head
+		or item_lib.check_turn_in(e.self, e.trade, { item1 = 28781 }) -- desert giant head
+		or item_lib.check_turn_in(e.self, e.trade, { item1 = 28782 }) -- forest giant head
+	) then
+		e.other:Message(0, RESPONSES[5]);
+		e.other:QuestReward(e.self, 0, 0, 0, 0, 0, 1);
+		e.other:SummonCursorItem(11486);
+	end
+	if ( item_lib.check_turn_in(e.self, e.trade, { item1 = 11487 }) ) then -- Askr's Sealed Bag of Verity
+		if ( karana == 0 ) then
+			e.other:Message(0, RESPONSES[11]);
+			e.other:QuestReward(e.self, 0, 0, 0, 0, 0, 1000);
+			eq.set_global("karana", "1", 5, "F");
+			e.other:Message(15, "You have received a character flag!");
+		end
+	end
+	item_lib.return_items(e.self, e.other, e.trade);
+end
+`;
+
+describe('Askr the Lost: lines kept in a table', () => {
+  const say = q.parseDialog(ASKR);
+  const by = (kw) => say.find((b) => b.keywords.includes(kw));
+
+  it('reads the lines out of RESPONSES, by number and through the guard on its index', () => {
+    const hail = by('hail').replies.map((r) => r.text);
+    expect(hail[0]).toMatch(/You did well defeating one giant/);        // RESPONSES[18]
+    expect(hail.slice(1)).toEqual([                                    // state <= 3 → 1, 2, 3
+      "Askr looks up at you. 'Leave me alone to my ale and my misery.'",
+      "Askr the Lost says 'Did you not hear me?'",
+      'Askr raises an eyebrow your way.',
+    ]);
+    expect(by('it was me').replies.map((r) => r.text)).toEqual(["Askr the Lost says 'Are you paying attention?'"]);
+    const cont = by('continue').replies.map((r) => r.text);
+    expect(cont).toHaveLength(3);                                       // 8, 9, then 19 for "> 9"
+    expect(cont[1]).toMatch(/Seal them in this bag/);
+  });
+
+  it('counts an item put on your cursor as one you get', () => {
+    expect(by('continue').fx.gives).toEqual([17192]);
+  });
+
+  it('gives the three heads one shared answer, and marks the flag hand-in', () => {
+    const tr = q.tradeBranches(ASKR);
+    const heads = tr.filter((b) => [28749, 28781, 28782].includes(b.items[0]));
+    expect(heads).toHaveLength(3);
+    expect(new Set(heads.map((b) => b.group)).size).toBe(1);
+    for (const b of heads) {
+      expect(b.replies[0].text).toMatch(/severed the head/);
+      expect(b.fx.gives).toEqual([11486]);
+      expect(b.flag).toBe(false);
+    }
+    const bag = tr.find((b) => b.items[0] === 11487);
+    expect(bag.flag).toBe(true);
+    expect(bag.fx.exp).toBe(1000);
+    expect(bag.replies[0].text).toMatch(/remnants of the storm giants/);
+  });
+
+  it('skips a table that holds anything but strings', () => {
+    expect(q._stringTables('local T = {\n  { "a", "b" },\n};')).toEqual({});
+    expect(q._stringTables('local L = { "one", -- note\n "two" };')).toEqual({ L: ['one', 'two'] });
+  });
+});

@@ -1744,6 +1744,11 @@ faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()`
 `check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
 Quarm-only branches, flags unmatched rows `unverified`, and names NPCs / factions / items in one round. The
 overlay folds the NPC text (`_qOpen`), draws ⚠ tags (`_qWarnTags`), GIVE / GET and the faction line.
+**Lines kept in a table (bot 3.1.183, §120):** `_stringTables()` reads top-level `local NAME = { "…", … }`
+string lists; `RESPONSES[11]` resolves directly and `RESPONSES[state]` gives one line per value the
+`if`/`elseif` above allows (`_guardValues`). `effects()` also reads `SummonCursorItem` and QuestReward's exp;
+`tradeBranches()` groups `or`-joined `check_turn_in` heads (shared branch, `group`) and sets `flag` when the
+branch calls `set_global`. GET then lists those items plus "a character flag".
 
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),
