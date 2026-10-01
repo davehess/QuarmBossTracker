@@ -86,7 +86,8 @@ int main() {
   Write(folder / "bad-1.png", Png(64, 64));
   Write(folder / "notes.txt", {'h', 'i'});
   const auto &images = GetTagImages();
-  assert(images.size() == 3 && images.count("eur") && images.count("pic1") && images.count("zek"));
+  assert(images.shipped.size() == 3 && images.shipped.count("eur") && images.shipped.count("pic1") &&
+         images.shipped.count("zek") && images.custom.empty());
 
   assert(GetTagImage("IEUR") && GetTagImage("ieur") && GetTagImage("iPiC1"));
   assert(GetTagImage("IEUR")->filename() == "EUR.png");
@@ -104,11 +105,43 @@ int main() {
 
   // /tag icons reads the folder again.
   Write(folder / "MAY.png", Png(64, 64));
-  assert(!GetTagImage("IMAY") && GetTagImages(true).size() == 4 && GetTagImage("IMAY"));
+  assert(!GetTagImage("IMAY") && GetTagImages(true).shipped.size() == 4 && GetTagImage("IMAY"));
+
+  // The whole key also names an icon's picture: Windows allows no file called CON.png, so ICON.png is the
+  // only way to picture ^ICON^. In one folder the code's own name still comes first.
+  Write(folder / "ICON.png", Png(64, 64));
+  Write(folder / "IEUR.png", Png(64, 64));
+  GetTagImages(true);
+  assert(GetTagImage("ICON") && GetTagImage("ICON")->filename() == "ICON.png");
+  assert(GetTagImage("IEUR")->filename() == "EUR.png");
+
+  // A banner's picture is named for the whole key, and only a real guild's banner counts.
+  Write(folder / "BEUR.png", Png(64, 64));
+  Write(folder / "BXYZ.png", Png(64, 64));
+  GetTagImages(true);
+  assert(GetTagImage("BEUR") && GetTagImage("BEUR")->filename() == "BEUR.png" && !GetTagImage("BXYZ"));
+  assert(ReadTagKey("^BEUR^") == "BEUR" && ReadTagKey("^BXYZ^") == "B");
+
+  // A player's own folder, tagicons/custom: it wins over a shipped picture under either name, and a
+  // picture only there is found too.
+  fs::create_directories(folder / "custom");
+  Write(folder / "custom" / "IEUR.png", Png(32, 32));  // Whole-key name, over the shipped EUR.png.
+  Write(folder / "custom" / "zek.png", Png(32, 32));   // Same name in another case, over ZEK.tga.
+  Write(folder / "custom" / "NEW1.tga", Tga(2, 32, 32));
+  Write(folder / "custom" / "BEUR.png", Png(32, 32));
+  const auto &both = GetTagImages(true);
+  assert(both.custom.size() == 4);
+  assert(GetTagImage("IEUR")->parent_path().filename() == "custom");
+  assert(GetTagImage("IZEK")->parent_path().filename() == "custom");
+  assert(GetTagImage("BEUR")->parent_path().filename() == "custom");
+  assert(GetTagImage("INEW1") && GetTagImage("INEW1")->parent_path().filename() == "custom");
+  assert(GetTagImage("IPIC1")->parent_path().filename() == "tagicons");  // Not replaced: still shipped.
+  assert(!both.shipped.count("custom"));                                   // The folder is not a picture.
 
   // No folder at all: no pictures, no error.
   UISkin::root = root / "nowhere";
-  assert(GetTagImages(true).empty() && !GetTagImage("IEUR") && ReadTagKey("^IEUR^") == "IEUR");
+  assert(GetTagImages(true).shipped.empty() && GetTagImages().custom.empty() && !GetTagImage("IEUR") &&
+         ReadTagKey("^IEUR^") == "IEUR");
 
   fs::remove_all(root);
   std::puts("tag pictures: all checks passed");

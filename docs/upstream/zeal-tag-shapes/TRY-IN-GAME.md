@@ -234,6 +234,24 @@ Setup: make the folder `A:\EQ\uifiles\zeal\tagicons` and copy in the three test 
 9. Known gap: **a picture tag does not survive a relog yet.** After a relog it comes back
    as the built-in shape, or a white arrow. The saved-tags file predates pictures.
 
+### Your own pictures, templates and banners (new 2026-10-01, `tag-icon-files` `e8254ec`)
+
+The test build now installs `tagicons\README.txt` and `tagicons\templates\` (every guild's
+icon as `I<code>.png` and banner as `B<code>.png`). Nothing installs into `tagicons\custom\`.
+
+10. Run `/tag icons`: it prints the `custom` folder's path and **creates the folder** if it
+    was not there.
+11. Copy `templates\IMAY.png` into `custom\`, paint a big mark on it in any editor that keeps
+    transparency, run `/tag icons` (it lists **MAY (yours)**), then
+    `/tag local ^IMAY^IMAY Mine`: **your edited icon** draws, not the built-in one.
+12. Copy `templates\BMAY.png` into `custom\`, edit it, `/tag icons`, then
+    `/tag local ^BMAY^BMAY Banner`: **your banner** draws in place of the built-in flag.
+13. Put a different picture in `tagicons\` as `MAY.png` (the shipped folder) and `/tag icons`:
+    the tag still shows **your** `custom\IMAY.png`. Custom wins under either name.
+14. Copy `templates\ICON.png` into `custom\`, `/tag icons`, `/tag local ^ICON^ICON Con`: it
+    draws. (Windows allows no `CON.png`, which is why the whole-key name exists.)
+15. Delete your files from `custom\`, `/tag icons`, tag again: the built-in marks are back.
+
 ## Tagged players keep their tags (new: `tag-persistence` `9a3fd09`, 2026-09-26)
 
 A player's tag is kept by name, because their spawn id changes every time they zone in.

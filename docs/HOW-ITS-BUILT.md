@@ -2611,6 +2611,18 @@ is named `testall-<hash>` from the release name, so each push reads as a new
 version for Check, Install and the 12-hour reminder. Default stays `official`.
 `test/zeal-source.test.js`. DECISIONS §117.
 
+**Tag pictures on disk (in-game folder `uifiles\zeal\tagicons\`):**
+- `tagicons\`: pictures that ship with a build (replaced on update).
+- `tagicons\custom\`: the player's own. Nothing installs here, and a picture here
+  wins over a shipped one under either name.
+- `tagicons\templates\`: test build only. Each guild's icon `I<code>.png` and
+  banner `B<code>.png`, plus `README.txt`. Zeal does not read this folder.
+- `^I<code>^` uses `<code>.png` or `I<code>.png`. The second form is needed
+  because Windows forbids `CON.png`. `^B<code>^` uses `B<code>.png`.
+- Code: `GetTagImage` / `ScanTagImages` in the fork's `Zeal/nameplate.cpp` on
+  `tag-icon-files`. Off-client test: `docs/upstream/zeal-tag-icon-files/test/`.
+  The templates are the gallery renders (`web/public/zeal/marks` on beta).
+
 ## Web features
 
 - **Zeal tag icons gallery (`/zeal-icons`, on `beta` as a preview, 2026-09-26)**:
