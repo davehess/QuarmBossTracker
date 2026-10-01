@@ -3240,6 +3240,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   3-4 digit range not followed by a letter or `%`) are what stop ordinary chat
   becoming an item name — each was added because a REAL captured line beat the
   previous rule. `test/roll-item-line.test.js` carries every one of them.
+  **A later call reusing the numbers starts new sets (FB-45, agent 3.7.56, beta):**
+  `_rollSetSuperseded` ends a set once a call made after it started gives its
+  number to a different item (an item-less set: only a call 2+ min after its
+  last roll); `trackRollLine` then opens a new set and `rollSetsSnapshot` reports
+  the old one `open: false`. `test/roll-sets-new-call.test.js`. DECISIONS §116.
 - **Loot announce (#107)** — `noteLootAuction` → TTS + auction countdown chips.
 - **Timeline enrichment (#105)** — `noteSlowLanding` (SLOW_SPELLS), `noteMobHeal`,
   `DISC_LINES`/`_matchDiscLine` → `timeline_events`.

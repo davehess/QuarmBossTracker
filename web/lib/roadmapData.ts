@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-56-2026-10-01',
+    title: 'New loot, new rolls',
+    version: 'Agent 3.7.56 · Web 1.8.61',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'A new batch of loot that reuses the same roll numbers now starts fresh rolls under the new item names.',
+    features: [],
+    fixes: [
+      'When a second loot call reused the same roll numbers a few minutes after the first, the Rolls card and the Command Center added the new rolls to the old items and flagged anyone who rolled in both as re-rolling. A new call for a different item now starts its own rolls, and the old ones show as closed.',
+    ],
+  },
+  {
     key: 'agent-3-7-55-2026-09-30',
     title: 'Target Info from your own machine',
     version: 'Agent 3.7.55 · Bot 3.1.179 · Web 1.8.60',

@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **FB-45: a new loot call with the same numbers starts new rolls** | **§116.** Agent 3.7.56 on beta `2020a8c4`: a later call that puts a roll number on a different item closes the old set and starts a new one under the new name | the guild lead: on the beta, post two loot calls a few minutes apart reusing the numbers and check the Rolls card shows two batches. Raiders on stable get it at the next stable cut, which must repeat "Fixes FB-45" |
 | **Target Info: mob info kept on disk; the state payload** | **§114–§115.** Bot 3.1.179 builds zone packs; agent 3.7.55 (beta `effdc609`) keeps the Planes of Power and every visited zone on disk. The likelier cause of the slowness is untouched: `/api/state` carries 591 KB of guild triggers, and Target Info reads it twice a second | the guild lead: on the beta, target something in a PoP zone and say whether it is instant. Then pick whether to slim the payload (a Target-Info-only endpoint, or trigger notes out of `/api/state`). Raid hold: `flag_raid_hold = 0` if updates should land on raid-schedule evenings before 10/14 |
 | **PoP trigger pack (opens 2026-10-01)** | **§112–§113. Imported and live.** 374 guild-trigger rows (`pop-2026-10`), server recasts, corrected event patterns. NPC speech reaches triggers from agent 3.7.54, stable Mimic 2.7.6. Ring of Fire (Acrylia) pack of 5. No formal raids until 10/14 | the guild lead: in a PoP zone, run the boss short-name lookup once to see which command prints the "not online" reply the stat cards fire on. Raiders: update to 2.7.6 for the NPC-speech callouts |
 | **Feedback FB-38 to FB-42** | **§110.** FB-38 (XS kept), FB-41 (Ree slow), FB-42 (kill leaves the HUD in 10 s) on beta `0d782606`, agent 3.7.50; FB-40 on alpha `f7881fc3`; FB-39 (Extended Target debuffs per mob) bot 3.1.178 + beta `dde2f702` | the guild lead: with the partner on the beta, fight two same-name mobs and check each row's debuffs. FB-38 was reported from the stable, so its reporter gets it at the next stable cut |
@@ -5311,3 +5312,22 @@ The guild lead, on Target Info loading slowly, picked the disk cache (option B o
   `updateBlocked: raid hold — the bot reports an active raid` on a no-raid Wednesday. `_raidHoldNow` is
   schedule-driven; with no formal raids until 10/14 (§113), agent updates and background scans wait on those
   evenings unless an officer sets `flag_raid_hold = 0` in /admin/overlays, and clears it before 10/14.
+
+### 116. FB-45: a new loot call with the same numbers starts new rolls (2026-10-01, agent 3.7.56 beta `2020a8c4`)
+The guild lead, from a Command Center Rolls card that showed two loot calls as one: *"when we do rolls way
+later we should post the new items - we had a long time in between these rolls and we should have made them
+separate rolls even if it's the same numbers"*.
+- **What happened:** one raid call put 111/222/333 on three items at 22:08, the next put the same numbers on
+  three new items at 22:15. Seven minutes is inside the 10-minute same-range window and rolls were still
+  landing, so the second wave joined the first wave's sets under the old names (a set is only labelled
+  once), and a raider who rolled in both waves showed as re-rolling.
+- **The rule now:** a set ends when a call made after it started gives its number to a **different** item.
+  The same item posted again is a reminder and keeps the set. A set that has no item yet ends only when the
+  call comes more than **2 minutes after its last roll**: calls often follow the first rolls by up to a
+  minute (54 s and 10 s measured), and that call names the set rather than starting a new one. Only the
+  newest set of a range can take a roll. An ended set shows closed at once on the Rolls card and the
+  Command Center.
+- **Where:** `_rollSetSuperseded` in the agent, used by `trackRollLine` and `rollSetsSnapshot`. No bot
+  change: uploaded sets are keyed on `started_at`, so a new set is a new row. `test/roll-sets-new-call.test.js`.
+- **Not done:** an item-less call ("roll 333") still cannot start a new set, because it carries no name to
+  compare. A long pause on its own (no new call) still runs to the 10-minute window as before.
