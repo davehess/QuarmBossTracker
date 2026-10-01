@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-58-local-mode-2026-10-01',
+    title: 'Mimic on your own',
+    version: 'Agent 3.7.58 · Mimic 2.7.7 beta · Web 1.8.64',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'Friends outside the guild can use Mimic just for the overlays, with nothing sent to our server.',
+    features: [
+      {
+        name: 'Local mode',
+        blurb: 'Choose “Run local-only” in setup, or “Stay local-only” on the banner, and Mimic stops asking you to sign in. Your meter, triggers, timers, and charm and pet trackers work from your own log, and nothing about your play leaves your PC.',
+      },
+      {
+        name: 'Spell and item lists come with the installer',
+        blurb: 'Spell timers, buff names and clicky cast times work on a fresh install before you sign in, or without signing in at all.',
+      },
+    ],
+    fixes: [
+      'Buff queue and Extended Target said “loading” forever when you were not signed in. They now say they need sign-in.',
+    ],
+  },
+  {
     key: 'mimic-zeal-test-build-2026-10-01',
     title: 'Try the next Zeal early',
     version: 'Mimic 2.7.7 beta · Web 1.8.63',
