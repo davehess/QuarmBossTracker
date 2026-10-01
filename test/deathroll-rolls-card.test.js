@@ -32,8 +32,11 @@ function setsFor(steps, t0) {
              rolls: [{ name, nameLower: name.toLowerCase(), value, atMs, reroll: false }] };
   });
 }
+// The snapshot asks whether a later loot call superseded a set (FB-45); no call here.
+const supersededBlock = sliceBlock(agent, 'const ROLL_RELABEL_QUIET_MS', '\n}\n');
 function snapshot(rollSets) {
   const pre = 'const ROLL_SET_KEEP_MS = 2*60*60*1000; const ROLL_SET_GAP_MS = 10*60*1000;\n'
+            + 'const _rollItemByNumber = new Map();\n' + supersededBlock + '\n'
             + 'const _rollSets = ' + JSON.stringify(rollSets) + ';\n';
   return evalBlock(pre + snapBlock, ['rollSetsSnapshot']).rollSetsSnapshot();
 }
