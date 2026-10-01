@@ -279,6 +279,9 @@ function defaultConfig() {
     // Zeal.asi (that stays a one-click user action; the game may have it loaded).
     zealInstalledTag: null,
     zealAutoCheck: true,
+    // Where Zeal installs come from: 'official' (CoastalRedwood) or 'test' (the
+    // guild's fork, test-all build). zealUpdater.ZEAL_SOURCES; set from Settings.
+    zealSource: 'official',
     // Custom UI packs (Nillipuss etc.) installed via the uiPacks updater —
     // map of pack id → last-installed release tag. Same idea as zealInstalledTag
     // but per-pack, since a user can install more than one.
@@ -10480,8 +10483,21 @@ ipcMain.handle('clock-resync', async () => {
 ipcMain.handle('zeal-status', () => {
   try {
     const cfg = loadConfig();
-    return zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag);
-  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null }; }
+    return { ...zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag), source: zealUpdater._zealSource(cfg.zealSource) };
+  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null, source: 'official' }; }
+});
+// Switch where Zeal installs come from. Saved at once, not with the Settings
+// form, because the Check / Install buttons beside it act straight away. Nothing
+// is installed here; the next Check offers the other source's build.
+ipcMain.handle('zeal-set-source', (_e, source) => {
+  try {
+    const cfg = loadConfig();
+    cfg.zealSource = zealUpdater._zealSource(source);
+    saveConfig(cfg);
+    _zealNotifiedTag = null;     // the other source's newest build is news again
+    appendAgentLog(`[zeal-update] Zeal source set to ${cfg.zealSource}\n`);
+    return { ok: true, source: cfg.zealSource };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 // Check GitHub for the latest release (network). Returns the comparison the UI
 // needs; never writes anything.
@@ -10490,9 +10506,10 @@ ipcMain.handle('zeal-check-update', async () => {
     const cfg = loadConfig();
     const eqDir = _zealEqDir();
     const local = zealUpdater.localStatus(eqDir, cfg.zealInstalledTag);
-    const latest = await zealUpdater.checkLatest();
+    const latest = await zealUpdater.checkLatest(cfg.zealSource);
     return {
       ok: true,
+      source: latest.source,
       eqDir,
       installedTag: local.installedTag,
       hasZealAsi: local.hasZealAsi,
@@ -10532,8 +10549,8 @@ ipcMain.handle('zeal-install-update', async () => {
     if (await _isEqRunning()) {
       return { ok: false, error: 'Close EverQuest first — Zeal.asi is loaded by the running game and can\'t be replaced while it\'s open.' };
     }
-    const res = await zealUpdater.install(eqDir);
     const cfg = loadConfig();
+    const res = await zealUpdater.install(eqDir, { source: cfg.zealSource });
     cfg.zealInstalledTag = res.tag || cfg.zealInstalledTag;
     saveConfig(cfg);
     appendAgentLog(`[zeal-update] installed ${res.tag} into ${eqDir} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
@@ -10571,7 +10588,7 @@ async function checkZealUpdate({ manual = false } = {}) {
     if (!manual && cfg.zealAutoCheck === false) return;
     const eqDir = _zealEqDir();
     if (!eqDir) return;                              // no EQ folder yet — nothing to update
-    const latest = await zealUpdater.checkLatest();
+    const latest = await zealUpdater.checkLatest(cfg.zealSource);
     if (!latest.tag) return;
     const current = latest.tag === cfg.zealInstalledTag;
     // Tell the agent on EVERY check, before the once-per-tag latch below.
@@ -10585,8 +10602,10 @@ async function checkZealUpdate({ manual = false } = {}) {
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
     if (Notification.isSupported()) {
       const n = new Notification({
-        title: 'Zeal update available',
-        body: `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
+        title: latest.source === 'test' ? 'New Zeal test build' : 'Zeal update available',
+        body: latest.source === 'test'
+          ? `Zeal test build ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
+          : `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
         silent: true,
       });
       n.on('click', () => { try { openSettings(); } catch {} });
