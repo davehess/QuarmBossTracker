@@ -2597,6 +2597,15 @@ copy, no write) and deletes that installer's old copies byte-identical to the
 file. Before this, every Zeal update added a copy of each target ring.
 `test/install-no-identical-backups.test.js`. DECISIONS §117.
 
+### Zeal fork test builds on GitHub — 2026-10-01
+Our Zeal changes live on the fork (github.com/davehess/Zeal) and are tried together
+on its `test-all` branch. `.github/workflows/build-test-all.yml` (on `test-all`
+only) builds every push on a Windows runner with upstream's msbuild line and
+replaces `zeal_test-all.zip` on one rolling prerelease, tag `test-all-build`.
+The build reports itself as `testall-<hash>` in Zeal's options window. To refresh
+the test build: merge the feature branches into `test-all` and push. Mimic does
+not install it (it installs CoastalRedwood's latest release). DECISIONS §117.
+
 ## Web features
 
 - **Zeal tag icons gallery (`/zeal-icons`, on `beta` as a preview, 2026-09-26)**:

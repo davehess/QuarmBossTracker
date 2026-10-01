@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
-| **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push (`test-all` `7d49ae6`); not compiled yet. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) run the fork's "Create manual release" on `test-all` (or build locally) and try it in game; (2) say when to build the pipe-field adoption; (3) pick the tag-picture scope in §117 "Open" |
+| **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) install the `test-all-build` zip and try it in game; (2) say when to build the pipe-field adoption; (3) pick the tag-picture scope in §117 "Open"; (4) say whether Mimic beta should offer the test build as a Zeal choice |
 | **FB-45: a new loot call with the same numbers starts new rolls** | **§116.** Agent 3.7.56 on beta `2020a8c4`: a later call that puts a roll number on a different item closes the old set and starts a new one under the new name | the guild lead: on the beta, post two loot calls a few minutes apart reusing the numbers and check the Rolls card shows two batches. Raiders on stable get it at the next stable cut, which must repeat "Fixes FB-45" |
 | **Target Info: mob info kept on disk; the state payload** | **§114–§115.** Bot 3.1.179 builds zone packs; agent 3.7.55 (beta `effdc609`) keeps the Planes of Power and every visited zone on disk. The likelier cause of the slowness is untouched: `/api/state` carries 591 KB of guild triggers, and Target Info reads it twice a second | the guild lead: on the beta, target something in a PoP zone and say whether it is instant. Then pick whether to slim the payload (a Target-Info-only endpoint, or trigger notes out of `/api/state`). Raid hold: `flag_raid_hold = 0` if updates should land on raid-schedule evenings before 10/14 |
 | **PoP trigger pack (opens 2026-10-01)** | **§112–§113. Imported and live.** 374 guild-trigger rows (`pop-2026-10`), server recasts, corrected event patterns. NPC speech reaches triggers from agent 3.7.54, stable Mimic 2.7.6. Ring of Fire (Acrylia) pack of 5. No formal raids until 10/14 | the guild lead: in a PoP zone, run the boss short-name lookup once to see which command prints the "not online" reply the stat cards fire on. Raiders: update to 2.7.6 for the NPC-speech callouts |
@@ -5362,8 +5362,19 @@ main was synced by the guild lead; then main was merged into each branch (no for
 `8b4ff07`, `tag-persistence` `a5f104d`, `tag-corpses` `ccf7c07`, `tag-icon-files` `da36d4b`, `test-all`
 `7d49ae6`. The conflicts were all `nameplate.cpp` (include lists, the MainLoop callbacks, the `/tag` help
 text) and one README line; each branch's own change set is unchanged, checked line for line, and
-`test-all`'s differs from before only by the Bandolier lines, which now come from upstream. Not compiled
-here (the fork builds only on its manual release run). `bandolier-chat-filter` is merged upstream and
+`test-all`'s differs from before only by the Bandolier lines, which now come from upstream.
+
+**`test-all` builds on GitHub (fork `0a2e25d`).** The guild lead: *"can we render this in github directly to
+make a new test executable via script or does it need to be done on my machine"*. Until now every test
+build was local (Visual Studio): the fork had never run a workflow, and its copied "Create manual release"
+cannot run there, since it tags the release with the version in `zeal.h` (`v1.4.8`, the same as the real
+release) and its changelog step needs an existing tag, of which the fork has none.
+`.github/workflows/build-test-all.yml`, on `test-all` only (so it never rides into an upstream PR): every
+push builds on `windows-2022` with upstream's msbuild line, labels the build `testall-<hash>` (Zeal's
+options window shows it), zips what an upstream release zips, and replaces the zip on ONE rolling
+prerelease, tag `test-all-build` (not `test-all`, which would make the branch name ambiguous). The first
+run passed in about three minutes, which is also the first compile of the 1.4.8 merges:
+`https://github.com/davehess/Zeal/releases/tag/test-all-build`. `bandolier-chat-filter` is merged upstream and
 `pipe-spawn-id` (unrelated history; spawn ids shipped in 1.4.6) is obsolete; neither was touched.
 
 **The new pipe fields, reviewed.** `target_name`, `target_type` (0 player, 1 NPC, 2 NPC corpse, 3 player
