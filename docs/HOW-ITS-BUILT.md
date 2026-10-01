@@ -121,6 +121,18 @@ writes.
 
 ## Release & deploy pipeline
 
+### Local mode — Mimic without the guild server (agent 3.7.58 · bot 3.1.180, 2026-10-01)
+For players who want only the overlays (DECISIONS §118). **Agent:** `_localOnly()` = started with no
+token; `enqueueUpload`, `_postLiveState`, the upload drain and the version poll all stand down, and the
+Buff queue / Extended Target routes answer `local_only: true` (the overlays label it). **Mimic:**
+`cfg.localOnly` (set by setup, welcome and the banner's "Stay local-only" via `set-local-only`) makes
+`_setupIssue` count setup as done; `checkAgentUpdate` skips the bot without a token. **Data:** the bot's
+`GET /api/public/catalog/<spell-catalog|item-clickies|item-catalog>` (no sign-in, same cached bodies);
+`apps/mimic/scripts/stage-catalog.js` (`predist`) bundles them into `staged-agent/catalog/`, and
+`seedBundledCatalog` in `main.js` copies each into the agent folder when newer. **Site:** eqmimic.quest
+pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
+`test/local-mode.test.js`, `test/public-catalog.test.js`.
+
 ### Guild kit — the tenant config contract (`guild/`, 2026-09-18)
 **Slice 1a live (bot 3.1.129):** `_loadGuildDiscordJson` at the top of
 `index.js` reads `guild/discord.json` right after dotenv and fills only the

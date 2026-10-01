@@ -511,6 +511,18 @@ and the same never-refetch guarantee.
 - The pinned list (zone ids 200–223) is ours. The wizard should derive it from
   whatever expansion the guild is heading into, not copy it.
 
+### Public catalogs and installers that carry them (2026-10-01)
+- **The bot serves the spell, clicky and item catalogs without sign-in**
+  (`/api/public/catalog/*`, DECISIONS §118), and every Mimic build fetches them into the
+  installer. It costs bot egress per build and per anyone who calls it (about 1 MB each,
+  served from memory, no database read). The data is the public `eqemu_*` mirror, so a
+  guild's own deployment exposes nothing new by keeping the route.
+- The build script points at OUR bot by default (`WOLFPACK_CATALOG_URL` overrides it). A
+  guild building its own Mimic must point it at its own bot, or its installers ship our
+  snapshot.
+- Local mode (no token) sends nothing to the guild server, so an install can be handed to
+  people outside the guild. eqmimic.quest is ours; the wizard should not assume it.
+
 ## 4. Open questions for whoever builds it
 
 - **What does the wizard run as?** A CLI in the repo, a page in the local web
