@@ -80,7 +80,8 @@ describe('the raid-night planner', () => {
 describe('reading pop_flags past the 1,000-row cap', () => {
   const reader = stripJs(sliceBlock(page, 'async function mappedFlagRows()', '\n  }\n'));
   it('reads the real flags a page at a time, and only the real ones', () => {
-    expect(reader).toMatch(/\.neq\('flag_key', 'unmapped'\)/);
+    // Witnessed hails are stored as 'hail' rows since §119; they are evidence, not flags.
+    expect(reader).toMatch(/\.not\('flag_key', 'in', '\(unmapped,hail\)'\)/);
     expect(reader).toMatch(/\.range\(from, from \+ 999\)/);
     expect(reader).toMatch(/if \(rows\.length < 1000\) break;/);
     expect(body).not.toMatch(/\.limit\(20000\)/);

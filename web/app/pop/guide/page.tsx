@@ -52,7 +52,7 @@ export default async function PopGuidePage(
       manual: ((tickRows ?? []) as { character_name: string; item_key: string }[])
         .filter(r => r.character_name.toLowerCase() === lc).map(r => r.item_key),
       flags: ((flagRows ?? []) as { character: string; flag_key: string }[])
-        .filter(r => r.character.toLowerCase() === lc && r.flag_key !== 'unmapped').map(r => r.flag_key),
+        .filter(r => r.character.toLowerCase() === lc && r.flag_key !== 'unmapped' && r.flag_key !== 'hail').map(r => r.flag_key),
     };
   });
   const byParam = c ? chars.find(ch => ch.name.toLowerCase() === c.toLowerCase()) : undefined;

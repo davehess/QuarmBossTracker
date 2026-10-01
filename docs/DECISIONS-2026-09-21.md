@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PoP flags now record by name; Quarm's real gates; Justice marks** | **§119.** Agent 3.7.59 on `main` (stable Mimics hot-swap it), bot 3.1.182, web 1.8.65. Every grant is named from the flag NPC's line or the Seer's recital; Storms now needs the Justice flag; marks show on `/pop`. Today's 42 earlier grants stay unmapped until re-read | the guild lead: (1) tell raiders: sit by Seer Mal Nae`Shi in Knowledge, say "guided meditation", and every flag they hold records; (2) or re-run Opt-in Logs over today's log; (3) check `/pop` Justice shows the 7 Marks of Execution |
 | **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) add `eqmimic.quest` (and `www` as a redirect) to the Vercel project that builds the hesstastic repo, set DNS at the registrar, check the domain shows the page and not hesstastic.com; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
 | **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) on Mimic beta, Settings → Zeal → Test build → Install (Mimic beta `0e5eb23b`), and try it in game, including the custom-folder steps 10–15 in `zeal-tag-shapes/TRY-IN-GAME.md`; (2) say when to build the pipe-field adoption. Tag pictures: option A built (custom folder, banners, 60 templates + README, `test-all` `da88716`) |
@@ -5501,3 +5502,52 @@ hesstastic project"*.
   spread across `main.js`, the dashboard and setup); maintenance low-to-medium (every new guild feature
   needs the edition check); runtime none; change low. Until then, today's installer works for anyone
   in local mode, and the pages say why it is named Wolf Pack Mimic.
+
+### 119. PoP flags from the server's own scripts; Quarm's real gates; Justice marks (2026-10-01)
+
+The guild lead, the day PoP opened: *"POP is open, we need the flags to start updating"*, then *"PLANE OF
+STORMS REQUIRES flagging, but it shows everyone. We should also capture what they have specifically done
+For Justice capture the Marks they have based on the one that they did"* (with a Mark of Execution
+screenshot).
+
+**Why nothing updated.** All 21,291 `pop_flags` rows were `unmapped`. The grant line never names the flag
+and the bot could only name one from the boss killed just before it; the trials and the Tranquility
+NPCs have no boss. Two more faults, found in the server's scripts (`eqemu_quest_scripts`):
+- Elder Poxbourne prints **"You receive a character flag!"**, which the agent never matched.
+- NPCs re-print the flag line every time a flagged player hails them (10 characters gave 30 Justice
+  "grants" today), so counting lines counts nothing.
+- And the bot stored the agent's **witnessed hails** as `unmapped` grants with the NPC thrown away.
+
+**The fix: name flags the way the server keeps them.** Quarm's flags are ~20 character variables the zone
+scripts set (`mavuin` 1–3, `fuirstel` 1–5, `thelin` 1–4, `zeks` 1–7, `karana` 1–4, …; the list heads
+`poknowledge/Seer_Mal_Nae-Shi.lua`). A *stage* is one value of one of them (`mavuin_3`).
+- **Agent 3.7.59** (`parsePopFlagLine`, same function on every path): both grant spellings and the
+  checklist flag; the line just before the grant, **sent only when it opens like a flag NPC** (every
+  script prints a fixed NPC line there); and Seer Mal Nae`Shi's guided-meditation sentences, one per
+  flag held. Shipped to `main` as a scoped hotfix of the stable agent (3.7.54 → 3.7.59, this function
+  only), so stable Mimics hot-swap it with no installer: PoP opening day with zero flags recorded is a
+  broken stable. Beta carries it as 3.7.60.
+- **Bot 3.1.182** (`utils/popFlagStages.js`): the NPC line → stage table, the recital table, zone-only
+  names for single-grant zones (so older agents still resolve those), and `STAGE_IMPLIES` (what each
+  stage proves in the catalog's terms). It writes a row for the stage and for each catalog flag it proves,
+  with the new `stage` column; hails become `flag_key 'hail'` with the new `npc` column (migration
+  `20261001220000_pop_flags_stage_npc`, applied). The boss map stays as the fallback.
+- **Today's 42 grants stay `unmapped`**: they arrived with only a zone. Re-running Opt-in Logs over
+  today's log with the new agent names them; so does one guided meditation with the Seer.
+
+**Quarm's real gates (web 1.8.65).** `potranquility/player.lua` is the portal script, and Quarm switched
+the level bypasses off. Valor AND Storms need `mavuin 3` (Storms showed everyone in); Torment needs
+`fuirstel 5` and `thelin 4`; Thunder `karana` 3 or more (so Askr's medallion alone no longer counts);
+Tactics `zeks` 2+; Sol Ro the cipher and `zeks` 6+; Air, Earth and Water `zebuxoruk 2`; Time the time
+flag and level 65. `web/lib/popFlags.ts` gates now name those steps directly where no classic flag fits,
+and every `levelBypass` is gone. `test/pop-flag-stages.test.js` pins each gate to the script.
+
+**Justice marks.** The six trial marks are loot from each trial's last mob (ids 31796 Flame, 31842
+Execution, 31844 Torture, 31845 Stone, 31846 Suffocation = Hanging, 31960 Lashing; 31599 The Mark of
+Justice), and the agent already records loot: 7 Marks of Execution today. `/pop` shows them per character
+from `looted_items` in Justice (zone 201; another "Mark of Stone" exists elsewhere) and from uploaded
+inventories unless the character opted out (`exclude_inventory`): counts on the Justice card, names beside
+each character on the Justice page, and a Marks column on My Characters.
+
+**Privacy.** A grant now carries one NPC line, only from the allow-listed flag NPCs, and the Seer's
+sentences. `docs/PRIVACY.md` and `/privacy` say so.

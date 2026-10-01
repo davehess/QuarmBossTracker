@@ -96,7 +96,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-09-26 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-10-01 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -302,6 +302,13 @@ export default function PrivacyPage() {
           &ldquo;Hail&rdquo;, the zone, the time, and whose log saw it. Nothing else that was said. This
           is evidence of a possible flag, never proof, and is shown that way. A player greeting another
           player the same way (&ldquo;Hail, friend&rdquo;) is stored too — we can&apos;t tell them apart.
+        </p>
+        <p>
+          <B>Your own PoP flags.</B> When you get a flag, Mimic sends the flag line, your zone and the one
+          line just before it, but only when that line comes from one of the flag NPCs (Mavuin, the
+          Tribunal, the Planar Projections, Maelin and the others): that line is what names the flag. If
+          you sit with Seer Mal Nae`Shi and ask for a guided meditation, Mimic sends her sentences about
+          your flags. Nothing you or anyone else said goes with them.
         </p>
       </Section>
 

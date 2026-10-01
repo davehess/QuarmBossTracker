@@ -12,7 +12,7 @@
 > editing this file: **describe what the software does today, not what we
 > intend.** A promise goes in only once the code keeps it.
 
-*Last updated: 2026-09-25*
+*Last updated: 2026-10-01*
 
 ## The spirit
 
@@ -168,6 +168,13 @@ what followed "Hail", the zone, the time, and whose log saw it. Nothing else
 that was said. This is evidence of a possible flag, never proof, and is shown
 that way. A player greeting another player the same way ("Hail, friend") is
 stored too — we can't tell them apart.
+
+**Your own PoP flags.** When you get a flag, Mimic sends the flag line, your zone
+and the one line just before it, but only when that line comes from one of the
+flag NPCs (Mavuin, the Tribunal, the Planar Projections, Maelin and the others):
+that line is what names the flag. If you sit with Seer Mal Nae`Shi and ask for a
+guided meditation, Mimic sends her sentences about your flags. Nothing you or
+anyone else said goes with them.
 
 ## Exceptions: NPC speech that triggers can hear
 
