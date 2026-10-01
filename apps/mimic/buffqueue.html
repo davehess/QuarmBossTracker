@@ -738,7 +738,9 @@
       if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
       empty.style.display = '';
       var noun = groupMode ? 'group' : 'raid';
-      empty.textContent = bufferClass
+      empty.textContent = (payload && payload.local_only)
+        ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : bufferClass
         ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
         : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
       return;

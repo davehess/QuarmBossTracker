@@ -256,7 +256,7 @@
       copy:   function () { try { navigator.clipboard.writeText($('#wCode', el).textContent); } catch (e) { void e; } },
       cancel: function () { Promise.resolve(M.mimicLinkCancel()).catch(function () {}); },
       signout:function () { Promise.resolve(M.mimicLinkSignOut()).catch(function () {}); },
-      local:  function () { S.localOnly = true; changed('account'); },
+      local:  function () { S.localOnly = true; if (M.setLocalOnly) Promise.resolve(M.setLocalOnly(true)).catch(function () {}); changed('account'); },
     });
   }
 

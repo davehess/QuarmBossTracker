@@ -653,6 +653,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // User-facing toggles.
   setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
+  setLocalOnly:    (on)   => ipcRenderer.invoke('set-local-only', !!on),   // local mode: nothing online, no setup nag
   setOverlaysLocked: (on) => ipcRenderer.invoke('set-overlays-locked', !!on),
   // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
   // the dashboard's Overlays tab. Returns the updated status snapshot.
@@ -1047,10 +1048,21 @@ if (location.protocol === 'http:' && !_isAgentServedOverlay) {
       'padding:4px 12px', 'cursor:pointer', 'font-size:12px',
     ].join(';'));
     connectBtn.onclick = () => { try { ipcRenderer.invoke('open-settings'); } catch (e) {} };
+    // Local mode as a choice: overlays and your own triggers keep working and nothing goes online; this
+    // only stops Mimic asking (setup counts as finished). Same IPC as setup's "run local-only".
+    const localBtn = document.createElement('button');
+    localBtn.textContent = 'Stay local-only';
+    localBtn.title = 'Keep using the overlays with nothing sent online. Sign in any time from Settings.';
+    localBtn.setAttribute('style', [
+      'background:transparent', 'color:#f6c365', 'border:1px solid #6b5320', 'border-radius:5px',
+      'padding:3px 10px', 'cursor:pointer', 'font-size:12px',
+    ].join(';'));
+    localBtn.onclick = () => { try { ipcRenderer.invoke('set-local-only', true); } catch (e) {} };
     const msg = document.createElement('span');
     msg.innerHTML = '⚠ <b>Not connected</b> — no Wolf Pack token set, so your parses aren\'t being shared. Paste your <code>/token</code> to fix.';
     banner.appendChild(msg);
     banner.appendChild(connectBtn);
+    banner.appendChild(localBtn);
     document.body.appendChild(banner);
 
     // "Update ready" banner — replaces the naggy OS pop-up. Shows when a Mimic
@@ -1095,7 +1107,7 @@ if (location.protocol === 'http:' && !_isAgentServedOverlay) {
       gear.style.top = (updOn && connOn) ? '74px' : (updOn || connOn) ? '50px' : '10px';
     };
     const refreshBanner = (s) => {
-      banner.style.display = (s && s.localOnly) ? 'flex' : 'none';
+      banner.style.display = (s && s.localOnly && !s.localModeChosen) ? 'flex' : 'none';
       if (s && s.updatePending && !_updDismissed) {
         // Wording matters here: since 2.3.0 the update applies when you close
         // EVERQUEST (autoInstallOnAppQuit still covers a Mimic quit as well),
