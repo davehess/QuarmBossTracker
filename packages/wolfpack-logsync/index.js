@@ -199,8 +199,8 @@ const PROC_HATE = {
 // hate per cast. Bumps the caster's `spell` bucket so the breakdown reads
 // honestly. Community-sourced PoP-era ballparks; correct as observed.
 const CAST_HATE = {
-  // Knight aggro AAs
-  'voice of thule':                  3000,   // SHD AA — pulls a single mob hard
+  // Knight aggro AAs. Voice of Thule is not here: in eqemu_spells it is a 12% hate
+  // multiplier (SPA 114), not a flat amount, and the flat 3000 it carried was a guess.
   'disruptive persecution':          1500,   // PAL AA — burst aggro
   'projection of fury':               750,   // SHD AA — burst aggro
   // Warrior provocation chain
@@ -212,12 +212,19 @@ const CAST_HATE = {
   // Negative-hate / fade — let them surface as a *spell* row so the user
   // can see them in the breakdown even though they reduce hate. Negative
   // values shrink the spell bucket; the row still shows but doesn't lead.
-  'voice of quellious':             -2500,
+  // (Voice of Quellious sat here at -2500; it is an enchanter mana buff with no
+  // hate effect, so every cast dropped the enchanter's own meter. Removed.)
   'quivering veil of xarn':         -2000,
   'fading memories':                -1500,
-  // Classic wizard/caster de-aggro nukes — flat hate reduction per cast.
-  'jolt':                            -400,
-  'cinder jolt':                     -570,
+  // Wizard de-aggro spells (the guild lead, 2026-10-01: for the non-tanks who
+  // don't want to get hit). The values are each spell's own hate effect (SPA 92)
+  // in eqemu_spells. The server takes it off even when the mob resists the
+  // spell; a fizzle or an interrupt takes nothing off, so _threatLine hands the
+  // amount back when one follows the cast.
+  'jolt':                            -500,
+  'cinder jolt':                     -500,
+  'concussion':                      -400,
+  'ancient: greater concussion':     -600,
 };
 
 // Resisted detrimental spells STILL generate aggro on EQ — the spell's base
@@ -8379,6 +8386,54 @@ class EncounterBuilder {
     }
   }
 
+  // Threat changes that only a RAW line shows (the guild lead, 2026-10-01). Both
+  // lines miss the keep-list, so the live tail hands every line here before
+  // shouldKeep, as it does for _pvpAssistLine. (A silent backfill builder never
+  // counts cast hate, so it has nothing to take back.)
+  //   · "Your spell fizzles!" / "Your spell is interrupted." inside the cast
+  //     time of a CAST_HATE spell: the server applied nothing, so hand back what
+  //     the cast added.
+  //   · "LOADING, PLEASE WAIT...": you zoned. Zoning takes you off every hate
+  //     list, despawns your pet and breaks your charm (EQMacEmu
+  //     Client::RequestZoneTransferApproval), and the evac spells (Evacuate,
+  //     Exodus, Succor, Levant, Abscond, Egress, Decession) reload the zone, so
+  //     they print this line and do the same. Your hate and your pet's go to 0;
+  //     damage dealt stays on the damage meter.
+  _threatLine(line) {
+    if (!line || !this.character) return;
+    if (line.indexOf('LOADING, PLEASE WAIT') !== -1) {
+      if (!/\]\s+LOADING, PLEASE WAIT/.test(line)) return;
+      this._castHatePending = null;
+      const me = this.character;
+      for (const [name, t] of this.threatBy) {
+        const nl = name.toLowerCase();
+        let owner = (this._activeCharms?.get(nl)?.owner)
+          || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+          || (!/^an?\s/i.test(nl) ? (this.petLeaders[nl] || null) : null);
+        if (owner === '__SELF__') owner = me;
+        if (name !== me && owner !== me) continue;
+        if (!(t.swing || t.proc || t.spell || t.heal)) continue;
+        t.swing = 0; t.proc = 0; t.spell = 0; t.heal = 0;
+        if (!t.procDetail) t.procDetail = {};
+        t.procDetail['Zoned (hate cleared)'] = (t.procDetail['Zoned (hate cleared)'] || 0) + 1;
+      }
+      return;
+    }
+    const p = this._castHatePending;
+    if (!p) return;
+    if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+        && line.indexOf('miss the gem') === -1) return;
+    if (!_CAST_FAIL_RX.test(line)) return;
+    this._castHatePending = null;
+    const ts = parseEqTimestamp(line);
+    const atMs = ts ? ts.getTime() : Date.now();
+    if (atMs - p.atMs > p.windowMs) return;   // a later cast's failure, not this one
+    const t = this.threatBy.get(this.character);
+    if (!t) return;
+    t.spell -= p.hate;
+    if (t.procDetail && t.procDetail[p.spell] > 0) t.procDetail[p.spell]--;
+  }
+
   _publishLiveThreat() {
     if (this.threatBy.size === 0) {
       // Keep the last fight's threat visible for 2 min as a stale read-back.
@@ -9648,7 +9703,10 @@ class EncounterBuilder {
     if (event.type === 'spell_resisted' && this.character) {
       const attacker = this.character;
       const sl = String(event.ability || '').toLowerCase();
-      const hate = RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
+      // A CAST_HATE spell already counted its own amount when it was cast, and
+      // the server applies that same amount on a resist, so nothing more here.
+      const hate = CAST_HATE[sl] !== undefined ? 0
+        : RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
       if (!this.threatBy.has(attacker)) {
         this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
       }
@@ -9791,7 +9849,7 @@ class EncounterBuilder {
         // which spell opened the session (Allure / Boltran's / …) in its
         // "pending charm staged?" diagnostic line.
         if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(spell, ci.dur, this.character) : ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
-        // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
+        // Direct-hate AAs / spells — Disruptive Persecution, Concussion,
         // Hate's Attraction, etc. — never produce a damage line, so they're
         // invisible to the rest of the threat math. Bump the caster's spell
         // bucket by the catalog hate so the Threat overlay reads honestly.
@@ -9805,6 +9863,10 @@ class EncounterBuilder {
           const ct = this.threatBy.get(this.character);
           ct.spell += ch;
           ct.procDetail[spell] = (ct.procDetail[spell] || 0) + 1;
+          // Counted at cast begin; _threatLine takes it back if the cast fizzles
+          // or is interrupted inside its cast time.
+          this._castHatePending = { spell, hate: ch, atMs: Date.parse(event.ts) || Date.now(),
+                                    windowMs: _spellCastSecs(spell) * 1000 + 1500 };
         }
       }
       // Bard melody tracker — singing-only (the parseEvent split tags bard
@@ -19938,7 +20000,7 @@ var WP_OVERLAY_ROWS = [
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
-  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
+  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
@@ -43570,6 +43632,8 @@ async function main() {
         // PvP assist spell evidence — cast starts + debuff landings on players.
         // The opt-in-log backfill runs the same hook, so both credit alike.
         if (!_sourceExcluded) { try { b.builder._pvpAssistLine(line); } catch (e) { void e; } }
+        // Threat: a failed cast hands back its hate; zoning clears yours and your pet's.
+        try { b.builder._threatLine(line); } catch (e) { void e; }
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
         // NPC cast-starts + landings → "what did that mob just cast", and the
