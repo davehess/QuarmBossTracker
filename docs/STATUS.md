@@ -213,6 +213,10 @@ next touch one rather than assuming a missing row means a missing doc.
 - **📋 FB-37 XP tracking — reviewed, waiting on a pick (2026-09-29).** XP/AA per hour by zone and per
   five levels, solo and group, the top groups' composition and mobs. Options A (local) / B (guild board) /
   C (live piece), costs in `docs/DESIGN-xp-tracking.md`. §104.
+- **⏳ FB-45: a new loot call with the same numbers starts new rolls (agent 3.7.56, beta `2020a8c4`, 2026-10-01).**
+  A later raid call that puts a roll number on a different item closes the old set and starts a new one under
+  the new name; a repost of the same item keeps the set. Shown closed at once on the Rolls card and the Command
+  Center. Stable at the next cut. `test/roll-sets-new-call.test.js`. §116.
 - **⏳ Target Info: mob info kept on the member's machine (bot 3.1.179 main; agent 3.7.55, beta `effdc609`, 2026-09-30).**
   The bot builds a pack per zone (`/api/agent/mob-pack`, a week's life, ETag, gzip); the agent keeps the Planes
   of Power (zone ids 200–223) and every zone its characters visit in `mobinfo-cache/`, and answers Target Info
