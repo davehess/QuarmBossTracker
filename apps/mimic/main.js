@@ -420,6 +420,7 @@ function storeUploadToken(cfg, plain, identity) {
   if (identity) cfg.session.identity = identity;
   cfg.session.linked_at = cfg.session.linked_at || Date.now();
   delete cfg.token;             // retire legacy top-level pasted token
+  delete cfg.localOnly;         // signed in: no longer the local-mode choice
   return cfg;
 }
 
@@ -434,7 +435,10 @@ function storeUploadToken(cfg, plain, identity) {
 function _setupIssue() {
   try {
     const cfg = loadConfig();
-    if (!resolveUploadToken(cfg)) return 'Not signed in to Discord';
+    // Local mode (cfg.localOnly, chosen in setup or from the dashboard banner) is a finished setup, not a
+    // missing step: no launch toast, closes to the tray, no "SETUP NEEDED" (the guild lead, 2026-10-01: a
+    // purely local Mimic for players who only want the overlays).
+    if (!resolveUploadToken(cfg) && !cfg.localOnly) return 'Not signed in to Discord';
     if (!Array.isArray(cfg.eqPaths) || cfg.eqPaths.length === 0) return 'No EverQuest folder selected';
     return null;
   } catch { return null; }
@@ -496,7 +500,37 @@ function ensureWritableAgent() {
   if (refresh && bundledVer) {
     try { appendAgentLog(`[mimic] refreshed userData agent ${installedVer || '(none)'} → bundled v${bundledVer}\n`); } catch {}
   }
+  seedBundledCatalog(path.join(src, 'catalog'), dst);
   return path.join(dst, 'index.js');
+}
+
+// Spell and item data shipped inside the installer (local mode, the guild lead
+// 2026-10-01; DECISIONS §118). A local-only install never fetches it, so the
+// installer's snapshot is all it has. Copied into the agent's folder under the
+// agent's own cache names, only when it is NEWER than what is there: a
+// signed-in install keeps the fresher copy it fetched itself.
+function _catalogFetchedAt(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, 256, 0);
+    fs.closeSync(fd);
+    const m = /"fetched_at":"([^"]+)"/.exec(buf.toString('utf8', 0, n));
+    return m ? (Date.parse(m[1]) || 0) : 0;
+  } catch { return 0; }
+}
+function seedBundledCatalog(catalogDir, agentDir) {
+  let names = [];
+  try { names = fs.readdirSync(catalogDir).filter(f => /^logsync\.[a-z-]+\.json$/.test(f)); } catch { return; }
+  for (const f of names) {
+    const s = path.join(catalogDir, f);
+    const d = path.join(agentDir, f);
+    try {
+      if (fs.existsSync(d) && _catalogFetchedAt(s) <= _catalogFetchedAt(d)) continue;
+      fs.copyFileSync(s, d);
+      appendAgentLog(`[mimic] seeded ${f} from the installer\n`);
+    } catch {}
+  }
 }
 
 // ── Free-port probe ─────────────────────────────────────────────────────────
@@ -6733,6 +6767,9 @@ function currentStatus() {
     miniAllActive: !!_miniAllActive,
     agentRunning: !!agentProc,
     localOnly,
+    // Local mode chosen on purpose (setup's "run local-only", or the banner's "Stay local-only"), so the
+    // dashboard's "Not connected" banner stays away.
+    localModeChosen: localOnly && !!cfg.localOnly,
     quietMode: !!cfg.quietMode,
     hideOverlays: !!cfg.hideOverlays,
     tellsMode: cfg.tellsMode || 'off',
@@ -7489,6 +7526,12 @@ async function checkAgentUpdate(opts) {
   // 2) + the LKG crash-loop rollback below are the gates that catch a bad beta
   // agent (the four-gate rule). Was: beta builds skipped the hot-swap entirely.
   const isBetaBuild = /-/.test(String(app.getVersion() || ''));
+  // Local mode (no token): the agent arrives inside Mimic's own releases (from GitHub), so this check,
+  // which asks the guild server, is skipped and a local Mimic contacts the guild server not at all.
+  if (!resolveUploadToken(loadConfig())) {
+    if (manual) appendAgentLog('[mimic] manual agent check: local mode — the agent updates with Mimic itself\n');
+    return;
+  }
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
@@ -9409,6 +9452,16 @@ ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
   _broadcastMute(cfg);   // see the tray's Quiet mode item — same gap
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility();
+  pushStatus();
+  return currentStatus();
+});
+// Local mode as a saved choice (setup's "run local-only", the dashboard banner's "Stay local-only"). It
+// changes nothing the agent does (no token already means nothing is sent); it only marks setup as finished,
+// so Mimic stops asking. Signing in clears it (storeUploadToken).
+ipcMain.handle('set-local-only', (_e, on) => {
+  const cfg = loadConfig();
+  if (on) cfg.localOnly = true; else delete cfg.localOnly;
+  saveConfig(cfg);
   pushStatus();
   return currentStatus();
 });

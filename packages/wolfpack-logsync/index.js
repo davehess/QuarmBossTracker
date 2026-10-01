@@ -11246,7 +11246,16 @@ function _primaryCharacter() {
   return null;
 }
 
+// Local mode: the agent was started with no token (a player outside the guild, or a member who chose
+// local-only), so it sends NOTHING to the guild server. The guild lead, 2026-10-01: "a purely local
+// version" for players who want only the overlays. Before this, the upload queue and the live-state push
+// still posted to the guild bot without a token (each rejected with a 401, but the data had left the
+// machine). Null-safe before main() runs, so a test that never starts the agent is unaffected.
+function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
+
 function enqueueUpload(kind, payload) {
+  // Local mode: nothing is queued, so nothing can be sent.
+  if (_localOnly()) return null;
   // Cross-instance guard: only the elected uploader sends. A read-only
   // instance (another Parser/Mimic on this machine already owns the lock)
   // drops outbound uploads so the same line isn't posted twice. Its local
@@ -15426,6 +15435,9 @@ function _serializeForDashboard() {
     // session token, refreshed on every latest-version poll, so the
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
+    // Local mode: started with no token, so nothing goes to the guild server. The dashboard's
+    // "(local-only)" tag and its "Uploading enabled" row read this; nothing set it before.
+    localOnly:          _localOnly(),
     // #120 — token present (signed in) but identity may not be confirmed yet.
     // Lets the header show a soft "verifying" state instead of the hard "not
     // signed in" banner, and gate the scary banner on the no-token case only.
@@ -27873,7 +27885,10 @@ function startWebDashboard(port) {
         fetchRaidBuffQueue(bufferClass, bufferCharacter);
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
-        const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        // Local mode never asks the guild server, so "loading" would never end.
+        const payload = (cached && cached.payload)
+          || (_localOnly() ? { buff_queue: [], debuff_queue: [], local_only: true }
+                           : { buff_queue: [], debuff_queue: [], loading: true });
         // Enrich with the buffer's recent casts (the melody/rotation tracker
         // keeps the last cast cycle per character) so the overlay can mark
         // category sections "likely memmed" — you cast it this session, it's
@@ -27914,7 +27929,8 @@ function startWebDashboard(port) {
         } catch { /* */ }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
-        const payload = (cached && cached.payload) || { targets: [], loading: true };
+        const payload = (cached && cached.payload)
+          || (_localOnly() ? { targets: [], local_only: true } : { targets: [], loading: true });
         let outPayload = payload;
         // #128 — near-live HP for the row that IS this client's own Zeal slot-6
         // target. Every row's hp_pct arrives from the bot aggregate (slow: 3s
@@ -39445,6 +39461,7 @@ const _liveStateLastSig = new Map();   // character → last-sent signature
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
 function _postLiveState(targetUrl, token, payload) {
+  if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
   let url;
   try { url = new URL(targetUrl); } catch { return; }
   const mod = url.protocol === 'https:' ? https : http;
@@ -42957,8 +42974,9 @@ async function main() {
   // Start the durable upload queue drain. Loads any pending entries from
   // disk first and kicks an immediate replay attempt — so anything left
   // over from a previous crashed session goes out as soon as the
-  // network's back.
-  if (!dryRun) startUploadQueueDrain({ botUrl, token });
+  // network's back. Not in local mode (no token): anything still queued from a signed-in session waits on
+  // disk for the next signed-in start, rather than going out unauthenticated and being dropped as a 401.
+  if (!dryRun && token) startUploadQueueDrain({ botUrl, token });
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
@@ -43005,8 +43023,12 @@ async function main() {
   // still learn about new releases promptly (without needing an encounter
   // upload to surface latest_agent_version).
   if (botUrl) {
-    pollLatestVersion({ botUrl });
-    setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
+    // Local mode skips it: a local Mimic gets agent updates inside Mimic's own releases (from GitHub),
+    // so it has no reason to contact the guild server at all.
+    if (token) {
+      pollLatestVersion({ botUrl });
+      setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
+    }
     // Officer-filed backfill request poll. Runs slightly more often than the
     // version probe since requests are actionable (officers expect agents to
     // notice within ~5 min). Initial run is delayed a few seconds so the

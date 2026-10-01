@@ -706,7 +706,8 @@
     if (!targets.length) {
       rowsEl.innerHTML = '';
       emptyEl.style.display = 'block';
-      emptyEl.textContent = (payload && payload.loading) ? 'loading…'
+      emptyEl.textContent = (payload && payload.local_only) ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : (payload && payload.loading) ? 'loading…'
         : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held'
                       : (groupScope ? 'waiting for group targets…' : 'waiting for raid targets…'));
       cntEl.innerHTML = cntHtml(false);

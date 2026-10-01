@@ -822,6 +822,8 @@
   $('localOnlyLink').addEventListener('click', (e) => {
     e.preventDefault();
     localOnlyChosen = true;
+    // Saved, so Mimic counts setup as finished and stops asking (main.js set-local-only).
+    try { window.mimic.setLocalOnly(true); } catch (_) {}
     $('localOnlyNote').style.display = '';
     $('tokenBadge').textContent = 'Local only';
     $('tokenBadge').className = 'badge';
