@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { BOT_INDEX, readSource, sliceBlock, stripSql } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
@@ -35,6 +36,30 @@ describe('item catalog endpoint', () => {
   it('sends rows as arrays, not objects', () => {
     // At 11k rows the repeated key names would be most of the payload.
     expect(handler).toMatch(/entries\.push\(\[r\.item_id, r\.item_name, r\.era\]\)/);
+  });
+
+  it('reads every row past the server\'s 1000-row cap', async () => {
+    // PostgREST answers at most 1000 rows whatever limit is asked. A page size above that came
+    // back "short" and ended the loop: agents got 1,000 of 11,104 items until 2026-10-01.
+    const ROWS = 2500;
+    const supabase = {
+      select: async (_t, qs) => {
+        const off = Number(/offset=(\d+)/.exec(qs)[1]);
+        const lim = Math.min(Number(/limit=(\d+)/.exec(qs)[1]), 1000);   // the server's cap
+        const out = [];
+        for (let i = off; i < Math.min(off + lim, ROWS); i++) out.push({ item_id: i, item_name: 'x' + i, era: 'classic' });
+        return out;
+      },
+    };
+    let cache = null;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('require', 'mimicLink', '_ITEM_CATALOG_TTL_MS', 'setCache',
+      `let _itemCatalogCache = null;\n${handler}\nreturn async (req, res) => { await _handleAgentItemCatalog(req, res, true); setCache(_itemCatalogCache); };`)(
+      (m) => (m === 'crypto' ? crypto : supabase), {}, 1000, (c) => { cache = c; });
+    let body = null;
+    await fn({ headers: {} }, { writeHead: () => {}, end: (b) => { body = b; } });
+    expect(JSON.parse(body).entries.length).toBe(ROWS);
+    expect(cache.body).toBe(body);
   });
 
   it('reads the view, so the era join stays in Postgres', () => {
