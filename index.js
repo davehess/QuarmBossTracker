@@ -10511,7 +10511,9 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
     try {
       const supabase = require('./utils/supabase');
       let from = 0;
-      const PAGE = 2000;
+      // Never above 1000: PostgREST answers at most 1000 rows, so a bigger page came back
+      // "short" and ended the loop. It was 2000 until 2026-10-01, and agents got 1,000 of 11,104 items.
+      const PAGE = 1000;
       while (true) {
         const data = await supabase.select('item_catalog_droppable',
           `select=item_id,item_name,era&order=item_id.asc&offset=${from}&limit=${PAGE}`);
