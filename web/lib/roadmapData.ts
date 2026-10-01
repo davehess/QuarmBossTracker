@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-57-2026-10-01',
+    title: 'Threat for the non-tanks',
+    version: 'Agent 3.7.57 · Mimic 2.7.7 beta · Web 1.8.62',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'The threat meter counts what wizards and evacuations do to your hate, so you can see how close you are to pulling.',
+    features: [
+      {
+        name: 'Concussion on the threat meter',
+        blurb: 'A wizard’s Concussion and Ancient: Greater Concussion now drop their own row by the right amount. A resisted one still counts, because it still lowers your hate; one that fizzles or gets interrupted does not.',
+      },
+      {
+        name: 'Zoning clears your hate',
+        blurb: 'Zoning out or being evacuated takes you and your pet off every mob’s hate list in game, and now on your meter too. Your damage stays on the DPS meter.',
+      },
+    ],
+    fixes: [
+      'Jolt and Cinder Jolt took off the wrong amount of hate on the meter. They now match the spells.',
+      'An enchanter’s Voice of Quellious dropped their own threat meter, though it is a mana buff. It no longer does.',
+      'Updating Zeal from Mimic left a backup copy beside every file it did not change, such as the target rings. It no longer does, and the copies earlier updates left are cleaned up.',
+    ],
+  },
+  {
     key: 'agent-3-7-56-2026-10-01',
     title: 'New loot, new rolls',
     version: 'Agent 3.7.56 · Web 1.8.61',
