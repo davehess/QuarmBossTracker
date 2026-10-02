@@ -298,6 +298,11 @@ and the same never-refetch guarantee.
   and friends, `0` disables). A self-hoster with cheap storage may want them
   disabled entirely — the wizard should offer that rather than leaving the
   hosted-tier defaults in place.
+- **`xp_events` keeps 30 days** (2026-10-02, `XP_EVENTS_RETENTION_DAYS`; DECISIONS
+  §127). One row per experience line per uploader — a few thousand a day for our
+  fleet, more in a heavy XP week — carrying the group's names, so it is a privacy
+  window as much as a storage one. A guild that wants season-long XP trends wants
+  it longer; the wizard should ask, and say the rows name group members.
 - **Encounter collection is OPEN — volume scales with member farming**
   (2026-08-20). Since bot 3.1.52 every exactly-matched mob persists encounters
   (first kills are sacred); one member's overnight farm session wrote 336
