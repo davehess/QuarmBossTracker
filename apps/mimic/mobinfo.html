@@ -394,7 +394,8 @@
     var rows = '';
     for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b, isPacify); }
     if (!rows) return '';
-    return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
+    var sect = isPacify ? 'pacify' : hdr.indexOf('debuffs') === 0 ? 'debuffs' : 'buffs';
+    return '<div class="tbuffs" data-wp-sect="'+sect+'"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
   }
   function renderTargetBuffs(mi){
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
@@ -443,7 +444,7 @@
            +  '</div>';
     }
     if (!rows) return '';
-    return '<div class="tbuffs"><div class="hdr">casting</div>'+rows+'</div>';
+    return '<div class="tbuffs" data-wp-sect="casting"><div class="hdr">casting</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
@@ -530,8 +531,20 @@
   // can be opened in contexts where site data is unavailable.
   var _manaView = true;
   try { _manaView = window.localStorage.getItem('wpTargetMana') !== 'off'; } catch (e) {}
-  function _setTab(t){
+  // On the Mimic 3.0 Canvas this page can run several times at once, one copy per piece cut from it
+  // (apps/mimic/sections.js). A piece that only exists on one tab is pinned to it (?wptab=loot); the
+  // other copies share the tab picked on the title bar's piece, through sessionStorage, which the
+  // Canvas window's frames share and a standalone window keeps to itself.
+  var _wpQs = new URLSearchParams((window.location && window.location.search) || '');
+  var _TABS = { stats: 1, loot: 1, spells: 1, factions: 1 };
+  var _pinTab = _TABS[_wpQs.get('wptab')] ? _wpQs.get('wptab') : null;
+  var _shareTab = !_pinTab && _wpQs.get('wpcanvas') === '1';
+  if (_pinTab) _tab = _pinTab;
+  else if (_shareTab) { try { var _st = window.sessionStorage.getItem('wpTargetTab'); if (_TABS[_st]) _tab = _st; } catch (e) {} }
+  function _setTab(t, fromShare){
+    if (_pinTab) t = _pinTab;
     _tab = t;
+    if (_shareTab && !fromShare) { try { window.sessionStorage.setItem('wpTargetTab', t); } catch (e) {} }
     tabStatsBtn .classList.toggle('on', t === 'stats');
     tabLootBtn  .classList.toggle('on', t === 'loot');
     tabSpellsBtn.classList.toggle('on', t === 'spells');
@@ -550,6 +563,10 @@
   if (tabFactionsBtn) tabFactionsBtn.addEventListener('click', function(){ _setTab('factions'); });
   if (tabManaBtn) tabManaBtn.addEventListener('click', function(){ _setManaView(!_manaView); });
   if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
+  if (_tab !== 'stats') _setTab(_tab, true);
+  if (_shareTab) window.addEventListener('storage', function(ev){
+    if (ev.key === 'wpTargetTab' && _TABS[ev.newValue] && ev.newValue !== _tab) _setTab(ev.newValue, true);
+  });
 
   // #186 — PQDI link (delegated: the header re-renders every poll). Opens the
   // mob's pqdi.cc/npc page in the system browser via the open-external IPC
@@ -784,7 +801,7 @@
     var bar = '<div class="fqvtabs">' + subs.map(function(s){
       return '<button type="button" class="fqvtab' + (s[0] === sub ? ' on' : '') + '" data-fqv="' + s[0] + '">' + s[1] + '</button>';
     }).join('') + '</div>';
-    return bar + (sub === 'faction' ? renderFactions(mob) : sub === 'vendor' ? renderVendor(d) : renderQuest(mob, d));
+    return '<div data-wp-sect="fqv">' + bar + (sub === 'faction' ? renderFactions(mob) : sub === 'vendor' ? renderVendor(d) : renderQuest(mob, d)) + '</div>';
   }
   // Copy for the /say and /map chips. The chip holds its ✓ for 1.2s: the 500ms repaint
   // skips while it does, or the confirmation would vanish before anyone saw it.
@@ -1114,7 +1131,7 @@
       } else {
         spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
       }
-      tabBody = specBlock + spellsBlock;
+      tabBody = '<div data-wp-sect="spells">' + specBlock + spellsBlock + '</div>';
     } else {
       // resist grid (AC + 5 resists)
       var res = '';
@@ -1173,7 +1190,7 @@
                +   '<span style="color:#56d364;text-align:right;font-variant-numeric:tabular-nums">'+dmgTxt+'</span>'
                + '</div>';
         }).join('');
-        lastFight = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+        lastFight = '<div data-wp-sect="lastfight" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
                   +   '<div style="font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:3px">last fight (top 5)</div>'
                   +   rowsHtml
                   + '</div>';
@@ -1187,7 +1204,7 @@
       var ts = mi.target_slots;
       var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : '#56d364';
       var scol = ts.songs >= ts.song_max ? '#f0883e' : '#56d364';
-      slotLine = '<div class="sub">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
+      slotLine = '<div class="sub" data-wp-sect="slots">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
                + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
     }
     // #161-P0 — live target-state sections (what's casting on the target + its
@@ -1200,9 +1217,9 @@
     // catalog mobs (mob.id present) — corpses / unknown targets get nothing.
     var pqdiChip = (mob && mob.id) ? ' <a class="pqdi" data-pqdi="https://www.pqdi.cc/npc/'+mob.id+'" title="Open this mob on PQDI.cc (opens your browser)">🔗 PQDI</a>' : '';
     var html = '<div class="mob">'
-      + '<div><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
+      + '<div data-wp-sect="name"><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
-      + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+      + (sub.length ? '<div class="sub" data-wp-sect="stats">'+sub.join(' · ')+'</div>' : '')
       + slotLine
       + hpBar
       + slowBadge
@@ -1251,9 +1268,12 @@
       // without a server change. The renderer only surfaces it when the
       // target_name ends in "'s corpse" (i.e., the just-killed mob you're
       // now standing on for loot).
+      // (It is top-level in /api/state; this read `s.stats…`, which does not exist, so the "last
+      // fight" scoreboard never showed. Found by the 3.0 Canvas audit, 2026-10-02.)
       var mi = s.mobInfo;
-      if (mi && s.stats && s.stats.currentEncounterThreat) {
-        mi = Object.assign({}, mi, { _enc: s.stats.currentEncounterThreat });
+      var enc = s.currentEncounterThreat || (s.stats && s.stats.currentEncounterThreat) || null;
+      if (mi && enc) {
+        mi = Object.assign({}, mi, { _enc: enc });
       }
       _lastMi = mi;
       _renderBody(_lastMi);
