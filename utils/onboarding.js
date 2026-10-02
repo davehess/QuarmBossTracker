@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.186': [
+    '**The main assist’s target goes to the top of Extended Target.** Say it in raid chat — “MA is Bob”, “Bob is MA”, “assist Bob”, or the assist macro’s “ASSIST ME ON …” — and the mob that person is on sits first, marked MA. With no main assist named, the mob most of the raid is on stays first.',
+  ],
   '3.1.185': [
     '**See another raider’s timers on Target Info.** Target a guildmate and Target Info shows the timers their Mimic knows: discipline, Mend, Lay on Hands, Harm Touch, Area Taunt, with a ✓ when ready. A discipline you watched someone start shows too, even if they do not run Mimic. Shows on the beta Mimic first.',
   ],

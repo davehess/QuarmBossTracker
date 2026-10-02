@@ -276,6 +276,8 @@ const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
 const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
+const _mainAssist = require('./utils/mainAssist');
+const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -3363,6 +3365,21 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] target_observations retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: xp_events (FB-37 XP board) ───────────────────────
+      // One row per kill that gave XP. 30 days: a week for the board, a month for trends
+      // (docs/DESIGN-selfhost-wizard.md §3). XP_EVENTS_RETENTION_DAYS overrides (0 disables).
+      try {
+        const supabase = require('./utils/supabase');
+        const d = parseInt(process.env.XP_EVENTS_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(d) ? d : 30;
+        if (supabase.isEnabled() && keep > 0) {
+          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('xp_events', `at=lt.${encodeURIComponent(cutoff)}`);
+        }
+      } catch (err) {
+        console.warn('[midnight] xp_events retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: buff_casts ───────────────────────────────────────
       // Observed buff/debuff LANDINGS — the live "who has what buff" truth is
       // character_live_state (replaced in place per character); buff_casts is
@@ -4827,6 +4844,22 @@ async function _handleAgentChat(req, res) {
           });
         }
       }
+    }
+
+    // A main assist declared in raid chat ("MA is Bob", "assist me on …") → Extended Target pins
+    // their target first (utils/mainAssist.js). Same post-dedup spot as the mana report, so N agents
+    // hearing one line note it once. A named MA must be a character we know.
+    if (channel === 'raid' && /\b(?:ma|main\s*assist|assist)\b/i.test(String(text))) {
+      try {
+        const known = await _rosterNameSet();
+        const decl = _mainAssist.parseDeclaration(text, effectiveSpeaker, (n) => known.has(n));
+        if (decl) {
+          const split = _raidSplitCache.split;
+          const raid = split && split.multi ? split.raidForName(effectiveSpeaker) : null;
+          _mainAssistStore.note(raid ? raid.key : '_', decl, effectiveSpeaker, Date.now());
+          console.log(`[main-assist] ${decl.name}${decl.target ? ` on ${decl.target}` : ''} (said by ${effectiveSpeaker})`);
+        }
+      } catch (err) { console.warn('[main-assist] parse failed:', err?.message); }
     }
 
     // Class/level tag: try server-side whoData first, fall back to what the agent sent.
@@ -6690,6 +6723,16 @@ async function _panelAuctions(deps = {}) {
   return list;
 }
 
+// An OpenDKP timestamp as ISO UTC. They arrive without a zone ("2026-09-28T03:06:35"), which
+// Date.parse would read as the host's local time; the stored history shows they are UTC.
+function _odkpTime(v) {
+  if (v == null || v === '') return null;
+  let s = String(v).trim();
+  if (/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(s)) s += 'Z';
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 // Drop the shared auctions cache so the NEXT poll goes upstream. Called only
 // when we already know the answer changed — an officer opening bidding — never
 // on a timer and never from a request we did not cause. A no-op if nothing is
@@ -7378,7 +7421,11 @@ async function _handleAgentServerPanel(req, res) {
             item_id:    a.ItemId || a.Item?.Id,
             item_name:  a.ItemName || a.Item?.Name,
             top_bid:    a.TopBid || a.HighestBid || null,
-            ends_at:    a.EndTime || a.EndsAt || null,
+            // OpenDKP names it EndTimestamp (the settled history's field, openDkpSync.js); this read
+            // EndTime / EndsAt only, so ends_at was always null and no auction had a countdown. A late
+            // bid moves it later, so a reader re-reads it every poll (the guild lead, 2026-10-02).
+            ends_at:    _odkpTime(a.EndTimestamp || a.EndTime || a.EndsAt),
+            started_at: _odkpTime(a.CreatedTimestamp || a.StartTimestamp),
             wishlisted: !!wishById.get(a.ItemId || a.Item?.Id),
           })),
         }));
@@ -11244,6 +11291,7 @@ const _SHED_KINDS = new Set([
   'buff_casts', 'pvp', 'pvp_assists', 'fun_event',             // redundant / re-derivable
   'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
   'corpse',                                                    // the corpse DM's off switch
+  'xp_events',                                                 // XP board telemetry (FB-37)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
@@ -13575,6 +13623,34 @@ async function _liveRaidSplit(supabase, guildId) {
   return _keepRaidSplit(_raidGroups.groupRaids(rows));
 }
 
+// The declared main assist's target to the top of Extended Target, marked `ma_target`. Rows are
+// already sorted; this moves the matching NPC rows (by spawn id when the MA's Mimic sends one) to the
+// front and keeps everything else in order. → the `main_assist` payload field, or null.
+function _mainAssistPin(targets, ma, liveRows) {
+  if (!ma) return null;
+  const norm = (s) => String(s || '').replace(/^#/, '').replace(/_/g, ' ').trim().toLowerCase();
+  const row = (liveRows || []).find(r => r && r.character && r.character.toLowerCase() === ma.name.toLowerCase());
+  let target = null, targetId = null, source = null;
+  if (row && row.target_name && norm(row.target_name) !== ma.name.toLowerCase()) {
+    target = row.target_name; source = 'mimic';
+    targetId = Number.isFinite(Number(row.target_id)) && Number(row.target_id) > 0 ? Number(row.target_id) : null;
+  } else if (ma.called_target) { target = ma.called_target; source = 'called'; }
+  if (target) {
+    const want = norm(target);
+    const pinned = [], rest = [];
+    for (const t of targets) {
+      const hit = t.kind === 'npc' && norm(t.name) === want
+        && (targetId == null || t.spawn_id == null || Number(t.spawn_id) === targetId);
+      if (hit) { t.ma_target = true; pinned.push(t); } else rest.push(t);
+    }
+    if (pinned.length) targets.splice(0, targets.length, ...pinned, ...rest);
+  }
+  return {
+    name: ma.name, target, target_source: source,
+    declared_by: ma.by, declared_at: new Date(ma.declared_at).toISOString(),
+  };
+}
+
 // GET /api/agent/extended-target?character=<self>
 // Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
 // current target (character_live_state.target_name, Zeal slot 6) into a list of
@@ -14212,8 +14288,13 @@ async function _handleAgentExtendedTarget(req, res) {
       (b.raider_count - a.raider_count) ||
       ((b.hurt ? 1 : 0) - (a.hurt ? 1 : 0)) ||
       a.name.localeCompare(b.name));
+    // A main assist declared in raid chat pins their target above that (the guild lead, 2026-10-02;
+    // utils/mainAssist.js). Their target is what their own Mimic reports, else the mob their assist
+    // macro named in the last 90 s. With no declaration the most-targeted mob stays first.
+    const mainAssist = _mainAssistPin(targets, _mainAssistStore.get(myRaid ? myRaid.key : null, now), inScope);
 
     const extOut = { targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount };
+    if (mainAssist) extOut.main_assist = mainAssist;
     if (raidSplit.multi) extOut.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(extOut));
@@ -16545,6 +16626,76 @@ async function _noteZealTags(rows) {
   if (out.length === 0) return 0;
   await supabase.insert('zeal_tag_observations', out);
   return out.length;
+}
+
+// POST /api/agent/xp-events — one row per experience line (agent 3.7.67+), for the XP board
+// (FB-37 option B; the guild lead, 2026-10-02: "observe group composition and xp totals for groups
+// that are together during the day and find what compositions work and in what area in what zone,
+// with what mobs we're killing" · "Also track when we have an XP potion on"). Stored raw: the bars
+// before and after, so the total is computed at read time (docs/DESIGN-xp-tracking.md §2).
+const _XP_KINDS = new Set(['solo', 'party', 'raid']);
+function _num(v, lo, hi) {
+  const n = Number(v);
+  return v != null && v !== '' && Number.isFinite(n) && n >= lo && n <= hi ? n : null;
+}
+function _sanitizeXpEvent(e, guildId, uploadedBy, nowMs) {
+  const character = typeof e?.character === 'string' ? e.character.trim() : '';
+  if (!/^[A-Za-z]{2,15}$/.test(character)) return null;
+  const at = Date.parse(e?.at);
+  if (!Number.isFinite(at) || at > nowMs + 5 * 60_000 || at < nowMs - 3 * 86400_000) return null;
+  if (!_XP_KINDS.has(e?.kind)) return null;
+  const str = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+  const group = Array.isArray(e?.group_members)
+    ? e.group_members.slice(0, 6).map(g => ({
+        name: str(g?.name, 15), class: str(g?.class, 24), level: _num(g?.level, 1, 70),
+      })).filter(g => g.name && /^[A-Za-z]{2,15}$/.test(g.name))
+    : null;
+  const int = (v, lo, hi) => { const n = _num(v, lo, hi); return n == null ? null : Math.trunc(n); };
+  return {
+    guild_id: guildId, character, at: new Date(at).toISOString(), kind: e.kind,
+    level: int(e.level, 1, 70), level_after: int(e.level_after, 1, 70),
+    xp_before: _num(e.xp_before, 0, 100), xp_after: _num(e.xp_after, 0, 100),
+    aa_before: _num(e.aa_before, 0, 100), aa_after: _num(e.aa_after, 0, 100),
+    aa_banked_before: int(e.aa_banked_before, 0, 10000), aa_banked_after: int(e.aa_banked_after, 0, 10000),
+    zone_id: int(e.zone_id, 0, 1000), zone_name: str(e.zone_name, 80),
+    loc_x: _num(e.loc_x, -1e6, 1e6), loc_y: _num(e.loc_y, -1e6, 1e6), loc_z: _num(e.loc_z, -1e6, 1e6),
+    mob: str(e.mob, 80),
+    group_members: group && group.length ? group : null,
+    potion: e?.potion === true,
+    race: str(e.race, 24), class: str(e.class, 24),
+    uploaded_by: uploadedBy, agent_version: str(e.agent_version, 24),
+  };
+}
+async function _handleAgentXpEvents(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 256 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid json' })); }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const now = Date.now();
+  const rows = (Array.isArray(payload?.events) ? payload.events : []).slice(0, 200)
+    .map(e => _sanitizeXpEvent(e, guildId, identity.discord_id || null, now)).filter(Boolean);
+  if (!rows.length) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  try {
+    await supabase.upsert('xp_events', rows, 'guild_id,character,at,kind');
+  } catch (err) {
+    // A missing table (the migration not applied yet) must not leave every agent retrying the same
+    // batch from its durable queue: say it was taken, store nothing, log it.
+    if (/xp_events|does not exist|42P01/i.test(String(err?.message))) {
+      console.warn('[xp-events] table missing — accepted without storing:', err?.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, stored: 0, note: 'not stored' }));
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'upsert failed', detail: err?.message }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, stored: rows.length }));
 }
 
 // A character's own known timers, as their Mimic reports them (agent 3.7.66+):
@@ -21674,6 +21825,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentLiveState(req, res); }
     catch (err) {
       console.error('[live-state] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/xp-events') {
+    if (await _isShedded('xp_events', res)) return;
+    try { return await _handleAgentXpEvents(req, res); }
+    catch (err) {
+      console.error('[xp-events] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

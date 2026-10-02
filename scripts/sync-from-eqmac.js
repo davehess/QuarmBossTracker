@@ -423,7 +423,7 @@ const TRANSFORMS = {
     };
   },
   items: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield']);
+    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'maxcharges', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lore: r.lore,
@@ -445,6 +445,9 @@ const TRANSFORMS = {
       // the bar fills at the wrong rate for every clicky.
       casttime: r.casttime, clickeffect: r.clickeffect,
       clicktype: r.clicktype, clicklevel: r.clicklevel,
+      // Charges a clicky holds (-1 = unlimited): the HUD's clicky counters need it to tell
+      // "one charge left" from "never runs out" (the guild lead, 2026-10-02).
+      maxcharges: r.maxcharges,
       // Worn/stat columns for the Quarmy gear analysis (character gear pages:
       // worn effects like Fire Fist / infravision, +ATK recommendations).
       worneffect: r.worneffect, worntype: r.worntype,

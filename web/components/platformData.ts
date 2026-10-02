@@ -18,7 +18,7 @@ export const BRANCHES = [
       'The in-raid cockpit: frameless, click-through overlays that float over EverQuest and stay out of your way until they matter.',
     leaves: ['DPS + Tank HUDs', 'CH Chain', 'Command Center', 'Trigger callouts', 'UI Studio'],
     details: [
-      ['DPS HUD', 'live damage/threat meter with DPS + Tank tabs, pets attributed to owners'],
+      ['DPS/Tank Meter', 'live damage/threat meter with DPS + Tank tabs, pets attributed to owners'],
       ['CH Chain', 'complete-heal rotation board — beats, gaps, and who is NEXT, synced across clerics — and it speaks your "04 GO" out loud'],
       ['Loot bidding', 'log into OpenDKP once and place sealed bids from the dashboard — open auctions, last winner + runner-up, your DKP, and a wishlist built from your bid history'],
       ['Command Center', 'one board: healer mana, cures needed, Divine Intervention coverage, defensives'],
