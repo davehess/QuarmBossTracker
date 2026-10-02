@@ -36,7 +36,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/planner':      { title: 'Loadout Planner', description: 'Theory-craft weapon setups from the item database with hate-per-minute estimates.' },
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },
   '/raid':         { title: 'Live Raid', description: 'The raid right now — who’s in, groups, HP, and buffs, live from Zeal.' },
-  '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS HUD, triggers, buff queue, and log sync for Project Quarm.' },
+  '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS/Tank Meter, triggers, buff queue, and log sync for Project Quarm.' },
   '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },

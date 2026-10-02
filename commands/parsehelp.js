@@ -101,7 +101,7 @@ const STEPS = [
       '• In EverQuest, type **`/log on`** (or set `Logging=on` in `eqclient.ini`) so Mimic can read your fights.',
       '• Click **Open dashboard**. You’re now uploading. ✅',
       '',
-      'You also get: DPS HUD · trigger alerts (TTS) + timers · charm tracker · Buffs & Zone · private /tells · UI Studio (back up your EQ layout). Turn overlays on any time from the tray.',
+      'You also get: DPS/Tank Meter · trigger alerts (TTS) + timers · charm tracker · Buffs & Zone · private /tells · UI Studio (back up your EQ layout). Turn overlays on any time from the tray.',
     ].join('\n'),
   },
 ];
