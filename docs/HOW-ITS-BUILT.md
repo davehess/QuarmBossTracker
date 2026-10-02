@@ -923,6 +923,18 @@ the panel body takes the mouse only while arranging (DECISIONS §87). On the alp
 part's `_sampleTimers` holds one sample per group plus one per claimed name (`wpCanvasPanelNames`); callouts
 panels get `wpPartFlash`. `placeMenu` keeps the settings view whole on screen (§92).
 Test `test/timers-canvas.test.js`.
+**Overlay parts cut from the page (alpha `a29075d9`, §125).** Panel kind `sect` `{ key, sect, pw, ph, scale }`:
+the overlay's own page once per piece (`sectSrc` = its src + `&wpsect=<id>` + `&wptab=<tab>` when the part
+lives on one tab). `isolateFrame` injects `#wp-sect-iso` (`WpSections.isolateCss`: every box invisible but the
+part's, so the layout stays the window's); `cropSections()` (250 ms) reads `WpSections.unionRect` and moves
+the page under the panel, clips it (`clip-path: inset(...)` in page pixels) and sizes the panel to the part,
+`.nodata` when the part is absent, the card behind it from `WpSections.backdrop`. `takeApart(p)` swaps a
+whole-overlay panel for one grouped `sect` panel per part showing, each at its spot. `isVoice(p)`: one
+speaking copy per overlay. The map is `apps/mimic/sections.js` (`WpSections.byKey[key] = [{ id, label, sel,
+tab? }]`); a part with no class of its own gets an inert `data-wp-sect` mark in its page, on beta
+(Target Info: beta `5eae2d53`). A page that must share state between its copies uses sessionStorage + the
+`storage` event (Target Info's tab, `?wpcanvas=1` only). main's `_canvasHostedKeys` counts `sect` panels.
+Tests `test/canvas-sections.test.js` (alpha), `test/target-info-sections.test.js` (beta).
 Catalog entry in `docs/DESIGN-overlay-catalog.md`. DECISIONS §79.
 **Every overlay as a panel (Mimic 3.0 alpha `d2dadf94`, DECISIONS §102):** a third panel kind, `overlay`,
 is the overlay's own page in an iframe marked `?wpcanvas=1` (once per overlay; `_CANVAS_CATALOG` = the
