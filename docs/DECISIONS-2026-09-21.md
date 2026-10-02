@@ -114,11 +114,12 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`: a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
 | **PoP from /who; checklist by level, closed, maps on hover** | **§122.** Beta `4f5e68e1` (web on `b.wolfpack.quest`; SQL function applied). Anyone /who shows inside a gated plane holds its gate and the ones on the way in: blue ✓ on `/pop`, "✓ seen on /who" on the checklist. Checklist B/C: progression levels, closed by default, sidebar opens them, 🗺 map on hover | the guild lead: (1) open `b.wolfpack.quest/pop` and `b.wolfpack.quest/pop/guide?v=b` (and `?v=c`); (2) pick B or C so it graduates with the /who counts |
 | **Trigger timing votes can be switched off** | **§121.** Agent 3.7.61 + Mimic on beta `db4d21d5`: dashboard → Triggers → Timing votes, or 🔕 on the vote buttons. Off = no vote row and no votes, ✕ or age-outs sent | the guild lead: on the next beta build, fire a test trigger, press 🔕, check the dashboard switch shows off and the row stops appearing |
 | **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, staged on `claude/sharp-lamport-dC0TW` during the Thursday raid freeze; lands on `main` after 00:30 ET | the guild lead: after it lands (and the 6 h cache turns over), target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
 | **PoP flags now record by name; Quarm's real gates; Justice marks** | **§119.** Agent 3.7.59 on `main` (stable Mimics hot-swap it), bot 3.1.182, web 1.8.65. Every grant is named from the flag NPC's line or the Seer's recital; Storms now needs the Justice flag; marks show on `/pop`. Today's 42 earlier grants stay unmapped until re-read | the guild lead: (1) tell raiders: sit by Seer Mal Nae`Shi in Knowledge, say "guided meditation", and every flag they hold records; (2) or re-run Opt-in Logs over today's log; (3) check `/pop` Justice shows the 7 Marks of Execution |
-| **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) add `eqmimic.quest` (and `www` as a redirect) to the Vercel project that builds the hesstastic repo, set DNS at the registrar, check the domain shows the page and not hesstastic.com; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
+| **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) eqmimic.quest: no Vercel project builds the hesstastic repo (Pages only, §123), so import it into Vercel or make an `eqmimic` Pages repo, then DNS; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
 | **Zeal 1.4.8: branches synced; new pipe fields; tag pictures** | **§117.** Main merged into all five branches, no force-push. **`test-all` now builds on GitHub on every push** (`0a2e25d`, first run green, so the merges compile): download `zeal_test-all.zip` from the fork's `test-all-build` prerelease. Pipe target fields reviewed, adoption planned, not built. Mimic beta `567c5911` stops backing up unchanged files and clears the identical old copies | the guild lead: (1) on Mimic beta, Settings → Zeal → Test build → Install (Mimic beta `0e5eb23b`), and try it in game, including the custom-folder steps 10–15 in `zeal-tag-shapes/TRY-IN-GAME.md`; (2) say when to build the pipe-field adoption. Tag pictures: option A built (custom folder, banners, 60 templates + README, `test-all` `da88716`) |
 | **FB-45: a new loot call with the same numbers starts new rolls** | **§116.** Agent 3.7.56 on beta `2020a8c4`: a later call that puts a roll number on a different item closes the old set and starts a new one under the new name | the guild lead: on the beta, post two loot calls a few minutes apart reusing the numbers and check the Rolls card shows two batches. Raiders on stable get it at the next stable cut, which must repeat "Fixes FB-45" |
@@ -5634,3 +5635,56 @@ character whose owner does not run Mimic showed nothing.
   hover and on tap and closes again.
 - **Cost:** build low (one component, one SQL function); maintenance low (levels derive from the chart);
   runtime one ~90 ms grouped read per page, maps drawn only on hover; change easy.
+
+### 123. A plain /who uploads its zone; the eqmimic.quest demo; where eqmimic.quest can live (2026-10-02)
+
+The guild lead: *"using /who all doesn't give us who is in my current zone. it gives every zone."* Then:
+*"where is the standalone miMIC? is it on eqmimic.quest? individuals can use it locally. still uses the
+wolfy miMIC logo, but generate a demo site around it with demo data that users could expect to see. you
+may use obscured data from our guild's parses and whatnot. no who data. sample admin pages, etc."*
+
+**/who, agent 3.7.62 (beta `5250261a`).** `/who all` puts each player's short zone on the row; a plain
+/who (your own zone, the one people type) prints none there, only in its footer ("There are 12 players
+in Plane of Storms."). The agent used the footer for the /who overlay alone (§73 kept it out of the
+upload on purpose), so those rows uploaded with no zone: **7,263 of about 9,400 /who rows in two days**.
+Now the footer's zone goes onto that run's rows in `whoData`, lower-cased, and the who flush runs even
+when no new name appeared (a /who of people already seen used to upload nothing at all). This
+**supersedes §73's "upload untouched"**: `who_observations.zone` now holds short names and lower-cased
+long names, and `web/lib/popWho.ts` maps both (Ragrax shares "Plane of Earth" with the plane above it,
+so a long-name sighting there proves only the outer gate).
+
+**The standalone Mimic (the answer).** There is no separate program: it is Mimic in local mode, in the
+Mimic 2.7.7 beta from beta.7 on (§118). Pick "Run local-only" in setup. The download page that offers it
+is at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B). **eqmimic.quest is not live**: on 2026-10-02
+it resolved to the registrar's parking address and failed TLS.
+
+**Where eqmimic.quest can live (correcting §118).** §118 and the hesstastic README said to add the domain
+to "the Vercel project that builds this repo". There is none: every deployment of the hesstastic repo is
+`github-pages`, and a Pages site carries one custom domain (hesstastic.com). Two ways:
+- import the hesstastic repo into Vercel as a project and add `eqmimic.quest` there; `vercel.json`
+  already routes that host to `eqmimic/`; or
+- a new `eqmimic` repo with the contents of `eqmimic/` at its root, Pages on, `CNAME` = eqmimic.quest.
+Either way the registrar's DNS points at the chosen host. Both are the guild lead's steps (a cloud
+session cannot create repos or Vercel projects, and the Vercel connector needs sign-in).
+
+**The demo (hesstastic `e2d2f62`).** `hesstastic.com/eqmimic/demo/` is a tour of one raid night and
+`/eqmimic/demo/b/` an app to click around, the same screens in two layouts (one gets picked, the other
+deleted):
+- **Overlays:** a real 7-minute fight (Xerkizh The Creator, 32 raiders) replayed in 48 seconds: the damage
+  meter with your row pinned, timers, callouts, Target Info with the boss's real stats.
+- **Mimic's control panel:** your fights, triggers, overlays, settings in local mode.
+- **Guild site:** the raid night and every boss's parse.
+- **Officer pages:** guild triggers (real game text), attendance, loot and DKP, members and their Mimic,
+  bugs and ideas.
+- **The data:** the 2026-09-24 Ssraeshza Temple night: damage per raider, boss stats, attendance over
+  seven nights, the night's drops. Every character name is replaced by an invented one, checked against
+  every name in `characters`, `who_observations` and `eqemu_npc_types` (four collisions dropped); the
+  guild is "Lantern Watch"; dates move back eight weeks; ranks, DKP, Mimic versions and the bug reports
+  are made up. No /who data is shown. The mapping is shuffled at random and never saved.
+  `eqmimic/demo/tools/build-data.cjs` builds `data.js` from a private export (not committed) and
+  refuses to write if a real name survives; a second scan of every published file found none.
+- Both download pages now carry the wolf Mimic logo and link to the demo. Smoke-rendered at 1280 and
+  390 wide: no console errors, no sideways scroll.
+- **Cost:** build moderate (one shared panel script, two thin layouts); maintenance low (static,
+  regenerated only when wanted); runtime light (~20 KB data, no requests); change easy (screens are
+  functions).

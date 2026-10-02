@@ -813,7 +813,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   document-level hover owner (`_zoneOf`) so the wheel reaches the list. **ZONE** switch (agent
   3.7.38, §73): `#zone-btn` → `_zoneCol` (`wp:who:zoneCol`, off by default) → `zoneColHtml` after
   level. The agent's `_whoZoneSeen` holds each player's zone from their last /who (a `/who all` row's
-  `ZONE:`, else the plain /who footer's zone), apart from `whoData` so the upload is unchanged.
+  `ZONE:`, else the plain /who footer's zone). Since agent 3.7.62 (§123) the footer's zone also goes
+  onto that run's `whoData` rows, lower-cased, and `_whoZoneDirty` makes the next who flush upload them
+  even when no new name appeared, so a plain /who reaches `who_observations` with its zone.
 - **Beta channel from the dashboard** (agent 3.7.28, §53):
   - A `wpJoinBeta` "⤴ beta" button follows the Check-for-update slot in the header. It is rendered
     only for stable Mimic builds; beta builds show BETA + `wpRevertStable` instead.
