@@ -99,8 +99,38 @@ describe('the handler', () => {
   });
   it('counts a Glory kill as ours even when the other guild is unknown, and never as a boss kill', () => {
     expect(code).toMatch(/isWpKill\s*=\s*killType === 'pvp' && killerGuild === WP_GUILD_NAME && \(isGlory \|\| _hasRealGuild\(victimGuild\)\)/);
-    expect(code).toMatch(/isWpDeath\s*=\s*killType === 'pvp' && victimGuild === WP_GUILD_NAME && \(isGlory \|\| _hasRealGuild\(killerGuild\)\)/);
+    expect(code).toMatch(/isWpDeath\s*=\s*killType === 'pvp' && !!killer && victimGuild === WP_GUILD_NAME && \(isGlory \|\| _hasRealGuild\(killerGuild\)\)/);
     expect(code).toMatch(/if \(killType === 'pvp' && !victimGuild && victim && !isGlory\)/);
     expect(code).toMatch(/if \(b\?\.source === 'rallos_glory'\) continue;/);
+  });
+  // The Oct 1 wordings (the guild lead's unmatched-lines file, 2026-10-02; DECISIONS §132).
+  it('posts a forfeit as one, not as a death', () => {
+    expect(code).toContain("content = `${killType === 'forfeit' ? '🏃' : '☠️'} ${text}`;");
+  });
+});
+
+describe('the Oct 1 wordings', () => {
+  it('keeps a guild the line named and fills only the missing side', async () => {
+    const { fn } = loadResolver({
+      who: [{ character: 'Brackwyn', guild_name: 'Europa', observed_at: '2026-10-01T19:00:00Z' },
+            { character: 'Aldenmar', guild_name: 'Stale Guild', observed_at: '2026-10-01T19:00:00Z' }],
+    });
+    const b = glory({ killer: 'Aldenmar', killerGuild: 'Zek', victim: 'Brackwyn', victimGuild: null });
+    await fn([b]);
+    expect(b).toMatchObject({ killerGuild: 'Zek', victimGuild: 'Europa' });
+  });
+
+  it('records a death to an NPC and a death with no killer, and no forfeit', () => {
+    const block = sliceBlock(bot, 'function _pvpDeathRow(b, guildId, discordId, petOwners) {', '\n}');
+    // eslint-disable-next-line no-new-func
+    const row = new Function('petOwnerEntries', block + '\nreturn _pvpDeathRow;')(() => []);
+    const npc = row({ killType: 'npc', source: 'rallos_glory', victim: 'Brackwyn', victimGuild: 'Zek',
+      killer: 'a small mushroom', zone: 'The Fungus Grove', ts: '2026-10-01T06:43:40.000Z' }, 'wolfpack', null, {});
+    expect(npc).toMatchObject({ victim: 'Brackwyn', killer: 'a small mushroom', killer_is_npc: true, killer_guild: null });
+    const foe = row({ killType: 'pvp', source: 'rallos_glory', victim: 'Brackwyn', victimGuild: '',
+      killer: null, zone: 'Kedge Keep', ts: '2026-10-01T06:25:21.000Z' }, 'wolfpack', null, {});
+    expect(foe).toMatchObject({ victim: 'Brackwyn', killer: null, killer_is_npc: false });
+    expect(row({ killType: 'forfeit', source: 'rallos_glory', victim: 'Brackwyn', victimGuild: null,
+      killer: null, ts: '2026-10-01T06:25:21.000Z' }, 'wolfpack', null, {})).toBeNull();
   });
 });

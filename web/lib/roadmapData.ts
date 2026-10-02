@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'xanamech-glory-lines-2026-10-02',
+    title: 'Xanamech off the board, every Rallos Zek line read',
+    version: 'Bot 3.1.191 · Web 1.8.78 · Agent 3.7.71 beta',
+    date: '2026-10-02',
+    headline: 'The board drops a boss the server no longer locks, and #pvp catches up with how Rallos Zek announces deaths now.',
+    features: [
+      {
+        name: 'Xanamech off the timer board',
+        blurb: 'Since the October 1 patch Xanamech has no lockout, so his 72-hour timer is gone from the board and the website. A kill of him says "no lockout" in raid chat.',
+      },
+      {
+        name: 'Every Rallos Zek line in #pvp',
+        blurb: 'Deaths to an NPC post again, deaths with no worthy foe and players fleeing the battlefield post too, and the newer worthy-kill line counts as a kill. When the line names a guild, that guild is used.',
+      },
+    ],
+    fixes: [
+      'About 170 Rallos Zek lines since the PoP patch were never read. The beta Mimic reads all of them; run Opt-in Logs after updating to send the missed ones.',
+    ],
+  },
+  {
     key: 'pop-corpse-dm-2026-10-02',
     title: 'Corpse DM knows PoP corpses move',
     version: 'Bot 3.1.190 · Web 1.8.77',

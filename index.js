@@ -5110,6 +5110,8 @@ async function _resolveGloryGuilds(broadcasts) {
   const roster = await _rosterNameSet().catch(() => new Set());
   for (const b of glory) {
     for (const side of ['killer', 'victim']) {
+      // The Oct 1 wording names the guild ("Aldenmar <Wolf Pack>"); one the line carried stays.
+      if (b[`${side}Guild`] != null) continue;
       const k = String(b[side] || '').toLowerCase();
       b[`${side}Guild`] = guildOf.get(k) || (roster.has(k) ? WP_GUILD_NAME : '');
     }
@@ -5324,7 +5326,8 @@ async function _handleAgentPvp(req, res) {
       // side does not make it an NPC kill.
       const isGlory    = b?.source === 'rallos_glory';
       const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(victimGuild));
-      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(killerGuild));
+      // "Falls in <zone> without a worthy foe" names no killer: recorded, posted, but no backup ping.
+      const isWpDeath  = killType === 'pvp' && !!killer && victimGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(killerGuild));
       const ofG = (g) => (_hasRealGuild(g) ? ` of <${g}>` : '');
       const gloryNote = isGlory && b?.glory === false ? ' _(no Glory: Rallos Zek finds no worthy conquest)_' : '';
 
@@ -5384,7 +5387,8 @@ async function _handleAgentPvp(req, res) {
         // (our kill or our death); anything else is just a death notice
         // people can scroll past. ("Hmm don't like getting a ping every
         // kill" — a member, 2026-06-01)
-        content = `☠️ ${text}`;
+        // A forfeit (fled or abandoned the battlefield, Glory surrendered) is not a death.
+        content = `${killType === 'forfeit' ? '🏃' : '☠️'} ${text}`;
       }
 
       // Auto-record PvP boss respawn timer when the broadcast names a known
@@ -6014,6 +6018,10 @@ async function _handleAgentOptinSummary(req, res) {
 //   1. Match boss name against bosses.json (by name or nickname)
 //   2. Record kill + trigger full postKillUpdate refresh
 //   3. Post human-readable confirmation to RAID_CHAT_CHANNEL_ID with next-spawn time
+// Bosses deliberately taken off the board because the server gave them no
+// lockout (lower-case names). The guild lead, 2026-10-02, on the Oct 1 patch's
+// "Xanamech has no lockout": take him off the board.
+const _OFF_BOARD_NO_LOCKOUT = new Set(['xanamech nezmirthafen']);
 async function _handleAgentBossKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6107,13 +6115,17 @@ async function _handleAgentBossKill(req, res) {
       set++;
     } else {
       // Boss not in database — still post to raid channel as FYI (deferred).
+      // A boss taken off the board on purpose says so, instead of inviting an
+      // officer to /addboss it back (§132).
+      const offBoard = _OFF_BOARD_NO_LOCKOUT.has(nameLower);
       if (raidChId) {
         discordJobs.push(async () => {
           const ch = await client.channels.fetch(raidChId).catch(() => null);
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
-              `*(not in timer database — use \`/addboss\` to add it)*`
+              (offBoard ? `*(no lockout — not on the timer board)*`
+                        : `*(not in timer database — use \`/addboss\` to add it)*`)
             );
           }
         });
