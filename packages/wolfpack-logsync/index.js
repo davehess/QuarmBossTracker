@@ -14232,7 +14232,11 @@ function _meNoteRawLine(line, character) {
     // What you are casting, so its damage is not taken for a proc (_meNoteHit).
     if (msg.startsWith('You begin casting ')) {
       const d = parseEqTimestamp(line);
-      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now });
+      // `target`: who it was cast at, from Zeal — what {mytarget} names when the
+      // spell is resisted (_myTargetFor).
+      const zst = _meZealFor(cl);
+      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now,
+                            target: (zst && zst.target_name) ? String(zst.target_name) : null });
     }
     // Your own spell damage — the other half of a landed Boastful Bellow (_meNoteBellow).
     const nm = msg.indexOf('non-melee') !== -1 ? /^You hit (.+) for \d+ points? of non-melee damage\.$/.exec(msg) : null;
@@ -27070,7 +27074,7 @@ async function dismissTopDamage(key) {
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : esc(t.overlay_preview || t.overlay_text)) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
            : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
@@ -27115,7 +27119,7 @@ async function dismissTopDamage(key) {
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
-      html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
+      html += groupHtml('utility', '🔧 Utility (HP, mana, range, invis)',  groups.utility);
       listEl.innerHTML = html;
       var sel = document.getElementById('trgSugFor');
       if (sel) sel.addEventListener('change', function(){
@@ -29688,6 +29692,9 @@ function startWebDashboard(port) {
             label:     tpl.label,
             pattern:   tpl.pattern,
             overlay_text: tpl.overlay_text,
+            // What the alert reads with its words filled in ("RESISTED: Tashanian —
+            // a gnoll warlord"), for the panel; overlay_text keeps the {tokens}.
+            overlay_preview: tpl.overlay_preview || null,
             overlay_color: tpl.overlay_color || 'red',
             overlay_ms: tpl.overlay_ms || 4000,
             tts_default: !!tpl.tts_default,
@@ -29793,7 +29800,8 @@ function startWebDashboard(port) {
             };
           }
           const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
-          if (!hasPattern && !zealCond && !builtinTimer) continue;
+          const catalogMatch = !hasPattern && t ? _normCatalogMatch(t.catalog_match) : null;
+          if (!hasPattern && !zealCond && !builtinTimer && !catalogMatch) continue;
           // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
           const row = {
             id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
@@ -37234,10 +37242,26 @@ function loadPersonalTriggers() {
 }
 function _migrateRetiredSuggestedPattern(t) {
   const id = (t && typeof t.id === 'string' && t.id.startsWith('suggested:')) ? t.id.slice('suggested:'.length) : null;
-  const dead = id ? SUGGESTED_RETIRED_PATTERNS[id] : null;
-  if (!dead || !dead.includes(t.pattern)) return false;
-  const tpl = SUGGESTED_TRIGGERS.find(x => x.id === id);
-  if (!tpl || !tpl.pattern) return false;
+  const tpl = id ? SUGGESTED_TRIGGERS.find(x => x.id === id) : null;
+  if (!tpl) return false;
+  let moved = false;
+  // Alert text the template has since changed — only an exact match moves.
+  const deadText = SUGGESTED_RETIRED_OVERLAYS[id];
+  const act = Array.isArray(t.actions) ? t.actions.find(a => a && a.type === 'text_overlay') : null;
+  if (deadText && act && deadText.includes(act.text)) {
+    if (act.tts === act.text) act.tts = tpl.overlay_text;
+    act.text = tpl.overlay_text;
+    moved = true;
+  }
+  const dead = SUGGESTED_RETIRED_PATTERNS[id];
+  if (!dead || !dead.includes(t.pattern)) return moved;
+  if (tpl.catalog_match) {
+    // Moved from a dead pattern to matching by the spell's effect.
+    t.pattern = '';
+    t.catalog_match = tpl.catalog_match;
+    return true;
+  }
+  if (!tpl.pattern) return moved;
   t.pattern = tpl.pattern;
   return true;
 }
@@ -37300,7 +37324,7 @@ function _serializePersonalTriggers() {
     //     pattern)" in the dashboard.
     // A trigger is valid if it has something to fire on: a compiled pattern or
     // a gauge condition. The genuinely-broken ones are reported via `dropped`.
-    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer };
+    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer || !!t.catalog_match };
   });
 }
 
@@ -37319,7 +37343,10 @@ function _compilePersonalTrigger(t) {
     for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
   const characters = _normCharList(t.characters);   // per-character scope (FB-34); none = every character
-  return { ...t, characters: characters || undefined, _regex: regex, _conditions: conditions, _aliases: aliases,
+  // Matching by the spell catalog instead (catalog_match) — only with no pattern.
+  const catalogMatch = regex ? null : _normCatalogMatch(t.catalog_match);
+  return { ...t, characters: characters || undefined, catalog_match: catalogMatch || undefined,
+           _regex: regex, _conditions: conditions, _aliases: aliases,
            _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
@@ -37373,6 +37400,86 @@ function _compileEndEarlyRegex(t) {
 // {S1}/{S2}/etc captures are NOT used here — these templates are first-
 // person ("you are…") so there's no name to extract. Adding cooldown_seconds
 // where the trigger could otherwise spam (resists fire every tick).
+//
+// Matching by the CATALOG instead of a pattern (`catalog_match`, the guild lead, 2026-10-02:
+// "We need more in suggested triggers"). Three "on you" templates named texts no spell
+// prints ("You have been ensnared", "You feel calm", "You are afraid") — checked against
+// eqemu_spells — while the real ones run to 70+ snare and 30+ mez landings. So those
+// match a spell's own `you` text whose catalog `cc` (bot 3.1.189) holds the kind:
+//   { on: 'you',      cc: ['mez'] }  — a mez landed on you
+//   { on: 'worn_off', cc: ['mez'] }  — "Your <spell> spell has worn off." for a spell of
+//     yours with that kind (the server names the spell, never the mob — zone/spell_effects.cpp
+//     BuffFadeBySlot sends SPELL_WORN_OFF, and calls charm "charm" and fear "fear").
+const CATALOG_MATCH_ON = ['you', 'worn_off'];
+const CATALOG_CC_KINDS = ['mez', 'charm', 'fear', 'stun', 'root', 'snare', 'slow', 'silence'];
+function _normCatalogMatch(cm) {
+  if (!cm || !CATALOG_MATCH_ON.includes(cm.on)) return null;
+  const cc = (Array.isArray(cm.cc) ? cm.cc : []).filter(k => CATALOG_CC_KINDS.includes(k));
+  return cc.length ? { on: cm.on, cc } : null;
+}
+// Landing text → the kinds EVERY spell printing it carries. A text one spell
+// without that kind also prints is left out of that kind, the Blind Mode rule
+// (_blindCatalogTexts), so a shared line can never cry mez.
+let _ccTextsFor = null, _ccTexts = null;
+function _ccCatalogTexts() {
+  if (_ccTexts && _ccTextsFor === _spellByNameLower) return _ccTexts;
+  const byText = new Map();
+  for (const e of _spellByNameLower.values()) {
+    const you = e && e.you ? String(e.you).trim() : '';
+    if (!you) continue;
+    const kinds = new Set(Array.isArray(e.cc) ? e.cc : []);
+    const had = byText.get(you);
+    byText.set(you, had ? new Set([...had].filter(k => kinds.has(k))) : kinds);
+  }
+  for (const [t, ks] of byText) if (!ks.size) byText.delete(t);
+  _ccTexts = byText;
+  _ccTextsFor = _spellByNameLower;
+  return _ccTexts;
+}
+// The match a catalog trigger fires with, shaped like a RegExp result so the
+// rest of the fire path (capture bag, cooldown, actions) is the pattern one's.
+function _catalogTriggerMatch(cm, msg) {
+  if (!cm || !msg) return null;
+  if (cm.on === 'you') {
+    const ks = _ccCatalogTexts().get(msg);
+    const hit = ks && cm.cc.find(k => ks.has(k));
+    if (!hit) return null;
+    const m = [msg, hit];
+    m.groups = { cc: hit };
+    return m;
+  }
+  if (cm.on === 'worn_off') {
+    const w = /^Your (.+?) spell has worn off\.$/.exec(msg);
+    const e = w && _spellByNameLower.get(w[1].toLowerCase());
+    const hit = e && Array.isArray(e.cc) && cm.cc.find(k => e.cc.includes(k));
+    if (!hit) return null;
+    const m = [msg, w[1], hit];
+    m.groups = { spell: w[1], cc: hit };
+    return m;
+  }
+  return null;
+}
+// {mytarget} in an alert: the mob a resist or an immunity line is about. EQ's
+// "Your target resisted the Tashanian spell." never names it (the guild lead, 2026-10-02:
+// "spell resisted <spell name - mob name>"), so it is the target you had when you
+// began casting that spell — read from Zeal then — or, for an instant spell or a
+// line with no spell, your target now. Null when Zeal is not running.
+function _myTargetFor(character, spell) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  const lc = _meLastCast.get(cl);
+  if (lc && lc.target && Date.now() - lc.t < 15_000
+      && (!spell || lc.name === String(spell).toLowerCase())) return lc.target;
+  const zst = _meZealFor(cl);
+  return zst && zst.target_name ? String(zst.target_name) : null;
+}
+// Adds {mytarget} to a fire's captures when the trigger's text asks for it.
+function _addMyTarget(t, captures, character) {
+  if (!captures || captures.mytarget != null) return;
+  if (t._usesMyTarget === undefined) t._usesMyTarget = /mytarget/i.test(JSON.stringify(t.actions || []));
+  if (!t._usesMyTarget) return;
+  captures.mytarget = _myTargetFor(character, captures.spell || captures['1']) || 'your target';
+}
 const SUGGESTED_TRIGGERS = [
   // ── Buff drops on YOU — the most-requested alert class. The pattern matches
   //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
@@ -37399,15 +37506,33 @@ const SUGGESTED_TRIGGERS = [
     overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
     tts_default: false, cooldown_seconds: 3 },
 
-  // ── Debuffs landing ON you — actionable: cure, run, recast.
+  // ── Debuffs landing ON you — actionable: cure, run, recast. Matched by the
+  //    spell's effect in the catalog (catalog_match above): the texts these
+  //    three used to name appear in no spell.
   { id: 'self_snared', category: 'self', label: 'You are snared / rooted',
-    pattern: '^You have been (?:ensnared|rooted|bound)\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['root', 'snare'] },
     overlay_text: 'SNARED / ROOTED', overlay_color: 'yellow', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'self_mezzed', category: 'self', label: 'You are mezzed / charmed',
-    pattern: '^You feel (?:calm|charmed)\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['mez', 'charm'] },
     overlay_text: 'MEZZED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
+  { id: 'self_silenced', category: 'self', label: 'You are silenced',
+    pattern: '', catalog_match: { on: 'you', cc: ['silence'] },
+    overlay_text: 'SILENCED', overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 5 },
+  // Feign Death, from the server's own messages (zone/string_ids.h). A failed
+  // feign is said in the third person with your own name (STRING_FEIGNFAILED,
+  // "%1 has fallen to the ground." — the HUD's ✗ reads the same line); {c} is
+  // your characters, so a monk beside you failing does not call it.
+  { id: 'self_fd_failed', category: 'self', label: 'Your Feign Death failed',
+    pattern: '{c} has fallen to the ground\\.',
+    overlay_text: 'FD FAILED', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'self_fd_broken', category: 'self', label: 'A spell broke your Feign Death',
+    pattern: 'You are no longer feigning death, because a spell hit you\\.',
+    overlay_text: 'FD BROKEN — A SPELL HIT YOU', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
   // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
   // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
   // guard, and only speaks while that overlay is open. This fires on the log
@@ -37419,7 +37544,7 @@ const SUGGESTED_TRIGGERS = [
     overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
   { id: 'self_feared', category: 'self', label: 'You are feared',
-    pattern: '^You are afraid\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['fear'] },
     overlay_text: 'FEARED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'self_stunned', category: 'self', label: 'You are stunned',
@@ -37450,12 +37575,60 @@ const SUGGESTED_TRIGGERS = [
     tts_default: true,  cooldown_seconds: 3 },
 
   // ── Cast feedback — fast-paced raids need quick "did it land?" answers.
-  { id: 'cast_resisted_self', category: 'debuff', label: 'Your spell was resisted',
+  //    Server text from zone/string_ids.h. The resist and immunity lines never
+  //    name the mob, so {mytarget} does (_myTargetFor: your target when you began
+  //    the cast, from Zeal).
+  { id: 'cast_resisted_self', category: 'debuff', label: 'Your spell was resisted (spell and mob)',
     pattern: '^Your target resisted the (.+?) spell\\.',
-    overlay_text: 'RESISTED: {1}', overlay_color: 'yellow', overlay_ms: 3000,
+    overlay_text: 'RESISTED: {1} — {mytarget}', overlay_preview: 'RESISTED: Tashanian — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
     tts_default: false, cooldown_seconds: 1 },
+  { id: 'cast_immune_slow', category: 'debuff', label: 'Your target is immune to slow',
+    pattern: 'Your target is immune to changes in its attack speed\\.',
+    overlay_text: 'IMMUNE TO SLOW — {mytarget}', overlay_preview: 'IMMUNE TO SLOW — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'cast_immune_snare', category: 'debuff', label: 'Your target is immune to snare',
+    pattern: 'Your target is immune to changes in its run speed\\.',
+    overlay_text: 'IMMUNE TO SNARE — {mytarget}', overlay_preview: 'IMMUNE TO SNARE — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_cannot_mez', category: 'debuff', label: 'Your target cannot be mezzed',
+    pattern: 'Your target cannot be mesmerized',
+    overlay_text: 'CANNOT MEZ — {mytarget}', overlay_preview: 'CANNOT MEZ — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'cast_immune_stun', category: 'debuff', label: 'Your target is immune to stun',
+    pattern: 'Your target is immune to the stun portion of this effect\\.',
+    overlay_text: 'STUN IMMUNE — {mytarget}', overlay_preview: 'STUN IMMUNE — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_cannot_charm', category: 'debuff', label: 'Your target cannot be charmed',
+    pattern: 'Your target is too high of a level for your charm spell\\.|This NPC cannot be charmed\\.',
+    overlay_text: 'CAN\'T CHARM — {mytarget}', overlay_preview: 'CAN\'T CHARM — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  // Your crowd control wearing off a mob. The server names the spell, not the
+  // mob ("Your Mesmerize spell has worn off.") — catalog_match keeps it to your
+  // spells that mez, or that slow, root or snare.
+  { id: 'cast_mez_off', category: 'debuff', label: 'Your mez wore off',
+    pattern: '', catalog_match: { on: 'worn_off', cc: ['mez'] },
+    overlay_text: 'MEZ OFF: {spell}', overlay_preview: 'MEZ OFF: Mesmerize',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 0 },
+  { id: 'cast_slow_off', category: 'debuff', label: 'Your slow / root / snare wore off',
+    pattern: '', catalog_match: { on: 'worn_off', cc: ['slow', 'root', 'snare'] },
+    overlay_text: '{spell} WORE OFF', overlay_preview: 'Turgur\'s Insects WORE OFF',
+    overlay_color: 'yellow', overlay_ms: 4000,
+    tts_default: false, cooldown_seconds: 0 },
+  { id: 'cast_fear_off', category: 'debuff', label: 'Your fear wore off',
+    pattern: 'Your fear spell has worn off\\.',
+    overlay_text: 'FEAR OFF', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 0 },
+  // "Your spell is interrupted." (INTERRUPT_SPELL). This read "Your spell
+  // interrupted" / "Your target was interrupted", which the game never prints.
   { id: 'cast_interrupted', category: 'self', label: 'Your cast was interrupted',
-    pattern: '^Your (?:spell|target) (?:was )?interrupted',
+    pattern: 'Your spell is interrupted\\.',
     overlay_text: 'INTERRUPTED', overlay_color: 'yellow', overlay_ms: 2500,
     tts_default: false, cooldown_seconds: 1 },
   { id: 'cast_fizzle', category: 'self', label: 'Spell fizzle',
@@ -37474,6 +37647,23 @@ const SUGGESTED_TRIGGERS = [
     zeal_condition: { field: 'self_hp_pct', op: '<=', value: 30 },
     overlay_text: 'LOW HP', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 15 },
+  // Casting and pulling, from the server's own messages (zone/string_ids.h).
+  { id: 'cast_no_los', category: 'utility', label: 'You cannot see your target',
+    pattern: 'You cannot see your target\\.',
+    overlay_text: 'NO LINE OF SIGHT', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_out_of_range', category: 'utility', label: 'Your target is out of range',
+    pattern: 'Your target is out of range, get closer!',
+    overlay_text: 'OUT OF RANGE', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_no_mana', category: 'utility', label: 'Not enough mana for that spell',
+    pattern: 'Insufficient Mana to cast this spell!',
+    overlay_text: 'NOT ENOUGH MANA', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 3 },
+  { id: 'self_invis_fading', category: 'utility', label: 'Your invisibility is about to drop',
+    pattern: 'You feel yourself starting to appear\\.',
+    overlay_text: 'INVIS FADING', overlay_color: 'yellow', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 5 },
 
   // ── Timer bars — EQLogParser-style countdown rows in the trigger overlay,
   //    built by the agent from what it already tracks rather than from a log
@@ -37504,13 +37694,24 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 // (EQLogParser imports set the first three; guild-parity rows the rest).
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns', 'characters'];
+  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
 // exact matches move — a pattern the user edited by hand is theirs.
 const SUGGESTED_RETIRED_PATTERNS = {
   mob_rampage: ['\\brampages?\\s+on\\s+(?:you|YOU)\\b'],
+  // 2026-10-02: texts no spell or server message prints (checked against
+  // eqemu_spells and zone/string_ids.h). The first three move to catalog_match.
+  self_snared:      ['^You have been (?:ensnared|rooted|bound)\\.'],
+  self_mezzed:      ['^You feel (?:calm|charmed)\\.'],
+  self_feared:      ['^You are afraid\\.'],
+  cast_interrupted: ['^Your (?:spell|target) (?:was )?interrupted'],
+};
+// The same for a template's alert text: a saved row still saying exactly this
+// gets the current text (cast_resisted_self now names the mob, 2026-10-02).
+const SUGGESTED_RETIRED_OVERLAYS = {
+  cast_resisted_self: ['RESISTED: {1}'],
 };
 
 // Convert a SUGGESTED_TRIGGERS template into a personal-trigger row (the
@@ -37548,6 +37749,7 @@ function _templateToPersonalRow(tpl, opts) {
     end_early_pattern:  null,
     end_use_regex:      true,
     zeal_condition:     tpl.zeal_condition || null,
+    catalog_match:      tpl.catalog_match || undefined,
     actions:            [action],
   };
 }
@@ -42568,6 +42770,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
+  let lineMsg;  // the line without its timestamp — resolved once, only for a catalog_match trigger
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
@@ -42617,9 +42820,13 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
         }
       } catch { /* bad end-early regex — already logged at compile time */ }
     }
-    if (!t._regex) continue;
-    let m;
-    try { m = t._regex.exec(line); } catch { continue; }
+    let m = null;
+    if (t._regex) { try { m = t._regex.exec(line); } catch { continue; } }
+    else if (t.catalog_match) {
+      // Matched by the spell catalog, on the message without its timestamp.
+      if (lineMsg === undefined) { const at = line.indexOf('] '); lineMsg = at >= 0 ? line.slice(at + 2).trim() : ''; }
+      m = _catalogTriggerMatch(t.catalog_match, lineMsg);
+    }
     if (!m) continue;
     // GINA numeric guards ({N>=50000}): the capture matched, but the trigger
     // only fires when the number clears the threshold. Cheap — most triggers
@@ -42641,6 +42848,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
     const captures = _buildCaptureBag(m, line, {}, t._aliases);
+    _addMyTarget(t, captures, fileChar);
     if (_captureMatchesCharmPet(captures)) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
                         stopped: true, reason: 'suppressed — capture is your charm pet' });
@@ -43092,13 +43300,15 @@ function _replayEvaluateLine(line, tsMs, ctx) {
   let firedAny = false;
   for (const t of all) {
     if (t.enabled === false) continue;   // rehearsal must match live
-    if (!t._regex) continue;   // gauge-condition triggers have no log line to replay
-    let m;
-    try { m = t._regex.exec(line); } catch { continue; }
+    // Gauge-condition triggers have no log line to replay; a catalog_match one does.
+    let m = null;
+    if (t._regex) { try { m = t._regex.exec(line); } catch { continue; } }
+    else if (t.catalog_match) { const at = line.indexOf('] '); m = _catalogTriggerMatch(t.catalog_match, at >= 0 ? line.slice(at + 2).trim() : ''); }
     if (!m) continue;
     // Same guard + bag as the live evaluator — rehearsal must match live.
     if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) continue;
     const captures = _buildCaptureBag(m, line, {}, t._aliases);
+    _addMyTarget(t, captures, ctx && ctx.character);
     // Suppression — mirror the live pipeline (evaluate AND enforce), journalled
     // as a replay row so a swallowed callout is visible in the checkpoint log.
     if (_captureMatchesCharmPet(captures)) {
@@ -44934,6 +45144,8 @@ module.exports = {
   // drive the shipped code.
   SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
+  _catalogTriggerMatch, _normCatalogMatch, _addMyTarget, _buildCaptureBag, _expandTemplate, _meNoteRawLine,
+  _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
