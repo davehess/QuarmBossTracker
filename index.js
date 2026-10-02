@@ -15278,8 +15278,9 @@ async function _npcInteract(npcId) {
     });
   }
   const itemIds = new Set(), fxNpcIds = new Set(), factionIds = new Set();
-  for (const { t } of turnList) {
+  for (const { t, fx } of turnList) {
     for (const x of [...(t.inputs || []), ...(t.outputs || [])]) if (Number.isInteger(x?.item_id)) itemIds.add(x.item_id);
+    for (const id of fx.gives || []) itemIds.add(id);
   }
   for (const fx of [...say.map((b) => b.fx), ...turnList.map((x) => x.fx)]) {
     for (const id of [...fx.spawns, ...fx.depops]) fxNpcIds.add(id);
@@ -15390,15 +15391,36 @@ async function _npcInteract(npcId) {
       needs: needs.length ? needs.map(itemRef) : undefined,
     })),
     trade: trade.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })),
-    turnins: turnList.map(({ t, fx, says, unverified }) => ({
-      inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
-      outputs: (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => itemRef(x.item_id)),
-      exp: t.exp_award || null,
-      random: !!t.random_outputs || fx.givesRandom || undefined,
-      ...fxOut(fx),
-      says: says.length ? says.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })) : undefined,
-      unverified: unverified || undefined,
-    })).filter((t) => t.inputs.length),
+    // Outputs: the table's, plus what Quarm's own script hands over (SummonCursorItem, the exp in
+    // QuestReward) and a character flag when the branch sets one: Askr's bag and meld showed
+    // "nothing listed" though they are the Thunder flag steps (the guild lead, 2026-10-01). Hand-ins
+    // that are alternatives in one condition (any of three giant heads) and read the same are shown once.
+    turnins: (() => {
+      const shown = new Set();
+      return turnList.map(({ t, fx, says, br, unverified }) => {
+        const outIds = (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => x.item_id);
+        for (const id of fx.gives || []) if (!outIds.includes(id)) outIds.push(id);
+        const outputs = outIds.map(itemRef);
+        if (br && br.flag) outputs.push({ id: null, name: 'a character flag' });
+        return {
+          inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
+          outputs,
+          exp: t.exp_award || fx.exp || null,
+          random: !!t.random_outputs || fx.givesRandom || undefined,
+          ...fxOut(fx),
+          says: says.length ? says.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })) : undefined,
+          unverified: unverified || undefined,
+          _group: br ? br.group : null,
+        };
+      }).filter((t) => {
+        if (!t.inputs.length) return false;
+        if (t._group == null) return true;
+        const key = t._group + '|' + t.inputs.map((x) => x.qty + 'x' + x.name).join('+');
+        if (shown.has(key)) return false;
+        shown.add(key);
+        return true;
+      }).map(({ _group, ...t }) => t);
+    })(),
     next,
     vendor: (Array.isArray(vendorRows) ? vendorRows : []).filter((v) => items.has(v.item))
       .map((v) => ({ id: v.item, name: items.get(v.item).name, price: items.get(v.item).price ?? null })),
