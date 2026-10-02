@@ -250,6 +250,25 @@ describe('Tank mini — "One strip"', () => {
   it('the title bar hides in mini', () => {
     expect(stripCss(TANK)).toMatch(/<div class="title wp-mini-hide">/);
   });
+
+  // The guild lead, 2026-10-02 (Mark of the Plague Lords): "should be reflected in the hud and
+  // overlays". The agent sends ds.off when a shield-cancelling debuff is up (_dsOffFrom).
+  it('a shield-cancelling debuff turns the box red "DS OFF" and heads the card with it, sources struck', async () => {
+    const s = tankState();
+    s.mt.ds.off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 180 };
+    const mini = (await boot(TANK, 'content', s, { mini: true })).content();
+    expect(mini).toMatch(/<span class="mini-ds wp-mini-num cut"[^>]*>DS OFF<\/span>/);
+    expect(mini).not.toContain('85/hit');
+    const full = (await boot(TANK, 'content', s)).content();
+    expect(full).toContain('<div class="ds-off"><span>⛔ Mark of the Plague Lords — shield off</span><span class="left">3:00</span></div>');
+    expect(full).toContain('each hit heals the mob 50');
+    expect(full).toContain('<div class="ds-sources off">');
+    // No shield worn and no hits yet: the card still shows, for the debuff alone.
+    const bare = tankState({ mt: null, ds: { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: [], off: { name: 'Mark of the Plague Lords', heals: 50, seconds: 40 } } });
+    const only = (await boot(TANK, 'content', bare)).content();
+    expect(only).toContain('shield off</span><span class="left">40s</span>');
+    expect(only).not.toContain('no known DS buff up');
+  });
 });
 
 // ── Target Info ─────────────────────────────────────────────────────────────

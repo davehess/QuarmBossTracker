@@ -548,6 +548,18 @@ describe('the three HUDs', () => {
     expect(plain).toMatch(/r="13" fill="rgba\(13,17,23,0\.72\)" stroke="var\(--orange\)"/);
   });
 
+  // The guild lead, 2026-10-02 (Mark of the Plague Lords): "should be reflected in the hud".
+  it('HUD shows the damage-shield button red "DS OFF" with the time left while a cancelling debuff is up', () => {
+    const fn = HUDS.HUD || Object.values(HUDS)[0];
+    const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 125 };
+    const h = fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 0, from_buffs: true, kind: null, off } }) }));
+    expect(h).toMatch(/r="13" fill="rgba\(60,8,8,0\.82\)" stroke="#f85149"[^>]*stroke-dasharray="3 2"/);
+    expect(h).toMatch(/>DS OFF</);
+    expect(h).toMatch(/>2:05</);
+    expect(h).not.toContain('#1d5c2e');
+    expect(h).not.toContain('dslava');
+  });
+
   for (const [name, fn] of Object.entries(HUDS)) {
     it(name + ' keeps the middle open — no straight text within 95 units of the centre', () => {
       // Round eight curved the level and slow lines, so the straight text left is

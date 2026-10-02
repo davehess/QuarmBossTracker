@@ -29,6 +29,10 @@ function load() {
     function _meZealFor(cl) { return _zeal.has(cl) ? {} : null; }
     function _meTimersLoad() {}
     function _meTimersSave() {}
+    // The AAs whose reuse is known (Boastful Bellow) keep their HUD timer —
+    // me-hud-timers runs that path; none here.
+    const _ME_SKILL_LINES = [];
+    function _meStartSkill() {}
     function normalizeClass(c) { return c || null; }
     ${DISCS}
     ${REUSE}
