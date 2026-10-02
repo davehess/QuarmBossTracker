@@ -167,6 +167,9 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
   per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
   character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
+- **🧪 Trigger timing votes can be switched off (agent 3.7.61, beta `db4d21d5`).** Dashboard → Triggers →
+  Timing votes, or 🔕 on the vote buttons. Off: no « Earlier / ✓ Good! / » Too early row, and no votes,
+  ✕ or age-outs uploaded. Default on. `test/callout-dismissals.test.js`. `DECISIONS-2026-09-21.md` §121.
 - **⏳ Bard charm from Zeal's class, "recharm pet" at 4s, clicky buffs on the pet (agent 3.7.39–3.7.40 on
   beta, 2026-09-29).** `_classOf` reads Zeal label 3; a bard's gauge-opened charm gets its song's
   duration so the callouts speak; a clicky's glow line records its spell as a cast. §75.

@@ -12,7 +12,7 @@
 > editing this file: **describe what the software does today, not what we
 > intend.** A promise goes in only once the code keeps it.
 
-*Last updated: 2026-10-01*
+*Last updated: 2026-10-02*
 
 ## The spirit
 
@@ -130,6 +130,9 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
   goes out **in or out of a raid, and even with EQ logging off**.
 - **The raid roster** while you are in a raid: every raid member — including
   people from other guilds — with class, level, group, HP and position.
+- Your timing votes on callouts, and which callouts you clear or let run out
+  (switch off: dashboard → Triggers → Timing votes, or 🔕 on the vote buttons;
+  Mimic beta, agent 3.7.61).
 - Buffs and debuffs you see land; your casts; threat; guild trigger callouts;
   `/sll` lockouts; boss kills; PvP kills; faction; your PoP flags; `/random`
   rolls; what you loot.

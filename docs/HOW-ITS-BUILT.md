@@ -2357,6 +2357,11 @@ without-a-raid test path. Bot: `TRIGGER_FEEDBACK_DIRECTIONS`; DB: migration
 constraint (a row is REJECTED until it is applied). Dismissals are per-user and
 session-scoped by construction — nothing relays, nothing touches
 `guild_triggers`. Tests: `test/callout-dismissals.test.js`.
+**Switching it off (agent 3.7.61, beta, §121).** `_optinState.timingFeedback` (default on, kept in
+`logsync.optin.json`) gates all of it: `/api/triggers/feedback` answers 200 and records nothing, and
+`_recordCalloutFeedback` returns null, so no vote, ✕ or age-out uploads. `/api/callout-prefs` takes and
+serves it (GET for the overlay). `triggers.html` reads it every 30s and `showFeedback` skips the vote row
+while it is off; 🔕 on the row (`stopAsking`) turns it off. Dashboard: Triggers tab → Timing votes.
 
 ### Auto-update on EQ close + focus-safe nag — 2026-08-04 (Mimic 2.3.0)
 Mimic already polled hourly with `autoDownload` on; `autoInstallOnAppQuit` then

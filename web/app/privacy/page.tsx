@@ -96,7 +96,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-10-01 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-10-02 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -249,6 +249,10 @@ export default function PrivacyPage() {
           <li>
             <B>The raid roster</B> while you are in a raid: every raid member — including people from
             other guilds — with class, level, group, HP and position.
+          </li>
+          <li>
+            Your timing votes on callouts, and which callouts you clear or let run out (switch off: dashboard
+            → Triggers → Timing votes, or 🔕 on the vote buttons; Mimic beta).
           </li>
           <li>
             Buffs and debuffs you see land; your casts; threat; guild trigger callouts;{' '}

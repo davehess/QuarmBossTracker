@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-61-timing-votes-2026-10-01',
+    title: 'Agent 3.7.61',
+    version: 'Agent 3.7.61 · Mimic 2.7.7 beta',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'You can turn off the timing buttons that show up after a callout.',
+    features: [
+      {
+        name: 'Timing votes, off if you like',
+        blurb: 'Press 🔕 next to « Earlier / ✓ Good! / » Too early, or untick Timing votes on the dashboard’s Triggers tab. The buttons stop showing, and nothing about how you reacted to callouts is sent. Tick it again to help tune the guild’s callouts.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-flags-2026-10-01',
     title: 'PoP flags that fill in',
     version: 'Agent 3.7.59 · Bot 3.1.182 · Web 1.8.65',
