@@ -138,6 +138,11 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
 - Buffs and debuffs you see land; your casts; threat; guild trigger callouts;
   `/sll` lockouts; boss kills; PvP kills; faction; your PoP flags; `/random`
   rolls; what you loot.
+- **Experience you gain** (agent 3.7.67 beta): for each "You gain experience"
+  line, your XP and AA bars before and after it, level, zone, position, the mob
+  just killed, whether an XP potion is up, and **the names of your group** with
+  their class and level. Not for a character you excluded from stats. Used to
+  compare groups, zones and mobs for experience.
 - Your inventory, spellbook and Quarmy exports, if the files exist.
 - Housekeeping: app versions, your main character, zone and a clock check.
 
@@ -320,6 +325,7 @@ server events, counted from the start).
 | Buffs and debuffs seen landing | 7 days |
 | Per-hit parse detail | 7 days (the parse totals are kept) |
 | Threat snapshots | 30 days is the rule; the clean-up has fallen behind, so older ones exist today |
+| Experience gained (with your group's names) | 30 days |
 | `/who` sightings | 60 days, plus the most recent sighting of each character, indefinitely |
 | **Everything else** — chat, tells, parses, loot, rolls, crash reports, feedback, page views, sign-in records, your last live status, the Discord member list (including people who have left) | **No deletion date.** Kept until someone asks |
 

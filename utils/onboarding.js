@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.187': [
+    '**Loot auctions get their own timers, and History gets its own fight.** Each open auction counts down in Mimic’s timers and the Command Center, and moves when a late bid extends it. The DPS/Tank Meter’s History now gets the guild’s numbers for that exact fight, not the next pull of the same mob. Shows on the beta Mimic first.',
+  ],
   '3.1.186': [
     '**The main assist’s target goes to the top of Extended Target.** Say it in raid chat — “MA is Bob”, “Bob is MA”, “assist Bob”, or the assist macro’s “ASSIST ME ON …” — and the mob that person is on sits first, marked MA. With no main assist named, the mob most of the raid is on stays first.',
   ],

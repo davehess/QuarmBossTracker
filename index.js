@@ -10514,13 +10514,15 @@ async function _handleAgentItemClickies(req, res, isPublic) {
       const PAGE = 1000;
       while (true) {
         const data = await supabase.select('eqemu_items',
-          `select=id,name,casttime,clickeffect,clicktype,clicklevel&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
+          `select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
         if (!Array.isArray(data) || data.length === 0) break;
         for (const r of data) {
           entries.push({
             id: r.id, name: r.name,
             casttime: r.casttime, clickeffect: r.clickeffect,
             clicktype: r.clicktype, clicklevel: r.clicklevel,
+            // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
+            maxcharges: r.maxcharges != null ? r.maxcharges : null,
           });
         }
         if (data.length < PAGE) break;
@@ -13458,9 +13460,15 @@ async function _handleAgentLiveDamage(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
-  let boss = '';
-  try { boss = (new URL(req.url, 'http://x').searchParams.get('boss') || '').trim(); }
-  catch { /* */ }
+  let boss = '', fightStartMs = NaN;
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    boss = (sp.get('boss') || '').trim();
+    // The DPS/Tank Meter's History asks for ONE fight by its start (agent 3.7.67+). Without it,
+    // the second of two back-to-back same-name kills answered for the first one too (the guild
+    // lead, 2026-10-02: "This fight was backtoback with the same name").
+    fightStartMs = Date.parse(sp.get('fight_start') || '');
+  } catch { /* */ }
   if (!boss) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ players: [], note: 'no boss' }));
@@ -13475,7 +13483,8 @@ async function _handleAgentLiveDamage(req, res) {
   // Memo per boss — a raid of ~20 agents polls this on the same fight, and the
   // query is identical for all of them. Same idiom as the extended-target
   // bundle's 1.5s memo; without it this is 20x the reads for one answer.
-  const key = boss.toLowerCase();
+  const oneFight = Number.isFinite(fightStartMs);
+  const key = boss.toLowerCase() + (oneFight ? '|' + fightStartMs : '');
   const now = Date.now();
   globalThis._liveDmgCache = globalThis._liveDmgCache || new Map();
   const hit = globalThis._liveDmgCache.get(key);
@@ -13489,13 +13498,21 @@ async function _handleAgentLiveDamage(req, res) {
   // enough that the PREVIOUS pull of the same boss cannot bleed in. Repeat
   // pulls inside that window are the known limitation (see the design doc's
   // encounter-binding section) and are why `oldest_sample_age_sec` is returned.
-  const since = new Date(now - 3 * 60 * 1000).toISOString();
+  // One fight: every uploader's snapshots whose own fight began within 20 s of it (each client
+  // starts its fight on its first line, so the starts differ by a few seconds, never by a whole
+  // pull), however long ago that was.
+  const since = new Date(oneFight ? fightStartMs - 20_000 : now - 3 * 60 * 1000).toISOString();
+  const fightClause = oneFight
+    ? `&started_at=gte.${encodeURIComponent(new Date(fightStartMs - 20_000).toISOString())}`
+      + `&started_at=lte.${encodeURIComponent(new Date(fightStartMs + 20_000).toISOString())}`
+    : '';
   let rows = [];
   try {
     rows = await supabase.select('encounter_threat_snapshots',
       `guild_id=eq.${encodeURIComponent(guildId)}`
       + `&boss_name=eq.${encodeURIComponent(boss)}`
       + `&snapshot_at=gte.${encodeURIComponent(since)}`
+      + fightClause
       + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);

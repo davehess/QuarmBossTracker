@@ -173,6 +173,15 @@ next touch one rather than assuming a missing row means a missing doc.
   saw them start (estimated from their /who level). AAs exact from the server's refusal line; `/pipe at`
   on the Area Taunt key learns the reuse. A Canvas part on alpha `9e33af91`. Mend, LoH, HT and AAs print
   nothing a bystander sees, so a player without Mimic shows only a seen disc. §126.
+- **🧪 HUD batch, auction timers, the main assist, XP events, back-to-back fights (bot 3.1.186 + 3.1.187 ·
+  web 1.8.72 + 1.8.73 on main; agent 3.7.67 beta `d0a54a4d`).** Enrage warns at 10% ("Enrage soon", once
+  per mob) and its red clears once it ends; "DPS HUD" is now "DPS/Tank Meter"; the HUD's damage-shield
+  button wears thorns (druid) or lava (magician); a rampage arc top right and raiders at 25% or under top
+  left; clicky counters from your last `/output inventory`. One timer per live OpenDKP auction (a late bid
+  moves it) + an Auctions section in the Command Center. Extended Target marks the main assist's target.
+  XP events upload to `xp_events` (applied by hand; the board needs a week of rows). The DPS/Tank Meter
+  splits two back-to-back kills of one name by your own target window; History keeps 30 fights across a
+  restart, each local / sent / synced. §127.
 - **🧪 FB-46 / FB-47 / FB-48 (agent 3.7.66 beta `a100da84`).** FB-46: the Zeal update notice opens Settings
   at Zeal; the dashboard notice has a button. FB-47: Send feedback no longer loses typed text when a kill
   lands (Recent Parses got its own card, so #dash stops rewriting). FB-48: an overlay's own size comes back

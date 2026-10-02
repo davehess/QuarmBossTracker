@@ -73,6 +73,7 @@ const RETENTION: [string, string][] = [
   ['Buffs and debuffs seen landing', '7 days'],
   ['Per-hit parse detail', '7 days (the parse totals are kept)'],
   ['Threat snapshots', '30 days is the rule; the clean-up has fallen behind, so older ones exist today'],
+  ["Experience gained (with your group's names)", '30 days'],
   ['/who sightings', '60 days, plus the most recent sighting of each character, indefinitely'],
 ];
 
@@ -259,6 +260,12 @@ export default function PrivacyPage() {
             Buffs and debuffs you see land; your casts; threat; guild trigger callouts;{' '}
             <code>/sll</code> lockouts; boss kills; PvP kills; faction; your PoP flags;{' '}
             <code>/random</code> rolls; what you loot.
+          </li>
+          <li>
+            Experience you gain (Mimic beta): for each &ldquo;You gain experience&rdquo; line, your XP and AA
+            bars before and after it, level, zone, position, the mob just killed, whether an XP potion is up,
+            and the names of your group with their class and level. Not for a character you excluded from
+            stats. Used to compare groups, zones and mobs for experience.
           </li>
           <li>Your inventory, spellbook and Quarmy exports, if the files exist.</li>
           <li>Housekeeping: app versions, your main character, zone and a clock check.</li>

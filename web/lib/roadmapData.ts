@@ -37,6 +37,52 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'hud-batch-2026-10-02',
+    title: 'Enrage at 10%, auction timers, clicky counters',
+    version: 'Bot 3.1.187 · Web 1.8.73 · Agent 3.7.67 beta',
+    date: '2026-10-02',
+    headline: 'The HUD warns of enrage earlier, shows rampage and low-health raiders, counts your clicky charges, and every loot auction gets its own timer.',
+    features: [
+      {
+        name: 'Enrage at 10%',
+        blurb: 'Mimic says "Enrage soon" as your target reaches 10% (it was 8%, too late to step back), and the red on the HUD goes away once the enrage is over.',
+      },
+      {
+        name: 'Rampage and low-health raiders on the HUD',
+        blurb: 'The rampage target shows as a thin bar beside the tank\'s at the top right; raiders at 25% health or less show at the top left, lowest first.',
+      },
+      {
+        name: 'Clicky counters',
+        blurb: 'The HUD lists your clicky items with the charges left, counting down each time you click one. Run /output inventory once so Mimic knows what you carry.',
+      },
+      {
+        name: 'Damage shield look',
+        blurb: 'Your damage shield number on the HUD is wrapped in green thorns for a druid shield and glowing lava for a magician\'s.',
+      },
+      {
+        name: 'A timer for every loot auction',
+        blurb: 'Each open auction gets its own timer and a line in the Command Center. A late bid that extends an auction moves its timer too.',
+      },
+      {
+        name: 'The main assist on Extended Target',
+        blurb: 'When raid chat names a main assist, their target goes to the top of Extended Target, marked MA.',
+      },
+      {
+        name: 'Experience tracking starts',
+        blurb: 'Mimic now records each experience gain with where you were, who you were grouped with, what you killed and whether an XP potion was up, so we can compare groups and camps.',
+      },
+      {
+        name: 'DPS/Tank Meter',
+        blurb: 'The DPS HUD has a new name. Its History keeps your last 30 fights, even after a restart, and says whether each one was only on your computer, sent, or has the guild\'s numbers.',
+      },
+    ],
+    fixes: [
+      'Two kills of the same mob back to back showed as one long fight on the DPS/Tank Meter.',
+      'A second pull of the same mob soon after the first was missing from History.',
+    ],
+    channel: 'beta',
+  },
+  {
     key: 'player-timers-2026-10-02',
     title: 'Their timers on Target Info',
     version: 'Bot 3.1.185 · Web 1.8.71 · Agent 3.7.66 beta',
