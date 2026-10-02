@@ -7661,8 +7661,8 @@ function recordWhoEvent(ev) {
     guildRank: old.guildRank || null,   // /who never carries rank — preserve any /guildstatus value
     anonymous: !!ev.anonymous,
     gm:        !!ev.gm || !!old.gm,
-    // Zone only comes from `/who all`; a plain in-zone /who has none, so keep
-    // the last known zone rather than clobbering it with null.
+    // `/who all` rows carry their zone; a plain in-zone /who row has none until its footer
+    // names it (applyWhoLine), so keep the last known zone rather than clobbering it with null.
     zone:      ev.zone || old.zone || null,
     observedAt: ev.ts || new Date().toISOString(),
   });
@@ -7689,8 +7689,9 @@ let _whoRun = null;             // { startedAt, names:Set<lower>, zoned:Set<lowe
 // 2026-09-29: "lets include zone on /who overlay as toggleable column"). `/who all` puts the short
 // name on each row ("ZONE: wakening"); a plain /who has none on the rows, but its footer names the
 // zone they are all in ("There are 12 players in The Wakening Land."). Kept as the game printed it.
-// Overlay-only, apart from whoData, whose rows upload as they are.
+// The footer's zone also goes onto those rows in whoData, lower-cased, so it uploads (2026-10-01).
 const _whoZoneSeen = new Map();  // lower → zone text, or null (a /who all row with no zone, e.g. /anon)
+let _whoZoneDirty = false;       // a plain /who placed known names in a zone: upload on the next who flush
 const WHO_HEADER_RX = /^\[.+?\]\s+Players (?:in|on) EverQuest:/i;
 const WHO_FOOTER_RX = /^\[.+?\]\s+There (?:are|is) \d+ (?:player|players)\b/i;
 const WHO_FOOTER_ZONE_RX = /\bplayers? in (.+?)\.?\s*$/i;
@@ -7708,6 +7709,15 @@ function applyWhoLine(line) {
     for (const k of _whoRun.names) {
       if (zone) _whoZoneSeen.set(k, zone);                       // Plain /who: all in this zone.
       else if (!_whoRun.zoned.has(k)) _whoZoneSeen.set(k, null);  // /who all, row without a zone: unknown now.
+      // The upload as well (whoData → who_observations). A plain /who is the one most people type,
+      // and only its footer names the zone, so its rows used to go up with none (the guild lead,
+      // 2026-10-01: "using /who all doesn't give us who is in my current zone. it gives every zone").
+      // Lower-cased like /who all's short names; web/lib/popWho.ts reads the PoP planes' long names.
+      // A run of names already known does not grow whoData, so mark it for the next who flush.
+      if (zone && !_whoRun.zoned.has(k)) {
+        const w = whoData.get(k);
+        if (w) { w.zone = zone.toLowerCase(); _whoZoneDirty = true; }
+      }
     }
   }
 }
@@ -42926,9 +42936,10 @@ async function main() {
     // empty-encounter payload (no boss_name, no events) with the full
     // whoData snapshot — the server merges it into state.whoData and
     // /whois starts seeing the new entries within ~5-10 seconds of /who.
-    if (whoData.size > _whoDataLastSize && (now - _whoDataLastFlush) >= 5000) {
+    if ((whoData.size > _whoDataLastSize || _whoZoneDirty) && (now - _whoDataLastFlush) >= 5000) {
       _whoDataLastSize  = whoData.size;
       _whoDataLastFlush = now;
+      _whoZoneDirty     = false;
       const character  = builders[0]?.character || 'unknown';
       const iso        = new Date(now).toISOString();
       uploadEncounter({

@@ -167,7 +167,8 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
   per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
   character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
-- **🧪 A plain /who uploads its zone (agent 3.7.62, beta `5250261a`).** Its footer names the zone; the rows
+- **✅ A plain /who uploads its zone (agent 3.7.62 beta `5250261a`; stable agent 3.7.63, hot-swapped
+  2026-10-01, beta 3.7.64).** Its footer names the zone; the rows
   used to go up with none (7,263 of ~9,400 in two days). Supersedes §73's "upload untouched".
   `test/who-zone-column.test.js`, `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §123.
 - **🧪 eqmimic.quest demo with sample data (hesstastic `e2d2f62`).** `hesstastic.com/eqmimic/demo/` (tour)

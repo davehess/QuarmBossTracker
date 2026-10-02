@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'agent-3-7-63-who-zone-2026-10-01',
+    title: 'Agent 3.7.63',
+    version: 'Agent 3.7.63',
+    date: '2026-10-01',
+    headline: 'A plain /who now tells the guild site which zone everyone in it is in.',
+    features: [],
+    fixes: [
+      'A plain /who (the one without “all”) sent its names with no zone, so the site could not tell who was in your zone. Mimic now sends the zone named on the /who’s last line.',
+    ],
+  },
+  {
     key: 'agent-3-7-61-timing-votes-2026-10-01',
     title: 'Agent 3.7.61',
     version: 'Agent 3.7.61 · Mimic 2.7.7 beta',

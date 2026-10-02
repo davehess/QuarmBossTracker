@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`: a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
+| **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`, **stable agent 3.7.63** (hot-swapped 2026-10-01; beta 3.7.64): a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
 | **PoP from /who; checklist by level, closed, maps on hover** | **§122.** Beta `4f5e68e1` (web on `b.wolfpack.quest`; SQL function applied). Anyone /who shows inside a gated plane holds its gate and the ones on the way in: blue ✓ on `/pop`, "✓ seen on /who" on the checklist. Checklist B/C: progression levels, closed by default, sidebar opens them, 🗺 map on hover | the guild lead: (1) open `b.wolfpack.quest/pop` and `b.wolfpack.quest/pop/guide?v=b` (and `?v=c`); (2) pick B or C so it graduates with the /who counts |
 | **Trigger timing votes can be switched off** | **§121.** Agent 3.7.61 + Mimic on beta `db4d21d5`: dashboard → Triggers → Timing votes, or 🔕 on the vote buttons. Off = no vote row and no votes, ✕ or age-outs sent | the guild lead: on the next beta build, fire a test trigger, press 🔕, check the dashboard switch shows off and the row stops appearing |
 | **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, staged on `claude/sharp-lamport-dC0TW` during the Thursday raid freeze; lands on `main` after 00:30 ET | the guild lead: after it lands (and the 6 h cache turns over), target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
@@ -5652,6 +5652,12 @@ when no new name appeared (a /who of people already seen used to upload nothing 
 **supersedes §73's "upload untouched"**: `who_observations.zone` now holds short names and lower-cased
 long names, and `web/lib/popWho.ts` maps both (Ragrax shares "Plane of Earth" with the plane above it,
 so a long-name sighting there proves only the outer gate).
+**Hot-swapped to stable the same night** (the guild lead: *"hot-swap the /who fix to stable. we're not
+raiding tonight."*): main's agent went 3.7.59 → **3.7.63** with only this change, so every stable Mimic
+picks it up on its next agent check; beta's agent went to **3.7.64** so the beta line stays above it.
+Pushed at 22:30 ET on a Thursday with `[hotfix]` (inside the freeze window; no formal raids until 10/14,
+§113). ⚠ The agent's raid hold is schedule-driven (§115), so stable Mimics take 3.7.63 after 00:30 ET,
+not at once, unless an officer sets `flag_raid_hold = 0`.
 
 **The standalone Mimic (the answer).** There is no separate program: it is Mimic in local mode, in the
 Mimic 2.7.7 beta from beta.7 on (§118). Pick "Run local-only" in setup. The download page that offers it
