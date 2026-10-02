@@ -13,6 +13,8 @@
 // lands at launch for authoritative backfill). Catalog: web/lib/popFlags.ts —
 // data-only edits when Quarm's documented QoL deviations land. 'unmapped'
 // rows are grants we saw but couldn't name (the catalog's TODO list).
+// /who adds the rest (2026-10-01): a character any raider's /who showed inside a gated plane holds its
+// gate and the gates on the way in (pop_who_sightings + web/lib/popWho.ts), shown as a blue ✓.
 //
 // Views: default = chart + planner · ?zone=<key> = who's in/missing ·
 // ?view=matrix = roster × zone table · ?view=mine = the signed-in member's
@@ -34,9 +36,10 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import {
-  POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, JUSTICE_MARKS, MARK_OF_JUSTICE,
+  POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
+import { WHO_ZONE_SHORTS, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
@@ -49,7 +52,8 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags (Preview) — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
-type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean };
+// flags = recorded + seen; seen = the flags only /who proves (a character standing in a gated plane).
+type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean; seen: Map<string, WhoProof> };
 
 // One row per (character, PoP spell they haven't scribed) — main OR alt, as
 // of pop_spell_needs v4 (2026-08-26). Ordered by character level descending
@@ -98,9 +102,6 @@ function groupNeeds(rows: SpellNeed[]): NeedByChar[] {
     (b.level ?? -1) - (a.level ?? -1) || a.name.localeCompare(b.name));
 }
 
-const TIER_COLORS: Record<number, string> = {
-  1: '#8b949e', 2: '#58a6ff', 3: '#d29922', 4: '#f0883e', 5: '#a371f7',
-};
 const KIND_ICONS: Record<string, string> = {
   kill: '⚔', trial: '🏛', quest: '📜', event: '✨', loot: '🎁',
 };
@@ -256,13 +257,39 @@ export default async function PopFlagsPage(
   for (const r of flagRows) {
     const k = r.character.toLowerCase();
     let c = byChar.get(k);
-    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true }; byChar.set(k, c); }
+    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true, seen: new Map() }; byChar.set(k, c); }
     c.flags.add(r.flag_key);
   }
+  // /who, for the roster and the viewer's own characters (the guild lead, 2026-10-01: "from /who in the
+  // zone for users that don't have mimic, and if they're in that zone that requires other zones we
+  // should note it"). Standing in a gated plane proves its gate and the gates on the way in
+  // (web/lib/popWho.ts). Those flags count everywhere below, kept in `seen` so the page can say so.
+  const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name)].map(n => [n.toLowerCase(), n]));
+  const { data: sightRows } = nameOf.size
+    ? await sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_SHORTS })
+    : { data: [] };
+  const sightBy = new Map<string, Sighting[]>();
+  for (const r of (sightRows ?? []) as (Sighting & { character_key: string })[]) {
+    if (!sightBy.has(r.character_key)) sightBy.set(r.character_key, []);
+    sightBy.get(r.character_key)!.push(r);
+  }
+  for (const [k, rows] of sightBy) {
+    let c = byChar.get(k);
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map() }; byChar.set(k, c); }
+    for (const [f, proof] of flagsFromSightings(rows)) {
+      if (c.flags.has(f)) continue;
+      c.flags.add(f);
+      c.seen.set(f, proof);
+    }
+  }
+  const seenCount = [...byChar.values()].filter(c => c.seen.size > 0).length;
   // The guild-wide surfaces count the raid roster only (popRoster): raiders are the mains, raid alts the
   // alts. Their flags come from byChar; someone with none yet can still enter the open tier.
   const chars: CharFlags[] = members
-    .map(m => ({ name: m.name, flags: byChar.get(m.name.toLowerCase())?.flags ?? new Set<string>(), unmapped: 0, main: m.main }))
+    .map(m => {
+      const c = byChar.get(m.name.toLowerCase());
+      return { name: m.name, flags: c?.flags ?? new Set<string>(), unmapped: 0, main: m.main, seen: c?.seen ?? new Map<string, WhoProof>() };
+    })
     .sort((a, b) => b.flags.size - a.flags.size || a.name.localeCompare(b.name));
   const totalUnmapped = unmappedCount ?? 0;
 
@@ -366,6 +393,27 @@ export default async function PopFlagsPage(
     );
   }
 
+  // A gate that only /who proves for a character: its ✓ is blue and says where they were seen, and
+  // the zone page adds "seen in Storms on /who" beside the name.
+  const seenFor = (z: PopNode, c: { seen: Map<string, WhoProof> }) =>
+    z.requires.map(f => c.seen.get(f)).filter((p): p is WhoProof => !!p);
+  function seenTitle(proofs: WhoProof[]) {
+    const byZone = [...new Map(proofs.map(p => [p.zone, p])).values()];
+    return byZone.map(p => `${seenText(p.zone)} First seen ${new Date(p.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`).join(' ');
+  }
+  function AccessMark({ z, c }: { z: PopNode; c: { flags: Set<string>; seen: Map<string, WhoProof> } }) {
+    if (!zoneAccess(z, c.flags)) return <span className="text-dim">—</span>;
+    const seen = seenFor(z, c);
+    return seen.length ? <span className="text-blue" title={seenTitle(seen)}>✓</span> : <span className="text-green">✓</span>;
+  }
+  function seenTag(c: CharFlags) {
+    if (!selected) return null;
+    const seen = seenFor(selected, c);
+    if (!seen.length) return null;
+    const zones = [...new Set(seen.map(p => POP_ZONE_BY_KEY[p.zone]?.short ?? p.zone))];
+    return <span className="text-[11px] text-blue" title={seenTitle(seen)}> · seen in {zones.join(', ')} on /who</span>;
+  }
+
   // ── Card renderer (server-side JSX helper) ────────────────────────────────
   function ZoneCard({ z }: { z: PopNode }) {
     const color = TIER_COLORS[z.tier];
@@ -438,9 +486,11 @@ export default async function PopFlagsPage(
           The guild&apos;s road to <b className="text-text">Quarm</b> — every gate, who&apos;s through it, and what to
           raid next to move the most people forward. Counts update from the flags Mimic sees: each grant is named by
           what the flag NPC said just before it, and sitting with Seer Mal Nae`Shi in Knowledge (say &quot;guided
-          meditation&quot;) records everything a character holds. The gates are Quarm&apos;s own, read from the
-          server&apos;s portal script; there is no level bypass. Zones marked <b className="text-text">*</b> are not
-          yet confirmed that way.
+          meditation&quot;) records everything a character holds. <b className="text-text">/who</b> fills in the rest,
+          Mimic or not: anyone a raider&apos;s /who shows inside a flagged plane holds that plane&apos;s gate, and the
+          gates of the planes they came through (a <span className="text-blue">blue ✓</span>; hover it for where).
+          The gates are Quarm&apos;s own, read from the server&apos;s portal script; there is no level bypass. Zones
+          marked <b className="text-text">*</b> are not yet confirmed that way.
         </p>
         <div className="flex flex-wrap gap-4 mt-3 text-xs text-dim items-center">
           <span>
@@ -453,6 +503,11 @@ export default async function PopFlagsPage(
             {' '}· roster {rosterCount ?? '—'}
           </span>
           <span>🚩 <b className="text-text">{flagRows.length}</b> flags recorded</span>
+          {seenCount > 0 && (
+            <span title="Characters a raider's /who showed inside a plane behind a gate: their flags for it count, Mimic or not.">
+              👁 <b className="text-text">{seenCount}</b> placed by /who
+            </span>
+          )}
           {totalUnmapped > 0 && <span className="text-orange">⚠ {totalUnmapped} unmapped grants (catalog TODO)</span>}
           <span className="ml-auto flex flex-wrap gap-2 items-center">
             <span className="flex gap-1 mr-1" title="Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which always shows everything you own.">
@@ -486,7 +541,7 @@ export default async function PopFlagsPage(
               <div className="text-xs text-green mb-1">✓ Can enter ({(eligibleChars.get(selected.key) ?? []).length})</div>
               <ul className="space-y-0.5">
                 {(eligibleChars.get(selected.key) ?? []).map(c => (
-                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}</li>
+                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}{seenTag(c)}</li>
                 ))}
               </ul>
             </div>
@@ -526,7 +581,7 @@ export default async function PopFlagsPage(
                     </td>
                     {gatedZones.map(z => (
                       <td key={z.key} className="py-1.5 px-2 text-center">
-                        {zoneAccess(z, c.flags) ? <span className="text-green">✓</span> : <span className="text-dim">—</span>}
+                        <AccessMark z={z} c={c} />
                       </td>
                     ))}
                     <td className="py-1.5 pl-2 text-right text-dim text-xs">{c.flags.size}</td>
@@ -573,7 +628,7 @@ export default async function PopFlagsPage(
                 <tbody className="divide-y divide-border/50">
                   {myCharsSorted.map(c => {
                     const f = byChar.get(c.name.toLowerCase())
-                      ?? { name: c.name, flags: new Set<string>(), unmapped: 0 };
+                      ?? { name: c.name, flags: new Set<string>(), unmapped: 0, seen: new Map<string, WhoProof>() };
                     return (
                       <tr key={c.name}>
                         <td className="py-1.5 pr-3">
@@ -585,7 +640,7 @@ export default async function PopFlagsPage(
                           <td key={z.key} className="py-1.5 px-2 text-center"
                               title={zoneAccess(z, f.flags) ? undefined
                                 : `missing ${missingFor(z, f.flags).map(fk => POP_FLAGS[fk]?.label ?? fk).join(', ')}`}>
-                            {zoneAccess(z, f.flags) ? <span className="text-green">✓</span> : <span className="text-dim">—</span>}
+                            <AccessMark z={z} c={f} />
                           </td>
                         ))}
                         <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
@@ -691,7 +746,8 @@ export default async function PopFlagsPage(
             })}
             <p className="text-[10px] text-dim text-center">
               Chart topology after Samanna&apos;s classic planar progression chart · ⤓ gate flag with holder count ·
-              👤 characters holding the flag · &quot;N in&quot; = can enter today
+              👤 characters holding the flag · &quot;N in&quot; = can enter today · counts include characters /who
+              showed inside a gated plane
             </p>
           </section>
 

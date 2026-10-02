@@ -145,6 +145,10 @@ export const TIER_LABELS: Record<number, { name: string; sub: string }> = {
   4: { name: 'Tier Four — Elemental', sub: 'Maelin\'s power-source step' },
   5: { name: 'Plane of Time', sub: 'The time flag and level 65' },
 };
+// One colour per tier, shared by the /pop chart and the checklist's progression groups.
+export const TIER_COLORS: Record<number, string> = {
+  1: '#8b949e', 2: '#58a6ff', 3: '#d29922', 4: '#f0883e', 5: '#a371f7',
+};
 
 // The six Justice trial marks (items from each trial's last mob) and the Mark of Justice the Tribunal
 // hands over once all six are held. Ids from eqemu_items; the Tribunal counts exactly these

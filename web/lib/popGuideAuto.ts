@@ -2,17 +2,21 @@
 // fill in when someone is running mimic and we know that they're doing something, and note when it's
 // been filled in by database or mimic in a line item").
 //
-// Two sources, named on every row they tick:
+// Three sources, named on every row they tick:
 //   mimic    — Mimic saw it happen: a flag message after a boss kill (pop_flags, mapped), a Mark
 //              looted (looted_items), Mimic reporting the character at all (character_live_state).
 //   database — our records already show it: level on /who, an item in the last inventory upload
 //              (character_inventory, never when the character hides its inventory), the spellbook
 //              upload.
+//   who      — a raider's /who showed the character inside a gated plane, so its gate and the gates
+//              on the way in are done (web/lib/popWho.ts). Works for characters whose owners never
+//              run Mimic (the guild lead, 2026-10-01).
 // Pure: the page reads the rows and hands them in, so the rules are testable without a database.
 
 import { GUIDE_ITEMS } from './popGuide';
+import { flagsFromSightings, seenText, type Sighting } from './popWho';
 
-export type Evidence = { source: 'mimic' | 'database'; what: string; at: string | null };
+export type Evidence = { source: 'mimic' | 'database' | 'who'; what: string; at: string | null };
 export type AutoInput = {
   flags: { flag_key: string; earned_at: string | null }[];
   loots: { item_name: string; looted_at: string | null }[];
@@ -21,6 +25,14 @@ export type AutoInput = {
   levelAt: string | null;
   spellbook: boolean;
   liveAt: string | null;
+  seen?: Sighting[];   // pop_who_sightings rows for this character
+};
+
+// Steps that come before a gate flag in the same arc. Standing in Storms or Valor means the server's
+// mavuin 3, which only follows Mavuin's information and the Tribunal. (Only for /who: a recorded
+// trial_justice can still come from the boss fallback, which proves the trial and nothing after it.)
+const WHO_STEPS_BEFORE: Record<string, string[]> = {
+  trial_justice: ['justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
 };
 
 // Holding the reward (or the thing the step asks you to get) proves the step. All the ids, unless
@@ -61,6 +73,12 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
   if (!out.flag_trial_justice) {
     const mark = inp.loots.find(l => MARK_RX.test(String(l.item_name).trim()));
     if (mark) out.flag_trial_justice = { source: 'mimic', what: `Mimic saw you loot the ${mark.item_name}.`, at: mark.looted_at };
+  }
+  // /who: the gate of the plane they were seen in, and of every plane on the way in.
+  for (const [flag, proof] of flagsFromSightings(inp.seen ?? [])) {
+    const ev: Evidence = { source: 'who', what: seenText(proof.zone), at: proof.at };
+    for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
+    for (const k of WHO_STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
   }
   if (inp.liveAt) out.start_mimic = { source: 'mimic', what: 'Mimic has reported this character.', at: inp.liveAt };
   if (inp.level != null && inp.level >= 46) {

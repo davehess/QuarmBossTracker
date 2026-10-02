@@ -11,7 +11,20 @@
 // Every NPC here is placed (eqemu_spawn2) and every hand-in is read off the NPC's quest script
 // (eqemu_quest_scripts), same rules as popGuide.ts.
 
-import { GUIDE_ITEMS, type Loc } from './popGuide';
+import { GUIDE_ITEMS, type Loc, type SectionKey } from './popGuide';
+import { POP_ZONES, TIER_COLORS, TIER_LABELS } from './popFlags';
+
+// The checklist by progression level (the guild lead, 2026-10-01: "group them by the progression level
+// and give us a side bar in that page. collapse them as well by default"). The tiers are the /pop
+// chart's, in its colours, each naming its planes; everything before the first plane is one level.
+export type GuideLevel = { key: string; title: string; sub: string; color: string; sections: SectionKey[] };
+const planesOf = (tier: number) => POP_ZONES.filter(z => z.tier === tier && !z.subZoneOf).map(z => z.short).join(' · ');
+const tierLevel = (key: SectionKey, tier: number): GuideLevel =>
+  ({ key, title: TIER_LABELS[tier].name, sub: planesOf(tier), color: TIER_COLORS[tier], sections: [key] });
+export const GUIDE_LEVELS: GuideLevel[] = [
+  { key: 'before', title: 'Before the planes', sub: 'Start here · Knowledge quests · your spells', color: '#6e7681', sections: ['start', 'pok', 'spells'] },
+  tierLevel('t1', 1), tierLevel('t2', 2), tierLevel('t3', 3), tierLevel('t4', 4), tierLevel('time', 5),
+];
 
 export type TurnIn = { to: Loc; give: string; get?: string; note?: string };
 export type StepMore = { expect?: string; turnIn?: TurnIn[]; back?: Loc[]; auto?: string };
