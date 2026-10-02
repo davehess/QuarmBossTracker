@@ -396,10 +396,11 @@
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
            +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
            +  '</div>';
-      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
-        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+      // Gone once its enrage has ended (the guild lead, 2026-10-02).
+      if (s.enrage && s.enrage.enrages && !s.enrage.ended && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = s.enrage.enraged || thp <= (s.enrage.threshold_pct + 2);
         html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
-             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +    (s.enrage.enraged ? '⚠️ ENRAGED (currently ' + thp + '%)' : '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)')
              +  '</div>';
       }
     }
@@ -514,6 +515,28 @@
       // DI available but no mana call-outs yet — show the chips on their own
       // compact line rather than losing them.
       html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // Live OpenDKP auctions, one row each, soonest first (the guild lead,
+    // 2026-10-02: "add in loot auction timers on the control center ... as people
+    // bid when it's low time left, it does extend it further out"). The agent
+    // re-reads each end every poll, so a late bid moves the time and the row
+    // says "extended".
+    if (s.auctions && s.auctions.length) {
+      html += '<div class="card"><div class="head">' + secToggle('auctions', '⚖ Auctions', s.auctions.length) + '</div>';
+      if (!_isCollapsed('auctions')) {
+        for (var ai = 0; ai < s.auctions.length && ai < 8; ai++) {
+          var au = s.auctions[ai], aLeft = Math.max(0, Math.round((au.ms_left || 0) / 1000));
+          var aTxt = Math.floor(aLeft / 60) + ':' + String(aLeft % 60).padStart(2, '0');
+          var aCol = aLeft <= 15 ? '#f85149' : (aLeft <= 60 ? '#ffa657' : '#d29922');
+          html += '<div class="row" style="display:flex;gap:6px;align-items:baseline">'
+               +    '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(au.item) + '</span>'
+               +    (au.extended ? '<span class="dim" style="font-size:10px" title="A late bid moved the end">extended</span>' : '')
+               +    '<b style="color:' + aCol + ';font-variant-numeric:tabular-nums">' + aTxt + '</b>'
+               +  '</div>';
+        }
+      }
+      html += '</div>';
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"

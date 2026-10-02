@@ -491,6 +491,10 @@
     }
     // #194 — the in-game Zeal /tag, welded to this instance by the bot.
     if (t.tag_text || t.tag_shape) nm += ztagHtml(t.tag_text, t.tag_shape);
+    // The main assist's target, pinned to the top by the bot (the guild lead,
+    // 2026-10-02: "when someone is declared as main assist in raid chat, their
+    // target should be at the top of the extended target list").
+    if (t.ma_target) nm += '<span class="tank-tag" style="color:#d29922" title="The main assist is on this one">MA</span>';
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -709,6 +713,9 @@
                    + (myRaid ? ' · 👑 ' + esc(myRaid.leader) : '') + '</span>';
       if (withOnline && payload && payload.online != null) h += '<span>' + esc(payload.online) + (groupScope ? ' in group' : ' online') + '</span>';
       if (!_showOffTank && offTankCount) h += '<span>🛡 ' + esc(offTankCount) + ' off-tanked</span>';
+      // Who the raid named main assist, and (when known) what they are on.
+      var ma = payload && payload.main_assist;
+      if (ma && ma.name) h += '<span style="color:#d29922" title="Main assist, named in raid chat by ' + esc(ma.declared_by || 'a raider') + '">MA ' + esc(ma.name) + '</span>';
       return h;
     }
     if (!targets.length) {

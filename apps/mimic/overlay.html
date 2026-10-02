@@ -136,6 +136,8 @@
   .hitem.on{background:#2a1d3d;border-color:#a371f7}
   .hitem .hb{display:block;font-size:10px;color:#f6c365;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hitem .hm{display:block;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .hitem .hs-synced{color:#56d364}
+  .hitem .hs-local{color:#d29922}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
@@ -504,10 +506,17 @@
     var dur = d ? Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0') : '—';
     var ago = h.endedMs ? Math.max(0, Math.round((nowMs - h.endedMs) / 60000)) : null;
     var agoTxt = ago == null ? '' : (ago < 1 ? ' · now' : (ago < 60 ? ' · ' + ago + 'm ago' : ' · ' + Math.floor(ago / 60) + 'h ago'));
+    // Where the fight stands (the guild lead, 2026-10-02: "History should be much
+    // longer and specific if it's local or synced"): synced = the guild's merged
+    // numbers came back; sent = uploaded, still waiting on them; local = it never
+    // left this machine (not signed in, or the character is excluded from stats).
+    var st = h.settled ? 'synced' : (h.upload === 'local' ? 'local' : 'sent');
+    var stTitle = st === 'synced' ? 'guild numbers in (' + (h.uploaders || 0) + ' clients)'
+      : (st === 'local' ? 'this machine only, never uploaded' : 'uploaded, guild numbers still settling');
     return '<li><button type="button" class="hitem' + (on ? ' on' : '') + '" data-i="' + i + '"'
-      + ' title="' + esc(h.boss) + (h.settled ? '' : ' — guild numbers still settling') + '">'
-      + '<span class="hb">' + esc(h.boss) + (h.settled ? '' : ' …') + '</span>'
-      + '<span class="hm">' + dur + agoTxt + '</span></button></li>';
+      + ' title="' + esc(h.boss) + ' — ' + stTitle + '">'
+      + '<span class="hb">' + esc(h.boss) + (st === 'sent' ? ' …' : '') + '</span>'
+      + '<span class="hm">' + dur + agoTxt + ' · <span class="hs-' + st + '">' + st + '</span></span></button></li>';
   }
 
   // ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17:

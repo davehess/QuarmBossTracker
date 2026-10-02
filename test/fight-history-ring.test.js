@@ -70,12 +70,20 @@ describe('capturing a fight', () => {
     expect(_fightHistoryForTest().map(h => h.boss)).toEqual(['Second', 'First']);
   });
 
-  it('keeps only the last few', () => {
-    for (let i = 1; i <= 9; i++) _recordFightHistory(fight('Mob ' + i));
+  // 30 since 2026-10-02 (the guild lead: "History should be much longer").
+  it('keeps the last thirty', () => {
+    for (let i = 1; i <= 35; i++) _recordFightHistory(fight('Mob ' + i));
     const h = _fightHistoryForTest();
-    expect(h.length).toBeLessThanOrEqual(6);
-    expect(h[0].boss).toBe('Mob 9');
-    expect(h.map(x => x.boss)).not.toContain('Mob 1');
+    expect(h.length).toBe(30);
+    expect(h[0].boss).toBe('Mob 35');
+    expect(h.map(x => x.boss)).not.toContain('Mob 5');
+    expect(h.map(x => x.boss)).toContain('Mob 6');
+  });
+
+  it('says a fight that never left this machine is local', () => {
+    // No token in a test run: it can only ever be local.
+    _recordFightHistory(fight('Aten Ha Ra'));
+    expect(_fightHistoryForTest()[0].upload).toBe('local');
   });
 });
 
@@ -90,6 +98,14 @@ describe('one kill is one entry', () => {
     _recordFightHistory(fight('Aten Ha Ra', { startedAt: started }));
     _recordFightHistory(fight('Aten Ha Ra', { startedAt: new Date(Date.parse(started) + 4000).toISOString() }));
     expect(_fightHistoryForTest()).toHaveLength(1);
+  });
+
+  // The guild lead, 2026-10-02: "This fight was backtoback with the same name." A short pull begun
+  // 30 s after the last one is a new fight, not a repeat flush of the old one.
+  it('a back-to-back pull of the same name 30 s later is its own entry', () => {
+    _recordFightHistory(fight('A brann geistlig', { startedAt: iso(60_000) }));
+    _recordFightHistory(fight('A brann geistlig', { startedAt: iso(30_000) }));
+    expect(_fightHistoryForTest()).toHaveLength(2);
   });
 
   it('but a SECOND pull of the same mob is its own entry', () => {

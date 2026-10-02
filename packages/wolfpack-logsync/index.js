@@ -10104,6 +10104,22 @@ class EncounterBuilder {
       if (now - last > 120_000) this.flush();
     }
   }
+  // This client's own target window saw the fight's mob die (its corpse, or its bar at 0) — the
+  // same split the slain line makes above, for when that line never reached this log: it is
+  // range-limited, and nearby casts keep the 120 s idle from ever firing between pulls. Without
+  // it two back-to-back kills of one name were one 479 s fight on the meter (the guild lead,
+  // 2026-10-02: "This fight was backtoback with the same name"). Only the fight's TOP target
+  // counts, exactly as for the slain line.
+  noteZealTargetDead(name) {
+    if (!this.events.length || !name) return false;
+    let top = null, topDmg = -1;
+    for (const [n, dmg] of this.targets) if (dmg > topDmg) { top = n; topDmg = dmg; }
+    if (!top || top.toLowerCase() !== String(name).toLowerCase()) return false;
+    this.bossName = top;
+    this.bossKillConfirmed = true;
+    this.flush();
+    return true;
+  }
   // ── Proven-ours pets, for the UPLOAD payload ───────────────────────────────
   // The DPS HUD admits a pet row when ANY of the ownership trackers can prove
   // the mob is ours (_publishLiveThreat, ~line 5120: petLeaders / an open
@@ -10722,7 +10738,7 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
-    _recordFightHistory(stats.currentEncounterThreat);
+    _recordFightHistory(stats.currentEncounterThreat, this.character);
     // Mirror to the per-character map so the 2-min stale window applies
     // independently per character (a player's other character can
     // still be mid-fight while this one wraps up).
@@ -11118,6 +11134,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'corpse':          return base + '/corpse';
     case 'threat_snapshot': return base + '/threat-snapshot';
+    case 'xp_events':       return base + '/xp-events';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
     case 'looted':          return base + '/looted';
@@ -12178,6 +12195,9 @@ function saveSessionState() {
       sessionTotalDamage: stats.sessionTotalDamage,
       sessionDamageBy:    stats.sessionDamageBy,
       recentParses:       stats.recentParses,
+      // The DPS/Tank Meter's History survives a restart (the guild lead, 2026-10-02: "History
+      // should be much longer").
+      fightHistory:       stats.fightHistory,
       topDamageSaw:       stats.topDamageSaw,
       topDamageDid:       stats.topDamageDid,
       sessionDefenders:   stats.sessionDefenders,
@@ -12216,6 +12236,7 @@ function loadSessionState() {
     if (raw.sessionTotalDamage) stats.sessionTotalDamage = raw.sessionTotalDamage;
     if (raw.sessionDamageBy)    stats.sessionDamageBy    = raw.sessionDamageBy;
     if (raw.recentParses)       stats.recentParses       = raw.recentParses;
+    if (Array.isArray(raw.fightHistory)) stats.fightHistory = raw.fightHistory.slice(0, FIGHT_HISTORY_MAX);
     if (raw.topDamageSaw)       stats.topDamageSaw       = raw.topDamageSaw;
     if (raw.topDamageDid)       stats.topDamageDid       = raw.topDamageDid;
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
@@ -12946,7 +12967,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
 // Feeds _settleDsPending: it vouches for a small anonymous hit on the tank and
 // rules out a 150-point proc that a same-second flavor line would otherwise
 // have named as their shield.
-function _knownDsPerHitFor(name) {
+function _knownDsPerHitFor(name, out) {
   const nameLower = String(name || '').toLowerCase();
   if (!nameLower) return 0;
   let list = null;
@@ -12962,13 +12983,26 @@ function _knownDsPerHitFor(name) {
     const relay = _targetBuffsByName.get(_relayCacheKey(name));
     for (const b of ((relay && relay.buffs) || [])) list.push(b);
   }
-  let sum = 0;
+  let sum = 0, big = 0;
   for (const b of list) {
     if (!b || !b.name || b.fell_off) continue;
     const cat = _spellByNameLower.get(String(b.name).toLowerCase());
-    if (cat && cat.ds > 0) sum += Number(cat.ds) || 0;
+    if (cat && cat.ds > 0) {
+      sum += Number(cat.ds) || 0;
+      // `out.kind`: which look the HUD gives the shield — the biggest one up.
+      if (out && Number(cat.ds) > big) { big = Number(cat.ds); out.kind = _dsKindOf(b.name); }
+    }
   }
   return sum;
+}
+// The guild lead, 2026-10-02: the damage-shield amount "should show as wrapped in a thorny green
+// area if it's druid DS or glowing lava if mage ds". 'thorns' for the druid/ranger family, 'fire'
+// for the magician's; anything else (Feedback, the bard Psalms, a proc) keeps the plain look.
+function _dsKindOf(text) {
+  const s = String(text || '');
+  if (/fire|flame|lava|inferno|combust|immolat|burn|blaze|cadeau/i.test(s)) return 'fire';
+  if (/thorn|thistl|brambl|spike|barb|legacy\s+of|nettle|briar/i.test(s)) return 'thorns';
+  return null;
 }
 // Divine Aura lookup within a buff list — shared by the self DA banner and
 // Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
@@ -13306,7 +13340,8 @@ function _meCombatSince(cl, sinceMs, now) {
     .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, proc: !!h.proc, at: h.t, age_ms: Math.max(0, now - h.t) }));
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
-  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
+  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount,
+    kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
   return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
 }
 // Damage per MOB — done, taken and your damage shield — so the HUD can roll
@@ -13326,6 +13361,10 @@ const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 10_000;
 function _meNoteMobDeath(name, t) {
   const k = String(name || '').trim().toLowerCase();
   if (!k) return;
+  // A mob that dies enraged prints no end line; the next one of that name starts clean.
+  _meEnraged.delete(k);
+  _meEnrageEnded.delete(k);
+  for (const wk of [..._enrageWarned.keys()]) if (wk.startsWith(k + '#')) _enrageWarned.delete(wk);
   const list = _meMobDeaths.get(k) || [];
   list.push(t);
   if (list.length > 8) list.shift();
@@ -13998,6 +14037,46 @@ function _meTimersSave() {
 // "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
 // (EnragedDurationTimer), so an entry with no end line expires after 12 s.
 const _meEnraged = new Map();   // mobLower → until
+// The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's going
+// off too late and I'm getting hit. And then when it ends, it should no longer be red underneath the
+// name." So the warning line is 10%, a spoken "Enrage soon" plays once per mob as it crosses it, an
+// enrage that has ended clears the red, and a mob's death clears all of it for the next one.
+const ENRAGE_WARN_PCT = 10;
+const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
+const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
+function _mobCanEnrage(name, zoneId) {
+  if (_isEnrageBoss(name)) return true;
+  const c = _mobInfoByName.get(_mobInfoCacheKey(name, zoneId));
+  const sp = c && c.mob && c.mob.specials;
+  return Array.isArray(sp) && sp.includes('Enrage');
+}
+// 1 s tick: the active character's target crossing 10% says so, once per mob.
+function _tickEnrageWarn(nowMs) {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return;
+  const tgtG = st.target_hp_pct == null ? _meGauge(st, 6) : null;
+  const hp = Number(st.target_hp_pct != null ? st.target_hp_pct : (tgtG ? tgtG.pct : NaN));
+  const name = String(st.target_name).replace(/^#/, '').replace(/_/g, ' ').trim();
+  const key = name.toLowerCase() + '#' + (Number.isFinite(st.target_id) ? st.target_id : '');
+  if (hp > 20) { _enrageWarned.delete(key); return; }   // a fresh mob of the same name re-arms it
+  if (!(hp > 0 && hp <= ENRAGE_WARN_PCT) || _enrageWarned.has(key)) return;
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  if (!_mobCanEnrage(st.target_name, zoneId)) return;
+  _enrageWarned.set(key, nowMs);
+  if (_enrageWarned.size > 100) _enrageWarned.delete(_enrageWarned.keys().next().value);
+  _pushOverlay({
+    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — enrage soon',
+    tts:         'Enrage soon',
+    color:       'red',
+    duration_ms: 5000,
+    shownAt:     nowMs,
+    firedAt:     nowMs,
+    trigger:     'Enrage soon',
+    scope:       'enrage',
+    test:        false,
+  });
+}
+setInterval(() => { try { _tickEnrageWarn(Date.now()); } catch { void 0; } }, 1000).unref();
 
 // TRACKING — the HUD's eight arrows (a member's idea, 2026-09-25: "for tracking.
 // Ahead, Ahead and to right/left, behind left/right behind you"; the guild lead:
@@ -14133,9 +14212,14 @@ function _meNoteRawLine(line, character) {
     return;
   }
   if (msg.endsWith(' has become ENRAGED.')) {
-    _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
+    const mob = msg.slice(0, -' has become ENRAGED.'.length).toLowerCase();
+    _meEnraged.set(mob, now + 12_000);
+    _meEnrageEnded.delete(mob);
   } else if (msg.endsWith(' is no longer enraged.')) {
-    _meEnraged.delete(msg.slice(0, -' is no longer enraged.'.length).toLowerCase());
+    const mob = msg.slice(0, -' is no longer enraged.'.length).toLowerCase();
+    _meEnraged.delete(mob);
+    _meEnrageEnded.set(mob, now);
+    if (_meEnrageEnded.size > 100) _meEnrageEnded.delete(_meEnrageEnded.keys().next().value);
   } else {
     // A flurry or a rampage as it happens, so the HUD's F / R badge can light
     // up (the guild lead, 2026-09-24). Server strings NPC_FLURRY "%1 executes a
@@ -14287,6 +14371,9 @@ function _meTargetExtras(st, active, now) {
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
     enraged: !!(until && until > now),
+    // Its enrage has come and gone: the HUD stops marking the enrage zone red.
+    enrage_ended: !(until && until > now) && _meEnrageEnded.has(tl),
+    enrage_pct: ENRAGE_WARN_PCT,
     level, level_max, level_src, class: klass,
     // The mob's own resists, for the line under its name (the guild lead,
     // round eight: "Put their resists below their name").
@@ -14322,6 +14409,175 @@ function _meCastRemaining(cl, st, castG, castE) {
   if (dp >= 5 && dt >= 250) return { ms: Math.max(0, Math.round(dt * (100 - p) / dp)), measured: true };
   if (castE && castE.cast_ms) return { ms: Math.max(0, Math.round(castE.cast_ms * (1 - p / 100))), measured: false };
   return null;
+}
+
+// The HUD's side arcs (the guild lead, 2026-10-02): "when there's a rampage, it can be listed next to
+// the main tank on the side as an arc. we can show characters that are approaching 20% or less HP on
+// the left side of the top of the HUD in the same arc that we would have for the main tank." The
+// rampage target is the Tank overlay's (whole fight, _currentRampageForDisplay); the low list reads
+// the Zeal raid window when it is fresh and your group's bars, lowest first, never you (your own
+// health has its bar), never the dead, never the one already shown as its target or the rampage.
+// Clicky counters (the guild lead, 2026-10-02: "On the hud, there should be clicky counters for each
+// item you have"). The items are your last /output inventory's rows that the clicky catalog knows;
+// that file's Count column is a charged item's charges, and every "Your <item> begins to glow." after
+// the file was written spends one. eqemu_items.maxcharges (weekly sync) says which items have charges
+// at all — until it is known, a count of 1 is shown as a clicky with no number rather than "1 left".
+const _clickyUses = new Map();   // "char|itemLower" → [ms, …] (glow lines, by log time)
+function _noteClickyUse(character, itemName, atMs) {
+  const k = String(character).toLowerCase() + '|' + String(itemName).toLowerCase();
+  const list = _clickyUses.get(k) || [];
+  list.push(atMs);
+  if (list.length > 50) list.shift();
+  _clickyUses.set(k, list);
+}
+const ME_CLICKIES_MAX = 8;
+function _meClickies(character) {
+  const invs = stats.characterInventories || {};
+  const cl = String(character || '').toLowerCase();
+  const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
+  const inv = key ? invs[key] : null;
+  if (!inv || !Array.isArray(inv.items)) return [];
+  const since = Date.parse(inv._updatedAt || '') || 0;
+  const seen = new Map();
+  for (const it of inv.items) {
+    if (/^(?:Bank|SharedBank)/i.test(it.loc || '')) continue;   // not on you
+    const lower = String(it.name).toLowerCase();
+    const cat = _itemClickyByNameLower.get(lower);
+    if (!cat || !cat.clickeffect) continue;
+    const prev = seen.get(lower);
+    if (prev) { prev.count += it.count; continue; }   // two of the same: one counter
+    seen.set(lower, { name: it.name, count: it.count, max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
+      worn: !/^General|^Bank|^SharedBank/i.test(it.loc || '') });
+  }
+  return [...seen.values()].map(c => {
+    const used = (_clickyUses.get(cl + '|' + c.name.toLowerCase()) || []).filter(t => t >= since).length;
+    const unlimited = c.max != null && c.max < 0;
+    const charged = c.max != null ? c.max > 0 : c.count > 1;
+    return { name: c.name, left: charged ? Math.max(0, c.count - used) : null, unlimited, used, worn: c.worn };
+  }).sort((a, b) => (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_MAX);
+}
+// ── XP events (FB-37 option B, docs/DESIGN-xp-tracking.md) ─────────────────────
+// The guild lead, 2026-10-02: "observe group composition and xp totals for groups that are together
+// during the day and find what compositions work and in what area in what zone, with what mobs we're
+// killing" · "Also track when we have an XP potion on". EQ prints no amount, so each experience line
+// records the XP and AA bars just before it and three seconds after (Zeal labels 2/26/27/71), the
+// zone, loc, your group, the mob that just died and whether Maelin's Magical Concoction is up; the
+// bot works out the amount at read time. Live tail only, batched once a minute, never for a character
+// excluded from stats.
+const _XP_LINE_RX = /\]\s+You gain(?:ed)?\s+(party\s+|raid\s+|group\s+)?experience/i;
+const _xpBars = new Map();      // charLower → { cur: {level,xp,aa,banked,at}, prev }
+const _xpLastKill = new Map();  // charLower → { mob, at }
+const _xpLastAt = new Map();    // charLower → last event's ms (same-second lines get +1 ms each)
+const _xpPending = [];
+function _xpBarsOf(st) {
+  if (!st) return null;
+  const xp = _meNum(_meLabel(st, 26)) ?? (_meGauge(st, 4) ? _meGauge(st, 4).pct : null);
+  const aa = _meNum(_meLabel(st, 27)) ?? (_meGauge(st, 5) ? _meGauge(st, 5).pct : null);
+  if (xp == null && aa == null) return null;
+  return { level: _meNum(_meLabel(st, 2)), xp, aa, banked: _meNum(_meLabel(st, 71)) };
+}
+// Every character's bars, keeping the reading from before the latest change: the pipe can move the
+// bar a moment before or after the log line, and the line must get the bar from before its kill.
+function _xpSampleBars(nowMs) {
+  for (const ch of Object.keys(_zealState || {})) {
+    const b = _xpBarsOf(_zealState[ch]);
+    if (!b) continue;
+    const k = ch.toLowerCase(), e = _xpBars.get(k);
+    if (e && e.cur.level === b.level && e.cur.xp === b.xp && e.cur.aa === b.aa && e.cur.banked === b.banked) continue;
+    _xpBars.set(k, { cur: { ...b, at: nowMs }, prev: e ? e.cur : null });
+  }
+}
+function _xpNoteRawLine(line, character, nowMs) {
+  if (!character) return;
+  const cl = String(character).toLowerCase();
+  let m = _SLAIN_YOU_RX.exec(line) || _SLAIN_BY_RX.exec(line);
+  if (m) { _xpLastKill.set(cl, { mob: m[1].trim().replace(/[.!]+$/, '').slice(0, 80), at: nowMs }); return; }
+  m = _XP_LINE_RX.exec(line);
+  if (!m) return;
+  const word = (m[1] || '').trim().toLowerCase();
+  const kind = word === 'raid' ? 'raid' : (word ? 'party' : 'solo');
+  const key = Object.keys(_zealState || {}).find(k => k.toLowerCase() === cl);
+  const st = key ? _zealState[key] : null;
+  _xpSampleBars(nowMs);
+  const e = _xpBars.get(cl);
+  const before = e ? ((nowMs - e.cur.at <= 1500 && e.prev) ? e.prev : e.cur) : null;
+  const ts = parseEqTimestamp(line);
+  let atMs = ts ? ts.getTime() : nowMs;
+  const last = _xpLastAt.get(cl);
+  if (last != null && atMs <= last) atMs = last + 1;   // AoE: many lines in one second
+  _xpLastAt.set(cl, atMs);
+  const kill = _xpLastKill.get(cl);
+  const who = whoData.get(cl);
+  const group = [];
+  for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
+    if (!g || !g.text || g.slot < 11 || g.slot > 15) continue;
+    const gl = String(g.text).toLowerCase(), gw = whoData.get(gl);
+    group.push({ name: String(g.text), class: _raidClassByName.get(gl) || (gw && gw.class) || null, level: gw && gw.level ? gw.level : null });
+  }
+  const ev = {
+    character, at: new Date(atMs).toISOString(), kind,
+    level: before ? before.level : null, xp_before: before ? before.xp : null, aa_before: before ? before.aa : null,
+    aa_banked_before: before ? before.banked : null,
+    zone_id: st && st.zone != null && Number.isFinite(Number(st.zone)) ? Number(st.zone) : null,
+    zone_name: st ? (_zoneName(st.zone) || null) : null,
+    loc_x: st && st.loc ? Number(st.loc.x) : null, loc_y: st && st.loc ? Number(st.loc.y) : null, loc_z: st && st.loc ? Number(st.loc.z) : null,
+    mob: kill && nowMs - kill.at <= 5000 ? kill.mob : null,
+    group_members: group.length ? group : null,
+    potion: !!(st && Array.isArray(st.buffs) && st.buffs.some(b => b && b.name && /maelin/i.test(b.name))),
+    race: who && who.race ? who.race : null,
+    class: (st && normalizeClass(_meLabel(st, 3) || '')) || (who && who.class) || null,
+    agent_version: AGENT_VERSION,
+  };
+  const t = setTimeout(() => {
+    _xpSampleBars(Date.now());
+    const a = _xpBars.get(cl);
+    if (a) { ev.level_after = a.cur.level; ev.xp_after = a.cur.xp; ev.aa_after = a.cur.aa; ev.aa_banked_after = a.cur.banked; }
+    _xpPending.push(ev);
+    if (_xpPending.length > 500) _xpPending.splice(0, _xpPending.length - 500);
+  }, 3000);
+  if (t.unref) t.unref();
+}
+function _xpFlush() {
+  if (!_xpPending.length) return 0;
+  const batch = _xpPending.splice(0, 200).filter(ev => {
+    try { return shouldUploadForCharacter(ev.character); } catch { return true; }
+  });
+  if (batch.length) enqueueUpload('xp_events', { events: batch });
+  return batch.length;
+}
+{
+  const t1 = setInterval(() => { try { _xpSampleBars(Date.now()); } catch { void 0; } }, 1000);
+  const t2 = setInterval(() => { try { _xpFlush(); } catch { void 0; } }, 60_000);
+  if (t1.unref) t1.unref();
+  if (t2.unref) t2.unref();
+}
+const ME_LOW_HP_PCT = 25;   // "approaching 20% or less"
+const ME_LOW_HP_MAX = 3;
+function _meSideArcs(active, st, now, skip) {
+  let rampage = null;
+  const r = _currentRampageForDisplay(now);
+  if (r && r.target) {
+    rampage = { name: r.target, hp_pct: _resolveHpForName(String(r.target).toLowerCase(), active, st),
+      fresh: (now - r.at) <= RAMPAGE_FRESH_MS };
+  }
+  const hp = new Map();   // lower → { name, hp_pct }
+  if (_lastRaidPipe && now - _lastRaidPipe.at < 30_000) {
+    for (const m of _lastRaidPipe.members || []) {
+      if (m && m.name && typeof m.hp_pct === 'number') hp.set(String(m.name).toLowerCase(), { name: String(m.name), hp_pct: m.hp_pct });
+    }
+  }
+  for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
+    if (!g || !g.text || g.hp_pct == null || g.slot === 1 || g.slot === 6 || g.slot === 16) continue;
+    hp.set(String(g.text).toLowerCase(), { name: String(g.text), hp_pct: Math.round(Number(g.hp_pct)) });
+  }
+  const not = new Set([String(active || '').toLowerCase(), ...(skip || []).map(s => String(s || '').toLowerCase()),
+    rampage ? String(rampage.name).toLowerCase() : '']);
+  const low = [...hp.entries()]
+    .filter(([k, v]) => !not.has(k) && v.hp_pct > 0 && v.hp_pct <= ME_LOW_HP_PCT)
+    .map(([, v]) => v)
+    .sort((a, b) => a.hp_pct - b.hp_pct)
+    .slice(0, ME_LOW_HP_MAX);
+  return { rampage, low_hp: low };
 }
 
 function _serializeMeState() {
@@ -14442,9 +14698,13 @@ function _serializeMeState() {
   // Your damage shield per hit — the HUD's DS button ("a button with current DS
   // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
   // right now, else the last one that landed.
-  const dsKnown = _knownDsPerHitFor(active);
+  const dsWorn = {};
+  const dsKnown = _knownDsPerHitFor(active, dsWorn);
   if (!combat.ds && dsKnown) combat.ds = { hits: 0, total: 0, last: null };
-  if (combat.ds) { combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown; }
+  if (combat.ds) {
+    combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
+  }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.
   const swing = _meSwingState(cl, st, now);
@@ -14493,6 +14753,8 @@ function _serializeMeState() {
     },
     blind: !!(blind && blind.active),
     track: _meTrackFor(cl, st, now),
+    ..._meSideArcs(active, st, now, [tx && tx.tot ? tx.tot.name : null]),
+    clickies: _meClickies(active),
   };
 }
 
@@ -14796,12 +15058,17 @@ function _serializeTankState() {
   // active boss name from the DS reflects struct as a fallback when the
   // target gauge is empty (e.g. tank is targeting an offtank).
   const bossName = (dsr && dsr.bossName) || targetName || null;
+  const bossLower = bossName ? String(bossName).toLowerCase() : null;
+  const enrageUntil = bossLower ? _meEnraged.get(bossLower) : null;
   const enrage = {
     boss_name:        bossName,
     enrages:          _isEnrageBoss(bossName),
-    threshold_pct:    8,                 // Quarm bosses enrage at ~8% HP
+    threshold_pct:    ENRAGE_WARN_PCT,   // 10% (the guild lead, 2026-10-02: 8% "is going off too late")
     warn_pct:         15,                // warn the tank starting at 15%
     target_hp_pct:    targetHpPct,
+    // Enraged now; or its enrage has already ended (the warning box stops flashing red).
+    enraged:          !!(enrageUntil && enrageUntil > Date.now()),
+    ended:            !!(bossLower && _meEnrageEnded.has(bossLower)) && !(enrageUntil && enrageUntil > Date.now()),
     // Light projection — overlay can compute its own based on session DPS.
     projection_ready: targetHpPct != null && targetHpPct <= 15,
   };
@@ -15029,6 +15296,8 @@ function _serializeCommandCenterState() {
     })(),
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
+    // Live OpenDKP auctions, soonest to close first; a late bid moves an end (2026-10-02).
+    auctions:      _dkpAuctionsSnapshot(Date.now()),
     cures,
     // Per-cleric Divine Intervention readiness — chips on the board.
     di:            diStatusSnapshot(),
@@ -20264,7 +20533,7 @@ function renderTriggers(s) {
 // the one-liner from WP_OVERLAY_BLURB below.
 var WP_OVERLAY_ROWS = [
   ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use each overlay\\'s DOCK button (or + Panes on the dock itself) to pick what lives in it.'],
-  ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['hud',     'DPS/Tank Meter',      'Running session DPS, top damage seen, current encounter.'],
   ['canvas',  'Canvas',              'The trigger overlay taken apart: the callouts and the timers become panels you place and size anywhere on the screen, one by one. Add timer panels of your own — charm timers, lulls, one debuff by name — and each takes those countdowns out of the main stack. The voice is unchanged. Arrange it with ✏ Arrange on screen. Beta.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
@@ -20280,7 +20549,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -27349,10 +27618,11 @@ const COMMAND_HTML = `<!doctype html>
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
            +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
            +  '</div>';
-      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
-        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+      // Gone once its enrage has ended (the guild lead, 2026-10-02).
+      if (s.enrage && s.enrage.enrages && !s.enrage.ended && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = s.enrage.enraged || thp <= (s.enrage.threshold_pct + 2);
         html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
-             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +    (s.enrage.enraged ? '⚠️ ENRAGED (currently ' + thp + '%)' : '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)')
              +  '</div>';
       }
     }
@@ -27467,6 +27737,28 @@ const COMMAND_HTML = `<!doctype html>
       // DI available but no mana call-outs yet — show the chips on their own
       // compact line rather than losing them.
       html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // Live OpenDKP auctions, one row each, soonest first (the guild lead,
+    // 2026-10-02: "add in loot auction timers on the control center ... as people
+    // bid when it's low time left, it does extend it further out"). The agent
+    // re-reads each end every poll, so a late bid moves the time and the row
+    // says "extended".
+    if (s.auctions && s.auctions.length) {
+      html += '<div class="card"><div class="head">' + secToggle('auctions', '⚖ Auctions', s.auctions.length) + '</div>';
+      if (!_isCollapsed('auctions')) {
+        for (var ai = 0; ai < s.auctions.length && ai < 8; ai++) {
+          var au = s.auctions[ai], aLeft = Math.max(0, Math.round((au.ms_left || 0) / 1000));
+          var aTxt = Math.floor(aLeft / 60) + ':' + String(aLeft % 60).padStart(2, '0');
+          var aCol = aLeft <= 15 ? '#f85149' : (aLeft <= 60 ? '#ffa657' : '#d29922');
+          html += '<div class="row" style="display:flex;gap:6px;align-items:baseline">'
+               +    '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(au.item) + '</span>'
+               +    (au.extended ? '<span class="dim" style="font-size:10px" title="A late bid moved the end">extended</span>' : '')
+               +    '<b style="color:' + aCol + ';font-variant-numeric:tabular-nums">' + aTxt + '</b>'
+               +  '</div>';
+        }
+      }
+      html += '</div>';
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
@@ -29098,6 +29390,8 @@ function startWebDashboard(port) {
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
+          // The fight's mob seen dead in the target window: split the DPS/Tank Meter's fight there.
+          try { _noteMobDeathFromState(character, prevState, st); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
           // that owes nothing to the log text. Feeds the death registry.
           try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
@@ -29644,6 +29938,7 @@ function startWebDashboard(port) {
           _lootAuctions.delete(sig);
           if (_lastLootSig === sig) _lastLootSig = null;
         }
+        if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
@@ -31143,7 +31438,9 @@ function parseInventoryFile(text) {
   //   - Tab-separated: Location, Name, ID, Count, Slots
   //   - Empty slots use literal 'Empty' with ID 0
   //   - Bag contents follow `<bag>-Slot<n>` pattern, e.g. 'General1-Slot1'
-  const inv = { worn: {}, weapons: {}, bagged: [] };
+  // `items`: every row with its location — the HUD's clicky counters read it (worn keeps one entry
+  // per slot NAME, so a second ring or ear would be lost there).
+  const inv = { worn: {}, weapons: {}, bagged: [], items: [] };
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     if (!line) continue;
@@ -31158,6 +31455,7 @@ function parseInventoryFile(text) {
     if (!loc || !itemName || itemName === '-' || itemName.toLowerCase() === 'empty') continue;
 
     const entry = { name: itemName, id: Number.isFinite(itemId) ? itemId : null, count };
+    inv.items.push({ ...entry, loc });
     if (INVENTORY_WEAPON_SLOTS.has(loc)) {
       inv.weapons[loc.toLowerCase()] = entry;
     }
@@ -34085,9 +34383,14 @@ function startChatRelay() {
 // past that the fight has aged out of the query window and the answer is empty,
 // which would blank an entry that already had good numbers in it. Hence the
 // "only overwrite on a non-empty response" rule below.
-const FIGHT_HISTORY_MAX = 6;
+// The guild lead, 2026-10-02: "History should be much longer and specific if it's local or
+// synced." So 30 fights instead of 6, kept across a restart (saveSessionState), and each entry
+// says where it stands: `upload` 'local' (never leaves this machine — no token, dry run, or the
+// character is excluded from stats) or 'sent' (in the upload queue); `settled` (below) is the
+// guild's merged numbers having come back, which the meter shows as synced.
+const FIGHT_HISTORY_MAX = 30;
 const FIGHT_HISTORY_SETTLE_MS = [40_000, 100_000];
-function _recordFightHistory(et) {
+function _recordFightHistory(et, character) {
   if (!et) return;
   const boss = et.bossName || et.targetName || null;
   if (!boss) return;
@@ -34095,11 +34398,15 @@ function _recordFightHistory(et) {
   stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
   // A multi-log install flushes once per builder, and flush() also propagates
   // to peer builders on the same fight — so the same kill arrives several
-  // times. One entry per (boss, start within 60s).
+  // times, a few seconds apart. One entry per (boss, start within 8 s): the
+  // old 60 s window also swallowed a real second kill of the same name pulled
+  // right behind the first (2026-10-02).
   const dupe = stats.fightHistory.find(h =>
     String(h.boss).toLowerCase() === String(boss).toLowerCase()
-    && Math.abs((h.startedMs || 0) - startedMs) < 60_000);
+    && Math.abs((h.startedMs || 0) - startedMs) < 8_000);
   if (dupe) return;
+  let sends = !!(_uploadOpts && _uploadOpts.token && !_uploadOpts.dryRun);
+  try { if (sends && character) sends = shouldUploadForCharacter(character); } catch { void 0; }
   // This machine's own view, kept alongside the guild's — the "(what you saw)"
   // half of the row is the thing a local-only meter can never give you.
   const local = [];
@@ -34117,6 +34424,7 @@ function _recordFightHistory(et) {
     players: [],        // guild view; filled by the settle passes below
     uploaders: 0,
     settled: false,
+    upload: sends ? 'sent' : 'local',
   };
   stats.fightHistory.unshift(entry);
   if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
@@ -34129,7 +34437,9 @@ function _recordFightHistory(et) {
     const t = setTimeout(async () => {
       try {
         const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
-        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}`, {
+        // fight_start: this fight's numbers, not the next same-name pull's (bot 3.1.187+; older bots ignore it).
+        const fs0 = startedMs ? `&fight_start=${encodeURIComponent(new Date(startedMs).toISOString())}` : '';
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}${fs0}`, {
           headers: { Authorization: `Bearer ${_uploadOpts.token}` },
         });
         if (!r.ok) return;                          // old bot → History shows local only
@@ -37760,6 +38070,26 @@ const FIRE_DEDUP_WINDOW_MS = 8_000;
 // cross-uploader duplicates collapse at the web read layer.
 const MOB_HEAL_MIN_RISE = 5;          // percentage points
 const MOB_HEAL_DEBOUNCE_MS = 10_000;
+// The mob you had targeted died, as your own target window saw it: its name became "<name>'s
+// corpse", or its bar went to 0 under the same name. Settles 1.5 s so the killing blow's lines
+// land in this fight first, then hands it to EncounterBuilder.noteZealTargetDead.
+const ZEAL_DEATH_SETTLE_MS = 1500;
+function _noteMobDeathFromState(character, prev, next) {
+  if (!character || !prev || !next || !prev.target_name || !next.target_name) return;
+  const pn = String(prev.target_name).replace(/^#/, '').trim();
+  const nn = String(next.target_name).replace(/^#/, '').trim();
+  const base = nn.replace(/'s\s+corpse\d*$/i, '');
+  const becameCorpse = base !== nn && base.toLowerCase() === pn.toLowerCase();
+  const hitZero = pn.toLowerCase() === nn.toLowerCase()
+    && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0 && next.target_hp_pct === 0;
+  if (!becameCorpse && !hitZero) return;
+  const cl = String(character).toLowerCase();
+  for (const b of _liveBuilders) {
+    if (String(b.character || '').toLowerCase() !== cl) continue;
+    const t = setTimeout(() => { try { b.noteZealTargetDead(base); } catch (e) { void e; } }, ZEAL_DEATH_SETTLE_MS);
+    if (t.unref) t.unref();
+  }
+}
 function _noteMobHealFromState(character, prev, next) {
   if (!character || !prev || !next) return;
   const pn = prev.target_name, nn = next.target_name;
@@ -41684,6 +42014,81 @@ function _activeTimersSnapshot() {
 // (noteLootFromChat) is a separate, untouched consumer of the same chat lines.
 const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
 let _lastLootSig     = null;
+
+// ── OpenDKP auctions, one timer each (the guild lead, 2026-10-02) ────────────
+// "add in loot auction timers on the control center as well as in the timers window for each
+// individual one. note that as people bid when it's low time left, it does extend it further out.
+// So the timers for those may end up changing." The bot's auction panel carries each live
+// auction's end (bot 3.1.186); this re-reads it every poll, so a late bid moves the timer's end
+// and the bar re-scales. Quiet on purpose — four auctions closing together must not mean four
+// spoken warnings. A dismissed one stays dismissed until it closes.
+const _dkpAuctions = new Map();          // auction_id → { id, item, ends_at_ms, first_ends_ms, started_ms, top_bid, extended }
+const _dkpAuctionsDismissed = new Set(); // auction_ids whose timer chip was ✕'d
+function _applyDkpAuctions(list, nowMs) {
+  const live = new Set();
+  for (const a of (Array.isArray(list) ? list : [])) {
+    const id = a && a.auction_id != null ? String(a.auction_id) : null;
+    const endMs = a && a.ends_at ? Date.parse(a.ends_at) : NaN;
+    if (!id || !Number.isFinite(endMs) || endMs <= nowMs) continue;
+    live.add(id);
+    const prev = _dkpAuctions.get(id);
+    const startedMs = (a.started_at && Date.parse(a.started_at)) || (prev && prev.started_ms) || nowMs;
+    const rec = { id, item: String(a.item_name || 'Auction'), ends_at_ms: endMs,
+      first_ends_ms: prev ? prev.first_ends_ms : endMs, started_ms: startedMs,
+      top_bid: a.top_bid != null ? a.top_bid : null };
+    rec.extended = rec.ends_at_ms > rec.first_ends_ms + 1000;
+    _dkpAuctions.set(id, rec);
+    const tid = 'auction|' + id;
+    if (_dkpAuctionsDismissed.has(id)) continue;
+    const t = _activeTimers.get(tid);
+    if (t && t.ends_at_ms === endMs) continue;
+    _activeTimers.set(tid, {
+      id: tid, name: rec.item + (rec.extended ? ' · extended' : ''), target: null, effect: rec.item,
+      started_at_ms: startedMs, ends_at_ms: endMs, duration_sec: Math.max(1, Math.round((endMs - startedMs) / 1000)),
+      color: 'gold', end_text: null, warn_ms: 0, warn_text: null, trigger_name: null, captures: null,
+      scope: 'loot', kind: 'loot', dismissible: true, test: false,
+    });
+  }
+  for (const id of [..._dkpAuctions.keys()]) {
+    if (live.has(id)) continue;
+    _dkpAuctions.delete(id); _dkpAuctionsDismissed.delete(id); _activeTimers.delete('auction|' + id);
+  }
+}
+// The Command Center's list: soonest to close first.
+function _dkpAuctionsSnapshot(nowMs) {
+  return [..._dkpAuctions.values()].filter(a => a.ends_at_ms > nowMs)
+    .sort((a, b) => a.ends_at_ms - b.ends_at_ms)
+    .map(a => ({ id: a.id, item: a.item, ends_at: new Date(a.ends_at_ms).toISOString(), ms_left: a.ends_at_ms - nowMs,
+      top_bid: a.top_bid, extended: a.extended }));
+}
+// Every 20 s, every 10 s while an auction is open. Nothing without a token, and nothing while the
+// guild has paused the fleet.
+function _pollDkpAuctions() {
+  const again = () => { const t = setTimeout(_pollDkpAuctions, _dkpAuctions.size ? 10_000 : 20_000); if (t.unref) t.unref(); };
+  const opts = _uploadOpts;
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (!opts || !opts.botUrl || !opts.token || down) return again();
+  try {
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/server-panel/auctions'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, timeout: 15_000,
+      headers: { 'Authorization': `Bearer ${opts.token}`, 'Accept': 'application/json', 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` } }, (res) => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { _applyDkpAuctions((JSON.parse(body) || {}).auctions, Date.now()); scheduleRender(); } catch { void 0; }
+        }
+        again();
+      });
+    });
+    req.on('error', again);
+    req.on('timeout', () => { req.destroy(); });
+    req.end();
+  } catch { again(); }
+}
+{ const t = setTimeout(_pollDkpAuctions, 15_000); if (t.unref) t.unref(); }
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
 // whole words only where intended).
@@ -43800,6 +44205,7 @@ async function main() {
             if (b.character) {
               _pendingClickies.set(b.character.toLowerCase(),
                 { itemName, castMs, atMs: Date.now() });
+              try { _noteClickyUse(b.character, itemName, (parseEqTimestamp(line) || new Date()).getTime()); } catch (e) { void e; }
             }
             // A clicky logs no "You begin casting", so what it lands had nothing to match: SoW from
             // a Blood Orchid Katana onto a charmed pet stayed an untimed "SOW (?)" (the guild lead,
@@ -44266,6 +44672,8 @@ async function main() {
         // Taunt, discipline activations, and enrage start/end. Raw line for
         // the same reason — misses and disc texts match no keep pattern.
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
+        // XP events: each experience line with the bars around it (FB-37 option B; live tail only).
+        try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
@@ -44342,6 +44750,7 @@ module.exports = {
   parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
+  _noteMobDeathFromState,
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
   CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,

@@ -242,7 +242,7 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: true, showCharm: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }, { key: 'charm', flag: 'showCharm', pid: 12 }],
-    })).toEqual({ 11: 'DPS HUD', 12: 'Charm tracker' });
+    })).toEqual({ 11: 'DPS/Tank Meter', 12: 'Charm tracker' });
   });
 
   it('calls out an overlay that is ALIVE while switched off', () => {
@@ -251,14 +251,14 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: false },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }],
-    })).toEqual({ 11: 'DPS HUD (switched OFF)' });
+    })).toEqual({ 11: 'DPS/Tank Meter (switched OFF)' });
   });
 
   it('skips overlays that have no window', () => {
     expect(labels({
       cfg: { showHud: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }, { key: 'charm', flag: 'showCharm', pid: 0 }],
-    })).toEqual({ 11: 'DPS HUD' });
+    })).toEqual({ 11: 'DPS/Tank Meter' });
   });
 
   it('names the non-overlay windows too', () => {
@@ -277,7 +277,7 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: true, showPets: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 9 }, { key: 'pets', flag: 'showPets', pid: 9 }],
-    })).toEqual({ 9: 'DPS HUD + Pet tracker' });
+    })).toEqual({ 9: 'DPS/Tank Meter + Pet tracker' });
   });
 
   it('every lifecycle key has a human name', () => {
