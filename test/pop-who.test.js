@@ -60,8 +60,14 @@ describe('which flags a sighting proves', () => {
     for (const z of ['justice', 'innovation', 'disease', 'nightmare']) expect(whoProves(z)).toEqual([]);
   });
   it('every gated plane has a /who name, and every /who name is a real PoP zone of the server', () => {
+    // Short names (/who all) are the bot's zone ids' names; long names (a plain /who's footer, which
+    // the agent lower-cases) are the agent's own eqemu_zone names table.
     const shorts = new Set(Object.values(ZONE_BY_ID));
-    for (const s of Object.keys(WHO_ZONE)) expect(shorts.has(s), s).toBe(true);
+    const agentSrc = fs.readFileSync(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'), 'utf8');
+    const table = agentSrc.match(/const ZONE_NAMES = \{\n([^\n]+)\n\};/)[1];
+    const longs = new Set([...table.matchAll(/\d+:(['"])(.*?)\1/g)].map(m => m[2].toLowerCase()));
+    for (const s of Object.keys(WHO_ZONE)) expect(s.includes(' ') ? longs.has(s) : shorts.has(s), s).toBe(true);
+    expect(whoProves(WHO_ZONE['plane of storms'])).toEqual(['trial_justice']);
     const mapped = new Set(Object.values(WHO_ZONE));
     // The lower crypt is the same zone as the upper, so it has no name of its own.
     for (const z of POP_ZONES.filter(z => z.requires.length && z.key !== 'codb')) expect(mapped.has(z.key), z.key).toBe(true);

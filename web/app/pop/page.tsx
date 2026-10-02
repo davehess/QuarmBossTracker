@@ -39,7 +39,7 @@ import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
-import { WHO_ZONE_SHORTS, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
+import { WHO_ZONE_NAMES, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
@@ -266,7 +266,7 @@ export default async function PopFlagsPage(
   // (web/lib/popWho.ts). Those flags count everywhere below, kept in `seen` so the page can say so.
   const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name)].map(n => [n.toLowerCase(), n]));
   const { data: sightRows } = nameOf.size
-    ? await sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_SHORTS })
+    ? await sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES })
     : { data: [] };
   const sightBy = new Map<string, Sighting[]>();
   for (const r of (sightRows ?? []) as (Sighting & { character_key: string })[]) {
