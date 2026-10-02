@@ -580,6 +580,9 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// The words typed so far, so a rebuilt card gets them back (FB-47: "This send
+// feedback section refreshes and we lose what we were ready to submit").
+var _wpFbDraft = '';
 // Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
 // than one monitor, the captured screens still waiting to be picked.
 var _wpFbShots = [];
@@ -714,8 +717,10 @@ async function _wpFbPreviewNow() {
 function _wpFbWire() {
   var root = document.getElementById('wpFeedback');
   if (!root) return;
-  _wpFbSetKind('bug');
+  // A rebuilt card comes back as it was: kind, words and pictures (FB-47).
+  _wpFbSetKind(_wpFbKind);
   _wpFbSetMin(_wpFbMin);
+  _wpFbRenderShots();
   var snapBtn = document.getElementById('wpFbSnap');
   if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
   var fileIn = document.getElementById('wpFbFile');
@@ -726,6 +731,10 @@ function _wpFbWire() {
     await _wpFbAddShots(urls);
   });
   var fbText = document.getElementById('wpFbText');
+  if (fbText) {
+    fbText.value = _wpFbDraft;
+    fbText.addEventListener('input', function () { _wpFbDraft = fbText.value; });
+  }
   if (fbText) fbText.addEventListener('paste', async function (e) {
     var files = [];
     var items = (e.clipboardData && e.clipboardData.files) || [];
@@ -793,6 +802,7 @@ async function _wpFbSend() {
     var j = await r.json();
     if (j && j.ok) {
       if (ta) ta.value = '';
+      _wpFbDraft = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
       _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
@@ -1505,22 +1515,10 @@ function renderDash(s) {
   // actionable info. The Triggers tab has the real config + recent fires.)
 
   h += '<div class="grid">';
-  // Recent parses — hide placeholder rows from older uploads (boss "?" with
-  // zero events / zero damage). The recordUploadForDashboard write path also
-  // skips creating these going forward, but in-memory stale ones live until a
-  // session reset; filtering here makes them disappear immediately.
-  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
-  h += '<div class="card"><h2>Recent Parses</h2>';
-  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
-  else {
-    h += '<table>';
-    for (const p of _validParses.slice(0, 5)) {
-      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
-           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Recent parses — isolated (a new kill adds a row). renderRecentParsesCard.
+  // It sat inline here, so every kill rewrote all of #dash and with it the
+  // feedback card's half-typed report (FB-47).
+  h += '<div id="wpRecentParses" class="card"></div>';
   // Session damage — isolated (live numbers change every poll). renderDamageDoneCard.
   h += '<div id="wpDamageDone" class="card" style="display:none"></div>';
 
@@ -1541,8 +1539,7 @@ function renderDash(s) {
   // Top Damage — isolated (live during combat; owns its dismiss-button wiring). renderTopDamageCard.
   h += '<div id="wpTopDamage" class="card wide" style="display:none"></div>';
   h += '</div>';  // grid
-  // #dash now contains only STATIC content (Recent Parses + the trigger chip)
-  // plus the wp* placeholders, so its HTML is byte-identical between polls and
+  // #dash now contains only the wp* placeholders, so its HTML is byte-identical between polls and
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
@@ -2145,6 +2142,26 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+}
+// Recent parses — hide placeholder rows from older uploads (boss "?" with
+// zero events / zero damage). The recordUploadForDashboard write path also
+// skips creating these going forward, but in-memory stale ones live until a
+// session reset; filtering here makes them disappear immediately.
+function renderRecentParsesCard(s) {
+  const el = document.getElementById('wpRecentParses');
+  if (!el) return;
+  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
+  let h = '<h2>Recent Parses</h2>';
+  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
+  else {
+    h += '<table>';
+    for (const p of _validParses.slice(0, 5)) {
+      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
+           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -6803,7 +6820,8 @@ async function refresh() {
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
                      ['setupchecks', renderSetupChecks],
-                     ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
+                     ['triggeralerts', renderTriggerAlertsCard], ['recentparses', renderRecentParsesCard],
+                     ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
@@ -7375,11 +7393,22 @@ function wpRenderMailPanel(){
        + (crit ? "<span style='color:var(--red,#f87171);font-weight:700'>CRITICAL · </span>" : "")
        + "<span style='font-weight:700'>" + wpEscN(n.title) + "</span>"
        + "<div style='margin-top:3px;white-space:pre-wrap'>" + wpEscN(n.body) + "</div>"
+       // A Zeal update goes straight to where Install is (FB-46). Mimic only:
+       // Zeal installs from Mimic's Settings, not from a browser.
+       + (n.action === "zeal" && window.mimic && window.mimic.openSettings
+           ? "<button type='button' class='wp-notice-zeal' style='margin-top:6px'>⚙ Open Settings → Zeal</button>" : "")
        + "<div style='color:var(--dim);font-size:11px;margin-top:3px'>" + wpEscN((n.created_at || "").slice(0, 10)) + "</div>"
        + "</div>";
   }
   panel.innerHTML = h;
 }
+(function(){
+  var panel = document.getElementById("wpMailPanel");
+  if (panel) panel.addEventListener("click", function(e){
+    var b = e.target && e.target.closest ? e.target.closest(".wp-notice-zeal") : null;
+    if (b && window.mimic && window.mimic.openSettings) { try { window.mimic.openSettings("zeal"); } catch (err) { void err; } }
+  });
+})();
 function wpPollNotices(){
   fetch("/api/notices").then(function(r){ return r.json(); }).then(function(j){
     _wpNotices = (j && Array.isArray(j.notices)) ? j.notices : [];

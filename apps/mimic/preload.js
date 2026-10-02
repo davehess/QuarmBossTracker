@@ -602,7 +602,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // renderer has no Node access. UI Studio uses it to mark which cloud backups
   // came from the machine you are sitting at.
   machineName:         (() => { try { return require('os').hostname(); } catch { return ''; } })(),
-  openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  // section: open scrolled to that part of Settings ('zeal').
+  openSettings:        (section)  => ipcRenderer.invoke('open-settings', section),
+  onSettingsGoto:      (cb)       => ipcRenderer.on('settings-goto', (_e, section) => cb(section)),
   // ⏻ Quit Mimic from the dashboard — the tray's Quit ('quit-app').
   quitApp:             ()         => ipcRenderer.invoke('quit-app'),
   // Resource use in its own window — the dashboard's "what does Mimic cost?"

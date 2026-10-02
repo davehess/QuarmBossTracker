@@ -34,6 +34,10 @@
   .mob .ht{font-size:10px;margin-left:5px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
   .mob .ht.ok{color:#56d364}
   .mob .ht.used{color:#f85149}
+  /* A targeted player's known timers (disc, Mend, Lay on Hands, AAs): the HT chip's look. */
+  .mob .cds{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0 1px}
+  .mob .cd{font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149}
+  .mob .cd.ok{color:#56d364}
   .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
   .hpbar{height:6px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:4px}
@@ -321,6 +325,27 @@
   function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return fmtK(n/1000000, 'M'); if (n >= 1000) return fmtK(n/1000, 'k'); return String(n); }
   // ── Durations ──────────────────────────────────────────────────────────────
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  // A targeted player's known timers (the guild lead, 2026-10-02: "When we have a
+  // known timer, for someone's disciplines or mend or area taunt, we should
+  // display those on target info. When we're targeting them"). ✓ when ready,
+  // else the time left; "~" marks an estimate. The agent (_targetPlayerTimers)
+  // names where each came from.
+  var _CD_FROM = { own: 'from your own character', mimic: 'from their Mimic', seen: 'you saw them start it' };
+  function timersLine(list){
+    if (!list || !list.length) return '';
+    var h = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i] || {};
+      if (!c.label) continue;
+      var ready = !(c.ms_left > 0);
+      var tip = esc(c.label) + ' — ' + (_CD_FROM[c.source] || 'from a Mimic');
+      if (c.source === 'seen') tip += c.level_known ? '; the time is estimated from their level' : '; their level is unknown, so this is the longest it can take';
+      else if (c.est) tip += '; the time is an estimate';
+      h += '<span class="cd' + (ready ? ' ok' : '') + '" title="' + tip + '">' + esc(c.label) + ' '
+         + (ready ? '✓' : (c.est ? '~' : '') + fmtSecs(c.ms_left / 1000)) + '</span>';
+    }
+    return h ? '<div class="cds" data-wp-sect="timers">' + h + '</div>' : '';
+  }
   // Short slow name for the badge — "Turgur's Insects" → "Turgur's" (matches the
   // agent's _slowShortName so the badge, the callout, and the debuff row agree).
   function _slowShort(n){ return String(n||'').replace(/\s+(Insects|Deeds|Pace|Sleep)$/i,'').trim() || String(n||''); }
@@ -1222,6 +1247,7 @@
       + (sub.length ? '<div class="sub" data-wp-sect="stats">'+sub.join(' · ')+'</div>' : '')
       + slotLine
       + hpBar
+      + timersLine(mi.target_timers)
       + slowBadge
       + manaBar
       + manaLine
