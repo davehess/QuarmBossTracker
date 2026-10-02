@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **3.0: every overlay exactly on the Canvas, then taken apart** | **§125.** Audit: 3 of 378 overlay elements were exact as parts.js pieces. Alpha `a29075d9`: pieces cut from the overlay's own page (exact by construction), ✂ Take it apart, ✂ Overlay parts in the chooser; Target Info's 19 parts first (marks on beta `5eae2d53`) | the guild lead: (1) on the next alpha, put Target Info on the Canvas, ⚙ → ✂ Take it apart, pull out Loot; (2) say if this is the way (A) before the other 14 overlays get their maps; (3) watch Resource use with several pieces on |
 | **Two raids at once stay two raids** | **§124.** Bot 3.1.184 + web 1.8.70 on `main`: each Mimic's latest upload names its raid leader; buff queue and Extended Target keep to your raid; `/raid` one tab per raid by leader; crowns work (rank is text). Agent 3.7.65 on beta: "⚔ N raids at once" on Extended Target, Buff queue, Command Center, dashboard Raid tab | the guild lead: (1) at the next split raid, check `/raid` shows two tabs and the overlays say whose raid; (2) call it: should attendance ticks and the trigger relay split by raid too (§124 "not split yet") |
 | **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`, **stable agent 3.7.63** (hot-swapped 2026-10-01; beta 3.7.64): a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
 | **PoP from /who; checklist by level, closed, maps on hover** | **§122.** Beta `4f5e68e1` (web on `b.wolfpack.quest`; SQL function applied). Anyone /who shows inside a gated plane holds its gate and the ones on the way in: blue ✓ on `/pop`, "✓ seen on /who" on the checklist. Checklist B/C: progression levels, closed by default, sidebar opens them, 🗺 map on hover | the guild lead: (1) open `b.wolfpack.quest/pop` and `b.wolfpack.quest/pop/guide?v=b` (and `?v=c`); (2) pick B or C so it graduates with the /who counts |
@@ -5751,3 +5752,93 @@ change moderate.
 - `/buffs`, the signup comp matcher and the essence queue still take everyone's names together; the
   `dedup_roster` election (off by default) keys by group number alone.
 - A machine boxing characters in both raids sends whichever raid window Mimic read first in each flush.
+
+### 125. 3.0: every overlay reproduced exactly on the Canvas, then taken apart (2026-10-02, alpha `a29075d9`, beta `5eae2d53`)
+The guild lead: *"when we're done with the alpha 3.0 version every one of the overlays should be exactly
+reproduced within the canvas so the people can disassemble them and use any element of them in the way
+that they feel fits best on their screen. and in my mind we can take their exact layout with where their
+windows are and arrange those pieces in a way that makes the most sense and takes up just the right amount
+of screen real estate while getting out of their way so that they can play the game."* And: *"in its
+current implementation the overlays as they exist outside of the canvas are not reproducible inside of the
+canvas. that needs to be a priority before we can optimize anything else."*
+
+**The call: parity first.** Every overlay reproducible inside the Canvas, exactly, before anything else is
+optimised. Then any part of it can be pulled out and placed; later, Mimic arranges the parts around the
+raider's actual EQ windows.
+
+**The audit** (three read-only passes, every element a raider sees or uses, window chrome left out):
+
+| Overlay | Elements | Exact as a parts.js piece | Data only (drawn differently, or no interaction) | Missing |
+|---|---|---|---|---|
+| DPS HUD | 21 | 0 | 7 | 14 |
+| Tank | 22 | 0 | 13 | 9 |
+| Threat meter | 12 | 0 | 4 | 8 |
+| HUD (me) | 41 | 0 | 30 | 11 |
+| Command Center | 24 | 0 | 13 | 11 |
+| Target Info | 49 | 0 | 37 | 12 |
+| Extended Target | 30 | 0 | 8 | 22 |
+| Buff queue | 25 | 0 | 10 | 15 |
+| CH chain | 27 | 0 | 8 | 19 |
+| /who | 21 | 0 | 9 | 12 |
+| Charm | 24 | 1 | 10 | 13 |
+| Pets | 16 | 1 | 8 | 7 |
+| Melody | 31 | 0 | 10 | 21 |
+| Tick | 15 | 1 | 6 | 8 |
+| PoP raid | 20 | 0 | 0 | 20 |
+| **Total** | **378** | **3** | **183** | **192** |
+| *Trigger overlay, loaded from its own page* | *19* | *18* | *0* | *1* |
+
+The parts.js pieces (§103) redraw one value their own way, with no tooltips, no clicks beyond copy and
+open, no per-row actions (dismiss, cure, rez), no speech, none of the page's own state (tabs, filters,
+collapsed sections), different colour steps and number formats. The one overlay that was already exact on
+the Canvas was the one loaded as its own page.
+
+**Two ways to make every overlay exact:**
+- **A. Cut each piece from the overlay's own page (shipped on alpha).** The page runs once per piece, with
+  every other part made invisible and the panel cropped to its part. Same code, same look, same buttons, so
+  exact by construction. Build low per overlay (a list of its parts; a mark only where a part has no class);
+  maintenance low (one code path, and an overlay change reaches its pieces); runtime heavier (each piece is
+  a page with its own poll); change low.
+- **B. Rebuild every overlay from parts.js** (the 3.0 plan's end state, §102). Build very high (about 380
+  elements with their interactions and speech); maintenance lowest in the long run (one engine); runtime
+  lightest; change medium (every overlay hangs off the engine).
+- **Taken: A now**, then B for single pieces only where the runtime cost is measured and matters. The two
+  sit together in the chooser: parts exactly as drawn, and parts.js values drawn other ways.
+
+**What shipped (alpha `a29075d9`; Target Info's marks on beta `5eae2d53`):**
+- A Canvas piece kind cut from a page (`apps/mimic/sections.js`, `canvas.html` kind `sect`). It follows its
+  part (grows, shrinks, steps aside with no target), keeps the card it sat on behind it, and A−/A+ and a page
+  width size it.
+- **✂ Take it apart** on a whole overlay: one piece per part showing, each where it was, moving together
+  until one is Alt-dragged out. The chooser's **✂ Overlay parts** tab lists every part.
+- One voice per overlay: copies of a page that speaks (Charm, CH chain) stay silent but one.
+- **Target Info first:** 19 parts. Loot, Spells and F/Q/V pin their own tab; the other copies share the tab
+  picked on the title-bar part.
+- Checked in Chromium against a fake agent: the whole overlay and its parts side by side are identical.
+- Limits:
+  - an effect on the whole window (Charm's red flash) belongs to the whole page, not to a part;
+  - the Command Center is served by the agent from another origin, so it cannot be cut until the Canvas
+    loads the local `command.html`;
+  - each piece is a page; measure on a raid night with the tray's Resource use.
+
+**Next, in order:** section maps for the other 14: DPS HUD, Extended Target, Buff queue, Tank, Charm,
+Command Center, CH chain, HUD, Tick, Pets, Melody, /who, Threat meter, PoP raid. Page state the parts must
+share (the DPS/Tank/History tab, the buff class picker, the /who filters) follows Target Info's
+sessionStorage pattern.
+
+**Recorded for after parity: Target Info that keeps its context** (the guild lead, same message):
+- *"as soon as you stop targeting that you lose the context"*: a history of recent targets with what they
+  showed, and per-NPC quest steps you can tick off (*"a way to mark off or log the things that you
+  specifically already did for that quest line with that NPC"*).
+- Loot in context, without leaving the screen: hover an item for its stats; can this character use it
+  (class, race, slot); could someone with you use it; vendor price; is it a tradeskill part
+  (`eqemu_tradeskill_recipe_entries`), a quest item (`eqemu_quest_scripts`), a spell component, rare,
+  worth a bag slot. Today the loot payload carries id, name, chance, raw chance, lore, the guild's win
+  count, how many NPCs drop it and whether only this one does; items link nowhere and nothing checks
+  can-use. Spell components are not mirrored (`eqemu_spells` has no component columns): a sync gap.
+- Auto-arrange: read where the raider's windows are and place the parts to take *"just the right amount of
+  screen real estate while getting out of their way"*.
+
+**Found on the way:** Target Info's corpse "last fight" scoreboard read a key `/api/state` does not have,
+so it never showed (fixed, beta `5eae2d53`). The threat meter's gold "your row" never lights for the same
+kind of reason (queued as its own task).
