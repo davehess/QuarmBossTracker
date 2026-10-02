@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Fifteen more suggested triggers; four dead ones fixed** | **§129.** Bot 3.1.189 (catalog `cc`) + web 1.8.76 on `main`; agent 3.7.70 on beta `e2f06f69`. FD failed / broken, resist naming the mob ({mytarget}), immune slow/snare/stun, can't mez/charm, mez / slow / fear wore off, silenced, LoS, range, mana, invis fading. Snared/mezzed/feared now match by the spell's effect; interrupted has the real text. Every line from the server's own messages | the guild lead: (1) on the beta, tick a few in the Triggers tab and get resisted once — check the alert names the mob you were casting at; (2) on a monk, fail a feign and check "FD FAILED"; (3) say whether the buff-dropped triggers should change — see §129, unverified |
 | **Shield OFF under Mark of the Plague Lords; Boastful Bellow timer** | **§128.** Bot 3.1.188 (catalog `ds_heal`) + web 1.8.75 on `main`; agent 3.7.69 on beta `a66d208d`. The Mark replaces every shield and heals the mob 50 a hit (server code); HUD "DS OFF" + time left, Tank card names it. Bellow: 18 s, from your resist or your landing + your own damage; HUD "BB" once used; Triggers-tab bar. Fading Memories: no duration — invis until broken, 900 mana, 1 s reuse | the guild lead: (1) in Plane of Disease with the beta, check the HUD reads DS OFF while the Mark is up and the Tank card names it; (2) on a bard with the AA, bellow once and check BB counts 18 s — and that another bard's bellow on your mob does not start it |
 | **HUD batch, auction timers, MA, XP events, fight split (one message, nine asks)** | **§127.** Bot 3.1.186 + 3.1.187, web 1.8.72 + 1.8.73 on `main`; agent 3.7.67 on beta `d0a54a4d`. Enrage at 10% with "Enrage soon", red gone once it ends; "DPS/Tank Meter"; DS thorns/lava; rampage + under-25% arcs; clicky counters; one timer per auction (late bids move it) + Command Center Auctions; MA on Extended Target; XP events uploading (`xp_events` live); back-to-back same-name fights split by your own target window; History 30 fights, local / sent / synced. Defaults picked for XP: kept 30 days, raid XP stored but kept apart | the guild lead: (1) on the beta, fight an enraging mob and check "Enrage soon" at 10% and the red clearing; (2) open an auction with a late bid and watch its timer move; (3) say yes or change the XP defaults (30 days; names stay to signed-in members); (4) make a Quarmy export (or `/output inventory`) once so the clicky counters have items — agent 3.7.68 reads either, the newer wins |
 | **A targeted player's timers on Target Info; FB-46/47/48** | **§126.** Bot 3.1.185 + web 1.8.71 on `main` (column applied); agent 3.7.66 on beta `a100da84`: disc, Mend, LoH/HT and AAs from the player's own Mimic, a disc you saw them start, ✓ or time left. AAs exact from the refusal line; `/pipe at` learns Area Taunt's reuse. Alpha `9e33af91`: the timers as a Canvas part, and the "slowed null%" / "0 / 0 HP" pieces fixed. FB-46 (Zeal notice → Settings at Zeal), FB-47 (feedback text kept), FB-48 (overlay size kept) on beta | the guild lead: (1) on the beta, with a second Mimic raider, Mend or fire a disc on one and target them from the other; (2) put `/pipe at` on the Area Taunt key, press it twice and check Target Info counts down; (3) say if this should also show on Extended Target rows |
@@ -6011,3 +6012,42 @@ the hud and overlays"* — then, mid-session: *"add Boastful Bellow AA as a time
 **Not done:** the sibling path in the raid card's spell decode (`_spellFxMap` takes `Math.abs` of SPA 59, so
 a positive value would read as a shield there) — left alone, it never sees the Mark today; the bundled
 local-mode spell snapshot gains `ds_heal` only when it is next regenerated.
+
+### 129. Fifteen more suggested triggers, and four that could never fire (2026-10-02, bot 3.1.189 · web 1.8.76 · agent 3.7.70 beta `e2f06f69`)
+
+The guild lead: *"We need more in suggested triggers, like failed feign death and spell resisted <spell name -
+mob name>"*.
+
+- **The rule this ran on: every line is the server's own text, checked, never written from memory.** The
+  source of truth is EQMacEmu `zone/string_ids.h` (server messages) and `eqemu_spells.cast_on_you` (spell
+  landings). That check is what found the dead ones below.
+- **New (15):** Feign Death failed (`STRING_FEIGNFAILED`, "%1 has fallen to the ground." — said with your OWN
+  name, so the pattern is `{c} has fallen…` and a monk beside you does not set it off); a spell broke your
+  feign; immune to slow / snare / stun; cannot be mezzed (both forms); cannot be charmed (both forms); your mez
+  wore off; your slow / root / snare wore off; your fear wore off; you are silenced; no line of sight; out of
+  range; not enough mana; invisibility fading.
+- **Resists name the mob.** "Your target resisted the %1 spell." never names it, so a new alert word,
+  `{mytarget}`, fills it: your Zeal target when you began casting THAT spell (recorded on "You begin casting"),
+  else your target now — an instant spell has no begin-casting line, `zone/spells.cpp` sends the begin-cast
+  only when `cast_time > 0` — else "your target". "RESISTED: Tashanian — a gnoll warlord". The immunity alerts
+  use the same word. A saved row still reading "RESISTED: {1}" is updated on load.
+- **Wearing off names the spell, never the mob.** `zone/spell_effects.cpp` `BuffFadeBySlot` sends the caster
+  `SPELL_WORN_OFF` ("Your %1 spell has worn off."), with charm and fear spelled "charm" and "fear". So "your mez
+  wore off" says which mez, not which mob. A "worn off of <mob>" string exists in the client's list but this
+  server never sends it.
+- **Dead and fixed (4).** "You are snared / rooted" waited for "You have been ensnared/rooted/bound",
+  "mezzed / charmed" for "You feel calm/charmed", "feared" for "You are afraid" — none appears in any spell. The
+  real landings run to 70+ snare texts, 30+ mez, 30+ root, 16 fear. So those three now match **by the spell's
+  effect**: the bot catalog carries `cc` (mez, charm, fear, stun, root, snare, slow, silence — SPA 31, 22, 23,
+  21, 99, 3 negative, 11 under 100, 96) and the agent fires when a line is the landing text of a spell with
+  that kind (`catalog_match`). A text that a spell WITHOUT that kind also prints is left out, the Blind Mode
+  rule. "Interrupted" read "Your spell interrupted"; the server prints "Your spell is interrupted." Saved rows
+  move on load (exact old pattern only; an edited one is the member's).
+- **Not touched, and unverified:** the five "your buff dropped" suggestions read "Your Clarity spell has worn
+  off." The server sends that line to the CASTER of a DETRIMENTAL spell only; a buff fading on you shows the
+  spell's own fade text ("The cool breeze fades."). Whether the client also prints "Your … spell has worn off"
+  for your own buffs is not settled from the code here, and fire history has no evidence either way. Left as
+  they are; one look at a log when Clarity drops settles it. "You are stunned" is unverified for the same reason.
+
+**Not done:** the buff-drop question above; a stun "on you" by catalog (161 landing texts — wired the same way
+when wanted).

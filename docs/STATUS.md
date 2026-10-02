@@ -173,6 +173,12 @@ next touch one rather than assuming a missing row means a missing doc.
   saw them start (estimated from their /who level). AAs exact from the server's refusal line; `/pipe at`
   on the Area Taunt key learns the reuse. A Canvas part on alpha `9e33af91`. Mend, LoH, HT and AAs print
   nothing a bystander sees, so a player without Mimic shows only a seen disc. §126.
+- **🧪 Fifteen more suggested triggers; four dead ones fixed (bot 3.1.189 · web 1.8.76 on main; agent 3.7.70
+  beta `e2f06f69`).** Feign Death failed / broken, a resist that names the mob (`{mytarget}` — your target
+  when you began that cast), immune to slow / snare / stun, can't mez / charm, your mez / slow / fear wore off,
+  silenced, line of sight, range, mana, invis fading — every line the server's own text. Snared, mezzed and
+  feared named texts no spell prints; they now match by the spell's effect (catalog `cc`), and "interrupted"
+  has the real line. Buff-dropped suggestions left as they are, unverified. §129.
 - **🧪 Shield OFF under Mark of the Plague Lords; Boastful Bellow timer (bot 3.1.188 · web 1.8.75 on main;
   agent 3.7.69 beta `a66d208d`).** A positive SPA 59 (the Mark, +50) replaces every shield and heals the mob
   50 a hit on the Quarm server; the catalog now carries it as `ds_heal`, and while one is up the HUD's DS
