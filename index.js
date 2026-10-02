@@ -19621,8 +19621,15 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
 const _corpseDmSeen = new Map();    // `${character}|${died_at}` → ms: a queue retry never DMs twice
 const _corpseDmRecent = new Map();  // owner discord id → [ms]: a cap per hour, for a bad night
 const CORPSE_DM_MAX_PER_HOUR = 6;
+// Planes of Power zones whose corpses the server moves after an hour (Quarm patch notes, 2026-10-02):
+// from a guild instance to the Plane of Tranquility graveyard, in the open world to the zone's own
+// graveyard; a failed Plane of Justice trial's corpse goes to the Tribunal. Zone ids 200–223 less the
+// Plane of Knowledge (202) and Tranquility (203) — listed by id because the catalog files the Crypt of
+// Decay and Plane of Justice under expansion 0.
+const _POP_CORPSE_MOVE_ZONES = new Set([200, 201, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+  215, 216, 217, 218, 219, 220, 221, 222, 223]);
 
-function _corpseDmText({ character, zone, loc, diedAtMs }) {
+function _corpseDmText({ character, zone, zoneId, loc, diedAtMs }) {
   const unix = Math.floor(diedAtMs / 1000);
   const where = zone ? ` in **${zone}**` : '';
   const lines = [`💀 **${character}** died${where} <t:${unix}:t> (<t:${unix}:R>).`];
@@ -19630,6 +19637,12 @@ function _corpseDmText({ character, zone, loc, diedAtMs }) {
     lines.push(`Corpse at \`/loc\` **${Math.round(loc.x)}, ${Math.round(loc.y)}, ${Math.round(loc.z)}**`);
   } else {
     lines.push('Corpse position unknown: Zeal was not sending your location.');
+  }
+  // The /loc above is good for an hour in the Planes of Power, then the corpse moves.
+  if (_POP_CORPSE_MOVE_ZONES.has(Number(zoneId))) {
+    const moveAt = unix + 3600;
+    lines.push(`It moves <t:${moveAt}:R>: to the Plane of Tranquility graveyard from a guild instance, or to this zone's graveyard in the open world.`);
+    if (Number(zoneId) === 201) lines.push('A corpse from a failed trial goes to the Tribunal instead, in the same instance.');
   }
   return lines.join('\n');
 }
@@ -19696,7 +19709,7 @@ async function _handleAgentCorpse(req, res) {
     const user = await client.users.fetch(ownerDiscordId).catch(() => null);
     if (!user) return;
     await user.send({
-      content: _corpseDmText({ character: charRow.name || character, zone, loc, diedAtMs }),
+      content: _corpseDmText({ character: charRow.name || character, zone, zoneId: payload?.zone_id, loc, diedAtMs }),
       allowedMentions: { parse: [] },
     }).catch(() => {});
   } catch (err) { console.warn('[corpse] DM failed:', err?.message); }

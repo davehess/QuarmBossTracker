@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **The Oct 1–2 server patch notes** | **§130.** Bot 3.1.190 + web 1.8.77 on `main`: the corpse DM says when and where a PoP corpse moves. Not changed, waiting on facts or a call: Xanamech's 72 h board timer (no lockout now); the reworded Glory broadcasts (no real line yet; unread ones are saved to `logsync.pvp-unmatched.json`); whether an open-world kill of a Classic–Luclin raid target would start the instance timer | the guild lead: (1) take Xanamech off the board? (2) paste one new-style Glory line, or send that file; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
+| **Our own zone map (A website, then B Mimic overlay)** | **§131.** Queued, not started — "A then B, but not yet". First step when it starts: mirror pather routes (`grid`, `grid_entries`) into the weekly sync | the guild lead: say when to start; ask staff before anything shows live NPC positions |
 | **Fifteen more suggested triggers; four dead ones fixed** | **§129.** Bot 3.1.189 (catalog `cc`) + web 1.8.76 on `main`; agent 3.7.70 on beta `e2f06f69`. FD failed / broken, resist naming the mob ({mytarget}), immune slow/snare/stun, can't mez/charm, mez / slow / fear wore off, silenced, LoS, range, mana, invis fading. Snared/mezzed/feared now match by the spell's effect; interrupted has the real text. Every line from the server's own messages | the guild lead: (1) on the beta, tick a few in the Triggers tab and get resisted once — check the alert names the mob you were casting at; (2) on a monk, fail a feign and check "FD FAILED"; (3) say whether the buff-dropped triggers should change — see §129, unverified |
 | **Shield OFF under Mark of the Plague Lords; Boastful Bellow timer** | **§128.** Bot 3.1.188 (catalog `ds_heal`) + web 1.8.75 on `main`; agent 3.7.69 on beta `a66d208d`. The Mark replaces every shield and heals the mob 50 a hit (server code); HUD "DS OFF" + time left, Tank card names it. Bellow: 18 s, from your resist or your landing + your own damage; HUD "BB" once used; Triggers-tab bar. Fading Memories: no duration — invis until broken, 900 mana, 1 s reuse | the guild lead: (1) in Plane of Disease with the beta, check the HUD reads DS OFF while the Mark is up and the Tank card names it; (2) on a bard with the AA, bellow once and check BB counts 18 s — and that another bard's bellow on your mob does not start it |
 | **HUD batch, auction timers, MA, XP events, fight split (one message, nine asks)** | **§127.** Bot 3.1.186 + 3.1.187, web 1.8.72 + 1.8.73 on `main`; agent 3.7.67 on beta `d0a54a4d`. Enrage at 10% with "Enrage soon", red gone once it ends; "DPS/Tank Meter"; DS thorns/lava; rampage + under-25% arcs; clicky counters; one timer per auction (late bids move it) + Command Center Auctions; MA on Extended Target; XP events uploading (`xp_events` live); back-to-back same-name fights split by your own target window; History 30 fights, local / sent / synced. Defaults picked for XP: kept 30 days, raid XP stored but kept apart | the guild lead: (1) on the beta, fight an enraging mob and check "Enrage soon" at 10% and the red clearing; (2) open an auction with a late bid and watch its timer move; (3) say yes or change the XP defaults (30 days; names stay to signed-in members); (4) make a Quarmy export (or `/output inventory`) once so the clicky counters have items — agent 3.7.68 reads either, the newer wins |
@@ -6051,3 +6053,67 @@ mob name>"*.
 
 **Not done:** the buff-drop question above; a stun "on you" by catalog (161 landing texts — wired the same way
 when wanted).
+
+### 130. The October 1–2 server patch notes against the platform (2026-10-02, bot 3.1.190 · web 1.8.77)
+
+The guild lead posted the server's patch notes for October 1–2 and asked us to consume them (§63a did the same for
+the July–September notes). Each change, what it touches here, and what was done:
+
+- **PoP corpses move after an hour** — guild instances to the Plane of Tranquility graveyard, open-world
+  PoP zones to their own graveyard; a failed Plane of Justice trial's corpse to the Tribunal; Thelin's hedge
+  maze corpses with the players; the PvP instance keeps its 30-minute timer. **Done:** the corpse DM now
+  says when (an hour after death) and where, for zone ids 200–223 less the Plane of Knowledge and
+  Tranquility. Listed by id: the catalog files the Crypt of Decay and the Plane of Justice under expansion 0.
+  It cannot tell an instance from the open world (same zone id), so it names both. Both the stable and beta
+  agents already send the zone id, so this reached everyone with the bot deploy.
+- **Xanamech has no lockout; existing lockouts cleared; Nitram ready as soon as the flagging window ends;
+  Nitram can't be killed once Xanamech is up.** The board has Xanamech at **72 hours**, now simply wrong
+  (the §63a open question — 66 or 72 — is moot). Not changed: taking a boss off the board changes the
+  visible board, and a kill of a boss not in `bosses.json` posts "not in timer database — use /addboss" to
+  raid chat. Recommended: remove him from the board. `character_lockouts` held **no** Xanamech rows
+  (checked), so nothing to clear.
+- **Rallosian Glory death broadcasts reworded:** "Name <Guild>", shorter, Glory lost and gained stated;
+  kills by an NPC, unworthy kills and forfeits now report Glory lost and the zone. Our parser reads the OLD
+  wording (`PVP_GLORY_RX`, `PVP_GLORY_WORTHY_RX`). The newest parsed row is 10:00 UTC Oct 2, still in the
+  old wording, so either the patch was not live yet or new lines are being missed. A line the parser can't
+  read is not lost: the agent's `captureUnmatchedPvpKill` saves every unparsed Rallos / Glory broadcast to
+  `logsync.pvp-unmatched.json` beside the agent. **Not changed, deliberately:** writing a pattern from the
+  notes' description is the invented-pattern failure (CLAUDE.md, trigger rules). One real line fixes it, and
+  the new lines carry the guilds, so /who will no longer be needed to fill them in.
+- **Classic–Luclin raid targets also respawn in the open world** (instances stay; open-world spawns are
+  not GM-enforced, racing allowed). Two things touch us:
+  - **Risk:** the board is guild-INSTANCE timers, fed by "Druzzil Ro tells the guild, '<X> of <Guild> has
+    killed <Boss> in <Zone>!'". If our guild kills an open-world copy and Druzzil says the same thing, the
+    bot starts the instance timer on the board. Whether the line differs is unknown until our first
+    open-world kill.
+  - **Possible feature, the guild lead's call:** open-world spawn windows for those targets. The server's own
+    respawn time and variance are in `eqemu_spawn2`; another guild's kill is not broadcast to us, only
+    seen if someone is there.
+- **Reduced open-world respawns are back.** Any respawn time we quote from the database is the full
+  timer; the real one can be shorter. Applies to the AoE-farming answer and the map below.
+- **Terris Thule:** adds despawn on reset or her death; pulling her out of the chamber wipes hate and heals
+  her. **The Tribunal hands back items. Plane of Sky's 13 quest NPCs move again.** No repo text mentions
+  any of these; nothing to change.
+- **`#pvpzone quake <luclin|pop> <on|off>`:** quakes can now include or leave out an expansion. Our quake
+  tracking reads the quake broadcast; it is unaffected until that wording changes. Watch for it.
+
+### 131. Our own zone map: the website first, then a Mimic overlay — queued, not started (2026-10-02)
+
+The guild lead, on whether we can render our own map instead of Zeal's, with NPCs, pathers and aggro / call-for-help
+rings: *"A then B, but not yet. Queue them."*
+- **A — website map** (`/map/<zone>`, reusing the PoP guide's `ZoneMap`): every spawn point by family,
+  aggro and assist rings from `eqemu_npc_types` (giants 60 / 80, some Vind 100, storm guardians 400),
+  pather routes as dashed lines, a floor filter, name / level / respawn on hover.
+- **B — Mimic overlay**, reusing A's drawing: the same layers plus live dots for you, your group and raid
+  from Zeal (already sent). It owes the full overlay parity checklist.
+- **Prerequisite for both:** mirror the server's `grid` and `grid_entries` (pather routes; Bastion of
+  Thunder alone has 469 waypoints on 30 routes) into the weekly eqemu sync. Walls need EQ map files or a map
+  pack whose licence is checked first; the current outline is inferred from spawn points.
+- **Not in scope:** live NPC positions. That is ShowEQ territory, which the server's rules likely forbid;
+  ask staff before anything shows them. Respawn labels carry the §130 caveat (reduced respawns).
+- The reasoning behind the giants' call-for-help, which the map is meant to make visible: EQMacEmu
+  `NPC::CallForHelp` / `EntityList::AIYellForHelp` (zone/aggro.cpp): an engaged or fleeing NPC calls on
+  engage and every 3 s (`AIassistcheck_delay`); any NPC within ITS OWN assist radius of the caller, with
+  line of sight, answers when it shares the primary faction or lists the caller's faction as an ally
+  (`npc_value` 1). All four greater-giant families list each other, so any giant answers any giant. An
+  answerer does not call in turn (`IsAssisting`), so adds come from wherever the first giant goes.

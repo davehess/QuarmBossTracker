@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-corpse-dm-2026-10-02',
+    title: 'Corpse DM knows PoP corpses move',
+    version: 'Bot 3.1.190 · Web 1.8.77',
+    date: '2026-10-02',
+    headline: 'Since the October 2 server patch a Planes of Power corpse moves after an hour, and your corpse DM now says when and where.',
+    features: [
+      {
+        name: 'When your corpse moves',
+        blurb: 'Die in a Planes of Power zone and the DM shows the time your corpse will move: to the Plane of Tranquility graveyard from a guild instance, or to that zone\'s graveyard in the open world. In the Plane of Justice it also says a failed trial\'s corpse goes to the Tribunal.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'more-suggested-triggers-2026-10-02',
     title: 'More suggested triggers',
     version: 'Bot 3.1.189 · Web 1.8.76 · Agent 3.7.70 beta',
