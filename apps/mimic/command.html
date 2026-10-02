@@ -152,6 +152,9 @@
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* Two or more raids at once: which one this board is for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -365,6 +368,14 @@
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
+  // Two or more raids at once (the bot names them only then): the cures and the healer mana
+  // below are this raid's, and this line says which raid that is.
+  function raidsNoteHtml(raids){
+    var mine = null;
+    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
+    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
+         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -375,6 +386,7 @@
     whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
 
     var html = '';
+    if (s.raids && s.raids.length > 1) html += raidsNoteHtml(s.raids);
 
     // Target HP + boss enrage warning (same data the Tank overlay shows).
     if (s.target && s.target.name) {

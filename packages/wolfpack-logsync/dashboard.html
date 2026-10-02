@@ -6072,6 +6072,10 @@ var _CLASS_CHECKLIST = {
   beastlord: ['Attack', 'HP Regen'],
   magician:  ['Dmg Shield'],
 };
+// Zeal sends the rank as text ("Raid Leader" / "Group Leader"); this tab looked for '2' / '1' and
+// never showed a crown (2026-10-01). Both spellings count.
+function _isRaidLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '2' || /^raid\s*leader$/i.test(r); }
+function _isGroupLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '1' || /^group\s*leader$/i.test(r); }
 function renderRaidTab(q) {
   var root = document.getElementById('raid');
   if (!root) return;
@@ -6098,6 +6102,14 @@ function renderRaidTab(q) {
     h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
   } else {
     var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    // Two or more raids at once (the bot names them only then): this roster is your raid's; list
+    // every raid so the other one is visible too.
+    var raids = (q && Array.isArray(q.raids) && q.raids.length > 1) ? q.raids : null;
+    if (raids) {
+      h += '<div style="font-size:11px;margin:4px 0 0"><span style="color:var(--orange)">⚔ ' + raids.length + ' raids at once:</span> '
+        + raids.map(function(r){ return (r.mine ? '<b>' : '') + '👑 ' + esc(r.leader) + ' (' + esc(r.size) + ')' + (r.mine ? ' · yours</b>' : ''); }).join(' · ')
+        + '</div>';
+    }
     h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic · click a name for their buffs</div>';
     var byGroup = {};
     var groupOrder = [];
@@ -6118,7 +6130,7 @@ function renderRaidTab(q) {
         var selected = _raidSelName === m.name;
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
-          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (_isRaidLeadRank(m.rank) ? '👑 ' : (_isGroupLeadRank(m.rank) ? '⭐ ' : '')) + esc(m.name)
           + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'

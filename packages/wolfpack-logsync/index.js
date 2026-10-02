@@ -14756,6 +14756,9 @@ function _serializeCommandCenterState() {
 
   return {
     character:     activeChar,
+    // Two or more raids at once (§124): which they are and which is yours. Absent with one raid.
+    raids:         (bqCached && bqCached.payload && Array.isArray(bqCached.payload.raids) && bqCached.payload.raids.length > 1)
+                     ? bqCached.payload.raids : undefined,
     target:        tank.target,
     mt:            tank.mt,
     rampage:       tank.rampage,
@@ -14806,8 +14809,12 @@ function _serializeCommandCenterState() {
           put(s.name, scls, s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
         }
       }
-      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback).
+      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback). That list is guild-wide, so
+      // with two raids at once it keeps to the priests in this Mimic's own raid window (§124).
+      const _ownRaidOnly = !!_raidSplitNow(nowMs) && _raidRosterMembers.size > 0 &&
+                           !!_lastRaidPipe && (nowMs - (_lastRaidPipe.at || 0)) < 60_000;
       for (const h of (_diStatusCache.healer_mana || [])) {
+        if (_ownRaidOnly && !_raidRosterMembers.has(String(h.name || '').toLowerCase())) continue;
         const age = h.updated_at ? Math.max(0, (nowMs - Date.parse(h.updated_at)) / 1000) : 0;
         put(h.name, h.class, h.mana_pct, age, true);
       }
@@ -22550,6 +22557,10 @@ var _CLASS_CHECKLIST = {
   beastlord: ['Attack', 'HP Regen'],
   magician:  ['Dmg Shield'],
 };
+// Zeal sends the rank as text ("Raid Leader" / "Group Leader"); this tab looked for '2' / '1' and
+// never showed a crown (2026-10-01). Both spellings count.
+function _isRaidLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '2' || /^raid\\s*leader$/i.test(r); }
+function _isGroupLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '1' || /^group\\s*leader$/i.test(r); }
 function renderRaidTab(q) {
   var root = document.getElementById('raid');
   if (!root) return;
@@ -22576,6 +22587,14 @@ function renderRaidTab(q) {
     h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
   } else {
     var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    // Two or more raids at once (the bot names them only then): this roster is your raid's; list
+    // every raid so the other one is visible too.
+    var raids = (q && Array.isArray(q.raids) && q.raids.length > 1) ? q.raids : null;
+    if (raids) {
+      h += '<div style="font-size:11px;margin:4px 0 0"><span style="color:var(--orange)">⚔ ' + raids.length + ' raids at once:</span> '
+        + raids.map(function(r){ return (r.mine ? '<b>' : '') + '👑 ' + esc(r.leader) + ' (' + esc(r.size) + ')' + (r.mine ? ' · yours</b>' : ''); }).join(' · ')
+        + '</div>';
+    }
     h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic · click a name for their buffs</div>';
     var byGroup = {};
     var groupOrder = [];
@@ -22596,7 +22615,7 @@ function renderRaidTab(q) {
         var selected = _raidSelName === m.name;
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
-          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (_isRaidLeadRank(m.rank) ? '👑 ' : (_isGroupLeadRank(m.rank) ? '⭐ ' : '')) + esc(m.name)
           + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'
@@ -26861,6 +26880,9 @@ const COMMAND_HTML = `<!doctype html>
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* Two or more raids at once: which one this board is for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -27074,6 +27096,14 @@ const COMMAND_HTML = `<!doctype html>
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
+  // Two or more raids at once (the bot names them only then): the cures and the healer mana
+  // below are this raid's, and this line says which raid that is.
+  function raidsNoteHtml(raids){
+    var mine = null;
+    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
+    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
+         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -27084,6 +27114,7 @@ const COMMAND_HTML = `<!doctype html>
     whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
 
     var html = '';
+    if (s.raids && s.raids.length > 1) html += raidsNoteHtml(s.raids);
 
     // Target HP + boss enrage warning (same data the Tank overlay shows).
     if (s.target && s.target.name) {
@@ -38482,6 +38513,17 @@ function fetchTargetBuffs(name, selfChar, targetId) {
 // local view never waits on the round trip.
 let _diStatusCache = { at: 0, clerics: [], healer_mana: [] };
 let _diStatusInflight = false;
+// Two or more raids at once (the guild lead, 2026-10-01; bot 3.1.184, DECISIONS §124): the bot names
+// them on the buff-queue and Extended Target payloads ({ key, leader, size, mine }), and only then.
+// Kept here so the Command Center can stay with this raid's healers; a payload without them clears it.
+let _raidSplitSeen = { at: 0, raids: null };
+function _noteRaidSplit(j) {
+  if (!j || typeof j !== 'object' || j.error) return;
+  _raidSplitSeen = { at: Date.now(), raids: (Array.isArray(j.raids) && j.raids.length > 1) ? j.raids : null };
+}
+function _raidSplitNow(nowMs) {
+  return (_raidSplitSeen.raids && (nowMs - _raidSplitSeen.at) < 60_000) ? _raidSplitSeen.raids : null;
+}
 const DI_STATUS_TTL_MS = 4000;
 function fetchDiStatus() {
   const opts = _uploadOpts;
@@ -38671,7 +38713,7 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _buffQueueInflight.delete(key);
-        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); }
+        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); _noteRaidSplit(j); }
         catch { _buffQueueCache.set(key, { at: Date.now(), payload: { buff_queue: [], debuff_queue: [] } }); }
       });
     });
@@ -38756,7 +38798,7 @@ function fetchExtendedTarget(character) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _extTargetInflight.delete(key);
-        try { const j = JSON.parse(body); _extTargetCache.set(key, { at: Date.now(), payload: j }); }
+        try { const j = JSON.parse(body); _extTargetCache.set(key, { at: Date.now(), payload: j }); _noteRaidSplit(j); }
         catch { _extTargetCache.set(key, { at: Date.now(), payload: { targets: [] } }); }
       });
     });
