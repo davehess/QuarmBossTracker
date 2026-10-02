@@ -33300,8 +33300,42 @@ const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
 // Aldenmar with his favor for spilling Brackwyn's blood in Ruins of Sebilis. Aldenmar now bears 1 of 10
 // measures of Rallosian Glory."). The zone ends at the sentence break before "<name> now bears".
 const PVP_GLORY_WORTHY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek marks (\w+) with his favor for spilling (\w+)'s blood in (.+?)\.\s+(\w+ now bears .+?)\s*$/;
+// Every other way the PoP patch announces a death or a Glory change, from the 168 unread lines the guild
+// lead sent on 2026-10-02 (DECISIONS §132). Real wording, invented names:
+//   "Rallos Zek exults as Aldenmar cuts down Brackwyn in Ruins of Sebilis and claims 1 measure of
+//    hard-won Glory. Aldenmar now bears 1 of 10."                                   → a worthy kill
+//   "Rallos Zek looks on as Brackwyn falls to froglok bok knight in Ruins of Sebilis, but grants no Glory."
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls to a small mushroom in The Fungus Grove."
+//                                                                                    → killed by an NPC
+//   "Rallos Zek looks down in disgust as Brackwyn falls in Kedge Keep without a worthy foe."
+//                                                                                    → dead, no killer named
+//   "Rallos Zek looks down in disgust as Brackwyn flees the battlefield like a cowardly dog, surrendering
+//    1 measure of Rallosian Glory."   (also "abandons the battlefield")             → a forfeit, not a death
+// The disgust wording puts the guild after the name when there is one ("Brackwyn <Zek>"). A guild the line
+// carries is sent; a missing one stays null for the bot to fill from /who, as before.
+const PVP_GLORY_EXULTS_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? cuts down (\w+)(?:\s+<([^>]*)>)? in (.+?) and (claims .+?)\s*$/;
+const PVP_GLORY_FALLS_TO_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek (?:looks on|looks down in disgust) as (\w+)(?:\s+<([^>]*)>)? falls to (.+?)\s*$/;
+const PVP_GLORY_NO_FOE_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?) (without a worthy foe.*?)[.!]?\s*$/;
+const PVP_GLORY_FORFEIT_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield(.*?),\s+(surrendering\b.*?)[.!]?\s*$/;
+// "<NPC> in <zone>[, <clause>][. <more>]" → the NPC, the zone and the text after it. No zone name has a
+// period or " in " in it (eqemu_zone, checked 2026-10-02) but one NPC does ("a lady in waiting"), so the
+// zone starts after the LAST " in ", once the clause is off.
+function _gloryNpcZone(s) {
+  let place = String(s || '').trim(), tail = '';
+  const sent = /^(.+?)\.\s+(\S.*)$/.exec(place);
+  if (sent) { place = sent[1]; tail = sent[2]; }
+  place = place.replace(/[.!]\s*$/, '');
+  const clause = PVP_GLORY_CLAUSE_RX.exec(place);
+  if (clause) { place = clause[1]; tail = clause[2] + (tail ? '. ' + tail : ''); }
+  const at = place.toLowerCase().lastIndexOf(' in ');
+  if (at <= 0) return null;
+  return { npc: place.slice(0, at).trim(), zone: place.slice(at + 4).trim(), tail: tail.trim() || null };
+}
+const _gloryGuild = (g) => (g == null ? null : String(g).trim());
 function parseGloryKill(line) {
   if (line.indexOf('Rallos Zek') === -1) return null;   // cheap gate
+  const tsIso = () => { const t = parseEqTimestamp(line); return t ? t.toISOString() : new Date().toISOString(); };
+  const text = () => line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim();
   const w = PVP_GLORY_WORTHY_RX.exec(line);
   if (w) {
     const ts = parseEqTimestamp(line);
@@ -33315,6 +33349,38 @@ function parseGloryKill(line) {
       zone: w[4].trim(),
       glory: true,
       gloryText: w[5].trim(),
+    };
+  }
+  const ex = PVP_GLORY_EXULTS_RX.exec(line);
+  if (ex) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: ex[2], killerGuild: _gloryGuild(ex[3]),
+    victim: ex[4], victimGuild: _gloryGuild(ex[5]),
+    zone: ex[6].trim(), glory: true, gloryText: ex[7].trim(),
+  };
+  const ft = PVP_GLORY_FALLS_TO_RX.exec(line);
+  const nz = ft && _gloryNpcZone(ft[4]);
+  if (nz) return {
+    ts: tsIso(), text: text(), killType: 'npc', source: 'rallos_glory',
+    killer: nz.npc, killerGuild: null,
+    victim: ft[2], victimGuild: _gloryGuild(ft[3]),
+    zone: nz.zone, glory: false, gloryText: nz.tail,
+  };
+  const nf = PVP_GLORY_NO_FOE_RX.exec(line);
+  if (nf) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: nf[2], victimGuild: _gloryGuild(nf[3]),
+    zone: nf[4].trim(), glory: false, gloryText: nf[5].trim(),
+  };
+  const ff = PVP_GLORY_FORFEIT_RX.exec(line);
+  if (ff) {
+    const where = /\bin\s+(.+)$/.exec(ff[4]);
+    return {
+      ts: tsIso(), text: text(), killType: 'forfeit', source: 'rallos_glory',
+      killer: null, killerGuild: null,
+      victim: ff[2], victimGuild: _gloryGuild(ff[3]),
+      zone: where ? where[1].trim() : null, glory: false, gloryText: ff[5].trim(),
     };
   }
   const m = PVP_GLORY_RX.exec(line);
