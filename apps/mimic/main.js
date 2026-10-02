@@ -3921,9 +3921,26 @@ function _validScale(v) {
 function overlayScale() {
   return _validScale(loadConfig().overlayScale) ?? 1.0;
 }
+// The key an overlay's OWN setup bar (size slider, opacity in Setup THIS)
+// writes under: the _overlayEntries() name, the one every reader uses. It used
+// to be derived from the bounds key ('mobInfo', 'extTarget', 'chChain',
+// 'popRaid', 'panelBounds_<x>'), so those overlays saved a scale nothing read
+// back: closed and reopened, the window came back at its saved larger size
+// but normal scale (FB-48). The dock and the Canvas stay out, as before.
+function _ownOverlayKey(win) {
+  const hit = _overlayEntries().find(([, w]) => w === win);
+  return hit && hit[0] !== 'dock' && hit[0] !== 'canvas' ? hit[0] : null;
+}
+// Where FB-48's scales were saved, so a size a member already chose still applies.
+const _LEGACY_SCALE_KEYS = { mobinfo: 'mobInfo', chchain: 'chChain', exttarget: 'extTarget', popraid: 'popRaid' };
+function _legacyScaleKey(key) {
+  return String(key).startsWith('panel:') ? 'panelBounds_' + String(key).slice(6) : (_LEGACY_SCALE_KEYS[key] || null);
+}
 function overlayScaleFor(key) {
   const cfg = loadConfig();
-  const own = _validScale((cfg.overlayScaleByKey || {})[key]);
+  const byKey = cfg.overlayScaleByKey || {};
+  let own = _validScale(byKey[key]);
+  if (own == null && _legacyScaleKey(key)) own = _validScale(byKey[_legacyScaleKey(key)]);
   if (own != null) return own;
   // The dock sits out of the global scale unless opted in (the guild lead
   // 2026-08-19: "don't change the [dock] with the scale by default") — it's
@@ -4512,13 +4529,22 @@ function createTriggerOverlay() {
   });
 }
 
-function openSettings() {
-  if (settingsWindow) { settingsWindow.focus(); return; }
+// `section` opens Settings scrolled to that part ('zeal' — FB-46: a Zeal update
+// notice should go "directly to the area that has the ability to update zeal").
+// A tray item calls this with its menu item as the first argument, so only a
+// plain word counts.
+function openSettings(section) {
+  const sec = (typeof section === 'string' && /^[a-z]{1,20}$/.test(section)) ? section : null;
+  if (settingsWindow) {
+    settingsWindow.focus();
+    if (sec) { try { settingsWindow.webContents.send('settings-goto', sec); } catch {} }
+    return;
+  }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
     webPreferences: _wpPrefs('Settings'),
   });
-  settingsWindow.loadFile('settings.html');
+  settingsWindow.loadFile('settings.html', sec ? { hash: sec } : undefined);
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
@@ -9865,7 +9891,7 @@ ipcMain.handle('capture-screens', async (e) => {
   }
 });
 // Gear icon on the dashboard opens the Settings window.
-ipcMain.handle('open-settings', () => { openSettings(); return true; });
+ipcMain.handle('open-settings', (_e, section) => { openSettings(section); return true; });
 // Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
 ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
@@ -9906,7 +9932,7 @@ function _exitSingleSetup(win) {
     _singleSetupWins.delete(win.webContents.id);
     const cfg = loadConfig();
     const locked = cfg.overlaysLocked !== false;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
     try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
     try { win.setResizable(!locked); } catch {}
     try {
@@ -9932,7 +9958,8 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return false;
     // Done — exit single-overlay setup mode for THIS window. Restore the
     // persisted lock state instead of forcing unlocked, so the Done button
     // actually puts things back the way the user had them. Without this,
@@ -9998,12 +10025,15 @@ ipcMain.handle('set-overlay-scale-this', (e, value) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return null;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return null;
     const cfg = loadConfig();
     cfg.overlayScaleByKey = cfg.overlayScaleByKey || {};
     const s = _validScale(value);
     if (s == null) delete cfg.overlayScaleByKey[key];
     else cfg.overlayScaleByKey[key] = s;
+    // The old name goes once the new one is written (FB-48).
+    if (_legacyScaleKey(key)) delete cfg.overlayScaleByKey[_legacyScaleKey(key)];
     saveConfig(cfg);
     applyOverlayScale(win, key);
     return overlayScaleFor(key);
@@ -10013,10 +10043,12 @@ ipcMain.handle('get-overlay-scale-this', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return null;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return null;
+    const byKey = loadConfig().overlayScaleByKey || {};
     return {
       global: overlayScale(),
-      own: _validScale((loadConfig().overlayScaleByKey || {})[key]),
+      own: _validScale(byKey[key]) ?? (_legacyScaleKey(key) ? _validScale(byKey[_legacyScaleKey(key)]) : null),
       effective: overlayScaleFor(key),
     };
   } catch { return null; }
@@ -10637,6 +10669,9 @@ function _pushZealUpdateToAgent(tag, installed) {
   } catch { /* agent not up yet — the next 12h check (or a manual one) re-pushes */ }
 }
 let _zealNotifiedTag = null;
+// Held so the notice is not garbage-collected before it is clicked — a dropped
+// Notification loses its click handler (FB-46).
+let _zealNotice = null;
 async function checkZealUpdate({ manual = false } = {}) {
   try {
     const cfg = loadConfig();
@@ -10663,7 +10698,9 @@ async function checkZealUpdate({ manual = false } = {}) {
           : `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
         silent: true,
       });
-      n.on('click', () => { try { openSettings(); } catch {} });
+      // Straight to the Zeal part of Settings, where Install is (FB-46).
+      n.on('click', () => { try { openSettings('zeal'); } catch {} });
+      _zealNotice = n;
       n.show();
     }
   } catch (e) { appendAgentLog(`[zeal-update] background check failed: ${e && e.message}\n`); }

@@ -16,7 +16,7 @@ const page = readSource(path.join(ROOT, 'apps', 'mimic', 'mobinfo.html'));
 const src = stripJs(page);
 
 describe('Target Info marks the parts a Canvas piece can show', () => {
-  it.each(['name', 'stats', 'slots', 'casting', 'fqv', 'spells', 'lastfight'])('%s', (id) => {
+  it.each(['name', 'stats', 'slots', 'casting', 'fqv', 'spells', 'lastfight', 'timers'])('%s', (id) => {
     expect(src).toContain(`data-wp-sect="${id}"`);
   });
   it('the three buff lists each get their own mark', () => {

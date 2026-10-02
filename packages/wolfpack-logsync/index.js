@@ -13599,6 +13599,8 @@ function _meNotePipeCooldowns(cl, st) {
     const w = String(e.text || '').trim().toLowerCase().replace(/^cd\s+/, '');
     if (_ME_PIPE_WORDS[w]) _meStartSkill(cl, _ME_PIPE_WORDS[w], e.at);
     else if (_ME_ABILITIES[w]) _meNoteAbility(cl, w, e.at);
+    else if (_ME_AA_PIPE[w]) _meNoteAaPress(cl, _ME_AA_PIPE[w], e.at);
+    else if (w.startsWith('aa ') && w.length > 3) _meNoteAaPress(cl, w.slice(3).trim().replace(/\b\w/g, ch => ch.toUpperCase()), e.at);
   }
   _mePipeSeen.set(cl, newest);
 }
@@ -13725,6 +13727,182 @@ function _meDisc(cl, now) {
   return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
 }
 
+// ── A targeted player's known timers, on Target Info (the guild lead, 2026-10-02:
+// "When we have a known timer, for someone's disciplines or mend or area taunt,
+// we should display those on target info. When we're targeting them") ──────────
+// Three sources: your own characters (the timers above), another raider's Mimic
+// (their own timers ride their live-state upload, _liveCooldownsFor), and a
+// discipline you SAW another player start (_ME_DISC_OTHER). Mend, Lay on Hands,
+// Harm Touch and AAs print nothing a bystander can see, so for those only the
+// player's own Mimic knows.
+//
+// AAs: the server tells you nothing when one fires (zone/aa.cpp ActivateAA
+// starts the timer silently; Area Taunt makes the mobs say nothing either), and
+// prints the time left only when you press one that is not ready:
+//   "You can use the ability %s again in %u hour(s) %u minute(s) %u seconds."
+//   "You can use the ability %s again in %u minute(s) %u seconds."
+// That line is exact. The press itself can come from a `/pipe` line on the AA's
+// hotkey (`/pipe at`, `/pipe area taunt`, or `/pipe aa <name>`), as Feign Death
+// does; its reuse is not in our data (aa_actions is not mirrored), so it is
+// LEARNED: the first refusal after a press gives press-to-ready, and later
+// presses count down from that.
+const _ME_AA_REFUSAL_RX = /^You can use the ability (.+?) again in (?:(\d+) hour\(s\) )?(\d+) minute\(s\) (\d+) seconds\.$/;
+const _ME_AA_PIPE = { 'at': 'Area Taunt', 'area taunt': 'Area Taunt' };
+const _meAaTimers = new Map();   // charLower → Map(aaKey → { name, ready, total_ms, press, learned })
+function _meAaKey(name) { return 'aa:' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 29); }
+function _meAaSlot(cl, name) {
+  let mp = _meAaTimers.get(cl);
+  if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
+  const k = _meAaKey(name);
+  let e = mp.get(k);
+  if (!e) { e = { name, ready: 0, total_ms: null, press: 0, learned: null, est: false }; mp.set(k, e); }
+  return e;
+}
+function _meNoteAaRefusal(cl, msg, atMs) {
+  const m = _ME_AA_REFUSAL_RX.exec(msg);
+  if (!m) return false;
+  const left = ((m[2] ? parseInt(m[2], 10) : 0) * 3600 + parseInt(m[3], 10) * 60 + parseInt(m[4], 10)) * 1000;
+  const e = _meAaSlot(cl, m[1]);
+  e.name = m[1];   // the server's spelling over a /pipe line's
+  e.ready = atMs + left;
+  e.est = false;
+  // A press inside the last 4 hours that this refusal falls after: its reuse.
+  if (e.press && e.press < atMs && atMs - e.press < 4 * 3600_000) {
+    e.learned = Math.round((e.ready - e.press) / 1000) * 1000;
+    e.total_ms = e.learned;
+  }
+  _meTimersSave();
+  return true;
+}
+function _meNoteAaPress(cl, name, atMs) {
+  const e = _meAaSlot(cl, name);
+  // A press while the timer still runs is not a use (the refusal line says so).
+  if (e.ready > atMs + 2000) return;
+  e.press = atMs;
+  if (e.learned) { e.ready = atMs + e.learned; e.total_ms = e.learned; e.est = true; }
+  _meTimersSave();
+}
+
+// Another player's discipline, from the text everyone near them sees — the disc
+// spell's cast_on_other (eqemu_spells 4498-4520, 4585-4587, 4670-4678; every one
+// unique in the catalog). Keyed to the self text in _ME_DISCS for the name,
+// reuse and unlock levels. The reuse is ESTIMATED from their /who level, or the
+// disc's longest when the level is unknown.
+const _ME_DISC_OTHER = new Map([
+  ['assumes an aggressive fighting style', 'You assume an aggressive fighting style.'],
+  ["'s assumes a precise fighting style", 'You assume a precise fighting style.'],
+  ['assumes a defensive fighting style', 'You assume a defensive fighting style.'],
+  ['assumes an evasive fighting style', 'You assume an evasive fighting style.'],
+  ["'s fist clenches with fatal fervor", 'Your hands clench with fatal fervor.'],
+  ["'s body is consumed in rage", 'A consuming rage takes over your weapons.'],
+  ["'s face becomes twisted with fury", 'Your instincts take over as you turn aside every attack.'],
+  ["'s weapons move with uncanny grace", 'Your weapons move with uncanny grace.'],
+  ["'s feet become one with the earth", 'Your body becomes one with the earth.'],
+  ['is guarded by a protective spirit', 'A protective spirit guards you.'],
+  ["'s feet glow with mystic power", 'Your feet glow with mystic power.'],
+  ["'s body begins to move with instinctual grace", 'You instincts take over as you avoid every attack.'],
+  ['becomes untouchable', 'You become untouchable.'],
+  ["'s weapons strike true", 'Your weapons strike true.'],
+  ["'s muscles bulge with the force of will", 'Your muscles bulge with the force of will.'],
+  ["'s eyes gleam with energy", 'Your muscles quiver with power.'],
+  ['is consumed in a bestial fury', 'A bestial fury consumes you.'],
+  ["'s fists begin to blur", 'Your fists begin to blur.'],
+  ["'s hands speeds up", 'Your hands speeds up.'],
+  ["'s focus becomes perfect", 'Your focus becomes perfect.'],
+  ['feels unstoppable', 'You feel unstoppable.'],
+  ['feels like a killing machine', 'You feel like a killing machine.'],
+  ['bounces about nimbly', 'You bounce about nimbly.'],
+  ["'s body is filled with silent fury", 'Your body is filled with silent fury.'],
+  ["'s arms feel alive with mystic energy", 'Your arms feel alive with mystic energy.'],
+  ["'s weapon is bathed in a holy light", 'Your weapon is bathed in a holy light.'],
+  ['is surrounded in an aura of sanctification', 'Your body is surrounded in an aura of sanctification.'],
+  ["'s bow crackles with natural energy", 'Your bow crackles with natural energy.'],
+  ["'s weapons begin to spin", 'Your weapons begin to spin.'],
+  ['is enveloped in an unholy aura', 'An unholy aura envelopes your body.'],
+  ["'s skin glows with dark energy", 'Your skin glows with dark energy.'],
+  ['dances about nimbly', 'You dance about nimbly.'],
+  ["'s voice becomes perfectly melodious", 'Your voice becomes perfectly melodious.'],
+  ['has become more resistant', 'You channel your will into magical resistance.'],
+  ["'s eyes gleam with iron will", 'Your will drives fear from your mind.'],
+]);
+const _meObsDiscs = new Map();   // nameLower → { name (disc), who, at, total_ms }
+// Returns true when the line was another player's discipline.
+function _meNoteOtherDisc(msg, cl, atMs) {
+  const sp = msg.indexOf(' ');
+  if (sp < 3) return false;
+  const apos = msg.indexOf("'s ");
+  const cut = (apos > 0 && apos < sp) ? apos : sp;
+  const who = msg.slice(0, cut);
+  if (!/^[A-Z][a-z]{2,14}$/.test(who) || who.toLowerCase() === cl) return false;
+  const rest = msg.slice(cut === apos ? cut : cut + 1).replace(/\.$/, '');
+  const selfText = _ME_DISC_OTHER.get(rest);
+  if (!selfText) return false;
+  const def = _ME_DISCS.get(selfText);
+  if (!def) return false;
+  const wl = who.toLowerCase();
+  const w = whoData.get(wl);
+  const cls = normalizeClass((w && w.class) || _raidClassByName.get(wl) || '') || null;
+  const unlock = (cls && def[2][cls]) || Math.min(...Object.values(def[2]));
+  // No level: the reuse AT the unlock level, the longest it can be.
+  const level = w && Number(w.level) > 0 ? Number(w.level) : null;
+  _meObsDiscs.set(wl, { name: def[0], who, at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000, level_known: level != null });
+  if (_meObsDiscs.size > 200) _meObsDiscs.delete(_meObsDiscs.keys().next().value);
+  return true;
+}
+
+// This character's own known timers in the shape another raider's Target Info
+// reads (uploaded with live-state; the bot keeps them as character_live_state
+// .cooldowns). Absolute ready times, so the reader counts down on its own and a
+// re-send is needed only when a timer starts. Only timers a minute or longer:
+// Taunt, Kick and Feign Death come back before anyone could act on them.
+const _LIVE_CD_KEEP_MS = 12 * 3600_000;
+function _liveCooldownsFor(cl, now) {
+  _meTimersLoad();
+  const out = [];
+  const add = (key, label, readyAt, totalMs, est) => {
+    if (!Number.isFinite(readyAt) || readyAt < now - _LIVE_CD_KEEP_MS) return;
+    out.push({ key, label, ready_at: new Date(readyAt).toISOString(), total_ms: Number.isFinite(totalMs) ? totalMs : null, est: !!est });
+  };
+  const act = _meDiscs.get(cl) || null;
+  const ref = _discReadyAt.get(cl) || null;
+  if (ref && ref.at > now) add('disc', act ? act.name : 'Discipline', ref.at, act ? Math.max(act.total_ms, ref.at - act.at) : null, false);
+  else if (act) add('disc', act.name, act.at + act.total_ms, act.total_ms, true);
+  for (const [k, c] of _meSkillCds.get(cl) || []) {
+    if (c.secs < 60) continue;
+    add(k, c.label, c.at + c.secs * 1000, c.secs * 1000, c.est);
+  }
+  for (const [k, e] of _meAaTimers.get(cl) || []) {
+    if (e.ready) add(k, e.name, e.ready, e.total_ms, e.est);
+  }
+  return out.slice(0, 12);
+}
+
+// What Target Info shows for a PLAYER target: their timers, best source first —
+// yours (one of your own characters), theirs (their Mimic's upload), then a
+// discipline you saw them start. Null for an NPC or when nothing is known.
+function _targetPlayerTimers(st, cached, now) {
+  const name = String(st.target_name || '').trim();
+  if (!name || /\s/.test(name) || name.startsWith('#') || (cached && cached.mob)) return null;
+  const k = name.toLowerCase();
+  const out = [];
+  let list = null, source = null;
+  if (_meZealFor(k)) { list = _liveCooldownsFor(k, now); source = 'own'; }
+  else {
+    const live = _mtLiveStateByName.get(k);
+    if (live && live.state && Array.isArray(live.state.cooldowns) && live.state.cooldowns.length) { list = live.state.cooldowns; source = 'mimic'; }
+  }
+  for (const c of list || []) {
+    const ready = Date.parse(c && c.ready_at);
+    if (!c || !c.key || !c.label || !Number.isFinite(ready)) continue;
+    out.push({ key: c.key, label: c.label, ms_left: Math.max(0, ready - now), total_ms: c.total_ms || null, est: !!c.est, source });
+  }
+  const seen = _meObsDiscs.get(k);
+  if (seen && !out.some(c => c.key === 'disc') && now - seen.at < _LIVE_CD_KEEP_MS) {
+    out.unshift({ key: 'disc', label: seen.name, ms_left: Math.max(0, seen.at + seen.total_ms - now), total_ms: seen.total_ms, est: true, source: 'seen', level_known: seen.level_known });
+  }
+  return out.length ? out : null;
+}
+
 // The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
 // pre-buffs it waits for that the bard strip does not carry, Puretone
 // Discipline (up now, or ready by the shared disc timer), and mana for the
@@ -13784,6 +13962,13 @@ function _meTimersLoad() {
         if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
         if (!mp.has(k)) mp.set(k, c);
       }
+      // AAs: the timer, and the reuse learned for one (kept while it is known).
+      for (const [k, a] of Object.entries(e.aa || {})) {
+        if (!a || !a.name || !(a.learned || a.ready > now - _ME_TIMER_KEEP_MS)) continue;
+        let mp = _meAaTimers.get(cl);
+        if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
+        if (!mp.has(k)) mp.set(k, a);
+      }
     }
   } catch { /* first run, or not writable — nothing to restore */ }
 }
@@ -13799,6 +13984,9 @@ function _meTimersSave() {
       for (const [cl, r] of _discReadyAt) if (r.at > now) slot(cl).refusal = r;
       for (const [cl, mp] of _meSkillCds) {
         for (const [k, c] of mp) if (c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS) (slot(cl).skills = slot(cl).skills || {})[k] = c;
+      }
+      for (const [cl, mp] of _meAaTimers) {
+        for (const [k, a] of mp) if (a.learned || a.ready > now - _ME_TIMER_KEEP_MS) (slot(cl).aa = slot(cl).aa || {})[k] = a;
       }
       fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
     } catch { /* best effort */ }
@@ -13901,6 +14089,12 @@ function _meNoteRawLine(line, character) {
   if (msg.startsWith('You')) {
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
+    // An AA pressed before it was ready: the exact time left (_meNoteAaRefusal).
+    if (msg.startsWith('You can use the ability ')) {
+      const ts = parseEqTimestamp(line);
+      _meNoteAaRefusal(cl, msg, ts ? ts.getTime() : now);
+      return;
+    }
     // What you are casting, so its damage is not taken for a proc (_meNoteHit).
     if (msg.startsWith('You begin casting ')) {
       const d = parseEqTimestamp(line);
@@ -13918,6 +14112,8 @@ function _meNoteRawLine(line, character) {
   }
   const disc = _ME_DISCS.get(msg);
   if (disc) { _meNoteDisc(cl, disc, now); return; }
+  // Someone else's discipline — for Target Info when you target them.
+  if (_meNoteOtherDisc(msg, cl, now)) return;
   // Lay on Hands / Harm Touch are instant (cast_time 0) and may print no
   // "begin casting" line; the landing text does print, but a bystander sees the
   // same text. Credit it to you only when you are the class that has it and it
@@ -17065,6 +17261,9 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// The words typed so far, so a rebuilt card gets them back (FB-47: "This send
+// feedback section refreshes and we lose what we were ready to submit").
+var _wpFbDraft = '';
 // Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
 // than one monitor, the captured screens still waiting to be picked.
 var _wpFbShots = [];
@@ -17199,8 +17398,10 @@ async function _wpFbPreviewNow() {
 function _wpFbWire() {
   var root = document.getElementById('wpFeedback');
   if (!root) return;
-  _wpFbSetKind('bug');
+  // A rebuilt card comes back as it was: kind, words and pictures (FB-47).
+  _wpFbSetKind(_wpFbKind);
   _wpFbSetMin(_wpFbMin);
+  _wpFbRenderShots();
   var snapBtn = document.getElementById('wpFbSnap');
   if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
   var fileIn = document.getElementById('wpFbFile');
@@ -17211,6 +17412,10 @@ function _wpFbWire() {
     await _wpFbAddShots(urls);
   });
   var fbText = document.getElementById('wpFbText');
+  if (fbText) {
+    fbText.value = _wpFbDraft;
+    fbText.addEventListener('input', function () { _wpFbDraft = fbText.value; });
+  }
   if (fbText) fbText.addEventListener('paste', async function (e) {
     var files = [];
     var items = (e.clipboardData && e.clipboardData.files) || [];
@@ -17278,6 +17483,7 @@ async function _wpFbSend() {
     var j = await r.json();
     if (j && j.ok) {
       if (ta) ta.value = '';
+      _wpFbDraft = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
       _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
@@ -17990,22 +18196,10 @@ function renderDash(s) {
   // actionable info. The Triggers tab has the real config + recent fires.)
 
   h += '<div class="grid">';
-  // Recent parses — hide placeholder rows from older uploads (boss "?" with
-  // zero events / zero damage). The recordUploadForDashboard write path also
-  // skips creating these going forward, but in-memory stale ones live until a
-  // session reset; filtering here makes them disappear immediately.
-  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
-  h += '<div class="card"><h2>Recent Parses</h2>';
-  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
-  else {
-    h += '<table>';
-    for (const p of _validParses.slice(0, 5)) {
-      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
-           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Recent parses — isolated (a new kill adds a row). renderRecentParsesCard.
+  // It sat inline here, so every kill rewrote all of #dash and with it the
+  // feedback card's half-typed report (FB-47).
+  h += '<div id="wpRecentParses" class="card"></div>';
   // Session damage — isolated (live numbers change every poll). renderDamageDoneCard.
   h += '<div id="wpDamageDone" class="card" style="display:none"></div>';
 
@@ -18026,8 +18220,7 @@ function renderDash(s) {
   // Top Damage — isolated (live during combat; owns its dismiss-button wiring). renderTopDamageCard.
   h += '<div id="wpTopDamage" class="card wide" style="display:none"></div>';
   h += '</div>';  // grid
-  // #dash now contains only STATIC content (Recent Parses + the trigger chip)
-  // plus the wp* placeholders, so its HTML is byte-identical between polls and
+  // #dash now contains only the wp* placeholders, so its HTML is byte-identical between polls and
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
@@ -18630,6 +18823,26 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+}
+// Recent parses — hide placeholder rows from older uploads (boss "?" with
+// zero events / zero damage). The recordUploadForDashboard write path also
+// skips creating these going forward, but in-memory stale ones live until a
+// session reset; filtering here makes them disappear immediately.
+function renderRecentParsesCard(s) {
+  const el = document.getElementById('wpRecentParses');
+  if (!el) return;
+  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
+  let h = '<h2>Recent Parses</h2>';
+  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
+  else {
+    h += '<table>';
+    for (const p of _validParses.slice(0, 5)) {
+      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
+           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -23288,7 +23501,8 @@ async function refresh() {
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
                      ['setupchecks', renderSetupChecks],
-                     ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
+                     ['triggeralerts', renderTriggerAlertsCard], ['recentparses', renderRecentParsesCard],
+                     ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
@@ -23860,11 +24074,22 @@ function wpRenderMailPanel(){
        + (crit ? "<span style='color:var(--red,#f87171);font-weight:700'>CRITICAL · </span>" : "")
        + "<span style='font-weight:700'>" + wpEscN(n.title) + "</span>"
        + "<div style='margin-top:3px;white-space:pre-wrap'>" + wpEscN(n.body) + "</div>"
+       // A Zeal update goes straight to where Install is (FB-46). Mimic only:
+       // Zeal installs from Mimic's Settings, not from a browser.
+       + (n.action === "zeal" && window.mimic && window.mimic.openSettings
+           ? "<button type='button' class='wp-notice-zeal' style='margin-top:6px'>⚙ Open Settings → Zeal</button>" : "")
        + "<div style='color:var(--dim);font-size:11px;margin-top:3px'>" + wpEscN((n.created_at || "").slice(0, 10)) + "</div>"
        + "</div>";
   }
   panel.innerHTML = h;
 }
+(function(){
+  var panel = document.getElementById("wpMailPanel");
+  if (panel) panel.addEventListener("click", function(e){
+    var b = e.target && e.target.closest ? e.target.closest(".wp-notice-zeal") : null;
+    if (b && window.mimic && window.mimic.openSettings) { try { window.mimic.openSettings("zeal"); } catch (err) { void err; } }
+  });
+})();
 function wpPollNotices(){
   fetch("/api/notices").then(function(r){ return r.json(); }).then(function(j){
     _wpNotices = (j && Array.isArray(j.notices)) ? j.notices : [];
@@ -28099,6 +28324,8 @@ function startWebDashboard(port) {
                 + 'an out-of-date Zeal quietly degrades all of them.',
             severity: 'normal',
             created_at: _zealUpdate.at || new Date().toISOString(),
+            // The dashboard gives this notice a button to Settings → Zeal (FB-46).
+            action: 'zeal',
           });
         }
         return res.end(JSON.stringify({ notices: out }));
@@ -39526,6 +39753,10 @@ function buildMobInfo() {
     // A Shadow Knight mob's Harm Touch: ready, or used with the time until it is
     // back. Null for anything else (_npcHtFor).
     target_npc_ht:  _npcHtFor(selfChar, st, cached, _curIdForRelay),
+    // A player's known timers — discipline, Mend, Lay on Hands / Harm Touch,
+    // AAs — from your own character, their Mimic, or a disc you saw them start.
+    // Null for NPCs and when nothing is known (_targetPlayerTimers).
+    target_timers:  _targetPlayerTimers(st, cached, Date.now()),
   };
 }
 
@@ -40299,6 +40530,13 @@ function flushLiveStateToBot(opts) {
         const di = _diStateByChar.get(String(ch).toLowerCase());
         return di ? new Date(di.readyAt).toISOString() : null;
       })(),
+      // This character's own known timers (discipline, Mend, Lay on Hands /
+      // Harm Touch, AAs) — another raider's Target Info shows them while
+      // targeting this character (_liveCooldownsFor, _targetPlayerTimers).
+      cooldowns: (() => {
+        const l = _liveCooldownsFor(String(ch).toLowerCase(), now);
+        return l.length ? l : null;
+      })(),
       // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
       // cur/max (labels 124/125) so it's exact when the pipe supplies them.
       self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
@@ -40453,6 +40691,9 @@ function flushLiveStateToBot(opts) {
     // iteration order must not decide whether we consider it changed.
     const tankKeys = (rec.observed_tanks || [])
       .map(o => `${o.mob}|${String(o.tank).toLowerCase()}`).sort();
+    // A timer STARTING (a disc, a Mend) is an event; the ready times are
+    // absolute, so they do not churn while it counts down.
+    const cdKeys = (rec.cooldowns || []).map(c => `${c.key}@${c.ready_at}`);
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -40467,6 +40708,7 @@ function flushLiveStateToBot(opts) {
       diUp,
       (rec.incoming_mob || '').toLowerCase(),
       tankKeys,
+      cdKeys,
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target

@@ -156,7 +156,7 @@
     <div id="uiStudioCharList" style="margin-top:8px"></div>
   </div>
 
-  <h2>Zeal</h2>
+  <h2 id="zeal">Zeal</h2>
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
 
   <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Official Zeal — CoastalRedwood's latest release</label></div>
@@ -707,7 +707,19 @@
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
+    // Opened for one part (a Zeal update notice opens #zeal — FB-46).
+    _gotoSection((location.hash || '').slice(1));
   }
+  // Scroll a part of Settings into view. Once more a moment later: the UI
+  // Studio list above Zeal fills in after load and pushes it down.
+  function _gotoSection(id) {
+    const el = id && /^[a-z]{1,20}$/.test(id) ? document.getElementById(id) : null;
+    if (!el) return;
+    el.scrollIntoView({ block: 'start' });
+    setTimeout(() => { try { el.scrollIntoView({ block: 'start' }); } catch {} }, 700);
+  }
+  // Already open: main sends the part to show instead of reloading.
+  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto(_gotoSection);
 
   // Overlay scale — label follows the drag; the scale applies on RELEASE
   // ('change'), and main glides every overlay's zoom + window bounds to the
