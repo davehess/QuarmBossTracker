@@ -306,13 +306,20 @@ describe('the dashboard\'s whole-list save keeps what an EQLogParser import carr
   async function post(triggers) {
     const res = { writeHead() {}, end(b) { this.body = b; return b; } };
     const run = new Function('req', 'res', '_readBody', '_compilePersonalTrigger', 'savePersonalTriggers',
-      'BUILTIN_TIMER_KINDS', 'PERSONAL_CARRY_FIELDS', 'ctx',
+      'BUILTIN_TIMER_KINDS', 'PERSONAL_CARRY_FIELDS', '_normCatalogMatch', 'ctx',
       'let _personalTriggers; return (async () => { ' + handler + ' })().then(() => { ctx.out = _personalTriggers; });');
     const ctx = {};
     await run({ url: '/api/personal-triggers', method: 'POST' }, res, async () => JSON.stringify({ triggers }),
-      (t) => ({ ...t }), () => true, new Set(['recharm_tick', 'lull', 'my_spells']), agent.PERSONAL_CARRY_FIELDS, ctx);
+      (t) => ({ ...t }), () => true, new Set(['recharm_tick', 'lull', 'my_spells']), agent.PERSONAL_CARRY_FIELDS,
+      agent._normCatalogMatch, ctx);
     return ctx.out;
   }
+  // 2026-10-02: a suggested trigger matched by the spell catalog has no pattern either.
+  it('a catalog-matched row (no pattern) is kept with its match', async () => {
+    const [row] = await post([{ id: 'suggested:self_mezzed', name: 'Mezzed', pattern: '',
+      catalog_match: { on: 'you', cc: ['mez', 'charm'] }, actions: [{ type: 'text_overlay', text: 'MEZZED!' }] }]);
+    expect(row && row.catalog_match).toEqual({ on: 'you', cc: ['mez', 'charm'] });
+  });
   it('warning, end text and bar colour survive a round trip', async () => {
     const [row] = await post([{ id: 'p1', name: 'Mez', pattern: 'x', timer_duration_sec: 60,
       warning_seconds: 10, warning_text: 'MEZ SOON', end_text: 'MEZ OFF', bar_color: '#1f6feb', pinned: true }]);
