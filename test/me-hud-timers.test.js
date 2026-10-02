@@ -43,6 +43,7 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
     const CHARM_SPELLS = new Map();
     const stats = { currentEncounterThreat: null, characterInventories: globalThis.__invs || {} };
     const _itemClickyByNameLower = globalThis.__clk || new Map();
+    function _quarmyLocalItems() { return globalThis.__quarmy || null; }
     const _blindState = {};
     function normalizeClass(s) { return s ? String(s).trim() : s; }
     ${failRx}
@@ -694,6 +695,25 @@ describe('clicky counters', () => {
 
   it('no export, no counters', () => {
     expect(load()._meClickies('Aldenmar')).toEqual([]);
+  });
+
+  // The guild lead, 2026-10-02: "quarmy has the charges per item".
+  it('reads the Quarmy export too, and the newer of the two exports wins', () => {
+    try {
+      setup(true);
+      globalThis.__quarmy = { at: fileAt + 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
+      const h = load();
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);        // before the Quarmy export: in its count
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 3_700_000);     // after it: spends one
+      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true }]);
+      // An older Quarmy export loses to the newer /output inventory.
+      globalThis.__quarmy = { at: fileAt - 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
+      expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ name: 'Ring of Shadows', left: 5 });
+      // Only a Quarmy export at all: it is used.
+      globalThis.__invs = null;
+      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Rod of Insidious Glamour', count: 1 }] };
+      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false }]);
+    } finally { globalThis.__quarmy = null; }
   });
 });
 

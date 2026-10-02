@@ -14436,10 +14436,16 @@ function _meClickies(character) {
   const cl = String(character || '').toLowerCase();
   const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
   const inv = key ? invs[key] : null;
-  if (!inv || !Array.isArray(inv.items)) return [];
-  const since = Date.parse(inv._updatedAt || '') || 0;
+  // Two exports carry the counts: /output inventory and the Quarmy export (the guild lead,
+  // 2026-10-02: "quarmy has the charges per item"). The newer one wins; glows count from it.
+  let items = inv && Array.isArray(inv.items) ? inv.items : null;
+  let since = inv ? (Date.parse(inv._updatedAt || '') || 0) : 0;
+  let q = null;
+  try { q = _quarmyLocalItems(character); } catch { q = null; }
+  if (q && Array.isArray(q.items) && (!items || q.at > since)) { items = q.items; since = q.at; }
+  if (!items) return [];
   const seen = new Map();
-  for (const it of inv.items) {
+  for (const it of items) {
     if (/^(?:Bank|SharedBank)/i.test(it.loc || '')) continue;   // not on you
     const lower = String(it.name).toLowerCase();
     const cat = _itemClickyByNameLower.get(lower);
@@ -31648,6 +31654,39 @@ function parseQuarmyExport(text) {
     }
   }
   return out;
+}
+
+// The HUD's clicky counters read a character's Quarmy export too (the guild lead, 2026-10-02:
+// "quarmy has the charges per item"): its Count column is a charged item's charges, like
+// /output inventory's. Local only — read here, never uploaded by this path; bank and coin rows are
+// already dropped by parseQuarmyExport. The directory is looked at every 30 s at most and the file
+// is parsed only when it changes.
+const _quarmyLocal = new Map();   // charLower → { checkedAt, fp, at, items }
+function _quarmyLocalItems(character) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  const now = Date.now();
+  const c = _quarmyLocal.get(cl);
+  if (c && now - c.checkedAt < 30_000) return c.items ? c : null;
+  const firstLog = stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+  const entry = { checkedAt: now, fp: c ? c.fp : null, at: c ? c.at : 0, items: c ? c.items : null };
+  _quarmyLocal.set(cl, entry);
+  if (!firstLog) return entry.items ? entry : null;
+  try {
+    const dir = path.dirname(firstLog);
+    const name = fs.readdirSync(dir).find(n => { const m = n.match(QUARMY_FILENAME_RX); return m && m[1].toLowerCase() === cl; });
+    if (!name) return entry.items ? entry : null;
+    const full = path.join(dir, name);
+    const st = fs.statSync(full);
+    const fp = _fileFingerprint(st);
+    if (fp !== entry.fp) {
+      const q = parseQuarmyExport(fs.readFileSync(full, 'utf8'));
+      entry.items = [...q.equipped, ...q.bags].map(i => ({ name: i.item_name, id: i.item_id, count: i.count, loc: i.slot }));
+      entry.fp = fp;
+      entry.at = st.mtimeMs;
+    }
+  } catch { /* unreadable — keep what we had */ }
+  return entry.items ? entry : null;
 }
 
 function _quarmyPrefsBlock(lowerName) {
