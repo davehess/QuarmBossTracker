@@ -3473,6 +3473,17 @@ function renderTriggers(s) {
   h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
+  // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
+  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
+  h += '<span>Ask whether a callout&rsquo;s timing was right &mdash; &laquo; Earlier / &#10003; Good! / &raquo; Too early under the alert</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
+  h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -9598,9 +9609,10 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
-  // #136 raid callout allow-list toggle — persist the on/off choice.
-  async function saveCalloutPref(body) {
-    var msg = document.getElementById('calloutMsg');
+  // #136 raid callout allow-list toggle — persist the on/off choice. The timing-votes
+  // switch shares the route and passes its own message line.
+  async function saveCalloutPref(body, msgId) {
+    var msg = document.getElementById(msgId || 'calloutMsg');
     try {
       await fetch('/api/callout-prefs', {
         method: 'POST',
@@ -9938,6 +9950,8 @@ async function dismissTopDamage(key) {
           saveLootPref({ lootAuctionDefaultSec: v });
         } else if (t.id === 'calloutAllow') {
           saveCalloutPref({ calloutAllowlist: !!t.checked });
+        } else if (t.id === 'timingVotes') {
+          saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
       });
       section._wpTrigChangeBound = true;
