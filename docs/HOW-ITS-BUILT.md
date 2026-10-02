@@ -2309,6 +2309,21 @@ exists), so five docked overlays cost one renderer instead of five.
   pane resolves the agent-served copy (#65) exactly as the window does.
 
 ### Overlays (one .html each)
+**2026-10-02 (agent 3.7.67 beta, bot 3.1.186/3.1.187, §127):** the DPS HUD is
+renamed **DPS/Tank Meter**. History keeps 30 fights (`FIGHT_HISTORY_MAX`) across a
+restart (`saveSessionState.fightHistory`), dedups peer flushes within 8 s, marks each
+`upload` local / sent (and `settled` = synced), and asks `/live-damage?fight_start=`
+for that fight's own snapshots. A fight also closes when your own Zeal target turns
+into its corpse or hits 0% (`_noteMobDeathFromState` →
+`EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
+HUD (`me.html`): enrage zone 10% (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`),
+cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
+under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
+from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:
+`_pollDkpAuctions` → `_applyDkpAuctions` (one `auction|<id>` timer each) + the
+Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assist`
+header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).
+
 DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
 machine's own observations, History is the guild's settled numbers for the last
 6 mobs with a ◀ ▶ pager. Agent 3.5.80 moved the guild-combined merge OFF the

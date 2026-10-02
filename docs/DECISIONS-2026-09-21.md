@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **HUD batch, auction timers, MA, XP events, fight split (one message, nine asks)** | **§127.** Bot 3.1.186 + 3.1.187, web 1.8.72 + 1.8.73 on `main`; agent 3.7.67 on beta `d0a54a4d`. Enrage at 10% with "Enrage soon", red gone once it ends; "DPS/Tank Meter"; DS thorns/lava; rampage + under-25% arcs; clicky counters; one timer per auction (late bids move it) + Command Center Auctions; MA on Extended Target; XP events uploading (`xp_events` live); back-to-back same-name fights split by your own target window; History 30 fights, local / sent / synced. Defaults picked for XP: kept 30 days, raid XP stored but kept apart | the guild lead: (1) on the beta, fight an enraging mob and check "Enrage soon" at 10% and the red clearing; (2) open an auction with a late bid and watch its timer move; (3) say yes or change the XP defaults (30 days; names stay to signed-in members); (4) `/output inventory` once so the clicky counters have items |
 | **A targeted player's timers on Target Info; FB-46/47/48** | **§126.** Bot 3.1.185 + web 1.8.71 on `main` (column applied); agent 3.7.66 on beta `a100da84`: disc, Mend, LoH/HT and AAs from the player's own Mimic, a disc you saw them start, ✓ or time left. AAs exact from the refusal line; `/pipe at` learns Area Taunt's reuse. Alpha `9e33af91`: the timers as a Canvas part, and the "slowed null%" / "0 / 0 HP" pieces fixed. FB-46 (Zeal notice → Settings at Zeal), FB-47 (feedback text kept), FB-48 (overlay size kept) on beta | the guild lead: (1) on the beta, with a second Mimic raider, Mend or fire a disc on one and target them from the other; (2) put `/pipe at` on the Area Taunt key, press it twice and check Target Info counts down; (3) say if this should also show on Extended Target rows |
 | **3.0: every overlay exactly on the Canvas, then taken apart** | **§125.** Audit: 3 of 378 overlay elements were exact as parts.js pieces. Alpha `a29075d9`: pieces cut from the overlay's own page (exact by construction), ✂ Take it apart, ✂ Overlay parts in the chooser; Target Info's 19 parts first (marks on beta `5eae2d53`) | the guild lead: (1) on the next alpha, put Target Info on the Canvas, ⚙ → ✂ Take it apart, pull out Loot; (2) say if this is the way (A) before the other 14 overlays get their maps; (3) watch Resource use with several pieces on |
 | **Two raids at once stay two raids** | **§124.** Bot 3.1.184 + web 1.8.70 on `main`: each Mimic's latest upload names its raid leader; buff queue and Extended Target keep to your raid; `/raid` one tab per raid by leader; crowns work (rank is text). Agent 3.7.65 on beta: "⚔ N raids at once" on Extended Target, Buff queue, Command Center, dashboard Raid tab | the guild lead: (1) at the next split raid, check `/raid` shows two tabs and the overlays say whose raid; (2) call it: should attendance ticks and the trigger relay split by raid too (§124 "not split yet") |
@@ -5897,3 +5898,72 @@ commit's `Fixes FB-45`, a numbering slip: that commit answered a different repor
 itself is answered by §117 (a resisted spell still applies its hate on the server, so the meter is right
 to drop). FB-43 (a "RIP" callout for an NPC killed by a pet) and FB-44 (more vertical bars, text on any
 side) are still open.
+
+### 127. HUD batch, auction timers, the main assist, XP events, back-to-back fights (2026-10-02, bot 3.1.186 + 3.1.187 · web 1.8.72 + 1.8.73 · agent 3.7.67 beta `d0a54a4d`)
+
+One message from the guild lead with a DPS meter screenshot, then two more mid-work. Each ask, quoted, and
+where it landed:
+
+- **"what area in planes of power have a lot of mobs that we could aoe farm? plane of innovation?"** —
+  answered from the spawn tables: yes, the Plane of Innovation's junkyard (many low-HP clockwork mobs close
+  together); the Plane of Disease's pusling rooms second. The higher PoP zones are packed too, but with
+  level 62–66 mobs of 25–38k HP, which is not AoE work.
+- **"Enrage timer and TTS should go off at 10%, not 8% … when it ends, it should no longer be red
+  underneath the name."** The HUD's red zone covers the last 10%; a spoken "Enrage soon" plays once per mob
+  as your target crosses 10% (only for a mob that can enrage — the mob-info flag or the boss list), re-armed
+  for a fresh mob of the same name. "no longer enraged" clears the red; the Tank overlay and Command Center
+  drop the box; a death clears it all. The Tank overlay's threshold moved to 10% too.
+- **"We need to rename DPS/Tank Meter."** Done everywhere the name shows (tray, Settings, setup screens,
+  dashboard, the window's process name, the site, /parsehelp).
+- **"the Thorns amount should show as wrapped in a thorny green area if it's druid DS or glowing lava if
+  mage ds."** The Thorns amount is the HUD's damage-shield button (the DPS/Tank Meter has no DS figure). It
+  is wrapped in a ring of green thorns for a druid/ranger shield and a glowing lava halo for a magician's,
+  read from the shield you wear (else the last shield hit); the shield's numbers take the same colour.
+  Static on purpose — a glow that pulses would pull the eye mid-fight. One design, not options: the ask
+  named the look.
+- **"when there's a rampage, it can be listed next to the main tank on the side as an arc … characters
+  that are approaching 20% or less HP on the left side of the top."** The rampage target is a thin arc to the
+  right of its target's arc; raiders at 25% or under ("approaching 20%") stack as arcs top left, lowest
+  first, three at most, from the Zeal raid window and your group's bars — never you, never the dead, never
+  the one already shown. Both are ⚙ parts ("Raid").
+- **"there should be clicky counters for each item you have."** The HUD lists your clickies from your last
+  `/output inventory` with charges left; each "Your X begins to glow" after the export spends one. ∞ for an
+  item that never runs out. The catalog's `maxcharges` (column added and applied; the weekly sync fills it,
+  and the bot now serves it) is what tells a 1-charge item from an unlimited one; until it lands, a 1 shows
+  with no number. Nothing about the inventory leaves the machine for this.
+- **"add in loot auction timers on the control center as well as in the timers window for each individual
+  one … as people bid when it's low time left, it does extend it further out."** The bot's auction panel had
+  never carried an end time (it read `EndTime`; OpenDKP calls it `EndTimestamp`) — fixed in 3.1.186. The
+  agent polls it (20 s, 10 s while one is open) and keeps one timer per auction whose end is re-read each
+  poll, marked "extended" once a bid moved it; the Command Center has an Auctions section. Deliberately
+  silent: four auctions closing together must not be four spoken warnings.
+- **"when someone is declared as main assist in raid chat, their target should be at the top of the extended
+  target list. And it is typically the person that has more targets than anyone's."** Bot 3.1.186 reads the
+  declaration (`utils/mainAssist.js`) and pins the MA's target first; the overlay marks the row "MA" and names
+  the MA in its header. With no MA declared, the most-targeted mob stays on top.
+- **"observe group composition and xp totals for groups that are together during the day …" · "Also track
+  when we have an XP potion on."** FB-37 option B: each experience line becomes one `xp_events` row (bars
+  before and after, level, zone, loc, group, the mob just killed, Maelin's Magical Concoction up or not).
+  `xp_events` had not reached production — the GitHub integration does not apply migration files pushed
+  straight to `main` (the history holds only MCP-applied versions) — so it was applied by hand, in five
+  steps (`xp_events`, two indexes, the read policy, the comment), because the MCP times out whenever
+  `drop policy if exists` or `enable row level security` share a call with other statements. The committed
+  file is the same DDL. The board that answers the question needs a week of rows first.
+- **"This fight was backtoback with the same name. Kept the damage History should be much longer and
+  specific if it's local or synced."** Cause, found by reading the code: a fight closes on the slain line,
+  which is range-limited, and nearby casts kept the 120 s idle from ever firing, so the second
+  "A brann geistlig" joined the first (479 s). Your own target window now closes the fight when its mob
+  dies — its name turning into its corpse, or its bar hitting 0 under the same name — 1.5 s later, so the
+  killing blow lands first. History: 30 fights (was 6), kept across a restart, one entry per pull (the dedup
+  window was 60 s, which also swallowed a real second pull), each marked **local** (never left this
+  machine), **sent** (uploaded, guild numbers pending) or **synced** (guild numbers in). The guild numbers
+  are now asked for by the fight's start (bot 3.1.187), not just the mob's name.
+
+**Defaults picked, for the guild lead to confirm (open table):** XP events kept 30 days (the bars and the
+mob, not a log); raid XP stored with its kind but kept out of the group-composition answer; the rows are
+readable by signed-in members only, like every guild table. Clicky counters show no number until the
+weekly sync fills `maxcharges`.
+
+**Not done:** the XP board (needs data); a "RIP"-style split for a mob you did not have targeted (the slain
+line still covers it when in range); clicky charges for items whose inventory export is older than the
+glows we saw (counts start from the export).
