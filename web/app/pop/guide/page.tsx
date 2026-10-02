@@ -50,9 +50,10 @@ export default async function PopGuidePage(
             <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
           </div>
           <p className="text-sm text-dim mt-1 max-w-3xl">
-            Where to start, what you can&apos;t skip, who you need, who takes what and who you go back to, with a
-            map for every stop. Steps Mimic saw you do, or that our records already show, tick themselves and
-            say which.
+            Where to start, what you can&apos;t skip, who you need, who takes what and who you go back to, by
+            progression level. Open a level to see its steps; hover 🗺 for the map. Steps Mimic saw you do, that
+            our records already show, or that /who proves (you were seen inside a plane that needs them) tick
+            themselves and say which.
           </p>
         </section>
         <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} />
