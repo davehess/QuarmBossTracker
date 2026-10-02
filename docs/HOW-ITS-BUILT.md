@@ -2309,6 +2309,15 @@ exists), so five docked overlays cost one renderer instead of five.
   pane resolves the agent-served copy (#65) exactly as the window does.
 
 ### Overlays (one .html each)
+**2026-10-02 (agent 3.7.69 beta, bot 3.1.188, §128):** a shield-cancelling debuff
+(positive SPA 59 — Mark of the Plague Lords) rides the spell catalog as `ds_heal`
+(bot `_dsHealMagnitude`); the agent's `_dsOffFrom` reads it off a buff list, zeroes
+`_knownDsPerHitFor`, and puts `off` on `/api/me` `combat.ds` and both `/api/tank-state`
+DS cards. HUD: red "DS OFF" button with the time left; Tank: the card leads with the
+debuff, the mini box reads "DS OFF". Boastful Bellow: `_ME_SKILL_LINES` 'bellow' (18 s),
+started by the resist line or `_meNoteBellow` (landing + your own non-melee hit on that
+mob within 1.5 s, bards only); HUD "BB"; built-in timer `bellow` (Triggers tab).
+
 **2026-10-02 (agent 3.7.67 beta, bot 3.1.186/3.1.187, §127):** the DPS HUD is
 renamed **DPS/Tank Meter**. History keeps 30 fights (`FIGHT_HISTORY_MAX`) across a
 restart (`saveSessionState.fightHistory`), dedups peer flushes within 8 s, marks each

@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'ds-off-bellow-2026-10-02',
+    title: 'Damage shield off, Boastful Bellow timer',
+    version: 'Bot 3.1.188 · Web 1.8.75 · Agent 3.7.69 beta',
+    date: '2026-10-02',
+    headline: 'The HUD and Tank window show when Mark of the Plague Lords has switched your damage shield off, and bards get a Boastful Bellow timer.',
+    features: [
+      {
+        name: 'Damage shield off',
+        blurb: 'While Mark of the Plague Lords is on you, no shield you wear does anything and every hit a mob lands on you heals it 50. The HUD\'s shield button turns red and reads DS OFF with the time left, and the Tank window names the debuff.',
+      },
+      {
+        name: 'Boastful Bellow timer',
+        blurb: 'Bards with the AA get an 18-second Boastful Bellow cooldown on the HUD once they use it, and can switch on a Boastful Bellow timer bar in the Triggers tab. Another bard\'s bellow on your mob does not start yours.',
+      },
+    ],
+    fixes: [
+      'The HUD showed your normal damage shield number while Mark of the Plague Lords had turned it off.',
+    ],
+  },
+  {
     key: 'hud-batch-2026-10-02',
     title: 'Enrage at 10%, auction timers, clicky counters',
     version: 'Bot 3.1.187 · Web 1.8.74 · Agent 3.7.68 beta',
