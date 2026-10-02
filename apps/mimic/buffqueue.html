@@ -97,6 +97,9 @@
   .casting .sp{color:#c9d1d9}
   .casting .t{color:#6e7681;font-variant-numeric:tabular-nums}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:6px 4px;font-style:italic}
+  /* Two or more raids at once: which one these queues are for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -733,6 +736,15 @@
     // before deciding what's visible.
     reconcileDismissed(dq);
     var html = document.body.classList.contains('wp-mini') ? buildMiniHtml(payload) : buildHtml(payload);
+    // Two or more raids at once (the bot names them only then): the queues are your raid's; say
+    // whose. Not in mini mode, which has no room for it.
+    var raids = (payload && Array.isArray(payload.raids) && payload.raids.length > 1) ? payload.raids : null;
+    if (html && raids && !document.body.classList.contains('wp-mini')) {
+      var mine = null;
+      for (var ri = 0; ri < raids.length; ri++) if (raids[ri] && raids[ri].mine) mine = raids[ri];
+      html = '<div class="raids-note"><span class="n">⚔ ' + esc(raids.length) + ' raids at once</span>'
+           + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>' + html;
+    }
     if (!html) {
       // Nothing to show — either no roster or everything is covered/dismissed.
       if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
