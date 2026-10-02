@@ -154,7 +154,7 @@ const TEXT_KEY_SET = new Set<string>(TEXT_KEYS.map(t => t.key));
 // customized install, then auto-arranges. Existing users are never touched.
 // Keys here MUST match Mimic's toggle-overlay names.
 const OVERLAY_KEYS: { key: string; label: string }[] = [
-  { key: 'hud',       label: 'DPS HUD' },
+  { key: 'hud',       label: 'DPS/Tank Meter' },
   { key: 'trigger',   label: 'Trigger alerts' },
   { key: 'charm',     label: 'Charm tracker' },
   { key: 'pet',       label: 'Pet tracker' },
