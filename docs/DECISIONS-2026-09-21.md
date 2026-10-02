@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Shield OFF under Mark of the Plague Lords; Boastful Bellow timer** | **§128.** Bot 3.1.188 (catalog `ds_heal`) + web 1.8.75 on `main`; agent 3.7.69 on beta `a66d208d`. The Mark replaces every shield and heals the mob 50 a hit (server code); HUD "DS OFF" + time left, Tank card names it. Bellow: 18 s, from your resist or your landing + your own damage; HUD "BB" once used; Triggers-tab bar. Fading Memories: no duration — invis until broken, 900 mana, 1 s reuse | the guild lead: (1) in Plane of Disease with the beta, check the HUD reads DS OFF while the Mark is up and the Tank card names it; (2) on a bard with the AA, bellow once and check BB counts 18 s — and that another bard's bellow on your mob does not start it |
 | **HUD batch, auction timers, MA, XP events, fight split (one message, nine asks)** | **§127.** Bot 3.1.186 + 3.1.187, web 1.8.72 + 1.8.73 on `main`; agent 3.7.67 on beta `d0a54a4d`. Enrage at 10% with "Enrage soon", red gone once it ends; "DPS/Tank Meter"; DS thorns/lava; rampage + under-25% arcs; clicky counters; one timer per auction (late bids move it) + Command Center Auctions; MA on Extended Target; XP events uploading (`xp_events` live); back-to-back same-name fights split by your own target window; History 30 fights, local / sent / synced. Defaults picked for XP: kept 30 days, raid XP stored but kept apart | the guild lead: (1) on the beta, fight an enraging mob and check "Enrage soon" at 10% and the red clearing; (2) open an auction with a late bid and watch its timer move; (3) say yes or change the XP defaults (30 days; names stay to signed-in members); (4) make a Quarmy export (or `/output inventory`) once so the clicky counters have items — agent 3.7.68 reads either, the newer wins |
 | **A targeted player's timers on Target Info; FB-46/47/48** | **§126.** Bot 3.1.185 + web 1.8.71 on `main` (column applied); agent 3.7.66 on beta `a100da84`: disc, Mend, LoH/HT and AAs from the player's own Mimic, a disc you saw them start, ✓ or time left. AAs exact from the refusal line; `/pipe at` learns Area Taunt's reuse. Alpha `9e33af91`: the timers as a Canvas part, and the "slowed null%" / "0 / 0 HP" pieces fixed. FB-46 (Zeal notice → Settings at Zeal), FB-47 (feedback text kept), FB-48 (overlay size kept) on beta | the guild lead: (1) on the beta, with a second Mimic raider, Mend or fire a disc on one and target them from the other; (2) put `/pipe at` on the Area Taunt key, press it twice and check Target Info counts down; (3) say if this should also show on Extended Target rows |
 | **3.0: every overlay exactly on the Canvas, then taken apart** | **§125.** Audit: 3 of 378 overlay elements were exact as parts.js pieces. Alpha `a29075d9`: pieces cut from the overlay's own page (exact by construction), ✂ Take it apart, ✂ Overlay parts in the chooser; Target Info's 19 parts first (marks on beta `5eae2d53`) | the guild lead: (1) on the next alpha, put Target Info on the Canvas, ⚙ → ✂ Take it apart, pull out Loot; (2) say if this is the way (A) before the other 14 overlays get their maps; (3) watch Resource use with several pieces on |
@@ -5969,3 +5970,44 @@ weekly sync fills `maxcharges`.
 **Not done:** the XP board (needs data); a "RIP"-style split for a mob you did not have targeted (the slain
 line still covers it when in range); clicky charges for items whose inventory export is older than the
 glows we saw (counts start from the export).
+
+### 128. Mark of the Plague Lords turns the shield OFF; a Boastful Bellow timer; Fading Memories answered (2026-10-02, bot 3.1.188 · web 1.8.75 · agent 3.7.69 beta `a66d208d`)
+
+The guild lead, with a screenshot of the debuff on a tank whose HUD still read "DS 23": *"how long does
+faded memories last for? Note that this debuff exists for damage shield reduction and should be reflected in
+the hud and overlays"* — then, mid-session: *"add Boastful Bellow AA as a timer for Bards that have the AA"*.
+
+- **The debuff is not a reduction, it is an off switch.** Mark of the Plague Lords (spell 1067: SPA 59
+  base **+50**, 3m12s, PBAE range 50, unresistable) reads "Decrease Damage Shield by 50" in game, but the
+  Quarm server's spell-bonus sum (`zone/bonuses.cpp`, `SE_DamageShield`) lets a positive value REPLACE the
+  shields already summed, and skips any shield after it. A positive total then runs the "healing shield"
+  branch of `Mob::DamageShield` (`zone/attack.cpp`): **each melee hit that lands on the wearer heals the
+  attacker 50**, and item and AA shields never get added (they only join a negative total). So the HUD's
+  "DS 23" was wrong twice: the shield returns nothing, and the mob is being fed. Mark of Karn (+6, a cleric's
+  spell on a mob) is the same mechanic pointed the other way. Nine catalog spells carry a positive SPA 59.
+- **Where it landed.** The bot's spell catalog carries the positive value as `ds_heal` beside `ds` (it used
+  to drop it as an "NPC guard mechanic"). The agent's `_dsOffFrom` reads it off any buff list; while one is up
+  `_knownDsPerHitFor` is 0 (so the anonymous-hit settle stops crediting shield hits), `/api/me` and
+  `/api/tank-state` carry `off` {name, heals, seconds}. HUD: the DS button goes red, dashed, "DS OFF" with
+  the time left. Tank overlay: the card leads with the debuff and its time, says "each hit heals the mob 50",
+  and strikes the worn shields through; the mini box reads "DS OFF" in red. One design, in the family the
+  thorns/lava button already set; the alternative was a struck-through number that kept the shield's value,
+  rejected because it reads as "still 23, slightly less".
+- **Boastful Bellow.** Reuse **18 s** (Quarm `aa_actions` row for AA 592, spell 3282 — a 10–50 magic nuke
+  with a short stun). It is instant, and the server sends the begin-cast only when `cast_time > 0`
+  (`zone/spells.cpp`), so no "You begin casting" line exists. Started by the resist line ("Your target
+  resisted the Boastful Bellow spell.", seen only by the caster), or by "<mob> is shaken by a loud bellow."
+  paired within 1.5 s with your own "You hit <mob> for N points of non-melee damage." — the landing alone is
+  seen by every bard near the mob, and raids run several. Bards only. An early press's refusal line corrects
+  the same timer rather than opening a second AA slot. The HUD shows **BB** once a bard has used it (the
+  pipe does not carry AAs owned — use is the proof), kept 12 hours past ready like the other timers. The
+  Triggers tab has a "Boastful Bellow reuse" timer bar, off until ticked, per character.
+- **Fading Memories (the question).** It has **no duration**. It is the bard PoP AA (6 points, one rank),
+  costs **900 mana**, and its reuse is **1 second** (`aa_actions` aaid 630: reuse_time 1, nonspell_mana 900,
+  nonspell_duration 0). The server runs `Escape()` (`zone/client.cpp`): you are wiped from every NPC's hate
+  list and made **invisible** — ordinary invisibility, held until you break it (attack, cast, and so on), not
+  a timed buff. A rogue gets hide instead. Mana is the limit, not a timer.
+
+**Not done:** the sibling path in the raid card's spell decode (`_spellFxMap` takes `Math.abs` of SPA 59, so
+a positive value would read as a shield there) — left alone, it never sees the Mark today; the bundled
+local-mode spell snapshot gains `ds_heal` only when it is next regenerated.

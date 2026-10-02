@@ -173,6 +173,13 @@ next touch one rather than assuming a missing row means a missing doc.
   saw them start (estimated from their /who level). AAs exact from the server's refusal line; `/pipe at`
   on the Area Taunt key learns the reuse. A Canvas part on alpha `9e33af91`. Mend, LoH, HT and AAs print
   nothing a bystander sees, so a player without Mimic shows only a seen disc. §126.
+- **🧪 Shield OFF under Mark of the Plague Lords; Boastful Bellow timer (bot 3.1.188 · web 1.8.75 on main;
+  agent 3.7.69 beta `a66d208d`).** A positive SPA 59 (the Mark, +50) replaces every shield and heals the mob
+  50 a hit on the Quarm server; the catalog now carries it as `ds_heal`, and while one is up the HUD's DS
+  button reads "DS OFF" with the time left and the Tank card names it. Boastful Bellow: an 18 s HUD cooldown
+  ("BB") once a bard has used it, started by your resist line or your landing + your own damage; a
+  Triggers-tab timer bar too. Fading Memories answered: no duration (invis until broken), 900 mana, 1 s
+  reuse. §128.
 - **🧪 HUD batch, auction timers, the main assist, XP events, back-to-back fights (bot 3.1.186 + 3.1.187 ·
   web 1.8.72 + 1.8.73 on main; agent 3.7.67 beta `d0a54a4d`).** Enrage warns at 10% ("Enrage soon", once
   per mob) and its red clears once it ends; "DPS HUD" is now "DPS/Tank Meter"; the HUD's damage-shield

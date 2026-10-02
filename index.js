@@ -10321,6 +10321,28 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
         return null;
       }
+      // SPA 59 with a POSITIVE value — the other half of the excluded case above.
+      // On the Quarm server it is not a smaller shield: the spell-bonus sum lets a
+      // positive value REPLACE every shield the wearer has, and a positive total
+      // HEALS whoever lands a melee hit on them by that much (zone/bonuses.cpp
+      // SE_DamageShield; zone/attack.cpp Mob::DamageShield). Mark of the Plague
+      // Lords (+50, Plane of Disease, on raiders) turns the tank's shield off;
+      // Mark of Karn (+6, a cleric's, on a mob) heals the melee hitting the mob.
+      // The guild lead, 2026-10-02: "this debuff exists for damage shield
+      // reduction and should be reflected in the hud and overlays."
+      function _dsHealMagnitude(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : null;
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : null;
+        if (eff && base) {
+          const idx = eff.indexOf(59);
+          return (idx >= 0 && Number(base[idx]) > 0) ? Number(base[idx]) : null;
+        }
+        const slots = [[r.effect_id_1, r.effect_base_value_1], [r.effect_id_2, r.effect_base_value_2], [r.effect_id_3, r.effect_base_value_3]];
+        for (const [id, val] of slots) {
+          if (id === 59 && Number(val) > 0) return Number(val);
+        }
+        return null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -10428,6 +10450,9 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             // from a raider's CURRENT buff list (the guild lead, 2026-06-29: "Highlight
             // the DS spells and songs and how much you're getting from each").
             ds: _dsMagnitude(r) || undefined,
+            // Positive SPA 59: while it is up the wearer's shield is off and
+            // attackers are healed this much per hit (_dsHealMagnitude).
+            ds_heal: _dsHealMagnitude(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
