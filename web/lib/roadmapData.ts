@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'hud-batch-2026-10-02',
     title: 'Enrage at 10%, auction timers, clicky counters',
-    version: 'Bot 3.1.187 · Web 1.8.73 · Agent 3.7.67 beta',
+    version: 'Bot 3.1.187 · Web 1.8.74 · Agent 3.7.68 beta',
     date: '2026-10-02',
     headline: 'The HUD warns of enrage earlier, shows rampage and low-health raiders, counts your clicky charges, and every loot auction gets its own timer.',
     features: [
@@ -53,7 +53,7 @@ export const releases: Release[] = [
       },
       {
         name: 'Clicky counters',
-        blurb: 'The HUD lists your clicky items with the charges left, counting down each time you click one. Run /output inventory once so Mimic knows what you carry.',
+        blurb: 'The HUD lists your clicky items with the charges left, counting down each time you click one. Mimic reads your Quarmy export or /output inventory, whichever is newer.',
       },
       {
         name: 'Damage shield look',
