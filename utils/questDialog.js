@@ -48,22 +48,71 @@ function _splitTop(expr, sep) {
 }
 
 // "Hello " .. e.other:GetCleanName() .. ", friend" → "Hello <you>, friend". Anything computed
-// that is not the player's name becomes "…".
-function _exprText(expr) {
+// that is not the player's name becomes "…". A line read out of a table of strings
+// (RESPONSES[11]) is looked up in `tables` (from _stringTables).
+function _exprText(expr, tables) {
   return _splitTop(expr, '..').map((p) => {
     const t = p.trim();
     if (t[0] === '"' || t[0] === "'") return _readString(t, 0).text;
     if (/Get(?:Clean)?Name\s*\(/.test(t)) return '<you>';
+    const ref = /^([A-Za-z_]\w*)\s*\[\s*(\d+)\s*\]$/.exec(t);
+    if (ref && tables && tables[ref[1]] && tables[ref[1]][Number(ref[2]) - 1]) return tables[ref[1]][Number(ref[2]) - 1];
     return '…';
   }).join('').replace(/\s+/g, ' ').trim();
+}
+
+// Top-level `local NAME = { "…", "…", … }` lists of plain strings, by name (Lua indexes from 1).
+// Askr the Lost keeps every line in RESPONSES and says e.other:Message(0, RESPONSES[11]); without
+// this his Quest tab showed only the hand-ins (the guild lead, 2026-10-01: "This is missing the
+// actual instructions"). A table holding anything but strings (the Seer's checklist) is skipped.
+function _stringTables(src) {
+  const out = {};
+  for (const m of String(src || '').matchAll(/(?:^|\n)\s*local\s+([A-Za-z_]\w*)\s*=\s*\{/g)) {
+    const items = [];
+    let j = m.index + m[0].length, ok = false;
+    while (j < src.length) {
+      const c = src[j];
+      if (c === '"' || c === "'") { const r = _readString(src, j); items.push(r.text); j = r.end; continue; }
+      if (src.startsWith('--', j)) { const nl = src.indexOf('\n', j); j = nl < 0 ? src.length : nl; continue; }
+      if (c === '}') { ok = true; break; }
+      if (c === ',' || /\s/.test(c)) { j++; continue; }
+      break;   // a number, a nested table, a variable: not a list of lines
+    }
+    if (ok && items.length) out[m[1]] = items;
+  }
+  return out;
+}
+
+// RESPONSES[state]: which values `state` can hold here, read off the if/elseif just above the call
+// (state == 6 · state == 8 or state == 9 · state <= 3). Unbounded tests (state > 9) give nothing.
+function _guardValues(seg, pos, ident) {
+  let cond = null;
+  for (const m of seg.slice(0, pos).matchAll(/\b(?:if|elseif)\b([^\n]*?)\bthen\b/g)) cond = m[1];
+  if (!cond) return [];
+  const vals = new Set();
+  const id = ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const m of cond.matchAll(new RegExp(`\\b${id}\\s*(==|<=|<)\\s*(\\d+)`, 'g'))) {
+    const n = Number(m[2]);
+    if (m[1] === '==') vals.add(n);
+    else for (let k = 1; k <= (m[1] === '<=' ? n : n - 1) && k <= 30; k++) vals.add(k);
+  }
+  return [...vals].sort((a, b) => a - b);
 }
 
 // Lua e.self:Say(…), and the Perl the turn-in snippets are in: quest::say("… $name …").
 const REPLY_RX = /e\.self:(Say|Emote|Shout)\s*\(|quest::(say|emote|shout)\s*\(|e\.other:Message\s*\(/g;
 
-// Every NPC line in a stretch of script, in order.
-function _replies(seg) {
+// Every NPC line in a stretch of script, in order. `tables` resolves lines kept in a list
+// (RESPONSES[11]); a list indexed by a variable gives one line per value its guard allows.
+function _replies(seg, tables) {
   const out = [];
+  const push = (kind, raw) => {
+    let text = String(raw || '').replace(/\$name\b/g, '<you>');
+    // Scripts that print their own tell: "Maelin tells you, '...'" → the words inside.
+    const tell = /^[A-Za-z`' ]+? tells you, '([\s\S]*)'$/.exec(text);
+    if (tell) text = tell[1];
+    if (text && text !== '…') out.push({ kind, text });
+  };
   REPLY_RX.lastIndex = 0;
   let m;
   while ((m = REPLY_RX.exec(seg))) {
@@ -77,11 +126,12 @@ function _replies(seg) {
       if (Number(parts[0].trim()) === 15) continue;
       args = parts.slice(1).join(',');
     }
-    let text = _exprText(args).replace(/\$name\b/g, '<you>');
-    // Scripts that print their own tell: "Maelin tells you, '...'" → the words inside.
-    const tell = /^[A-Za-z`' ]+? tells you, '([\s\S]*)'$/.exec(text);
-    if (tell) text = tell[1];
-    if (text && text !== '…') out.push({ kind, text });
+    const byVar = /^\s*([A-Za-z_]\w*)\s*\[\s*([A-Za-z_]\w*)\s*\]\s*$/.exec(args);
+    if (byVar && tables && tables[byVar[1]]) {
+      for (const n of _guardValues(seg, m.index, byVar[2])) push(kind, tables[byVar[1]][n - 1]);
+      continue;
+    }
+    push(kind, _exprText(args, tables));
   }
   return out;
 }
@@ -100,7 +150,7 @@ const GATE_RX = /\bqglobals\b|:HasItem\s*\(|:GetFaction|:GetLevel\s*\(|:GetClass
 //   gives      item ids you can get; givesRandom = one of them, picked at random
 function effects(code) {
   const s = String(code || '');
-  const out = { depopSelf: false, depops: [], spawns: [], spawnOther: false, faction: [], gives: [], givesRandom: false };
+  const out = { depopSelf: false, depops: [], spawns: [], spawnOther: false, faction: [], gives: [], givesRandom: false, exp: 0 };
   const add = (list, n) => { if (n > 0 && !list.includes(n)) list.push(n); };
   for (const m of s.matchAll(/(?:\beq\.|quest::)depop(?:_?all|_with_?timer)?\s*\(\s*(\d*)\s*[,)]/gi)) {
     if (m[1]) add(out.depops, Number(m[1])); else out.depopSelf = true;
@@ -114,11 +164,18 @@ function effects(code) {
   for (const m of s.matchAll(/(?::Faction|quest::faction)\s*\(\s*(?:e\.self\s*,\s*)?(\d+)\s*,\s*(-?\d+)/g)) {
     if (Number(m[2]) !== 0) out.faction.push({ id: Number(m[1]), delta: Number(m[2]) });
   }
-  // Items: SummonItem(id) / quest::summonitem(id); QuestReward's item slot, written positionally
-  // (e.self, copper, silver, gold, platinum, item, exp) or as a table ({itemid = id, items = {…}});
-  // eq.ChooseRandom(a, b, c) / quest::ChooseRandom(…) in either means one of them.
-  for (const m of s.matchAll(/(?::SummonItem|quest::summonitem|QuestReward)\s*\(/g)) {
+  // Items: SummonItem(id) / SummonCursorItem(id) (Askr's bag) / quest::summonitem(id); QuestReward's
+  // item slot, written positionally (e.self, copper, silver, gold, platinum, item, exp) or as a table
+  // ({itemid = id, items = {…}}); eq.ChooseRandom(a, b, c) / quest::ChooseRandom(…) in either means
+  // one of them. QuestReward's exp slot is kept too, so a hand-in that pays only exp says so.
+  for (const m of s.matchAll(/(?::SummonItem|:SummonCursorItem|quest::summonitem|QuestReward)\s*\(/g)) {
     const args = _callArgs(s, m.index + m[0].length - 1);
+    if (/QuestReward/.test(m[0])) {
+      const ex = /\bexp\s*=\s*(\d+)/.exec(args);
+      const pos = _splitTop(args, ',');
+      const n = ex ? Number(ex[1]) : (pos.length >= 7 && /^\s*\d+\s*$/.test(pos[6]) ? Number(pos[6]) : 0);
+      if (n > out.exp) out.exp = n;
+    }
     const rnd = /ChooseRandom\s*\(([^)]*)\)/.exec(args);
     if (rnd) {
       out.givesRandom = true;
@@ -162,6 +219,7 @@ function needsItems(cond) {
 // flag = this branch gives a character flag; clears = it deletes flags (the Seer's "delete").
 function parseDialog(body) {
   const src = String(body || '');
+  const tables = _stringTables(src);
   const start = src.search(/function\s+event_say\s*\(/);
   if (start < 0) return [];
   const next = src.indexOf('\nfunction ', start + 10);
@@ -188,7 +246,7 @@ function parseDialog(body) {
   // stay part of it.
   return branches.map((b, n) => {
     const seg = say.slice(b.at, n + 1 < branches.length ? branches[n + 1].start : say.length);
-    const replies = _replies(seg);
+    const replies = _replies(seg, tables);
     const hints = [...new Set(replies.flatMap((r) => [...r.text.matchAll(/\[([^\]]{1,40})\]/g)].map((h) => h[1].trim())))];
     return {
       keywords: b.keywords,
@@ -215,14 +273,17 @@ function tradeReplies(body) {
   const start = src.search(/function\s+event_trade\s*\(/);
   if (start < 0) return [];
   const next = src.indexOf('\nfunction ', start + 10);
-  return _replies(src.slice(start, next < 0 ? src.length : next));
+  return _replies(src.slice(start, next < 0 ? src.length : next), _stringTables(src));
 }
 
 // event_trade split into one entry per hand-in: the item ids check_turn_in wants (a repeat means
-// that many), what the NPC says, and what the hand-in does (effects). A branch runs until the
-// next check_turn_in, the same way a say branch runs until the next keyword.
+// that many), what the NPC says, what the hand-in does (effects) and whether it gives a character
+// flag. A branch runs until the next check_turn_in, the same way a say branch runs until the next
+// keyword. Hand-ins joined by `or` in one condition (Askr takes any of three giant heads) share the
+// code after its `then`, so each gets that code, and the same `group`.
 function tradeBranches(body) {
   const src = String(body || '');
+  const tables = _stringTables(src);
   const start = src.search(/function\s+event_trade\s*\(/);
   if (start < 0) return [];
   const next = src.indexOf('\nfunction ', start + 10);
@@ -232,10 +293,26 @@ function tradeBranches(body) {
     const args = _callArgs(tr, m.index + m[0].length - 1);
     heads.push({ at: m.index, items: [...args.matchAll(/\bitem\d+\s*=\s*(\d+)/g)].map((x) => Number(x[1])) });
   }
-  return heads.filter((h) => h.items.length).map((h, n, all) => {
-    const seg = tr.slice(h.at, n + 1 < all.length ? all[n + 1].at : tr.length);
-    return { items: h.items, replies: _replies(seg), fx: effects(seg) };
+  const live = heads.filter((h) => h.items.length);
+  // Group: a head whose stretch up to the next head holds no `then` is still inside one condition.
+  const groups = [];
+  for (let n = 0; n < live.length; n++) {
+    const upTo = n + 1 < live.length ? live[n + 1].at : tr.length;
+    const cur = groups[groups.length - 1];
+    if (cur && cur.open) cur.heads.push(live[n]); else groups.push({ heads: [live[n]], open: false });
+    groups[groups.length - 1].open = !/\bthen\b/.test(tr.slice(live[n].at, upTo));
+  }
+  const out = [];
+  groups.forEach((g, gi) => {
+    const last = g.heads[g.heads.length - 1];
+    const nextGroup = groups[gi + 1];
+    const seg = tr.slice(last.at, nextGroup ? nextGroup.heads[0].at : tr.length);
+    const replies = _replies(seg, tables);
+    const fx = effects(seg);
+    const flag = /set_global\s*\(|received a character flag/i.test(seg);
+    for (const h of g.heads) out.push({ items: h.items, replies, fx, flag, group: gi });
   });
+  return out;
 }
 
 // Names worth looking up as "who to talk to next": runs of Capitalised words (with the
@@ -288,4 +365,4 @@ const displayName = (n) => String(n || '').replace(/^#+/, '').replace(/_/g, ' ')
 // filenames cannot hold written as "-" (Seer_Mal_Nae`Shi → Seer_Mal_Nae-Shi.lua).
 const scriptPath = (zoneShort, npcName) => `${zoneShort}/${String(npcName).replace(/`/g, '-')}.lua`;
 
-module.exports = { parseDialog, tradeReplies, tradeBranches, effects, needsItems, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies };
+module.exports = { parseDialog, tradeReplies, tradeBranches, effects, needsItems, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies, _stringTables };

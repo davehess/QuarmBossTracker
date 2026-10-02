@@ -96,7 +96,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-10-01 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-10-02 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -251,6 +251,10 @@ export default function PrivacyPage() {
             other guilds — with class, level, group, HP and position.
           </li>
           <li>
+            Your timing votes on callouts, and which callouts you clear or let run out (switch off: dashboard
+            → Triggers → Timing votes, or 🔕 on the vote buttons; Mimic beta).
+          </li>
+          <li>
             Buffs and debuffs you see land; your casts; threat; guild trigger callouts;{' '}
             <code>/sll</code> lockouts; boss kills; PvP kills; faction; your PoP flags;{' '}
             <code>/random</code> rolls; what you loot.
@@ -308,7 +312,10 @@ export default function PrivacyPage() {
           line just before it, but only when that line comes from one of the flag NPCs (Mavuin, the
           Tribunal, the Planar Projections, Maelin and the others): that line is what names the flag. If
           you sit with Seer Mal Nae`Shi and ask for a guided meditation, Mimic sends her sentences about
-          your flags. Nothing you or anyone else said goes with them.
+          your flags. Nothing you or anyone else said goes with them. The PoP pages also read{' '}
+          <code>/who</code>, which is already collected: if a raider&apos;s /who shows you inside a plane behind
+          a gate, members see you counted as holding that gate (and the ones on the way in), marked as
+          &ldquo;seen on /who&rdquo;, whether or not you run Mimic (on the beta site first).
         </p>
       </Section>
 

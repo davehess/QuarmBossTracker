@@ -164,6 +164,25 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-09-29 (bot 3.1.170–3.1.171, Mimic beta `013cca9d`):** NPC text folded behind "▸ says"; ⚠ on a
   despawn, a spawn or a faction loss; GIVE / GET on hand-ins; every faction change; Quarm-only hand-ins
   from its own script, ProjectEQ-only ones marked "not in Quarm's script". §74.
+  **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
+  per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
+  character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
+- **✅ A plain /who uploads its zone (agent 3.7.62 beta `5250261a`; stable agent 3.7.63, hot-swapped
+  2026-10-01, beta 3.7.64).** Its footer names the zone; the rows
+  used to go up with none (7,263 of ~9,400 in two days). Supersedes §73's "upload untouched".
+  `test/who-zone-column.test.js`, `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §123.
+- **🧪 eqmimic.quest demo with sample data (hesstastic `e2d2f62`).** `hesstastic.com/eqmimic/demo/` (tour)
+  and `/eqmimic/demo/b/` (app): overlays replaying a real fight, the control panel, guild and officer
+  pages, every name invented. eqmimic.quest itself is not live: no Vercel project builds the hesstastic
+  repo. §123.
+- **🧪 PoP from /who; the checklist by progression level (beta `4f5e68e1`, web on `b.wolfpack.quest`).**
+  Anyone a raider's /who shows inside a gated plane holds its gate and the gates on the way in: blue ✓ on
+  `/pop`, "✓ seen on /who" on the checklist (SQL `pop_who_sightings`, applied). Checklist layouts B/C:
+  progression levels, closed by default, sidebar opens them, 🗺 map on hover. Waits on the B/C pick.
+  `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §122.
+- **🧪 Trigger timing votes can be switched off (agent 3.7.61, beta `db4d21d5`).** Dashboard → Triggers →
+  Timing votes, or 🔕 on the vote buttons. Off: no « Earlier / ✓ Good! / » Too early row, and no votes,
+  ✕ or age-outs uploaded. Default on. `test/callout-dismissals.test.js`. `DECISIONS-2026-09-21.md` §121.
 - **⏳ Bard charm from Zeal's class, "recharm pet" at 4s, clicky buffs on the pet (agent 3.7.39–3.7.40 on
   beta, 2026-09-29).** `_classOf` reads Zeal label 3; a bard's gauge-opened charm gets its song's
   duration so the callouts speak; a clicky's glow line records its spell as a cast. §75.

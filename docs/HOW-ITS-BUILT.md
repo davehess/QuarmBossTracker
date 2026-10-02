@@ -813,7 +813,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   document-level hover owner (`_zoneOf`) so the wheel reaches the list. **ZONE** switch (agent
   3.7.38, §73): `#zone-btn` → `_zoneCol` (`wp:who:zoneCol`, off by default) → `zoneColHtml` after
   level. The agent's `_whoZoneSeen` holds each player's zone from their last /who (a `/who all` row's
-  `ZONE:`, else the plain /who footer's zone), apart from `whoData` so the upload is unchanged.
+  `ZONE:`, else the plain /who footer's zone). Since agent 3.7.62 (§123; stable 3.7.63) the footer's zone also goes
+  onto that run's `whoData` rows, lower-cased, and `_whoZoneDirty` makes the next who flush upload them
+  even when no new name appeared, so a plain /who reaches `who_observations` with its zone.
 - **Beta channel from the dashboard** (agent 3.7.28, §53):
   - A `wpJoinBeta` "⤴ beta" button follows the Check-for-update slot in the header. It is rendered
     only for stable Mimic builds; beta builds show BETA + `wpRevertStable` instead.
@@ -1708,6 +1710,12 @@ single-grant zones, Tactics checklist by boss), writes the stage row plus the ca
 with `npc`. Gates in `web/lib/popFlags.ts` follow `potranquility/player.lua`. Justice marks on `/pop`
 come from `looted_items` (zone 201) and `character_inventory` (`JUSTICE_MARKS`). Tests:
 `test/pop-flag-stages.test.js`, `test/pop-flag-agent.test.js`.
+**From /who (beta `4f5e68e1`, §122):** `pop_who_sightings(guild, names, zones)` groups `who_observations`
+per character and gated plane (GMs skipped, service role only); `web/lib/popWho.ts` turns a sighting into
+the flags it proves (`WHO_ZONE` short name → chart key, `whoProves` follows each gate flag to the plane
+it is earned in, `GATE_IMPLIES` = the bot's `STAGE_IMPLIES`, `wayInChain` for the "reached through"
+text). `/pop` adds them to each character with `seen` kept apart (blue ✓ via `AccessMark`, `seenTag`).
+`test/pop-who.test.js`.
 
 ### PoP checklist (`/pop/guide`)
 Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
@@ -1730,6 +1738,10 @@ zone from the server's own placement rows for step maps.
 `ZoneMap.tsx` (SVG, north up, x mirrored), `routeData.ts` (the viewer's own characters' ticks + evidence +
 day-cached outlines), `web/lib/popGuideMore.ts` (expect / turnIn / back / auto per step key) and
 `web/lib/popGuideAuto.ts` (what fills itself in: `mimic` vs `database`). `test/pop-guide-more.test.js`.
+2026-10-01 (§122): `GUIDE_LEVELS` (`popGuideMore.ts`) groups the sections by progression level; every
+level renders closed (`open` set) with progress and the next step, the sidebar's `goTo` opens and
+scrolls; `MapPeek` shows `ZoneMap` in a fixed popover on hover / tap / keyboard focus; `popGuideAuto`
+gains the `who` source from `pop_who_sightings` (`routeData.ts`). `test/pop-who.test.js`.
 
 ### Target Info F/Q/V (Faction · Quest · Vendor)
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
@@ -1744,6 +1756,11 @@ faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()`
 `check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
 Quarm-only branches, flags unmatched rows `unverified`, and names NPCs / factions / items in one round. The
 overlay folds the NPC text (`_qOpen`), draws ⚠ tags (`_qWarnTags`), GIVE / GET and the faction line.
+**Lines kept in a table (bot 3.1.183, §120):** `_stringTables()` reads top-level `local NAME = { "…", … }`
+string lists; `RESPONSES[11]` resolves directly and `RESPONSES[state]` gives one line per value the
+`if`/`elseif` above allows (`_guardValues`). `effects()` also reads `SummonCursorItem` and QuestReward's exp;
+`tradeBranches()` groups `or`-joined `check_turn_in` heads (shared branch, `group`) and sets `flag` when the
+branch calls `set_global`. GET then lists those items plus "a character flag".
 
 ### Buff landings & cross-client buffs
 `_buffLandingsByTarget` (Mob Info) + `_petBuffLandings` (charm/pet trackers),
@@ -2352,6 +2369,11 @@ without-a-raid test path. Bot: `TRIGGER_FEEDBACK_DIRECTIONS`; DB: migration
 constraint (a row is REJECTED until it is applied). Dismissals are per-user and
 session-scoped by construction — nothing relays, nothing touches
 `guild_triggers`. Tests: `test/callout-dismissals.test.js`.
+**Switching it off (agent 3.7.61, beta, §121).** `_optinState.timingFeedback` (default on, kept in
+`logsync.optin.json`) gates all of it: `/api/triggers/feedback` answers 200 and records nothing, and
+`_recordCalloutFeedback` returns null, so no vote, ✕ or age-out uploads. `/api/callout-prefs` takes and
+serves it (GET for the overlay). `triggers.html` reads it every 30s and `showFeedback` skips the vote row
+while it is off; 🔕 on the row (`stopAsking`) turns it off. Dashboard: Triggers tab → Timing votes.
 
 ### Auto-update on EQ close + focus-safe nag — 2026-08-04 (Mimic 2.3.0)
 Mimic already polled hourly with `autoDownload` on; `autoInstallOnAppQuit` then
