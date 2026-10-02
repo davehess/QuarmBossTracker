@@ -3418,7 +3418,7 @@ async function _askAboutDisplays() {
 // sitting whole on another screen is where the raider keeps it (§80a).
 // → { lost, away: [{…entry, from: display}], home, nudge: [{…entry, to}] }
 const _OVERLAY_NAMES = {
-  dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+  dock: 'Dock', hud: 'DPS/Tank Meter', trigger: 'Trigger alerts', charm: 'Charm tracker',
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
@@ -4268,7 +4268,7 @@ function createOverlayWindow() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true, // needed so it can be dragged when unlocked
     show: false,     // visibility decided from config + quiet mode below
-    webPreferences: _wpPrefs('DPS HUD'),
+    webPreferences: _wpPrefs('DPS/Tank Meter'),
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true);
@@ -6184,7 +6184,7 @@ const _OVERLAY_WINDOWS = [
 // value is remembered in cfg.dockedPrev so undocking restores what the user
 // had rather than guessing.
 const _DOCK_CATALOG = [
-  { key: 'hud',       label: 'DPS HUD',        file: 'overlay.html',      flag: 'showHud' },
+  { key: 'hud',       label: 'DPS/Tank Meter', file: 'overlay.html',      flag: 'showHud' },
   { key: 'chchain',   label: 'CH chain',       file: 'chchain.html',      flag: 'showChChain' },
   { key: 'tank',      label: 'Tank',           file: 'tank.html',         flag: 'showTank' },
   { key: 'buffQueue', label: 'Buff queue',     file: 'buffqueue.html',    flag: 'showBuffQueue' },
@@ -7065,7 +7065,7 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { type: 'separator' },
-    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.hideOverlays && !_dockedNow.includes('hud'), click: (mi) => {
+    { label: 'DPS/Tank Meter', type: 'checkbox', checked: s.showHud, enabled: !s.hideOverlays && !_dockedNow.includes('hud'), click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();

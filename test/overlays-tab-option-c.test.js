@@ -222,7 +222,7 @@ describe('Your layouts: one tile per saved layout, from real data', () => {
     expect(h.indexOf('<b>Brackwyn</b>')).toBeLessThan(h.indexOf('<b>Aldenmar</b>'));
     expect(count(h, 'class="wp-st on">active</span>')).toBe(1);
     expect(h).toContain('<b>Brackwyn</b><span class="wp-st on">active</span>');
-    expect(h).toContain('<span class="wp-layovs">DPS HUD · Target Info</span>');
+    expect(h).toContain('<span class="wp-layovs">DPS/Tank Meter · Target Info</span>');
     expect(h).toContain('<span class="wp-layovs">CH chain</span>');
     expect(h).toContain('class="wp-charprof-del" data-char="aldenmar"');
     expect(h).toContain('class="wp-charprof-del" data-char="brackwyn"');

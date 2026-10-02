@@ -541,10 +541,12 @@
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
            +      '<div class="val">' + (tval == null ? '—' : tval) + '</div></div>'
            +  '</div>';
-      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
-        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+      // Gone once its enrage has ended (the guild lead, 2026-10-02: "when it
+      // ends, it should no longer be red").
+      if (s.enrage && s.enrage.enrages && !s.enrage.ended && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = s.enrage.enraged || thp <= (s.enrage.threshold_pct + 2);
         html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
-             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +    (s.enrage.enraged ? '⚠️ ENRAGED (currently ' + thp + '%)' : '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)')
              +  '</div>';
       }
     }
