@@ -6434,8 +6434,10 @@ function _canvasHostedKeys(cfg) {
   } catch { /* mid-close */ }
   const layout = (res && all[res]) || all[cfg.canvasLastRes];
   const out = [];
+  // A piece cut from an overlay (kind 'sect', canvas sections.js) is that overlay's page too, so its
+  // window steps aside the same way: the canvas is where it lives now.
   for (const p of (layout && Array.isArray(layout.panels)) ? layout.panels : []) {
-    if (p && p.kind === 'overlay' && _canvasSpec(p.key) && !out.includes(p.key)) out.push(p.key);
+    if (p && (p.kind === 'overlay' || p.kind === 'sect') && _canvasSpec(p.key) && !out.includes(p.key)) out.push(p.key);
   }
   return out;
 }

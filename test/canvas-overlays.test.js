@@ -46,7 +46,8 @@ describe('the canvas keeps overlay panels', () => {
     expect(r.ovSrc('nope')).toBeNull();
   });
   it('a hidden overlay panel unloads its page; the page is scaled whole from outside', () => {
-    expect(c).toMatch(/var want = p\.off \? 'about:blank' : \(ovSrc\(p\.key\) \|\| 'about:blank'\);/);
+    // (A piece cut from an overlay, kind 'sect', loads the same page with its part named: canvas-sections.test.js.)
+    expect(c).toMatch(/var want = p\.off \? 'about:blank' : \(\(p\.kind === 'sect' \? sectSrc\(p\) : ovSrc\(p\.key\)\) \|\| 'about:blank'\);/);
     expect(c).toMatch(/e\.frame\.style\.width = Math\.round\(w \/ s\) \+ 'px';/);
     expect(c).toMatch(/e\.frame\.style\.transform = s === 1 \? '' : 'scale\(' \+ s \+ '\)';/);
   });

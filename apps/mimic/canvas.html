@@ -42,6 +42,10 @@
   /* An overlay page keeps its own layout at its own size and is scaled as a
      whole (place() sets the width/height to the panel ÷ scale). */
   .panel.ov > iframe{inset:auto;left:0;top:0;transform-origin:0 0}
+  /* A piece cut from an overlay's page: a window onto one section of the page (cropSections()
+     moves the page under the panel and clips it to the section). With nothing to show it steps
+     aside. */
+  .panel.sect.nodata{visibility:hidden}
   /* A hidden panel keeps its page (a callouts panel is where a pinned callout
      lives); it is only invisible. */
   .panel.off{visibility:hidden}
@@ -51,6 +55,9 @@
   body.edit .panel{outline:1px dashed rgba(88,166,255,0.85);outline-offset:0;
     background:rgba(31,111,235,0.07);cursor:move}
   body.edit .panel > iframe{pointer-events:none}
+  body.edit .panel.sect.nodata{visibility:visible;opacity:0.45;min-width:90px;min-height:18px}
+  /* Its size is its section's; A−/A+ and the page width in ⚙ change it, not a drag. */
+  .panel.sect > .grip{display:none!important}
   body.edit .panel.off{visibility:visible;opacity:0.4}
   body.edit .panel.lift{z-index:50;outline-style:solid}
   body.edit .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
@@ -218,6 +225,7 @@
   </div>
   <div id="ghost"></div>
 <script src="parts.js"></script>
+<script src="sections.js"></script>
 <script>
   var M = window.mimic || {};
   var PORT = 7779;
@@ -245,6 +253,14 @@
     var o = ovEntry(key);
     if (!o || !o.src) return null;
     return o.src + (o.src.indexOf('?') >= 0 ? '&' : '?') + 'wpcanvas=1';
+  }
+  // A piece cut from an overlay (sections.js): its page, told which section it is and, where the
+  // section only exists on one tab, that tab.
+  function sectSrc(p) {
+    var base = ovSrc(p.key);
+    if (!base) return null;
+    var d = window.WpSections ? window.WpSections.find(p.key, p.sect) : null;
+    return base + '&wpsect=' + encodeURIComponent(p.sect) + (d && d.tab ? '&wptab=' + encodeURIComponent(d.tab) : '');
   }
 
   function defaultLayout() {
@@ -293,6 +309,25 @@
           thick: (p.thick === 'thin' || p.thick === 'thick') ? p.thick : '',
           color: /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '',
           align: (p.align === 'c' || p.align === 'r') ? p.align : '',
+          grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
+          off: !!p.off,
+        });
+        continue;
+      }
+      // A piece cut from an overlay's own page (sections.js): that page once per piece, cropped to
+      // one section, so several may come from the same overlay. Its size follows the section; pw/ph
+      // is the size the page lays out at, as its window did.
+      if (p.kind === 'sect') {
+        var skey = String(p.key || ''), sid = String(p.sect || '');
+        if (!/^[A-Za-z]{2,16}$/.test(skey) || !/^[a-z][a-z0-9-]{0,23}$/.test(sid)) continue;
+        seen[p.id] = true;
+        out.push({
+          id: p.id.slice(0, 24), kind: 'sect', key: skey, sect: sid,
+          name: String(p.name || '').slice(0, 32),
+          x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
+          w: num(p.w, 16, 4000, 200), h: num(p.h, 8, 3000, 40),
+          pw: num(p.pw, 160, 2400, 340), ph: num(p.ph, 120, 3000, 400),
+          scale: num(p.scale, 0.5, 2.5, 1),
           grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
           off: !!p.off,
         });
@@ -394,6 +429,7 @@
   function claimText(p) {
     if (p.kind === 'part') { var d = partDef(p); return d ? modeLabel(d, p.mode).toLowerCase() + (p.grp ? ' · in a group' : '') : 'unknown piece'; }
     if (p.kind === 'overlay') return 'the overlay, as it is';
+    if (p.kind === 'sect') { var so = ovEntry(p.key); return 'cut from ' + (so ? so.label : p.key) + ', as it is'; }
     if (p.kind === 'callouts') return 'what the voice says';
     if (p.all) return 'everything else';
     var parts = [];
@@ -421,6 +457,7 @@
       fr = document.createElement('iframe');
       fr.setAttribute('scrolling', 'no');
       if (p.kind === 'overlay') root.classList.add('ov');
+      else if (p.kind === 'sect') { root.classList.add('ov'); root.classList.add('sect'); }
       else fr.setAttribute('src', 'triggers.html?part=' + p.kind + '&panel=' + encodeURIComponent(p.id));
     }
     var grip = document.createElement('span');
@@ -448,7 +485,7 @@
     tab.querySelector('.x').addEventListener('click', function (ev) {
       ev.stopPropagation();
       var q = panelById(p.id); if (!q) return;
-      if (q.kind === 'part') { removePanels([q.id]); return; }
+      if (q.kind === 'part' || q.kind === 'sect') { removePanels([q.id]); return; }
       q.off = !q.off; save(); render();
     });
     root.addEventListener('contextmenu', function (ev) { ev.preventDefault(); if (_edit || ev.target === mv) openMenu(p.id, ev.target === mv ? mv : root); });
@@ -468,6 +505,7 @@
       if (_bgAlpha != null) doc.documentElement.style.setProperty('--bg-alpha', String(_bgAlpha));
       // An overlay's page is left as it is; it is scaled from outside (place).
       if (p.kind === 'overlay') return;
+      if (p.kind === 'sect') { isolateFrame(e, p); return; }
       doc.documentElement.style.setProperty('--part-scale', String(p.scale || 1));
       doc.body.classList.toggle('timers-topdown', p.anchor === 'top');
       doc.body.classList.toggle('part-edit', _edit);
@@ -497,6 +535,104 @@
     e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
   }
 
+  // ── Pieces cut from an overlay's own page (kind 'sect', sections.js) ────────
+  // The page runs as it does in its window; everything but the section is made invisible (its
+  // boxes keep their space, so the layout is the window's), and the panel shows only the section's
+  // box. Exact by construction: same code, same look, same buttons.
+  function isolateFrame(e, p) {
+    var d = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+    var doc = e.frame && e.frame.contentDocument;
+    if (!d || !doc || !doc.head) return;
+    var st = doc.getElementById('wp-sect-iso');
+    if (!st) { st = doc.createElement('style'); st.id = 'wp-sect-iso'; doc.head.appendChild(st); }
+    var css = WpSections.isolateCss(d.sel);
+    if (st.textContent !== css) st.textContent = css;
+    // One voice per overlay (Charm and the CH chain speak from their page): the whole overlay's
+    // panel if it is here, else its first piece. Every other copy is silent.
+    var w = e.frame.contentWindow;
+    if (w && w.speechSynthesis && !isVoice(p)) { try { w.speechSynthesis.speak = function () {}; } catch (err) { /* */ } }
+  }
+  function isVoice(p) {
+    var first = null;
+    for (var i = 0; i < _layout.panels.length; i++) {
+      var q = _layout.panels[i];
+      if (q.key !== p.key || q.off) continue;
+      if (q.kind === 'overlay') return false;
+      if (q.kind === 'sect' && !first) first = q;
+    }
+    return first === p;
+  }
+  // Each piece follows its section: the page lays out at its own size (pw × ph, the window's), the
+  // panel is the section's box, and grows or shrinks with it. A section that is not there right
+  // now (no target, no fight) leaves its panel empty and out of the way.
+  var SECT_PAD = 4;   // page px of the card kept around a piece, so its text is not flush with the edge
+  function cropSections() {
+    var moved = false;
+    _layout.panels.forEach(function (p) {
+      if (p.kind !== 'sect' || p.off) return;
+      var e = _els[p.id], d = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+      var doc = null;
+      try { doc = e && e.frame && e.frame.contentDocument; } catch (err) { doc = null; }
+      if (!d || !doc || !doc.body) return;
+      if (!doc.getElementById('wp-sect-iso')) isolateFrame(e, p);
+      // Still in its group (just taken apart) its box is exactly the section's, so the parts abut
+      // and read as the overlay did; on its own it keeps a little of its card around it.
+      var s = p.scale || 1, r = WpSections.unionRect(doc, d.sel, p.grp ? 0 : SECT_PAD);
+      e.root.classList.toggle('nodata', !r);
+      // The card it sat on in its window (Target Info's dark panel) goes behind it here too.
+      var bd = r ? WpSections.backdrop(doc, d.sel) : null;
+      var bg = bd ? bd.bg : '', rad = (bd && !p.grp) ? Math.round(bd.radius * s) + 'px' : '';
+      if (e.root.style.backgroundColor !== bg) e.root.style.backgroundColor = bg;
+      if (e.root.style.borderRadius !== rad) e.root.style.borderRadius = rad;
+      var fw = Math.round(p.pw), fh = Math.round(Math.max(p.ph, r ? r.top + r.height + 8 : 0));
+      e.frame.style.width = fw + 'px';
+      e.frame.style.height = fh + 'px';
+      e.frame.style.transform = s === 1 ? '' : 'scale(' + s + ')';
+      if (!r) return;
+      e.frame.style.left = Math.round(-r.left * s) + 'px';
+      e.frame.style.top = Math.round(-r.top * s) + 'px';
+      // Clipped in the page's own pixels (before the scale), so only the section can be seen or
+      // clicked; the rest of the page is still there, laid out as in its window.
+      e.frame.style.clipPath = 'inset(' + r.top + 'px ' + Math.max(0, fw - r.left - r.width) + 'px '
+        + Math.max(0, fh - r.top - r.height) + 'px ' + r.left + 'px)';
+      var w = Math.max(16, Math.round(r.width * s)), h = Math.max(8, Math.round(r.height * s));
+      if (Math.abs(w - p.w) > 1 || Math.abs(h - p.h) > 1) { p.w = w; p.h = h; place(e, p); moved = true; }
+    });
+    if (moved) placeGbox();
+  }
+  setInterval(cropSections, 250);
+  function sectPanel(key, sect, x, y, o) {
+    o = o || {};
+    var d = window.WpSections ? WpSections.find(key, sect) : null;
+    var ov = ovEntry(key);
+    return { id: newId('c'), kind: 'sect', key: key, sect: sect,
+      name: ((ov ? ov.label : key) + ' · ' + (d ? d.label : sect)).slice(0, 32),
+      x: x, y: y, w: o.w || 200, h: o.h || 40, pw: o.pw || (ov && ov.w) || 340, ph: o.ph || (ov && ov.h) || 400,
+      scale: o.scale || 1, grp: o.grp || null, off: false };
+  }
+  // ✂ Take apart: the overlay's panel becomes one piece per section it shows right now, each at
+  // the spot it has on the page, grouped so they still move together until one is pulled out
+  // (Alt-drag). It looks the same as before; now each part can go its own way.
+  function takeApart(p) {
+    var e = _els[p.id], list = window.WpSections ? WpSections.list(p.key) : [];
+    var doc = null;
+    try { doc = e && e.frame && e.frame.contentDocument; } catch (err) { doc = null; }
+    if (!doc || !doc.body || !list.length) return 0;
+    var W = window.innerWidth, H = window.innerHeight, s = p.scale || 1;
+    var x0 = e.root.offsetLeft, y0 = e.root.offsetTop, grp = newId('g'), n = 0, made = [];
+    list.forEach(function (d) {
+      if (d.id === 'empty') return;
+      var r = WpSections.unionRect(doc, d.sel);
+      if (!r || made.length + _layout.panels.length >= MAX_PANELS) return;
+      made.push(sectPanel(p.key, d.id, num((x0 + r.left * s) / W, 0, 1, 0.3), num((y0 + r.top * s) / H, 0, 1, 0.3),
+        { w: Math.round(r.width * s), h: Math.round(r.height * s), pw: Math.round(p.w / s), ph: Math.round(p.h / s), scale: s, grp: grp }));
+    });
+    if (!made.length) return 0;
+    _layout.panels = _layout.panels.filter(function (q) { return q.id !== p.id; });
+    made.forEach(function (q) { _layout.panels.push(q); n++; });
+    return n;
+  }
+
   function render() {
     var keep = {};
     _layout.panels.forEach(function (p) {
@@ -504,8 +640,8 @@
       var e = _els[p.id] || (_els[p.id] = build(p));
       // A hidden overlay panel unloads its page, so it stops polling; showing
       // it again loads it fresh.
-      if (p.kind === 'overlay') {
-        var want = p.off ? 'about:blank' : (ovSrc(p.key) || 'about:blank');
+      if (p.kind === 'overlay' || p.kind === 'sect') {
+        var want = p.off ? 'about:blank' : ((p.kind === 'sect' ? sectSrc(p) : ovSrc(p.key)) || 'about:blank');
         if (e.src !== want) { e.src = want; e.frame.setAttribute('src', want); }
       }
       if (p.kind === 'part') {
@@ -835,6 +971,21 @@
       var o = ovEntry(p.key);
       h += '<div class="note">' + esc(o ? o.label : p.key) + ' as it is today: the same page, its own buttons and tabs. '
         + 'While it is on the canvas it has no window of its own.</div>';
+      if (window.WpSections && WpSections.list(p.key).length) {
+        h += '<div class="row"><button class="btn go" data-apart title="One piece per part of it that shows right now, each where it is, moving together until you Alt-drag one out">'
+          + '✂ Take it apart</button></div>';
+      }
+    } else if (p.kind === 'sect') {
+      var so = ovEntry(p.key), sd = window.WpSections ? WpSections.find(p.key, p.sect) : null;
+      h += '<div class="note">' + esc(sd ? sd.label : p.sect) + ', cut from ' + esc(so ? so.label : p.key)
+        + ': its own page, drawn as in its window, with its own buttons. Its size follows what it shows; '
+        + 'A−/A+ make it bigger or smaller, and the page width below lets its text wrap differently.</div>'
+        + '<div class="sec">Page width</div><div class="row">'
+        + '<button class="btn" data-pw="-20">−</button><span style="min-width:4em;text-align:center">' + Math.round(p.pw) + ' px</span>'
+        + '<button class="btn" data-pw="20">+</button></div>';
+      if (p.grp) {
+        h += '<div class="row"><button class="btn" data-leave title="It stops moving with the other pieces (Alt-drag does the same)">Leave the group</button></div>';
+      }
     } else if (p.kind === 'callouts') {
       h += '<div class="note">The text of every callout, where you want to read it. The voice is unchanged.</div>';
     } else if (p.all) {
@@ -857,10 +1008,10 @@
         + '<button class="btn' + (p.anchor !== 'top' ? ' on' : '') + '" data-anchor="bottom">↑ grows up</button>'
         + '<button class="btn' + (p.anchor === 'top' ? ' on' : '') + '" data-anchor="top">↓ grows down</button></div>';
     }
-    h += '<div class="sec">' + (p.kind === 'overlay' ? 'Size' : 'Text size') + '</div><div class="row">'
+    h += '<div class="sec">' + ((p.kind === 'overlay' || p.kind === 'sect') ? 'Size' : 'Text size') + '</div><div class="row">'
       + '<button class="btn" data-sc="-1">A−</button><span style="min-width:3em;text-align:center">' + Math.round((p.scale || 1) * 100) + '%</span>'
       + '<button class="btn" data-sc="1">A+</button></div>';
-    if (p.kind !== 'overlay' && p.kind !== 'part') {
+    if (p.kind !== 'overlay' && p.kind !== 'part' && p.kind !== 'sect') {
       h += '<div class="row" style="margin-top:8px">'
         + (p.kind === 'callouts'
           ? '<button class="btn" data-test title="One sample callout, shown and not spoken">🧪 Show a test callout</button>'
@@ -872,7 +1023,7 @@
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
       + (p.kind === 'overlay' ? '<button class="btn warn" data-remove title="Take it off the canvas; it opens as its own window again">Remove · own window</button>' : '')
-      + (p.kind === 'part' ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
+      + ((p.kind === 'part' || p.kind === 'sect') ? '<button class="btn warn" data-remove>Remove piece</button>' : '')
       + '</div>';
     menuEl.innerHTML = h;
     menuEl.classList.add('show');
@@ -1068,7 +1219,13 @@
       closeMenu(); render(); return;
     }
     else if (t.hasAttribute('data-anchor')) { p.anchor = t.getAttribute('data-anchor'); }
-    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-sc')) { p.scale = Math.round(num((p.scale || 1) + 0.1 * Number(t.getAttribute('data-sc')), (p.kind === 'overlay' || p.kind === 'part' || p.kind === 'sect') ? 0.5 : 0.6, p.kind === 'part' ? 3 : 2.5, 1) * 10) / 10; }
+    else if (t.hasAttribute('data-pw')) { p.pw = num((p.pw || 340) + Number(t.getAttribute('data-pw')), 160, 2400, 340); }
+    else if (t.hasAttribute('data-apart')) {
+      closeMenu();
+      if (takeApart(p)) { save(); render(); }
+      return;
+    }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
     else if (t.hasAttribute('data-rmgrp')) {
@@ -1244,7 +1401,8 @@
     if (!window.WpParts) return;
     var st = chooserState();
     chEl.classList.toggle('open', !!st.open);
-    var th = '<span class="ch-tab' + (st.tab === 'groups' ? ' on' : '') + '" data-tab="groups">★ Groups</span>';
+    var th = '<span class="ch-tab' + (st.tab === 'groups' ? ' on' : '') + '" data-tab="groups">★ Groups</span>'
+      + (window.WpSections ? '<span class="ch-tab' + (st.tab === 'cuts' ? ' on' : '') + '" data-tab="cuts" title="Parts of each overlay, drawn exactly as in its window">✂ Overlay parts</span>' : '');
     WpParts.CATS.forEach(function (c) {
       if (!WpParts.PARTS.some(function (d) { return d.cat === c[0]; })) return;
       th += '<span class="ch-tab' + (st.tab === c[0] ? ' on' : '') + '" data-tab="' + c[0] + '">' + esc(c[1]) + '</span>';
@@ -1270,6 +1428,21 @@
         lh += '<div class="ch-sec">Whole overlays, as today</div>';
         whole.forEach(function (o) { lh += '<div class="pc" data-drag="overlay:' + o.key + '"><span class="pc-l">▣ ' + esc(o.label) + '</span></div>'; });
       }
+    } else if (st.tab === 'cuts') {
+      // Each overlay's parts, cut from its own page: the same drawing and buttons as its window.
+      lh += '<div class="dim" style="margin:2px 0 6px">Exactly as each overlay draws it, one part at a time. '
+        + 'A whole overlay on the screen comes apart with ⚙ → ✂ Take it apart.</div>';
+      _overlays.forEach(function (o) {
+        var secs = WpSections.list(o.key);
+        if (!secs.length) return;
+        lh += '<div class="ch-sec">' + esc(o.label) + '</div>';
+        secs.forEach(function (d) {
+          if (d.id === 'empty') return;
+          lh += '<div class="pc" data-drag="sect:' + o.key + ':' + d.id + '" title="' + esc(d.note || ('Drag onto the screen: ' + d.label + ', as ' + o.label + ' draws it')) + '">'
+            + '<span class="pc-l">✂ ' + esc(d.label) + '</span>' + (d.tab ? '<span class="pc-v">its own tab</span>' : '') + '</div>';
+        });
+      });
+      if (!_overlays.some(function (o) { return WpSections.list(o.key).length; })) lh += '<div class="dim">still loading…</div>';
     } else {
       WpParts.PARTS.forEach(function (d) {
         if (d.cat !== st.tab) return;
@@ -1441,6 +1614,11 @@
       var added = o ? addOverlay(o, 0) : null;
       if (added) { added.x = num(X / W, 0, 1, 0.3); added.y = num(Y / H, 0, 1, 0.3); setTimeout(refresh, 600); }
     }
+    else if (bits[0] === 'sect' && window.WpSections && WpSections.find(bits[1], bits[2]) && _layout.panels.length < MAX_PANELS) {
+      _layout.panels.push(sectPanel(bits[1], bits[2], num(X / W, 0, 1, 0.3), num(Y / H, 0, 1, 0.3)));
+      // Its overlay's own window steps aside, as for a whole overlay (main _canvasHostedKeys).
+      setTimeout(refresh, 600);
+    }
     save(); render();
   }
   function saveSelectionAsGroup(name) {
@@ -1487,7 +1665,7 @@
   // callout or a countdown would have nowhere to show); everything else is.
   var toastEl = document.getElementById('toast'), toastMsg = document.getElementById('toastMsg');
   var _undo = null, _undoT = null;
-  function removable(q) { return q.kind === 'part' || q.kind === 'overlay' || (q.kind === 'timers' && !q.all); }
+  function removable(q) { return q.kind === 'part' || q.kind === 'sect' || q.kind === 'overlay' || (q.kind === 'timers' && !q.all); }
   function removePanels(ids) {
     var gone = [];
     _layout.panels = _layout.panels.filter(function (q, i) {

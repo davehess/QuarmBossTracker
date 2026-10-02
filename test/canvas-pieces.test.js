@@ -209,7 +209,7 @@ describe('the canvas places pieces', () => {
     r.undoRemove();
     expect(layout.panels.map(p => p.id)).toEqual(['callouts', 'all', 'p1', 'p2']);
     const c = stripJs(canvas);
-    expect(c).toMatch(/if \(q\.kind === 'part'\) \{ removePanels\(\[q\.id\]\); return; \}\s*q\.off = !q\.off;/);
+    expect(c).toMatch(/if \(q\.kind === 'part' \|\| q\.kind === 'sect'\) \{ removePanels\(\[q\.id\]\); return; \}\s*q\.off = !q\.off;/);
   });
   it('the selection bar locks pieces together, unlocks them, saves them as a group, deletes them', () => {
     const c = stripJs(canvas);
