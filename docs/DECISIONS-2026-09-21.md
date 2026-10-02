@@ -114,10 +114,11 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Two raids at once stay two raids** | **§124.** Bot 3.1.184 + web 1.8.70 on `main`: each Mimic's latest upload names its raid leader; buff queue and Extended Target keep to your raid; `/raid` one tab per raid by leader; crowns work (rank is text). Agent 3.7.65 on beta: "⚔ N raids at once" on Extended Target, Buff queue, Command Center, dashboard Raid tab | the guild lead: (1) at the next split raid, check `/raid` shows two tabs and the overlays say whose raid; (2) call it: should attendance ticks and the trigger relay split by raid too (§124 "not split yet") |
 | **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`, **stable agent 3.7.63** (hot-swapped 2026-10-01; beta 3.7.64): a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
 | **PoP from /who; checklist by level, closed, maps on hover** | **§122.** Beta `4f5e68e1` (web on `b.wolfpack.quest`; SQL function applied). Anyone /who shows inside a gated plane holds its gate and the ones on the way in: blue ✓ on `/pop`, "✓ seen on /who" on the checklist. Checklist B/C: progression levels, closed by default, sidebar opens them, 🗺 map on hover | the guild lead: (1) open `b.wolfpack.quest/pop` and `b.wolfpack.quest/pop/guide?v=b` (and `?v=c`); (2) pick B or C so it graduates with the /who counts |
 | **Trigger timing votes can be switched off** | **§121.** Agent 3.7.61 + Mimic on beta `db4d21d5`: dashboard → Triggers → Timing votes, or 🔕 on the vote buttons. Off = no vote row and no votes, ✕ or age-outs sent | the guild lead: on the next beta build, fire a test trigger, press 🔕, check the dashboard switch shows off and the row stops appearing |
-| **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, staged on `claude/sharp-lamport-dC0TW` during the Thursday raid freeze; lands on `main` after 00:30 ET | the guild lead: after it lands (and the 6 h cache turns over), target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
+| **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, **live on `main`** (landed 2026-10-01 22:30 ET with the /who hot-swap, `853c75df`) | the guild lead: once the 6 h cache turns over, target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
 | **PoP flags now record by name; Quarm's real gates; Justice marks** | **§119.** Agent 3.7.59 on `main` (stable Mimics hot-swap it), bot 3.1.182, web 1.8.65. Every grant is named from the flag NPC's line or the Seer's recital; Storms now needs the Justice flag; marks show on `/pop`. Today's 42 earlier grants stay unmapped until re-read | the guild lead: (1) tell raiders: sit by Seer Mal Nae`Shi in Knowledge, say "guided meditation", and every flag they hold records; (2) or re-run Opt-in Logs over today's log; (3) check `/pop` Justice shows the 7 Marks of Execution |
 | **Local mode (Mimic without the guild server); eqmimic.quest** | **§118.** Agent 3.7.58 on beta `0ec64fef` (`v2.7.7-beta.7`): no token = nothing sent to our server (it used to post uploads and live state that were then refused), no sign-in nag, Buff queue and Extended Target say "sign in". Installers carry the spell and item lists (bot 3.1.180 public catalog route). Found on the way: the bot's item catalog served 1,000 of 11,104 items (fixed in bot 3.1.181; nothing on screen used it, so no player saw it). eqmimic.quest: two designs at `hesstastic.com/eqmimic/` (A) and `/eqmimic/b/` (B), in the hesstastic repo | the guild lead: (1) pick A or B; (2) eqmimic.quest: no Vercel project builds the hesstastic repo (Pages only, §123), so import it into Vercel or make an `eqmimic` Pages repo, then DNS; (3) say whether to build the generic "Mimic" edition (§118, about 2 days); (4) cut a stable when ready, so the download is not a beta |
 | **Threat meter: Concussion, Jolt values, zoning clears your hate** | **§117.** Agent 3.7.57 on beta `2fe18e75`, your own meter only (A). Voice of Quellious and the flat Voice of Thule removed; fizzles/interrupts handed back; "LOADING, PLEASE WAIT..." clears you and your pet | the guild lead: on a wizard, Concussion a mob and watch the row drop; zone out mid-fight and see it clear. B (other raiders' meters) when wanted |
@@ -5694,3 +5695,59 @@ deleted):
 - **Cost:** build moderate (one shared panel script, two thin layouts); maintenance low (static,
   regenerated only when wanted); runtime light (~20 KB data, no requests); change easy (screens are
   functions).
+
+### 124. Two raids at once: a raid is the one your Mimic's raid window names (2026-10-02, bot 3.1.184 · web 1.8.70 · agent 3.7.65 beta)
+The guild lead: *"earlier tonight we had two concurrent raids running for flagging our members. the second
+raid started nearly an hour or so after the first one. mimic should be able to report up the raid
+structure from the Zeal pipe and if that varies from the rest of the raiders reporting we should be
+taking note. that means that things like extended Target, buff queue, the in-mimic raid dashboard and
+the wolfpack.quest raid page should reflect that. the site page can show that there are two or more
+raids"*
+
+**What the night's data showed** (counts only). 24 uploaders between 18:22 and 22:20 ET; two raid
+leaders live at once for about an hour, one raid of ~16 and one of ~26. Mimic already reported the raid
+structure (Zeal type 5, every member with group and rank); nothing new was needed from the agent. Two
+things were wrong on the reading side:
+- **Raids were told apart by shared members** (union-find in the buff queue and on `/raid`). Rows are
+  upserted and never deleted, so a raider who moves across stays in the first raid's uploads for the
+  15-minute window, and one move joins the two raids into one. 6 uploaders held both leaders' rows that
+  night, so the two raids read as one.
+- **Rank is text.** Zeal sends `Raid Leader` / `Group Leader` (48 `Raid Leader` rows, no `'2'`); `/raid`
+  and the dashboard Raid tab looked for `'2'` / `'1'`, so no crown, no leader banner and no leader on a
+  raid tab had ever shown.
+
+**The rule now (`utils/raidGroups.js`, ported to `web/lib/raidGroups.ts`).** Every row of one upload
+carries the same `captured_at`, so each Mimic's latest upload is the raid it is in now, and that upload's
+`Raid Leader` names the raid. Uploads naming the same leader are one raid; every latest upload that night
+named exactly one. Uploads older than 2 minutes have no say (a raid that ended is not a second raid); two
+raids sharing 60% of their members are one raid mid leader-change (DESIGN-multi-raid.md §2). With one raid
+every caller keeps its old code path, and the bot's responses are byte-for-byte what they were.
+
+**Where it shows.**
+- **Buff queue** (bot): your raid's members only; the payload names the raids
+  (`raids: [{ key, leader, size, mine }]`) only when there are two or more.
+- **Extended Target** (bot): the other raid's raiders and their targets drop out, even in the same zone;
+  raiders in no raid stay. Same `raids` field.
+- **`/raid`** (web, main): one tab per raid, labelled with its leader, "N raids at once"; the tab you
+  picked stays picked when the other raid grows past yours (it was held by position before); crowns.
+- **Mimic** (beta, agent 3.7.65): Extended Target's count line, the Buff queue, the Command Center and the
+  dashboard Raid tab say "⚔ N raids at once" and whose raid they show; the Command Center's priest mana
+  keeps to your raid while two run; the Raid tab's crowns.
+- **Taking note:** the bot logs one `[raids]` line each time the set of raids changes. Nothing is stored:
+  `raid_roster` is pruned hourly, so tomorrow nothing records that two raids ran. A per-night record (for
+  the raid review) is a small follow-up if wanted.
+
+**Design.** One design, inside the existing `/raid` tab strip and the overlays' existing count lines,
+rather than variants: the tabs were already there and broken, and the overlays get one line each. If the
+guild lead wants a page that shows both raids at once (officers watching two crews), that is the
+alternative: build moderate, maintenance moderate (two of every panel), runtime about double the render,
+change moderate.
+
+**Not split yet, each its own call:**
+- **Attendance ticks** take every fresh roster together, so one tick covers both raids. Whether a flagging
+  raid earns the main raid's tick is a DKP question (DESIGN-multi-raid.md §8 kept DKP out).
+- **The trigger relay** is guild-wide during the raid window, so a guild trigger fired in one raid plays
+  on the other raid's Mimics.
+- `/buffs`, the signup comp matcher and the essence queue still take everyone's names together; the
+  `dedup_roster` election (off by default) keys by group number alone.
+- A machine boxing characters in both raids sends whichever raid window Mimic read first in each flush.
