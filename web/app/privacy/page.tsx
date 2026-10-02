@@ -243,7 +243,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <B>Your live status</B>, every few seconds while Zeal is connected: zone, position (x/y/z),
-            HP, mana, buffs, target, pet and what is hitting you. This goes out{' '}
+            HP, mana, buffs, target, pet and what is hitting you, and when your own discipline, Mend,
+            Lay on Hands, Harm Touch and AAs are ready again (beta Mimic). This goes out{' '}
             <B>in or out of a raid, and even with EQ logging off</B>.
           </li>
           <li>
@@ -428,7 +429,7 @@ export default function PrivacyPage() {
           {([
             ['ONLY YOU', 'bg-purple/20 text-purple border-purple/40', <>Your relayed tells; your <Link href="/me" className="text-blue hover:underline">/me</Link> page.</>],
             ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. Two switches on /me share them with members, separately: <B>Quest page</B> and <B>Inventory page</B>.</>],
-            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP and buffs — that&apos;s how the buff queue and Target Info work.</>],
+            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP, buffs and those timers — that&apos;s how the buff queue and Target Info work.</>],
             ['OFFICERS', 'bg-gold/20 text-gold border-gold/40', <>The admin pages cover all of it, including chat history, member page views and feedback.</>],
             ['DISCORD', 'bg-blue/20 text-blue border-blue/40', <>Whoever can read the channel: relayed guild and raid chat, parse cards (which name deaths), the night&apos;s damage leaderboard, deathrolls, PvP kills and feedback.</>],
             ['ANON', 'bg-panel text-dim border-border', <>Guild-wide totals with <B>no names</B> (&ldquo;the Pack summoned 4,000 stacks of food&rdquo;).</>],

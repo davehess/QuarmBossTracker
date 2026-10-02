@@ -126,8 +126,10 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
 - **`/who` results:** every player shown who is level 50+ or anonymous, **from
   any guild** — name, level, class, race, guild and zone.
 - **Your live status**, every few seconds while Zeal is connected: zone,
-  position (x/y/z), HP, mana, buffs, target, pet and what is hitting you. This
-  goes out **in or out of a raid, and even with EQ logging off**.
+  position (x/y/z), HP, mana, buffs, target, pet and what is hitting you, and
+  (agent 3.7.66 beta) when your own discipline, Mend, Lay on Hands, Harm Touch
+  and AAs are ready again. This goes out **in or out of a raid, and even with
+  EQ logging off**.
 - **The raid roster** while you are in a raid: every raid member — including
   people from other guilds — with class, level, group, HP and position.
 - Your timing votes on callouts, and which callouts you clear or let run out
@@ -281,8 +283,8 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   with members, separately: **Quest page** and **Inventory page**.
 - 🐺 **Signed-in members** — parses, DKP and bids, attendance, loot, kill
   timers, `/who` sightings, and each character's equipped gear and AAs.
-  Members' Mimic can look up your current zone, HP and buffs — that's how the
-  buff queue and Target Info work.
+  Members' Mimic can look up your current zone, HP, buffs and those timers —
+  that's how the buff queue and Target Info work.
 - 🛠 **Officers** — the admin pages cover all of it, including chat history,
   member page views and feedback.
 - 💬 **Whoever can read the Discord channel** — relayed guild and raid chat,

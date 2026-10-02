@@ -3652,6 +3652,18 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   phrases learn from NPCs only (`_knownLevelOf`): the client's consider of a
   player does not follow the level table (DECISIONS-2026-09-21 §15). NPC
   considers still give a level or range.
+- **A targeted player's timers on Target Info (agent 3.7.66 beta, bot 3.1.185)** —
+  `target_timers` on `mobInfo` from `_targetPlayerTimers`: one of your own
+  characters → `_liveCooldownsFor`; another raider → their live-state upload
+  (`character_live_state.cooldowns`, stored by `_sanitizeLiveCooldowns`, returned by
+  `GET /api/agent/character-live-state`); a disc seen in your log →
+  `_meNoteOtherDisc` (`_ME_DISC_OTHER`, the 35 cast_on_other texts). AAs:
+  `_meNoteAaRefusal` reads "You can use the ability … again in …"; `/pipe at` /
+  `/pipe aa <name>` → `_meNoteAaPress`, which learns the reuse from a press then a
+  refusal (kept in `logsync.hud-timers.json`). `timersLine` in
+  `apps/mimic/mobinfo.html` (`data-wp-sect="timers"`, a Canvas part on alpha). Tests:
+  `test/target-player-timers.test.js`, `test/live-state-cooldowns.test.js`,
+  `test/live-state-signature.test.js`. DECISIONS-2026-09-21 §126.
 - **Blind Mode, catalog-driven (agent 3.7.2)** — `_blindCatalogTexts` reads
   SPA-20 landing/fade text from the catalog (`blind` flag, bot 3.1.145),
   excluding texts a non-blind spell shares; `/api/state.blind.active` looked
