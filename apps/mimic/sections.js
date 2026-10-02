@@ -31,6 +31,7 @@
       { id: 'stats',    label: 'HP, damage, health %', sel: '[data-wp-sect="stats"]' },
       { id: 'slots',    label: 'Buff and song slots', sel: '[data-wp-sect="slots"]' },
       { id: 'hp',       label: 'Health bar',          sel: '.mob > .hpbar' },
+      { id: 'timers',   label: 'Their timers (a player)', sel: '[data-wp-sect="timers"]' },
       { id: 'slow',     label: 'Slow',                sel: '.mob > .slowbadge' },
       { id: 'mana',     label: 'Mana',                sel: '.mob > .manabar, .mob > .mana' },
       { id: 'lastcast', label: 'Last spell it cast',  sel: '.mob > .lastcast' },

@@ -67,7 +67,9 @@
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c];
     });
   }
-  function num(v) { v = Number(v); return isFinite(v) ? v : null; }
+  // A missing value is null, not 0: Number(null) is 0, so "slowed null%" and "0 / 0 HP" drew for
+  // values the agent had not sent (the guild lead's screenshot, 2026-10-02).
+  function num(v) { if (v == null || v === '') return null; v = Number(v); return isFinite(v) ? v : null; }
   function pct(v) { v = num(v); return v == null ? null : Math.max(0, Math.min(100, v)); }
   // Health reads the way EQ's own bars do: fine, hurt, dying.
   function hpColor(p) { return p == null ? C.dim : p > 60 ? C.green : p > 30 ? C.orange : C.red; }

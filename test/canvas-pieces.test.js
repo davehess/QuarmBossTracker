@@ -436,3 +436,17 @@ describe('FB-40: target mana on every mob with mana, one ✥ per group, labels',
     expect(stripJs(canvas)).toMatch(/markGroupMovers\(\);\s*paintParts\(\);/);
   });
 });
+
+describe('a value the agent did not send draws as missing, not as 0', () => {
+  // The guild lead's screenshot, 2026-10-02: the Target pieces read "slowed null%" and "0 / 0 HP".
+  // Number(null) is 0, so num() turned every missing value into a known zero.
+  it('a slow with no strength says "slowed", nothing more', () => {
+    const r = W.byId['target.slow'].get({ character: 'Aldenmar', target: { slow: { pct: null, remaining_secs: 90 } } });
+    expect(r.text).toBe('slowed');
+  });
+  it('no exact HP falls back to the catalog figure', () => {
+    const r = W.byId['target.hpmax'].get({ mobInfo: { target_hp_cur: null, target_hp_max: null, mob: { hp: 24400 } } });
+    expect(r.text).not.toMatch(/^0 \/ 0/);
+    expect(r.text).toMatch(/ HP$/);
+  });
+});
