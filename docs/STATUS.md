@@ -108,9 +108,17 @@ next touch one rather than assuming a missing row means a missing doc.
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
   weekly eqemu sync. No live NPC positions without staff approval. DECISIONS-2026-09-21 §131.
 - **✅ / ⏳ The Oct 1–2 server patch notes consumed (bot 3.1.190 · web 1.8.77, 2026-10-02).** Done: the corpse DM
-  says when and where a PoP corpse moves. Waiting: Xanamech's 72 h board timer (he has no lockout now — the
-  guild lead's call); the reworded Glory broadcasts (need one real line); whether an open-world Classic–Luclin
-  raid-target kill would start the instance board timer (need one Druzzil line). §130.
+  says when and where a PoP corpse moves. Waiting: whether an open-world Classic–Luclin raid-target kill would
+  start the instance board timer (need one Druzzil line). §130.
+- **✅ Xanamech off the timer board (bot 3.1.191 · web 1.8.78, 2026-10-02).** No lockout since the Oct 1 patch.
+  Removed from `bosses.json`, the website's `bot_boards` row and the 72 h `bosses_local` override; a kill of him
+  says "no lockout" instead of the `/addboss` hint. ⚠ `/removeboss` leaves the `bot_boards` row behind (the
+  mirror only upserts). §132.
+- **⏳ Every Rallos Zek line read (agent 3.7.71, beta `c82ae5b4`; bot 3.1.191, 2026-10-02).** 168 lines were
+  unread since the PoP patch: deaths to NPCs (147), forfeits (13), the "exults" kill, a no-killer death.
+  All parse now. NPC deaths post to #pvp again; forfeits post as 🏃; no backup ping without a killer. Line
+  guilds are kept. Beta only until a stable cut; the Oct 2 "Glory lost/gained" wording has not been seen yet.
+  §132.
 
 - **✅ PoP flags record by name; the chart uses Quarm's real gates; Justice marks on /pop (agent 3.7.59 on main, bot 3.1.182, web 1.8.65, 2026-10-01; DECISIONS §119).** Every grant was 'unmapped' since launch. Now named from the flag NPC's line before it or from Seer Mal Nae`Shi's recital, read off the server's own scripts (`utils/popFlagStages.js`); hails stored as hails. Storms, Torment, Thunder, Sol Ro, the elementals and Time gated as `potranquility/player.lua` gates them, no level bypass. Open: the 42 grants recorded before the fix stay unmapped until re-read (Opt-in Logs or a Seer meditation).
 - **⏳ Local mode: Mimic for players outside the guild (agent 3.7.58 on beta `0ec64fef`, bot 3.1.180–3.1.181, 2026-10-01; DECISIONS §118).** No token = nothing sent to the guild server (the queue and live state used to post anyway and be refused), no sign-in nag, guild-only overlays say "sign in", and installers carry the spell and item lists via the bot's public catalog route. The bot's item catalog served 1,000 of 11,104 items since 2026-08-30 (fixed in bot 3.1.181); no screen calls the agent's local item search yet, so no player saw it. Download pages for eqmimic.quest: two designs in the hesstastic repo, awaiting a pick and the domain. Open: the generic "Mimic" edition (recommended over a branch, not decided).

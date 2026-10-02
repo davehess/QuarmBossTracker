@@ -1514,20 +1514,6 @@
     "pqdiUrl": ""
   },
   {
-    "id": "xanamech_nezmirthafen",
-    "name": "Xanamech Nezmirthafen",
-    "zone": "Plane of Innovation",
-    "expansion": "PoP",
-    "timerHours": 72,
-    "nicknames": [
-      "xanamech",
-      "xana",
-      "mech"
-    ],
-    "emoji": "⚙️",
-    "pqdiUrl": ""
-  },
-  {
     "id": "grummus",
     "name": "Grummus",
     "zone": "Plane of Disease",
