@@ -223,6 +223,9 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
   - `_corpseDmText` quotes Zeal's x, y, z, which are the numbers `/loc` prints (Zeal
     `zone_map.cpp`: "Position is y,x,z").
   - It is sheddable: `flag_shed_corpse`.
+  - In a Planes of Power zone (`_POP_CORPSE_MOVE_ZONES`, ids 200–223 less 202 and 203) it adds
+    when the corpse moves, an hour after death, and where (bot 3.1.190, the 2026-10-02 server
+    patch; DECISIONS-2026-09-21 §130).
 - **Tests:** `test/corpse-dm.test.js` and `test/corpse-dm-agent.test.js`.
   DECISIONS-2026-09-21 §43.
 
