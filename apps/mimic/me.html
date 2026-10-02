@@ -1257,7 +1257,8 @@
     // clicky counters for each item you have"): one line just inside the
     // resists, each item short-named with the charges it has left — orange at
     // one, red at none, ∞ when it never runs out, no number when that is not
-    // known yet. Names come from your last /output inventory.
+    // known yet. Names come from the newer of your /output inventory and your
+    // Quarmy export.
     if (p.clickies && d.clk.length) {
       var plainC = '', spans = d.clk.map(function(c, i){
         var nm = String(c.name).replace(/^(?:the|a|an)\s+/i, '');
