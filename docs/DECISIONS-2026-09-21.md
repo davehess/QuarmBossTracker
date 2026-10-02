@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PoP from /who; checklist by level, closed, maps on hover** | **§122.** Beta `4f5e68e1` (web on `b.wolfpack.quest`; SQL function applied). Anyone /who shows inside a gated plane holds its gate and the ones on the way in: blue ✓ on `/pop`, "✓ seen on /who" on the checklist. Checklist B/C: progression levels, closed by default, sidebar opens them, 🗺 map on hover | the guild lead: (1) open `b.wolfpack.quest/pop` and `b.wolfpack.quest/pop/guide?v=b` (and `?v=c`); (2) pick B or C so it graduates with the /who counts |
 | **Trigger timing votes can be switched off** | **§121.** Agent 3.7.61 + Mimic on beta `db4d21d5`: dashboard → Triggers → Timing votes, or 🔕 on the vote buttons. Off = no vote row and no votes, ✕ or age-outs sent | the guild lead: on the next beta build, fire a test trigger, press 🔕, check the dashboard switch shows off and the row stops appearing |
 | **Quest tab: Askr's lines, hand-ins that give a flag** | **§120.** Bot 3.1.183 + web 1.8.66, staged on `claude/sharp-lamport-dC0TW` during the Thursday raid freeze; lands on `main` after 00:30 ET | the guild lead: after it lands (and the 6 h cache turns over), target Askr the Lost and check the Quest tab shows his conversation and "a character flag" under GET |
 | **PoP flags now record by name; Quarm's real gates; Justice marks** | **§119.** Agent 3.7.59 on `main` (stable Mimics hot-swap it), bot 3.1.182, web 1.8.65. Every grant is named from the flag NPC's line or the Seer's recital; Storms now needs the Justice flag; marks show on `/pop`. Today's 42 earlier grants stay unmapped until re-read | the guild lead: (1) tell raiders: sit by Seer Mal Nae`Shi in Knowledge, say "guided meditation", and every flag they hold records; (2) or re-run Opt-in Logs over today's log; (3) check `/pop` Justice shows the 7 Marks of Execution |
@@ -135,7 +136,7 @@ is ephemeral. It is a desktop-session job.
 | **FB-37: XP tracking** | **Reviewed, not built (§104; `docs/DESIGN-xp-tracking.md`).** Nothing about XP leaves the machine today; total XP is exact from EQ's own formula | the guild lead: pick A (local), B (guild XP board) or B then C (live piece); retention 7 or 30 days; names for non-guild group members; does raid XP count |
 | **3.0: every overlay on the canvas** | **Alpha `d2dadf94`, build `3.0.0-alpha.846` (§102).** Any of the 15 overlays as a canvas panel, as it is today; "Bring in" moves everything on screen at its spot and size; one copy of each | the guild lead: on the alpha, arrange the canvas → ＋ Overlay → Bring in; play a session; say which overlay should get its new views first |
 | **3.0: sets, edit in place, six display types** | **Order taken 2026-09-29 (§83, §83a). Step 1 on alpha `e9e4f3d6`:** overlay sets — `/pipe mimic load/save/next/prev/lock`, tray 🗂 Overlay sets, Settings → Overlay sets; kept locally | the guild lead: on the alpha, save two sets, put `/pipe mimic next` on a social, flip between them in game; say whether a character switch should load that character's set. Sessions: step 2, the database backup |
-| **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records" | the guild lead: open `b.wolfpack.quest/pop/guide?v=b` and `?v=c`, pick one |
+| **PoP checklist: two layouts on beta** | **Beta `d0e69d49` (§86).** Sidebar nav; each step's expectations, what to say, who takes what, who you go back to, and a zone map; rows that fill themselves say "filled by Mimic" or "from our records". Reworked 2026-10-01 (§122: levels, closed, maps on hover) | the pick is now the §122 row's |
 | **PoP checklist: Justice + Bastion of Thunder** | **Corrected live, web 1.8.48 + bot 3.1.176 (§86).** Six Marks per trial, the Mark is checked not taken, the wrong Tribunal location removed; Askr is three hand-ins; the Talisman is a flag from the Storms shrine and needs Justice; Symbol of Torden required; tower walk added; seven flag bosses now map | the guild lead: tell officers the page is corrected; decide the 9,846 hail rows in `pop_flags` (delete, or store them as evidence) |
 | **DPS HUD +pet breakdown** | **Beta `672ff15e` (agent 3.7.45) + bot 3.1.175 (§85).** Pet's share of the bar in pet orange, "+pet" in the same colour; click for name, damage, spawn id | the guild lead: on a pet class's row, check the orange end reads apart from the row colour (gold on your own row); click +pet. Say if orange should be purple |
 | **FB-34 per-character suggested triggers · FB-35 pets on the meter** | **Beta `f857fa6f` (agent 3.7.44) + bot 3.1.174 (§84).** A **For:** picker on Suggested triggers; pets named by anyone's `/pet leader` credited on every Mimic, otherwise labelled (pet) | the guild lead: pick one character in For:, tick a trigger, check it stays quiet on another; members: pet owners type `/pet leader` once per night |
@@ -5591,3 +5592,45 @@ with the way to switch it off.
 
 **Beta only.** Stable agents keep asking. If it should reach stable before the next cut, the change is
 agent + `triggers.html`, so the overlay half needs a Mimic build, not just the hot-swap.
+
+### 122. PoP flags from /who; the checklist by progression level, closed, maps on hover (2026-10-01, beta `4f5e68e1`)
+
+The guild lead: *"how are we updating the pop pages? from /who in the zone for users that don't have
+mimic, and if they're in that zone that requires other zones we should note it. make the items a
+checklist style instead of just a big block of text. group them by the progression level and give us a
+side bar in that page. collapse them as well by default. in live map images when you roll over the map
+icon on the guide page"*.
+
+**How the pages were updating (the answer).** Only from Mimic: the flag NPC's line before each grant,
+the Seer's recital, the boss-kill fallback, a looted Justice Mark, and uploaded inventories (§119). A
+character whose owner does not run Mimic showed nothing.
+
+**/who now fills that in.**
+- `/who all` prints every visible player's zone, and any raider's Mimic uploads it (`who_observations`,
+  zone as the server's short name). A character inside a gated plane passed its gate.
+- `pop_who_sightings(guild, names, zones)` (migration `20261002010000`, applied by MCP; the same file on
+  `beta` and staged for `main`) returns one row per character and plane: first and last seen, GMs
+  skipped, service role only. About 90 ms for the whole roster.
+- `web/lib/popWho.ts` decides what a sighting proves: the plane's gate, and, by following each gate flag
+  to the plane it is earned in, the gates on the way in (Thunder → the shrine → Storms → the Justice
+  flag). A server step proves what the bot's `STAGE_IMPLIES` says; `test/pop-who.test.js` keeps the two
+  equal. Instanced copies are not counted (they show as "… (Instanced)"); it never takes a flag away.
+- On the day it shipped: 26 of our characters seen in Storms, 6 in Valor, 3 in Thunder.
+- `/pop`: those flags count everywhere. A gate only /who proves is a **blue ✓** whose tooltip names the
+  plane and the planes passed through; the zone page adds "seen in Storms on /who"; the header counts
+  them. The checklist ticks the flag steps (and Mavuin's information, the Tribunal and the Mavuin hail
+  before the Justice flag) as "✓ seen on /who", and its sidebar names the planes.
+
+**The checklist (both beta layouts, `?v=b` and `?v=c`).**
+- Steps sit under their **progression level**: Before the planes, then the `/pop` chart's tiers in its
+  colours, each naming its planes (`GUIDE_LEVELS` in `web/lib/popGuideMore.ts`).
+- **Every level starts closed**, showing done / total, the must-haves, a bar and the next step. The
+  sidebar opens the level you pick (Open all / Close all; a `#lvl-`/`#sec-` link opens itself).
+- **Maps on hover:** 🗺 on a row and 📍 in a step's detail show the zone map with the NPCs marked; on a
+  phone a tap opens it. Kept inside the window, closed on scroll.
+- Read as: the production page (no `?v=`) was the "big block of text"; B already had the sidebar and
+  closed detail, so the ask lands there. **B and C still wait on a pick**; graduating one deletes the other.
+- Smoke-rendered from the real component at 1280 and 390 wide: no sideways scroll, the map opens on
+  hover and on tap and closes again.
+- **Cost:** build low (one component, one SQL function); maintenance low (levels derive from the chart);
+  runtime one ~90 ms grouped read per page, maps drawn only on hover; change easy.

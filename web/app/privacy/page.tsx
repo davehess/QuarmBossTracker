@@ -312,7 +312,10 @@ export default function PrivacyPage() {
           line just before it, but only when that line comes from one of the flag NPCs (Mavuin, the
           Tribunal, the Planar Projections, Maelin and the others): that line is what names the flag. If
           you sit with Seer Mal Nae`Shi and ask for a guided meditation, Mimic sends her sentences about
-          your flags. Nothing you or anyone else said goes with them.
+          your flags. Nothing you or anyone else said goes with them. The PoP pages also read{' '}
+          <code>/who</code>, which is already collected: if a raider&apos;s /who shows you inside a plane behind
+          a gate, members see you counted as holding that gate (and the ones on the way in), marked as
+          &ldquo;seen on /who&rdquo;, whether or not you run Mimic (on the beta site first).
         </p>
       </Section>
 

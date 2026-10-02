@@ -167,6 +167,11 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
   per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
   character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
+- **🧪 PoP from /who; the checklist by progression level (beta `4f5e68e1`, web on `b.wolfpack.quest`).**
+  Anyone a raider's /who shows inside a gated plane holds its gate and the gates on the way in: blue ✓ on
+  `/pop`, "✓ seen on /who" on the checklist (SQL `pop_who_sightings`, applied). Checklist layouts B/C:
+  progression levels, closed by default, sidebar opens them, 🗺 map on hover. Waits on the B/C pick.
+  `test/pop-who.test.js`. `DECISIONS-2026-09-21.md` §122.
 - **🧪 Trigger timing votes can be switched off (agent 3.7.61, beta `db4d21d5`).** Dashboard → Triggers →
   Timing votes, or 🔕 on the vote buttons. Off: no « Earlier / ✓ Good! / » Too early row, and no votes,
   ✕ or age-outs uploaded. Default on. `test/callout-dismissals.test.js`. `DECISIONS-2026-09-21.md` §121.

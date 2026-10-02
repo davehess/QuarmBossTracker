@@ -1708,6 +1708,12 @@ single-grant zones, Tactics checklist by boss), writes the stage row plus the ca
 with `npc`. Gates in `web/lib/popFlags.ts` follow `potranquility/player.lua`. Justice marks on `/pop`
 come from `looted_items` (zone 201) and `character_inventory` (`JUSTICE_MARKS`). Tests:
 `test/pop-flag-stages.test.js`, `test/pop-flag-agent.test.js`.
+**From /who (beta `4f5e68e1`, §122):** `pop_who_sightings(guild, names, zones)` groups `who_observations`
+per character and gated plane (GMs skipped, service role only); `web/lib/popWho.ts` turns a sighting into
+the flags it proves (`WHO_ZONE` short name → chart key, `whoProves` follows each gate flag to the plane
+it is earned in, `GATE_IMPLIES` = the bot's `STAGE_IMPLIES`, `wayInChain` for the "reached through"
+text). `/pop` adds them to each character with `seen` kept apart (blue ✓ via `AccessMark`, `seenTag`).
+`test/pop-who.test.js`.
 
 ### PoP checklist (`/pop/guide`)
 Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
@@ -1730,6 +1736,10 @@ zone from the server's own placement rows for step maps.
 `ZoneMap.tsx` (SVG, north up, x mirrored), `routeData.ts` (the viewer's own characters' ticks + evidence +
 day-cached outlines), `web/lib/popGuideMore.ts` (expect / turnIn / back / auto per step key) and
 `web/lib/popGuideAuto.ts` (what fills itself in: `mimic` vs `database`). `test/pop-guide-more.test.js`.
+2026-10-01 (§122): `GUIDE_LEVELS` (`popGuideMore.ts`) groups the sections by progression level; every
+level renders closed (`open` set) with progress and the next step, the sidebar's `goTo` opens and
+scrolls; `MapPeek` shows `ZoneMap` in a fixed popover on hover / tap / keyboard focus; `popGuideAuto`
+gains the `who` source from `pop_who_sightings` (`routeData.ts`). `test/pop-who.test.js`.
 
 ### Target Info F/Q/V (Faction · Quest · Vendor)
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
