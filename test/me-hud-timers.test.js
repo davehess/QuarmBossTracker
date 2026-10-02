@@ -60,7 +60,11 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
     function _resolveHpValuesForName() { return null; }
     ${dsSlack}
     ${slainRx}
-    function _knownDsPerHitFor(n, out) { if (out && globalThis.__dsWornKind) out.kind = globalThis.__dsWornKind; return ${Number(dsKnown) || 0}; }
+    function _knownDsPerHitFor(n, out) {
+      if (out && globalThis.__dsWornKind) out.kind = globalThis.__dsWornKind;
+      if (out && globalThis.__dsWornOff) { out.off = globalThis.__dsWornOff; return 0; }
+      return ${Number(dsKnown) || 0};
+    }
     ${sliceBlock(agent, 'function _dsKindOf(text) {', '\n}')}
     function _targetPlayerInfo() { return ${JSON.stringify(player)}; }
     function _currentTargetState() { return globalThis.__enrageTgt || null; }
@@ -479,6 +483,58 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     say(h, 'Aldenmar', 'a gnoll warlord writhes in the grip of agony.');
     expect(cd(h, 'ht').seen).toBe(true);
   });
+
+  // The guild lead, 2026-10-02: "add Boastful Bellow AA as a timer for Bards that have the AA".
+  // Reuse 18 s (Quarm aa_actions, AA 592). Instant, so no "begin casting" line.
+  describe('Boastful Bellow', () => {
+    it('is no slot for a bard who has not used it — the HUD cannot see AAs owned', () => {
+      expect(cd(load({ zeal: zeal('Bard') }), 'bellow')).toBeUndefined();
+    });
+
+    it('starts on a landing paired with your own damage on that mob, either order', () => {
+      let h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      expect(cd(h, 'bellow')).toBeUndefined();   // the landing alone: anyone near the mob sees it
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 37 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toMatchObject({ label: 'Boastful Bellow', seen: true, ms_left: 18_000, total_ms: 18_000 });
+      h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'You hit A gnoll warlord for 12 points of non-melee damage.');
+      clock += 800;
+      say(h, 'Aldenmar', 'A gnoll warlord is shaken by a loud bellow.');
+      expect(cd(h, 'bellow').ms_left).toBe(17_200);
+    });
+
+    it('another bard\'s bellow on your mob, your damage on a different mob or too late, starts nothing', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      say(h, 'Aldenmar', 'You hit a gnoll guard for 30 points of non-melee damage.');
+      clock += 2000;
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 30 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toBeUndefined();
+    });
+
+    it('a resist names it and only you see it — that starts it too', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'Your target resisted the Boastful Bellow spell.');
+      expect(cd(h, 'bellow').ms_left).toBe(18_000);
+    });
+
+    it('never for another class', () => {
+      const h = load({ zeal: zeal('Cleric') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 37 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toBeUndefined();
+    });
+
+    it('pressing it early puts the one timer right — no second AA slot', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'Your target resisted the Boastful Bellow spell.');
+      clock += 3000;
+      say(h, 'Aldenmar', 'You can use the ability Boastful Bellow again in 0 minute(s) 12 seconds.');
+      expect(cd(h, 'bellow').ms_left).toBe(12_000);
+      expect(h._serializeMeState().cooldowns.filter(c => /bellow/i.test(c.label)).length).toBe(1);
+    });
+  });
 });
 
 // The guild lead, 2026-09-24: "Damage shield hits are also mixed in there - those
@@ -554,6 +610,24 @@ describe('damage shield — its own kind, and its per-hit value', () => {
     const plain = load({ zeal: Z.zeal });
     plain._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'feedback', amount: 9, ds: true });
     expect(plain._serializeMeState().combat.ds.kind).toBeNull();
+  });
+
+  // The guild lead, 2026-10-02 (Mark of the Plague Lords): a shield-cancelling debuff "should be
+  // reflected in the hud" — 0 a hit and no thorns/lava look, even with a shield hit this fight.
+  it('a shield-cancelling debuff makes the DS button 0 a hit and names the debuff', () => {
+    const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 150 };
+    try {
+      globalThis.__dsWornOff = off;
+      const bare = load({ zeal: Z.zeal })._serializeMeState().combat.ds;   // no shield hit yet: the button still shows
+      expect(bare.off).toEqual(off);
+      expect(bare.per_hit).toBe(0);
+      const h = load({ zeal: Z.zeal });
+      h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+      const ds = h._serializeMeState().combat.ds;
+      expect(ds.per_hit).toBe(0);
+      expect(ds.kind).toBeNull();
+      expect(ds.off.name).toBe('Mark of the Plague Lords');
+    } finally { globalThis.__dsWornOff = null; }
   });
 
   it('every hit carries its log second, so the HUD can draw one round per line', () => {

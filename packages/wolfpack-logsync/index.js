@@ -12993,7 +12993,32 @@ function _knownDsPerHitFor(name, out) {
       if (out && Number(cat.ds) > big) { big = Number(cat.ds); out.kind = _dsKindOf(b.name); }
     }
   }
+  // A shield-cancelling debuff up (Mark of the Plague Lords) means no shield at
+  // all, whatever else is worn — see _dsOffFrom.
+  const off = _dsOffFrom(list);
+  if (off) { if (out) out.off = off; return 0; }
   return sum;
+}
+// The debuff that turns a damage shield OFF (the guild lead, 2026-10-02: "this debuff exists for
+// damage shield reduction and should be reflected in the hud and overlays"). The catalog's
+// `ds_heal` is a POSITIVE SPA 59, and on the Quarm server that is not a smaller shield: the
+// positive value replaces every shield the wearer has, and each melee hit that lands on them
+// HEALS the attacker by that much (zone/bonuses.cpp SE_DamageShield, zone/attack.cpp
+// Mob::DamageShield). So Mark of the Plague Lords (+50) on a tank = no shield for 3m12s and a mob
+// healed 50 a hit. → { name, heals, seconds } for the biggest one up, else null.
+function _dsOffFrom(list) {
+  let off = null;
+  for (const b of (list || [])) {
+    if (!b || !b.name || b.fell_off) continue;
+    const cat = _spellByNameLower.get(String(b.name).toLowerCase());
+    const heals = cat ? Number(cat.ds_heal) || 0 : 0;
+    if (heals > 0 && (!off || heals > off.heals)) {
+      const secs = typeof b.seconds === 'number' ? b.seconds
+                 : (typeof b.remaining_secs === 'number' ? b.remaining_secs : null);
+      off = { name: b.name, heals, seconds: secs };
+    }
+  }
+  return off;
 }
 // The guild lead, 2026-10-02: the damage-shield amount "should show as wrapped in a thorny green
 // area if it's druid DS or glowing lava if mage ds". 'thorns' for the druid/ranger family, 'fire'
@@ -13570,6 +13595,13 @@ const _ME_SKILL_LINES = [
   { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You feign death\./ },   // failures: _meFdFailed
   { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
   { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
+  // Boastful Bellow, the bard PoP AA (the guild lead, 2026-10-02: "add Boastful Bellow AA as a
+  // timer for Bards that have the AA"). Reuse 18 s — Quarm's aa_actions row for AA 592 (spell
+  // 3282). It is instant, so no "begin casting" line exists (zone/spells.cpp sends the begin-cast
+  // only when cast_time > 0). A resist names it and only the caster sees that; a landing is
+  // paired with your own damage on that mob (_meNoteBellow). Not in _ME_CLASS_CDS: the slot
+  // appears once a bard has used it, which is how we know they have the AA.
+  { key: 'bellow', label: 'Boastful Bellow', secs: 18, est: false, aa: true, rx: /^Your target resisted the Boastful Bellow spell\./ },
 ];
 const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // The cooldowns each class always sees, even before the first use this
@@ -13603,6 +13635,25 @@ function _meStartSkill(cl, key, atMs) {
   if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
   mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
   _meTimersSave();
+}
+// A landed Boastful Bellow. Everyone near the mob sees "<mob> is shaken by a loud
+// bellow." — so a second bard on the same mob would start YOUR timer off THEIR
+// bellow. Only the caster sees "You hit <mob> for N points of non-melee damage.",
+// and the bellow's damage arrives in the same server tick; the pair, on the same
+// mob within 1.5 s, is yours. Bards only. `kind` 'land' | 'hit'.
+const _meBellowSeen = new Map();   // charLower → { land: { mob, at }, hit: { mob, at } }
+function _meNoteBellow(cl, kind, mob, atMs) {
+  const zst = _meZealFor(cl);
+  const cls = zst ? normalizeClass(_meLabel(zst, 3) || '') : null;
+  if (cls !== 'Bard' || !mob) return;
+  let e = _meBellowSeen.get(cl);
+  if (!e) { e = {}; _meBellowSeen.set(cl, e); }
+  e[kind] = { mob: String(mob).toLowerCase(), at: atMs };
+  const o = e[kind === 'land' ? 'hit' : 'land'];
+  if (o && o.mob === e[kind].mob && Math.abs(o.at - atMs) <= 1500) {
+    _meBellowSeen.delete(cl);
+    _meStartSkill(cl, 'bellow', Math.min(o.at, atMs));
+  }
 }
 // A Feign Death that FAILED (the guild lead, 2026-09-24: "I did not get an 'FD
 // Failure' message when this happened - FD cooldown in the Hud should show an
@@ -13801,6 +13852,10 @@ function _meNoteAaRefusal(cl, msg, atMs) {
   const m = _ME_AA_REFUSAL_RX.exec(msg);
   if (!m) return false;
   const left = ((m[2] ? parseInt(m[2], 10) : 0) * 3600 + parseInt(m[3], 10) * 60 + parseInt(m[4], 10)) * 1000;
+  // An AA whose reuse we know (Boastful Bellow) keeps its one HUD timer: the
+  // refusal just puts it right.
+  const known = _ME_SKILL_LINES.find(s => s.aa && s.label.toLowerCase() === m[1].toLowerCase());
+  if (known) { _meStartSkill(cl, known.key, atMs + left - known.secs * 1000); return true; }
   const e = _meAaSlot(cl, m[1]);
   e.name = m[1];   // the server's spelling over a /pipe line's
   e.ready = atMs + left;
@@ -14179,6 +14234,9 @@ function _meNoteRawLine(line, character) {
       const d = parseEqTimestamp(line);
       _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now });
     }
+    // Your own spell damage — the other half of a landed Boastful Bellow (_meNoteBellow).
+    const nm = msg.indexOf('non-melee') !== -1 ? /^You hit (.+) for \d+ points? of non-melee damage\.$/.exec(msg) : null;
+    if (nm) _meNoteBellow(cl, 'hit', nm[1], now);
     let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
     if (m) { const d = parseEqTimestamp(line); _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at), d ? d.getTime() : null); return; }
     m = _ME_ABILITY_RX.exec(msg);
@@ -14188,6 +14246,10 @@ function _meNoteRawLine(line, character) {
       _meStartSkill(cl, s.key, now);
       return;
     }
+  }
+  if (msg.endsWith(' is shaken by a loud bellow.')) {
+    _meNoteBellow(cl, 'land', msg.slice(0, -' is shaken by a loud bellow.'.length), now);
+    return;
   }
   const disc = _ME_DISCS.get(msg);
   if (disc) { _meNoteDisc(cl, disc, now); return; }
@@ -14706,10 +14768,12 @@ function _serializeMeState() {
   // right now, else the last one that landed.
   const dsWorn = {};
   const dsKnown = _knownDsPerHitFor(active, dsWorn);
-  if (!combat.ds && dsKnown) combat.ds = { hits: 0, total: 0, last: null };
+  if (!combat.ds && (dsKnown || dsWorn.off)) combat.ds = { hits: 0, total: 0, last: null };
   if (combat.ds) {
     combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown;
     combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
+    // Shield cancelled (_dsOffFrom): 0 a hit, whatever landed before the debuff.
+    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.from_buffs = true; combat.ds.kind = null; }
   }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.
@@ -14861,6 +14925,7 @@ function _serializeTankState() {
     if (cat && cat.ds) dsSources.push({ name: b.name, per_hit: cat.ds });
   }
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
+  const dsOff = _dsOffFrom(buffsOut);   // Mark of the Plague Lords: those sources return nothing
 
   // Rampage target — persists for the WHOLE fight (see
   // _currentRampageForDisplay: the rampage target doesn't change between
@@ -14970,7 +15035,7 @@ function _serializeTankState() {
       hp_cur:  mtHpCur,
       hp_max:  mtHpMax,
       buffs:   (mtBuffs || []).slice(0, 20),
-      ds:      mtDs ? { ...mtDs, sources: mtDsSources.slice(0, 8) } : { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: mtDsSources.slice(0, 8) },
+      ds:      { ...(mtDs || { total: 0, hits: 0, avg_per_hit: 0, abilities: [] }), sources: mtDsSources.slice(0, 8), off: _dsOffFrom(mtBuffs) },
     };
   }
 
@@ -15137,6 +15202,7 @@ function _serializeTankState() {
       avg_per_hit: dsHits > 0 ? Math.round(dsTotal / dsHits) : 0,
       abilities: dsBreakdown.slice(0, 8),
       sources: dsSources.slice(0, 8),
+      off: dsOff,
     },
     rampage,
     enrage,
@@ -20555,7 +20621,7 @@ var WP_OVERLAY_ROWS = [
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -37427,6 +37493,10 @@ const SUGGESTED_TRIGGERS = [
   // standalone timer". The same Zeal gauge-24 tick the HUD draws, as a bar.
   { id: 'timer_server_tick', category: 'timer', label: 'Server tick (the 6s tick from Zeal, like the HUD\'s)',
     builtin_timer: 'server_tick', no_tts: true },
+  // The guild lead, 2026-10-02: "add Boastful Bellow AA as a timer for Bards that have the AA".
+  // The HUD's own Bellow cooldown (_ME_SKILL_LINES 'bellow') as a bar.
+  { id: 'timer_boastful_bellow', category: 'timer', label: 'Boastful Bellow reuse (bards with the AA — 18s from each one you land or get resisted)',
+    builtin_timer: 'bellow', no_tts: true },
 ];
 
 const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
@@ -41958,6 +42028,16 @@ function _builtinTimerRows(now) {
              remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true, group: 'tick' });
     }
   }
+  if (on.has('bellow')) {
+    // Each watched character's Boastful Bellow, while it is coming back.
+    for (const cl of mine) {
+      const c = (_meSkillCds.get(cl) || new Map()).get('bellow');
+      const left = c ? c.at + c.secs * 1000 - now : 0;
+      if (!(left > 0)) continue;
+      push({ id: 'bt|bellow|' + cl + '|' + c.at, name: 'Boastful Bellow', target: null, effect: 'Boastful Bellow',
+             remaining_ms: left, duration_sec: c.secs, bar_color: '#d29922', group: 'spell' });
+    }
+  }
   if (on.has('lull') || on.has('my_spells')) {
     for (const [tk, mp] of _buffLandingsByTarget) {
       for (const [sk, b] of mp) {
@@ -44855,7 +44935,7 @@ module.exports = {
   SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
-  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
+  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
