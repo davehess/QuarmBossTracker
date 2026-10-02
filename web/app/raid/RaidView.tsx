@@ -22,6 +22,10 @@ import {
   shortBuffName, fmtBuffRemaining, buffTimeTone, isCurseBuff,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
+import { isRaidLeader, isGroupLeader } from '@/lib/raidGroups';
+
+// One tab per raid when two or more run at once; keyed by the raid's leader, not its position.
+export type RaidTab = { key: string; label: string };
 
 // Tone for a buff's live time-left — crit (refresh now) → low → ok. "unknown"
 // renders the "?" chip dimmer + italic so it reads differently from a real
@@ -36,9 +40,9 @@ export type RaidRow = {
   className: string | null;
   role: Role;
   raidGroup: number | null;
-  raidIdx: number | null;        // which concurrent raid (0-based, biggest first)
+  raidKey: string | null;        // which raid, when two or more run at once (its leader, lower-cased)
   level: number | null;
-  rank: string | null;           // '2' raid leader, '1' group leader
+  rank: string | null;           // Zeal's "Raid Leader" / "Group Leader" (isRaidLeader / isGroupLeader)
   inRaid: boolean;
   swappedTo: string | null;      // this client logged another character in
   noAgent: boolean;              // no buff data for this row (see hasAgent — NOT the same question)
@@ -189,10 +193,10 @@ function manaFillClass(pct: number): string {
 }
 
 export default function RaidView({
-  rows, raidLabels, myClass, dsValues, ari, rosterMissing = false,
+  rows, raidTabs, myClass, dsValues, ari, rosterMissing = false,
 }: {
   rows: RaidRow[];
-  raidLabels: string[];
+  raidTabs: RaidTab[];
   myClass: string | null;
   dsValues: Record<string, number>;
   // Auto-Raid-Invite registry (officer-set via Discord /ari, mirrored to
@@ -210,15 +214,18 @@ export default function RaidView({
   const [bufferClass, setBufferClass] = useState<BufferClass | ''>(() => asBufferClass(myClass));
   const [selectedName, setSelectedName] = useState<string | null>(null);
   // Concurrent raids → one tab each (Raid 1 = biggest). Defaults to the raid
-  // containing the signed-in user's character.
-  const [activeRaid, setActiveRaid] = useState<number>(() => {
-    const mine = rows.find(r => r.isMe && r.raidIdx != null);
-    return mine?.raidIdx ?? 0;
+  // containing the signed-in user's character. Held by the raid's key, so the
+  // 15s refresh never moves you to the other raid when it outgrows yours; a
+  // raid that ends drops you on the first tab.
+  const [pickedRaid, setActiveRaid] = useState<string | null>(() => {
+    const mine = rows.find(r => r.isMe && r.raidKey != null);
+    return mine?.raidKey ?? null;
   });
-  const multiRaid = raidLabels.length > 1;
+  const multiRaid = raidTabs.length > 1;
+  const activeRaid = raidTabs.some(t => t.key === pickedRaid) ? pickedRaid : (raidTabs[0]?.key ?? null);
   // Rows visible under the active tab: the tab's raid + everything parked.
   const tabRows = useMemo(
-    () => (multiRaid ? rows.filter(r => !r.inRaid || r.raidIdx === activeRaid || r.raidIdx == null) : rows),
+    () => (multiRaid ? rows.filter(r => !r.inRaid || r.raidKey === activeRaid || r.raidKey == null) : rows),
     [rows, activeRaid, multiRaid],
   );
   // Headline counters for the ACTIVE raid (previously page-computed globals,
@@ -229,13 +236,13 @@ export default function RaidView({
   // the hasAgent note in page.tsx: !noAgent includes INFERRED raiders (buffs
   // seen by a groupmate's Mimic), which pinned this at 100%.
   const mimicCovered = inRaidRows.filter(r => r.hasAgent).length;
-  const leaderRow    = inRaidRows.find(r => r.rank === '2') ?? null;
+  const leaderRow    = inRaidRows.find(r => isRaidLeader(r.rank)) ?? null;
   const leaderName   = leaderRow?.name ?? null;
   const leaderClass  = leaderRow?.className ?? null;
   const groupLeaders = useMemo(() => {
     const m: Record<number, string> = {};
     for (const r of inRaidRows) {
-      if (r.rank === '1' && r.raidGroup != null && m[r.raidGroup] == null) m[r.raidGroup] = r.name;
+      if (isGroupLeader(r.rank) && r.raidGroup != null && m[r.raidGroup] == null) m[r.raidGroup] = r.name;
     }
     return m;
   }, [inRaidRows]);
@@ -430,17 +437,18 @@ export default function RaidView({
         </div>
       )}
 
-      {/* Concurrent raids — one tab each. Only rendered when Zeal snapshots
-          cluster into MORE than one raid (two crews running at once). */}
+      {/* Concurrent raids — one tab each. Only rendered when Mimics report
+          MORE than one raid leader (two crews running at once). */}
       {multiRaid && (
         <div className="flex items-center gap-2 flex-wrap">
-          {raidLabels.map((label, i) => (
+          <span className="text-xs text-orange">{raidTabs.length} raids at once:</span>
+          {raidTabs.map((t) => (
             <button
-              key={label}
+              key={t.key}
               type="button"
-              onClick={() => setActiveRaid(i)}
-              className={`px-3 py-1.5 text-xs rounded border transition-colors ${activeRaid === i ? 'bg-[#1f6feb33] text-blue border-blue' : 'bg-panel text-dim border-border hover:border-blue'}`}
-            >⚔️ {label}</button>
+              onClick={() => setActiveRaid(t.key)}
+              className={`px-3 py-1.5 text-xs rounded border transition-colors ${activeRaid === t.key ? 'bg-[#1f6feb33] text-blue border-blue' : 'bg-panel text-dim border-border hover:border-blue'}`}
+            >⚔️ {t.label}</button>
           ))}
         </div>
       )}
@@ -566,8 +574,8 @@ export default function RaidView({
                 <ul className="divide-y divide-border/40">
                   {grpRows.map(r => {
                     const style = TIER_STYLE[r.tier];
-                    const isLeader = r.rank === '2';
-                    const isGrpLead = r.rank === '1';
+                    const isLeader = isRaidLeader(r.rank);
+                    const isGrpLead = isGroupLeader(r.rank);
                     return (
                       <li
                         key={r.name}
@@ -1073,8 +1081,8 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-text text-base font-medium truncate">
-            {row.rank === '2' && '👑 '}
-            {row.rank === '1' && '⭐ '}
+            {isRaidLeader(row.rank) && '👑 '}
+            {isGroupLeader(row.rank) && '⭐ '}
             {row.name}
           </div>
           <div className="text-dim text-[11px]">

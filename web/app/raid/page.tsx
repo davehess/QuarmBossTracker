@@ -26,7 +26,8 @@ import {
   resistTypesFor, isSongBuff, secondaryCategoriesFor, UPGRADE_CHAINS, chainPosition,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
-import RaidView, { type RaidRow } from './RaidView';
+import { groupRaids } from '@/lib/raidGroups';
+import RaidView, { type RaidRow, type RaidTab } from './RaidView';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -233,43 +234,18 @@ export default async function RaidHubPage() {
   const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
   const rosterClean = ((rosterRows ?? []) as RosterRow[]).filter(r => !isCorpse(r.name));
 
-  // ── Concurrent-raid clustering ─────────────────────────────────────────────
-  // raid_roster now holds one SNAPSHOT per uploader (pk guild,uploader,name).
-  // Snapshots sharing any member are the same raid; disjoint snapshots are
-  // separate raids running at once (the "Raid 2" report). Union-
-  // find over uploaders via shared members → cluster ordinals, biggest first.
-  const snapsByUploader = new Map<string, RosterRow[]>();
-  for (const r of rosterClean) {
-    const up = String(r.uploaded_by_discord_id || '');
-    if (!snapsByUploader.has(up)) snapsByUploader.set(up, []);
-    snapsByUploader.get(up)!.push(r);
-  }
-  const uploaders = [...snapsByUploader.keys()];
-  const clusterOf = new Map<string, number>(uploaders.map((u, i) => [u, i]));
-  const memberFirstUp = new Map<string, string>();
-  for (const [up, rws] of snapsByUploader) {
-    for (const r of rws) {
-      const m = r.name.toLowerCase();
-      const other = memberFirstUp.get(m);
-      if (other == null) { memberFirstUp.set(m, up); continue; }
-      const a = clusterOf.get(up)!, b = clusterOf.get(other)!;
-      if (a !== b) for (const [u2, c] of clusterOf) if (c === a) clusterOf.set(u2, b);
-    }
-  }
-  // Cluster id → ordinal (0-based), ordered by member count desc so "Raid 1"
-  // is the big one. memberRaidIdx: member(lower) → ordinal.
-  const clusterMembers = new Map<number, Set<string>>();
-  for (const [up, rws] of snapsByUploader) {
-    const c = clusterOf.get(up)!;
-    if (!clusterMembers.has(c)) clusterMembers.set(c, new Set());
-    for (const r of rws) clusterMembers.get(c)!.add(r.name.toLowerCase());
-  }
-  const ordered = [...clusterMembers.entries()].sort((a, b) => b[1].size - a[1].size);
-  const ordinalOf = new Map<number, number>(ordered.map(([c], i) => [c, i]));
-  const memberRaidIdx = new Map<string, number>();
-  for (const [c, members] of clusterMembers) {
-    for (const m of members) memberRaidIdx.set(m, ordinalOf.get(c)!);
-  }
+  // ── Two or more raids at once ──────────────────────────────────────────────
+  // Each Mimic's latest upload names its raid leader; uploads naming the same leader are one raid
+  // (web/lib/raidGroups.ts, the bot's utils/raidGroups.js; DECISIONS §124). This replaced clustering
+  // by shared members, which one raider moving between the raids joined into a single raid for 15
+  // minutes (the guild lead, 2026-10-01: two flagging raids, the second an hour after the first).
+  const raidSplit = groupRaids(rosterClean);
+  // A row no live raid claims (they left, or their uploader went quiet) stays with the raid its
+  // uploader is in.
+  const raidKeyFor = (lower: string, rr: RosterRow): string | null =>
+    raidSplit.multi
+      ? (raidSplit.raidForName(lower) ?? raidSplit.raidForUploader(rr.uploaded_by_discord_id))?.key ?? null
+      : null;
 
   // Per-member freshest row across snapshots. The freshest row wins membership
   // (group, rank, level), but HP backfills from the freshest row that actually
@@ -544,9 +520,9 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: swappedTo ? null : (rr.group_num ?? null),
-      raidIdx: swappedTo ? null : (memberRaidIdx.get(lower) ?? null),
+      raidKey: swappedTo ? null : raidKeyFor(lower, rr),
       level: rr.level ?? null,
-      rank: rr.rank ?? null,        // '2' raid leader, '1' group leader, else member
+      rank: rr.rank ?? null,        // "Raid Leader" / "Group Leader" from Zeal, else member
       inRaid: !swappedTo,
       swappedTo,
       noAgent,
@@ -594,7 +570,7 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: null,
-      raidIdx: null,
+      raidKey: null,
       level: null,
       rank: null,
       inRaid: false,
@@ -645,17 +621,11 @@ export default async function RaidHubPage() {
     }
   }
 
-  // Tab labels per raid cluster — "Raid 1 — <leader> (N)" when the Zeal rank
-  // marks a leader, else just the ordinal + size.
-  const raidLabels: string[] = ordered.map(([c], i) => {
-    const members = clusterMembers.get(c)!;
-    let leaderName: string | null = null;
-    for (const m of members) {
-      const rr = rosterByName.get(m);
-      if (rr && rr.rank === '2') { leaderName = rr.name; break; }
-    }
-    return 'Raid ' + (i + 1) + (leaderName ? ' — ' + leaderName : '') + ' (' + members.size + ')';
-  });
+  // One tab per raid, keyed by its leader so a tab stays put when the other raid grows past it.
+  // Empty with one raid: no tabs, as before.
+  const raidTabs: RaidTab[] = raidSplit.multi
+    ? raidSplit.raids.map((r, i) => ({ key: r.key, label: 'Raid ' + (i + 1) + ' — ' + r.leader + ' (' + r.size + ')' }))
+    : [];
 
   // The signed-in user's class as they appear in the current raid (if any) —
   // used as the default Buffer-mode class. They can override.
@@ -674,7 +644,7 @@ export default async function RaidHubPage() {
   return (
     <RaidView
       rows={rows}
-      raidLabels={raidLabels}
+      raidTabs={raidTabs}
       myClass={myClass}
       dsValues={dsValues}
       ari={ari}

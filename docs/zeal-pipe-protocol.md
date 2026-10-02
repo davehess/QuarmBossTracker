@@ -78,7 +78,7 @@ source, not inferred.
 | 2    | gauge  | array of `{ type: <gauge id>, value (per-mille 0-1000), text }` | self/target/pet/group HP absorbed; full dump kept |
 | 3    | player | `{ zone, location: {x,y,z}, heading, autoattack }` | **all four now absorbed** (loc+heading added 1.7.0) |
 | 4    | custom | `{ text }` — output of the in-game **`/pipe <string>`** command | recent ring per character; future in-game→Mimic command hook |
-| 5    | raid   | per-member `{ name, class, level, group, rank, loc, heading }` + verbose `{ hp_current, hp_max, zone_id }` | agent → `raid_roster` (name/class/level/group/rank + hp%); verbose HP now preferred over gauge cross-ref |
+| 5    | raid   | per-member `{ name, class, level, group, rank, loc, heading }` + verbose `{ hp_current, hp_max, zone_id }` | agent → `raid_roster` (name/class/level/group/rank + hp%); verbose HP now preferred over gauge cross-ref. `rank` is TEXT: `"Raid Leader"`, `"Group Leader"` or empty, not `2`/`1` (measured 2026-10-01; `utils/raidGroups.js` `isRaidLeader`) |
 | 6    | group  | per-member `{ name, loc, heading }` + verbose `{ hp_current, hp_max, class, level, zone_id }` | absorbed to snapshot + explorer (1.7.0) |
 
 ### Settings & cadence (Zeal ini `[Zeal]`, set in-game)

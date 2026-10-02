@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.184': [
+    '**Two raids at once stay two raids.** When the guild runs a second raid (a flagging crew, an alt raid), the buff queue and Extended Target show your own raid, and wolfpack.quest/raid gives each raid its own tab, named for its leader. It used to merge them as soon as one person moved from one raid to the other. The raid page also marks the 👑 raid leader and ⭐ group leaders now; it never recognised them before.',
+  ],
   '3.1.178': [
     '**Extended Target puts each debuff on the right mob.** When two mobs share a name and Zeal tells them apart, a slow or a tash now shows on the mob it landed on, going by the mob number the caster’s Mimic saw, instead of on whichever one you happen to be targeting. Shows on the beta Mimic first.',
   ],
