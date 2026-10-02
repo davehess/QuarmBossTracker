@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.188': [
+    '**Mark of the Plague Lords turns your damage shield off — and Mimic now says so.** While it is on you, no shield you wear does anything and every hit a mob lands on you heals it 50. The HUD’s shield button goes red “DS OFF” with the time left, and the Tank window says which debuff and for how long. Shows on the beta Mimic first.',
+  ],
   '3.1.187': [
     '**Loot auctions get their own timers, and History gets its own fight.** Each open auction counts down in Mimic’s timers and the Command Center, and moves when a late bid extends it. The DPS/Tank Meter’s History now gets the guild’s numbers for that exact fight, not the next pull of the same mob. Shows on the beta Mimic first.',
   ],
