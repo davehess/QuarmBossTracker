@@ -111,9 +111,9 @@ next touch one rather than assuming a missing row means a missing doc.
   says when and where a PoP corpse moves. Waiting: whether an open-world Classic–Luclin raid-target kill would
   start the instance board timer (need one Druzzil line). §130.
 - **✅ Xanamech off the timer board (bot 3.1.191 · web 1.8.78, 2026-10-02).** No lockout since the Oct 1 patch.
-  Removed from `bosses.json`, the website's `bot_boards` row and the 72 h `bosses_local` override; a kill of him
-  says "no lockout" instead of the `/addboss` hint. ⚠ `/removeboss` leaves the `bot_boards` row behind (the
-  mirror only upserts). §132.
+  Removed from `bosses.json` and the 72 h `bosses_local` override; a kill of him says "no lockout" instead of
+  the `/addboss` hint. ⏳ His website `bot_boards` row still needs one delete (the cloud session's timed out).
+  ⚠ `/removeboss` leaves the `bot_boards` row behind (the mirror only upserts). §132.
 - **⏳ Every Rallos Zek line read (agent 3.7.71, beta `c82ae5b4`; bot 3.1.191, 2026-10-02).** 168 lines were
   unread since the PoP patch: deaths to NPCs (147), forfeits (13), the "exults" kill, a no-killer death.
   All parse now. NPC deaths post to #pvp again; forfeits post as 🏃; no backup ping without a killer. Line
