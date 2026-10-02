@@ -37,6 +37,32 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'player-timers-2026-10-02',
+    title: 'Their timers on Target Info',
+    version: 'Bot 3.1.185 · Web 1.8.71 · Agent 3.7.66 beta',
+    date: '2026-10-02',
+    headline: 'Target another player and Target Info shows when their discipline, Mend, Lay on Hands, Harm Touch and Area Taunt are ready.',
+    features: [
+      {
+        name: 'Their timers, while you target them',
+        blurb: 'A row under their health bar: ✓ when a timer is ready, otherwise the time left, with ~ when it is an estimate. The timers come from their own Mimic, and a discipline you watched someone start shows even if they do not run Mimic.',
+      },
+      {
+        name: 'Area Taunt and other AAs',
+        blurb: 'Press an AA before it is ready and Mimic learns exactly when it will be. Add /pipe at to your Area Taunt hotkey and Mimic times every use after that.',
+      },
+      {
+        name: 'Zeal updates, one click away',
+        blurb: 'The Zeal update notice now opens Settings right at the Zeal install button, and the dashboard notice has a button that does the same.',
+      },
+    ],
+    fixes: [
+      'An overlay you sized with its own slider came back at normal size after closing and reopening it (Target Info, Extended Target, CH chain, PoP raids).',
+      'Send feedback on the dashboard lost what you had typed whenever a kill was recorded.',
+    ],
+    channel: 'beta',
+  },
+  {
     key: 'two-raids-2026-10-02',
     title: 'Two raids at once',
     version: 'Bot 3.1.184 · Web 1.8.70 · Agent 3.7.65 beta',
