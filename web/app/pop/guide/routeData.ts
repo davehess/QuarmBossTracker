@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { GUIDE_ITEMS } from '@/lib/popGuide';
 import { STEP_MORE, stepPlaces } from '@/lib/popGuideMore';
 import { AUTO_ITEM_IDS, guideEvidence } from '@/lib/popGuideAuto';
-import { WHO_ZONE, WHO_ZONE_SHORTS, type Sighting } from '@/lib/popWho';
+import { WHO_ZONE, WHO_ZONE_NAMES, type Sighting } from '@/lib/popWho';
 import type { RouteChar } from './GuideRoute';
 import type { ZoneOutline } from './ZoneMap';
 
@@ -42,7 +42,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     names.length ? admin.from('who_directory').select('character_key, level, last_seen').in('character_key', lower) : none,
     names.length ? admin.from('character_live_state').select('character, updated_at').in('character', names) : none,
     // Where /who has shown each of them inside a gated plane (popWho.ts says what that proves).
-    names.length ? admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_SHORTS }) : none,
+    names.length ? admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_NAMES }) : none,
     ...zones.map(z => zoneOutline(z)),
   ]);
 

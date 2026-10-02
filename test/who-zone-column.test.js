@@ -80,12 +80,27 @@ describe('the agent sends each row\'s zone', () => {
     expect(s.recentGone.map((r) => [r.name, r.zone])).toEqual([['Zarrin', 'sebilis']]);
   });
 
-  it('the uploaded /who rows are untouched: a footer\'s zone never lands in whoData', () => {
+  // Until 2026-10-01 the footer's zone stayed out of the upload (§73). The guild lead: "using /who all
+  // doesn't give us who is in my current zone. it gives every zone." A plain /who is the one people
+  // type, so its rows now upload the zone the footer names (lower-cased); a later plain /who moves
+  // someone a /who all had placed elsewhere.
+  it('the uploaded /who rows take a plain /who\'s footer zone, lower-cased', () => {
     const h = load();
     who(h, 'Players on EverQuest:', [ev('Rethlan', { zone: 'poknowledge' })], 'There are 1 players in EverQuest.');
-    who(h, 'Players in EverQuest:', [ev('Rethlan'), ev('Corvale')], 'There are 2 players in The Wakening Land.');
     expect(h.whoData.get('rethlan').zone).toBe('poknowledge');
+    who(h, 'Players in EverQuest:', [ev('Rethlan'), ev('Corvale')], 'There are 2 players in Plane of Storms.');
+    expect(h.whoData.get('rethlan').zone).toBe('plane of storms');
+    expect(h.whoData.get('corvale').zone).toBe('plane of storms');
+  });
+  it('a /who all row without a zone (an /anon player) gets none from the footer', () => {
+    const h = load();
+    who(h, 'Players on EverQuest:', [ev('Rethlan', { zone: 'postorms' }), ev('Corvale')], 'There are 2 players in EverQuest.');
+    expect(h.whoData.get('rethlan').zone).toBe('postorms');
     expect(h.whoData.get('corvale').zone).toBe(null);
+  });
+  it('names already known still go up: the next who flush runs when a plain /who placed them', () => {
+    expect(agent).toMatch(/if \(w\) \{ w\.zone = zone\.toLowerCase\(\); _whoZoneDirty = true; \}/);
+    expect(agent).toMatch(/if \(\(whoData\.size > _whoDataLastSize \|\| _whoZoneDirty\) && \(now - _whoDataLastFlush\) >= 5000\) \{/);
   });
 });
 

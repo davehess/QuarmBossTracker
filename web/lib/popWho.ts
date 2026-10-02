@@ -14,15 +14,24 @@
 
 import { POP_FLAGS, POP_ZONE_BY_KEY } from './popFlags';
 
-// The server's short name → the chart's zone key, for the planes behind a gate. The lower Crypt of
-// Decay is the same zone as the upper, so a sighting there proves only the upper's gate.
+// A /who zone → the chart's zone key, for the planes behind a gate. Two spellings reach the table:
+// `/who all` puts the server's short name on each row, and a plain /who (your own zone, the one most
+// people type) names it once in its footer, which the agent uploads lower-cased (agent 3.7.62; the
+// guild lead, 2026-10-01: "using /who all doesn't give us who is in my current zone"). The long names
+// are eqemu_zone's. The lower Crypt of Decay is the same zone as the upper, and Ragrax shares
+// "Plane of Earth" with the plane above it, so those prove only the outer gate.
 export const WHO_ZONE: Record<string, string> = {
   postorms: 'storms', povalor: 'valor', codecay: 'cod', nightmareb: 'ponb', potorment: 'torment',
   bothunder: 'bot', hohonora: 'hoh', hohonorb: 'hohb', potactics: 'tactics', solrotower: 'solro',
   poeartha: 'earth', poearthb: 'poeb', poair: 'air', powater: 'water', pofire: 'fire',
   potimea: 'time', potimeb: 'time',
+  'plane of storms': 'storms', 'plane of valor': 'valor', 'the crypt of decay': 'cod',
+  'the lair of terris thule': 'ponb', 'torment, the plane of pain': 'torment', 'bastion of thunder': 'bot',
+  'halls of honor': 'hoh', 'temple of marr': 'hohb', 'drunder, the fortress of zek': 'tactics',
+  'tower of solusek ro': 'solro', 'plane of earth': 'earth', 'plane of air': 'air', 'plane of water': 'water',
+  'plane of fire': 'fire', 'plane of time': 'time',
 };
-export const WHO_ZONE_SHORTS = Object.keys(WHO_ZONE);
+export const WHO_ZONE_NAMES = Object.keys(WHO_ZONE);
 
 // The plane you must come through to reach another (its door is inside that plane, not in Tranquility),
 // for saying so on the page. whoProves does not need it (see there).
