@@ -1445,9 +1445,15 @@ Backfilled (`--since`) kills record but never post/predict.
 `parseGloryKill` reads both wordings, "Rallos Zek watches as X spills Y's blood in Z, but finds no worthy
 conquest" (`glory: false`) and, since agent 3.7.51, "Rallos Zek marks X with his favor for spilling Y's
 blood in Z. X now bears N of 10 measures of Rallosian Glory" (`glory: true`, `PVP_GLORY_WORTHY_RX`). Before
-that the worthy kills went to the local `logsync.pvp-unmatched.json` and never uploaded. The bot's
-`_resolveGloryGuilds` fills the guilds from `/who`, else the roster. `test/pvp-glory.test.js`,
-`test/pvp-glory-bot.test.js`.
+that the worthy kills went to the local `logsync.pvp-unmatched.json` and never uploaded. Since agent
+3.7.71 (beta, §132) it also reads:
+- the "exults as K cuts down V" kill (`PVP_GLORY_EXULTS_RX`);
+- deaths to an NPC, "looks on as / looks down in disgust as X falls to `<NPC>` in Z" (`killType: 'npc'`);
+- a death with no killer, "falls in Z without a worthy foe";
+- forfeits, "flees / abandons the battlefield" (`killType: 'forfeit'`: a 🏃 post, no death row).
+
+The bot's `_resolveGloryGuilds` fills a guild the line left out from `/who`, else the roster. A guild the
+newer wording names ("X <Zek>") is kept. `test/pvp-glory.test.js`, `test/pvp-glory-bot.test.js`.
 
 **Fight sizes** (§57, migration `20260927040000`): `pvp_fights` returns `zek_players`, `ally_players`
 and `players_by_guild` — everyone a Wolf Pack log saw on the field (the dead, their killers, the

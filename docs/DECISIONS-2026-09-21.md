@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **The Oct 1–2 server patch notes** | **§130.** Bot 3.1.190 + web 1.8.77 on `main`: the corpse DM says when and where a PoP corpse moves. Not changed, waiting on facts or a call: Xanamech's 72 h board timer (no lockout now); the reworded Glory broadcasts (no real line yet; unread ones are saved to `logsync.pvp-unmatched.json`); whether an open-world kill of a Classic–Luclin raid target would start the instance timer | the guild lead: (1) take Xanamech off the board? (2) paste one new-style Glory line, or send that file; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
+| **The Oct 1–2 server patch notes** | **§130, §132.** Bot 3.1.190 + web 1.8.77: the corpse DM says when and where a PoP corpse moves. Bot 3.1.191 + web 1.8.78: Xanamech is off the board, the website and the 72 h override. Agent 3.7.71 on beta `c82ae5b4` reads all 168 unread Rallos Zek lines: NPC deaths, no-killer deaths, forfeits (🏃), the "exults" kill. NPC deaths post to #pvp again, about 50 a day. Still open: the Oct 2 "Glory lost/gained" wording (none seen yet); whether an open-world raid-target kill starts the instance timer | the guild lead: (1) on the beta, run Opt-in Logs from Sep 28 to send the missed deaths; (2) say if NPC deaths should record without posting to #pvp; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
 | **Our own zone map (A website, then B Mimic overlay)** | **§131.** Queued, not started — "A then B, but not yet". First step when it starts: mirror pather routes (`grid`, `grid_entries`) into the weekly sync | the guild lead: say when to start; ask staff before anything shows live NPC positions |
 | **Fifteen more suggested triggers; four dead ones fixed** | **§129.** Bot 3.1.189 (catalog `cc`) + web 1.8.76 on `main`; agent 3.7.70 on beta `e2f06f69`. FD failed / broken, resist naming the mob ({mytarget}), immune slow/snare/stun, can't mez/charm, mez / slow / fear wore off, silenced, LoS, range, mana, invis fading. Snared/mezzed/feared now match by the spell's effect; interrupted has the real text. Every line from the server's own messages | the guild lead: (1) on the beta, tick a few in the Triggers tab and get resisted once — check the alert names the mob you were casting at; (2) on a monk, fail a feign and check "FD FAILED"; (3) say whether the buff-dropped triggers should change — see §129, unverified |
 | **Shield OFF under Mark of the Plague Lords; Boastful Bellow timer** | **§128.** Bot 3.1.188 (catalog `ds_heal`) + web 1.8.75 on `main`; agent 3.7.69 on beta `a66d208d`. The Mark replaces every shield and heals the mob 50 a hit (server code); HUD "DS OFF" + time left, Tank card names it. Bellow: 18 s, from your resist or your landing + your own damage; HUD "BB" once used; Triggers-tab bar. Fading Memories: no duration — invis until broken, 900 mana, 1 s reuse | the guild lead: (1) in Plane of Disease with the beta, check the HUD reads DS OFF while the Mark is up and the Tank card names it; (2) on a bard with the AA, bellow once and check BB counts 18 s — and that another bard's bellow on your mob does not start it |
@@ -6117,3 +6117,51 @@ rings: *"A then B, but not yet. Queue them."*
   line of sight, answers when it shares the primary faction or lists the caller's faction as an ally
   (`npc_value` 1). All four greater-giant families list each other, so any giant answers any giant. An
   answerer does not call in turn (`IsAssisting`), so adds come from wherever the first giant goes.
+
+### 132. Xanamech off the board; every Rallos Zek line read (2026-10-02, bot 3.1.191 · web 1.8.78 · agent 3.7.71 beta `c82ae5b4`)
+
+The guild lead, answering §130's two questions: *"1. yes"* (take Xanamech off the board) and *"2. attached"*,
+the agent's `logsync.pvp-unmatched.json` from their machine.
+
+- **Xanamech is off the timer board.** No lockout since the Oct 1 patch, so the 72 h timer was wrong.
+  - `data/bosses.json` entry removed. The PoP thread still has three board panels, so the board edits
+    in place with no repost.
+  - The website's `bot_boards` row was deleted by hand. The mirror only upserts, so a removed boss's
+    row would otherwise stay on /boards forever. ⚠ `/removeboss` has the same gap; not fixed here.
+  - `bosses_local.timer_hours_override` set to null (it said 72). The row stays: the guide page and
+    encounter matching still use it, and he is still a raid target.
+  - A kill relay naming him now says *"no lockout — not on the timer board"*. It no longer asks an
+    officer to `/addboss` him back. The list is `_OFF_BOARD_NO_LOCKOUT` in `index.js`.
+  - Test: `test/xanamech-off-board.test.js`.
+- **The unread lines: 168 Rallos Zek broadcasts, Sep 28 – Oct 1, no pattern read any of them.** Each family
+  was checked against the whole file; all 168 now parse.
+
+  | Line | Count | Read as |
+  |---|---|---|
+  | "looks on as X falls to `<NPC>` in `<zone>`, but grants no Glory." | 87 | a death to an NPC (`killType: 'npc'`), as Druzzil's "has died to" used to be |
+  | "looks down in disgust as X [`<Guild>`] falls to `<NPC>` in `<zone>`." | 60 | the same; the newer wording carries the guild |
+  | "looks down in disgust as X falls in `<zone>` without a worthy foe." | 1 | a death with no killer named |
+  | "… X flees / abandons the battlefield like a cowardly dog, surrendering 1 measure of Rallosian Glory." | 13 | a forfeit (`killType: 'forfeit'`), not a death |
+  | "exults as K cuts down V in `<zone>` and claims 1 measure of hard-won Glory. K now bears 1 of 10." | 1 | a Glory-worthy kill |
+  | "marks K with his favor for spilling V's blood …" | 6 | already read since agent 3.7.51; these came from an older agent |
+
+  - **NPC and zone split at the LAST " in ".** Checked in `eqemu_zone` and `eqemu_npc_types`: no zone name
+    has " in " or a period in it, but one NPC does ("a lady in waiting"). Padded NPC names
+    ("Emperor Ssraeshza  in") come out trimmed.
+  - **Guilds:** a guild the line names is kept. `_resolveGloryGuilds` now fills only a side the line left
+    null. Old agents always send null, so their behaviour is unchanged.
+  - **What the bot does with each:**
+    - NPC deaths: a `pvp_deaths` row (`killer_is_npc`) and a plain ☠️ post in #pvp. This is what the
+      Druzzil wording got before the PoP patch, so #pvp gets roughly 50 of these a day back.
+    - A death with no killer: a death row, and a ☠️ post with **no** backup ping. `isWpDeath` now
+      needs a killer.
+    - A forfeit: a 🏃 post. No death row and no assist credit.
+    - The worthy kill: a kill like any other.
+  - **Not yet seen:** the Oct 2 wording the patch notes describe ("Glory lost and gained stated"). The
+    newest line in the file is Oct 1 11:36 UTC. The patterns allow a guild after any name, and a trailing
+    clause on the NPC-death and no-foe lines, but nothing was written for wording nobody has seen.
+    Unread lines still land in `logsync.pvp-unmatched.json`.
+- **Reach:** beta Mimic only until a stable cut. After updating, Opt-in Logs over Sep 28 onward sends the
+  missed deaths. Backfill rows record but do not repost to #pvp.
+- Tests: `test/pvp-glory.test.js` (each family, invented names) and `test/pvp-glory-bot.test.js`
+  (line guilds kept, NPC/no-killer deaths recorded, forfeit not, the 🏃 post).
