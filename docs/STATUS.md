@@ -167,6 +167,13 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
   per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
   character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
+- **✅ Two raids at once stay two raids (bot 3.1.184 · web 1.8.70 on main; 🧪 agent 3.7.65 beta).** A
+  raid is the one each Mimic's latest raid window names by its leader, not a cluster of shared members
+  (one raider moving across had merged them). Buff queue and Extended Target keep to your raid, `/raid`
+  gives each raid a tab, the overlays and dashboard say "⚔ N raids at once"; crowns read Zeal's rank text.
+  Not split yet: attendance ticks, trigger relay, `/buffs`. `utils/raidGroups.js`,
+  `web/lib/raidGroups.ts`, `test/raid-groups.test.js`, `test/raid-split-agent.test.js` (beta).
+  `DECISIONS-2026-09-21.md` §124.
 - **✅ A plain /who uploads its zone (agent 3.7.62 beta `5250261a`; stable agent 3.7.63, hot-swapped
   2026-10-01, beta 3.7.64).** Its footer names the zone; the rows
   used to go up with none (7,263 of ~9,400 in two days). Supersedes §73's "upload untouched".

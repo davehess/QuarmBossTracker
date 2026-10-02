@@ -275,6 +275,7 @@ const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLoc
 const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
 const kvLatch = require('./utils/kvLatch');
+const _raidGroups = require('./utils/raidGroups');
 const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
 
 function getBosses() {
@@ -13544,6 +13545,33 @@ async function _handleAgentLiveDamage(req, res) {
   return res.end(body);
 }
 
+// The live raid split (§124, utils/raidGroups.js): which raid each uploader and raider is in when
+// two or more run at once. The buff queue computes it from the roster it already reads and leaves
+// it here; other handlers read it here, and fetch only the last RAID_LIVE_MS of uploads (the only
+// ones that can name a raid) when it has gone stale. A failed read means "one raid": no scoping.
+let _raidSplitCache = { at: 0, split: null };
+let _raidSplitSig = '';
+function _keepRaidSplit(split) {
+  _raidSplitCache = { at: Date.now(), split };
+  // Taking note (the guild lead, 2026-10-01): one log line each time the set of raids changes.
+  const sig = split.multi ? split.raids.map(r => r.key).sort().join('|') : '';
+  if (sig === _raidSplitSig) return split;
+  _raidSplitSig = sig;
+  console.log(sig
+    ? `[raids] ${split.raids.length} raids at once: ` + split.raids.map(r => `${r.leader} (${r.size})`).join(', ')
+    : '[raids] one raid again');
+  return split;
+}
+async function _liveRaidSplit(supabase, guildId) {
+  if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < 5000) return _raidSplitCache.split;
+  const since = new Date(Date.now() - _raidGroups.RAID_LIVE_MS).toISOString();
+  const rows = await supabase.select('raid_roster',
+    `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
+    `&select=name,rank,uploaded_by_discord_id,captured_at`).catch(() => null);
+  if (!rows) return _raidGroups.groupRaids([]);
+  return _keepRaidSplit(_raidGroups.groupRaids(rows));
+}
+
 // GET /api/agent/extended-target?character=<self>
 // Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
 // current target (character_live_state.target_name, Zeal slot 6) into a list of
@@ -13639,7 +13667,14 @@ async function _handleAgentExtendedTarget(req, res) {
     // raider whose zone we can't resolve (null zone_name) rides along rather
     // than vanishing — never hide data on missing info. My-zone-unknown is
     // handled by scopeZone staying null above (→ every online raider).
-    const inScope = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;
+    const inZone = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;
+    // Two raids at once (§124): the other raid's raiders, and what they target, are not this raid's,
+    // even in the same zone. Raiders in no raid stay (fail open); one raid changes nothing.
+    const raidSplit = await _liveRaidSplit(supabase, guildId);
+    const myRaid = raidSplit.multi ? raidSplit.raidFor({ discordId: identity.discord_id, character: selfChar }) : null;
+    const inScope = myRaid
+      ? inZone.filter(r => { const theirs = raidSplit.raidForName(r.character); return !theirs || theirs === myRaid; })
+      : inZone;
 
     const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
@@ -14175,10 +14210,10 @@ async function _handleAgentExtendedTarget(req, res) {
       ((b.hurt ? 1 : 0) - (a.hurt ? 1 : 0)) ||
       a.name.localeCompare(b.name));
 
+    const extOut = { targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount };
+    if (raidSplit.multi) extOut.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({
-      targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount,
-    }));
+    return res.end(JSON.stringify(extOut));
   } catch (err) {
     console.error('[extended-target] fetch failed:', err && err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -14469,12 +14504,19 @@ async function _handleAgentRaidBuffQueue(req, res) {
         scopedUploaders = uploaders.filter(u => find(u) === c);
       }
     }
+    // Two raids at once (§124): one raider moving across joins the clusters above into one, so scope
+    // by the raid the requester's latest upload names instead, keeping its members only. One raid
+    // (or none) leaves the clusters exactly as they were.
+    const raidSplit = _keepRaidSplit(_raidGroups.groupRaids(rosterRows));
+    const myRaid = raidSplit.multi ? raidSplit.raidFor({ discordId: identity.discord_id, character: bufferCharacter }) : null;
+    if (myRaid) scopedUploaders = null;
     const rosterByName = new Map();
     const hpByName = new Map();   // member → freshest row that actually has hp_pct
     for (const [up, rows] of snapsByUploader) {
       if (scopedUploaders && !scopedUploaders.includes(up)) continue;
       for (const r of rows) {
         const k = r.name.toLowerCase();
+        if (myRaid && !myRaid.members.has(k)) continue;
         const prev = rosterByName.get(k);
         if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
         if (r.hp_pct != null) {
@@ -15043,6 +15085,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
       group_mode:   groupMode,
     };
     if (burstSpec) { out[burstSpec.key] = burstQueue; out.burst_label = burstSpec.label; }
+    if (raidSplit.multi) out.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(out));
   } catch (err) {

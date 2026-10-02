@@ -226,6 +226,29 @@ boundaries, `#if 0` C++ — the index above stays the map of intent. The
 - **Tests:** `test/corpse-dm.test.js` and `test/corpse-dm-agent.test.js`.
   DECISIONS-2026-09-21 §43.
 
+### Two or more raids at once (bot 3.1.184 · web 1.8.70 · agent 3.7.65 beta, 2026-10-02)
+Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §124;
+`docs/DESIGN-multi-raid.md` was the contract.
+- **The rule (`utils/raidGroups.js` `groupRaids`, ported to `web/lib/raidGroups.ts`):** every row of one
+  `raid_roster` upload carries the same `captured_at`, so an uploader's LATEST upload is the raid they
+  are in now, and its `Raid Leader` row names it. Uploads naming the same leader are one raid. Uploads
+  older than 2 minutes have no say; two raids sharing 60% of their members are one raid mid
+  leader-change. With one raid (`multi: false`) every caller keeps its old code path.
+- **Rank is text.** Zeal sends `Raid Leader` / `Group Leader`; the crowns on `/raid` and the dashboard
+  Raid tab looked for `'2'` / `'1'` and never showed. `isRaidLeader` / `isGroupLeader` accept both.
+- **Bot:** the buff queue scopes to the requester's raid and adds `raids: [{ key, leader, size, mine }]`
+  only when there are two or more; Extended Target drops the other raid's raiders (same zone or not)
+  and adds the same `raids`. `_liveRaidSplit` (5 s memo, filled by the buff queue) serves other
+  handlers; `_keepRaidSplit` logs one `[raids]` line each time the set of raids changes.
+- **Web `/raid`:** one tab per raid, keyed by leader (a tab no longer jumps when the other raid
+  outgrows it), "N raids at once", crowns.
+- **Mimic (beta):** Extended Target's count line, the Buff queue, the Command Center and the dashboard
+  Raid tab say "⚔ N raids at once" and whose raid they show. The Command Center's guild-wide priest
+  mana keeps to this Mimic's raid window while two raids run (`_noteRaidSplit` / `_raidSplitNow`).
+- **Not split yet:** attendance ticks, the trigger relay, `/buffs`, the signup comp matcher, the essence
+  queue, the `dedup_roster` election (§124 lists them).
+- **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta).
+
 ### Reporter fleet: one account, several installs, one slot (bot 3.1.102)
 
 The fleet registry keys on discord_id, so a second install on one account used

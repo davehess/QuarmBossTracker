@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'two-raids-2026-10-02',
+    title: 'Two raids at once',
+    version: 'Bot 3.1.184 · Web 1.8.70 · Agent 3.7.65 beta',
+    date: '2026-10-02',
+    headline: 'When the guild runs two raids at the same time, each one keeps its own raid page, buff queue and target list.',
+    features: [
+      {
+        name: 'One tab per raid',
+        blurb: 'wolfpack.quest/raid says how many raids are running and gives each its own tab, named for its leader. Your tab stays put when the other raid grows.',
+      },
+      {
+        name: 'Your raid’s queue and targets',
+        blurb: 'The buff queue and Extended Target show your own raid, even when the other raid is in the same zone. On the beta Mimic they, the Command Center and the dashboard’s Raid tab also say “⚔ 2 raids at once” and whose raid you are looking at.',
+      },
+    ],
+    fixes: [
+      'Two raids used to merge into one as soon as someone moved from one to the other.',
+      'The raid page now marks the 👑 raid leader and ⭐ group leaders; it never recognised them before.',
+    ],
+  },
+  {
     key: 'agent-3-7-63-who-zone-2026-10-01',
     title: 'Agent 3.7.63',
     version: 'Agent 3.7.63',
