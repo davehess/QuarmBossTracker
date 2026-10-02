@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
+  2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
+  floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
+  weekly eqemu sync. No live NPC positions without staff approval. DECISIONS-2026-09-21 §131.
+- **✅ / ⏳ The Oct 1–2 server patch notes consumed (bot 3.1.190 · web 1.8.77, 2026-10-02).** Done: the corpse DM
+  says when and where a PoP corpse moves. Waiting: Xanamech's 72 h board timer (he has no lockout now — the
+  guild lead's call); the reworded Glory broadcasts (need one real line); whether an open-world Classic–Luclin
+  raid-target kill would start the instance board timer (need one Druzzil line). §130.
+
 - **✅ PoP flags record by name; the chart uses Quarm's real gates; Justice marks on /pop (agent 3.7.59 on main, bot 3.1.182, web 1.8.65, 2026-10-01; DECISIONS §119).** Every grant was 'unmapped' since launch. Now named from the flag NPC's line before it or from Seer Mal Nae`Shi's recital, read off the server's own scripts (`utils/popFlagStages.js`); hails stored as hails. Storms, Torment, Thunder, Sol Ro, the elementals and Time gated as `potranquility/player.lua` gates them, no level bypass. Open: the 42 grants recorded before the fix stay unmapped until re-read (Opt-in Logs or a Seer meditation).
 - **⏳ Local mode: Mimic for players outside the guild (agent 3.7.58 on beta `0ec64fef`, bot 3.1.180–3.1.181, 2026-10-01; DECISIONS §118).** No token = nothing sent to the guild server (the queue and live state used to post anyway and be refused), no sign-in nag, guild-only overlays say "sign in", and installers carry the spell and item lists via the bot's public catalog route. The bot's item catalog served 1,000 of 11,104 items since 2026-08-30 (fixed in bot 3.1.181); no screen calls the agent's local item search yet, so no player saw it. Download pages for eqmimic.quest: two designs in the hesstastic repo, awaiting a pick and the domain. Open: the generic "Mimic" edition (recommended over a branch, not decided).
 - **⏳ Instant charm break + trigger timers from the top (agent 3.7.34, beta, 2026-09-27).** The agent pushes the player's own charm break down the fire long-poll the moment it reads the line; the Charm overlay speaks it (was up to ~1.5 s late), the trigger overlay skips it, the old deferred call stays as the fallback. Right-click the trigger overlay → "Timers start at: TOP" hangs the stack off the top edge and turns grow-upward off for that window. Targeting the pet from the Charm window needs a Zeal change: designed, not built (options in §59e). `DECISIONS-2026-09-21.md` §59c–§59e.

@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.190': [
+    '**Your corpse DM now says when a Planes of Power corpse moves.** Since the October 2 patch a corpse in a PoP zone moves after an hour: to the Plane of Tranquility graveyard from a guild instance, or to that zone\'s graveyard in the open world. The DM shows the time it moves, so the /loc is not trusted after that. In the Plane of Justice it also says a failed trial\'s corpse goes to the Tribunal.',
+  ],
   '3.1.189': [
     '**Fifteen more suggested triggers in Mimic, and four old ones that never worked now do.** Failed Feign Death, a spell breaking your feign, a resist that names the spell and the mob, immune to slow, snare or stun, can\'t mez, can\'t charm, your mez or slow wearing off, out of range, no line of sight, not enough mana and invisibility fading. "You are snared", "mezzed", "feared" and "interrupted" were waiting for words the game never prints; they fire now. Tick them in the dashboard\'s Triggers tab. Shows on the beta Mimic first.',
   ],

@@ -75,6 +75,25 @@ describe('the DM', () => {
     expect(sent[0].content).toContain('**Aldenmar** died <t:');
     expect(sent[0].content).toContain('position unknown');
   });
+
+  // Quarm patch notes, 2026-10-02: Planes of Power corpses move after an hour.
+  it('in the Planes of Power it says the corpse moves in an hour, and where to', async () => {
+    const { _handleAgentCorpse, sent } = loadWith({ chars: { aldenmar: ALDENMAR } });
+    await post(_handleAgentCorpse, death({ zone_id: 209, zone: 'Bastion of Thunder' }));
+    const hour = Date.parse('2026-09-26T01:42:10.000Z') / 1000 + 3600;
+    expect(sent[0].content).toContain(`It moves <t:${hour}:R>: to the Plane of Tranquility graveyard from a guild instance`);
+    expect(sent[0].content).not.toContain('Tribunal');
+  });
+  it('the Plane of Justice also names the Tribunal; the Plane of Knowledge and Sky say nothing about moving', async () => {
+    const { _corpseDmText } = loadWith({});
+    const at = Date.parse('2026-09-26T01:42:10.000Z');
+    expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Justice', zoneId: 201, loc: null, diedAtMs: at }))
+      .toContain('failed trial goes to the Tribunal');
+    expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Knowledge', zoneId: 202, loc: null, diedAtMs: at }))
+      .not.toContain('It moves');
+    expect(_corpseDmText({ character: 'Aldenmar', zone: 'Plane of Sky', zoneId: 71, loc: null, diedAtMs: at }))
+      .not.toContain('It moves');
+  });
 });
 
 describe('who gets it', () => {
