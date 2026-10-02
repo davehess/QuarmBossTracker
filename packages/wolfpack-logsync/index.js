@@ -16370,6 +16370,7 @@ function _serializeForDashboard() {
     lootAuctionDefaultSec: _lootAuctionDefaultSec(),
     // #136 raid callout allow-list — dashboard Triggers-tab toggle (default ON).
     calloutAllowlist:      _optinState.calloutAllowlist !== false,
+    timingFeedback:        _optinState.timingFeedback !== false,
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -19938,6 +19939,17 @@ function renderTriggers(s) {
   h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
   h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
   h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
+
+  // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
+  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
+  h += '<span>Ask whether a callout&rsquo;s timing was right &mdash; &laquo; Earlier / &#10003; Good! / &raquo; Too early under the alert</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
+  h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
@@ -26065,9 +26077,10 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
-  // #136 raid callout allow-list toggle — persist the on/off choice.
-  async function saveCalloutPref(body) {
-    var msg = document.getElementById('calloutMsg');
+  // #136 raid callout allow-list toggle — persist the on/off choice. The timing-votes
+  // switch shares the route and passes its own message line.
+  async function saveCalloutPref(body, msgId) {
+    var msg = document.getElementById(msgId || 'calloutMsg');
     try {
       await fetch('/api/callout-prefs', {
         method: 'POST',
@@ -26405,6 +26418,8 @@ async function dismissTopDamage(key) {
           saveLootPref({ lootAuctionDefaultSec: v });
         } else if (t.id === 'calloutAllow') {
           saveCalloutPref({ calloutAllowlist: !!t.checked });
+        } else if (t.id === 'timingVotes') {
+          saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
       });
       section._wpTrigChangeBound = true;
@@ -27681,6 +27696,12 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(_body || '{}'); }
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const dir = String(payload.direction || '').toLowerCase();
+        // Timing feedback switched off here (dashboard, or 🔕 on the vote row): an overlay that
+        // has not caught up yet still gets a 200, and nothing is recorded or sent.
+        if (_optinState.timingFeedback === false) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true,"off":true}');
+        }
         // #207 implicit directions — the overlay reports a CALLOUT (sticky row /
         // centre flash) being cleared or aging out. Countdown chips take the
         // /api/timers/cancel path instead, because the agent owns those rows and
@@ -29381,20 +29402,25 @@ function startWebDashboard(port) {
         }));
       }
 
-      // POST /api/callout-prefs — dashboard Triggers-tab toggle for the #136
-      // raid callout allow-list. Body: { calloutAllowlist: boolean }. Persists
-      // to logsync.optin.json alongside the other trigger prefs.
-      if (req.url === '/api/callout-prefs' && req.method === 'POST') {
-        const body = await _readBody(req).catch(() => '');
-        let payload = {};
-        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
-        if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
-        _saveOptInState();
-        scheduleRender();
+      // POST /api/callout-prefs — dashboard Triggers-tab toggles for the #136
+      // raid callout allow-list and the timing votes. Body: { calloutAllowlist?,
+      // timingFeedback? } (booleans). Persists to logsync.optin.json alongside
+      // the other trigger prefs. GET returns both, for the trigger overlay.
+      if (req.url === '/api/callout-prefs' && (req.method === 'POST' || req.method === 'GET')) {
+        if (req.method === 'POST') {
+          const body = await _readBody(req).catch(() => '');
+          let payload = {};
+          try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+          if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
+          if (typeof payload.timingFeedback === 'boolean') _optinState.timingFeedback = payload.timingFeedback;
+          _saveOptInState();
+          scheduleRender();
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
           ok: true,
           calloutAllowlist: _optinState.calloutAllowlist !== false,
+          timingFeedback:   _optinState.timingFeedback !== false,
         }));
       }
 
@@ -30344,6 +30370,11 @@ const _optinState = {
   // Personal triggers the user created themselves are never gated. Persisted
   // here like the other dashboard-set flags.
   calloutAllowlist: true,
+  // Trigger timing feedback (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). ON (default): the trigger overlay offers « Earlier / ✓ Good! / » Too early after a
+  // fire, and those votes plus each callout's ✕ / age-out go to trigger_timing_feedback. OFF: no
+  // vote row, and nothing about callout timing leaves this machine.
+  timingFeedback: true,
   // Buff-queue overlay section filters (the guild lead, 2026-08-19: "add some options
   // on the dashboard for debuff / feral only"). All ON by default; a curer
   // unticks buffs+burst to run cures-only, a shaman unticks the rest for a
@@ -30388,6 +30419,7 @@ function _loadOptInState() {
     }
     // #136 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
+    _optinState.timingFeedback       = (raw.timingFeedback !== false);
     // Buff-queue section filters — same absent-means-on convention.
     _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
@@ -30406,6 +30438,7 @@ function _saveOptInState() {
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
       calloutAllowlist:      _optinState.calloutAllowlist !== false,
+      timingFeedback:        _optinState.timingFeedback !== false,
       bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
       bqShowBuffs:           _optinState.bqShowBuffs !== false,
       bqShowBurst:           _optinState.bqShowBurst !== false,
@@ -41148,6 +41181,8 @@ function _calloutVoterCharacter() {
 // e: { direction, timer? , trigger_id?, trigger_name?, firedAtMs?, source?, test? }
 function _recordCalloutFeedback(e) {
   if (!e) return null;
+  // Timing feedback switched off on this machine: a ✕ or an age-out is not recorded or sent.
+  if (_optinState.timingFeedback === false) return null;
   const dir = e.direction === 'expired' ? 'expired' : 'dismissed';
   const row = e.timer || null;
   // A loot-auction chip is a BID WINDOW, not a callout. Its ✕ means "I've bid"
