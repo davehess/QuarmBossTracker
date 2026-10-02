@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **A targeted player's timers on Target Info; FB-46/47/48** | **§126.** Bot 3.1.185 + web 1.8.71 on `main` (column applied); agent 3.7.66 on beta `a100da84`: disc, Mend, LoH/HT and AAs from the player's own Mimic, a disc you saw them start, ✓ or time left. AAs exact from the refusal line; `/pipe at` learns Area Taunt's reuse. Alpha `9e33af91`: the timers as a Canvas part, and the "slowed null%" / "0 / 0 HP" pieces fixed. FB-46 (Zeal notice → Settings at Zeal), FB-47 (feedback text kept), FB-48 (overlay size kept) on beta | the guild lead: (1) on the beta, with a second Mimic raider, Mend or fire a disc on one and target them from the other; (2) put `/pipe at` on the Area Taunt key, press it twice and check Target Info counts down; (3) say if this should also show on Extended Target rows |
 | **3.0: every overlay exactly on the Canvas, then taken apart** | **§125.** Audit: 3 of 378 overlay elements were exact as parts.js pieces. Alpha `a29075d9`: pieces cut from the overlay's own page (exact by construction), ✂ Take it apart, ✂ Overlay parts in the chooser; Target Info's 19 parts first (marks on beta `5eae2d53`) | the guild lead: (1) on the next alpha, put Target Info on the Canvas, ⚙ → ✂ Take it apart, pull out Loot; (2) say if this is the way (A) before the other 14 overlays get their maps; (3) watch Resource use with several pieces on |
 | **Two raids at once stay two raids** | **§124.** Bot 3.1.184 + web 1.8.70 on `main`: each Mimic's latest upload names its raid leader; buff queue and Extended Target keep to your raid; `/raid` one tab per raid by leader; crowns work (rank is text). Agent 3.7.65 on beta: "⚔ N raids at once" on Extended Target, Buff queue, Command Center, dashboard Raid tab | the guild lead: (1) at the next split raid, check `/raid` shows two tabs and the overlays say whose raid; (2) call it: should attendance ticks and the trigger relay split by raid too (§124 "not split yet") |
 | **eqmimic.quest demo with sample data; a plain /who uploads its zone** | **§123.** Demo at `hesstastic.com/eqmimic/demo/` (tour) and `/eqmimic/demo/b/` (app), hesstastic `e2d2f62`; a real raid night with every name invented, no /who data. Agent 3.7.62 on beta `5250261a`, **stable agent 3.7.63** (hot-swapped 2026-10-01; beta 3.7.64): a plain /who's footer zone goes up with its rows (7,263 of ~9,400 rows in two days had none) | the guild lead: (1) pick the tour or the app; (2) get eqmimic.quest a host: Vercel project for the hesstastic repo, or an `eqmimic` Pages repo (§123); (3) on the beta, `/who` in a PoP plane and check `/pop` on beta shows the blue ✓ |
@@ -5842,3 +5843,57 @@ sessionStorage pattern.
 **Found on the way:** Target Info's corpse "last fight" scoreboard read a key `/api/state` does not have,
 so it never showed (fixed, beta `5eae2d53`). The threat meter's gold "your row" never lights for the same
 kind of reason (queued as its own task).
+
+### 126. A targeted player's timers on Target Info; FB-46, FB-47, FB-48 (2026-10-02, bot 3.1.185 · web 1.8.71 · agent 3.7.66 beta `a100da84` · alpha `9e33af91`)
+The guild lead: *"When we have a known timer, for someone's disciplines or mend or area taunt, we should
+display those on target info. When we're targeting them"*, and *"check the latest feedback too"*.
+
+**What can be known, and from where.** Checked against the server source (EQMacEmu `zone/aa.cpp`,
+`special_attacks.cpp`, `client_packet.cpp`) and `eqemu_spells`:
+- **Disciplines:** everyone near the player sees the disc spell's `cast_on_other` text ("Brackwyn assumes an
+  aggressive fighting style", "…'s fists begin to blur"). All 35 are unique in the catalog, so a seen line
+  names the disc exactly. The reuse is estimated from their /who level (or the longest, at the unlock level,
+  when the level is unknown).
+- **Mend, Lay on Hands, Harm Touch:** the messages go to the user only. A bystander sees nothing.
+- **AAs (Area Taunt):** `ActivateAA` starts the timer silently, and Area Taunt makes the mobs say nothing.
+  The only line is the refusal, when pressed before ready: "You can use the ability %s again in %u
+  hour(s) %u minute(s) %u seconds." It is exact. Reuse times sit in `aa_actions`, which we do not mirror.
+So the player's **own Mimic** is the one source for all of them, and a seen disc covers players without it.
+
+**Built:**
+- Agent: your own timers of a minute or longer (disc, Mend, LoH, HT, AAs) ride live-state as `cooldowns`
+  with absolute ready times (`_liveCooldownsFor`). A timer starting is a change-signature term; the
+  countdown is not, so this adds one upload per timer started, not a stream.
+- Bot: `character_live_state.cooldowns` (migration applied), sanitised on the way in and returned by
+  `character-live-state`, the route Target Info already calls for a player target.
+- Target Info: a row under the health bar (`target_timers`): ✓ ready, else time left, `~` when estimated;
+  the tooltip says where it came from (your own character, their Mimic, or a disc you saw).
+- AAs: the refusal line is read for any AA. `/pipe at` (or `/pipe area taunt`, `/pipe aa <name>`) on the
+  hotkey marks the press, as `/pipe fd` does for Feign Death; the first refusal after a press teaches the
+  reuse, and later presses count down from it.
+- Alpha: "Their timers (a player)" is a Target Info part on the Canvas.
+
+**Not done:** Feign Death, Taunt and Kick are under a minute and are not uploaded (back before anyone could
+act). A player without Mimic shows only a disc you saw. Extended Target rows do not show these yet (asked
+in the open table).
+
+**The latest feedback (FB-46 to FB-48), all on the beta, `Fixes` lines in `a100da84`:**
+- **FB-46** (Zeal update notice should link to the updater): the desktop notice opens Settings scrolled to
+  Zeal (`openSettings('zeal')`, `settings.html#zeal`), and is now held so its click is not lost to garbage
+  collection; the dashboard's notice has an "Open Settings → Zeal" button.
+- **FB-47** (Send feedback refreshes and loses the text): Recent Parses sat inside `#dash`, so each kill
+  rewrote `#dash` and rebuilt the feedback card empty. It has its own card now, and the card keeps the
+  words, the bug/idea choice and the pictures if it is ever rebuilt.
+- **FB-48** (an overlay's scale is back to normal after close and reopen, at the larger size): the overlay's
+  own size slider saved under the bounds-key name (`mobInfo`, `extTarget`, `chChain`, `popRaid`,
+  `panelBounds_<x>`) while every reader used the overlay name (`mobinfo`, …). Fixed for the slider and for
+  the opacity in Setup THIS (same mismatch); sizes already saved under the old name still apply.
+
+**Also from the screenshot:** the alpha's Target pieces read "slowed null%" and "0 / 0 HP" because the
+pieces' number helper turned a missing value into 0. Fixed (alpha `9e33af91`).
+
+**Feedback housekeeping:** FB-45 (the threat meter and a resisted Concussion) was closed by the loot-call
+commit's `Fixes FB-45`, a numbering slip: that commit answered a different report. The threat question
+itself is answered by §117 (a resisted spell still applies its hate on the server, so the meter is right
+to drop). FB-43 (a "RIP" callout for an NPC killed by a pet) and FB-44 (more vertical bars, text on any
+side) are still open.

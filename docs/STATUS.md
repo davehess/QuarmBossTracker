@@ -167,6 +167,16 @@ next touch one rather than assuming a missing row means a missing doc.
   **2026-10-01 (bot 3.1.183):** lines a script keeps in a table (`RESPONSES[11]`, Askr the Lost) show, one
   per state the condition allows; a hand-in lists what Quarm's script gives (cursor items, exp) and "a
   character flag" when it sets one; `or`-joined hand-ins share their branch and show once. §120.
+- **🧪 A targeted player's timers on Target Info (bot 3.1.185 · web 1.8.71 on main; agent 3.7.66 beta
+  `a100da84`).** Discipline, Mend, Lay on Hands, Harm Touch, AAs: ✓ when ready, else time left, ~ when
+  estimated. Sources: your own character; their Mimic (new `character_live_state.cooldowns`); a disc you
+  saw them start (estimated from their /who level). AAs exact from the server's refusal line; `/pipe at`
+  on the Area Taunt key learns the reuse. A Canvas part on alpha `9e33af91`. Mend, LoH, HT and AAs print
+  nothing a bystander sees, so a player without Mimic shows only a seen disc. §126.
+- **🧪 FB-46 / FB-47 / FB-48 (agent 3.7.66 beta `a100da84`).** FB-46: the Zeal update notice opens Settings
+  at Zeal; the dashboard notice has a button. FB-47: Send feedback no longer loses typed text when a kill
+  lands (Recent Parses got its own card, so #dash stops rewriting). FB-48: an overlay's own size comes back
+  after close and reopen (the slider saved under the bounds-key name). §126.
 - **✅ Two raids at once stay two raids (bot 3.1.184 · web 1.8.70 on main; 🧪 agent 3.7.65 beta).** A
   raid is the one each Mimic's latest raid window names by its leader, not a cluster of shared members
   (one raider moving across had merged them). Buff queue and Extended Target keep to your raid, `/raid`

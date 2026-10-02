@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.185': [
+    '**See another raider’s timers on Target Info.** Target a guildmate and Target Info shows the timers their Mimic knows: discipline, Mend, Lay on Hands, Harm Touch, Area Taunt, with a ✓ when ready. A discipline you watched someone start shows too, even if they do not run Mimic. Shows on the beta Mimic first.',
+  ],
   '3.1.184': [
     '**Two raids at once stay two raids.** When the guild runs a second raid (a flagging crew, an alt raid), the buff queue and Extended Target show your own raid, and wolfpack.quest/raid gives each raid its own tab, named for its leader. It used to merge them as soon as one person moved from one raid to the other. The raid page also marks the 👑 raid leader and ⭐ group leaders now; it never recognised them before.',
   ],

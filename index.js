@@ -12737,7 +12737,7 @@ async function _handleAgentCharacterLiveState(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('character_live_state',
     `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
-    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,updated_at&limit=1`).catch(() => []);
+    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,cooldowns,updated_at&limit=1`).catch(() => []);
   const r = Array.isArray(rows) && rows[0];
   let state = null;
   if (r && r.updated_at) {
@@ -12760,6 +12760,9 @@ async function _handleAgentCharacterLiveState(req, res) {
                      : (b && typeof b.ticks === 'number') ? b.ticks * 6 : null,
             })).filter(b => b.name)
           : [],
+        // Their own known timers (discs, Mend, LoH/HT, AAs) — absolute ready
+        // times, so the 10-minute row gate above is all the freshness they need.
+        cooldowns: Array.isArray(r.cooldowns) ? r.cooldowns : [],
         updated_at: r.updated_at,
       };
     }
@@ -16544,6 +16547,37 @@ async function _noteZealTags(rows) {
   return out.length;
 }
 
+// A character's own known timers, as their Mimic reports them (agent 3.7.66+):
+// [{key, label, ready_at, total_ms, est}]. Another raider's Target Info shows
+// them while targeting that character (the guild lead, 2026-10-02: "When we have a
+// known timer, for someone's disciplines or mend or area taunt, we should
+// display those on target info"). ready_at is absolute, so a reader counts down
+// without a fresh upload. Capped and range-checked; null when none sent.
+const _LIVE_CD_MAX = 12;
+function _sanitizeLiveCooldowns(list, nowMs) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const out = [];
+  for (const c of list) {
+    if (out.length >= _LIVE_CD_MAX) break;
+    const key = typeof c?.key === 'string' ? c.key : '';
+    if (!/^[a-z0-9:_-]{1,32}$/.test(key)) continue;
+    const label = typeof c?.label === 'string' ? c.label.trim().slice(0, 40) : '';
+    if (!label) continue;
+    const at = Date.parse(c?.ready_at);
+    // A timer ready more than 12 h ago tells nothing; one more than 4 h out is
+    // longer than any reuse we track (Lay on Hands is 72 min).
+    if (!Number.isFinite(at) || at < nowMs - 12 * 3600_000 || at > nowMs + 4 * 3600_000) continue;
+    const total = Number(c?.total_ms);
+    out.push({
+      key, label,
+      ready_at: new Date(at).toISOString(),
+      total_ms: Number.isFinite(total) && total > 0 && total <= 5 * 3600_000 ? Math.trunc(total) : null,
+      est: c?.est === true,
+    });
+  }
+  return out.length ? out : null;
+}
+
 async function _handleAgentLiveState(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -16650,6 +16684,9 @@ async function _handleAgentLiveState(req, res) {
     const locX = (st?.loc_x != null && Number.isFinite(Number(st.loc_x))) ? Number(st.loc_x) : null;
     const locY = (st?.loc_y != null && Number.isFinite(Number(st.loc_y))) ? Number(st.loc_y) : null;
     const locZ = (st?.loc_z != null && Number.isFinite(Number(st.loc_z))) ? Number(st.loc_z) : null;
+    // The character's own known timers (agent 3.7.66+) — read back by
+    // character-live-state for another raider's Target Info.
+    const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
     rows.push({
       guild_id:    guildId,
       character,
@@ -16706,6 +16743,7 @@ async function _handleAgentLiveState(req, res) {
       loc_x:       locX,
       loc_y:       locY,
       loc_z:       locZ,
+      cooldowns,
       buffs,
       buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
       pet_name:    petName,
