@@ -37,6 +37,38 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'more-suggested-triggers-2026-10-02',
+    title: 'More suggested triggers',
+    version: 'Bot 3.1.189 · Web 1.8.76 · Agent 3.7.70 beta',
+    date: '2026-10-02',
+    headline: 'Fifteen more one-click triggers in Mimic\'s Triggers tab, and four old ones that never fired now do.',
+    features: [
+      {
+        name: 'Feign Death',
+        blurb: 'An alert when your Feign Death fails, and when a spell breaks it. Another monk failing next to you does not set it off.',
+      },
+      {
+        name: 'Resists that name the mob',
+        blurb: 'A resist now reads "RESISTED: Tashanian — a gnoll warlord". The game never says which mob, so Mimic uses the one you were targeting when you started the cast.',
+      },
+      {
+        name: 'Immunities',
+        blurb: 'Alerts when your target is immune to slow, snare or stun, or cannot be mezzed or charmed, each naming the mob.',
+      },
+      {
+        name: 'Your crowd control wearing off',
+        blurb: 'Your mez wearing off, with the spell\'s name; your slow, root or snare wearing off; your fear wearing off.',
+      },
+      {
+        name: 'Casting and pulling',
+        blurb: 'Out of range, no line of sight, not enough mana, invisibility starting to fade, and being silenced.',
+      },
+    ],
+    fixes: [
+      '"You are snared", "You are mezzed", "You are feared" and "Your cast was interrupted" waited for words the game never prints, so they never went off. They now go off. If you had ticked them, they update by themselves.',
+    ],
+  },
+  {
     key: 'ds-off-bellow-2026-10-02',
     title: 'Damage shield off, Boastful Bellow timer',
     version: 'Bot 3.1.188 · Web 1.8.75 · Agent 3.7.69 beta',

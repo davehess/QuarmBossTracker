@@ -10343,6 +10343,27 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
         return null;
       }
+      // Crowd control a DETRIMENTAL spell carries, for the agent's suggested
+      // triggers that match by effect, not by text (the guild lead, 2026-10-02: "We need
+      // more in suggested triggers"). Three of those used to name landing texts no
+      // spell prints ("You have been ensnared", "You feel calm", "You are afraid");
+      // the catalog has 70+ snare texts and 30+ mez ones, so the agent reads each
+      // spell's own `you` text against these kinds instead. SPA 31 mez · 22 charm ·
+      // 23 fear · 21 stun · 99 root · 96 silence · 3 negative = snare · 11 under
+      // 100 = slow (Turgur's Insects 85, Tepid Deeds 80; a haste is over 100).
+      const _CC_SPA = { 31: 'mez', 22: 'charm', 23: 'fear', 21: 'stun', 99: 'root', 96: 'silence' };
+      function _ccKinds(r) {
+        if (Number(r.good_effect) !== 0) return null;
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : [r.effect_id_1, r.effect_id_2, r.effect_id_3];
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : [r.effect_base_value_1, r.effect_base_value_2, r.effect_base_value_3];
+        const out = [];
+        for (let i = 0; i < eff.length; i++) {
+          const e = Number(eff[i]), b = Number(base[i]) || 0;
+          const k = _CC_SPA[e] || (e === 3 && b < 0 ? 'snare' : null) || (e === 11 && b > 0 && b < 100 ? 'slow' : null);
+          if (k && !out.includes(k)) out.push(k);
+        }
+        return out.length ? out : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -10453,6 +10474,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             // Positive SPA 59: while it is up the wearer's shield is off and
             // attackers are healed this much per hit (_dsHealMagnitude).
             ds_heal: _dsHealMagnitude(r) || undefined,
+            // Crowd control on a detrimental spell (_ccKinds), e.g. ['mez'].
+            cc: _ccKinds(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than

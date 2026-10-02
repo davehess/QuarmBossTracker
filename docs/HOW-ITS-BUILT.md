@@ -2309,6 +2309,14 @@ exists), so five docked overlays cost one renderer instead of five.
   pane resolves the agent-served copy (#65) exactly as the window does.
 
 ### Overlays (one .html each)
+**2026-10-02 (agent 3.7.70 beta, bot 3.1.189, §129) — suggested triggers:** the list is
+`SUGGESTED_TRIGGERS` in the agent (dashboard Triggers tab, `/api/triggers/suggested`). A
+template may match by the spell catalog instead of a pattern — `catalog_match` `{ on: 'you' |
+'worn_off', cc: [...] }`, read by `_catalogTriggerMatch` against the bot catalog's `cc` kinds
+(`_ccKinds`). `{mytarget}` in an alert is `_myTargetFor` (Zeal target at "You begin casting",
+else now). Dead saved patterns / alert texts move on load (`SUGGESTED_RETIRED_PATTERNS`,
+`SUGGESTED_RETIRED_OVERLAYS`).
+
 **2026-10-02 (agent 3.7.69 beta, bot 3.1.188, §128):** a shield-cancelling debuff
 (positive SPA 59 — Mark of the Plague Lords) rides the spell catalog as `ds_heal`
 (bot `_dsHealMagnitude`); the agent's `_dsOffFrom` reads it off a buff list, zeroes
