@@ -21,7 +21,10 @@
 //
 // WHAT IS KEPT: every step's title, who (solo/group/raid), must, "not yet confirmed" mark, detail,
 // the words to say (with /sit), the places (zone + the Y X /map takes), the chain's start / story /
-// hand-ins, and the expect / turn-in / go-back notes. WHAT IS DROPPED: the checkbox keys' flag
+// hand-ins, the expect / turn-in / go-back notes, and `seq` (the guild lead, 2026-10-03: the whole step
+// as one ordered list of hail / say / give / get / kill / click / zone / wait / note acts, each with the
+// script it was read from; the overlay draws it in place of says + turn-in when a step has one).
+// WHAT IS DROPPED: the checkbox keys' flag
 // plumbing, the auto-tick explanations and the site-relative links (none of them mean anything in
 // an overlay). [[Item Name#id]] tokens become the bare name: the overlay has no item cards.
 const fs = require('fs');
@@ -90,6 +93,15 @@ function build(g) {
       q.says = item.says.map((s) => (s.sit ? { to: s.to, text: s.text, sit: true } : { to: s.to, text: s.text }));
     }
     if (item.where && item.where.length) q.where = item.where.map(loc);
+    if (item.seq && item.seq.length) {
+      // Field order is fixed so the generated file is byte-stable; clean() turns [[Name#id]] into Name.
+      q.seq = item.seq.map((a) => {
+        const o = { kind: a.kind };
+        for (const k of ['to', 'text', 'items', 'sit', 'times', 'until']) if (a[k] !== undefined) o[k] = a[k];
+        o.src = a.src;
+        return o;
+      });
+    }
     if (item.chain) {
       const c = item.chain;
       const first = { text: c.first.text, at: loc(c.first.at) };

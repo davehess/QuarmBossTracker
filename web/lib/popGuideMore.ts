@@ -61,6 +61,7 @@ export const STEP_MORE: Record<string, StepMore> = {
   },
   justice_mavuin_hail: {
     expect: 'Solo, seconds. This hail is the Justice flag, and the Storms shrine checks it before it lets you into the Bastion of Thunder.',
+    auto: 'Ticks itself when Mimic records your Justice flag, which is this hail.',
   },
   justice_seventh_hammer: {
     expect: 'A raid, later. Needs all six Marks on one person, so six trial wins. Not needed for any flag.',
@@ -71,12 +72,13 @@ export const STEP_MORE: Record<string, StepMore> = {
     turnIn: [
       { to: at('flag_askr'), give: 'one [[Storm Giant Head#28749]] (any camp’s)', get: '[[Askr’s Bag of Verity#17192]] after “it was me”, “paying attention”, “continue”, “continue”' },
       { to: at('flag_askr'), give: '[[Askr’s Sealed Bag of Verity#11487]] (beard + bone + sash combined in the bag)', get: 'the first flag; say “bastion of thunder” for a second bag' },
-      { to: at('flag_askr'), give: '[[Esoteric Meld#11488]] (two medallions from different camps, combined)', get: 'the Askr flag' },
+      { to: at('flag_askr'), give: '[[Esoteric Meld#11488]] (two medallions from different camps, combined)', get: 'Askr’s second flag; the shrine click after it is your Bastion of Thunder flag' },
     ],
     back: [at('storms_zone_bot')],
   },
   storms_zone_bot: {
     expect: 'Solo. With both flags the shrine sends you to the lower halls of the Bastion of Thunder. Without the Justice flag it finds “no mystic symbol”: go back to Mavuin.',
+    auto: 'Ticks itself when Mimic records your Bastion of Thunder flag, which is this click.',
   },
 
   bot_symbol: {

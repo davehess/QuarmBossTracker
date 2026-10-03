@@ -35,11 +35,14 @@ export type AutoInput = {
 };
 
 // Steps that come before a gate flag in the same arc. Standing in Storms or Valor means the server's
-// mavuin 3, which only follows Mavuin's information and the Tribunal. (Only for /who and loot, which are
-// presence: a recorded trial_justice can still come from the boss fallback, which proves the trial and
-// nothing after it.)
-const WHO_STEPS_BEFORE: Record<string, string[]> = {
-  trial_justice: ['justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
+// mavuin 3, which only follows Mavuin's information and the Tribunal.
+// The Justice flag now belongs to the Mavuin hail and the Bastion flag to the shrine click (popGuide.ts,
+// the guild lead, 2026-10-03), so the steps they used to sit on are listed here: the trial, and Askr.
+// Mimic's record counts too: every recorded trial_justice is the server's mavuin 3 and every askr_quest
+// its karana 3 (pop_flags.stage, checked 2026-10-03), and each of those follows the steps listed.
+const STEPS_BEFORE: Record<string, string[]> = {
+  trial_justice: ['flag_trial_justice', 'justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
+  askr_quest: ['flag_askr'],
 };
 
 // Holding the reward (or the thing the step asks you to get) proves the step. All the ids, unless
@@ -81,18 +84,24 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
     const mark = inp.loots.find(l => MARK_RX.test(String(l.item_name).trim()));
     if (mark) out.flag_trial_justice = { source: 'mimic', what: `Mimic saw you loot the ${mark.item_name}.`, at: mark.looted_at };
   }
+  // A recorded flag also proves the steps it needs (after the Mark, which names the trial more exactly).
+  for (const [flag, at] of flagAt) {
+    for (const k of STEPS_BEFORE[flag] ?? []) {
+      if (!out[k]) out[k] = { source: 'mimic', what: 'Mimic recorded a later flag in this arc, which needs this step first.', at: at ?? null };
+    }
+  }
   // /who: the gate of the plane they were seen in, and of every plane on the way in.
   for (const [flag, proof] of flagsFromSightings(inp.seen ?? [])) {
     const ev: Evidence = { source: 'who', what: seenText(proof.zone), at: proof.at };
     for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
-    for (const k of WHO_STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
+    for (const k of STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
   }
   // Loot: the same gates, from what they looted in the plane. After /who, so a step /who already filled
   // keeps its /who label.
   for (const [flag, proof] of flagsFromLoot(inp.looted ?? [])) {
     const ev: Evidence = { source: 'loot', what: lootText(proof.zone, proof.source), at: proof.at };
     for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
-    for (const k of WHO_STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
+    for (const k of STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
   }
   if (inp.liveAt) out.start_mimic = { source: 'mimic', what: 'Mimic has reported this character.', at: inp.liveAt };
   if (inp.level != null && inp.level >= 46) {

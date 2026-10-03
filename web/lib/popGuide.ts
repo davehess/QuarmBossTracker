@@ -35,6 +35,37 @@ export type Who = 'solo' | 'group' | 'raid';
 export type Say = { to: string; text: string; sit?: boolean; src?: string };
 export type Loc = { npc: string; zone: ZoneKey; y: number; x: number; note?: string };
 
+// One step as ONE ordered list (the guild lead, 2026-10-03: "some of the steps require you to hail after
+// something else or say a line multiple times. the hand in items should be in order with the text we say
+// to them"). says[], where[], chain and turnIn (popGuideMore.ts) each keep a piece of a step, so the order
+// between saying, handing in and hailing again was lost. `seq` is that order, read off the quest scripts;
+// where a step has one, the checklist, its beta layouts and the Mimic PoP overlay draw it in place of the
+// pieces. The old fields stay (nothing was deleted) and stay the fallback when a step has no `seq`.
+//   hail  — hail `to`; `text` is an optional qualifier ("only the group with the kill credit")
+//   say   — say `text` to `to`. `sit`: only while seated. `times`: said that many times in a row.
+//           `until`: say it again until that is true ("she has nothing new to unlock")
+//   give  — hand `items` ([[Name#id]] tokens) to `to`
+//   get   — receive `items` and/or `text` (a character flag, experience). Drawn on the row it follows.
+//   kill  — defeat `to`
+//   click — click `to`; `items` are held on the cursor, or put in the bag, for it
+//   zone  — the click or the drop that FLAGS you or zones you in. The server sets those flags on the
+//           click (potranquility/player.lua, postorms/player.lua, …), not an NPC, so it is its own kind
+//   wait  — wait for `text`
+//   note  — a caveat, drawn under the row before it and not numbered
+// `src` is the eqemu_quest_scripts path the act was read from. ⚠ Upstream's scripts: Quarm may differ.
+// test/pop-guide-seq.test.js holds every say to its script's own keyword and every item to a real id.
+export type ActKind = 'hail' | 'say' | 'give' | 'get' | 'kill' | 'click' | 'zone' | 'wait' | 'note';
+export type Act = {
+  kind: ActKind;
+  to?: string;
+  text?: string;
+  items?: string[];
+  sit?: boolean;
+  times?: number;
+  until?: string;
+  src: string;
+};
+
 export type GuideItem = {
   key: string;
   section: SectionKey;
@@ -48,6 +79,7 @@ export type GuideItem = {
   says?: Say[];
   where?: Loc[];
   chain?: Chain;
+  seq?: Act[];         // the whole step in the order the script needs (see Act); attached from SEQ below
 };
 
 // A quest that is a chain of NPCs (the guild lead, 2026-09-28: "Follow the chain and show the
@@ -186,7 +218,8 @@ const MAELIN = 'poknowledge/Grand_Librarian_Maelin.lua';
 
 const PROJECTION = 'Then hail A Planar Projection before anyone leaves.';
 
-export const GUIDE_ITEMS: GuideItem[] = [
+// The steps as authored; GUIDE_ITEMS below is this list with each step's `seq` attached.
+const BASE_ITEMS: GuideItem[] = [
   // ── Start here ────────────────────────────────────────────────────────────
   { key: 'start_level46', section: 'start', who: 'solo', must: true, title: 'Reach level 46',
     detail: 'Every PoP zone needs 46. The Plane of Knowledge does not; the Plane of Time asks for more.' },
@@ -303,14 +336,18 @@ export const GUIDE_ITEMS: GuideItem[] = [
   // Justice
   { key: 'justice_mavuin_info', section: 't1', who: 'solo', must: true, title: 'Justice, before the trial: ask Mavuin for his information',
     says: [{ to: 'Mavuin', text: 'information' }], where: [L.mavuin] },
-  { key: 'flag_trial_justice', section: 't1', who: 'raid', must: true, flag: 'trial_justice', title: 'Win a Justice trial and loot its Mark',
+  // The Justice flag (trial_justice = the server's mavuin 3) is finished by the Mavuin hail below, not by the
+  // trial: the guild lead, 2026-10-03: "move the justice flag to the mavuin hail step". postorms/player.lua
+  // lets you in only at mavuin >= 3 and the Tranquility portals check mavuin == "3", so the hail is what
+  // completes Justice. This step ticks from a Mark looted, or from /who (web/lib/popGuideAuto.ts).
+  { key: 'flag_trial_justice', section: 't1', who: 'raid', must: true, title: 'Win a Justice trial and loot its Mark',
     detail: 'Any one of the six: [[Mark of Execution#31842]], [[Mark of Flame#31796]], [[Mark of Lashing#31960]], [[Mark of Stone#31845]], [[Mark of Suffocation#31846]] or [[Mark of Torture#31844]]. The trial’s boss drops SIX of its Mark, one each, so one win covers six people; run it again for the rest. To start, tell that trial’s Tribunal “prove”, then “prepared”, then “I am ready to begin the Trial of Lashing” (or Execution, Stoning, Torture, Hanging, Flame); it takes everyone in your group standing close. After a win it can run again in 10 minutes, after a loss in 1.',
     says: [{ to: 'The Tribunal (at the trial)', text: 'prove' }, { to: 'The Tribunal (at the trial)', text: 'prepared' }],
     link: popZone('justice') },
   { key: 'justice_tribunal', section: 't1', who: 'solo', must: true, title: 'With your Mark in your bags, tell a Tribunal “mavuin sent me”',
     detail: 'Needs Mavuin’s “information” first. The Tribunal checks that you carry a Mark but does not take it; without one it says “You must prove yourself in one of our trials”. Keep the Mark.',
     says: [{ to: 'The Tribunal', text: 'mavuin sent me' }], where: [L.tribunalA] },
-  { key: 'justice_mavuin_hail', section: 't1', who: 'solo', must: true, title: 'Go back and hail Mavuin: that is your Justice flag',
+  { key: 'justice_mavuin_hail', section: 't1', who: 'solo', must: true, flag: 'trial_justice', title: 'Go back and hail Mavuin: that is your Justice flag',
     detail: 'The Bastion of Thunder shrine in the Plane of Storms checks for this flag, so do not skip it. Needs the Tribunal’s “mavuin sent me” first (your Mavuin flag at 2); this hail moves it to 3, which the Valor and Storms portals in Tranquility check, and so does Aerin`Dar’s projection. His reply points you to Karana and Mithaniel Marr.',
     says: [{ to: 'Mavuin', text: 'Hail', src: 'pojustice/#Mavuin.lua' }], where: [L.mavuin] },
   { key: 'justice_seventh_hammer', section: 't1', who: 'raid', title: 'Optional: The Seventh Hammer (all six Marks)',
@@ -341,7 +378,7 @@ export const GUIDE_ITEMS: GuideItem[] = [
   { key: 'nightmare_adroha', section: 't1', who: 'solo', must: true, title: 'Nightmare, before the maze: talk to Adroha Jezith',
     says: [{ to: 'Adroha Jezith', text: 'Hail' }, { to: 'Adroha Jezith', text: 'tortured by nightmares' }], where: [L.adroha] },
   { key: 'flag_hedge', section: 't1', who: 'group', must: true, flag: 'hedge_event', title: 'Thelin’s hedge maze (Plane of Nightmare), then hail Thelin Poxbourne',
-    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the [[Dagger Blade Shard#9258]]: hand it to Thelin for [[Thelin’s Dagger#9259]]. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.',
+    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. The hail is your Thelin flag at 2; clicking the portal to the Lair of Terris Thule afterwards is what opens the Lair. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the [[Dagger Blade Shard#9258]]: hand it to Thelin for [[Thelin’s Dagger#9259]]. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.',
     says: [
       { to: 'Thelin Poxbourne (outside the maze)', text: 'Hail', src: MAZE },
       { to: 'Thelin Poxbourne (outside the maze)', text: 'dagger', src: MAZE },
@@ -380,14 +417,18 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Needs Bertoxxulous dead and his projection hailed (that moves your Fuirstel flag to 4); this hail moves it to 5. It is the other half of the Torment portal check, with Elder Poxbourne.',
     says: [{ to: 'Elder Fuirstel', text: 'Hail', src: 'potranquility/Elder_Fuirstel.lua' }], where: [L.fuirstel] },
   // Storms
-  { key: 'flag_askr', section: 't2', who: 'group', must: true, flag: 'askr_quest', title: 'Askr the Lost: one head, one bag, one meld (Plane of Storms)',
+  // The Bastion flag is the shrine click's, not Askr's (the guild lead, 2026-10-03: "the flagging for bastion
+  // of thunder REQUIRES you to enter the zone from plane of storms after doing the turnin"): the meld sets
+  // karana 2, and only postorms/player.lua door 4 turns it into karana 3, which is what Mimic records as
+  // askr_quest. So the flag sits on storms_zone_bot, and this step ticks from it (web/lib/popGuideAuto.ts).
+  { key: 'flag_askr', section: 't2', who: 'group', must: true, title: 'Askr the Lost: one head, one bag, one meld (Plane of Storms)',
     detail: 'Everyone does their own. 1) Hand Askr ONE [[Storm Giant Head#28749]] (any camp’s; 60% from its giants). Then say “it was me”, “paying attention”, and “continue” twice for [[Askr’s Bag of Verity#17192]]. 2) Combine a [[Storm Volaas Beard#28750]] (south camp), a [[Storm Taarid Bone#28751]] (west) and a [[Storm Satuur Sash#28764]] (north) in the bag; give him [[Askr’s Sealed Bag of Verity#11487]]. 3) Say “bastion of thunder” for a second bag; combine two [[Esoteric Medallion#28765]]s from DIFFERENT camps in it (south, west or north; each camp’s named drops three) and give him the [[Esoteric Meld#11488]]. Leaving the zone resets his conversation, so answer him right after each hand-in.',
     says: [
       { to: 'Askr the Lost', text: 'it was me' }, { to: 'Askr the Lost', text: 'paying attention' },
       { to: 'Askr the Lost', text: 'continue' }, { to: 'Askr the Lost', text: 'bastion of thunder' },
     ],
     where: [L.askr], link: popZone('storms') },
-  { key: 'storms_zone_bot', section: 't2', who: 'solo', must: true, title: 'Click the shrine in Mount Grenidor to enter the Bastion of Thunder',
+  { key: 'storms_zone_bot', section: 't2', who: 'solo', must: true, flag: 'askr_quest', title: 'Click the shrine in Mount Grenidor to enter the Bastion of Thunder',
     detail: 'Needs Askr’s flag AND your Justice flag (the last Mavuin hail). The “Talisman of Thunderous Foyer” is this click, a flag, not a keyring item. Without both flags the shrine says it finds no mystic symbol. You land in the lower halls.',
     where: [L.stormsShrine] },
   // Valor
@@ -512,20 +553,22 @@ export const GUIDE_ITEMS: GuideItem[] = [
 
   // ── Elemental ─────────────────────────────────────────────────────────────
   { key: 'flag_fennin', section: 't4', who: 'raid', must: true, flag: 'fennin_dead', title: 'Kill Fennin Ro (Plane of Fire)',
-    detail: 'Hail A Planar Projection to receive the [[Globe of Dancing Flame#29147]].', link: popZone('fire') },
+    // The NPC that gives the item is "Essence of Fire", not A Planar Projection (pofire/encounters/Fennin.lua
+    // spawns type 217454; the same for Air, Water and Earth below). Corrected 2026-10-03 from the scripts.
+    detail: 'Hail Essence of Fire, who appears where Fennin Ro falls, to receive the [[Globe of Dancing Flame#29147]].', link: popZone('fire') },
   { key: 'air_key', section: 't4', who: 'raid', title: 'Optional: [[A Wind Etched Key#28638]] to reach Xegony’s island',
     detail: 'One per group. Once the holder clicks the rainbow, the group has 5 minutes to follow.' },
   { key: 'flag_avatars_air', section: 't4', who: 'raid', flag: 'avatars_air', check: true, title: 'Kill the four air avatars', link: popZone('air') },
   { key: 'flag_xegony', section: 't4', who: 'raid', must: true, flag: 'xegony_dead', title: 'Kill Xegony (Plane of Air)',
-    detail: 'Hail A Planar Projection to receive the [[Amorphous Cloud of Air#29164]].', link: popZone('air') },
+    detail: 'Hail Essence of Air, who appears where Xegony falls, to receive the [[Amorphous Cloud of Air#29164]].', link: popZone('air') },
   { key: 'flag_coirnav', section: 't4', who: 'raid', must: true, flag: 'coirnav_dead', title: 'Kill Coirnav (Plane of Water)',
-    detail: 'Hail A Planar Projection to receive the [[Sphere of Coalesced Water#29163]].', link: popZone('water') },
+    detail: 'Hail Essence of Water, who appears where Coirnav falls, to receive the [[Sphere of Coalesced Water#29163]].', link: popZone('water') },
   { key: 'earth_key', section: 't4', who: 'raid', title: 'Optional: [[A Gem-Etched Key#28636]] from Tantisala Jaggedtooth',
     detail: 'One person needs it to open the door to the tunnels in Plane of Earth A.' },
   { key: 'flag_arbitor', section: 't4', who: 'raid', must: true, flag: 'arbitor_dead', check: true, title: 'The four earth rings and A Mystical Arbitor of Earth',
     detail: 'Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B.', link: popZone('earth') },
   { key: 'flag_rathe', section: 't4', who: 'raid', must: true, flag: 'rathe_dead', title: 'Kill the Rathe Council (the Avatar of Earth)',
-    detail: 'Hail A Planar Projection to receive the [[Mound of Living Stone#29146]].', link: popZone('poeb') },
+    detail: 'Hail Essence of Earth, who appears where the Avatar of Earth falls, to receive the [[Mound of Living Stone#29146]].', link: popZone('poeb') },
   // Essences of Power, part 2 (poknowledge/Councilwoman_Kerasha.lua; the bowl recipe is tradeskill
   // recipe 9921; each essence is 40% on its god's loot table, one per kill, and lore).
   { key: 'essences_power', section: 't4', who: 'raid', title: 'Optional: the four Essences of Power for a [[Jade Hoop of Speed#32106]] or another reward (part 2)',
@@ -553,6 +596,471 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Shows your guild’s timeline, when it retires, and which encounters are open in each phase.' },
   { key: 'flag_quarm', section: 'time', who: 'raid', must: true, flag: 'quarm_dead', title: 'Kill Quarm', link: popZone('time') },
 ];
+
+// ── The order of each step (the guild lead, 2026-10-03; see Act above) ──────────────────────────────
+// Read from eqemu_quest_scripts on 2026-10-03. Where a script keeps the order in a state machine
+// (postorms/Askr_the_Lost.lua: head → "it was me" → "paying attention" → "continue" twice), the order is
+// the script's. Where it is only a list of keywords with no state (most hails and "story" words), the
+// guide's existing order is kept and the script does not fix it. Marked per step.
+// ⚠ Steps with no quest script in the mirror have NO seq and keep says[] as they were: Gram Dunnar's charm
+// ("craft", "I have stories") is in no eqemu_quest_scripts row, so there is nothing to cite.
+const I = (name: string, id: number) => `[[${name}#${id}]]`;
+const hail = (to: string, src: string, text?: string): Act => ({ kind: 'hail', to, ...(text ? { text } : {}), src });
+const say = (to: string, text: string, src: string, more: { sit?: boolean; times?: number; until?: string } = {}): Act =>
+  ({ kind: 'say', to, text, ...more, src });
+const give = (to: string, items: string[], src: string, text?: string): Act =>
+  ({ kind: 'give', to, items, ...(text ? { text } : {}), src });
+const get = (src: string, o: { items?: string[]; text?: string } = {}): Act => ({ kind: 'get', ...o, src });
+const kill = (to: string, src: string, text?: string): Act => ({ kind: 'kill', to, ...(text ? { text } : {}), src });
+const click = (to: string, src: string, o: { items?: string[]; text?: string } = {}): Act => ({ kind: 'click', to, ...o, src });
+const zone = (to: string, text: string, src: string): Act => ({ kind: 'zone', to, text, src });
+const wait = (text: string, src: string): Act => ({ kind: 'wait', text, src });
+const note = (text: string, src: string, items?: string[]): Act => ({ kind: 'note', text, ...(items ? { items } : {}), src });
+// "You have received a character flag!" follows the act: the phrase or hail that earns it.
+const FLAG = { text: 'a character flag' };
+
+const SEER = 'poknowledge/Seer_Mal_Nae-Shi.lua';
+const MERRI = 'poknowledge/Curator_Merri.lua';
+const TRIBUNAL = 'pojustice/The_Tribunal.lua';
+const MAVUIN = 'pojustice/#Mavuin.lua';
+const POJ_PLAYER = 'pojustice/player.lua';
+const ASKR = 'postorms/Askr_the_Lost.lua';
+const NITRAM = 'poinnovation/Nitram_Anizok.lua';
+const POI_PLAYER = 'poinnovation/player.lua';
+const TRANQ = 'potranquility/player.lua';        // the Tranquility portals set the zone flags on the click
+const SOLRO_PLAYER = 'solrotower/player.lua';
+const FUIRSTEL = 'potranquility/Elder_Fuirstel.lua';
+const KERASHA = 'poknowledge/Councilwoman_Kerasha.lua';
+const TORMENT_PORTAL = 'the Torment portal in the Plane of Tranquility';
+const TORMENT_PORTAL_TEXT = 'Click it once both Elders have answered (your Fuirstel flag at 5 and your Thelin flag at 4): that click sets the Torment zone flag.';
+const SHARD = I('Dagger Blade Shard', 9258);
+const FIST = I('Tiny Gold Fist', 16260);
+const BAG = I('Askr’s Bag of Verity', 17192);
+const COLLECTORS_BOX = I('Collector’s Box', 17769);
+
+const SEQ: Record<string, Act[]> = {
+  // ── Start here ──
+  start_pok_bind: [say('Soulbinder Jera', 'bind my soul', 'poknowledge/Soulbinder_Jera.lua')],
+  // Order across the two NPCs is NOT fixed by either script: the Seer's checklist flags need flags Maelin sets
+  // (cl_rallos needs zeks 6) and Maelin needs flags the Seer sets (cl_saryrn → saryrn, for the cipher), so it
+  // is a loop. Within one visit to Maelin, "Hail" (cipher) must come before "information" (the Zek reading
+  // needs the cipher) and "lore" before the second "information" (zebuxoruk 1 → 2).
+  start_flag_fixers: [
+    say('Seer Mal Nae`Shi', 'guided meditation', SEER, { sit: true }),
+    say('Seer Mal Nae`Shi', 'unlock my memories', SEER, { sit: true, until: 'she has nothing new to unlock' }),
+    hail('Grand Librarian Maelin', MAELIN),
+    say('Grand Librarian Maelin', 'lore', MAELIN),
+    say('Grand Librarian Maelin', 'information', MAELIN),
+    note('Each of them unlocks what the other needs, so go back to the Seer and do it again, back and forth, until neither has anything new. Visit Maelin before and after the Zeks and after Saryrn.', SEER),
+  ],
+  // Willamina's Needles: the hand-ins are the item chain, so their order is fixed by what each NPC takes.
+  // No NPC's trade checks that you spoke first; the story words stay in the chain's own folded section.
+  start_traveler_manual: [
+    get('poknowledge/Agrakath_Theric.lua', { items: [I('History of Evils: The Age of Scale', 28188)], text: 'from the floor on the upper level of Myrist' }),
+    note('Nobody needs a phrase before taking an item, so the hand-ins are all there is; the optional story is folded below.', 'poknowledge/Agrakath_Theric.lua'),
+    give('Agrakath Theric', [I('History of Evils: The Age of Scale', 28188)], 'poknowledge/Agrakath_Theric.lua'),
+    get('poknowledge/Agrakath_Theric.lua', { items: [I('Note to Caden', 28084)] }),
+    give('Caden Zharik', [I('Note to Caden', 28084)], 'poknowledge/Caden_Zharik.lua'),
+    get('poknowledge/Caden_Zharik.lua', { items: [I('Boiron’s Standard', 28085)] }),
+    give('Boiron Ston', [I('Boiron’s Standard', 28085)], 'poknowledge/Boiron_Ston.lua'),
+    get('poknowledge/Boiron_Ston.lua', { items: [I('Letter to Elisha', 28086)] }),
+    give('Elisha Dirtyshoes', [I('Letter to Elisha', 28086)], 'poknowledge/Elisha_Dirtyshoes.lua'),
+    get('poknowledge/Elisha_Dirtyshoes.lua', { items: [I('Narik’s Ring', 28087)] }),
+    give('Arch Mage Narik', [I('Narik’s Ring', 28087)], 'poknowledge/Arch_Mage_Narik.lua'),
+    get('poknowledge/Arch_Mage_Narik.lua', { items: [I('Onirelin’s Jewel', 28088)] }),
+    give('Onirelin Gali', [I('Onirelin’s Jewel', 28088)], 'poknowledge/Onirelin_Gali.lua'),
+    get('poknowledge/Onirelin_Gali.lua', { items: [I('Cador’s Artifact', 28089)] }),
+    give('Oracle Cador', [I('Cador’s Artifact', 28089)], 'poknowledge/Oracle_Cador.lua'),
+    get('poknowledge/Oracle_Cador.lua', { items: [I('Black Lava Powder', 28090)] }),
+    give('Mirao Frostpouch', [I('Black Lava Powder', 28090)], 'poknowledge/Mirao_Frostpouch.lua'),
+    get('poknowledge/Mirao_Frostpouch.lua', { items: [I('Curative Potion', 28091)] }),
+    give('Bolcen Tendag', [I('Curative Potion', 28091)], 'poknowledge/Bolcen_Tendag.lua'),
+    get('poknowledge/Bolcen_Tendag.lua', { items: [I('New Sewing Needles', 28092)] }),
+    give('Willamina', [I('New Sewing Needles', 28092)], 'poknowledge/Willamina.lua'),
+    get('poknowledge/Willamina.lua', { items: [I('Planar Traveler’s Manual', 28745)] }),
+  ],
+
+  // ── PoK collections: the box from Curator Merri, the four things combined in it, the filled box handed
+  // to its collector. Merri's "collector's box" is a keyword with no state, so the box can be had any time
+  // before the combine; the guide's order (box first) is kept.
+  pok_taxidermy: [
+    say('Curator Merri', "collector's box", MERRI), get(MERRI, { items: [COLLECTORS_BOX] }),
+    click('Combine', 'poknowledge/Holly_Longtail.lua', { text: 'put these four in the box first', items: [I('Tiny Rockhopper Eye', 7154), I('Undead Froglok Tongue', 16532), I('Cockatrice Beak', 11935), I('High Quality Cougarskin', 30030)] }),
+    give('Holly Longtail', [I('Collection of Taxidermy', 28076)], 'poknowledge/Holly_Longtail.lua'),
+    get('poknowledge/Holly_Longtail.lua', { items: [I('Fine Antique Ring', 28237)] }),
+  ],
+  // Trep's three keywords ("will do you a favor", "ready to begin") carry no state either; only the last one hands over the crate.
+  pok_merchant_crate: [
+    say('Trep Thilcan', 'ready to begin', 'poknowledge/Trep_Thilcan.lua'), get('poknowledge/Trep_Thilcan.lua', { items: [I('Empty Supplies Crate', 17177)] }),
+    click('Combine', 'poknowledge/Trep_Thilcan.lua', { text: 'with all six in the crate: a purification tablet (Freeport), a keg of beer (Qeynos), a ball of twine (Shadeweaver), a bundle of weapons (Firiona), an armor assortment (Thurgadin) and a case of meat (Bazaar)' }),
+    give('Trep Thilcan', [I('Merchants Crate of Supplies', 15978)], 'poknowledge/Trep_Thilcan.lua'),
+    get('poknowledge/Trep_Thilcan.lua', { text: '60 platinum and experience' }),
+  ],
+  pok_instruments: [
+    say('Curator Merri', "collector's box", MERRI), get(MERRI, { items: [COLLECTORS_BOX] }),
+    click('Combine', 'poknowledge/Lohie_Cantare.lua', { text: 'put these four in the box first', items: [I('Minotaur Horn', 13077), I('Tambourine of Rituals', 28074), I('Stretched Skin Drum', 3392), I('Orcish Lute of Singing', 28025)] }),
+    give('Lohie Cantare', [I('Collection of Instruments', 28080)], 'poknowledge/Lohie_Cantare.lua'),
+    get('poknowledge/Lohie_Cantare.lua', { items: [I('Fine Antique Amice', 28239)] }),
+  ],
+  // Tarerd's "from me" is the keyword his own reply calls "[from you]"; his trade does not check it, so the
+  // order is the item chain: Sarnak Blood → note → book → book → mask.
+  pok_reflecting_pools: [
+    say('Tarerd Gahar', 'from me', 'poknowledge/Tarerd_Gahar.lua'),
+    give('Tarerd Gahar', [I('Sarnak Blood', 22519)], 'poknowledge/Tarerd_Gahar.lua'),
+    get('poknowledge/Tarerd_Gahar.lua', { items: [I('Note from Tarerd', 15958)] }),
+    give('Vicar Thiran', [I('Note from Tarerd', 15958)], 'poknowledge/Vicar_Thiran.lua'),
+    get('poknowledge/Vicar_Thiran.lua', { items: [I('Goblins and Their Religions', 15959)] }),
+    give('Jeren Manri', [I('Goblins and Their Religions', 15959)], 'droga/Jeren_Manri.lua'),
+    get('droga/Jeren_Manri.lua', { items: [I('The Reflecting Pools of Tanaan', 15960)] }),
+    give('Tratlan Jowyr', [I('The Reflecting Pools of Tanaan', 15960)], 'poknowledge/Tratlan_Jowyr.lua'),
+    get('poknowledge/Tratlan_Jowyr.lua', { items: [I('Fine Cut, Diamond Inlaid Mask', 9321)], text: '150,000 experience' }),
+  ],
+  // Sage Balic: "continue" is the one real state machine here. It is a prompt that answers the first time
+  // and then, with the 60-second timer still running, a second time, and only the second gives the box.
+  pok_sage_research: [
+    say('Sage Balic', 'your research', 'poknowledge/Sage_Balic.lua'),
+    say('Sage Balic', 'continue', 'poknowledge/Sage_Balic.lua', { times: 2 }),
+    get('poknowledge/Sage_Balic.lua', { items: [I('Sage’s Box of Research', 17176)], text: 'the second “continue” gives it, within a minute of the first' }),
+    say('Sage Balic', 'their research', 'poknowledge/Sage_Balic.lua'),
+    click('Combine', 'poknowledge/Sage_Balic.lua', { text: 'a Rune and its matching Words in the box; classic research drops' }),
+    give('Sage Balic', [I('Word of Combine', 15946), I('Word of Sorcery', 15947), I('Word of Helix', 15948), I('Word of Inverse', 15949), I('Word of Impetus', 15950)], 'poknowledge/Sage_Balic.lua', 'one Word per turn-in; the other research drops (bindings, notes) hand in the same way for experience only'),
+    get('poknowledge/Sage_Balic.lua', { items: [I('Sage’s Apprentice Cap', 32019), I('Twisted Talisman', 32020), I('Three Ringed Hoop', 32021), I('Joined Signet', 32022), I('Apprentice’s Notebook', 32023)], text: 'in that order, one per Word, and 100,000 experience each' }),
+  ],
+  pok_books: [
+    say('Curator Merri', "collector's box", MERRI), get(MERRI, { items: [COLLECTORS_BOX] }),
+    click('Combine', 'poknowledge/Alexis_Dubbani.lua', { text: 'put these four in the box first', items: [I('Black Tome with Silver Runes', 13400), I('Tome of the Eternal', 14719), I('Codex of the Warrior', 28071), I('Book of Inspiration', 4680)] }),
+    give('Alexis Dubbani', [I('Collection of Books', 28081)], 'poknowledge/Alexis_Dubbani.lua'),
+    get('poknowledge/Alexis_Dubbani.lua', { items: [I('Fine Antique Locket', 28240)] }),
+  ],
+  pok_gems: [
+    say('Curator Merri', "collector's box", MERRI), get(MERRI, { items: [COLLECTORS_BOX] }),
+    click('Combine', 'poknowledge/Drelynn_Beaufax.lua', { text: 'put these four in the box first', items: [I('Blackened Sapphire', 13238), I('Greenscale Emerald', 28073), I('Shimmering Velium Ruby', 27999), I('Hope Diamond', 4696)] }),
+    give('Drelynn Beaufax', [I('Collection of Gems', 28077)], 'poknowledge/Drelynn_Beaufax.lua'),
+    get('poknowledge/Drelynn_Beaufax.lua', { items: [I('Fine Antique Veil', 28242)] }),
+  ],
+  pok_idols: [
+    say('Curator Merri', 'special items', MERRI),
+    say('Curator Merri', "collector's box", MERRI), get(MERRI, { items: [COLLECTORS_BOX] }),
+    click('Combine', MERRI, { text: 'put these four in the box first', items: [I('Forlorn Totem of Rolfron Zek', 2569), I('Idol of Woven Grass', 28075), I('Coldain Fetish', 28072), I('Petrified Totem', 4748)] }),
+    give('Curator Merri', [I('Collection of Idols', 28082)], MERRI),
+    get(MERRI, { items: [I('Fine Antique Velvet Rose', 28241)] }),
+  ],
+
+  // ── Tier one ──
+  disease_ward: [say('Adler Fuirstel', 'what ward', 'potranquility/Adler_Fuirstel.lua'), get('potranquility/Adler_Fuirstel.lua', FLAG)],
+  // Justice, in the order each NPC needs: Mavuin's "information" (mavuin 1), a Mark and the Tribunal's "mavuin"
+  // (2), then the Mavuin hail (3). The trial itself can be won any time before the Tribunal.
+  justice_mavuin_info: [say('Mavuin', 'information', MAVUIN), get(MAVUIN, FLAG)],
+  flag_trial_justice: [
+    say('The Tribunal (at the trial)', 'prove', TRIBUNAL),
+    say('The Tribunal (at the trial)', 'prepared', TRIBUNAL),
+    say('The Tribunal (at the trial)', 'ready to begin the Trial of Lashing', TRIBUNAL),
+    note('Use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.', TRIBUNAL),
+    kill('the trial’s boss', TRIBUNAL, 'win the trial'),
+    get(TRIBUNAL, { items: [I('Mark of Execution', 31842), I('Mark of Flame', 31796), I('Mark of Lashing', 31960), I('Mark of Stone', 31845), I('Mark of Suffocation', 31846), I('Mark of Torture', 31844)], text: 'loot the one for that trial' }),
+  ],
+  justice_tribunal: [
+    note('Have a Mark in your bags: the Tribunal checks for one and does not take it.', TRIBUNAL),
+    say('The Tribunal', 'mavuin sent me', TRIBUNAL), get(TRIBUNAL, FLAG),
+  ],
+  justice_mavuin_hail: [
+    hail('Mavuin', MAVUIN), get(MAVUIN, FLAG),
+    zone('the Valor or Storms portal in the Plane of Tranquility', 'Click it with your Mavuin flag at 3: that click sets the zone flags for both planes.', TRANQ),
+  ],
+  justice_seventh_hammer: [
+    note('Hold all six Marks in your bags: the Tribunal checks them and does not take them.', TRIBUNAL),
+    say('The Tribunal', 'knowledge', TRIBUNAL), get(TRIBUNAL, { items: [I('The Mark of Justice', 31599)] }),
+    click('a trial portal', POJ_PLAYER, { items: [I('The Mark of Justice', 31599)], text: 'hold it on your cursor' }),
+  ],
+  // Nitram's story words (hail … "collecting materials") are a keyword list with no state and the trade does
+  // not check them; the guide's order is kept. The trade, the kill and the second hail are the script's order.
+  innovation_door_key: [
+    hail('Nitram Anizok', NITRAM),
+    say('Nitram Anizok', 'advanced tinkering', NITRAM),
+    say('Nitram Anizok', 'construction', NITRAM),
+    say('Nitram Anizok', 'instinct for survival', NITRAM),
+    say('Nitram Anizok', 'combination of batteries', NITRAM),
+    say('Nitram Anizok', 'collecting materials', NITRAM),
+    give('Nitram Anizok', [I('Copper Node', 9295), I('Bundle of Super Conductive Wires', 9426), I('Intact Power Cell', 9434)], NITRAM, 'all three in one trade; he then walks to the beast and puts the power unit in'),
+    kill('Xanamech Nezmirthafen', 'poinnovation/#Xanamech_Nezmirthafen.lua'),
+    hail('Nitram Anizok (after the beast dies)', NITRAM, 'only the group or raid with the kill credit'), get(NITRAM, FLAG),
+    click('The main factory door', POI_PLAYER, { text: 'it opens only with that flag' }),
+  ],
+  innovation_test: [say('Giwin Mirakon', 'I will test the machine', 'poinnovation/Giwin_Mirakon.lua'), get('poinnovation/Giwin_Mirakon.lua', FLAG)],
+  flag_behemoth: [
+    kill('the Manaetic Behemoth', 'poinnovation/encounters/Behemoth.lua'),
+    hail('Giwin Mirakon (appears after the kill)', 'poinnovation/#Giwin_Mirakon.lua', 'only the group or raid with the kill credit'), get('poinnovation/#Giwin_Mirakon.lua', FLAG),
+    zone('the Plane of Tactics portal in the Plane of Tranquility', 'Click it with your Zeks flag at 2 or more: that click sets the zone flag.', TRANQ),
+  ],
+  // Adroha's story words are a keyword chain with no state; only "tortured by nightmares" sets the flag.
+  nightmare_adroha: [
+    hail('Adroha Jezith', 'potranquility/Adroha_Jezith.lua'),
+    say('Adroha Jezith', 'tortured by nightmares', 'potranquility/Adroha_Jezith.lua'), get('potranquility/Adroha_Jezith.lua', FLAG),
+  ],
+  // The maze (ponightmare/encounters/Maze.lua is a state machine): "ready" outside (state 0 → 1), "ready" inside
+  // within five minutes (1 → 2, he walks), the boss spawns (3), the shard is taken only in state 3 (his
+  // dagger), the dialogue ends in state 4, and only then does a hail flag you and carry you out.
+  flag_hedge: [
+    hail('Thelin Poxbourne (outside the maze)', MAZE),
+    say('Thelin Poxbourne (outside the maze)', 'dagger', MAZE),
+    say('Thelin Poxbourne (outside the maze)', 'help', MAZE),
+    say('Thelin Poxbourne (outside the maze)', 'ready', MAZE),
+    note('Only “ready” moves things on; Hail, “dagger” and “help” are his story. Each group leader says it, and is carried in with the group standing near. Without Adroha’s flag he only screams and falls asleep.', MAZE),
+    hail('Thelin (inside the dream)', MAZE),
+    say('Thelin (inside the dream)', 'ready', MAZE),
+    note('Say it within 5 minutes or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop.', MAZE),
+    kill('the boss at the end of the maze', MAZE, 'a construct of nightmares'),
+    get(MAZE, { items: [SHARD], text: 'it drops the last piece' }),
+    give('Thelin (inside the dream)', [SHARD], MAZE),
+    get(MAZE, { items: [I('Thelin’s Dagger', 9259)] }),
+    wait('Thelin and Terris Thule to finish talking', MAZE),
+    hail('Thelin (after he and Terris have talked)', MAZE), get(MAZE, { text: 'a character flag, and he carries you out' }),
+    zone('the portal to the Lair of Terris Thule', 'Click it with your Thelin flag at 2 or more: that click sets the Lair’s zone flag.', 'ponightmare/player.lua'),
+  ],
+  // Essences of Power, part 1. The start phrase is a proximity-say at the tree (ponightmare/EinoInvisNight.lua);
+  // the waves are Aid_Eino.lua's waypoints; the hand-in works only once he has reached the end (escortDone).
+  essences_escort: [
+    say('Aid Eino (PoK, optional)', 'help', 'poknowledge/Aid_Eino.lua'),
+    say('The big tree in Nightmare', 'Quellious be my guide', 'ponightmare/EinoInvisNight.lua'),
+    note('Say it at night in game (8 PM to 7 AM), right beside the tree. Four waves come at his stops: 4 tortured banshees; 2 nightstalkers; 5 hobgoblins; then 4 banshees and 4 bats. Keep everything off Eino.', 'ponightmare/Aid_Eino.lua'),
+    kill('The Dreamkeeper', 'ponightmare/Aid_Eino.lua', 'he sits for a few minutes first'),
+    get('ponightmare/Aid_Eino.lua', { items: [I('Strand of Nightmare', 16261)], text: 'loot it' }),
+    give('Aid Eino', [I('Strand of Nightmare', 16261)], 'ponightmare/Aid_Eino.lua', 'when he asks for it at the Tranquility portal'),
+    get('ponightmare/Aid_Eino.lua', { items: [FIST], text: '100,000 experience' }),
+  ],
+
+  // ── Tier two ──
+  flag_grummus: [
+    kill('Grummus', 'podisease/#Grummus.lua'),
+    hail('A Planar Projection', 'podisease/A_Planar_Projection.lua'), get('podisease/A_Planar_Projection.lua', FLAG),
+    zone('the pit behind Grummus', 'Jump in: dropping into the Crypt of Decay is what sets its zone flag, and only with the Grummus flag from the projection.', 'podisease/player.lua'),
+  ],
+  flag_tthule: [
+    kill('Terris Thule', 'nightmareb/Terris_Thule.lua'),
+    hail('A Planar Projection', 'nightmareb/A_Planar_Projection.lua'), get('nightmareb/A_Planar_Projection.lua', FLAG),
+  ],
+  nightmare_poxbourne: [
+    hail('Elder Poxbourne', 'potranquility/Elder_Poxbourne.lua'), get('potranquility/Elder_Poxbourne.lua', FLAG),
+    zone(TORMENT_PORTAL, TORMENT_PORTAL_TEXT, TRANQ),
+  ],
+  cod_fuirstel_before: [hail('Elder Fuirstel', FUIRSTEL), get(FUIRSTEL, FLAG)],
+  flag_carprin: [
+    kill('the five Carprin nameds', 'codecay/#High_Priest_Ultor_Szanvon.lua', 'Tarkil Adan appears where High Priest Ultor Szanvon dies'),
+    hail('Tarkil Adan', 'codecay/Tarkil_Adan.lua', 'only the group or raid with the kill credit'), get('codecay/Tarkil_Adan.lua', FLAG),
+    click('the door to the lower Crypt', 'codecay/player.lua', { text: 'it opens only with that flag' }),
+  ],
+  flag_bert: [
+    kill('Bertoxxulous', 'codecay/encounters/Bertox.lua'),
+    hail('A Planar Projection', 'codecay/A_Planar_Projection.lua', 'it answers only with Tarkil Adan’s flag'), get('codecay/A_Planar_Projection.lua', FLAG),
+  ],
+  cod_fuirstel_after: [
+    hail('Elder Fuirstel', FUIRSTEL), get(FUIRSTEL, FLAG),
+    zone(TORMENT_PORTAL, TORMENT_PORTAL_TEXT, TRANQ),
+  ],
+  // Askr (postorms/Askr_the_Lost.lua) is the model case. His state per player: the head hand-in sets 6; "it was
+  // me" (6 → 7), "paying attention" (7 → 8), then "continue" at 8 and at 9: the first only talks, the second
+  // summons the bag. The sealed bag sets karana 1, "bastion of thunder" at 1 gives a second bag, the meld sets
+  // karana 2, and postorms/player.lua door 4 (the shrine) turns karana 2 + mavuin 3 into karana 3 and the
+  // zone-in. His state is in memory: it resets when you leave the zone, but he remembers the head, and a hail
+  // then puts you straight at 8.
+  flag_askr: [
+    give('Askr the Lost', [I('Storm Giant Head', 28749)], ASKR, 'any camp’s'),
+    get(ASKR, { items: [I('Storm Giant Head', 11486)], text: 'handed back; it will not work a second time' }),
+    say('Askr the Lost', 'it was me', ASKR),
+    say('Askr the Lost', 'paying attention', ASKR),
+    say('Askr the Lost', 'continue', ASKR, { times: 2 }),
+    get(ASKR, { items: [BAG], text: 'the second “continue” gives it' }),
+    note('If you leave the zone his conversation resets: hail him once (he remembers the head), then say “continue” twice again.', ASKR),
+    click('Combine', ASKR, { text: 'in the bag: one from each camp', items: [I('Storm Volaas Beard', 28750), I('Storm Taarid Bone', 28751), I('Storm Satuur Sash', 28764)] }),
+    give('Askr the Lost', [I('Askr’s Sealed Bag of Verity', 11487)], ASKR), get(ASKR, FLAG),
+    say('Askr the Lost', 'bastion of thunder', ASKR), get(ASKR, { items: [BAG], text: 'a second bag' }),
+    click('Combine', ASKR, { text: 'in the bag: two from different camps', items: [I('Esoteric Medallion', 28765), I('Esoteric Medallion', 28765)] }),
+    give('Askr the Lost', [I('Esoteric Meld', 11488)], ASKR), get(ASKR, FLAG),
+    note('That is not your Bastion of Thunder flag yet: the shrine click in the next step is. It needs this flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.', 'postorms/player.lua'),
+  ],
+  storms_zone_bot: [
+    zone('the shrine in the heart of Mount Grenidor', 'Click it: with Askr’s second flag and your Justice flag (Mavuin at 3) it sets your Bastion flag and sends you in; without both it refuses.', 'postorms/player.lua'),
+  ],
+  valor_globe: [
+    click('either switch by the glass door', 'povalor/player.lua', { items: [I('A Crystalline Globe', 25596)], text: 'hold the globe on your cursor; the glass door opens' }),
+  ],
+  flag_aerindar: [
+    kill('Aerin`Dar', 'povalor/#Aerin-Dar.lua'),
+    hail('A Planar Projection', 'povalor/A_Planar_Projection.lua', 'it answers only with your Mavuin flag at 3'), get('povalor/A_Planar_Projection.lua', { text: 'your Aerin`Dar flag (no message)' }),
+  ],
+  valor_zone_hoh: [
+    zone('the Halls of Honor portal, by the Valor underground tunnel', 'Click it: with the Aerin`Dar flag from the projection this click sets your Aerin`Dar flag to 2 and the Halls of Honor zone flag; without it the portal refuses you.', 'povalor/player.lua'),
+  ],
+  torment_fahlia: [say('Fahlia Shadyglade', 'i will go', 'potranquility/Fahlia_Shadyglade.lua'), get('potranquility/Fahlia_Shadyglade.lua', FLAG)],
+  flag_keeper: [
+    kill('The Keeper of Sorrows', 'potorment/The_Keeper_of_Sorrows.lua'),
+    hail('Tylis Newleaf (in Torment)', 'potorment/#Tylis_Newleaf.lua', 'it flags you only if Fahlia’s “will go” came first'), get('potorment/#Tylis_Newleaf.lua', FLAG),
+    say('Tylis Newleaf (in Torment)', 'ready to return', 'potorment/#Tylis_Newleaf.lua'),
+  ],
+  flag_saryrn: [
+    kill('Saryrn', 'potorment/Saryrn.lua'),
+    hail('A Planar Projection', 'potorment/A_Planar_Projection.lua'), get('potorment/A_Planar_Projection.lua', FLAG),
+  ],
+  torment_return: [
+    hail('Fahlia Shadyglade', 'potranquility/Fahlia_Shadyglade.lua'),
+    hail('Tylis Newleaf', 'potranquility/Tylis_Newleaf.lua'),
+  ],
+
+  // ── Tier three ──
+  bot_symbol: [
+    click('the tower portal in the courtyard', 'bothunder/player.lua', { items: [I('Symbol of Torden', 9433)], text: 'the holder puts it on the cursor and clicks; their raid or group then has 5 minutes' }),
+    click('the tower portal in the courtyard', 'bothunder/player.lua', { text: 'everyone else, within those 5 minutes' }),
+  ],
+  // Askr in the tower is two different NPCs (#Askr_the_Lost after Evynd, ##Askr_the_Lost after Emmerik). Each
+  // hail is story; "transport" and "what storm" are what act. "what storm" spawns the vortex, the vortex click carries you.
+  bot_tower: [
+    kill('Evynd Firestorm', 'bothunder/Evynd_Firestorm.lua'),
+    hail('Askr the Lost (appears where Evynd falls)', 'bothunder/#Askr_the_Lost.lua'),
+    say('Askr the Lost (appears where Evynd falls)', 'transport', 'bothunder/#Askr_the_Lost.lua'),
+    kill('Emmerik Skyfury', 'bothunder/Emmerik_Skyfury.lua'),
+    hail('Askr the Lost (appears where Emmerik falls)', 'bothunder/##Askr_the_Lost.lua'),
+    say('Askr the Lost (appears where Emmerik falls)', 'what storm', 'bothunder/##Askr_the_Lost.lua'),
+    click('A Chaotic Vortex', 'bothunder/player.lua', { text: 'it appears when he says that; clicking it carries you to Agnarr' }),
+  ],
+  flag_agnarr: [
+    kill('Agnarr the Storm Lord', 'bothunder/Agnarr_the_Storm_Lord.lua'),
+    say('Karana', 'I will follow the path of the Fallen.', 'bothunder/Karana.lua'), get('bothunder/Karana.lua', { text: 'a character flag, only if you came into the Bastion through the Storms shrine' }),
+    say('Karana', 'Send me on my path.', 'bothunder/Karana.lua'), get('bothunder/Karana.lua', { text: 'Gate: you land at your bind point' }),
+  ],
+  // The three Halls of Honor trials share one shape (each script: Hail and "ready" are the first NPC's words, the
+  // trial runs, and a second copy of the NPC stands there afterwards whose hail is the credit).
+  hoh_trial_dragon: [
+    hail('Trydan Faye (to start the trial)', 'hohonora/encounters/RyddaDar.lua'),
+    say('Trydan Faye (to start the trial)', 'trials', 'hohonora/encounters/RyddaDar.lua'),
+    say('Trydan Faye (to start the trial)', 'ready', 'hohonora/encounters/RyddaDar.lua'),
+    kill('Rydda`Dar', 'hohonora/encounters/RyddaDar.lua'),
+    hail('Trydan Faye (after the win)', 'hohonora/encounters/RyddaDar.lua', 'while you are in the group or raid that won'), get('hohonora/encounters/RyddaDar.lua', { text: 'your credit for this trial (a line about an ethereal mist)' }),
+  ],
+  hoh_trial_villagers: [
+    hail('Rhaliq Trell (to start the trial)', 'hohonora/encounters/Villagers.lua'),
+    say('Rhaliq Trell (to start the trial)', 'ready', 'hohonora/encounters/Villagers.lua'),
+    note('Win the trial: save the villagers.', 'hohonora/encounters/Villagers.lua'),
+    hail('Rhaliq Trell (after the win)', 'hohonora/encounters/Villagers.lua', 'while you are in the group or raid that won'), get('hohonora/encounters/Villagers.lua', { text: 'your credit for this trial (a line about an ethereal mist)' }),
+  ],
+  hoh_trial_villager: [
+    hail('Alekson Garn (to start the trial)', 'hohonora/encounters/Crazed.lua'),
+    say('Alekson Garn (to start the trial)', 'ready', 'hohonora/encounters/Crazed.lua'),
+    note('Win the trial: save one villager.', 'hohonora/encounters/Crazed.lua'),
+    hail('Alekson Garn (after the win)', 'hohonora/encounters/Crazed.lua', 'while you are in the group or raid that won'), get('hohonora/encounters/Crazed.lua', { text: 'your credit for this trial (a line about an ethereal mist)' }),
+    zone('one of the Temple of Marr portals', 'Click it once all three trials are credited: that click sets the Temple of Marr zone flag.', 'hohonora/player.lua'),
+  ],
+  flag_marr: [
+    kill('Mithaniel Marr', 'hohonorb/Lord_Mithaniel_Marr.lua'),
+    hail('A Planar Projection', 'hohonorb/A_Planar_Projection.lua'), get('hohonorb/A_Planar_Projection.lua', FLAG),
+  ],
+  // Maelin keeps no conversation: what each word does depends only on your flags. One visit, in the order the
+  // flags need: "Hail" (the cipher) before "information" (the Zek reading needs it), "lore" before the second
+  // "information" (the power source needs zebuxoruk 1).
+  tactics_maelin_before: [hail('Grand Librarian Maelin', MAELIN), say('Grand Librarian Maelin', 'lore', MAELIN), say('Grand Librarian Maelin', 'information', MAELIN)],
+  maelin_cipher: [hail('Grand Librarian Maelin', MAELIN, 'once you hold both halves, Saryrn’s and Mithaniel Marr’s'), get(MAELIN, { text: 'your cipher flag (it clears the two halves)' })],
+  maelin_lore: [say('Grand Librarian Maelin', 'lore', MAELIN), get(MAELIN, { text: 'a character flag (it clears the two notes)' })],
+  flag_vallon: [
+    kill('Vallon Zek', 'potactics/214317.lua'),
+    hail('A Planar Projection', 'potactics/214324.lua'), get('potactics/214324.lua', FLAG),
+  ],
+  flag_tallon: [
+    kill('Tallon Zek', 'potactics/214026.lua'),
+    hail('A Planar Projection', 'potactics/214323.lua'), get('potactics/214323.lua', FLAG),
+  ],
+  zeks_maelin: [
+    say('Grand Librarian Maelin', 'information', MAELIN), get(MAELIN, { text: 'a character flag (Zeks 6); it needs the cipher and both Zek projections' }),
+    zone('the Tower of Solusek Ro portal in the Plane of Tranquility', 'Click it with the cipher and your Zeks flag at 6 or more: that click sets the zone flag.', TRANQ),
+  ],
+  flag_rallos: [
+    kill('Rallos Zek', 'potactics/encounters/Rallos.lua'),
+    hail('A Planar Projection', 'potactics/214322.lua', 'it gives the real flag only with your Zeks flag at 6'), get('potactics/214322.lua', FLAG),
+  ],
+  tactics_maelin_after: [
+    say('Grand Librarian Maelin', 'information', MAELIN),
+    say('Seer Mal Nae`Shi', 'unlock my memories', SEER, { sit: true, until: 'she has nothing new to unlock' }),
+    note('If Rallos Zek’s projection gave only a checklist flag, the Seer makes it the real one first: go back and forth until neither has more.', SEER),
+  ],
+  zebuxoruk_maelin: [
+    say('Grand Librarian Maelin', 'information', MAELIN), get(MAELIN, { text: 'a character flag (Zebuxoruk 2)' }),
+    zone('the Air, Earth or Water portal in the Plane of Tranquility', 'Click one: that click sets the zone flags for all three, and needs your Zebuxoruk flag at 2.', TRANQ),
+  ],
+  pofire_miak: [
+    hail('Miak the Searedsoul', 'potranquility/Miak_the_Searedsoul.lua'),
+    say('Miak the Searedsoul', 'plane of fire', 'potranquility/Miak_the_Searedsoul.lua'),
+    say('Miak the Searedsoul', 'demise', 'potranquility/Miak_the_Searedsoul.lua'),
+    say('Miak the Searedsoul', "portal's destination", 'potranquility/Miak_the_Searedsoul.lua'), get('potranquility/Miak_the_Searedsoul.lua', { text: 'your first Fire flag' }),
+  ],
+  flag_solro_minis: [
+    note('The five wings in any order. Each is a boss and then a click on its flaming cauldron, which is there for 30 minutes after the kill; click when it is not and you only become disoriented.', SOLRO_PLAYER),
+    kill('Xuzl', 'solrotower/Xuzl.lua'),
+    click('Xuzl’s flaming cauldron', SOLRO_PLAYER), get(SOLRO_PLAYER, FLAG),
+    kill('Arlyxir', 'solrotower/Arlyxir.lua'),
+    click('Arlyxir’s flaming cauldron', SOLRO_PLAYER), get(SOLRO_PLAYER, FLAG),
+    kill('the four Guardians of Dresolik', 'solrotower/Guardian_of_Dresolik.lua', 'the Protector appears when the last one dies'),
+    kill('The Protector of Dresolik', 'solrotower/The_Protector_of_Dresolik.lua'),
+    click('Dresolik’s flaming cauldron', SOLRO_PLAYER), get(SOLRO_PLAYER, FLAG),
+    kill('Rizlona', 'solrotower/Rizlona.lua'),
+    kill('the second Rizlona, where she falls', 'solrotower/#Rizlona.lua'),
+    click('Rizlona’s flaming cauldron', SOLRO_PLAYER), get(SOLRO_PLAYER, FLAG),
+    kill('Jiva', 'solrotower/Jiva.lua'),
+    click('Jiva’s flaming cauldron', SOLRO_PLAYER), get(SOLRO_PLAYER, FLAG),
+  ],
+  flag_solro: [
+    kill('Solusek Ro', 'solrotower/Solusek_Ro.lua'),
+    hail('A Planar Projection', 'solrotower/A_Planar_Projection.lua', 'it answers only after all five wings'), get('solrotower/A_Planar_Projection.lua', { text: 'a character flag (your second Fire flag needs the first one and your Zeks flag at 7; otherwise it is a checklist flag)' }),
+    click('the floor doors in his chamber', SOLRO_PLAYER, { text: 'they open while the projection is up' }),
+    zone('the lava pit in his chamber', 'Drop in: falling into the Plane of Fire is what sets its zone flag, and only with your second Fire flag. The Fire portal in Tranquility works only after that.', SOLRO_PLAYER),
+  ],
+
+  // ── Elemental ──
+  flag_fennin: [
+    kill('Fennin Ro', 'pofire/encounters/Fennin.lua'),
+    hail('Essence of Fire', 'pofire/Essence_of_Fire.lua', 'only if you do not already hold the Globe or the Quintessence'), get('pofire/Essence_of_Fire.lua', { items: [I('Globe of Dancing Flame', 29147)] }),
+  ],
+  flag_xegony: [
+    kill('Xegony', 'poair/encounters/Xegony.lua'),
+    hail('Essence of Air', 'poair/Essence_of_Air.lua', 'only if you do not already hold the Cloud or the Quintessence'), get('poair/Essence_of_Air.lua', { items: [I('Amorphous Cloud of Air', 29164)] }),
+  ],
+  flag_coirnav: [
+    kill('Coirnav', 'powater/encounters/Coirnav.lua'),
+    hail('Essence of Water', 'powater/Essence_of_Water.lua', 'only if you do not already hold the Sphere or the Quintessence'), get('powater/Essence_of_Water.lua', { items: [I('Sphere of Coalesced Water', 29163)] }),
+  ],
+  flag_arbitor: [
+    kill('the four earth rings (Dust, Mud, Stone and Vine)', 'poeartha/arbitor_guy.lua', 'all four within 24 hours, or the Arbitor does not appear'),
+    kill('A Mystical Arbitor of Earth', 'poeartha/A_Mystical_Arbitor_of_Earth.lua'),
+    hail('A Planar Projection', 'poeartha/A_Planar_Projection.lua'), get('poeartha/A_Planar_Projection.lua', { text: 'a character flag (the Passkey of the Twelve)' }),
+    zone('the door into Plane of Earth B', 'Click it with that flag: the click sets the zone flag and carries you in.', 'poeartha/player.lua'),
+  ],
+  flag_rathe: [
+    kill('the Avatar of Earth', 'poearthb/#Avatar_of_Earth.lua'),
+    hail('Essence of Earth', 'poearthb/Essence_of_Earth.lua', 'only if you do not already hold the Mound or the Quintessence'), get('poearthb/Essence_of_Earth.lua', { items: [I('Mound of Living Stone', 29146)] }),
+  ],
+  // Part 2 of Essences of Power (poknowledge/Councilwoman_Kerasha.lua): she answers "essences of power" only while
+  // you carry the Fist. The reward ring is a rotation: each hand-back gives the next one.
+  essences_power: [
+    note('Carry the Tiny Gold Fist: Councilwoman Kerasha answers only while you have it.', KERASHA, [FIST]),
+    say('Councilwoman Kerasha', 'essences of power', KERASHA), get(KERASHA, { items: [I('Sacred Bowl', 17183)] }),
+    click('Combine', KERASHA, { text: 'in the bowl: one of each, a loot call from the four gods', items: [I('Essence of Fire', 16262), I('Essence of Wind', 16263), I('Essence of Water', 16265), I('Essence of Earth', 32111)] }),
+    get(KERASHA, { items: [I('Power of the Planes', 16266)] }),
+    give('Councilwoman Kerasha', [I('Power of the Planes', 16266)], KERASHA), get(KERASHA, { items: [I('Jade Hoop of Speed', 32106)] }),
+    give('Councilwoman Kerasha', [I('Jade Hoop of Speed', 32106), I('Frizzniks Endless Coin Purse', 17209), I('Cord of Invigoration', 32107), I('Mace of the Ancients', 32108), I('Ring of Farsight', 32109)], KERASHA, 'to change the reward, hand back the one you hold'),
+    get(KERASHA, { items: [I('Frizzniks Endless Coin Purse', 17209), I('Cord of Invigoration', 32107), I('Mace of the Ancients', 32108), I('Ring of Farsight', 32109), I('Jade Hoop of Speed', 32106)], text: 'the next one, in that order (each hand-back gives the next)' }),
+  ],
+
+  // ── Time ──
+  // Muon answers only while zebuxoruk 2 AND the Quintessence is in your bags (not the bank). His "Hail" and "yes"
+  // keywords carry no state, so the guide's order (Hail, then yes) is kept. The click on the machine is what flags you.
+  time_muon: [
+    note('Needs your Zebuxoruk flag at 2 and the Quintessence of Elements in your bags (the bank does not count).', 'poinnovation/#Chronographer_Muon.lua', [I('Quintessence of Elements', 29165)]),
+    hail('Chronographer Muon', 'poinnovation/#Chronographer_Muon.lua'),
+    say('Chronographer Muon', 'yes', 'poinnovation/#Chronographer_Muon.lua'),
+    note('He carries you up to the time-projection chamber, and Loreseeker Maelin appears there.', 'poinnovation/#Chronographer_Muon.lua'),
+    say('Loreseeker Maelin', 'researched', 'poinnovation/Loreseeker_Maelin.lua'),
+    zone('The time machine', 'Click it with the Quintessence in your bags: that click sets your Plane of Time flag and carries you in. The portal back in Tranquility then also asks for level 65.', POI_PLAYER),
+  ],
+};
+
+export const GUIDE_ITEMS: GuideItem[] = BASE_ITEMS.map(i => (SEQ[i.key] ? { ...i, seq: SEQ[i.key] } : i));
 
 export const GUIDE_KEYS = new Set(GUIDE_ITEMS.map(i => i.key));
 
@@ -583,9 +1091,28 @@ export function guideItemIds(): number[] {
   const ids = new Set<number>();
   for (const i of GUIDE_ITEMS) {
     const chain = i.chain ? [i.chain.first.text, ...i.chain.handins.flatMap(s => [s.give ?? '', s.get ?? ''])] : [];
-    for (const t of [i.title, i.detail ?? '', ...chain]) for (const p of splitItems(t)) if ('item' in p) ids.add(p.item.id);
+    const seq = (i.seq ?? []).flatMap(a => a.items ?? []);   // the hand-ins in a seq name items no title does
+    for (const t of [i.title, i.detail ?? '', ...chain, ...seq]) for (const p of splitItems(t)) if ('item' in p) ids.add(p.item.id);
   }
   return [...ids].sort((a, b) => a - b);
+}
+
+/** A seq as the rows a page draws (the guild lead, 2026-10-03: "1. Hail …  2. /say lore  3. Give … → get …").
+ *  Every act is a numbered row except two: a `get` rides on the row before it ("→ get …"), and a `note`
+ *  hangs under the row before it with no number of its own. A note before any row is `lead`. A `get` with
+ *  nothing before it (a pick-up from the floor) is a row of its own. The page and the Mimic overlay draw
+ *  these rows; the overlay carries its own copy of this rule (apps/mimic/popraid.html, seqRows). */
+export type SeqRow = { n: number; act: Act; gets: Act[]; notes: Act[] };
+export function seqRows(seq: Act[]): { lead: Act[]; rows: SeqRow[] } {
+  const lead: Act[] = [];
+  const rows: SeqRow[] = [];
+  for (const act of seq) {
+    const last = rows[rows.length - 1];
+    if (act.kind === 'note') (last ? last.notes : lead).push(act);
+    else if (act.kind === 'get' && last) last.gets.push(act);
+    else rows.push({ n: rows.length + 1, act, gets: [], notes: [] });
+  }
+  return { lead, rows };
 }
 
 /** Keys ticked for a character: their manual ticks plus every item whose flag the agent recorded. */
