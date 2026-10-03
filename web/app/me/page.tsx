@@ -36,6 +36,7 @@ import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
 import { selectAll } from '@/lib/selectAll';
+import { LIST_MIN_LEVEL, isListable } from '@/lib/listableChars';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 import { dayKey, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
@@ -791,7 +792,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   // Live state + best-known level per owned character.
   const [liveState, levelByName] = await Promise.all([
     loadLiveState(chars.map(c => c.name)),
-    loadCharLevels(chars.map(c => c.name)),
+    loadCharLevels(allChars.map(c => c.name)),
   ]);
 
   // Default card order: highest level first (the member's mains/raiders float
@@ -848,8 +849,16 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   const anyRecent = allChars.some(c => now - lastTouched(c.name) <= RECENT_MS);
   // Nobody touched lately → show everything rather than an empty section.
   const isRecent = (name: string) => !anyRecent || now - lastTouched(name) <= RECENT_MS;
-  const recentSeenRows = seenRows.filter(r => isRecent(r.name));
-  const olderRows = [...seenRows.filter(r => !isRecent(r.name)), ...neverRows];
+  // Traders and characters known to be under level 46 wait in the same collapsed section, whatever their
+  // last upload (the guild lead, 2026-10-03: "all of my traders and mule characters destroy my views
+  // anywhere we display all of our logs"). Moved, not removed. When none of them would be listed, the
+  // gate is off, as with `anyRecent`, so the front is never empty.
+  const listedNames = new Set(allChars
+    .filter(c => isListable({ rank: c.rank, level: levelByName.get(c.name.toLowerCase()) }))
+    .map(c => c.name));
+  const isFront = (name: string) => isRecent(name) && (listedNames.size === 0 || listedNames.has(name));
+  const recentSeenRows = seenRows.filter(r => isFront(r.name));
+  const olderRows = [...seenRows.filter(r => !isFront(r.name)), ...neverRows];
   const mostRecentSeen = seenRows[0]?.lastSeen ?? null;
 
   // Page-level aggregates
@@ -1137,7 +1146,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
       </div>
     );
 
-    return { name: c.name, level, header, summary: buffsZonePanel, details, recent: isRecent(c.name) } as MeCard;
+    return { name: c.name, level, header, summary: buffsZonePanel, details, recent: isFront(c.name) } as MeCard;
   });
 
   return (
@@ -1176,7 +1185,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
           {olderRows.length > 0 && (
             <details className="mt-2 text-xs">
               <summary className="cursor-pointer select-none text-dim hover:text-text">
-                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months or never uploaded
+                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months, never uploaded, a trader or under level {LIST_MIN_LEVEL}
               </summary>
               <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
                 {olderRows.map(r => <SyncCard key={r.name} {...r} />)}

@@ -12,6 +12,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { LIST_MIN_LEVEL, loadLevels, partitionListable } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
@@ -22,13 +23,40 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Checklist — Wolf Pack' };
 
 export default async function PopGuidePage(
-  { searchParams }: { searchParams: Promise<{ c?: string; v?: string }> },
+  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string }> },
 ) {
-  const { c, v } = await searchParams;
+  const { c, v, all } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
-  const mine = await ownedCharacters(user.id);
+  // Traders and characters under level 46 stay out of the character picker unless ?all=1 (the guild lead,
+  // 2026-10-03: "low level characters do not need to show up on the pop flag page"). A character picked
+  // on purpose, ?c=<name>, is kept whatever it is: a shared or bookmarked link must still open it.
+  const mineAll = await ownedCharacters(user.id);
+  const showAll = all === '1';
+  const levels = await loadLevels(supabaseAdmin(), mineAll.map(ch => ch.name));
+  const picked = c?.toLowerCase();
+  const lowKeys = new Set(partitionListable(mineAll, ch => ({ rank: ch.rank, level: levels.get(ch.name.toLowerCase()) }))
+    .hidden.map(ch => ch.name.toLowerCase()));
+  // Nobody listable at all (a new account of one low-level character): show them rather than an empty
+  // picker that reads "no characters linked".
+  const mine = showAll || lowKeys.size === mineAll.length
+    ? mineAll
+    : mineAll.filter(ch => !lowKeys.has(ch.name.toLowerCase()) || ch.name.toLowerCase() === picked);
+  const hiddenCount = mineAll.length - mine.length;
+  const toggleQuery = new URLSearchParams();
+  if (c) toggleQuery.set('c', c);
+  if (v) toggleQuery.set('v', v);
+  if (!showAll) toggleQuery.set('all', '1');
+  const toggleHref = '/pop/guide' + (toggleQuery.toString() ? `?${toggleQuery}` : '');
+  const hiddenNote = (showAll ? lowKeys.size > 0 : hiddenCount > 0) && (
+    <p className="text-xs text-dim mt-2">
+      {showAll
+        ? `Traders and characters under level ${LIST_MIN_LEVEL} are shown. `
+        : `Traders and characters under level ${LIST_MIN_LEVEL} are hidden from the picker (${hiddenCount}). `}
+      <Link href={toggleHref} className="text-blue hover:underline">{showAll ? 'Hide them' : 'Show all'}</Link>
+    </p>
+  );
 
   // Beta (the guild lead, 2026-09-29: "more detail, maps, who to turn things into, expectations and who
   // you will go back to. a sidebar nav with sections"): two layouts to pick from, GuideRoute.tsx. No
@@ -55,6 +83,7 @@ export default async function PopGuidePage(
             our records already show, or that /who proves (you were seen inside a plane that needs them) tick
             themselves and say which.
           </p>
+          {hiddenNote}
         </section>
         <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} />
       </div>
@@ -102,6 +131,7 @@ export default async function PopGuidePage(
           Where to start, what you can&apos;t skip, and who you need for each step. Tick things off as you go;
           your ticks are saved per character, and any flag Mimic has recorded ticks itself.
         </p>
+        {hiddenNote}
       </section>
       <GuideChecklist chars={chars} initial={initial} cards={cards} />
     </div>

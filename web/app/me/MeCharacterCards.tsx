@@ -14,6 +14,7 @@
 // display, order, minimize to header+buffs/zone, drag to reorder.")
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LIST_MIN_LEVEL } from '@/lib/listableChars';
 
 export type MeCard = {
   name: string;
@@ -21,7 +22,7 @@ export type MeCard = {
   header: React.ReactNode;   // always shown
   summary: React.ReactNode;  // buffs/zone — shown when collapsed
   details: React.ReactNode;  // full panel grid — shown when expanded
-  recent: boolean;           // touched in the last 3 months; the rest sit in a collapsed "more"
+  recent: boolean;           // touched in the last 3 months and not a trader / under 46; the rest sit in a collapsed "more"
 };
 
 type Prefs = { order: string[]; hidden: string[]; collapsed: string[] };
@@ -160,7 +161,7 @@ export default function MeCharacterCards({ items, storageKey }: { items: MeCard[
       {visible.some(n => !byName.get(n)!.recent) && (
         <details className="bg-panel/40 border border-border/60 rounded-lg">
           <summary className="cursor-pointer select-none px-4 py-2 text-xs text-dim hover:text-text">
-            {visible.filter(n => !byName.get(n)!.recent).length} more · not played in 3 months
+            {visible.filter(n => !byName.get(n)!.recent).length} more · not played in 3 months, a trader or under level {LIST_MIN_LEVEL}
           </summary>
           <div className="space-y-4 p-2">
             {visible.filter(n => !byName.get(n)!.recent).map(renderCard)}
