@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-self-flags-2026-10-03',
+    title: 'Tick your own PoP flags',
+    version: 'Web 1.8.86',
+    date: '2026-10-03',
+    headline: 'You can mark your own characters’ Planes of Power flags on the PoP page, no Mimic needed.',
+    features: [
+      { name: 'Tick your own flags', blurb: 'On the PoP page’s Matrix and My Characters, tap a gate on one of your characters to mark it as yours. It shows as a gold ☑ — your word — and counts in the chart and the planner. Tap again to take it back.' },
+      { name: 'One checklist', blurb: 'A tick on the PoP guide counts on the PoP page, and a tick on the PoP page shows on the guide.' },
+      { name: 'Proof still wins', blurb: 'A flag Mimic recorded (green ✓) or a /who sighting proved (blue ✓) shows that proof instead of your tick.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-pages-live-2026-10-03',
     title: 'The PoP pages and your character lists',
     version: 'Web 1.8.85',

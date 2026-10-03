@@ -6473,3 +6473,27 @@ in."*, then *"post the release to raid chat"*.
   commit (`9d0510a5`): `node_modules/` matches only directories. Removed, and `.gitignore` now also ignores a
   bare `node_modules` (`d1522e16`, on main with 2.7.8).
 - **Next, building:** members ticking their own PoP flags on /pop without Mimic (§145).
+
+### 145. Members tick their own PoP flags on /pop (2026-10-03, web 1.8.86)
+
+The guild lead: *"I need [a way] for people to be able to check off their own flags for their own characters
+outside of using mimic or relying on someone else with mimic to do it. they could do it on the matrix page or
+somewhere else that makes sense."*
+
+- **Where:** [wolfpack.quest/pop?view=matrix](https://wolfpack.quest/pop?view=matrix) and
+  [?view=mine](https://wolfpack.quest/pop?view=mine). Each gate cell on a character you own is a small button:
+  tap "—" and it becomes a gold ☑ (your word); tap again to take it back. Torment and Sol Ro need two flags, so
+  one tap ticks both. Other members' cells stay plain marks.
+- **Proof outranks a tick:** a flag Mimic recorded (green ✓) or /who proved (blue ✓) shows that proof and is not
+  a button. A gate is only as proven as its weakest flag.
+- **It counts everywhere** a flag counts: the chart (☑N beside the count), the planner, the zone page, the Flags
+  column. A legend sits under both tables.
+- **One store, no new table:** a tick is a `pop_guide_ticks` row — the guide step that grants the flag, or
+  `flag:<key>` when no step names it. So a tick on the PoP checklist counts on /pop, and a tick on /pop shows on
+  the checklist. Same ownership gate as the checklist (your account and family).
+- **One design, live**, not options: it is a change to an existing page the guild lead asked to go live, inside
+  the page's own look.
+- **Open, for the guild lead:** the checklist's "Win a trial" step carries the Justice flag, but Justice also needs
+  the Mavuin hail, so ticking that one step counts as Justice (which opens Valor and Storms). Moving the flag to
+  the hail step would be one data edit. Three flags (`fuirstel_5`, `thelin_4`, `hoh_trials`) have no checklist
+  step, so a /pop tick for them does not show on the checklist.
