@@ -6304,3 +6304,26 @@ The guild lead: *"crash reporting should be on the diagnostics tab of mimic"*.
   setting.
 - Not built (offered by the scoping pass, not asked for): a per-crash "send this one" button and a
   sent/not-sent badge. They need an agent endpoint and a privacy-copy check, since reports are opt-in.
+
+### 138. Extra PoP spells: an officer list (2026-10-03, web 1.8.82, migration `20261003150000`)
+
+The guild lead: *"extra PoP spells. when someone does a turnin for their new spells and gets one they
+already have, put that into an officer only list so we can help direct who needs it."*
+
+- **New page, so live with the tag:** [`wolfpack.quest/admin/extra-spells`](https://wolfpack.quest/admin/extra-spells),
+  officer only (`requireOfficer` + the admin layout), one card on `/admin`.
+- **Phase 1, from data we already hold.** No turn-in log line has been captured, so the page cannot see the
+  hand-in itself. What it does see: one of the 225 PoK trainer reward scrolls (`pop_parchment_pools`) in a
+  character's inventory export, whose spell that same character's spellbook export already lists. Each row
+  gives the holder, bag slot, both export times, and who still needs the spell in the same first-dibs order
+  as /pop (it calls `pop_spell_needs`, so the order cannot drift). 3 rows on the first run.
+- **Stale rows are possible:** a scroll scribed after the last inventory export stays until the next one.
+  Rows whose spellbook export is newer than the bags say "check".
+- **Opt-outs:** holders with `exclude_from_stats` or `exclude_inventory` are skipped, as are needers with
+  `exclude_inventory`. That is stricter than the older spell-exchange list, which ignores both.
+- **Access:** the function is executable by the service role only (revoked from public, anon and
+  authenticated). The older `pop_spell_needs` and `guild_held_spell_needs` keep the default grant; they are
+  not security-definer, so table RLS still governs what they return.
+- **Phase 2 needs the guild lead:** a dozen raw log lines from one hand-in to a PoK trainer (ideally one that
+  gave a duplicate). With those, the agent can record the moment of the turn-in, and the list can track
+  "passed to X". Until then the list depends on members exporting inventory and spellbook.
