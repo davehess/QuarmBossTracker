@@ -256,6 +256,31 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   queue, the `dedup_roster` election (§124 lists them).
 - **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta).
 
+### Loot tab: who looted what, last 12 hours (bot 3.1.192 · agent 3.7.73 beta, 2026-10-03)
+- **Bot:** server-panel key `night-loot` (`_nightLootPanelBody` in `index.js`, `buildNightLootPanel` +
+  `otherLooters` in `utils/rollLoot.js`): 12 h of `looted_items` plus `buildRollSessions` over `roll_sets`,
+  one 60 s cache entry per guild; a failed read throws so an empty list is never cached.
+- **Agent dashboard:** `wpNightLootHtml` / `wpNightLootSet` / `wpNightLootedBy` in `dashboard.html`, host
+  `#wpNightLoot` above `#wpLootRolls`; fetched through `/api/server/night-loot` by the Loot IIFE on the
+  bidding card's gate, every 30 s; "📦 looted by" on a roll set when the looter is not a winner shown.
+- Tests: `test/night-loot-panel.test.js`, `test/night-loot-section.test.js`. DECISIONS-2026-09-21 §139.
+
+### Character lists leave out traders and characters under 46 (agent 3.7.73 · web on beta, 2026-10-03)
+- `web/lib/listableChars.ts` (`isListable`, `partitionListable`, `loadLevels` via `me_levels`,
+  `loadTraderNames`); `ownedCharacters` carries `rank`. Used by `/pop` (`?all=1` shows all), `/pop/guide`,
+  `/me` (into the collapsed "more" sections). Agent: `watchedLogs[].level`, and the dashboard's Watched
+  characters / Replay picker hide known-under-46 behind "show N low-level".
+- Never on mule inventory (`/me/inventory`, `/quartermaster`, mule upload). Test: `test/listable-chars.test.js`.
+  DECISIONS-2026-09-21 §140.
+
+### PoP overlay Quests mode (Mimic beta, 2026-10-03)
+- `apps/mimic/popraid.html`: Slides / Quests toggle (`wp:pop:mode`, `wp:pop:quest`), quest renderer with copy
+  chips (`/map`, `/sit`, `/say`), mini shows the next quest.
+- Data: `apps/mimic/pop-quests.js`, GENERATED from `web/lib/popGuide.ts` + `popGuideMore.ts` by
+  `scripts/sync-pop-quests.js` (`npm run sync:pop-quests`, bundles the .ts with rolldown from vitest's tree).
+  Never hand-edit it; `test/pop-quests-sync.test.js` fails when stale. Renderer: `test/pop-overlay-quests.test.js`.
+  DECISIONS-2026-09-21 §141.
+
 ### Reporter fleet: one account, several installs, one slot (bot 3.1.102)
 
 The fleet registry keys on discord_id, so a second install on one account used

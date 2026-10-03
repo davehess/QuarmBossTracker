@@ -103,6 +103,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ PoP overlay Quests mode (Mimic beta `b84e25b8`, 2026-10-03).** Slides / Quests toggle; every PoP guide step with
+  copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). 19 of 50 places have no
+  words recorded yet — being filled from the quest scripts. §141.
+- **⏳ Traders and characters under 46 leave the character lists (agent 3.7.73 beta, 2026-10-03).** `/pop`, `/pop/guide`,
+  `/me` on b.wolfpack.quest + the dashboard's Watched characters / Replay picker; "show all" everywhere. `me_levels`
+  rewritten to use its indexes (applied). §140.
+- **⏳ Loot tab: who looted what, last 12 hours (bot 3.1.192 live; agent 3.7.73 beta, 2026-10-03).** Plus "looted by" on
+  a roll someone else looted. §139.
 - **⏳ Extra PoP spells, an officer list (web 1.8.82, live with the `[beta]` tag, 2026-10-03).**
   [`wolfpack.quest/admin/extra-spells`](https://wolfpack.quest/admin/extra-spells): a PoK trainer reward scroll in a
   character's bags whose spell that character already has, with who needs it in /pop's first-dibs order. RPC
