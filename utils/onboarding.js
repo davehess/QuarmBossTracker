@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.192': [
+    '**Mimic\'s Loot tab can show who looted what.** The last 12 hours of loot from everyone running Mimic, newest first, and a roll that someone other than the winner looted says who did. Needs the beta Mimic for now.',
+  ],
   '3.1.191': [
     '**Xanamech is off the timer board.** Since the October 1 patch he has no lockout, so the 72-hour timer meant nothing. A kill of him in raid chat now says "no lockout" instead of asking an officer to add him back.',
     '**#pvp reads every new Rallos Zek line.** Deaths to an NPC post again, as they did before the PoP patch; a death with no worthy foe and a player fleeing the battlefield post too, and the newer "exults as … cuts down" kill counts as a kill. The guild is taken from the line when it names one. Needs the beta Mimic for now.',

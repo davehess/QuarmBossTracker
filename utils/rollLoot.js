@@ -122,6 +122,65 @@ function attributeLooters(session, lootedRows) {
 }
 
 /**
+ * The looters of a session who are NOT among its winners — the "looted by"
+ * that differs (a re-roll or a pass hands the item to someone else). One
+ * predicate for the Discord card and the Mimic Loot tab's night-loot panel.
+ */
+function otherLooters(session) {
+  const winners = session?.winners || [];
+  return (session?.looters || []).filter(l =>
+    !winners.some(w => w.name.toLowerCase() === String(l.looter).toLowerCase()));
+}
+
+const NIGHT_LOOT_WINDOW_MS = 12 * 3600_000;
+
+/**
+ * The Mimic Loot tab's "who looted what (last 12h)" panel (the guild lead,
+ * 2026-10-03: "the loot tab on mimic should have the 'who looted what' section
+ * on there for items, as well as the rolls for loot"). No new merge: the roll
+ * sessions are buildRollSessions over the same rows, and the looted list is
+ * the raw looted_items rows, newest first.
+ *
+ *   loot     — [{ looter, item, zone, at }]  newest first, capped; loot_total
+ *              is the uncapped count so the panel can say "showing N of M"
+ *   sessions — roll sessions that NAMED an item (an unnamed set — a deathroll,
+ *              a stray /random — can never be linked to a looter), newest
+ *              first: { item, qty, zone, from, to, started_at, last_at,
+ *              rollers, winners:[{name,value}], looters:[name], looted_by:[name] }
+ *              where looted_by is only the looters who differ from the winners.
+ */
+function buildNightLootPanel(rollRows, lootedRows, { nowMs = Date.now(), windowMs = NIGHT_LOOT_WINDOW_MS, lootCap = 200, sessionCap = 100 } = {}) {
+  const since = nowMs - windowMs;
+  const loot = [];
+  for (const l of (Array.isArray(lootedRows) ? lootedRows : [])) {
+    const ms = l?.looted_at ? Date.parse(l.looted_at) : NaN;
+    if (!Number.isFinite(ms) || ms < since || !l?.looter_character || !l?.item_name) continue;
+    loot.push({ looter: String(l.looter_character), item: String(l.item_name), zone: l.zone ? String(l.zone) : null, at: new Date(ms).toISOString(), ms });
+  }
+  loot.sort((a, b) => b.ms - a.ms);
+  // Attribution gets ALL the rows (the caller fetches a little before the
+  // window so a loot that landed just ahead of a roll's resolve still links).
+  const sessions = buildRollSessions(rollRows, lootedRows)
+    .filter(s => s.item && s.startMs >= since)
+    .slice(0, sessionCap)
+    .map(s => ({
+      item: s.item, qty: s.qty, zone: s.zone,
+      from: s.from, to: s.to,
+      started_at: new Date(s.startMs).toISOString(),
+      last_at: new Date(s.lastMs).toISOString(),
+      rollers: s.rollers,
+      winners: s.winners,
+      looters: s.looters.map(l => l.looter),
+      looted_by: otherLooters(s).map(l => l.looter),
+    }));
+  return {
+    loot_total: loot.length,
+    loot: loot.slice(0, lootCap).map(({ ms, ...row }) => row),
+    sessions,
+  };
+}
+
+/**
  * The embed body for the event thread's rolled-loot card. Pure string work so
  * it is unit-testable without discord.js. Sections, in the order the guild lead asked
  * for: what dropped + its range, then who won it, then who actually looted it
@@ -137,8 +196,7 @@ function renderRollLootLines(sessions, { max = 20 } = {}) {
     const win   = s.winners.length
       ? `\n   🏆 ${s.winners.map(w => `**${w.name}** (${w.value})`).join(' · ')}`
       : '\n   _no rolls captured yet_';
-    const others = s.looters.filter(l =>
-      !s.winners.some(w => w.name.toLowerCase() === String(l.looter).toLowerCase()));
+    const others = otherLooters(s);
     const loot = others.length ? `\n   📦 looted by ${others.map(l => l.looter).join(', ')}` : '';
     lines.push(head + win + loot);
   }
@@ -148,5 +206,6 @@ function renderRollLootLines(sessions, { max = 20 } = {}) {
 module.exports = {
   normalizeItemName, itemsMatch,
   buildRollSessions, attributeLooters, renderRollLootLines,
-  LOOT_WINDOW_MS, LOOT_PRE_SLACK_MS,
+  otherLooters, buildNightLootPanel,
+  LOOT_WINDOW_MS, LOOT_PRE_SLACK_MS, NIGHT_LOOT_WINDOW_MS,
 };
