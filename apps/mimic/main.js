@@ -2990,11 +2990,29 @@ function createMainWindow() {
     _autoInstalled ||
     process.argv.includes('--autostart') ||
     (process.platform === 'win32' && app.getLoginItemSettings && app.getLoginItemSettings().wasOpenedAtLogin);
+  // ...but a "Restart to install" click is not proof the game is shut. A member
+  // clicked it mid-raid, went back to EverQuest, and the new build opened its
+  // window over the game a few seconds later: the game crashed (FB-50, 2026-10-02;
+  // DECISIONS §133). So the first run of a new version starts hidden and shows
+  // the window only once tasklist says EverQuest is not running. Decided HERE,
+  // in the new build, because the old build that ran the update set no flag.
+  // An existing config without the mark is an older build's install: an update too.
+  let _firstRunAfterUpdate = false;
+  try {
+    const _raw = _readConfigRaw();
+    const _ver = String(app.getVersion() || '');
+    if (_raw && _raw.lastRunVersion !== _ver) {
+      _firstRunAfterUpdate = true;
+      const _c = loadConfig();
+      _c.lastRunVersion = _ver;
+      saveConfig(_c);
+    }
+  } catch (e) { void e; }
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
     title: 'Wolf Pack miMIC — Main window (Dashboard)',
-    show: !_autoStarted,
+    show: !_autoStarted && !_firstRunAfterUpdate,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
     // comes separately from build/icon.ico via electron-builder win.icon.
@@ -3005,6 +3023,20 @@ function createMainWindow() {
   // (loading.html → the agent dashboard) overwrite it — so this process stays
   // identifiable as the main window rather than "Mimic — getting ready" etc.
   mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  if (_firstRunAfterUpdate && !_autoStarted) {
+    _checkEqRunning().then((eqUp) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!eqUp) { mainWindow.show(); return; }
+      appendAgentLog(`[updater] first run of v${app.getVersion()} with EverQuest open — starting to tray, not over the game\n`);
+      try {
+        if (Notification.isSupported()) new Notification({
+          title:  `Mimic ${app.getVersion()} is installed`,
+          body:   'It is in the tray, so it does not jump in front of EverQuest.',
+          silent: true,
+        }).show();
+      } catch (e) { void e; }
+    }, () => {});
+  }
 
   // ── Load diagnostics ──────────────────────────────────────────────────────
   // These make a blank window self-explanatory from the agent log: which URL
