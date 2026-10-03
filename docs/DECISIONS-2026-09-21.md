@@ -6394,6 +6394,8 @@ things to say or do for any of the pop quests or flags so we can reference them.
   the Zeks. The factory "key" is a flag from hailing Nitram after Xanamech, not an item. Aerin`Dar's projection
   needs the last Mavuin hail too. The flag map is marked verified by the guild lead, so it was left alone.
 - All of it is upstream SecretsOTheP quest scripts; Quarm may differ in places nobody has checked.
+- Because `popGuideMore.ts` is still a beta file, this graduates to stable only with the guide's beta
+  layouts, or after that file moves to main on its own.
 
 ### 142. Canvas presets are the real overlays; the HUD ring, and its builder, on the Canvas (2026-10-03, alpha `5adafea8` · agent 3.7.74 beta)
 
@@ -6421,5 +6423,29 @@ identical."*
 - Not verified in Electron (only in tests and a headless load): how each trimmed page looks, the builder's widening
   and click-through on a locked Canvas. Two calls for the guild lead: should "＋ Overlay → HUD" also mean the ring
   (it does not yet), and fit-on-add only grows (an empty page would otherwise shrink to a sliver).
-- Because `popGuideMore.ts` is still a beta file, this graduates to stable only with the guide's beta
-  layouts, or after that file moves to main on its own.
+
+### 143. Hide from lists; no-known-level characters folded; the spellbook upload fixed (2026-10-03, web 1.8.83–1.8.84 · bot 3.1.193 · agent 3.7.75 beta · migration `20261003170000`)
+
+The guild lead: *"spellbook upload is screwing up the upload. put any unknown characters into a minimized area
+and make it so I can hide these characters from anything but account inventory"*, then, with a phone screenshot
+of b.wolfpack.quest/pop: *"clarification on breaking the page"*.
+
+- **The page break (live, web 1.8.83):** the "Submit a spellbook for [character] [Upload spellbook]" row on
+  /pop sat in a box told never to shrink, so on a phone it ran past the card and the whole page scrolled
+  sideways. It wraps now. Production had the same bug.
+- **A second upload bug found on the way (live, web 1.8.84):** the upload accepted a character only if its own
+  Discord link matched yours. Alts often have none, so 11 alts linked through their main were refused with "not
+  your character". It now falls back to the main, the rule the /me switches already used.
+- **Hide from lists (beta):** a new switch per character on [b.wolfpack.quest/me](https://b.wolfpack.quest/me),
+  "Hide from lists". A hidden character leaves every character list — /pop, the PoP guide, /me's main list,
+  Mimic's Watched characters and Replay picker — and still shows in account inventory, the quartermaster and
+  every upload. /me keeps them in a closed "Hidden by you" section with Unhide. Column
+  `characters.hidden_from_lists` (applied); display only, it stops nothing being collected. The bot passes it to
+  Mimic with the other character prefs (3.1.193).
+- **No known level → minimized (beta):** characters nobody has a level for are no longer listed with the rest;
+  they fold into a closed "N characters with no known level — upload a spellbook or get them seen in /who"
+  section (/pop, /me, Mimic) or a "No known level" group at the bottom of a picker (/pop/guide).
+- **The spellbook picker keeps everyone**, grouped: your listed characters, then "No known level", then
+  "Hidden". A spellbook upload is how an unknown character gets a level, so the filter must never block one.
+- Not changed: who may flip the switch is the owner (or the owner's main's account) only, like the other /me
+  switches; officers have no bypass there.
