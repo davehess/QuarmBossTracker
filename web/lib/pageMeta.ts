@@ -43,7 +43,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
-  '/zeal-icons':   { title: 'Zeal tag icons', description: 'Guild banners and icons for Zeal /tag — the keys to type, and picture files to download.' },
+  '/zeal-icons':   { title: '[beta] Zeal tag icons', description: 'Guild banners and icons for Zeal /tag — the keys to type, and picture files to download.' },
 };
 
 export function metaForPath(rawPath: string): PageMeta {
@@ -64,7 +64,7 @@ export function metaForPath(rawPath: string): PageMeta {
   m = path.match(/^\/zeal-icons\/([^/]+)$/);
   const guild = m ? guildByCode(decodeURIComponent(m[1])) : undefined;
   if (guild) {
-    return { title: `${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.` };
+    return { title: `[beta] ${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.` };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     return { title: 'Parse Breakdown', description: 'Per-player damage, abilities, and boss-kill comparison for one encounter.' };

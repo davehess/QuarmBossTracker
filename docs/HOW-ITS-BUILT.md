@@ -47,7 +47,9 @@ Component paths: bot = `/index.js` + `commands/` + `utils/`; agent =
   entry list for the first `p_with_parts`. Labels: `web/lib/tradeskills.ts`
   (skill + world-container enums from the EQMacEmu source).
 - **`/db/recipe/[id]`** — one combine: container, components, tools, results,
-  what a failure keeps. Links out to `www.pqdi.cc/recipe/<id>`.
+  what a failure keeps. Links out to `www.pqdi.cc/recipe/<id>`. Live with the
+  `[beta]` tag since web 1.8.81 (2026-10-03, a new page goes live first, §135);
+  until the item page below graduates it is reached by its address.
 - On `beta` only until the guild lead picks: `/db/item/<id>?v=b` (inline
   combines) / `?v=c` (grouped by skill). `DECISIONS-2026-09-21.md` §12.
 - ⚠ **PQDI answers only on `www.pqdi.cc`** and has no GET search URL;
@@ -2751,7 +2753,9 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
-- **Zeal tag icons gallery (`/zeal-icons`, on `beta` as a preview, 2026-09-26)**:
+- **Zeal tag icons gallery (`/zeal-icons`, live with the `[beta]` tag since web 1.8.81, 2026-10-03; built 2026-09-26)**:
+  - **[beta] tag:** `web/components/NewPageTag.tsx`, the marker every new page carries when it
+    goes live (DECISIONS §135); the page titles and link previews start with `[beta]` too.
   - **What it is:** a PUBLIC page for other guilds. It shows every guild's banner and
     icon with click-to-copy keys (`^BEUR^`, `^IEUR^`), the symbols, badges and paws, and
     picture files to download (`public/zeal/tagicons`, e.g. Europa's shield as

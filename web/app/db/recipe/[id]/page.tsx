@@ -15,8 +15,12 @@ import { supabaseServer } from '@/lib/supabase-server';
 import {
   type RecipePart, splitParts, partLabel, containerLabel, isWorldContainer, tradeskillName, isQuestCombine,
 } from '@/lib/tradeskills';
+import NewPageTag from '@/components/NewPageTag';
 
 export const dynamic = 'force-dynamic';
+// New on production 2026-10-03 with the [beta] tag (DECISIONS §135). The item page that links here
+// is still a beta preview, so until it graduates this page is reached by its address.
+export const metadata = { title: '[beta] Recipe' };
 
 type RecipeRow = {
   id: number; name: string; tradeskill: number | null; skillneeded: number | null;
@@ -64,6 +68,7 @@ export default async function DbRecipePage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-4 max-w-3xl">
+      <NewPageTag />
       <div className="text-sm text-dim">
         <Link href="/search" className="text-blue hover:underline">← search</Link>
         <span className="mx-2">·</span>

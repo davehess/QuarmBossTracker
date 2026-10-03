@@ -1,6 +1,8 @@
-// /zeal-icons/<code>: one guild's banner, icon and picture file (layout B, on beta until the guild
-// lead picks a layout). A link to hand one guild leader. Public, static, no user and no database.
+// /zeal-icons/<code>: one guild's banner, icon and picture file (layout B; live with the [beta] tag
+// until the guild lead picks a layout, DECISIONS §135). A link to hand one guild leader. Public,
+// static, no user and no database.
 import Link from 'next/link';
+import NewPageTag from '@/components/NewPageTag';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { GUILDS, guildByCode, markSrc } from '@/lib/zealIcons';
@@ -16,7 +18,7 @@ export async function generateMetadata({ params }: { params: Promise<{ code: str
   const guild = guildByCode((await params).code);
   if (!guild) return {};
   return {
-    title: `${guild.name}: Zeal tag icon`,
+    title: `[beta] ${guild.name}: Zeal tag icon`,
     description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.`,
   };
 }
@@ -26,6 +28,7 @@ export default async function GuildIconsPage({ params }: { params: Promise<{ cod
   if (!guild) notFound();
   return (
     <div className="mx-auto max-w-3xl py-2">
+      <NewPageTag />
       <Link href="/zeal-icons?v=b" className="text-sm text-dim no-underline hover:text-text">← All guilds</Link>
       <h1 className={`${H1} mt-3`}>{guild.name}</h1>
 

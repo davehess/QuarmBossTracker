@@ -6270,4 +6270,11 @@ preview b.wolfpack.quest for new versions of existing pages unless I say to make
   for a variant.
 - **Scoping and first-draft code go to Sonnet subagents**, several in parallel. The shipping session
   still reviews, runs the gate and writes the docs. CLAUDE.md has the rule.
+- **The two new pages that were waiting on beta went live (web 1.8.81):**
+  [`wolfpack.quest/zeal-icons`](https://wolfpack.quest/zeal-icons) (and layout B at `?v=b`, with a page
+  per guild) and `wolfpack.quest/db/recipe/<id>`. Both carry the tag, built once as
+  `web/components/NewPageTag.tsx`, and their titles and link previews start with `[beta]`. The recipe
+  page is linked only from the item page's beta layouts, so on production it is reached by its
+  address until the item page graduates. Everything else on beta is a change to an existing page
+  (about, the item page, /pop, /pop/guide, /pvp) and stays there.
 - The other seven parts of the same message are below as they land (§136 onward).

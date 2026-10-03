@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'new-pages-beta-tag-2026-10-03',
+    title: 'Two new pages, marked [beta]',
+    version: 'Web 1.8.81',
+    date: '2026-10-03',
+    headline: 'New pages now go live straight away with a [beta] tag at the top, so you know they are still being shaped.',
+    features: [
+      { name: 'Zeal tag icons', blurb: 'Every guild’s banner and icon for Zeal tags, the keys to type, and picture files to download. Two layouts to compare: one page, or a page per guild.' },
+      { name: 'Tradeskill recipes', blurb: 'A page for each combine: what goes in, what it goes in, what comes out, and what a failure keeps.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-7-7-2026-10-02',
     title: 'Mimic 2.7.7',
     version: 'Mimic 2.7.7 · Agent 3.7.71 · Web 1.8.80',

@@ -4,19 +4,21 @@
 // database, and takes no uploads (logos come in through Discord); that is what the 2026-09-26 audit
 // cleared for a public page.
 //
-// Two layouts are on offer on beta until the guild lead picks one (CLAUDE.md, UI options):
+// Live since 2026-10-03 with the [beta] tag (a new page goes live first, DECISIONS §135). Two
+// layouts until the guild lead picks one:
 //   A (no ?v=): one catalogue page, every guild with anchors (#eur);
 //   B (?v=b):   a short guild index; each guild has its own page at /zeal-icons/<code>.
 import Link from 'next/link';
 import type { Metadata } from 'next';
 import { GUILDS, markSrc } from '@/lib/zealIcons';
+import NewPageTag from '@/components/NewPageTag';
 import {
   GetYours, GuildKeys, H1, H2, LayoutSwitch, Lead, Mark, NumbersAndPaws, PictureDownloads, InstallSteps,
   StatusNote, SymbolsGrid,
 } from './parts';
 
 export const metadata: Metadata = {
-  title: 'Zeal tag icons',
+  title: '[beta] Zeal tag icons',
   description: 'Guild banners and icons for Zeal /tag, with the keys to type and picture files to download.',
 };
 
@@ -30,6 +32,7 @@ function Catalogue() {
   return (
     <div className="mx-auto max-w-5xl py-2">
       <LayoutSwitch current="a" />
+      <NewPageTag />
       <h1 className={H1}>Zeal tag icons</h1>
       <Lead />
       <StatusNote />
@@ -93,6 +96,7 @@ function GuildIndex() {
   return (
     <div className="mx-auto max-w-4xl py-2">
       <LayoutSwitch current="b" />
+      <NewPageTag />
       <h1 className={H1}>Zeal tag icons</h1>
       <Lead />
       <StatusNote />
