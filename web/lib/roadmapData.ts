@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-guide-order-2026-10-03',
+    title: 'The PoP guide, step by step in order',
+    version: 'Web 1.8.88',
+    date: '2026-10-03',
+    headline: 'Every PoP guide step now lists what to hail, say and hand in, in the order the NPC needs it.',
+    features: [
+      { name: 'One numbered list per step', blurb: 'Hails, the words to say, hand-ins and what you get back, in order — including lines you say twice, like “continue” to Askr the Lost, and ones you repeat until you get a new answer.' },
+      { name: 'Zone-ins that finish a flag', blurb: 'Where clicking a portal, door or shrine is what actually flags you (the Bastion of Thunder shrine, the Halls of Honor, the Lair of Terris Thule and more), the step ends with it, marked in gold.' },
+      { name: 'Flags where the game sets them', blurb: 'The Justice flag is now the Mavuin hail, and the Bastion of Thunder flag is the shrine click after Askr — ticking Askr alone no longer counts as flagged.' },
+    ],
+    fixes: [
+      'The elemental gods’ items come from the Essence of Fire, Air, Water and Earth, not a Planar Projection.',
+    ],
+  },
+  {
     key: 'pop-loot-flags-2026-10-03',
     title: 'Loot counts as PoP flag proof',
     version: 'Web 1.8.87',

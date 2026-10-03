@@ -109,6 +109,11 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ PoP guide in script order (web 1.8.88 live, Mimic overlay on beta, 2026-10-03).** 65 steps carry one ordered
+  list of hail / say / give / get / kill / click / zone-in, each act cited to its quest script, on
+  [wolfpack.quest/pop/guide](https://wolfpack.quest/pop/guide) and in Mimic's PoP overlay (beta). The Justice flag
+  sits on the Mavuin hail and the Bastion of Thunder flag on the shrine click (where the server sets them); a
+  recorded flag ticks the steps it needs. Open: Aerin`Dar's flag and the Halls of Honor door (§147).
 - **✅ Loot proves PoP flags (web 1.8.87, live, 2026-10-03).** A character that looted in a plane, or holds a NO
   DROP item that drops only in one, gets that plane's flags as a purple ✓ on
   [wolfpack.quest/pop](https://wolfpack.quest/pop) and an auto-tick on the guide. 71 (character, plane) rows today

@@ -27,7 +27,7 @@ import type { Evidence } from '@/lib/popGuideAuto';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
 import { setGuideTick } from './actions';
-import { CharOptions, ChainView, Place, WithItems } from './GuideChecklist';
+import { CharOptions, ChainView, Place, SeqView, WithItems } from './GuideChecklist';
 import ZoneMap, { type ZoneOutline } from './ZoneMap';
 
 // How a step got its tick. mimic = Mimic saw it happen; database = our records already show it;
@@ -432,6 +432,9 @@ export function StepDetail({ item, cards, outlines, mapHeight }: {
   const places = stepPlaces(item, more);
   const zones = [...new Set(places.map(p => p.zone))];
   const external = item.link?.href.startsWith('http');
+  // A step with a seq (web/lib/popGuide.ts) shows it as one numbered list in place of "What to say" and
+  // "Who takes what", which each kept half of the order (the guild lead, 2026-10-03).
+  const hasSeq = !!item.seq && item.seq.length > 0;
   return (
     <div className="flex flex-col gap-2 text-xs">
       <div className="text-sm text-text"><WithItems text={item.title} cards={cards} /></div>
@@ -449,7 +452,13 @@ export function StepDetail({ item, cards, outlines, mapHeight }: {
             : <Link href={item.link.href} className="text-blue hover:underline whitespace-nowrap">{item.link.label} →</Link>)}
         </p>
       )}
-      {item.says && item.says.length > 0 && (
+      {hasSeq && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-dim">What to do, in order</div>
+          <SeqView seq={item.seq!} cards={cards} />
+        </div>
+      )}
+      {!hasSeq && item.says && item.says.length > 0 && (
         <div>
           <div className="text-[10px] uppercase tracking-wide text-dim">What to say</div>
           <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[11px]">
@@ -463,7 +472,7 @@ export function StepDetail({ item, cards, outlines, mapHeight }: {
           </div>
         </div>
       )}
-      {more?.turnIn && more.turnIn.length > 0 && (
+      {!hasSeq && more?.turnIn && more.turnIn.length > 0 && (
         <div>
           <div className="text-[10px] uppercase tracking-wide text-dim">Who takes what</div>
           <ul className="mt-0.5 space-y-1">
@@ -506,7 +515,7 @@ export function StepDetail({ item, cards, outlines, mapHeight }: {
           </div>
         </div>
       )}
-      {item.chain && <ChainView chain={item.chain} cards={cards} />}
+      {item.chain && <ChainView chain={item.chain} cards={cards} skipHandins={hasSeq} />}
       {zones.map(z => (
         <ZoneMap key={z} outline={outlines[z] ?? null} height={mapHeight}
                  title={`${ZONE_NAMES[z as keyof typeof ZONE_NAMES] ?? z}: where to go`}

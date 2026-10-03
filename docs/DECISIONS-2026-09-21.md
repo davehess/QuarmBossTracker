@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PoP pages live; stable Mimic 2.7.8; self-ticked flags; loot proof** | **§143–§146.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194), members tick their own flags (1.8.86), loot proves flags (1.8.87, purple ✓). Building: the guide's steps as one ordered sequence, the Justice flag on the Mavuin hail, the zone-in acts (§147) | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready |
+| **PoP pages live; stable Mimic 2.7.8; self-ticked flags; loot proof** | **§143–§146.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194), members tick their own flags (1.8.86), loot proves flags (1.8.87, purple ✓), the guide in script order with the Justice flag on the Mavuin hail and the Bastion flag on the shrine click (1.8.88, §147; the overlay's ordered steps on Mimic beta) | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready; (4) read the ordered steps on https://wolfpack.quest/pop/guide; (5) say whether Aerin`Dar's flag moves to the Halls of Honor door step (§147) |
 | **The eight-part request of Oct 3** | **§135–§142.** Live: `/zeal-icons` + `/db/recipe` and `/admin/extra-spells` with the `[beta]` tag (web 1.8.81–1.8.82), the loot panel (bot 3.1.192). Beta (agent 3.7.72–3.7.74): Command Center raids card, crash review on Diagnostics, Loot tab who-looted-what, traders and under-46 tucked away on `/pop` `/pop/guide` `/me`, PoP overlay Quests mode with the guide's words filled from the quest scripts. Alpha `5adafea8`: Canvas presets are the real overlays, tight margins, HUD ring + builder | the guild lead: (1) look at the beta pages and Mimic beta; (2) look at the Canvas on the alpha; (3) send a dozen log lines from a PoK trainer hand-in (extra spells phase 2); (4) pick a Zeal icons layout; (5) the calls listed in §139–§142 |
 | **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.80: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
@@ -6521,3 +6521,51 @@ them up to that plane"*.
 - **Not changed:** the plane list is the /who table's (`WHO_ZONE`); the open planes (Justice, Disease,
   Nightmare, Innovation) prove nothing, and an instanced copy is not counted. A test keeps the SQL list and the
   site's list equal.
+
+### 147. The PoP guide in script order; the Justice and Bastion flags where the server sets them (2026-10-03, web 1.8.88 · Mimic beta)
+
+The guild lead: *"some of the steps require you to hail after something else or say a line multiple times. the
+hand in items should be in order with the text we say to them"*, *"we say continue twice for the plane of storms
+quest for bastion of thunder"*, *"move the justice flag to the mavuin hail step. the flagging for bastion of
+thunder REQUIRES you to enter the zone from plane of storms after doing the turnin. find other instances of
+this"*.
+
+- **One ordered list per step.** 65 of the 83 guide steps carry a `seq` (313 acts: hail / say / give / get / kill /
+  click / zone / wait / note, with "×N", "repeat until …" and "sit first"), every act cited to the
+  `eqemu_quest_scripts` file it was read from. A test checks every say is one of its script's own keywords and
+  every item is a real id and name. Drawn as one numbered list on
+  [wolfpack.quest/pop/guide](https://wolfpack.quest/pop/guide) (and its `?v=b`/`?v=c` previews) and in Mimic's
+  PoP overlay Quests mode (beta). Askr is the model case: the head, "it was me", "paying attention", "continue"
+  **twice** for the bag, the three parts, the sealed bag, "bastion of thunder", the meld. Sage Balic's
+  "continue" twice and the Seer's "unlock my memories" until nothing new are the others.
+- **The Justice flag is the Mavuin hail's** (as asked): the hail is the server's mavuin 3, which the Storms shrine
+  and the Tranquility portals check. Every Mimic-recorded Justice flag is that stage (36 rows).
+- **The Bastion of Thunder flag is the shrine click's** (the same rule, applied by this session): Askr's meld is
+  karana 2, and only the shrine click (`postorms/player.lua` door 4) makes it karana 3. Every Mimic-recorded
+  Bastion flag is that stage (31 rows), so the flag moves from Askr's step to "Click the shrine". A tick on
+  Askr's step alone no longer opens the Bastion on /pop.
+- **A recorded flag ticks the steps it needs** (Mimic now, as /who and loot already did): the Justice flag ticks
+  the trial, Mavuin's information and the Tribunal; the Bastion flag ticks Askr's step. A looted Mark still names
+  the trial more exactly.
+- **Flags finished by a click or a zone-in, not by the NPC** (the "other instances"), each now the last act of its
+  step, read from the zones' `player.lua`:
+
+  | Where | What finishes it | Step |
+  |---|---|---|
+  | Storms shrine (door 4) | Askr's flag + Justice → the Bastion of Thunder | Click the shrine |
+  | Valor (door 3) | Aerin`Dar's flag → the Halls of Honor | Zone into the Halls of Honor |
+  | Halls of Honor (doors 19/20) | all three trials → the Temple of Marr | the last trial |
+  | Nightmare (portal 59) | Thelin at 2 → the Lair of Terris Thule | Thelin's hedge maze |
+  | Disease (the pit) | the Grummus flag → the Crypt of Decay | Grummus |
+  | Earth A (doors 9–11) | the Earth B key → Earth B | the Arbitor |
+  | Innovation (door 145) | Zebuxoruk 2 + Quintessence → Time | Muon |
+  | Solusek Ro tower (doors, the pit) | each wing's cauldron; then the lava pit → Fire | Sol Ro's minis; Solusek Ro |
+  | Tranquility portals | Mavuin 3 → Valor/Storms; Zeks → Tactics, Sol Ro; Fuirstel 5 + Thelin 4 → Torment; Zebuxoruk → Air/Earth/Water | the Mavuin hail; the Behemoth; Maelin; Poxbourne/Fuirstel |
+- **Text corrected on the way:** the four elemental gods' items come from "Essence of Fire / Air / Water / Earth",
+  not "A Planar Projection" (the scripts spawn them; the NPC table agrees); the hedge maze's hail is Thelin 2, and
+  the Lair opens on the portal click.
+- **Open, for the guild lead:** (1) Aerin`Dar's flag could move to "Zone into the Halls of Honor" the same way
+  (the door click is aerindar 2), but the bot still records it from the Aerin`Dar kill, so a move would tick the
+  door step from a kill — left where it is. (2) Relv in Storms also takes "continue" twice; it has no guide step.
+  (3) Gram Dunnar's charm has no quest script in our mirror, so it keeps its old says. (4) The win conditions of
+  the second and third Halls of Honor trials are a note only.
