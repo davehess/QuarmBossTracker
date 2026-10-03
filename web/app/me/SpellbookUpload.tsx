@@ -34,7 +34,7 @@ export default function SpellbookUpload({ character }: { character: string }) {
   }
 
   return (
-    <div className="text-xs">
+    <div className="text-xs min-w-0 max-w-full">
       <button
         type="button"
         onClick={() => setOpen(o => !o)}

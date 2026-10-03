@@ -31,8 +31,9 @@
 // nature of pop flagging they may do it for many of their toons and we
 // shouldn't only track mains").
 //
-// ?all=1 — My Characters and the spell-needs table leave out Traders and characters under level 46
-// (web/lib/listableChars.ts); this shows them again. Not a scope: it composes with ?scope and ?view.
+// ?all=1 — My Characters and the spell-needs table leave out Traders, characters under level 46 and
+// characters their owner hid, and fold the ones with no known level into a collapsed area
+// (web/lib/listableChars.ts); this shows all of them inline again. Not a scope: it composes with ?scope and ?view.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -45,7 +46,7 @@ import {
 import { WHO_ZONE_NAMES, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
-import { LIST_MIN_LEVEL, loadLevels, loadTraderNames, partitionListable } from '@/lib/listableChars';
+import { LIST_MIN_LEVEL, loadHiddenNames, loadLevels, loadTraderNames, partitionTiers } from '@/lib/listableChars';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
 import SpellbookSubmit from './SpellbookSubmit';
 import EssencesQueue from './EssencesQueue';
@@ -129,34 +130,43 @@ export default async function PopFlagsPage(
   // the My Characters view — that one deliberately ignores `scope`, see the
   // header note).
   const sbAdmin = supabaseAdmin();
-  const [{ data: needRows }, myCharsAll, traderNames] = await Promise.all([
+  const [{ data: needRows }, myCharsAll, traderNames, flaggedHidden] = await Promise.all([
     sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }),
     ownedCharacters(user.id),
     loadTraderNames(sbAdmin),
+    loadHiddenNames(sbAdmin),
   ]);
   const spellNeedsAll = groupNeeds((needRows ?? []) as SpellNeed[]);
 
-  // Traders and characters under level 46 are tucked away on the two lists that name individual
-  // characters (My Characters and the spell-needs table), behind ?all=1 (the guild lead, 2026-10-03:
-  // "low level characters do not need to show up on the pop flag page. all of my traders and mule
-  // characters destroy my views"). They are filtered ONCE here, so every use below follows: the My
-  // Characters table, your spells needed, the spellbook picker and the /who sightings. The chart, matrix
-  // and planner count the raid roster already (popRoster). Only the names whose level is not already
-  // known to clear 46 are looked up, which keeps the me_levels call small.
+  // Traders, characters under level 46 and characters their owner hid are tucked away on the two lists
+  // that name individual characters (My Characters and the spell-needs table), behind ?all=1 (the guild
+  // lead, 2026-10-03: "low level characters do not need to show up on the pop flag page. all of my
+  // traders and mule characters destroy my views"). Characters with no known level are not hidden but
+  // folded into a collapsed area under each list ("put any unknown characters into a minimized area").
+  // They are split ONCE here, so every use below follows: the My Characters table, your spells needed
+  // and the /who sightings. The spellbook picker is the exception: it gets every owned character, because
+  // an upload is how an unknown one gets a level. The chart, matrix and planner count the raid roster
+  // already (popRoster). Only the names whose level is not already known to clear 46 are looked up,
+  // which keeps the me_levels call small.
   const lookup = [
     ...myCharsAll.map(c => c.name),
     ...spellNeedsAll.filter(n => n.level == null || n.level < LIST_MIN_LEVEL).map(n => n.name),
   ];
   const bestLevels = await loadLevels(sbAdmin, lookup);
   const bestLevel = (name: string, known: number | null) => Math.max(bestLevels.get(name.toLowerCase()) ?? 0, known ?? 0) || null;
-  const minePart = partitionListable(myCharsAll, c => ({ rank: c.rank, level: bestLevel(c.name, null) }));
-  const needPart = partitionListable(spellNeedsAll, n => ({
+  const minePart = partitionTiers(myCharsAll, c => ({ rank: c.rank, level: bestLevel(c.name, null), hidden: c.hidden_from_lists }));
+  const needPart = partitionTiers(spellNeedsAll, n => ({
     rank: traderNames.has(n.name.toLowerCase()) ? 'Trader' : null, level: bestLevel(n.name, n.level),
+    hidden: flaggedHidden.has(n.name.toLowerCase()),
   }));
   const hiddenNames = new Set([...minePart.hidden.map(c => c.name), ...needPart.hidden.map(n => n.name)].map(n => n.toLowerCase()));
+  const unknownNames = new Set([...minePart.unknown.map(c => c.name), ...needPart.unknown.map(n => n.name)].map(n => n.toLowerCase()));
   const myChars = showAll ? myCharsAll : minePart.listed;
+  const myUnknown = showAll ? [] : minePart.unknown;
   const spellNeeds = showAll ? spellNeedsAll : needPart.listed;
   const scopedSpellNeeds = scope === 'all' ? spellNeeds : spellNeeds.filter(n => n.isMain);
+  const unknownNeeds = showAll ? [] : needPart.unknown;
+  const scopedUnknownNeeds = scope === 'all' ? unknownNeeds : unknownNeeds.filter(n => n.isMain);
 
   // My Characters' own spell-needs slice (main + alt, scope-independent) and
   // which of those characters have a spellbook on file at all — lets the
@@ -173,8 +183,10 @@ export default async function PopFlagsPage(
     mySpellbookNames = new Set(
       ((sbRows ?? []) as { character_name: string }[]).map(r => r.character_name.toLowerCase()));
   }
-  const myCharsSorted = [...myChars].sort((a, b) =>
+  const mineOrder = (rows: typeof myCharsAll) => [...rows].sort((a, b) =>
     (a.main_name ? 1 : 0) - (b.main_name ? 1 : 0) || a.name.localeCompare(b.name));
+  const myCharsSorted = mineOrder(myChars);
+  const myUnknownSorted = mineOrder(myUnknown);
 
   const sb = supabaseAdmin();
   // pop_flags holds ~10k 'unmapped' rows (the hail rows, §86) older than any real flag, and the API
@@ -291,7 +303,7 @@ export default async function PopFlagsPage(
   // zone for users that don't have mimic, and if they're in that zone that requires other zones we
   // should note it"). Standing in a gated plane proves its gate and the gates on the way in
   // (web/lib/popWho.ts). Those flags count everywhere below, kept in `seen` so the page can say so.
-  const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name)].map(n => [n.toLowerCase(), n]));
+  const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name), ...myUnknown.map(c => c.name)].map(n => [n.toLowerCase(), n]));
   const { data: sightRows } = nameOf.size
     ? await sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES })
     : { data: [] };
@@ -503,6 +515,115 @@ export default async function PopFlagsPage(
     );
   }
 
+  // The My Characters table, once for the listed characters and once inside the "no known level" fold.
+  function MineTable({ rows }: { rows: typeof myCharsAll }) {
+    return (
+      <div className="overflow-x-auto">
+        <table className="text-sm min-w-full">
+          <thead>
+            <tr className="text-dim text-xs text-left">
+              <th className="py-1 pr-3">Character</th>
+              <th className="py-1 pr-3">Class</th>
+              {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
+              <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
+              <th className="py-1 pl-2 text-right">Flags</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {rows.map(c => {
+              const f = byChar.get(c.name.toLowerCase())
+                ?? { name: c.name, flags: new Set<string>(), unmapped: 0, seen: new Map<string, WhoProof>() };
+              return (
+                <tr key={c.name}>
+                  <td className="py-1.5 pr-3">
+                    <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
+                    {!c.main_name && <span className="ml-1 text-[10px] text-gold" title="main">★</span>}
+                  </td>
+                  <td className="py-1.5 pr-3 text-dim">{c.class ?? '—'}</td>
+                  {gatedZones.map(z => (
+                    <td key={z.key} className="py-1.5 px-2 text-center"
+                        title={zoneAccess(z, f.flags) ? undefined
+                          : `missing ${missingFor(z, f.flags).map(fk => POP_FLAGS[fk]?.label ?? fk).join(', ')}`}>
+                      <AccessMark z={z} c={f} />
+                    </td>
+                  ))}
+                  <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
+                    {[...marksOf(c.name), ...(hasMarkOfJustice(c.name) ? ['Mark of Justice'] : [])].join(', ') || <span className="text-dim">—</span>}
+                  </td>
+                  <td className="py-1.5 pl-2 text-right text-dim text-xs">{f.flags.size}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // The spell-needs table, once for the listed characters and once inside the "no known level" fold.
+  function NeedsTable({ rows }: { rows: NeedByChar[] }) {
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-dim text-xs text-left">
+              <th className="py-1 pr-3">Character</th>
+              <th className="py-1 pr-3">Class</th>
+              <th className="py-1 pr-3 text-right">Level</th>
+              {POP_TURN_IN_ORDER.map(k => (
+                <th key={k} className="py-1 pr-3 text-right" title={POP_TURN_INS[k].blurb}>
+                  {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
+                </th>
+              ))}
+              <th className="py-1 pr-3 text-right"
+                  title="Needed, but not awarded by this class's parchment turn-ins — research spells, or another class's tradeable scroll (e.g. necro Destroy Undead rides a cleric 64 scroll).">
+                Other
+              </th>
+              <th className="py-1 pr-3 text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {rows.map(n => (
+              <tr key={n.name} className="hover:bg-[#1a212c] align-top">
+                <td className="py-1.5 pr-3">
+                  <Link href={`/character/${encodeURIComponent(n.name)}/spells`} className="text-blue hover:underline">{n.name}</Link>
+                  {!n.isMain && <span className="ml-1 text-[10px] text-dim">alt</span>}
+                </td>
+                <td className="py-1.5 pr-3 text-dim">{n.cls ?? '—'}</td>
+                <td className="py-1.5 pr-3 text-right text-text">{n.level ?? '—'}</td>
+                {POP_TURN_IN_ORDER.map(k => {
+                  const list = n.tiers[k];
+                  return (
+                    <td key={k} className="py-1.5 pr-3 text-right"
+                        title={list.length ? list.map(x => x.spell_name).join(', ') : 'nothing needed at this tier'}>
+                      <span className={list.length ? 'text-orange' : 'text-dim/50'}>{list.length || '—'}</span>
+                    </td>
+                  );
+                })}
+                <td className="py-1.5 pr-3 text-right"
+                    title={n.other.length ? n.other.map(x => x.spell_name).join(', ') : 'nothing outside the turn-in lists'}>
+                  <span className={n.other.length ? 'text-purple' : 'text-dim/50'}>{n.other.length || '—'}</span>
+                </td>
+                <td className="py-1.5 pr-3 text-right text-text">{n.total}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // The collapsed area for characters nobody has a level for (the guild lead, 2026-10-03: "put any
+  // unknown characters into a minimized area"). Closed by default; it wraps, so it cannot widen the page.
+  const noLevelFold = (n: number, body: React.ReactNode) => (
+    <details className="bg-bg/40 border border-border/60 rounded min-w-0 max-w-full">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs text-dim hover:text-text">
+        {n} character{n === 1 ? '' : 's'} with no known level — upload a spellbook or get {n === 1 ? 'it' : 'them'} seen in /who to place {n === 1 ? 'it' : 'them'}
+      </summary>
+      <div className="p-2">{body}</div>
+    </details>
+  );
+
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -536,16 +657,16 @@ export default async function PopFlagsPage(
             </span>
           )}
           {totalUnmapped > 0 && <span className="text-orange">⚠ {totalUnmapped} unmapped grants (catalog TODO)</span>}
-          {hiddenNames.size > 0 && (
-            <span title={`Applies to My Characters and the spell-needs table. A character is hidden when it is a Trader or its level is known and under ${LIST_MIN_LEVEL}, the lowest level any Planes of Power zone lets in.`}>
-              {showAll ? `Traders and characters under ${LIST_MIN_LEVEL} shown. ` : `Traders and characters under ${LIST_MIN_LEVEL} hidden. `}
+          {(hiddenNames.size > 0 || unknownNames.size > 0) && (
+            <span title={`Applies to My Characters and the spell-needs table. A character is hidden when it is a Trader, its owner hid it from /me, or its level is known and under ${LIST_MIN_LEVEL}, the lowest level any Planes of Power zone lets in. A character with no known level is not hidden: it sits in a collapsed area under each list.`}>
+              {showAll ? `Traders, hidden characters and characters under ${LIST_MIN_LEVEL} shown. ` : `Traders, hidden characters and characters under ${LIST_MIN_LEVEL} hidden. `}
               <Link href={hrefFor({ all: showAll ? null : '1' })} className="underline hover:text-text">
-                {showAll ? 'Hide them' : `Show all (${hiddenNames.size} hidden)`}
+                {showAll ? 'Hide them' : `Show all (${hiddenNames.size} hidden${unknownNames.size > 0 ? `, ${unknownNames.size} no level` : ''})`}
               </Link>
             </span>
           )}
           <span className="ml-auto flex flex-wrap gap-2 items-center">
-            <span className="flex gap-1 mr-1" title={`Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which shows every character you own (traders and characters under ${LIST_MIN_LEVEL} sit behind Show all).`}>
+            <span className="flex gap-1 mr-1" title={`Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which shows every character you own (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away).`}>
               <Link href={hrefFor({ scope: null })} className={navCls(scope === 'mains')}>Mains</Link>
               <Link href={hrefFor({ scope: 'all' })} className={navCls(scope === 'all')}>All characters</Link>
             </span>
@@ -640,11 +761,11 @@ export default async function PopFlagsPage(
             </p>
           </div>
 
-          {myChars.length === 0 ? (
+          {myChars.length === 0 && myUnknown.length === 0 ? (
             <div className="bg-bg border border-orange/40 rounded p-4 text-sm">
               <div className="text-orange mb-1">
                 {myCharsAll.length > 0
-                  ? `Every character on your account is a trader or under level ${LIST_MIN_LEVEL}.`
+                  ? `Every character on your account is a trader, hidden by you or under level ${LIST_MIN_LEVEL}.`
                   : 'No characters linked to your account yet.'}
               </div>
               <div className="text-dim text-xs">
@@ -657,45 +778,12 @@ export default async function PopFlagsPage(
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="text-sm min-w-full">
-                <thead>
-                  <tr className="text-dim text-xs text-left">
-                    <th className="py-1 pr-3">Character</th>
-                    <th className="py-1 pr-3">Class</th>
-                    {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
-                    <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
-                    <th className="py-1 pl-2 text-right">Flags</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {myCharsSorted.map(c => {
-                    const f = byChar.get(c.name.toLowerCase())
-                      ?? { name: c.name, flags: new Set<string>(), unmapped: 0, seen: new Map<string, WhoProof>() };
-                    return (
-                      <tr key={c.name}>
-                        <td className="py-1.5 pr-3">
-                          <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
-                          {!c.main_name && <span className="ml-1 text-[10px] text-gold" title="main">★</span>}
-                        </td>
-                        <td className="py-1.5 pr-3 text-dim">{c.class ?? '—'}</td>
-                        {gatedZones.map(z => (
-                          <td key={z.key} className="py-1.5 px-2 text-center"
-                              title={zoneAccess(z, f.flags) ? undefined
-                                : `missing ${missingFor(z, f.flags).map(fk => POP_FLAGS[fk]?.label ?? fk).join(', ')}`}>
-                            <AccessMark z={z} c={f} />
-                          </td>
-                        ))}
-                        <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
-                          {[...marksOf(c.name), ...(hasMarkOfJustice(c.name) ? ['Mark of Justice'] : [])].join(', ') || <span className="text-dim">—</span>}
-                        </td>
-                        <td className="py-1.5 pl-2 text-right text-dim text-xs">{f.flags.size}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {myChars.length > 0
+                ? <MineTable rows={myCharsSorted} />
+                : <p className="text-sm text-dim">None of your characters has a known level of {LIST_MIN_LEVEL} or more yet.</p>}
+              {myUnknown.length > 0 && noLevelFold(myUnknown.length, <MineTable rows={myUnknownSorted} />)}
+            </>
           )}
 
           {myChars.length > 0 && (
@@ -870,7 +958,13 @@ export default async function PopFlagsPage(
           </div>
           {/* min-w-0, not shrink-0: a no-shrink box sized itself to the whole picker row and ran off a phone
               screen, so the page scrolled sideways (the guild lead, 2026-10-03). Now the row wraps. */}
-          <div className="min-w-0 max-w-full"><SpellbookSubmit characters={myChars.map(c => c.name)} /></div>
+          <div className="min-w-0 max-w-full">
+            <SpellbookSubmit
+              listed={minePart.listed.map(c => c.name)}
+              unknown={minePart.unknown.map(c => c.name)}
+              hidden={minePart.hidden.map(c => c.name)}
+            />
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
@@ -886,57 +980,16 @@ export default async function PopFlagsPage(
             Nobody with a submitted spellbook is missing a PoP spell yet — or no spellbooks have been submitted.
           </p>
         ) : (
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-dim text-xs text-left">
-                  <th className="py-1 pr-3">Character</th>
-                  <th className="py-1 pr-3">Class</th>
-                  <th className="py-1 pr-3 text-right">Level</th>
-                  {POP_TURN_IN_ORDER.map(k => (
-                    <th key={k} className="py-1 pr-3 text-right" title={POP_TURN_INS[k].blurb}>
-                      {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
-                    </th>
-                  ))}
-                  <th className="py-1 pr-3 text-right"
-                      title="Needed, but not awarded by this class's parchment turn-ins — research spells, or another class's tradeable scroll (e.g. necro Destroy Undead rides a cleric 64 scroll).">
-                    Other
-                  </th>
-                  <th className="py-1 pr-3 text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {scopedSpellNeeds.map(n => (
-                  <tr key={n.name} className="hover:bg-[#1a212c] align-top">
-                    <td className="py-1.5 pr-3">
-                      <Link href={`/character/${encodeURIComponent(n.name)}/spells`} className="text-blue hover:underline">{n.name}</Link>
-                      {!n.isMain && <span className="ml-1 text-[10px] text-dim">alt</span>}
-                    </td>
-                    <td className="py-1.5 pr-3 text-dim">{n.cls ?? '—'}</td>
-                    <td className="py-1.5 pr-3 text-right text-text">{n.level ?? '—'}</td>
-                    {POP_TURN_IN_ORDER.map(k => {
-                      const list = n.tiers[k];
-                      return (
-                        <td key={k} className="py-1.5 pr-3 text-right"
-                            title={list.length ? list.map(x => x.spell_name).join(', ') : 'nothing needed at this tier'}>
-                          <span className={list.length ? 'text-orange' : 'text-dim/50'}>{list.length || '—'}</span>
-                        </td>
-                      );
-                    })}
-                    <td className="py-1.5 pr-3 text-right"
-                        title={n.other.length ? n.other.map(x => x.spell_name).join(', ') : 'nothing outside the turn-in lists'}>
-                      <span className={n.other.length ? 'text-purple' : 'text-dim/50'}>{n.other.length || '—'}</span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-right text-text">{n.total}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-3">
+            <NeedsTable rows={scopedSpellNeeds} />
             <p className="text-[11px] text-dim mt-2">
               Hover a count to see the exact spells. <b>Other</b> = needed but not in this class&apos;s turn-in
               lists (research, or another class&apos;s tradeable scroll). Click a name for their full missing-spell list.
             </p>
           </div>
+        )}
+        {scopedUnknownNeeds.length > 0 && (
+          <div className="mt-3">{noLevelFold(scopedUnknownNeeds.length, <NeedsTable rows={scopedUnknownNeeds} />)}</div>
         )}
       </section>
 
