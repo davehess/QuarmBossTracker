@@ -109,6 +109,12 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ Hide from lists + folded no-known-level characters (agent 3.7.75 beta, bot 3.1.193 + web 1.8.83–1.8.84 live,
+  2026-10-03).** Owner's "Hide from lists" on [b.wolfpack.quest/me](https://b.wolfpack.quest/me) (everywhere except
+  account inventory), no-known-level characters folded on `/pop`, `/pop/guide`, `/me` and in Mimic's pickers, the
+  spellbook picker keeps everyone. Live fixes: the spellbook row broke `/pop` sideways on a phone; alts linked
+  through their main were refused a spellbook upload. Leftover: a member's name in a `dashboard.html` comment
+  (renderMeCard) to swap for a role on the next dashboard change. §143.
 - **⏳ Traders and characters under 46 leave the character lists (agent 3.7.73 beta, 2026-10-03).** `/pop`, `/pop/guide`,
   `/me` on b.wolfpack.quest + the dashboard's Watched characters / Replay picker; "show all" everywhere. `me_levels`
   rewritten to use its indexes (applied). §140.

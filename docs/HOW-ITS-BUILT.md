@@ -272,6 +272,14 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   characters / Replay picker hide known-under-46 behind "show N low-level".
 - Never on mule inventory (`/me/inventory`, `/quartermaster`, mule upload). Test: `test/listable-chars.test.js`.
   DECISIONS-2026-09-21 §140.
+- **Three tiers + the owner's hide (agent 3.7.75 · web on beta · bot 3.1.193, §143):** `tierOf` /
+  `partitionTiers` / `frontTierOf` / `loadHiddenNames` — listed (46+), unknown (no known level: folded in a
+  closed `<details>`, or a "No known level" `<optgroup>`), hidden (Trader, known <46, or
+  `characters.hidden_from_lists`). The owner sets the flag with "Hide from lists" on /me
+  (`setCharacterExclusion`, family-root gate); /me shows "Hidden by you (N)" with Unhide. The /pop spellbook
+  picker (`SpellbookSubmit`) always offers every owned character, grouped. Mimic: the flag rides
+  character-prefs (`_characterPrefsFor`) into `watchedLogs[].hidden`. Display only — account inventory and
+  every upload ignore it.
 
 ### PoP overlay Quests mode (Mimic beta, 2026-10-03)
 - `apps/mimic/popraid.html`: Slides / Quests toggle (`wp:pop:mode`, `wp:pop:quest`), quest renderer with copy
