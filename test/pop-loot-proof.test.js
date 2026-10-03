@@ -206,7 +206,10 @@ describe('the checklist fills in from loot', () => {
 
   it('Mimic’s record wins, then /who, then loot', () => {
     const mimic = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: T1 }], looted: [loot('postorms')] });
-    expect(mimic.flag_trial_justice.source).toBe('mimic');
+    // The recorded Justice flag is the Mavuin hail's (2026-10-03), so Mimic's label lands there; the trial
+    // step, which no longer owns the flag, is filled by the loot like the Tribunal.
+    expect(mimic.justice_mavuin_hail.source).toBe('mimic');
+    expect(mimic.flag_trial_justice.source).toBe('loot');
     expect(mimic.justice_tribunal.source).toBe('loot');
     const both = guideEvidence({ ...NO_DATA, seen: [sight('postorms')], looted: [loot('postorms')] });
     for (const k of ['flag_trial_justice', 'justice_tribunal']) expect(both[k].source, k).toBe('who');

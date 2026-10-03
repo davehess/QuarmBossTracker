@@ -61,6 +61,7 @@ export const STEP_MORE: Record<string, StepMore> = {
   },
   justice_mavuin_hail: {
     expect: 'Solo, seconds. This hail is the Justice flag, and the Storms shrine checks it before it lets you into the Bastion of Thunder.',
+    auto: 'Ticks itself when Mimic records your Justice flag, which is this hail.',
   },
   justice_seventh_hammer: {
     expect: 'A raid, later. Needs all six Marks on one person, so six trial wins. Not needed for any flag.',

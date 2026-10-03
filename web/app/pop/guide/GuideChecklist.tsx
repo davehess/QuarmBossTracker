@@ -7,8 +7,8 @@
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
-  GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, splitItems, tickedKeys,
-  type Chain, type GuideItem, type Loc, type Who,
+  GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, seqRows, splitItems, tickedKeys,
+  type Act, type Chain, type GuideItem, type Loc, type Who,
 } from '@/lib/popGuide';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
@@ -188,11 +188,98 @@ export function Place({ at }: { at: Loc }) {
   );
 }
 
+// A step's seq as ONE numbered list (the guild lead, 2026-10-03: "the hand in items should be in order
+// with the text we say to them"): "1. Hail Grand Librarian Maelin  2. /say lore ⧉  3. Give … → get …".
+// The rows come from seqRows (web/lib/popGuide.ts): a `get` rides on the row before it, a `note` hangs
+// under it, the zone-in that flags you is gold. Item names go through WithItems, so the site's item card
+// shows on hover; a /say and a /sit are the same CopyChip as everywhere else on the page.
+const ITEM_NAMES = (items: string[]) => {
+  // The same item twice in a row of hand-ins reads "Name ×2" (two Esoteric Medallions), not a repeated name.
+  const counts = new Map<string, number>();
+  for (const t of items) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return [...counts].map(([t, n]) => (n > 1 ? `${t} ×${n}` : t)).join(', ');
+};
+
+function ActItems({ act, cards }: { act: Act; cards: Record<number, ItemCard> }) {
+  return act.items && act.items.length > 0 ? <WithItems text={ITEM_NAMES(act.items)} cards={cards} /> : null;
+}
+
+function ActLine({ act, cards }: { act: Act; cards: Record<number, ItemCard> }) {
+  const who = act.to ? <span className="text-text">{act.to}</span> : null;
+  const aside = act.text && act.kind !== 'say' && act.kind !== 'get' ? <span className="text-dim"> ({act.text})</span> : null;
+  switch (act.kind) {
+    case 'hail':
+      return <span className="inline-flex flex-wrap items-center gap-1.5 min-w-0"><span className="text-dim">Hail</span>{who}{aside}<CopyChip text={sayCommand({ text: 'Hail' })} /></span>;
+    case 'say':
+      return (
+        <span className="inline-flex flex-wrap items-center gap-1.5 min-w-0 max-w-full">
+          <span className="text-dim">Say to</span>{who}<span className="text-dim">:</span>
+          {act.sit && <><span className="text-gold">sit first</span><CopyChip text="/sit" /></>}
+          <CopyChip text={sayCommand({ text: act.text ?? '' })} />
+          {act.times && act.times > 1 && <span className="text-gold" title="Say it this many times in a row">×{act.times}</span>}
+          {act.until && <span className="text-gold">repeat until {act.until}</span>}
+        </span>
+      );
+    case 'give':
+      return <span><span className="text-dim">Give</span> {who}<span className="text-dim">:</span> <ActItems act={act} cards={cards} />{aside}</span>;
+    case 'get':
+      return <span><span className="text-dim">Get</span> <GetBits act={act} cards={cards} /></span>;
+    case 'kill':
+      return <span><span className="text-dim">Kill</span> {who}{aside}</span>;
+    case 'click':
+      return <span><span className="text-dim">Click</span> {who}{act.items && act.items.length > 0 && <>: <ActItems act={act} cards={cards} /></>}{aside}</span>;
+    case 'zone':
+      return <span><span className="text-gold">Zone in:</span> {who}<span className="block text-dim">{act.text}</span></span>;
+    case 'wait':
+      return <span><span className="text-dim">Wait for</span> <span className="text-text">{act.text}</span></span>;
+    default:
+      return <span className="text-dim">{act.text}</span>;
+  }
+}
+
+// What comes back: the items, then the words ("a character flag", "100,000 experience").
+function GetBits({ act, cards }: { act: Act; cards: Record<number, ItemCard> }) {
+  return (
+    <>
+      <ActItems act={act} cards={cards} />
+      {act.text && <span className="text-dim">{act.items && act.items.length > 0 ? ` (${act.text})` : act.text}</span>}
+    </>
+  );
+}
+
+export function SeqView({ seq, cards }: { seq: Act[]; cards: Record<number, ItemCard> }) {
+  const { lead, rows } = seqRows(seq);
+  return (
+    <div className="mt-1.5 text-[11px]">
+      {lead.map((a, n) => (
+        <p key={n} className="text-dim mb-1"><WithItems text={a.text ?? ''} cards={cards} /><ActItems act={a} cards={cards} /></p>
+      ))}
+      <ol className="space-y-1">
+        {rows.map(r => (
+          <li key={r.n} className={`flex gap-1.5 ${r.act.kind === 'zone' ? 'border-l-2 border-gold/70 bg-gold/5 pl-1.5 py-0.5' : ''}`}>
+            <span className="text-dim shrink-0 w-4 text-right">{r.n}.</span>
+            <div className="min-w-0">
+              <ActLine act={r.act} cards={cards} />
+              {r.gets.map((g, k) => (
+                <span key={k}><span className="text-gold"> → </span><span className="text-dim">get</span> <GetBits act={g} cards={cards} /></span>
+              ))}
+              {r.notes.map((a, k) => (
+                <div key={k} className="text-dim mt-0.5"><WithItems text={a.text ?? ''} cards={cards} />{a.items && a.items.length > 0 && <> <ActItems act={a} cards={cards} /></>}</div>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 // A quest chain (the guild lead, 2026-09-28: "show the first item that seems to be required …
 // the full quest chain with minimize sections … Highlight stages where you will have
 // input/output"). The first item stays in view; the hand-ins (item in → item out, gold) and
-// the story fold away.
-export function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
+// the story fold away. `skipHandins`: the step's seq already lists them in order (SeqView above), so the
+// folded copy would only repeat them.
+export function ChainView({ chain, cards, skipHandins }: { chain: Chain; cards: Record<number, ItemCard>; skipHandins?: boolean }) {
   return (
     <div className="mt-2 space-y-1.5 text-[11px]">
       <div className="rounded border border-gold/60 bg-gold/10 px-2 py-1.5">
@@ -204,6 +291,7 @@ export function ChainView({ chain, cards }: { chain: Chain; cards: Record<number
         </div>
         {chain.first.fetch && <div className="mt-1">📖 <Place at={chain.first.fetch} /></div>}
       </div>
+      {!skipHandins && (
       <details className="rounded border border-border px-2 py-1">
         <summary className="cursor-pointer text-dim">Hand-ins, in order · {chain.handins.length}</summary>
         <ol className="mt-1 space-y-1">
@@ -222,6 +310,7 @@ export function ChainView({ chain, cards }: { chain: Chain; cards: Record<number
           ))}
         </ol>
       </details>
+      )}
       <details className="rounded border border-border px-2 py-1">
         <summary className="cursor-pointer text-dim">Optional: the story, from {chain.talk[0]?.at.npc ?? 'the start'} · {chain.talk.length}</summary>
         <ol className="mt-1 space-y-1">
@@ -271,7 +360,7 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
               : <Link href={item.link.href} className="text-blue hover:underline whitespace-nowrap">{item.link.label} →</Link>)}
           </p>
         )}
-        {item.says && item.says.length > 0 && (
+        {item.seq && item.seq.length > 0 ? <SeqView seq={item.seq} cards={cards} /> : item.says && item.says.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-[11px]">
             {item.says.map((s, n) => (
               <span key={n} className="inline-flex flex-wrap items-center gap-1 min-w-0 max-w-full">
@@ -292,7 +381,7 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
             ))}
           </div>
         )}
-        {item.chain && <ChainView chain={item.chain} cards={cards} />}
+        {item.chain && <ChainView chain={item.chain} cards={cards} skipHandins={!!item.seq} />}
       </div>
     </li>
   );

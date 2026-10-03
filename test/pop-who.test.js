@@ -110,7 +110,10 @@ describe('the checklist fills in from /who', () => {
   });
   it('Mimic’s own record still wins where it has one', () => {
     const ev = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: '2026-10-01T19:00:00Z' }], seen: [sight('postorms')] });
-    expect(ev.flag_trial_justice.source).toBe('mimic');
+    // The recorded Justice flag is the Mavuin hail's now (2026-10-03); the trial step, which no longer owns
+    // the flag, still ticks from /who along with the Tribunal.
+    expect(ev.justice_mavuin_hail.source).toBe('mimic');
+    expect(ev.flag_trial_justice.source).toBe('who');
     expect(ev.justice_tribunal.source).toBe('who');
   });
   it('a recorded flag alone does not tick the Tribunal steps (it can come from the trial kill)', () => {

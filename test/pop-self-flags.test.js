@@ -27,7 +27,9 @@ const none = new Set();
 describe('a flag and the row that stores it', () => {
   it('a flag a guide step grants is stored as that step, so the checklist shows the tick', () => {
     expect(tickKeyForFlag('grummus_dead')).toBe('flag_grummus');
-    expect(tickKeyForFlag('trial_justice')).toBe('flag_trial_justice');
+    // The Justice flag is the Mavuin hail's (the guild lead, 2026-10-03: "move the justice flag to the mavuin
+    // hail step"): postorms/player.lua lets you into Storms only at mavuin >= 3.
+    expect(tickKeyForFlag('trial_justice')).toBe('justice_mavuin_hail');
     expect(tickKeyForFlag('zebuxoruk_2')).toBe('zebuxoruk_maelin');
     for (const i of GUIDE_ITEMS.filter(g => g.flag)) expect(tickKeyForFlag(i.flag), i.key).toBe(i.key);
   });
@@ -98,7 +100,7 @@ describe('selfFlagsFromTicks', () => {
 
   it('one store, both pages: a flag ticked on /pop ticks its step on the checklist, and the reverse', () => {
     // /pop ticks the Justice flag → the checklist's own tickedKeys sees the step done.
-    expect(tickedKeys([tickKeyForFlag('trial_justice')], []).has('flag_trial_justice')).toBe(true);
+    expect(tickedKeys([tickKeyForFlag('trial_justice')], []).has('justice_mavuin_hail')).toBe(true);
     // The checklist ticks the Grummus step → /pop reads the Grummus flag.
     const m = selfFlagsFromTicks([{ character_name: 'Rethlan', item_key: 'flag_grummus' }]);
     expect(m.get('rethlan').has('grummus_dead')).toBe(true);

@@ -43,6 +43,14 @@ window.POP_QUESTS = {
          "y": -221,
          "x": -53
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Soulbinder Jera",
+         "text": "bind my soul",
+         "src": "poknowledge/Soulbinder_Jera.lua"
+        }
        ]
       },
       {
@@ -117,6 +125,45 @@ window.POP_QUESTS = {
          "x": 1016,
          "note": "top of the library elevator"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Seer Mal Nae`Shi",
+         "text": "guided meditation",
+         "sit": true,
+         "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Seer Mal Nae`Shi",
+         "text": "unlock my memories",
+         "sit": true,
+         "until": "she has nothing new to unlock",
+         "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Grand Librarian Maelin",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "lore",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "information",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Each of them unlocks what the other needs, so go back to the Seer and do it again, back and forth, until neither has anything new. Visit Maelin before and after the Zeks and after Saryrn.",
+         "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
+        }
        ]
       },
       {
@@ -151,6 +198,171 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "All inside PoK, no fighting. Start at Agrakath Theric and fetch him one book; ten hand-ins later, Willamina gives you the manual. Needed for the Beginner Manual quests later.",
+       "seq": [
+        {
+         "kind": "get",
+         "text": "from the floor on the upper level of Myrist",
+         "items": [
+          "History of Evils: The Age of Scale"
+         ],
+         "src": "poknowledge/Agrakath_Theric.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Nobody needs a phrase before taking an item, so the hand-ins are all there is; the optional story is folded below.",
+         "src": "poknowledge/Agrakath_Theric.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Agrakath Theric",
+         "items": [
+          "History of Evils: The Age of Scale"
+         ],
+         "src": "poknowledge/Agrakath_Theric.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Note to Caden"
+         ],
+         "src": "poknowledge/Agrakath_Theric.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Caden Zharik",
+         "items": [
+          "Note to Caden"
+         ],
+         "src": "poknowledge/Caden_Zharik.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Boiron’s Standard"
+         ],
+         "src": "poknowledge/Caden_Zharik.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Boiron Ston",
+         "items": [
+          "Boiron’s Standard"
+         ],
+         "src": "poknowledge/Boiron_Ston.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Letter to Elisha"
+         ],
+         "src": "poknowledge/Boiron_Ston.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Elisha Dirtyshoes",
+         "items": [
+          "Letter to Elisha"
+         ],
+         "src": "poknowledge/Elisha_Dirtyshoes.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Narik’s Ring"
+         ],
+         "src": "poknowledge/Elisha_Dirtyshoes.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Arch Mage Narik",
+         "items": [
+          "Narik’s Ring"
+         ],
+         "src": "poknowledge/Arch_Mage_Narik.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Onirelin’s Jewel"
+         ],
+         "src": "poknowledge/Arch_Mage_Narik.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Onirelin Gali",
+         "items": [
+          "Onirelin’s Jewel"
+         ],
+         "src": "poknowledge/Onirelin_Gali.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Cador’s Artifact"
+         ],
+         "src": "poknowledge/Onirelin_Gali.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Oracle Cador",
+         "items": [
+          "Cador’s Artifact"
+         ],
+         "src": "poknowledge/Oracle_Cador.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Black Lava Powder"
+         ],
+         "src": "poknowledge/Oracle_Cador.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Mirao Frostpouch",
+         "items": [
+          "Black Lava Powder"
+         ],
+         "src": "poknowledge/Mirao_Frostpouch.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Curative Potion"
+         ],
+         "src": "poknowledge/Mirao_Frostpouch.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Bolcen Tendag",
+         "items": [
+          "Curative Potion"
+         ],
+         "src": "poknowledge/Bolcen_Tendag.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "New Sewing Needles"
+         ],
+         "src": "poknowledge/Bolcen_Tendag.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Willamina",
+         "items": [
+          "New Sewing Needles"
+         ],
+         "src": "poknowledge/Willamina.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Planar Traveler’s Manual"
+         ],
+         "src": "poknowledge/Willamina.lua"
+        }
+       ],
        "chain": {
         "first": {
          "text": "Start at Agrakath Theric. He wants History of Evils: The Age of Scale, which lies on the floor on the upper level of Myrist: one is up at a time, back 30 minutes after someone takes it. Hand it to him and walk the hand-ins below; no NPC needs the talk before taking its item.",
@@ -429,6 +641,48 @@ window.POP_QUESTS = {
          "y": 878,
          "x": 563
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "collector's box",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Collector’s Box"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "put these four in the box first",
+         "items": [
+          "Tiny Rockhopper Eye",
+          "Undead Froglok Tongue",
+          "Cockatrice Beak",
+          "High Quality Cougarskin"
+         ],
+         "src": "poknowledge/Holly_Longtail.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Holly Longtail",
+         "items": [
+          "Collection of Taxidermy"
+         ],
+         "src": "poknowledge/Holly_Longtail.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Fine Antique Ring"
+         ],
+         "src": "poknowledge/Holly_Longtail.lua"
+        }
        ]
       },
       {
@@ -448,6 +702,40 @@ window.POP_QUESTS = {
          "zone": "Plane of Knowledge",
          "y": -426,
          "x": 864
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Trep Thilcan",
+         "text": "ready to begin",
+         "src": "poknowledge/Trep_Thilcan.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Empty Supplies Crate"
+         ],
+         "src": "poknowledge/Trep_Thilcan.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "with all six in the crate: a purification tablet (Freeport), a keg of beer (Qeynos), a ball of twine (Shadeweaver), a bundle of weapons (Firiona), an armor assortment (Thurgadin) and a case of meat (Bazaar)",
+         "src": "poknowledge/Trep_Thilcan.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Trep Thilcan",
+         "items": [
+          "Merchants Crate of Supplies"
+         ],
+         "src": "poknowledge/Trep_Thilcan.lua"
+        },
+        {
+         "kind": "get",
+         "text": "60 platinum and experience",
+         "src": "poknowledge/Trep_Thilcan.lua"
         }
        ]
       },
@@ -474,6 +762,48 @@ window.POP_QUESTS = {
          "zone": "Plane of Knowledge",
          "y": 820,
          "x": 640
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "collector's box",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Collector’s Box"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "put these four in the box first",
+         "items": [
+          "Minotaur Horn",
+          "Tambourine of Rituals",
+          "Stretched Skin Drum",
+          "Orcish Lute of Singing"
+         ],
+         "src": "poknowledge/Lohie_Cantare.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Lohie Cantare",
+         "items": [
+          "Collection of Instruments"
+         ],
+         "src": "poknowledge/Lohie_Cantare.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Fine Antique Amice"
+         ],
+         "src": "poknowledge/Lohie_Cantare.lua"
         }
        ]
       },
@@ -513,6 +843,75 @@ window.POP_QUESTS = {
          "y": 867,
          "x": 796
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Tarerd Gahar",
+         "text": "from me",
+         "src": "poknowledge/Tarerd_Gahar.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Tarerd Gahar",
+         "items": [
+          "Sarnak Blood"
+         ],
+         "src": "poknowledge/Tarerd_Gahar.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Note from Tarerd"
+         ],
+         "src": "poknowledge/Tarerd_Gahar.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Vicar Thiran",
+         "items": [
+          "Note from Tarerd"
+         ],
+         "src": "poknowledge/Vicar_Thiran.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Goblins and Their Religions"
+         ],
+         "src": "poknowledge/Vicar_Thiran.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Jeren Manri",
+         "items": [
+          "Goblins and Their Religions"
+         ],
+         "src": "droga/Jeren_Manri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "The Reflecting Pools of Tanaan"
+         ],
+         "src": "droga/Jeren_Manri.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Tratlan Jowyr",
+         "items": [
+          "The Reflecting Pools of Tanaan"
+         ],
+         "src": "poknowledge/Tratlan_Jowyr.lua"
+        },
+        {
+         "kind": "get",
+         "text": "150,000 experience",
+         "items": [
+          "Fine Cut, Diamond Inlaid Mask"
+         ],
+         "src": "poknowledge/Tratlan_Jowyr.lua"
+        }
        ]
       },
       {
@@ -537,6 +936,66 @@ window.POP_QUESTS = {
          "y": -24,
          "x": 56
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Sage Balic",
+         "text": "your research",
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Sage Balic",
+         "text": "continue",
+         "times": 2,
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "get",
+         "text": "the second “continue” gives it, within a minute of the first",
+         "items": [
+          "Sage’s Box of Research"
+         ],
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Sage Balic",
+         "text": "their research",
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "a Rune and its matching Words in the box; classic research drops",
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Sage Balic",
+         "text": "one Word per turn-in; the other research drops (bindings, notes) hand in the same way for experience only",
+         "items": [
+          "Word of Combine",
+          "Word of Sorcery",
+          "Word of Helix",
+          "Word of Inverse",
+          "Word of Impetus"
+         ],
+         "src": "poknowledge/Sage_Balic.lua"
+        },
+        {
+         "kind": "get",
+         "text": "in that order, one per Word, and 100,000 experience each",
+         "items": [
+          "Sage’s Apprentice Cap",
+          "Twisted Talisman",
+          "Three Ringed Hoop",
+          "Joined Signet",
+          "Apprentice’s Notebook"
+         ],
+         "src": "poknowledge/Sage_Balic.lua"
+        }
        ]
       },
       {
@@ -551,6 +1010,48 @@ window.POP_QUESTS = {
          "y": 908,
          "x": 640
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "collector's box",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Collector’s Box"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "put these four in the box first",
+         "items": [
+          "Black Tome with Silver Runes",
+          "Tome of the Eternal",
+          "Codex of the Warrior",
+          "Book of Inspiration"
+         ],
+         "src": "poknowledge/Alexis_Dubbani.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Alexis Dubbani",
+         "items": [
+          "Collection of Books"
+         ],
+         "src": "poknowledge/Alexis_Dubbani.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Fine Antique Locket"
+         ],
+         "src": "poknowledge/Alexis_Dubbani.lua"
+        }
        ]
       },
       {
@@ -564,6 +1065,48 @@ window.POP_QUESTS = {
          "zone": "Plane of Knowledge",
          "y": 847,
          "x": 563
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "collector's box",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Collector’s Box"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "put these four in the box first",
+         "items": [
+          "Blackened Sapphire",
+          "Greenscale Emerald",
+          "Shimmering Velium Ruby",
+          "Hope Diamond"
+         ],
+         "src": "poknowledge/Drelynn_Beaufax.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Drelynn Beaufax",
+         "items": [
+          "Collection of Gems"
+         ],
+         "src": "poknowledge/Drelynn_Beaufax.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Fine Antique Veil"
+         ],
+         "src": "poknowledge/Drelynn_Beaufax.lua"
         }
        ]
       },
@@ -584,6 +1127,54 @@ window.POP_QUESTS = {
          "zone": "Plane of Knowledge",
          "y": 865,
          "x": 668
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "special items",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Curator Merri",
+         "text": "collector's box",
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Collector’s Box"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "put these four in the box first",
+         "items": [
+          "Forlorn Totem of Rolfron Zek",
+          "Idol of Woven Grass",
+          "Coldain Fetish",
+          "Petrified Totem"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Curator Merri",
+         "items": [
+          "Collection of Idols"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Fine Antique Velvet Rose"
+         ],
+         "src": "poknowledge/Curator_Merri.lua"
         }
        ]
       }
@@ -655,6 +1246,19 @@ window.POP_QUESTS = {
          "x": -1467,
          "note": "outside the Plane of Disease portal"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Adler Fuirstel",
+         "text": "what ward",
+         "src": "potranquility/Adler_Fuirstel.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Adler_Fuirstel.lua"
+        }
        ]
       },
       {
@@ -662,7 +1266,30 @@ window.POP_QUESTS = {
        "title": "Kill Grummus (Plane of Disease)",
        "who": "group",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves. Then jump into the pit to reach the Crypt of Decay."
+       "detail": "Then hail A Planar Projection before anyone leaves. Then jump into the pit to reach the Crypt of Decay.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Grummus",
+         "src": "podisease/#Grummus.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "podisease/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "podisease/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the pit behind Grummus",
+         "text": "Jump in: dropping into the Crypt of Decay is what sets its zone flag, and only with the Grummus flag from the projection.",
+         "src": "podisease/player.lua"
+        }
+       ]
       },
       {
        "key": "justice_mavuin_info",
@@ -681,6 +1308,19 @@ window.POP_QUESTS = {
          "zone": "Plane of Justice",
          "y": -455,
          "x": 742
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Mavuin",
+         "text": "information",
+         "src": "pojustice/#Mavuin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "pojustice/#Mavuin.lua"
         }
        ],
        "expect": "Solo, a minute. He tells his story; “information” is the word that counts.",
@@ -708,6 +1348,50 @@ window.POP_QUESTS = {
         {
          "to": "The Tribunal (at the trial)",
          "text": "prepared"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "The Tribunal (at the trial)",
+         "text": "prove",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "say",
+         "to": "The Tribunal (at the trial)",
+         "text": "prepared",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "say",
+         "to": "The Tribunal (at the trial)",
+         "text": "ready to begin the Trial of Lashing",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "the trial’s boss",
+         "text": "win the trial",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "get",
+         "text": "loot the one for that trial",
+         "items": [
+          "Mark of Execution",
+          "Mark of Flame",
+          "Mark of Lashing",
+          "Mark of Stone",
+          "Mark of Suffocation",
+          "Mark of Torture"
+         ],
+         "src": "pojustice/The_Tribunal.lua"
         }
        ],
        "expect": "A raid. Six Marks drop per win, one each, so bring six who need it and run it again for the rest. Pick any of the six trials. A loss can be retried in a minute, a win in ten.",
@@ -742,6 +1426,24 @@ window.POP_QUESTS = {
          "note": "any of the six around the trial room"
         }
        ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Have a Mark in your bags: the Tribunal checks for one and does not take it.",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "say",
+         "to": "The Tribunal",
+         "text": "mavuin sent me",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "pojustice/The_Tribunal.lua"
+        }
+       ],
        "expect": "Solo, seconds. The Tribunal looks for a Mark in your bags. You keep it, so hold on to it for the Seventh Hammer.",
        "back": [
         {
@@ -772,6 +1474,24 @@ window.POP_QUESTS = {
          "x": 742
         }
        ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Mavuin",
+         "src": "pojustice/#Mavuin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "pojustice/#Mavuin.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Valor or Storms portal in the Plane of Tranquility",
+         "text": "Click it with your Mavuin flag at 3: that click sets the zone flags for both planes.",
+         "src": "potranquility/player.lua"
+        }
+       ],
        "expect": "Solo, seconds. This hail is the Justice flag, and the Storms shrine checks it before it lets you into the Bastion of Thunder."
       },
       {
@@ -792,6 +1512,35 @@ window.POP_QUESTS = {
          "y": 765,
          "x": 469,
          "note": "any of the six around the trial room"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Hold all six Marks in your bags: the Tribunal checks them and does not take them.",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "say",
+         "to": "The Tribunal",
+         "text": "knowledge",
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "The Mark of Justice"
+         ],
+         "src": "pojustice/The_Tribunal.lua"
+        },
+        {
+         "kind": "click",
+         "to": "a trial portal",
+         "text": "hold it on your cursor",
+         "items": [
+          "The Mark of Justice"
+         ],
+         "src": "pojustice/player.lua"
         }
        ],
        "expect": "A raid, later. Needs all six Marks on one person, so six trial wins. Not needed for any flag."
@@ -854,6 +1603,76 @@ window.POP_QUESTS = {
          "note": "click it once Nitram has given you the flag"
         }
        ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Nitram Anizok",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Nitram Anizok",
+         "text": "advanced tinkering",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Nitram Anizok",
+         "text": "construction",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Nitram Anizok",
+         "text": "instinct for survival",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Nitram Anizok",
+         "text": "combination of batteries",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Nitram Anizok",
+         "text": "collecting materials",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Nitram Anizok",
+         "text": "all three in one trade; he then walks to the beast and puts the power unit in",
+         "items": [
+          "Copper Node",
+          "Bundle of Super Conductive Wires",
+          "Intact Power Cell"
+         ],
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Xanamech Nezmirthafen",
+         "src": "poinnovation/#Xanamech_Nezmirthafen.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Nitram Anizok (after the beast dies)",
+         "text": "only the group or raid with the kill credit",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "poinnovation/Nitram_Anizok.lua"
+        },
+        {
+         "kind": "click",
+         "to": "The main factory door",
+         "text": "it opens only with that flag",
+         "src": "poinnovation/player.lua"
+        }
+       ],
        "expect": "A raid, and a while. Finding the three parts (about 2% each) is the slow part; once they are handed in Nitram walks to the beast and the fight is a raid fight. Everyone who hails him with the kill credit gets the flag, and he leaves after 10 minutes.",
        "turnIn": [
         {
@@ -897,6 +1716,19 @@ window.POP_QUESTS = {
          "x": 49,
          "note": "inside the factory door"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Giwin Mirakon",
+         "text": "I will test the machine",
+         "src": "poinnovation/Giwin_Mirakon.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "poinnovation/Giwin_Mirakon.lua"
+        }
        ]
       },
       {
@@ -909,6 +1741,30 @@ window.POP_QUESTS = {
         {
          "to": "Giwin Mirakon (appears after the kill)",
          "text": "Hail"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "the Manaetic Behemoth",
+         "src": "poinnovation/encounters/Behemoth.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Giwin Mirakon (appears after the kill)",
+         "text": "only the group or raid with the kill credit",
+         "src": "poinnovation/#Giwin_Mirakon.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "poinnovation/#Giwin_Mirakon.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Plane of Tactics portal in the Plane of Tranquility",
+         "text": "Click it with your Zeks flag at 2 or more: that click sets the zone flag.",
+         "src": "potranquility/player.lua"
         }
        ],
        "expect": "A raid. The Behemoth wakes when the 10th clockwork device dies. Giwin Mirakon appears near the boss room afterwards.",
@@ -944,6 +1800,24 @@ window.POP_QUESTS = {
          "y": -258,
          "x": -1428,
          "note": "sick bay"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Adroha Jezith",
+         "src": "potranquility/Adroha_Jezith.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Adroha Jezith",
+         "text": "tortured by nightmares",
+         "src": "potranquility/Adroha_Jezith.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Adroha_Jezith.lua"
         }
        ]
       },
@@ -991,6 +1865,102 @@ window.POP_QUESTS = {
          "x": -1519,
          "note": "outside the hedge maze"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Thelin Poxbourne (outside the maze)",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Thelin Poxbourne (outside the maze)",
+         "text": "dagger",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Thelin Poxbourne (outside the maze)",
+         "text": "help",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Thelin Poxbourne (outside the maze)",
+         "text": "ready",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Only “ready” moves things on; Hail, “dagger” and “help” are his story. Each group leader says it, and is carried in with the group standing near. Without Adroha’s flag he only screams and falls asleep.",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Thelin (inside the dream)",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Thelin (inside the dream)",
+         "text": "ready",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Say it within 5 minutes or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop.",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "the boss at the end of the maze",
+         "text": "a construct of nightmares",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "get",
+         "text": "it drops the last piece",
+         "items": [
+          "Dagger Blade Shard"
+         ],
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Thelin (inside the dream)",
+         "items": [
+          "Dagger Blade Shard"
+         ],
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Thelin’s Dagger"
+         ],
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "wait",
+         "text": "Thelin and Terris Thule to finish talking",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Thelin (after he and Terris have talked)",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag, and he carries you out",
+         "src": "ponightmare/encounters/Maze.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the portal to the Lair of Terris Thule",
+         "text": "Click it with your Thelin flag at 2 or more: that click sets the Lair’s zone flag.",
+         "src": "ponightmare/player.lua"
+        }
        ]
       },
       {
@@ -1022,6 +1992,56 @@ window.POP_QUESTS = {
          "y": -11,
          "x": 1005,
          "note": "top of the library elevator"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Aid Eino (PoK, optional)",
+         "text": "help",
+         "src": "poknowledge/Aid_Eino.lua"
+        },
+        {
+         "kind": "say",
+         "to": "The big tree in Nightmare",
+         "text": "Quellious be my guide",
+         "src": "ponightmare/EinoInvisNight.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Say it at night in game (8 PM to 7 AM), right beside the tree. Four waves come at his stops: 4 tortured banshees; 2 nightstalkers; 5 hobgoblins; then 4 banshees and 4 bats. Keep everything off Eino.",
+         "src": "ponightmare/Aid_Eino.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "The Dreamkeeper",
+         "text": "he sits for a few minutes first",
+         "src": "ponightmare/Aid_Eino.lua"
+        },
+        {
+         "kind": "get",
+         "text": "loot it",
+         "items": [
+          "Strand of Nightmare"
+         ],
+         "src": "ponightmare/Aid_Eino.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Aid Eino",
+         "text": "when he asks for it at the Tranquility portal",
+         "items": [
+          "Strand of Nightmare"
+         ],
+         "src": "ponightmare/Aid_Eino.lua"
+        },
+        {
+         "kind": "get",
+         "text": "100,000 experience",
+         "items": [
+          "Tiny Gold Fist"
+         ],
+         "src": "ponightmare/Aid_Eino.lua"
         }
        ],
        "expect": "A group or two. The waves come at points along his walk, with a rest between each. He waits 30 minutes for the strand at the portal, then leaves, and only one person gets the Fist per run, so plan a run each.",
@@ -1056,6 +2076,23 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Terris Thule",
+         "src": "nightmareb/Terris_Thule.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "nightmareb/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "nightmareb/A_Planar_Projection.lua"
+        }
+       ],
        "back": [
         {
          "npc": "Elder Poxbourne",
@@ -1086,6 +2123,24 @@ window.POP_QUESTS = {
          "x": -1426,
          "note": "sick bay"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Elder Poxbourne",
+         "src": "potranquility/Elder_Poxbourne.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Elder_Poxbourne.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Torment portal in the Plane of Tranquility",
+         "text": "Click it once both Elders have answered (your Fuirstel flag at 5 and your Thelin flag at 4): that click sets the Torment zone flag.",
+         "src": "potranquility/player.lua"
+        }
        ]
       },
       {
@@ -1107,6 +2162,18 @@ window.POP_QUESTS = {
          "y": -291,
          "x": -1417,
          "note": "sick bay"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Elder Fuirstel",
+         "src": "potranquility/Elder_Fuirstel.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Elder_Fuirstel.lua"
         }
        ]
       },
@@ -1130,6 +2197,31 @@ window.POP_QUESTS = {
          "x": 309,
          "note": "appears where High Priest Ultor Szanvon dies"
         }
+       ],
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "the five Carprin nameds",
+         "text": "Tarkil Adan appears where High Priest Ultor Szanvon dies",
+         "src": "codecay/#High_Priest_Ultor_Szanvon.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Tarkil Adan",
+         "text": "only the group or raid with the kill credit",
+         "src": "codecay/Tarkil_Adan.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "codecay/Tarkil_Adan.lua"
+        },
+        {
+         "kind": "click",
+         "to": "the door to the lower Crypt",
+         "text": "it opens only with that flag",
+         "src": "codecay/player.lua"
+        }
        ]
       },
       {
@@ -1138,6 +2230,24 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Bertoxxulous",
+         "src": "codecay/encounters/Bertox.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "text": "it answers only with Tarkil Adan’s flag",
+         "src": "codecay/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "codecay/A_Planar_Projection.lua"
+        }
+       ],
        "back": [
         {
          "npc": "Elder Fuirstel",
@@ -1167,6 +2277,24 @@ window.POP_QUESTS = {
          "y": -291,
          "x": -1417,
          "note": "sick bay"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Elder Fuirstel",
+         "src": "potranquility/Elder_Fuirstel.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Elder_Fuirstel.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Torment portal in the Plane of Tranquility",
+         "text": "Click it once both Elders have answered (your Fuirstel flag at 5 and your Thelin flag at 4): that click sets the Torment zone flag.",
+         "src": "potranquility/player.lua"
         }
        ]
       },
@@ -1200,6 +2328,124 @@ window.POP_QUESTS = {
          "zone": "Plane of Storms",
          "y": -1255,
          "x": -2576
+        }
+       ],
+       "seq": [
+        {
+         "kind": "give",
+         "to": "Askr the Lost",
+         "text": "any camp’s",
+         "items": [
+          "Storm Giant Head"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "get",
+         "text": "handed back; it will not work a second time",
+         "items": [
+          "Storm Giant Head"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost",
+         "text": "it was me",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost",
+         "text": "paying attention",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost",
+         "text": "continue",
+         "times": 2,
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "get",
+         "text": "the second “continue” gives it",
+         "items": [
+          "Askr’s Bag of Verity"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "note",
+         "text": "If you leave the zone his conversation resets: hail him once (he remembers the head), then say “continue” twice again.",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the bag: one from each camp",
+         "items": [
+          "Storm Volaas Beard",
+          "Storm Taarid Bone",
+          "Storm Satuur Sash"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Askr the Lost",
+         "items": [
+          "Askr’s Sealed Bag of Verity"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost",
+         "text": "bastion of thunder",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a second bag",
+         "items": [
+          "Askr’s Bag of Verity"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the bag: two from different camps",
+         "items": [
+          "Esoteric Medallion",
+          "Esoteric Medallion"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Askr the Lost",
+         "items": [
+          "Esoteric Meld"
+         ],
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "postorms/Askr_the_Lost.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the shrine in the heart of Mount Grenidor",
+         "text": "Click it: this click is what flags you and takes you into the Bastion of Thunder. It needs Askr’s second flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.",
+         "src": "postorms/player.lua"
         }
        ],
        "expect": "A group clears a camp at a time. Everyone needs their own head, their own three parts and two medallions from different camps, and each camp’s named drops three medallions. Stay in the zone until you are done with him: leaving resets the conversation.",
@@ -1260,6 +2506,14 @@ window.POP_QUESTS = {
          "note": "the stone in the middle of Storms"
         }
        ],
+       "seq": [
+        {
+         "kind": "zone",
+         "to": "the shrine in the heart of Mount Grenidor",
+         "text": "Click it: with Askr’s second flag and your Justice flag (Mavuin at 3) it sets your Bastion flag and sends you in; without both it refuses.",
+         "src": "postorms/player.lua"
+        }
+       ],
        "expect": "Solo. With both flags the shrine sends you to the lower halls of the Bastion of Thunder. Without the Justice flag it finds “no mystic symbol”: go back to Mavuin."
       },
       {
@@ -1282,6 +2536,17 @@ window.POP_QUESTS = {
          "x": 375,
          "note": "either switch works"
         }
+       ],
+       "seq": [
+        {
+         "kind": "click",
+         "to": "either switch by the glass door",
+         "text": "hold the globe on your cursor; the glass door opens",
+         "items": [
+          "A Crystalline Globe"
+         ],
+         "src": "povalor/player.lua"
+        }
        ]
       },
       {
@@ -1289,13 +2554,39 @@ window.POP_QUESTS = {
        "title": "Kill Aerin`Dar (Plane of Valor)",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves."
+       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Aerin`Dar",
+         "src": "povalor/#Aerin-Dar.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "text": "it answers only with your Mavuin flag at 3",
+         "src": "povalor/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your Aerin`Dar flag (no message)",
+         "src": "povalor/A_Planar_Projection.lua"
+        }
+       ]
       },
       {
        "key": "valor_zone_hoh",
        "title": "Zone into the Halls of Honor by the Valor underground tunnel",
        "who": "solo",
-       "must": true
+       "must": true,
+       "seq": [
+        {
+         "kind": "zone",
+         "to": "the Halls of Honor portal, by the Valor underground tunnel",
+         "text": "Click it: with the Aerin`Dar flag from the projection this click sets your Aerin`Dar flag to 2 and the Halls of Honor zone flag; without it the portal refuses you.",
+         "src": "povalor/player.lua"
+        }
+       ]
       },
       {
        "key": "torment_fahlia",
@@ -1316,6 +2607,19 @@ window.POP_QUESTS = {
          "y": -301,
          "x": -1365,
          "note": "sick bay"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Fahlia Shadyglade",
+         "text": "i will go",
+         "src": "potranquility/Fahlia_Shadyglade.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potranquility/Fahlia_Shadyglade.lua"
         }
        ]
       },
@@ -1340,6 +2644,30 @@ window.POP_QUESTS = {
          "text": "ready to return"
         }
        ],
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "The Keeper of Sorrows",
+         "src": "potorment/The_Keeper_of_Sorrows.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Tylis Newleaf (in Torment)",
+         "text": "it flags you only if Fahlia’s “will go” came first",
+         "src": "potorment/#Tylis_Newleaf.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potorment/#Tylis_Newleaf.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Tylis Newleaf (in Torment)",
+         "text": "ready to return",
+         "src": "potorment/#Tylis_Newleaf.lua"
+        }
+       ],
        "back": [
         {
          "npc": "Tylis Newleaf",
@@ -1356,6 +2684,23 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Saryrn",
+         "src": "potorment/Saryrn.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "potorment/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potorment/A_Planar_Projection.lua"
+        }
+       ],
        "back": [
         {
          "npc": "Fahlia Shadyglade",
@@ -1410,6 +2755,18 @@ window.POP_QUESTS = {
          "x": 1016,
          "note": "top of the library elevator"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Fahlia Shadyglade",
+         "src": "potranquility/Fahlia_Shadyglade.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Tylis Newleaf",
+         "src": "potranquility/Tylis_Newleaf.lua"
+        }
        ]
       }
      ]
@@ -1439,6 +2796,23 @@ window.POP_QUESTS = {
          "y": 11,
          "x": 170,
          "note": "in the courtyard"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "click",
+         "to": "the tower portal in the courtyard",
+         "text": "the holder puts it on the cursor and clicks; their raid or group then has 5 minutes",
+         "items": [
+          "Symbol of Torden"
+         ],
+         "src": "bothunder/player.lua"
+        },
+        {
+         "kind": "click",
+         "to": "the tower portal in the courtyard",
+         "text": "everyone else, within those 5 minutes",
+         "src": "bothunder/player.lua"
         }
        ],
        "expect": "The raid farms the four spheres and one Unadorned Symbol. One raider carries the finished Symbol; everyone else clicks the portal within 5 minutes of them.",
@@ -1488,6 +2862,46 @@ window.POP_QUESTS = {
          "note": "appears when Emmerik Skyfury dies"
         }
        ],
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Evynd Firestorm",
+         "src": "bothunder/Evynd_Firestorm.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Askr the Lost (appears where Evynd falls)",
+         "src": "bothunder/#Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost (appears where Evynd falls)",
+         "text": "transport",
+         "src": "bothunder/#Askr_the_Lost.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Emmerik Skyfury",
+         "src": "bothunder/Emmerik_Skyfury.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Askr the Lost (appears where Emmerik falls)",
+         "src": "bothunder/##Askr_the_Lost.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Askr the Lost (appears where Emmerik falls)",
+         "text": "what storm",
+         "src": "bothunder/##Askr_the_Lost.lua"
+        },
+        {
+         "kind": "click",
+         "to": "A Chaotic Vortex",
+         "text": "it appears when he says that; clicking it carries you to Agnarr",
+         "src": "bothunder/player.lua"
+        }
+       ],
        "expect": "A raid. Everyone talks to Askr twice, once after each tower boss. Askr, the vortex and Karana stay 55 minutes.",
        "back": [
         {
@@ -1524,6 +2938,35 @@ window.POP_QUESTS = {
          "note": "appears when Agnarr dies"
         }
        ],
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Agnarr the Storm Lord",
+         "src": "bothunder/Agnarr_the_Storm_Lord.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Karana",
+         "text": "I will follow the path of the Fallen.",
+         "src": "bothunder/Karana.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag, only if you came into the Bastion through the Storms shrine",
+         "src": "bothunder/Karana.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Karana",
+         "text": "Send me on my path.",
+         "src": "bothunder/Karana.lua"
+        },
+        {
+         "kind": "get",
+         "text": "Gate: you land at your bind point",
+         "src": "bothunder/Karana.lua"
+        }
+       ],
        "expect": "A raid. Karana answers up to 72 people from the raid with the kill. Ask for the path of the Fallen before “send me”, which casts Gate."
       },
       {
@@ -1558,6 +3001,41 @@ window.POP_QUESTS = {
          "x": -1725,
          "note": "northeast trial"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Trydan Faye (to start the trial)",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Trydan Faye (to start the trial)",
+         "text": "trials",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Trydan Faye (to start the trial)",
+         "text": "ready",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Rydda`Dar",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Trydan Faye (after the win)",
+         "text": "while you are in the group or raid that won",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your credit for this trial (a line about an ethereal mist)",
+         "src": "hohonora/encounters/RyddaDar.lua"
+        }
        ]
       },
       {
@@ -1587,6 +3065,35 @@ window.POP_QUESTS = {
          "y": 1374,
          "x": 456,
          "note": "northwest trial"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Rhaliq Trell (to start the trial)",
+         "src": "hohonora/encounters/Villagers.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Rhaliq Trell (to start the trial)",
+         "text": "ready",
+         "src": "hohonora/encounters/Villagers.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Win the trial: save the villagers.",
+         "src": "hohonora/encounters/Villagers.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Rhaliq Trell (after the win)",
+         "text": "while you are in the group or raid that won",
+         "src": "hohonora/encounters/Villagers.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your credit for this trial (a line about an ethereal mist)",
+         "src": "hohonora/encounters/Villagers.lua"
         }
        ]
       },
@@ -1618,6 +3125,41 @@ window.POP_QUESTS = {
          "x": -2330,
          "note": "southeast trial"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Alekson Garn (to start the trial)",
+         "src": "hohonora/encounters/Crazed.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Alekson Garn (to start the trial)",
+         "text": "ready",
+         "src": "hohonora/encounters/Crazed.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Win the trial: save one villager.",
+         "src": "hohonora/encounters/Crazed.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Alekson Garn (after the win)",
+         "text": "while you are in the group or raid that won",
+         "src": "hohonora/encounters/Crazed.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your credit for this trial (a line about an ethereal mist)",
+         "src": "hohonora/encounters/Crazed.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "one of the Temple of Marr portals",
+         "text": "Click it once all three trials are credited: that click sets the Temple of Marr zone flag.",
+         "src": "hohonora/player.lua"
+        }
        ]
       },
       {
@@ -1625,7 +3167,24 @@ window.POP_QUESTS = {
        "title": "Kill Mithaniel Marr (Temple of Marr)",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves."
+       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Mithaniel Marr",
+         "src": "hohonorb/Lord_Mithaniel_Marr.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "hohonorb/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "hohonorb/A_Planar_Projection.lua"
+        }
+       ]
       },
       {
        "key": "tactics_maelin_before",
@@ -1655,6 +3214,25 @@ window.POP_QUESTS = {
          "x": 1016,
          "note": "top of the library elevator"
         }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Grand Librarian Maelin",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "lore",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "information",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        }
        ]
       },
       {
@@ -1676,6 +3254,19 @@ window.POP_QUESTS = {
          "y": 6,
          "x": 1016,
          "note": "top of the library elevator"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Grand Librarian Maelin",
+         "text": "once you hold both halves, Saryrn’s and Mithaniel Marr’s",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your cipher flag (it clears the two halves)",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
         }
        ]
       },
@@ -1699,19 +3290,66 @@ window.POP_QUESTS = {
          "x": 1016,
          "note": "top of the library elevator"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "lore",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag (it clears the two notes)",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        }
        ]
       },
       {
        "key": "flag_vallon",
        "title": "Kill Vallon Zek",
        "who": "raid",
-       "detail": "Then hail A Planar Projection before anyone leaves."
+       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Vallon Zek",
+         "src": "potactics/214317.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "potactics/214324.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potactics/214324.lua"
+        }
+       ]
       },
       {
        "key": "flag_tallon",
        "title": "Kill Tallon Zek",
        "who": "raid",
-       "detail": "Then hail A Planar Projection before anyone leaves."
+       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Tallon Zek",
+         "src": "potactics/214026.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "potactics/214323.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potactics/214323.lua"
+        }
+       ]
       },
       {
        "key": "zeks_maelin",
@@ -1733,6 +3371,25 @@ window.POP_QUESTS = {
          "x": 1016,
          "note": "top of the library elevator"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "information",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag (Zeks 6); it needs the cipher and both Zek projections",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Tower of Solusek Ro portal in the Plane of Tranquility",
+         "text": "Click it with the cipher and your Zeks flag at 6 or more: that click sets the zone flag.",
+         "src": "potranquility/player.lua"
+        }
        ]
       },
       {
@@ -1740,7 +3397,25 @@ window.POP_QUESTS = {
        "title": "Kill Rallos Zek",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves."
+       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Rallos Zek",
+         "src": "potactics/encounters/Rallos.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "text": "it gives the real flag only with your Zeks flag at 6",
+         "src": "potactics/214322.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "potactics/214322.lua"
+        }
+       ]
       },
       {
        "key": "tactics_maelin_after",
@@ -1774,6 +3449,27 @@ window.POP_QUESTS = {
          "x": -224,
          "note": "next to the Plane of Tranquility book"
         }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "information",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Seer Mal Nae`Shi",
+         "text": "unlock my memories",
+         "sit": true,
+         "until": "she has nothing new to unlock",
+         "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
+        },
+        {
+         "kind": "note",
+         "text": "If Rallos Zek’s projection gave only a checklist flag, the Seer makes it the real one first: go back and forth until neither has more.",
+         "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
+        }
        ]
       },
       {
@@ -1795,6 +3491,25 @@ window.POP_QUESTS = {
          "y": 6,
          "x": 1016,
          "note": "top of the library elevator"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "say",
+         "to": "Grand Librarian Maelin",
+         "text": "information",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag (Zebuxoruk 2)",
+         "src": "poknowledge/Grand_Librarian_Maelin.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the Air, Earth or Water portal in the Plane of Tranquility",
+         "text": "Click one: that click sets the zone flags for all three, and needs your Zebuxoruk flag at 2.",
+         "src": "potranquility/player.lua"
         }
        ]
       },
@@ -1829,6 +3544,36 @@ window.POP_QUESTS = {
          "y": 255,
          "x": -2255,
          "note": "next to the Plane of Fire portal"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "hail",
+         "to": "Miak the Searedsoul",
+         "src": "potranquility/Miak_the_Searedsoul.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Miak the Searedsoul",
+         "text": "plane of fire",
+         "src": "potranquility/Miak_the_Searedsoul.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Miak the Searedsoul",
+         "text": "demise",
+         "src": "potranquility/Miak_the_Searedsoul.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Miak the Searedsoul",
+         "text": "portal's destination",
+         "src": "potranquility/Miak_the_Searedsoul.lua"
+        },
+        {
+         "kind": "get",
+         "text": "your first Fire flag",
+         "src": "potranquility/Miak_the_Searedsoul.lua"
         }
        ]
       },
@@ -1906,6 +3651,99 @@ window.POP_QUESTS = {
          "note": "click it after the kill"
         }
        ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "The five wings in any order. Each is a boss and then a click on its flaming cauldron, which is there for 30 minutes after the kill; click when it is not and you only become disoriented.",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Xuzl",
+         "src": "solrotower/Xuzl.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Xuzl’s flaming cauldron",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Arlyxir",
+         "src": "solrotower/Arlyxir.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Arlyxir’s flaming cauldron",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "the four Guardians of Dresolik",
+         "text": "the Protector appears when the last one dies",
+         "src": "solrotower/Guardian_of_Dresolik.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "The Protector of Dresolik",
+         "src": "solrotower/The_Protector_of_Dresolik.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Dresolik’s flaming cauldron",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Rizlona",
+         "src": "solrotower/Rizlona.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "the second Rizlona, where she falls",
+         "src": "solrotower/#Rizlona.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Rizlona’s flaming cauldron",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "Jiva",
+         "src": "solrotower/Jiva.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Jiva’s flaming cauldron",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag",
+         "src": "solrotower/player.lua"
+        }
+       ],
        "expect": "A raid, a wing at a time, in any order. Each wing is a boss fight and then a click on its flaming cauldron, which stays 30 minutes. Everyone clicks their own."
       },
       {
@@ -1913,7 +3751,37 @@ window.POP_QUESTS = {
        "title": "Kill Solusek Ro",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves. Then drop into the lava pit in his chamber to reach the Plane of Fire."
+       "detail": "Then hail A Planar Projection before anyone leaves. Then drop into the lava pit in his chamber to reach the Plane of Fire.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Solusek Ro",
+         "src": "solrotower/Solusek_Ro.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "text": "it answers only after all five wings",
+         "src": "solrotower/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag (your second Fire flag needs the first one and your Zeks flag at 7; otherwise it is a checklist flag)",
+         "src": "solrotower/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "click",
+         "to": "the floor doors in his chamber",
+         "text": "they open while the projection is up",
+         "src": "solrotower/player.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the lava pit in his chamber",
+         "text": "Drop in: falling into the Plane of Fire is what sets its zone flag, and only with your second Fire flag. The Fire portal in Tranquility works only after that.",
+         "src": "solrotower/player.lua"
+        }
+       ]
       }
      ]
     }
@@ -1935,7 +3803,27 @@ window.POP_QUESTS = {
        "title": "Kill Fennin Ro (Plane of Fire)",
        "who": "raid",
        "must": true,
-       "detail": "Hail A Planar Projection to receive the Globe of Dancing Flame."
+       "detail": "Hail Essence of Fire, who appears where Fennin Ro falls, to receive the Globe of Dancing Flame.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Fennin Ro",
+         "src": "pofire/encounters/Fennin.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Essence of Fire",
+         "text": "only if you do not already hold the Globe or the Quintessence",
+         "src": "pofire/Essence_of_Fire.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Globe of Dancing Flame"
+         ],
+         "src": "pofire/Essence_of_Fire.lua"
+        }
+       ]
       },
       {
        "key": "air_key",
@@ -1954,14 +3842,54 @@ window.POP_QUESTS = {
        "title": "Kill Xegony (Plane of Air)",
        "who": "raid",
        "must": true,
-       "detail": "Hail A Planar Projection to receive the Amorphous Cloud of Air."
+       "detail": "Hail Essence of Air, who appears where Xegony falls, to receive the Amorphous Cloud of Air.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Xegony",
+         "src": "poair/encounters/Xegony.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Essence of Air",
+         "text": "only if you do not already hold the Cloud or the Quintessence",
+         "src": "poair/Essence_of_Air.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Amorphous Cloud of Air"
+         ],
+         "src": "poair/Essence_of_Air.lua"
+        }
+       ]
       },
       {
        "key": "flag_coirnav",
        "title": "Kill Coirnav (Plane of Water)",
        "who": "raid",
        "must": true,
-       "detail": "Hail A Planar Projection to receive the Sphere of Coalesced Water."
+       "detail": "Hail Essence of Water, who appears where Coirnav falls, to receive the Sphere of Coalesced Water.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "Coirnav",
+         "src": "powater/encounters/Coirnav.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Essence of Water",
+         "text": "only if you do not already hold the Sphere or the Quintessence",
+         "src": "powater/Essence_of_Water.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Sphere of Coalesced Water"
+         ],
+         "src": "powater/Essence_of_Water.lua"
+        }
+       ]
       },
       {
        "key": "earth_key",
@@ -1975,14 +3903,63 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "check": true,
-       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B."
+       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "the four earth rings (Dust, Mud, Stone and Vine)",
+         "text": "all four within 24 hours, or the Arbitor does not appear",
+         "src": "poeartha/arbitor_guy.lua"
+        },
+        {
+         "kind": "kill",
+         "to": "A Mystical Arbitor of Earth",
+         "src": "poeartha/A_Mystical_Arbitor_of_Earth.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "A Planar Projection",
+         "src": "poeartha/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "get",
+         "text": "a character flag (the Passkey of the Twelve)",
+         "src": "poeartha/A_Planar_Projection.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "the door into Plane of Earth B",
+         "text": "Click it with that flag: the click sets the zone flag and carries you in.",
+         "src": "poeartha/player.lua"
+        }
+       ]
       },
       {
        "key": "flag_rathe",
        "title": "Kill the Rathe Council (the Avatar of Earth)",
        "who": "raid",
        "must": true,
-       "detail": "Hail A Planar Projection to receive the Mound of Living Stone."
+       "detail": "Hail Essence of Earth, who appears where the Avatar of Earth falls, to receive the Mound of Living Stone.",
+       "seq": [
+        {
+         "kind": "kill",
+         "to": "the Avatar of Earth",
+         "src": "poearthb/#Avatar_of_Earth.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Essence of Earth",
+         "text": "only if you do not already hold the Mound or the Quintessence",
+         "src": "poearthb/Essence_of_Earth.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Mound of Living Stone"
+         ],
+         "src": "poearthb/Essence_of_Earth.lua"
+        }
+       ]
       },
       {
        "key": "essences_power",
@@ -2002,6 +3979,88 @@ window.POP_QUESTS = {
          "y": 0,
          "x": 1003,
          "note": "top of the library elevator"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Carry the Tiny Gold Fist: Councilwoman Kerasha answers only while you have it.",
+         "items": [
+          "Tiny Gold Fist"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Councilwoman Kerasha",
+         "text": "essences of power",
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Sacred Bowl"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the bowl: one of each, a loot call from the four gods",
+         "items": [
+          "Essence of Fire",
+          "Essence of Wind",
+          "Essence of Water",
+          "Essence of Earth"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Power of the Planes"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Councilwoman Kerasha",
+         "items": [
+          "Power of the Planes"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Jade Hoop of Speed"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Councilwoman Kerasha",
+         "text": "to change the reward, hand back the one you hold",
+         "items": [
+          "Jade Hoop of Speed",
+          "Frizzniks Endless Coin Purse",
+          "Cord of Invigoration",
+          "Mace of the Ancients",
+          "Ring of Farsight"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
+        },
+        {
+         "kind": "get",
+         "text": "the next one, in that order (each hand-back gives the next)",
+         "items": [
+          "Frizzniks Endless Coin Purse",
+          "Cord of Invigoration",
+          "Mace of the Ancients",
+          "Ring of Farsight",
+          "Jade Hoop of Speed"
+         ],
+         "src": "poknowledge/Councilwoman_Kerasha.lua"
         }
        ],
        "expect": "Solo once you hold all four essences. Getting them is four raid kills at 40% each, so the guild decides who they go to.",
@@ -2098,6 +4157,44 @@ window.POP_QUESTS = {
          "y": -858,
          "x": 886,
          "note": "click it with the Quintessence in your bags"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Needs your Zebuxoruk flag at 2 and the Quintessence of Elements in your bags (the bank does not count).",
+         "items": [
+          "Quintessence of Elements"
+         ],
+         "src": "poinnovation/#Chronographer_Muon.lua"
+        },
+        {
+         "kind": "hail",
+         "to": "Chronographer Muon",
+         "src": "poinnovation/#Chronographer_Muon.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Chronographer Muon",
+         "text": "yes",
+         "src": "poinnovation/#Chronographer_Muon.lua"
+        },
+        {
+         "kind": "note",
+         "text": "He carries you up to the time-projection chamber, and Loreseeker Maelin appears there.",
+         "src": "poinnovation/#Chronographer_Muon.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Loreseeker Maelin",
+         "text": "researched",
+         "src": "poinnovation/Loreseeker_Maelin.lua"
+        },
+        {
+         "kind": "zone",
+         "to": "The time machine",
+         "text": "Click it with the Quintessence in your bags: that click sets your Plane of Time flag and carries you in. The portal back in Tranquility then also asks for level 65.",
+         "src": "poinnovation/player.lua"
         }
        ]
       },

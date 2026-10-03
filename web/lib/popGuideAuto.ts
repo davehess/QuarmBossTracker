@@ -38,8 +38,10 @@ export type AutoInput = {
 // mavuin 3, which only follows Mavuin's information and the Tribunal. (Only for /who and loot, which are
 // presence: a recorded trial_justice can still come from the boss fallback, which proves the trial and
 // nothing after it.)
+// The Justice flag now belongs to the Mavuin hail (popGuide.ts), so the trial step is listed here too:
+// before 2026-10-03 it was the flag's own step and ticked through the flag loop below.
 const WHO_STEPS_BEFORE: Record<string, string[]> = {
-  trial_justice: ['justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
+  trial_justice: ['flag_trial_justice', 'justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
 };
 
 // Holding the reward (or the thing the step asks you to get) proves the step. All the ids, unless

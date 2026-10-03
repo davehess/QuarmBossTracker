@@ -68,6 +68,30 @@ describe('pop-quests.js is the generated copy of the web guide', () => {
     }
   });
 
+  it('carries every step’s seq (the guild lead, 2026-10-03: one ordered list per step) act for act, in order, with its script', () => {
+    const byKey = new Map(quests(load()).map(q => [q.key, q]));
+    const fields = ['kind', 'to', 'text', 'sit', 'times', 'until', 'src'];
+    let n = 0;
+    for (const i of GUIDE_ITEMS) {
+      const q = byKey.get(i.key);
+      if (!i.seq) { expect(q.seq, i.key).toBeUndefined(); continue; }
+      expect(q.seq.length, i.key).toBe(i.seq.length);
+      i.seq.forEach((a, k) => {
+        for (const f of fields) expect(q.seq[k][f], `${i.key}[${k}].${f}`).toEqual(a[f]);
+        // Item tokens come through as the bare name, one per token and in the same order.
+        expect(q.seq[k].items, `${i.key}[${k}].items`).toEqual(a.items?.map(t => t.replace(/\[\[([^\]#]+)#\d+\]\]/g, '$1')));
+        n++;
+      });
+    }
+    expect(n).toBeGreaterThan(300);
+    // The model case reads in full: "continue" twice, then the shrine.
+    const askr = byKey.get('flag_askr').seq;
+    expect(askr.find(a => a.text === 'continue').times).toBe(2);
+    expect(askr[askr.length - 1]).toMatchObject({ kind: 'zone', src: 'postorms/player.lua' });
+    expect(askr[0].items).toEqual(['Storm Giant Head']);
+    expect(byKey.get('start_flag_fixers').seq.find(a => a.until)).toMatchObject({ text: 'unlock my memories', sit: true });
+  });
+
   it('turns [[Item#id]] tokens into the bare item name, everywhere', () => {
     expect(generated).not.toMatch(/\[\[|#\d+\]\]/);
     const q = quests(load()).find(x => x.key === 'pok_taxidermy');
