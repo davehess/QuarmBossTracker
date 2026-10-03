@@ -11,12 +11,17 @@
 //   who      — a raider's /who showed the character inside a gated plane, so its gate and the gates
 //              on the way in are done (web/lib/popWho.ts). Works for characters whose owners never
 //              run Mimic (the guild lead, 2026-10-01).
+//   loot     — the character looted something inside a gated plane (or holds a NO DROP item that drops
+//              only there), which is the same proof of presence, so the same gates are done (the guild
+//              lead, 2026-10-03: "if anyone has looted any distinct items from any of the planes we
+//              should go through and flag them up to that plane"). /who is read first, so where both
+//              show it the row says /who.
 // Pure: the page reads the rows and hands them in, so the rules are testable without a database.
 
 import { GUIDE_ITEMS } from './popGuide';
-import { flagsFromSightings, seenText, type Sighting } from './popWho';
+import { flagsFromLoot, flagsFromSightings, lootText, seenText, type LootSighting, type Sighting } from './popWho';
 
-export type Evidence = { source: 'mimic' | 'database' | 'who'; what: string; at: string | null };
+export type Evidence = { source: 'mimic' | 'database' | 'who' | 'loot'; what: string; at: string | null };
 export type AutoInput = {
   flags: { flag_key: string; earned_at: string | null }[];
   loots: { item_name: string; looted_at: string | null }[];
@@ -26,11 +31,13 @@ export type AutoInput = {
   spellbook: boolean;
   liveAt: string | null;
   seen?: Sighting[];   // pop_who_sightings rows for this character
+  looted?: LootSighting[];   // pop_loot_sightings rows for this character
 };
 
 // Steps that come before a gate flag in the same arc. Standing in Storms or Valor means the server's
-// mavuin 3, which only follows Mavuin's information and the Tribunal. (Only for /who: a recorded
-// trial_justice can still come from the boss fallback, which proves the trial and nothing after it.)
+// mavuin 3, which only follows Mavuin's information and the Tribunal. (Only for /who and loot, which are
+// presence: a recorded trial_justice can still come from the boss fallback, which proves the trial and
+// nothing after it.)
 const WHO_STEPS_BEFORE: Record<string, string[]> = {
   trial_justice: ['justice_mavuin_info', 'justice_tribunal', 'justice_mavuin_hail'],
 };
@@ -77,6 +84,13 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
   // /who: the gate of the plane they were seen in, and of every plane on the way in.
   for (const [flag, proof] of flagsFromSightings(inp.seen ?? [])) {
     const ev: Evidence = { source: 'who', what: seenText(proof.zone), at: proof.at };
+    for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
+    for (const k of WHO_STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
+  }
+  // Loot: the same gates, from what they looted in the plane. After /who, so a step /who already filled
+  // keeps its /who label.
+  for (const [flag, proof] of flagsFromLoot(inp.looted ?? [])) {
+    const ev: Evidence = { source: 'loot', what: lootText(proof.zone, proof.source), at: proof.at };
     for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
     for (const k of WHO_STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
   }

@@ -109,6 +109,11 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **✅ Loot proves PoP flags (web 1.8.87, live, 2026-10-03).** A character that looted in a plane, or holds a NO
+  DROP item that drops only in one, gets that plane's flags as a purple ✓ on
+  [wolfpack.quest/pop](https://wolfpack.quest/pop) and an auto-tick on the guide. 71 (character, plane) rows today
+  (Bastion of Thunder 25, Storms 38, Valor 8); all already proven by Mimic or /who, so no purple ✓ shows yet.
+  Migration `20261003190000` applied. §146.
 - **⏳ Members tick their own PoP flags (web 1.8.86, live, 2026-10-03).** On
   [wolfpack.quest/pop?view=matrix](https://wolfpack.quest/pop?view=matrix) and
   [?view=mine](https://wolfpack.quest/pop?view=mine) a gate on your own character is a toggle: gold ☑ = your word,
