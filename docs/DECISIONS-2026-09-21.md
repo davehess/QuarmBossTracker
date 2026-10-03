@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **PoP pages live; stable Mimic 2.7.8; self-ticked flags** | **§143–§145.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194). Building: members tick their own PoP flags on /pop | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready |
+| **PoP pages live; stable Mimic 2.7.8; self-ticked flags; loot proof** | **§143–§146.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194), members tick their own flags (1.8.86), loot proves flags (1.8.87, purple ✓). Building: the guide's steps as one ordered sequence, the Justice flag on the Mavuin hail, the zone-in acts (§147) | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready |
 | **The eight-part request of Oct 3** | **§135–§142.** Live: `/zeal-icons` + `/db/recipe` and `/admin/extra-spells` with the `[beta]` tag (web 1.8.81–1.8.82), the loot panel (bot 3.1.192). Beta (agent 3.7.72–3.7.74): Command Center raids card, crash review on Diagnostics, Loot tab who-looted-what, traders and under-46 tucked away on `/pop` `/pop/guide` `/me`, PoP overlay Quests mode with the guide's words filled from the quest scripts. Alpha `5adafea8`: Canvas presets are the real overlays, tight margins, HUD ring + builder | the guild lead: (1) look at the beta pages and Mimic beta; (2) look at the Canvas on the alpha; (3) send a dozen log lines from a PoK trainer hand-in (extra spells phase 2); (4) pick a Zeal icons layout; (5) the calls listed in §139–§142 |
 | **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.80: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
@@ -6497,3 +6497,27 @@ somewhere else that makes sense."*
   the Mavuin hail, so ticking that one step counts as Justice (which opens Valor and Storms). Moving the flag to
   the hail step would be one data edit. Three flags (`fuirstel_5`, `thelin_4`, `hoh_trials`) have no checklist
   step, so a /pop tick for them does not show on the checklist.
+  ⚠ **Superseded the same evening:** the guild lead asked for exactly that move (§147).
+
+### 146. Loot proves PoP flags (2026-10-03, web 1.8.87, migration `20261003190000`)
+
+The guild lead: *"if anyone has looted any distinct items from any of the planes we should go through and flag
+them up to that plane"*.
+
+- **The rule:** loot is presence proof, the same as a /who sighting. A character that looted something inside a
+  plane stood in it, so it holds that plane's gate and every gate on the way in. Two sources, one RPC
+  (`pop_loot_sightings`, service role only):
+  - **looted** — `looted_items` (the agent's own "You have looted" line, self-only) whose Zeal zone id maps to a
+    plane. Verified: the zone column is the numeric zone id as text and maps cleanly through `eqemu_zone`.
+  - **inventory** — a NO DROP item that drops in exactly one zone, that zone a plane, and no quest reward, in an
+    uploaded inventory. The same rule as the keyed-zone inference (`locked_zone_evidence_for`), so "distinct"
+    items are covered whether or not the loot line was captured. Honours `exclude_inventory`.
+- **Shown as a purple ✓** ("Looted in <plane>"), counted wherever a /who proof counts (chart, matrix, planner,
+  My Characters, zone page), and the guide checklist auto-ticks it ("looted there"). Precedence: Mimic (green) >
+  /who (blue) > loot (purple) > the owner's tick (gold ☑). Purple therefore means "the loot is the only proof".
+- **Measured on production after applying:** 71 (character, plane) rows across 38 characters — Bastion of Thunder
+  25, Storms 38, Valor 8; nothing yet in the other planes. Every one of those flags was already proven by Mimic
+  or /who, so no purple ✓ shows today; it appears the first time someone loots in a plane before /who places them.
+- **Not changed:** the plane list is the /who table's (`WHO_ZONE`); the open planes (Justice, Disease,
+  Nightmare, Innovation) prove nothing, and an instanced copy is not counted. A test keeps the SQL list and the
+  site's list equal.

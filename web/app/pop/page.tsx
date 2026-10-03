@@ -19,6 +19,11 @@
 // characters outside of using mimic"): pop_guide_ticks, the table the /pop/guide checklist writes, read by
 // web/lib/popSelfFlags.ts and shown as a gold ☑. Mimic's flag and /who both outrank it. On the matrix and
 // My Characters the viewer's own cells are buttons (SelfFlagCells.tsx); everyone else's are plain marks.
+// Loot counts as presence too (the guild lead, 2026-10-03: "if anyone has looted any distinct items from any
+// of the planes we should go through and flag them up to that plane"): a character that looted inside a
+// gated plane, or holds a NO DROP item that drops only in one, was there, so it holds the same flags a /who
+// sighting there proves (pop_loot_sightings + flagsFromLoot in web/lib/popWho.ts), shown as a purple ✓.
+// Proof precedence, strongest first: Mimic > /who > loot > the owner's tick.
 //
 // Views: default = chart + planner · ?zone=<key> = who's in/missing ·
 // ?view=matrix = roster × zone table · ?view=mine = the signed-in member's
@@ -47,7 +52,10 @@ import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
-import { WHO_ZONE_NAMES, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
+import {
+  WHO_ZONE_NAMES, flagsFromLoot, flagsFromSightings, lootText, seenText, type LootProof, type Sighting, type WhoProof,
+} from '@/lib/popWho';
+import { loadLootSightings, type LootRow } from '@/lib/popLootRows';
 import { SELF_TICK_KEYS, SELF_TICK_TITLE, gateState, proofFor, selfFlagsFromTicks } from '@/lib/popSelfFlags';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
@@ -64,9 +72,13 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
-// flags = recorded + seen + self; seen = the flags only /who proves (a character standing in a gated plane);
-// self = the flags only the owner's own tick holds (Mimic and /who both outrank it, so a flag they prove is never here).
-type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean; seen: Map<string, WhoProof>; self: Set<string> };
+// flags = recorded + seen + looted + self; seen = the flags only /who proves (a character standing in a gated plane);
+// looted = the flags only loot proves (a character that looted in one; Mimic and /who outrank it, so a flag they
+// prove is never here); self = the flags only the owner's own tick holds (Mimic, /who and loot all outrank it).
+type CharFlags = {
+  name: string; flags: Set<string>; unmapped: number; main: boolean;
+  seen: Map<string, WhoProof>; looted: Map<string, LootProof>; self: Set<string>;
+};
 
 // One row per (character, PoP spell they haven't scribed) — main OR alt, as
 // of pop_spell_needs v4 (2026-08-26). Ordered by character level descending
@@ -322,7 +334,7 @@ export default async function PopFlagsPage(
   for (const r of flagRows) {
     const k = r.character.toLowerCase();
     let c = byChar.get(k);
-    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
+    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true, seen: new Map(), looted: new Map(), self: new Set() }; byChar.set(k, c); }
     c.flags.add(r.flag_key);
   }
   // /who, for the roster and the viewer's own characters (the guild lead, 2026-10-01: "from /who in the
@@ -330,9 +342,14 @@ export default async function PopFlagsPage(
   // should note it"). Standing in a gated plane proves its gate and the gates on the way in
   // (web/lib/popWho.ts). Those flags count everywhere below, kept in `seen` so the page can say so.
   const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name), ...myUnknown.map(c => c.name)].map(n => [n.toLowerCase(), n]));
-  const { data: sightRows } = nameOf.size
-    ? await sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES })
-    : { data: [] };
+  // Loot is read beside it (pop_loot_sightings, every character, a page at a time) and kept for the same
+  // names, so one more round trip does not wait on the first.
+  const [{ data: sightRows }, lootRows] = await Promise.all([
+    nameOf.size
+      ? sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES })
+      : { data: [] },
+    nameOf.size ? loadLootSightings(sb) : Promise.resolve([] as LootRow[]),
+  ]);
   const sightBy = new Map<string, Sighting[]>();
   for (const r of (sightRows ?? []) as (Sighting & { character_key: string })[]) {
     if (!sightBy.has(r.character_key)) sightBy.set(r.character_key, []);
@@ -340,11 +357,31 @@ export default async function PopFlagsPage(
   }
   for (const [k, rows] of sightBy) {
     let c = byChar.get(k);
-    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), looted: new Map(), self: new Set() }; byChar.set(k, c); }
     for (const [f, proof] of flagsFromSightings(rows)) {
       if (c.flags.has(f)) continue;
       c.flags.add(f);
       c.seen.set(f, proof);
+    }
+  }
+  // Loot next (the guild lead, 2026-10-03: "if anyone has looted any distinct items from any of the planes we
+  // should go through and flag them up to that plane"): the same proof of presence as a /who sighting, so the
+  // same flags. It comes after /who and before the ticks: a flag Mimic or /who already holds keeps that mark,
+  // so where /who and loot prove the same flag the blue /who ✓ is the one shown (the older, wider record, and
+  // it leaves purple to mean "only the loot says so"), and a tick never shows over a loot.
+  const lootBy = new Map<string, LootRow[]>();
+  for (const r of lootRows) {
+    if (!nameOf.has(r.character_key)) continue;
+    if (!lootBy.has(r.character_key)) lootBy.set(r.character_key, []);
+    lootBy.get(r.character_key)!.push(r);
+  }
+  for (const [k, rows] of lootBy) {
+    let c = byChar.get(k);
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), looted: new Map(), self: new Set() }; byChar.set(k, c); }
+    for (const [f, proof] of flagsFromLoot(rows)) {
+      if (c.flags.has(f)) continue;
+      c.flags.add(f);
+      c.looted.set(f, proof);
     }
   }
   // The owners' own word, last, so Mimic's record and /who's sighting both outrank it: a flag already held
@@ -353,7 +390,7 @@ export default async function PopFlagsPage(
   for (const [k, flags] of selfFlagsFromTicks(tickRows)) {
     if (!nameOf.has(k)) continue;
     let c = byChar.get(k);
-    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), looted: new Map(), self: new Set() }; byChar.set(k, c); }
     for (const f of flags) {
       if (c.flags.has(f)) continue;
       c.flags.add(f);
@@ -361,6 +398,7 @@ export default async function PopFlagsPage(
     }
   }
   const seenCount = [...byChar.values()].filter(c => c.seen.size > 0).length;
+  const lootCount = [...byChar.values()].filter(c => c.looted.size > 0).length;
   const selfCount = [...byChar.values()].filter(c => c.self.size > 0).length;
   // The characters the viewer owns, hidden and low-level ones included: their cells are the buttons.
   const ownedKeys = new Set(myCharsAll.map(c => c.name.toLowerCase()));
@@ -370,7 +408,8 @@ export default async function PopFlagsPage(
     .map(m => {
       const c = byChar.get(m.name.toLowerCase());
       return { name: m.name, flags: c?.flags ?? new Set<string>(), unmapped: 0, main: m.main,
-               seen: c?.seen ?? new Map<string, WhoProof>(), self: c?.self ?? new Set<string>() };
+               seen: c?.seen ?? new Map<string, WhoProof>(), looted: c?.looted ?? new Map<string, LootProof>(),
+               self: c?.self ?? new Set<string>() };
     })
     .sort((a, b) => b.flags.size - a.flags.size || a.name.localeCompare(b.name));
   const totalUnmapped = unmappedCount ?? 0;
@@ -491,29 +530,41 @@ export default async function PopFlagsPage(
     const byZone = [...new Map(proofs.map(p => [p.zone, p])).values()];
     return byZone.map(p => `${seenText(p.zone)} First seen ${new Date(p.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`).join(' ');
   }
+  // A flag only loot proves (pop_loot_sightings): a purple ✓ that says where they looted. Mimic and /who
+  // outrank it, so a flag either one holds is never in `looted` (see the merge above).
+  const lootedFor = (z: PopNode, c: { looted: Map<string, LootProof> }) =>
+    z.requires.map(f => c.looted.get(f)).filter((p): p is LootProof => !!p);
+  function lootTitle(proofs: LootProof[]) {
+    const byZone = [...new Map(proofs.map(p => [p.zone, p])).values()];
+    return byZone.map(p => `${lootText(p.zone, p.source)} First ${p.source === 'inventory' ? 'seen held' : 'looted'} ${new Date(p.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`).join(' ');
+  }
+  // What a cell's tooltip says about the proof behind it: where /who saw them, where they looted.
+  function proofTitle(z: PopNode, c: { seen: Map<string, WhoProof>; looted: Map<string, LootProof> }) {
+    const seen = seenFor(z, c);
+    const looted = lootedFor(z, c);
+    return [seen.length ? seenTitle(seen) : '', looted.length ? lootTitle(looted) : ''].filter(Boolean).join(' ');
+  }
   // A flag a member only ticked (web/lib/popSelfFlags.ts) is their own word, shown as a gold ☑ that says
   // so. A gate is only as proven as its weakest flag, so one ticked flag makes the whole cell ☑.
   const selfOf = (z: PopNode, c: { self: Set<string> }) => z.requires.filter(f => c.self.has(f));
   function selfTitle(z: PopNode, c: { self: Set<string> }) {
     return `${SELF_TICK_TITLE}: ${selfOf(z, c).map(f => POP_FLAGS[f]?.label ?? f).join(', ')}.`;
   }
-  type MarkSource = { flags: Set<string>; seen: Map<string, WhoProof>; self: Set<string> };
+  type MarkSource = { flags: Set<string>; seen: Map<string, WhoProof>; looted: Map<string, LootProof>; self: Set<string> };
   function AccessMark({ z, c }: { z: PopNode; c: MarkSource }) {
     const g = gateState(z.requires, proofFor(z.requires, c), c.self);
     if (g.mark === 'none') return <span className="text-dim">—</span>;
-    const seen = seenFor(z, c);
-    const title = [g.mark === 'self' ? selfTitle(z, c) : '', seen.length ? seenTitle(seen) : ''].filter(Boolean).join(' ');
+    const title = [g.mark === 'self' ? selfTitle(z, c) : '', proofTitle(z, c)].filter(Boolean).join(' ');
     return <GateMark kind={g.mark} title={title || undefined} />;
   }
   // One gate cell, as the owner's button when the viewer owns the character and as AccessMark for everyone
   // else's. The button decides for itself whether anything is left to tick (SelfFlagCells.tsx).
   function GateCell({ z, c, owned }: { z: PopNode; c: MarkSource & { name: string }; owned: boolean }) {
     if (!owned) return <AccessMark z={z} c={c} />;
-    const seen = seenFor(z, c);
     return (
       <OwnedGateCell character={c.name} zone={z.name}
                      requires={z.requires.map(f => ({ key: f, label: POP_FLAGS[f]?.label ?? f }))}
-                     proof={proofFor(z.requires, c)} whoTitle={seen.length ? seenTitle(seen) : ''} />
+                     proof={proofFor(z.requires, c)} proofTitle={proofTitle(z, c)} />
     );
   }
   // What a row's Flags number starts from: every flag Mimic or /who holds. The viewer's ticks are added live.
@@ -527,6 +578,13 @@ export default async function PopFlagsPage(
     if (!seen.length) return null;
     const zones = [...new Set(seen.map(p => POP_ZONE_BY_KEY[p.zone]?.short ?? p.zone))];
     return <span className="text-[11px] text-blue" title={seenTitle(seen)}> · seen in {zones.join(', ')} on /who</span>;
+  }
+  function lootTag(c: CharFlags) {
+    if (!selected) return null;
+    const looted = lootedFor(selected, c);
+    if (!looted.length) return null;
+    const zones = [...new Set(looted.map(p => POP_ZONE_BY_KEY[p.zone]?.short ?? p.zone))];
+    return <span className="text-[11px] text-purple" title={lootTitle(looted)}> · looted in {zones.join(', ')}</span>;
   }
   function selfTag(c: CharFlags) {
     if (!selected || selfOf(selected, c).length === 0) return null;
@@ -602,7 +660,7 @@ export default async function PopFlagsPage(
   // The My Characters table, once for the listed characters and once inside the "no known level" fold.
   function MineTable({ rows }: { rows: typeof myCharsAll }) {
     const flagsOf = (c: (typeof rows)[number]): CharFlags => byChar.get(c.name.toLowerCase())
-      ?? { name: c.name, flags: new Set<string>(), unmapped: 0, main: !c.main_name, seen: new Map<string, WhoProof>(), self: new Set<string>() };
+      ?? { name: c.name, flags: new Set<string>(), unmapped: 0, main: !c.main_name, seen: new Map<string, WhoProof>(), looted: new Map<string, LootProof>(), self: new Set<string>() };
     // Every row here is the viewer's own character, so every gate cell is theirs to tick (SelfFlagCells.tsx).
     return (
       <SelfFlagsProvider initial={ownTicks(rows.map(flagsOf))}>
@@ -714,6 +772,7 @@ export default async function PopFlagsPage(
   const gateLegend = (
     <p className="text-[11px] text-dim mt-3 leading-5">
       <span className="text-green">✓</span> Mimic saw it · <span className="text-blue">✓</span> seen on /who ·{' '}
+      <span className="text-purple">✓</span> looted in the plane ·{' '}
       <span className="text-gold">☑</span> {SELF_TICK_TITLE.toLowerCase()}, their own word · — not yet.{' '}
       On your own characters a cell is a button: tap it to tick or untick.
     </p>
@@ -732,6 +791,8 @@ export default async function PopFlagsPage(
           meditation&quot;) records everything a character holds. <b className="text-text">/who</b> fills in the rest,
           Mimic or not: anyone a raider&apos;s /who shows inside a flagged plane holds that plane&apos;s gate, and the
           gates of the planes they came through (a <span className="text-blue">blue ✓</span>; hover it for where).
+          So does <b className="text-text">loot</b>: anyone who looted inside a flagged plane was there, and gets
+          the same gates (a <span className="text-purple">purple ✓</span>).
           Anyone can also tick their <b className="text-text">own</b> characters&apos; gates on the Matrix or My
           Characters views, or on <Link href="/pop/guide" className="underline">their checklist</Link>: that is their
           own word, a <span className="text-gold">gold ☑</span>, and Mimic or /who outranks it.
@@ -752,6 +813,11 @@ export default async function PopFlagsPage(
           {seenCount > 0 && (
             <span title="Characters a raider's /who showed inside a plane behind a gate: their flags for it count, Mimic or not.">
               👁 <b className="text-text">{seenCount}</b> placed by /who
+            </span>
+          )}
+          {lootCount > 0 && (
+            <span title="Characters who looted inside a plane behind a gate (or hold a NO DROP item that drops only there) and were not already placed by Mimic or /who: their flags for it count, marked with a purple ✓.">
+              🎒 <b className="text-text">{lootCount}</b> placed by loot
             </span>
           )}
           {selfCount > 0 && (
@@ -800,7 +866,7 @@ export default async function PopFlagsPage(
               <div className="text-xs text-green mb-1">✓ Can enter ({(eligibleChars.get(selected.key) ?? []).length})</div>
               <ul className="space-y-0.5">
                 {(eligibleChars.get(selected.key) ?? []).map(c => (
-                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}{seenTag(c)}{selfTag(c)}</li>
+                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}{seenTag(c)}{lootTag(c)}{selfTag(c)}</li>
                 ))}
               </ul>
             </div>
@@ -872,7 +938,7 @@ export default async function PopFlagsPage(
             <p className="text-xs text-dim">
               Every character linked to your account — alts included. Zone columns mirror the
               Matrix view. A cell is yours to tick: tap a — to say you hold that gate (Mimic hasn&apos;t seen
-              it; hover for what&apos;s missing), tap a ☑ to take it back. Gates Mimic or /who proved
+              it; hover for what&apos;s missing), tap a ☑ to take it back. Gates Mimic, /who or loot proved
               can&apos;t be unticked. Every other flag is on your <Link href="/pop/guide" className="underline">checklist</Link>.
             </p>
           </div>
@@ -995,7 +1061,7 @@ export default async function PopFlagsPage(
             <p className="text-[10px] text-dim text-center">
               Chart topology after Samanna&apos;s classic planar progression chart · ⤓ gate flag with holder count ·
               👤 characters holding the flag · &quot;N in&quot; = can enter today · counts include characters /who
-              showed inside a gated plane · <span className="text-gold">☑ N</span> of the holders are an owner&apos;s
+              showed, or loot placed, inside a gated plane · <span className="text-gold">☑ N</span> of the holders are an owner&apos;s
               own tick on the site
             </p>
           </section>

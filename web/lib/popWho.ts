@@ -10,6 +10,7 @@
 //
 // What it does not count: a plane's instanced copy shows on /who under another name ("… (Instanced)"),
 // and a GM is skipped by the query (pop_who_sightings). It only ever adds flags, never takes one away.
+// Loot in a plane (pop_loot_sightings) proves the same flags, at the bottom of this file.
 // Pure, so the rules are testable without a database.
 
 import { POP_FLAGS, POP_ZONE_BY_KEY } from './popFlags';
@@ -93,9 +94,46 @@ export function flagsFromSightings(rows: Sighting[]): Map<string, WhoProof> {
   return out;
 }
 
-// "Seen on /who in the Bastion of Thunder, reached through the Plane of Storms."
-export function seenText(zoneKey: string): string {
+// "Bastion of Thunder, reached through Plane of Storms": where a proof was, for the sentences below.
+function placeText(zoneKey: string): string {
   const name = POP_ZONE_BY_KEY[zoneKey]?.name ?? zoneKey;
   const via = wayInChain(zoneKey).map(z => POP_ZONE_BY_KEY[z]?.name ?? z);
-  return `Seen on /who in ${name}${via.length ? `, reached through ${via.join(' and ')}` : ''}.`;
+  return `${name}${via.length ? `, reached through ${via.join(' and ')}` : ''}`;
+}
+
+// "Seen on /who in the Bastion of Thunder, reached through the Plane of Storms."
+export function seenText(zoneKey: string): string {
+  return `Seen on /who in ${placeText(zoneKey)}.`;
+}
+
+// Loot is presence proof too (the guild lead, 2026-10-03: "if anyone has looted any distinct items from any
+// of the planes we should go through and flag them up to that plane"). A character that looted something
+// inside a plane stood in it, so it holds exactly what a /who sighting there proves. The rows come from
+// pop_loot_sightings, which names the plane by the same short names WHO_ZONE keys (a test keeps the SQL's
+// list and this table's in step), so they run through flagsFromSightings itself: one rule for what a
+// plane proves, instanced copies and open planes ignored the same way.
+//   'looted'    the character's own "--You have looted <item>.--" in that plane;
+//   'inventory' a NO DROP item that drops only in that plane, in an uploaded inventory.
+export type LootSighting = {
+  zone: string; first_at: string; last_at: string; items: number; sample_item: string | null; source: 'looted' | 'inventory';
+};
+// One flag proven by loot: the plane (chart key), the first time, and which kind of proof it was.
+export type LootProof = WhoProof & { source: LootSighting['source'] };
+
+// Flags proven by a character's loot, each by its earliest row.
+export function flagsFromLoot(rows: LootSighting[]): Map<string, LootProof> {
+  const out = new Map<string, LootProof>();
+  const proven = flagsFromSightings(rows.map(r => ({ zone: r.zone, first_seen: r.first_at, last_seen: r.last_at })));
+  for (const [flag, p] of proven) {
+    const row = rows.find(r => WHO_ZONE[r.zone] === p.zone && r.first_at === p.at);
+    out.set(flag, { ...p, source: row?.source ?? 'looted' });
+  }
+  return out;
+}
+
+// "Looted in Bastion of Thunder, reached through Plane of Storms."
+export function lootText(zoneKey: string, source: LootSighting['source'] = 'looted'): string {
+  return source === 'inventory'
+    ? `Holds a NO DROP item that drops only in ${placeText(zoneKey)}.`
+    : `Looted in ${placeText(zoneKey)}.`;
 }

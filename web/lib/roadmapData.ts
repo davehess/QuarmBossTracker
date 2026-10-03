@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-loot-flags-2026-10-03',
+    title: 'Loot counts as PoP flag proof',
+    version: 'Web 1.8.87',
+    date: '2026-10-03',
+    headline: 'If you looted something in a plane, the PoP page counts you as flagged for it.',
+    features: [
+      { name: 'Looted there, flagged there', blurb: 'A character who looted an item inside a plane — or holds a NO DROP item that only drops in one — gets that plane’s flags on the PoP page as a purple ✓.' },
+      { name: 'The checklist ticks itself', blurb: 'The PoP guide ticks those steps for you too, marked “looted there”.' },
+      { name: 'Proof order', blurb: 'Mimic’s flag (green ✓) and a /who sighting (blue ✓) still show first; purple means the loot is the only proof.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'pop-self-flags-2026-10-03',
     title: 'Tick your own PoP flags',
     version: 'Web 1.8.86',
