@@ -281,6 +281,16 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   character-prefs (`_characterPrefsFor`) into `watchedLogs[].hidden`. Display only — account inventory and
   every upload ignore it.
 
+### Self-ticked PoP flags on /pop (web 1.8.86, 2026-10-03)
+- A flag is self-reported when `pop_guide_ticks` holds the guide step that grants it, else `flag:<key>`
+  (`web/lib/popSelfFlags.ts`; gate rules in `web/lib/popGateCell.ts`, import-free so the client stays small).
+  One store: a /pop/guide tick counts on /pop and the reverse. No new table.
+- /pop merges ticks last, so Mimic (`pop_flags`, green ✓) and /who (blue ✓) outrank a tick (gold ☑); a gate is
+  only as proven as its weakest flag. Matrix + My Characters cells for your own characters are toggles
+  (`SelfFlagCells.tsx`, optimistic, rolls back on failure); everyone else's cells and proven cells are marks
+  (`GateMark.tsx`). Write path: `setFlagTicks` in `web/app/pop/guide/actions.ts`, the same ownership gate as
+  `setGuideTick` (`ownedCharacters`, family root included). Test: `test/pop-self-flags.test.js`. §145.
+
 ### PoP overlay Quests mode (Mimic beta, 2026-10-03)
 - `apps/mimic/popraid.html`: Slides / Quests toggle (`wp:pop:mode`, `wp:pop:quest`), quest renderer with copy
   chips (`/map`, `/sit`, `/say`), mini shows the next quest.
