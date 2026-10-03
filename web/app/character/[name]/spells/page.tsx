@@ -39,8 +39,8 @@ type MissingSpell = {
   held_by: string[];
   buyable: boolean;
   // PoP = only obtainable from Planes of Power sources (sold only in PoK or
-  // dropped in a PoP zone) or scribe level 61+. Locked until 2026-10-01, so it's
-  // called out separately — no point chasing a scroll you can't scribe yet.
+  // dropped in a PoP zone) or scribe level 61+. Called out separately because
+  // those scrolls come from different places (live since 2026-10-01).
   pop: boolean;
 };
 
@@ -175,8 +175,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           scroll right now — ask them first.{' '}
           <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue align-middle">PoP</span>{' '}
           = Planes of Power (level 61+, or only sold in PoK / dropped in a PoP
-          zone) — <b>locked until Oct 1</b>, so don&apos;t chase it yet. Levels come
-          from guild spellbooks, so a few may be blank until someone uploads.
+          zone). Levels come from guild spellbooks, so a few may be blank until
+          someone uploads.
         </p>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
@@ -185,7 +185,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           <span>🛒 Buyable: <span className="text-orange">{buyableCount}</span></span>
           <span>⚔ Go get: <span className="text-purple">{otherCount}</span></span>
           <span>🎒 Held by a guildmate: <span className="text-green">{heldCount}</span></span>
-          <span>PoP-locked: <span className="text-blue">{popCount}</span></span>
+          <span>PoP: <span className="text-blue">{popCount}</span></span>
         </div>
         {!hasBook && (
           <p className="text-xs text-orange mt-3">

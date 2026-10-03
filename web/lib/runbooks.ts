@@ -486,7 +486,7 @@ export const RUNBOOKS: Runbook[] = [
       { text: 'Rebuild from Supabase encounters (default 72h, dry-run supported).',
         levers: [{ kind: 'command', name: 'recoverkills' }] },
     ],
-    after: 'PoP is locked until 2026-10-01. After unlock, run /board and refresh pqdiUrls via /addboss.',
+    after: 'PoP unlocked on 2026-10-01; the lock no longer applies. If a PoP board panel looks stale, run /board and refresh pqdiUrls via /addboss.',
     donts: ['Don’t chase stale spawn alerts right after a redeploy — they are suppressed on purpose.'],
     signals: [],
     lastReviewed: '2026-08-02',

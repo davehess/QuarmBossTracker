@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.79: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
 | **The Oct 1–2 server patch notes** | **§130, §132.** Bot 3.1.190 + web 1.8.77: the corpse DM says when and where a PoP corpse moves. Bot 3.1.191 + web 1.8.78: Xanamech is off the board and the 72 h override; his website row still needs one delete. Agent 3.7.71 on beta `c82ae5b4` reads all 168 unread Rallos Zek lines: NPC deaths, no-killer deaths, forfeits (🏃), the "exults" kill. NPC deaths post to #pvp again, about 50 a day. Still open: the Oct 2 "Glory lost/gained" wording (none seen yet); whether an open-world raid-target kill starts the instance timer | the guild lead: (0) approve or run `delete from bot_boards where boss_id = 'xanamech_nezmirthafen';` (§132); (1) on the beta, run Opt-in Logs from Sep 28 to send the missed deaths; (2) say if NPC deaths should record without posting to #pvp; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
 | **Our own zone map (A website, then B Mimic overlay)** | **§131.** Queued, not started — "A then B, but not yet". First step when it starts: mirror pather routes (`grid`, `grid_entries`) into the weekly sync | the guild lead: say when to start; ask staff before anything shows live NPC positions |
@@ -6217,3 +6218,32 @@ the agent's `logsync.pvp-unmatched.json` from their machine.
     queue moves them back to "needs it", with no timer, for the last ~3.5 minutes they still carry
     the buff.
   - Waiting on the guild lead to say which view and character showed no timer before changing either.
+
+### 134. The website stops saying PoP is locked; stable Mimic 2.7.7 (2026-10-02, web 1.8.79 · Mimic 2.7.7 · agent 3.7.71)
+
+The guild lead: *"go through the site and remove all the locks from pop release, or mentions of things not
+being available yet. please roll out a fresh stable release"*.
+
+- **The PoP sweep (web).**
+  - Raid guide index and boss pages: the date lock (`POP_UNLOCK_MS`), the 🔒 and the "locked until
+    2026-10-01" banner are gone. They had stopped rendering on Oct 1; this removes the dead code.
+  - /pop: the "(Preview)" title and badge are gone, and the empty state no longer says "PoP unlocks
+    2026-10-01".
+  - Missing spells: PoP spells are no longer greyed out or labelled "locked until Oct 1, don't chase it
+    yet". The count reads "PoP"; the PoP pill stays as a label.
+  - Gear: PoP AAs join "Available to train"; the "+N more arrive with PoP (locked until Oct 1)" line is
+    gone.
+  - The bot-board runbook text and two comments updated.
+  - Left as they are, on purpose: roadmap entries (they are history), dated incident notes, the lockouts
+    page (raid lockouts, not PoP), and the bot's own `isPopLocked`, which is date-based and has done
+    nothing since Oct 1.
+- **Stable Mimic 2.7.7, agent 3.7.71.** File-level promotion from beta `b5684da0`:
+  - `apps/mimic/` and `packages/wolfpack-logsync/` byte-identical to beta, plus their tests.
+  - **Not promoted:** the website previews still on beta for the guild lead's pick — the about page,
+    the PoP guide redesign, the Essences queue, /who flags, PvP fights, tradeskills, Zeal icons — and
+    their nine tests. `test/pop-planner-mains-alts.test.js` keeps main's version.
+  - Gate on the promoted tree: 384 test files, 5,118 tests, lint, the dashboard check, golden logs.
+  - Carries everything since 2.7.6 (agent 3.7.55–3.7.71). That includes the §133 update fix, so updating
+    2.7.6 → 2.7.7 is the first update that starts quietly in the tray while EverQuest is open.
+  - Repeats FB-46, FB-49 and FB-50 so the bot marks them implemented.
+  - Beta re-parks at 2.7.8.

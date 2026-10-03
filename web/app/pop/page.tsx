@@ -1,4 +1,4 @@
-// /pop — "PoP Flags (Preview)" (pre-built for the 2026-10-01 PoP unlock).
+// /pop — "PoP Flags" (built ahead of the 2026-10-01 PoP unlock; live since).
 //
 // Primarily a GRAPHICAL progression chart (modeled on Samanna's classic planar
 // chart): tier bands top-to-bottom, one card per zone with its gate, the flags
@@ -43,7 +43,7 @@ import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/po
 import SpellbookSubmit from './SpellbookSubmit';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'PoP Flags (Preview) — Wolf Pack' };
+export const metadata = { title: 'PoP Flags — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
 type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean };
@@ -424,7 +424,6 @@ export default async function PopFlagsPage(
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold flex items-center gap-3 mb-1">
           <span>🌀 PoP Flags</span>
-          <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-orange/20 border border-orange/60 text-orange uppercase">Preview</span>
         </h2>
         <p className="text-sm text-dim leading-6">
           The guild&apos;s road to <b className="text-text">Quarm</b> — every gate, who&apos;s through it, and what to
@@ -696,9 +695,8 @@ export default async function PopFlagsPage(
             </p>
             {chars.length === 0 ? (
               <p className="text-sm text-dim">
-                No flags recorded yet — PoP unlocks 2026-10-01. Once members raid the planes with Mimic running,
-                grants land here automatically and this table ranks itself. This page is pre-built so day-one
-                flags have a home.
+                No flags recorded yet. As members raid the planes with Mimic running, grants land here
+                automatically and this table ranks itself.
               </p>
             ) : planTop.length === 0 ? (
               <p className="text-sm text-dim">Everyone with recorded flags is caught up — nothing to chase. 🐺</p>
