@@ -16,7 +16,16 @@ let agent;
 beforeAll(() => { agent = createRequire(import.meta.url)('../packages/wolfpack-logsync/index.js'); });
 
 const ME = 'Aldenmar';
-const TS = '[Fri Oct 02 21:10:01 2026] ';
+// NOW, in the log's own format. A fixed date went stale: {mytarget} trusts a "You begin casting"
+// line only for 15 s (_myTargetFor), so a constant timestamp passed on the day it was written and
+// failed from the next morning on.
+const TS = (() => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()];
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return `[${day} ${mon} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${d.getFullYear()}] `;
+})();
 const tpl = (id) => agent.SUGGESTED_TRIGGERS.find(t => t.id === id);
 const fromTpl = (id) => agent._compilePersonalTrigger(agent._templateToPersonalRow(tpl(id)));
 const fires = (name) => agent._fireLog.filter(f => f.name === name).length;

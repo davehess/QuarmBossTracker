@@ -633,8 +633,12 @@
           if (rowsC.length > 3) nms += ' +' + (rowsC.length - 3);
           preview = '<span style="color:#8b949e;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">'+esc(nms)+'</span>';
         }
+        // data-wp-interact: a header is a <div>, which the preload's hover
+        // handshake did not count as a control, so on a locked overlay the
+        // click went to EQ and the cursor stayed hidden behind the panel
+        // (the guild lead, 2026-10-02: "can't click it").
         html += '<div class="cat">'
-              +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
+              +   '<div class="cathdr" data-wp-interact data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
               +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
               +     '<span style="font-weight:600">'+esc(label)+'</span>'
               +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
