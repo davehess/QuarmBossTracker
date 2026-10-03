@@ -1826,7 +1826,7 @@ window.POP_QUESTS = {
        "title": "Thelin’s hedge maze (Plane of Nightmare), then hail Thelin Poxbourne",
        "who": "group",
        "must": true,
-       "detail": "Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the Dagger Blade Shard: hand it to Thelin for Thelin’s Dagger. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.",
+       "detail": "Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. The hail is your Thelin flag at 2; clicking the portal to the Lair of Terris Thule afterwards is what opens the Lair. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the Dagger Blade Shard: hand it to Thelin for Thelin’s Dagger. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.",
        "says": [
         {
          "to": "Thelin Poxbourne (outside the maze)",
@@ -2442,9 +2442,8 @@ window.POP_QUESTS = {
          "src": "postorms/Askr_the_Lost.lua"
         },
         {
-         "kind": "zone",
-         "to": "the shrine in the heart of Mount Grenidor",
-         "text": "Click it: this click is what flags you and takes you into the Bastion of Thunder. It needs Askr’s second flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.",
+         "kind": "note",
+         "text": "That is not your Bastion of Thunder flag yet: the shrine click in the next step is. It needs this flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.",
          "src": "postorms/player.lua"
         }
        ],
@@ -2478,7 +2477,7 @@ window.POP_QUESTS = {
           "x": -2576
          },
          "give": "Esoteric Meld (two medallions from different camps, combined)",
-         "get": "the Askr flag"
+         "get": "Askr’s second flag; the shrine click after it is your Bastion of Thunder flag"
         }
        ],
        "back": [

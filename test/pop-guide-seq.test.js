@@ -275,7 +275,7 @@ describe('the model case: Askr the Lost (postorms/Askr_the_Lost.lua is a state m
   const s = step('flag_askr').seq;
   const brief = (a) => [a.kind, a.text ?? a.to ?? '', a.times ?? 1];
 
-  it('head, "it was me", "paying attention", "continue" TWICE for the bag, the three parts, the sealed bag, "bastion of thunder", the medallions, the meld, then the shrine', () => {
+  it('head, "it was me", "paying attention", "continue" TWICE for the bag, the three parts, the sealed bag, "bastion of thunder", the medallions, the meld; the shrine is the next step', () => {
     const rows = seqRows(s).rows.map(r => [r.act.kind, r.act.kind === 'say' ? r.act.text : r.act.to, r.act.times ?? 1]);
     expect(rows).toEqual([
       ['give', 'Askr the Lost', 1],
@@ -287,7 +287,6 @@ describe('the model case: Askr the Lost (postorms/Askr_the_Lost.lua is a state m
       ['say', 'bastion of thunder', 1],
       ['click', 'Combine', 1],
       ['give', 'Askr the Lost', 1],
-      ['zone', 'the shrine in the heart of Mount Grenidor', 1],
     ]);
     expect(brief(s.find(a => a.text === 'continue'))).toEqual(['say', 'continue', 2]);
   });
@@ -304,18 +303,23 @@ describe('the model case: Askr the Lost (postorms/Askr_the_Lost.lua is a state m
     expect(seqRows(s).rows[0].gets[0].items).toEqual(['[[Storm Giant Head#11486]]']);
   });
 
-  it('it ENDS with the shrine click, which is what flags you and takes you in, with its condition', () => {
+  // The guild lead, 2026-10-03: "the flagging for bastion of thunder REQUIRES you to enter the zone from plane
+  // of storms after doing the turnin". The meld is karana 2; the shrine click (storms_zone_bot) is karana 3.
+  it('it ENDS by saying the meld is not the Bastion flag: the shrine click is, and the flag sits on that step', () => {
     const last = s[s.length - 1];
-    expect(last.kind).toBe('zone');
+    expect(last.kind).toBe('note');
     expect(last.src).toBe('postorms/player.lua');
-    expect(last.text).toMatch(/flags you and takes you into the Bastion of Thunder/);
-    expect(last.text).toMatch(/second flag AND your Justice flag/);
+    expect(last.text).toMatch(/not your Bastion of Thunder flag yet: the shrine click in the next step is/);
+    expect(last.text).toMatch(/AND your Justice flag/);
+    expect(step('flag_askr').flag).toBeUndefined();
+    expect(step('storms_zone_bot').flag).toBe('askr_quest');
   });
 
   it('each hand-in comes before the flag it earns and the medallion/meld hand-ins come last', () => {
     const kinds = seqRows(s).rows.map(r => r.act.kind);
     expect(kinds.filter(k => k === 'give').length).toBe(3);
-    expect(kinds.lastIndexOf('give')).toBeLessThan(kinds.indexOf('zone'));
+    expect(kinds.lastIndexOf('give')).toBe(kinds.length - 1);
+    expect(kinds).not.toContain('zone');
   });
 });
 
@@ -416,7 +420,7 @@ describe('other steps where the order, a repeat or a loop is the point', () => {
 describe('flags finished by a click or a zone-in, not by an NPC', () => {
   // step → the script whose door or zone event sets the flag. Each is the LAST act of its step.
   const ZONE = {
-    flag_askr: 'postorms/player.lua', storms_zone_bot: 'postorms/player.lua', valor_zone_hoh: 'povalor/player.lua',
+    storms_zone_bot: 'postorms/player.lua', valor_zone_hoh: 'povalor/player.lua',
     hoh_trial_villager: 'hohonora/player.lua', flag_hedge: 'ponightmare/player.lua', flag_grummus: 'podisease/player.lua',
     flag_arbitor: 'poeartha/player.lua', time_muon: 'poinnovation/player.lua', flag_solro: 'solrotower/player.lua',
     justice_mavuin_hail: 'potranquility/player.lua', nightmare_poxbourne: 'potranquility/player.lua',

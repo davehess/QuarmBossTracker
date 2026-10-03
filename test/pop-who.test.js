@@ -110,15 +110,24 @@ describe('the checklist fills in from /who', () => {
   });
   it('Mimic’s own record still wins where it has one', () => {
     const ev = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: '2026-10-01T19:00:00Z' }], seen: [sight('postorms')] });
-    // The recorded Justice flag is the Mavuin hail's now (2026-10-03); the trial step, which no longer owns
-    // the flag, still ticks from /who along with the Tribunal.
+    // The recorded Justice flag is the Mavuin hail's now (2026-10-03), and it is the server's mavuin 3, so
+    // Mimic's record also covers the trial and the Tribunal before it.
     expect(ev.justice_mavuin_hail.source).toBe('mimic');
-    expect(ev.flag_trial_justice.source).toBe('who');
-    expect(ev.justice_tribunal.source).toBe('who');
+    expect(ev.flag_trial_justice.source).toBe('mimic');
+    expect(ev.justice_tribunal.source).toBe('mimic');
   });
-  it('a recorded flag alone does not tick the Tribunal steps (it can come from the trial kill)', () => {
-    const ev = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: null }] });
-    expect(ev.justice_tribunal).toBeUndefined();
+  it('a recorded flag ticks the steps it needs: every recorded trial_justice is mavuin 3, every askr_quest karana 3', () => {
+    const ev = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: null }, { flag_key: 'askr_quest', earned_at: null }] });
+    for (const k of ['flag_trial_justice', 'justice_mavuin_info', 'justice_tribunal', 'flag_askr']) {
+      expect(ev[k]?.source, k).toBe('mimic');
+      expect(ev[k].what, k).toMatch(/later flag/);
+    }
+    expect(ev.justice_mavuin_hail.what).toMatch(/character flag/);
+    expect(ev.storms_zone_bot.what).toMatch(/character flag/);
+  });
+  it('a looted Mark names the trial more exactly than a later flag does', () => {
+    const ev = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: null }], loots: [{ item_name: 'Mark of Flame', looted_at: null }] });
+    expect(ev.flag_trial_justice.what).toBe('Mimic saw you loot the Mark of Flame.');
   });
 });
 

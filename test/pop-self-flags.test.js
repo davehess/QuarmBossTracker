@@ -30,6 +30,9 @@ describe('a flag and the row that stores it', () => {
     // The Justice flag is the Mavuin hail's (the guild lead, 2026-10-03: "move the justice flag to the mavuin
     // hail step"): postorms/player.lua lets you into Storms only at mavuin >= 3.
     expect(tickKeyForFlag('trial_justice')).toBe('justice_mavuin_hail');
+    // The Bastion flag is the shrine click's, not Askr's (the guild lead, 2026-10-03: "REQUIRES you to enter
+    // the zone from plane of storms after doing the turnin"): a tick on Askr's step alone opens nothing.
+    expect(tickKeyForFlag('askr_quest')).toBe('storms_zone_bot');
     expect(tickKeyForFlag('zebuxoruk_2')).toBe('zebuxoruk_maelin');
     for (const i of GUIDE_ITEMS.filter(g => g.flag)) expect(tickKeyForFlag(i.flag), i.key).toBe(i.key);
   });

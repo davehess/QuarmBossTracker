@@ -378,7 +378,7 @@ const BASE_ITEMS: GuideItem[] = [
   { key: 'nightmare_adroha', section: 't1', who: 'solo', must: true, title: 'Nightmare, before the maze: talk to Adroha Jezith',
     says: [{ to: 'Adroha Jezith', text: 'Hail' }, { to: 'Adroha Jezith', text: 'tortured by nightmares' }], where: [L.adroha] },
   { key: 'flag_hedge', section: 't1', who: 'group', must: true, flag: 'hedge_event', title: 'Thelin’s hedge maze (Plane of Nightmare), then hail Thelin Poxbourne',
-    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the [[Dagger Blade Shard#9258]]: hand it to Thelin for [[Thelin’s Dagger#9259]]. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.',
+    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. The hail is your Thelin flag at 2; clicking the portal to the Lair of Terris Thule afterwards is what opens the Lair. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the [[Dagger Blade Shard#9258]]: hand it to Thelin for [[Thelin’s Dagger#9259]]. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.',
     says: [
       { to: 'Thelin Poxbourne (outside the maze)', text: 'Hail', src: MAZE },
       { to: 'Thelin Poxbourne (outside the maze)', text: 'dagger', src: MAZE },
@@ -417,14 +417,18 @@ const BASE_ITEMS: GuideItem[] = [
     detail: 'Needs Bertoxxulous dead and his projection hailed (that moves your Fuirstel flag to 4); this hail moves it to 5. It is the other half of the Torment portal check, with Elder Poxbourne.',
     says: [{ to: 'Elder Fuirstel', text: 'Hail', src: 'potranquility/Elder_Fuirstel.lua' }], where: [L.fuirstel] },
   // Storms
-  { key: 'flag_askr', section: 't2', who: 'group', must: true, flag: 'askr_quest', title: 'Askr the Lost: one head, one bag, one meld (Plane of Storms)',
+  // The Bastion flag is the shrine click's, not Askr's (the guild lead, 2026-10-03: "the flagging for bastion
+  // of thunder REQUIRES you to enter the zone from plane of storms after doing the turnin"): the meld sets
+  // karana 2, and only postorms/player.lua door 4 turns it into karana 3, which is what Mimic records as
+  // askr_quest. So the flag sits on storms_zone_bot, and this step ticks from it (web/lib/popGuideAuto.ts).
+  { key: 'flag_askr', section: 't2', who: 'group', must: true, title: 'Askr the Lost: one head, one bag, one meld (Plane of Storms)',
     detail: 'Everyone does their own. 1) Hand Askr ONE [[Storm Giant Head#28749]] (any camp’s; 60% from its giants). Then say “it was me”, “paying attention”, and “continue” twice for [[Askr’s Bag of Verity#17192]]. 2) Combine a [[Storm Volaas Beard#28750]] (south camp), a [[Storm Taarid Bone#28751]] (west) and a [[Storm Satuur Sash#28764]] (north) in the bag; give him [[Askr’s Sealed Bag of Verity#11487]]. 3) Say “bastion of thunder” for a second bag; combine two [[Esoteric Medallion#28765]]s from DIFFERENT camps in it (south, west or north; each camp’s named drops three) and give him the [[Esoteric Meld#11488]]. Leaving the zone resets his conversation, so answer him right after each hand-in.',
     says: [
       { to: 'Askr the Lost', text: 'it was me' }, { to: 'Askr the Lost', text: 'paying attention' },
       { to: 'Askr the Lost', text: 'continue' }, { to: 'Askr the Lost', text: 'bastion of thunder' },
     ],
     where: [L.askr], link: popZone('storms') },
-  { key: 'storms_zone_bot', section: 't2', who: 'solo', must: true, title: 'Click the shrine in Mount Grenidor to enter the Bastion of Thunder',
+  { key: 'storms_zone_bot', section: 't2', who: 'solo', must: true, flag: 'askr_quest', title: 'Click the shrine in Mount Grenidor to enter the Bastion of Thunder',
     detail: 'Needs Askr’s flag AND your Justice flag (the last Mavuin hail). The “Talisman of Thunderous Foyer” is this click, a flag, not a keyring item. Without both flags the shrine says it finds no mystic symbol. You land in the lower halls.',
     where: [L.stormsShrine] },
   // Valor
@@ -872,7 +876,7 @@ const SEQ: Record<string, Act[]> = {
     say('Askr the Lost', 'bastion of thunder', ASKR), get(ASKR, { items: [BAG], text: 'a second bag' }),
     click('Combine', ASKR, { text: 'in the bag: two from different camps', items: [I('Esoteric Medallion', 28765), I('Esoteric Medallion', 28765)] }),
     give('Askr the Lost', [I('Esoteric Meld', 11488)], ASKR), get(ASKR, FLAG),
-    zone('the shrine in the heart of Mount Grenidor', 'Click it: this click is what flags you and takes you into the Bastion of Thunder. It needs Askr’s second flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.', 'postorms/player.lua'),
+    note('That is not your Bastion of Thunder flag yet: the shrine click in the next step is. It needs this flag AND your Justice flag (Mavuin at 3), or the shrine finds “no mystic symbol”.', 'postorms/player.lua'),
   ],
   storms_zone_bot: [
     zone('the shrine in the heart of Mount Grenidor', 'Click it: with Askr’s second flag and your Justice flag (Mavuin at 3) it sets your Bastion flag and sends you in; without both it refuses.', 'postorms/player.lua'),

@@ -84,10 +84,11 @@ describe('pop-quests.js is the generated copy of the web guide', () => {
       });
     }
     expect(n).toBeGreaterThan(300);
-    // The model case reads in full: "continue" twice, then the shrine.
+    // The model case reads in full: "continue" twice, then the shrine (its own step, which holds the flag).
     const askr = byKey.get('flag_askr').seq;
     expect(askr.find(a => a.text === 'continue').times).toBe(2);
-    expect(askr[askr.length - 1]).toMatchObject({ kind: 'zone', src: 'postorms/player.lua' });
+    expect(askr[askr.length - 1]).toMatchObject({ kind: 'note', src: 'postorms/player.lua' });
+    expect(byKey.get('storms_zone_bot').seq.at(-1)).toMatchObject({ kind: 'zone', src: 'postorms/player.lua' });
     expect(askr[0].items).toEqual(['Storm Giant Head']);
     expect(byKey.get('start_flag_fixers').seq.find(a => a.until)).toMatchObject({ text: 'unlock my memories', sit: true });
   });

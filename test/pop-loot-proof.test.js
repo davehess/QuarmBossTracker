@@ -206,11 +206,11 @@ describe('the checklist fills in from loot', () => {
 
   it('Mimic’s record wins, then /who, then loot', () => {
     const mimic = guideEvidence({ ...NO_DATA, flags: [{ flag_key: 'trial_justice', earned_at: T1 }], looted: [loot('postorms')] });
-    // The recorded Justice flag is the Mavuin hail's (2026-10-03), so Mimic's label lands there; the trial
-    // step, which no longer owns the flag, is filled by the loot like the Tribunal.
+    // The recorded Justice flag is the Mavuin hail's (2026-10-03) and is mavuin 3, so Mimic's record covers
+    // the trial and the Tribunal before it too; the loot fills nothing Mimic already has.
     expect(mimic.justice_mavuin_hail.source).toBe('mimic');
-    expect(mimic.flag_trial_justice.source).toBe('loot');
-    expect(mimic.justice_tribunal.source).toBe('loot');
+    expect(mimic.flag_trial_justice.source).toBe('mimic');
+    expect(mimic.justice_tribunal.source).toBe('mimic');
     const both = guideEvidence({ ...NO_DATA, seen: [sight('postorms')], looted: [loot('postorms')] });
     for (const k of ['flag_trial_justice', 'justice_tribunal']) expect(both[k].source, k).toBe('who');
     // /who covers the Justice steps, loot in Thunder still adds the shrine /who never saw.
