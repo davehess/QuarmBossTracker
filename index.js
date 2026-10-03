@@ -6628,7 +6628,8 @@ async function _handleAgentUiEditResult(req, res) {
 // drive the login gate locally), "item-history" (per-item last winner +
 // runner-up), and "bid-history" (the caller's own wins + wishlist). The last
 // two are cached (60s) since a room of Mimics polls them — same spirit as the
-// target-buffs cache.
+// target-buffs cache. "night-loot" (2026-10-03) is the guild-wide looted list +
+// roll sessions for the last 12h, same 60s cache.
 
 // ── Panel auction cache (source-sliced by test/server-panel-auction-cache.test.js)
 // 2026-08-25, from OpenDKP's own API Gateway logs: every open Mimic dashboard
@@ -7059,6 +7060,38 @@ function _mergeWishlist(preregRows, bidItemRows) {
 const _lootPanelCache = new Map();
 function _lootCacheGet(k) { const e = _lootPanelCache.get(k); return (e && Date.now() < e.exp) ? e.val : null; }
 function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, exp: Date.now() + ttlMs }); if (_lootPanelCache.size > 200) { const first = _lootPanelCache.keys().next().value; _lootPanelCache.delete(first); } }
+
+// ── night-loot panel fetch (source-sliced by test/night-loot-panel.test.js) ──
+// The Mimic Loot tab's "who looted what" + rolls (the guild lead, 2026-10-03).
+// The agent only ever sees its OWN `--You have looted--` lines, so the
+// guild-wide list can only come from here. The join is utils/rollLoot.js —
+// the same buildRollSessions the Discord rolled-loot card and /rolls use.
+// ⚠ No exclude_from_stats filter on read, deliberately: like /rolls and the
+// card, it is enforced UPSTREAM (an excluded character's agent never uploads
+// its own looted/roll lines) and another raider's observation of them is theirs.
+// Looted rows are fetched 5 min ahead of the window (the card's own slack) so a
+// loot just before a roll resolves still links; buildNightLootPanel trims the
+// displayed list back to the window.
+async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now()) {
+  const { buildNightLootPanel, NIGHT_LOOT_WINDOW_MS } = require('./utils/rollLoot');
+  const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
+  const slackIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS - 5 * 60_000).toISOString());
+  const g = encodeURIComponent(guildId);
+  const [rollRows, lootedRows] = await Promise.all([
+    supabase.select('roll_sets',
+      `guild_id=eq.${g}&started_at=gte.${sinceIso}`
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at&order=started_at.desc&limit=400`),
+    supabase.select('looted_items',
+      `guild_id=eq.${g}&looted_at=gte.${slackIso}`
+      + `&select=looter_character,item_name,zone,looted_at&order=looted_at.desc&limit=500`),
+  ]);
+  // supabase.select answers null on ANY failure (timeout, breaker, 4xx/5xx), and
+  // a null is not an empty night — throw so the 60s cache never holds a hollow
+  // panel and the agent sees an error instead of "nobody looted anything".
+  if (!Array.isArray(rollRows) || !Array.isArray(lootedRows)) throw new Error('night-loot: roll_sets / looted_items fetch failed');
+  return buildNightLootPanel(rollRows, lootedRows, { nowMs });
+}
+// ── end night-loot panel fetch ──
 
 // Build the PostgREST `or=(col.ilike.a,col.ilike.b,…)` clause for a name list —
 // case-insensitive multi-name match. Names are [A-Za-z], so no comma/wildcard
@@ -7881,6 +7914,20 @@ async function _handleAgentServerPanel(req, res) {
         updated_at: new Date().toISOString(),
         opendkp_base, wins, wishlist: wishlistOut, misses, dkp, suggested_family,
       });
+      _lootCacheSet(ck, out);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(out);
+    }
+    if (key === 'night-loot') {
+      // Guild-wide "who looted what" + roll sessions for the last 12h, for the
+      // Mimic Loot tab. One shared cache entry (not per caller): the data is the
+      // same for every raider and a room of dashboards polls it. A failed fetch
+      // throws to the 500 below and is never cached.
+      const ck = 'night-loot:' + guildId;
+      const cached = _lootCacheGet(ck);
+      if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
+      const body = await _nightLootPanelBody(supabase, guildId);
+      const out = JSON.stringify({ key, scope: 'last 12h', updated_at: new Date().toISOString(), ...body });
       _lootCacheSet(ck, out);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
