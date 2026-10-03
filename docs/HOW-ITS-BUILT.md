@@ -291,6 +291,16 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   (`GateMark.tsx`). Write path: `setFlagTicks` in `web/app/pop/guide/actions.ts`, the same ownership gate as
   `setGuideTick` (`ownedCharacters`, family root included). Test: `test/pop-self-flags.test.js`. §145.
 
+### PoP flags proven by loot (web 1.8.87, 2026-10-03)
+- RPC `pop_loot_sightings(p_guild_id)` (migration `20261003190000`, service role only): one row per
+  (character, plane). `'looted'` = `looted_items` whose Zeal zone id maps through `eqemu_zone` to a plane;
+  `'inventory'` = a NO DROP item (`nodrop = false` on this mirror) that drops only in one plane and is no quest
+  reward, in `character_inventory` (honours `exclude_inventory`). Plane list = `WHO_ZONE`'s short names.
+- `web/lib/popLootRows.ts` pages it 1,000 rows at a time; `flagsFromLoot` (`web/lib/popWho.ts`) runs the rows
+  through `flagsFromSightings`, so a loot proves exactly what a /who sighting does. /pop shows a purple ✓
+  ("Looted in <plane>"); precedence Mimic > /who > loot > owner's tick. The guide checklist auto-ticks from it
+  ("looted there"). Test: `test/pop-loot-proof.test.js`. §146.
+
 ### PoP overlay Quests mode (Mimic beta, 2026-10-03)
 - `apps/mimic/popraid.html`: Slides / Quests toggle (`wp:pop:mode`, `wp:pop:quest`), quest renderer with copy
   chips (`/map`, `/sit`, `/say`), mini shows the next quest.
