@@ -3147,12 +3147,17 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   migration). Resolution order where a class is known: same-class observed
   spellbook level → `spell_class_levels` → seed minimum. ⚠ Any new consumer of
   `spell_level_seed.level` without a class join reintroduces this.
+- **Extra PoP spells, officer list (`/admin/extra-spells`, web 1.8.82, `[beta]`, 2026-10-03)** — a PoK
+  trainer reward scroll in a character's inventory export whose spell the same character's spellbook
+  export already has, with the needers in `pop_spell_needs` order. RPC `pop_extra_scrolls(guild)`
+  (migration `20261003150000`, service role only). Phase 1: export-based, can lag; no turn-in line yet.
+  `test/pop-extra-scrolls.test.js`. DECISIONS-2026-09-21 §138.
 - **PoP spell turn-ins (web 1.1.86 → 1.1.96, 2026-08-20/25)** — v2 reads the
   ACTUAL trainer scripts: `pop_parchment_pools` view over the ProjectEQ
   turn-in mirror (`scripted_npc_turnins`), per (class, tier, scroll), trainer
   class DERIVED via bit_and over scroll class-bitmasks. The v1 level-tier
   inference in `web/lib/popSpells.ts` overcounted (necro "12" vs the quest's
-  ~8 — Lacunanight, 2026-08-25) and is gone; a PoP spell outside the class's
+  ~8 — a member, 2026-08-25) and is gone; a PoP spell outside the class's
   pools shows "not a turn-in". `pop_spell_needs` gained `tier` + `'Song: %'`
   support (bards were silently dropped). Known ±1 Quarm-fork divergence on
   necro Ethereal: migration 20260825030000 header. `pop_spell_needs(guild)` RPC drives the /pop section: each

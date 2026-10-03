@@ -103,6 +103,12 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Extra PoP spells, an officer list (web 1.8.82, live with the `[beta]` tag, 2026-10-03).**
+  [`wolfpack.quest/admin/extra-spells`](https://wolfpack.quest/admin/extra-spells): a PoK trainer reward scroll in a
+  character's bags whose spell that character already has, with who needs it in /pop's first-dibs order. RPC
+  `pop_extra_scrolls` (migration `20261003150000`, applied). 3 rows on day one. Phase 1 only: built from inventory +
+  spellbook exports, so it can be stale until the next export; the turn-in moment itself needs a captured log line.
+  DECISIONS-2026-09-21 §138.
 - **⏳ Command Center: a Raids card when two or more raids run (agent 3.7.72 on beta `1af59bd6`, 2026-10-03).** One row
   per raid: the leader and the player count, yours first and marked, totals in the header, collapsible. Same data
   as the old one-line note, no new request. Waiting on a night with two raids. DECISIONS-2026-09-21 §136.
