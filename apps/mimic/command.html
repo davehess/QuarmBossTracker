@@ -170,6 +170,11 @@
   body.setup #setupbar{display:flex}
   body.setup #drag-controls{top:28px}
   body.setup #wrap{margin-top:26px}
+  /* On the Canvas (Mimic 3.0 alpha; the guild lead, 2026-10-03: "the margins around the actual data is
+     too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
+     and rolls cards keep clear of the hide button both go. */
+  body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
