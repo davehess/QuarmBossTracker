@@ -11922,6 +11922,80 @@ async function _announceMimic271Once() {
   }, 5 * 60_000);
 }
 
+// ── Mimic 2.7.8 one-shot raid-chat announcement (2026-10-03) ─────────────────
+// The guild lead: "post the release to raid chat". The 2.7.1 card's shape: one post ever (bot_kv
+// latch, fail-closed), and only once the STABLE v2.7.8 release carries its installer.
+const _MIMIC278_KV_KEY = 'announce_mimic_2_7_8_raid_chat';
+const _MIMIC278_TAG = 'v2.7.8';
+function _mimic278Ready(rel) {
+  return !!(rel && rel.tag_name === _MIMIC278_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+}
+function _mimic278Embed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x58a6ff)
+    .setTitle('🐺 Mimic 2.7.8 is out')
+    .setDescription([
+      'Accept the Mimic update prompt, or restart Mimic, to get it. If EverQuest is open it waits quietly in the tray.',
+      '',
+      '- **PoP quests in the PoP overlay** — switch it to Quests, pick any flag or quest, and it shows who to talk to, where they stand, and every word to say, ready to copy into the game.',
+      '- **Raids at a glance** — when the guild runs two or more raids, the Command Center lists each raid\'s leader and how many players it has.',
+      '- **Who looted what** — the Loot tab lists the last 12 hours of loot from everyone running Mimic, and a roll someone other than the winner looted says who did.',
+      '- **Crash review** now lives on the Diagnostics tab.',
+      '- **Tidier character lists** — traders, characters under 46 and any character you hide step aside; characters nobody has a level for fold away.',
+      '',
+      'On the website: every PoP flag step now has the exact words to say (https://wolfpack.quest/pop/guide), and your character page has a **Hide from lists** switch for mules and traders (https://wolfpack.quest/me).',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.8 stable · agent 3.7.75 · one-time announcement' });
+}
+async function _announceMimic278Once() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC278_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[mimic278-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC278_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  if (!_mimic278Ready(rel)) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[mimic278-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_mimic278Embed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[mimic278-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _MIMIC278_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[mimic278-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// First look a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const tick = () => _announceMimic278Once()
+    .then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+    .catch(err => console.warn('[mimic278-announce]', err?.message));
+  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } tick(); }, 5 * 60_000);
+  setTimeout(tick, 60_000);
+}
+
 // ── Opt-in logs → PvP credit: one-shot #pvp post (2026-09-27) ────────────────
 // The guild lead: "make a note in the PVP channel for people to run their opt
 // in logs to get historical credit on pvp kills and assists." Guildmate
