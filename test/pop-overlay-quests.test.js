@@ -29,7 +29,7 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise(r => s
 const ESC_SRC = sliceBlock(popHtml, 'function esc(s){', '[c]); }); }');
 const BLOCK = sliceBlock(popHtml, '// ── PoP quests — renderers', '// ── /PoP quests — renderers');
 const R = evalBlock(ESC_SRC + '\n' + BLOCK,
-  ['questHtml', 'questTags', 'questStops', 'questMiniHtml', 'qGroupLabel', 'qChip', '_qOpen', 'Q_NONE']);
+  ['questHtml', 'questTags', 'questStops', 'questMiniHtml', 'qGroupLabel', 'qChip', '_qOpen', 'Q_NONE', 'seqRows', 'qSeqHtml']);
 
 const PLACE = 'Plane of Testing';
 // Two steps: Aldenmar (answers only while you sit; two lines, the first needing /sit) and Brackwyn
@@ -202,6 +202,146 @@ describe('quest renderer: hand-ins, notes, chains', () => {
   });
 });
 
+// ── the ordered seq (the guild lead, 2026-10-03: "the hand in items should be in order with the text we say
+// to them"): one numbered list in place of "Talk to" + "Turn in", the old rendering where there is no seq ──
+describe('quest renderer: a step’s ordered seq', () => {
+  const SRC = 'x/y.lua';
+  const SEQ_QUEST = {
+    key: 'sample_seq', title: 'Open the vault', who: 'group', detail: 'Talk to the warden, then hand in the key.',
+    // The pieces the seq replaces: none of these may be drawn once the step has one.
+    says: [{ to: 'Warden Aldenmar', text: 'old words' }],
+    turnIn: [{ to: { npc: 'Keeper Brackwyn', zone: PLACE, y: 100, x: -200 }, give: 'old give', get: 'old get' }],
+    where: [{ npc: 'Warden Aldenmar', zone: PLACE, y: -12, x: 34, note: 'by the gate' }, { npc: 'Keeper Brackwyn', zone: PLACE, y: 100, x: -200 }],
+    seq: [
+      { kind: 'note', text: 'Bring a key.', src: SRC },
+      { kind: 'hail', to: 'Warden Aldenmar', src: SRC },
+      { kind: 'say', to: 'Warden Aldenmar', text: 'open the gate', sit: true, src: SRC },
+      { kind: 'say', to: 'Warden Aldenmar', text: 'continue', times: 2, until: 'he has nothing new', src: SRC },
+      { kind: 'get', items: ['Gate Token'], text: 'the second one gives it', src: SRC },
+      { kind: 'note', text: 'He forgets you if you zone.', src: SRC },
+      { kind: 'give', to: 'Keeper Brackwyn', items: ['Gate Token', 'Gate Token', 'Rusty Key'], src: SRC },
+      { kind: 'get', items: ['Vault Key'], text: '100 experience', src: SRC },
+      { kind: 'kill', to: 'The Vault Beast', src: SRC },
+      { kind: 'hail', to: 'A Planar Projection', text: 'only with the kill credit', src: SRC },
+      { kind: 'get', text: 'a character flag', src: SRC },
+      { kind: 'zone', to: 'the vault door', text: 'Click it: that click flags you.', src: SRC },
+    ],
+  };
+  const html = R.questHtml(SEQ_QUEST);
+  const at = (s) => { const i = html.indexOf(s); expect(i, s).toBeGreaterThan(-1); return i; };
+
+  it('draws one numbered list, in the order of the acts: hail, say, say ×2, give, kill, hail, zone', () => {
+    const marks = ['/say Hail', 'data-copy="/sit"', 'data-copy="/say open the gate"', 'data-copy="/say continue"',
+      'Gate Token ×2, Rusty Key', 'Vault Key', 'The Vault Beast', 'A Planar Projection', 'the vault door'];
+    const where = marks.map(at);
+    expect(where).toEqual([...where].sort((a, b) => a - b));
+    // Seven rows; a get and a note are not rows.
+    expect([...html.matchAll(/<span class="qn">(\d+)\.<\/span>/g)].map(m => Number(m[1]))).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(html).toContain('<ol class="qseq">');
+    expect(html).toContain('🧭 In order <span class="ct">7</span>');
+  });
+
+  it('a phrase said more than once shows ×N, and a repeat shows its "until"', () => {
+    const row = html.slice(at('data-copy="/say continue"'), at('data-copy="/say continue"') + 400);
+    expect(row).toContain('×2');
+    expect(row).toContain('repeat until he has nothing new');
+    expect(count(html, '×')).toBeGreaterThanOrEqual(2);       // "continue ×2" and "Gate Token ×2"
+    expect(html).toContain('Gate Token ×2, Rusty Key');       // the same item twice in a hand-in reads Name ×2
+  });
+
+  it('a get rides on the row before it ("→ get …"); a note hangs under its row; a note before any row leads the list', () => {
+    expect(html).toContain('<span class="qk">get</span> Gate Token <span class="qk">(the second one gives it)</span>');
+    expect(html).toContain('<span class="qk">get</span> Vault Key <span class="qk">(100 experience)</span>');
+    expect(count(html, '<span class="qx">→</span> <span class="qk">get</span>')).toBe(3);
+    expect(at('Bring a key.')).toBeLessThan(at('<ol class="qseq">'));
+    const forgets = at('He forgets you if you zone.');
+    expect(forgets).toBeGreaterThan(at('data-copy="/say continue"'));
+    expect(forgets).toBeLessThan(at('<span class="qk">Give</span>'));
+    expect(html).toContain('<div class="qnote">He forgets you if you zone.</div>');
+  });
+
+  it('/sit comes first for a line that needs it, a hail is the guide’s own "/say Hail", the zone-in is gold', () => {
+    const sit = at('data-copy="/sit"');
+    expect(sit).toBeLessThan(at('data-copy="/say open the gate"'));
+    expect(html).toContain('sit first');
+    expect(html).toContain('<span class="qk">Hail</span> <span class="qwho">Warden Aldenmar</span> ');
+    expect(html).toContain('data-copy="/say Hail"');
+    expect(html).toContain('<li class="qs zone"><span class="qn">7.</span>');
+    expect(html).toContain('<span class="qx">Zone in:</span> <span class="qwho">the vault door</span><div class="qnote">Click it: that click flags you.</div>');
+    expect(html).toContain('<span class="qk">Hail</span> <span class="qwho">A Planar Projection</span> <span class="qk">(only with the kill credit)</span>');
+  });
+
+  it('the old pieces are not drawn again: no says, no Talk to, no Turn in; the places stay, with their /map chips', () => {
+    expect(html).not.toContain('old words');
+    expect(html).not.toContain('old give');
+    expect(html).not.toContain('🗣 Talk to');
+    expect(html).not.toContain('📦 Turn in');
+    expect(html).toContain('📍 Where <span class="ct">2</span>');
+    expect(html).toContain('data-copy="/map -12 34"');
+    expect(html).toContain('data-copy="/map 100 -200"');
+    expect(html).toContain('Plane of Testing · by the gate');
+    expect(html).toContain('Talk to the warden, then hand in the key.');   // the step's own detail still leads
+  });
+
+  it('every chip in it carries data-wp-interact (the page arms the hover handshake for the class)', () => {
+    const chips = html.match(/<span class="qcopy[^"]*"[^>]*>/g);
+    expect(chips.length).toBe(count(html, 'class="qcopy'));
+    expect(chips.length).toBeGreaterThanOrEqual(6);                 // hail ×2, sit, say ×2, map ×2
+    for (const c of chips) expect(c, c).toContain(' data-wp-interact ');
+  });
+
+  it('escapes what it prints, items and notes included', () => {
+    const q = { key: 'k', title: 't', who: 'solo', seq: [
+      { kind: 'note', text: 'a <b> note', src: SRC },
+      { kind: 'give', to: 'A "B"', items: ['x & <y>'], src: SRC },
+      { kind: 'say', to: 'C', text: 'x" <i>&', src: SRC },
+    ] };
+    const h = R.questHtml(q);
+    expect(h).toContain('a &lt;b&gt; note');
+    expect(h).toContain('x &amp; &lt;y&gt;');
+    expect(h).toContain('data-copy="/say x&quot; &lt;i&gt;&amp;"');
+    expect(h).not.toMatch(/<(b|i|y)>/);
+  });
+
+  it('a step with no seq is drawn exactly as before: Talk to, Turn in, and each phrase once', () => {
+    const old = R.questHtml({ ...SEQ_QUEST, seq: undefined });
+    expect(old).toContain('🗣 Talk to');
+    expect(old).toContain('📦 Turn in');
+    expect(old).toContain('data-copy="/say old words"');
+    expect(old).not.toContain('qseq');
+    expect(R.questHtml({ ...SEQ_QUEST, seq: [] })).toContain('🗣 Talk to');   // an empty seq is no seq
+  });
+
+  it('a chain with a seq keeps its start and its story and leaves out the folded hand-ins the seq already lists', () => {
+    const chain = {
+      first: { text: 'Start with the first.', at: { npc: 'First Nyssara', zone: PLACE, y: 1, x: 2 }, say: ['begin'] },
+      talk: [{ at: { npc: 'Second Corvale', zone: PLACE, y: 5, x: 6 }, say: ['tell me'] }],
+      handins: [{ at: { npc: 'First Nyssara', zone: PLACE, y: 1, x: 2 }, give: 'Thing A', get: 'Thing B' }],
+    };
+    const q = { key: 'c', title: 'c', who: 'solo', chain, seq: [{ kind: 'give', to: 'First Nyssara', items: ['Thing A'], src: SRC }, { kind: 'get', items: ['Thing B'], src: SRC }] };
+    const h = R.questHtml(q);
+    expect(h).toContain('Start here');
+    expect(h).toContain('Optional: the story');
+    expect(h).not.toContain('Hand-ins, in order');
+    expect(h).toContain('<span class="qk">Give</span> <span class="qwho">First Nyssara</span><span class="qk">:</span> Thing A');
+    expect(R.questHtml({ ...q, seq: undefined })).toContain('Hand-ins, in order');
+  });
+
+  it('seqRows is the same rule as the website’s, row for row, on every step of the real guide', async () => {
+    const { seqRows: web } = await import('../web/lib/popGuide.ts');
+    const w = {};
+    vm.runInNewContext(fs.readFileSync(path.join(MIMIC, 'pop-quests.js'), 'utf8'), { window: w });
+    const shape = (s) => ({ lead: s.lead.map(a => a.text), rows: s.rows.map(r => [r.n, r.act.kind, r.gets.length, r.notes.length]) });
+    let n = 0;
+    for (const q of w.POP_QUESTS.levels.flatMap(lv => lv.sections.flatMap(s => s.quests))) {
+      if (!q.seq) continue;
+      expect(shape(R.seqRows(q.seq)), q.key).toEqual(shape(web(q.seq)));
+      n++;
+    }
+    expect(n).toBe(65);
+  });
+});
+
 describe('quest renderer: picker labels and mini', () => {
   it('groups like the web guide: level — section where a level holds several, else the section\'s own title', () => {
     expect(R.qGroupLabel({ title: 'Before the planes', sections: [{}, {}] }, { title: 'Start here' })).toBe('Before the planes — Start here');
@@ -233,14 +373,18 @@ describe('the generated guide through the renderer', () => {
     let said = 0;
     for (const q of all) {
       const html = R.questHtml(q);
+      // A step with a seq is drawn from it (its says, and "Hail" for a hail act); one without, from says[].
+      const words = q.seq
+        ? [...q.seq.filter(a => a.kind === 'say').map(a => a.text), ...(q.seq.some(a => a.kind === 'hail') ? ['Hail'] : [])]
+        : (q.says || []).map(s => s.text);
       const recorded = new Set([
-        ...(q.says || []).map(s => s.text),
+        ...words,
         ...(q.chain ? [...(q.chain.first.say || []), ...q.chain.talk.flatMap(s => s.say || [])] : []),
       ]);
       const shown = [...html.matchAll(/data-copy="\/say ([^"]*)"/g)].map(m => unesc(m[1]));
       for (const t of shown) expect(recorded.has(t), q.key + ': "' + t + '" is not in the guide').toBe(true);
       for (const t of recorded) expect(shown.includes(t), q.key + ': missing "' + t + '"').toBe(true);
-      for (const s of q.says || []) { said++; expect(html, q.key).toContain('data-copy="/say ' + esc(s.text) + '"'); }
+      for (const t of words) { said++; expect(html, q.key).toContain('data-copy="/say ' + esc(t) + '"'); }
       for (const l of q.where || []) expect(html, q.key).toContain('data-copy="/map ' + l.y + ' ' + l.x + '"');
       expect(html, q.key).not.toMatch(/undefined|null|\[\[/);
     }
@@ -248,9 +392,52 @@ describe('the generated guide through the renderer', () => {
   });
 
   it('gives every sit-first line its /sit chip', () => {
-    const sitters = all.filter(q => (q.says || []).some(s => s.sit));
+    const lines = (q) => (q.seq ? q.seq.filter(a => a.kind === 'say') : (q.says || []));
+    const sitters = all.filter(q => lines(q).some(s => s.sit));
     expect(sitters.length).toBeGreaterThan(0);
-    for (const q of sitters) expect(count(R.questHtml(q), 'data-copy="/sit"'), q.key).toBe(q.says.filter(s => s.sit).length);
+    for (const q of sitters) expect(count(R.questHtml(q), 'data-copy="/sit"'), q.key).toBe(lines(q).filter(s => s.sit).length);
+  });
+
+  it('draws the seq of every step that has one: every act’s words, items, ×N and zone-in text, in act order', () => {
+    const withSeq = all.filter(q => q.seq);
+    expect(withSeq.length).toBe(65);
+    for (const q of withSeq) {
+      const html = R.questHtml(q);
+      expect(html, q.key).toContain('<ol class="qseq">');
+      expect(html, q.key).not.toContain('🗣 Talk to');
+      expect(html, q.key).not.toContain('📦 Turn in');
+      let from = html.indexOf('🧭 In order');   // a lead note sits above the <ol>
+      expect(from, q.key).toBeGreaterThan(-1);
+      for (const a of q.seq) {
+        const mark = a.kind === 'say' ? 'data-copy="/say ' + esc(a.text) + '"'
+          : a.kind === 'hail' ? '<span class="qwho">' + esc(a.to) + '</span>'
+          : a.kind === 'note' || a.kind === 'wait' ? esc(a.text)
+          : a.kind === 'get' ? (a.items && a.items[0] ? esc(a.items[0]) : esc(a.text))
+          : '<span class="qwho">' + esc(a.to) + '</span>';
+        const i = html.indexOf(mark, from);
+        expect(i, q.key + ' ' + a.kind + ' ' + mark).toBeGreaterThan(-1);
+        // A note can hang under a row and a get rides on one: neither moves the cursor past the next act.
+        if (a.kind !== 'note' && a.kind !== 'get') from = i;
+        if (a.kind === 'say' && a.times > 1) expect(html.slice(i, i + 500), q.key).toContain('×' + a.times);
+        if (a.kind === 'say' && a.until) expect(html.slice(i, i + 500), q.key).toContain('repeat until ' + esc(a.until));
+        if (a.kind === 'zone') expect(html, q.key).toContain(esc(a.text));
+      }
+      expect(html, q.key).not.toMatch(/undefined|null|\[\[/);
+    }
+  });
+
+  // The Bastion flag is the shrine click's, its own step (the guild lead, 2026-10-03: "the flagging for bastion
+  // of thunder REQUIRES you to enter the zone from plane of storms after doing the turnin").
+  it('Askr: "continue" ×2 is on its own row, the list ends saying the meld is not the Bastion flag, and the shrine is its own gold row', () => {
+    const q = all.find(x => x.key === 'flag_askr');
+    const html = R.questHtml(q);
+    const i = html.indexOf('data-copy="/say continue"');
+    expect(html.slice(i, i + 300)).toContain('×2');
+    expect(html).not.toContain('<li class="qs zone">');
+    expect(html.lastIndexOf('not your Bastion of Thunder flag yet')).toBeGreaterThan(html.indexOf('data-copy="/say bastion of thunder"'));
+    const shrine = R.questHtml(all.find(x => x.key === 'storms_zone_bot'));
+    expect(shrine).toContain('<li class="qs zone">');
+    expect(shrine).toContain('sets your Bastion flag and sends you in');
   });
 
   it('tells a place with no words from one with words, for every step in the guide', () => {
@@ -258,14 +445,18 @@ describe('the generated guide through the renderer', () => {
     for (const q of all) {
       const stops = R.questStops(q);
       const html = R.questHtml(q);
-      const n = stops.filter(s => s.quiet).length;
+      // A step with a seq draws no "Talk to" stops, so no stop can say "no words recorded".
+      const n = q.seq ? 0 : stops.filter(s => s.quiet).length;
       quiet += n;
       // A chain's start and story stops have their own fallback, counted separately.
       const inChain = q.chain ? (q.chain.first.say && q.chain.first.say.length ? 0 : 1) + q.chain.talk.filter(s => !(s.say && s.say.length)).length : 0;
       expect(count(html, R.Q_NONE), q.key).toBe(n + inChain);
       for (const s of stops) if (s.quiet) expect(s.says, q.key).toEqual([]);
     }
-    expect(quiet).toBeGreaterThan(0);
+    // Every step that had a place and no words now has a seq, which draws no "Talk to" stop. A new one that
+    // falls back to "no words recorded" should get a seq (test/pop-guide-seq.test.js says which steps need
+    // one); the invented-sample test above is what keeps the fallback itself honest.
+    expect(quiet).toBe(0);
   });
 });
 
