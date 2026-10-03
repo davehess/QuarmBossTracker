@@ -15978,7 +15978,13 @@ function _serializeForDashboard() {
     sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
-    watchedLogs:        stats.watchedLogs,
+    // `level` is the best the agent knows (Zeal's own label, else /who), null when unknown: the dashboard
+    // tucks characters KNOWN to be under 46 behind a toggle (the guild lead, 2026-10-03: "low level
+    // characters do not need to show up ... all of my traders and mule characters destroy my views").
+    // `hidden` is the owner's own "hide from lists" flag (the guild lead, 2026-10-03: "make it so I can hide
+    // these characters from anything but account inventory"): hidden characters join the tucked-away set.
+    // Display only — the Watched Logs diagnostic card still lists every file and nothing uploads differently.
+    watchedLogs:        (stats.watchedLogs || []).map(w => ({ ...w, level: _levelOf(w.character), hidden: _hiddenFromLists(w.character) })),
     // ── Buffs tab (the guild lead, 2026-09-02) ───────────────────────────────────────
     // Two provenances, never blended:
     //   buffsActive   what each watched character is carrying RIGHT NOW, from
@@ -18571,6 +18577,57 @@ function renderDash(s) {
   setSectionHTML('dash', h);
 }
 
+// Low-level characters (the guild lead, 2026-10-03: "low level characters do not need to show up on
+// the pop flag page. all of my traders and mule characters destroy my views anywhere we display all of
+// our logs"). A watched character the agent KNOWS is under level 46 (Zeal's own label, else /who; 46 is
+// the lowest zone-in gate in Planes of Power) waits behind a "show N low-level or hidden" toggle in the Me card's
+// Watched characters and the Replay log picker. Per machine, in localStorage; the in-memory flag keeps
+// the toggle working in a browser that refuses storage.
+// The same day the guild lead added two more: "put any unknown characters into a minimized area and make
+// it so I can hide these characters from anything but account inventory". So (1) a character the owner
+// hid on wolfpack.quest (\`hidden\`, characters.hidden_from_lists) joins the tucked-away set behind the same
+// toggle, and (2) a character with NO known level — no /who is not proof of a low level, so it is not
+// tucked behind the toggle — closes up under its own "N with no known level" group instead of sitting
+// among the ones that raid. Display only: nothing about inventory or uploading reads either rule.
+var WP_LOW_LEVEL = 46;
+var _wpShowLow = false;
+try { _wpShowLow = localStorage.getItem('wp:showLowLevel') === '1'; } catch (e) { void e; }
+function wpIsLowLevel(w) { return !!w && w.level != null && Number(w.level) > 0 && Number(w.level) < WP_LOW_LEVEL; }
+function wpIsTucked(w) { return !!w && (!!w.hidden || wpIsLowLevel(w)); }
+function wpHasLevel(w) { return !!w && w.level != null && Number(w.level) > 0; }
+// Split a character list into what shows inline (\`shown\`), what waits behind the toggle (\`tucked\`: low-level
+// or hidden) and what closes up under "no known level" (\`unknown\`). The toggle adds the tucked ones back to
+// \`shown\` in their own order; \`unknown\` never joins it. Never an empty list: if nothing would be left inline
+// (every character is hidden, low-level or unknown), nothing is tucked away and they are all \`shown\`.
+function wpPartitionChars(list) {
+  var main = [], unknown = [], tucked = [];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i];
+    if (wpIsTucked(w)) tucked.push(w);
+    else if (wpHasLevel(w)) main.push(w);
+    else unknown.push(w);
+  }
+  if (main.length === 0) return { shown: list.slice(), unknown: [], tucked: [] };
+  return {
+    shown: _wpShowLow ? list.filter(function (w) { return unknown.indexOf(w) < 0; }) : main,
+    unknown: unknown,
+    tucked: tucked,
+  };
+}
+function wpLowToggleHtml(n) {
+  return '<a href="#" class="wp-low-toggle" style="color:var(--blue)" title="Characters known to be under level ' + WP_LOW_LEVEL
+    + ', and any you hid on wolfpack.quest (a mule, a trader), are tucked away so the lists stay about the characters that raid.">'
+    + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level or hidden</a>';
+}
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.classList || !t.classList.contains('wp-low-toggle')) return;
+  e.preventDefault();
+  _wpShowLow = !_wpShowLow;
+  try { localStorage.setItem('wp:showLowLevel', _wpShowLow ? '1' : '0'); } catch (err) { void err; }
+  try { refresh(); } catch (err2) { void err2; }   // repaint now instead of waiting for the next poll
+});
+
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
 // old logsync region). Pulls ENTIRELY from local state — the own Zeal client
 // (character + zone + buffs), watched logs (characters), local tells, and recent
@@ -18628,16 +18685,28 @@ function renderMeCard(s) {
 
   // Two-column body: watched characters + recent tells.
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px">';
-  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + chars.length + ')</div>';
+  // Low-level, hidden and no-known-level characters are tucked away (see wpPartitionChars); when that would
+  // leave nothing inline it shows them all rather than an empty column.
+  const part = wpPartitionChars(chars);
+  const listedChars = part.shown;
+  const charRow = (c) => {
+    const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
+    return (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
+         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
+  };
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + listedChars.length + ')</div>';
   if (chars.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
   else {
     h += '<div style="font-size:12px;line-height:1.6">';
-    for (const c of chars.slice(0, 8)) {
-      const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
-      h += (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
-         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
-    }
+    for (const c of listedChars.slice(0, 8)) h += charRow(c);
     h += '</div>';
+    if (part.unknown.length > 0) {
+      // Collapsed by default; wpKeep keeps it however the user left it across this card's repaints.
+      h += '<details ' + wpKeep('me-nolevel') + ' style="margin-top:4px"><summary class="dim" style="cursor:pointer;font-size:11px">'
+         + part.unknown.length + ' with no known level</summary>'
+         + '<div style="font-size:12px;line-height:1.6;max-height:9.6em;overflow-y:auto">' + part.unknown.map(charRow).join('') + '</div></details>';
+    }
+    if (part.tucked.length > 0) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(part.tucked.length) + '</div>';
   }
   h += '</div>';
 
@@ -20390,6 +20459,27 @@ function renderDiag(s) {
   let h = '';
   h += '<div class="grid">';
 
+  // Crash review — first on Diagnostics (the guild lead, 2026-10-03: "crash reporting
+  // should be on the diagnostics tab of mimic"; it sat on Info from 2026-08-13, and on
+  // Triggers before that). Reading dumps costs real work, so the list fills on demand via
+  // renderCrashReview()'s one-shot. The checkbox mirrors the tray's "Share crash reports
+  // with the guild" toggle — same cfg.crashReports flag, two places to reach it, so
+  // nobody has to know the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>🩺 Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke — including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '— never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
+
   // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
@@ -20458,22 +20548,36 @@ function renderTriggers(s) {
   // ⏪ Replay (#101) — walk a slice of a watched log back through the real
   // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
   // byte-stable — its picker uses only stable watchedLog fields (character +
-  // logPath), so idle polls don't rewrite it and the user's from/to typing +
-  // datetime focus survive. The volatile progress/results live in the nested
+  // logPath, plus level + hidden, which change once when /who or the prefs poll
+  // learns them, never per poll), so idle polls don't rewrite it and the user's
+  // from/to typing + datetime focus survive. The volatile progress/results live in the nested
   // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
+  // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
+  // list, and ones with no known level close up in a trailing "no known level" group (a <select> cannot hold
+  // a <details>, so an optgroup is its native minimized area). Never all of them tucked: a picker with
+  // nothing in it is no use (wpPartitionChars shows them all then).
+  var _rlsPart = wpPartitionChars(_rls);
+  var _rlsLow = _rlsPart.tucked.length;
+  var _rlsHasLow = _rlsLow > 0;
+  var _rlsNoLevel = _rlsPart.unknown;
+  _rls = _rlsPart.shown;
+  function _rlsOption(w) { return '<option value="' + esc(w.logPath) + '">' + esc(w.character || w.logPath) + '</option>'; }
   if (_rls.length === 0) {
     h += '<div class="dim" style="font-size:12px">No watched log files yet — point Mimic at your EverQuest folder first.</div>';
   } else {
     var _inStyle = 'background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px';
     h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;font-size:12px">';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Log</span><select id="replayLog" style="' + _inStyle + '">';
-    for (var _ri = 0; _ri < _rls.length; _ri++) {
-      var _rw = _rls[_ri];
-      h += '<option value="' + esc(_rw.logPath) + '">' + esc(_rw.character || _rw.logPath) + '</option>';
+    for (var _ri = 0; _ri < _rls.length; _ri++) h += _rlsOption(_rls[_ri]);
+    if (_rlsNoLevel.length > 0) {
+      h += '<optgroup label="' + _rlsNoLevel.length + ' with no known level">';
+      for (var _rn = 0; _rn < _rlsNoLevel.length; _rn++) h += _rlsOption(_rlsNoLevel[_rn]);
+      h += '</optgroup>';
     }
     h += '</select></label>';
+    if (_rlsHasLow) h += '<span class="dim" style="font-size:11px;padding-bottom:5px">' + wpLowToggleHtml(_rlsLow) + '</span>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Pace</span><span style="display:flex;gap:10px;padding-top:4px">'
@@ -22516,6 +22620,97 @@ function _wpDeathrollHtml(e) {
   return h + '</table></details>';
 }
 
+// ── 📦 Who looted what (the guild lead, 2026-10-03) ──────────────────────────────────
+// "the loot tab on mimic should have the 'who looted what' section on there for
+// items, as well as the rolls for loot." An agent only ever sees its OWN
+// "You have looted" lines, so the guild-wide list is the bot's
+// /api/server/night-loot (last 12h of looted_items + the merged roll sessions).
+// The Loot IIFE fetches it on the bidding card's own poll gate and hands it to
+// wpNightLootSet(); everything here only DRAWS what it was given. Absolute HH:MM,
+// never fmtAgo, so the string is byte-stable between polls and morphInto leaves
+// the section alone until the list really changes.
+var _wpNightLoot = null;   // null = not asked yet; { missing } / { failed } = no list; else the bot's body
+function _wpHHMM(ms) { var d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+function _wpNightDay(ms) { return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); }
+function wpNightLootHtml(nl) {
+  var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last 12 hours</span></h2>';
+  if (!nl) {
+    return h + '<div class="dim" style="padding:6px">Loading…</div></div>';
+  }
+  if (nl.missing) {
+    return h + '<div class="dim" style="padding:6px">Needs the bot update.</div></div>';
+  }
+  if (nl.failed) {
+    return h + '<div class="dim" style="padding:6px">Cannot reach the server for this list right now.</div></div>';
+  }
+  var rows = nl.loot || [];
+  if (rows.length === 0) {
+    return h + '<div class="dim" style="padding:6px">No loot seen in the last 12 hours.</div></div>';
+  }
+  h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Raiders running Mimic report their own "You have looted" line to the bot, so this is the raid, not just you. Newest first.</div>';
+  h += '<div style="max-height:340px;overflow:auto"><table><tr><th>Time</th><th>Looter</th><th>Item</th><th>Zone</th></tr>';
+  var lastDay = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var ms = Date.parse(r.at);
+    if (!isFinite(ms)) continue;
+    var day = _wpNightDay(ms);
+    if (day !== lastDay) { lastDay = day; h += '<tr><td colspan="4" class="dim" style="padding-top:8px">' + esc(day) + '</td></tr>'; }
+    h += '<tr><td class="dim">' + _wpHHMM(ms) + '</td><td class="name">' + esc(r.looter) + '</td>'
+       + '<td>' + esc(r.item) + '</td><td class="dim">' + (r.zone ? esc(r.zone) : '—') + '</td></tr>';
+  }
+  h += '</table></div>';
+  if (nl.loot_total > rows.length) h += '<div class="dim" style="font-size:11px;margin-top:6px">Showing the newest ' + rows.length + ' of ' + nl.loot_total + '.</div>';
+  return h + '</div>';
+}
+// Own stable host (like #wpLootRolls): the bidding card is a persistent sibling
+// in #loot, so this section's markup must never live in a string morphInto
+// rewrites for another card. Sits just above the Rolls card whichever of the two
+// mounts first.
+function wpNightLootHost() {
+  var sec = document.getElementById('loot');
+  if (!sec) return null;
+  var host = document.getElementById('wpNightLoot');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'wpNightLoot';
+    var rolls = document.getElementById('wpLootRolls');
+    if (rolls && rolls.parentNode === sec) sec.insertBefore(host, rolls);
+    else sec.appendChild(host);
+  }
+  return host;
+}
+function wpRenderNightLoot() { morphInto(wpNightLootHost(), wpNightLootHtml(_wpNightLoot)); }
+// Called by the Loot IIFE with whatever the fetch produced. A blip never wipes a
+// list we already have; a 404 means the bot predates the key.
+function wpNightLootSet(j) {
+  var bad = !j || j.missing || j.failed || !Array.isArray(j.loot);
+  if (bad && _wpNightLoot && Array.isArray(_wpNightLoot.loot)) return;
+  _wpNightLoot = bad ? (j && j.missing ? { missing: true } : { failed: true }) : j;
+  wpRenderNightLoot();
+}
+// Who looted a roll set's item when that is NOT someone the card already shows as
+// a winner (a re-roll or a pass hands it on). The bot linked looters to the
+// guild-merged session; this finds this agent's local set in that list by range +
+// start time (the bot merges sets of one range within 10 minutes) and compares to
+// the winners drawn on the card, so the two never disagree on screen.
+function wpNightLootedBy(rset, sessions) {
+  if (!rset || !sessions || !sessions.length) return [];
+  var best = null, bestD = Infinity;
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    if (s.from !== rset.from || s.to !== rset.to) continue;
+    var d = Math.abs(Date.parse(s.started_at) - rset.started_at_ms);
+    if (!(d <= 600000) || d >= bestD) continue;
+    best = s; bestD = d;
+  }
+  if (!best) return [];
+  var won = {};
+  var ws = rset.winners || [];
+  for (var w = 0; w < ws.length; w++) won[String(ws[w].name).toLowerCase()] = 1;
+  return (best.looters || []).filter(function (n) { return !won[String(n).toLowerCase()]; });
+}
+
 function renderLootTab(s) {
   const sec = document.getElementById('loot');
   if (!sec) return;
@@ -22533,10 +22728,13 @@ function renderLootTab(s) {
       if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
       var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
+      // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
+      var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
          + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
       h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
@@ -22561,7 +22759,9 @@ function renderLootTab(s) {
   // ⚠ The bidding card is a persistent element that mounts ITSELF into this
   // section, so it must not live inside the string morphInto rewrites — the
   // rewrite would delete it on every poll. Roll markup goes in its own stable
-  // host div; the bidding card stays a sibling.
+  // host div; the bidding card stays a sibling. "Who looted what" is a third
+  // sibling, mounted just above the rolls (wpNightLootHost).
+  wpRenderNightLoot();
   var host = document.getElementById('wpLootRolls');
   if (!host) {
     host = document.createElement('div');
@@ -22756,26 +22956,6 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Crash review (moved here from Triggers, the guild lead 2026-08-13 — a crash is a
-  // machine/diagnostic concern, not a callout one). Reading dumps costs real
-  // work, so the list fills on demand via renderCrashReview()'s one-shot.
-  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
-  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
-  // the tray menu exists.
-  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
-    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
-    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
-    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
-    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
-    +    '<span>Automatically send crash reports to the guild</span>'
-    +  '</label>'
-    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
-    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
-    +  'parser engine.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
   // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
   // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
   // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
@@ -26320,8 +26500,26 @@ async function dismissTopDamage(key) {
     return !!(sec && sec.classList.contains("active"));
   }
 
+  // 📦 "Who looted what" — the bot's guild-wide last-12h list (drawn by
+  // wpNightLootHtml / wpNightLootSet in the Loot tab renderer). It rides this
+  // loop's own gate (fetchServer's wpLootPollWanted: raid window or Loot tab open)
+  // and never joins the bidding chain below, so a slow or missing key cannot hold
+  // the bidding card. The bot caches the answer for 60s, so 30s here is plenty.
+  // A 404 is a bot that predates the key; anything else is a blip.
+  var lastNightLootAt = 0;
+  function fetchNightLoot(){
+    if (Date.now() - lastNightLootAt < 30000) return;
+    lastNightLootAt = Date.now();
+    try {
+      fetch("/api/server/night-loot").then(function(r){
+        if (r.status === 404) return { missing:true };
+        return r.ok ? r.json() : { failed:true };
+      }).then(function(j){ wpNightLootSet(j); }).catch(function(){ wpNightLootSet({ failed:true }); });
+    } catch (e) { wpNightLootSet({ failed:true }); }
+  }
   function fetchServer(){
     if (!wpLootPollWanted()) { return Promise.resolve(); }
+    fetchNightLoot();
     var who=pickChar();
     var q = who ? ("?character="+encodeURIComponent(who)) : "";
     var jobs=[ fetch("/api/server/auctions"+q).then(function(r){return r.ok?r.json():{auctions:[]};}).then(function(j){ srvAucs=(j&&j.auctions)||[]; }).catch(function(){ srvAucs=[]; }) ];
@@ -27450,9 +27648,11 @@ const COMMAND_HTML = `<!doctype html>
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
-  /* Two or more raids at once: which one this board is for. */
-  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
-  .raids-note .n{color:#ffa657}
+  /* Two or more raids at once: every raid's leader and player count, yours marked. */
+  .raids-card .head{color:#ffa657}
+  .raids-card .row .cnt{color:#e6edf3;font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+  .raids-card .row .yours{color:#56d364;font-size:9px}
+  .raids-card .row.mine .nm{color:#56d364}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -27466,6 +27666,11 @@ const COMMAND_HTML = `<!doctype html>
   body.setup #setupbar{display:flex}
   body.setup #drag-controls{top:28px}
   body.setup #wrap{margin-top:26px}
+  /* On the Canvas (Mimic 3.0 alpha; the guild lead, 2026-10-03: "the margins around the actual data is
+     too large"): the panel owns the move and hide buttons, so the window padding and the gutter the cure
+     and rolls cards keep clear of the hide button both go. */
+  body.wp-in-canvas #wrap{padding:2px 3px;min-width:0}
+  body.wp-in-canvas .card.cure-card, body.wp-in-canvas .card.rolls-card{padding-right:7px}
   #setupbar input[type=range]{flex:1;cursor:pointer}
   #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
     display:flex;align-items:center;justify-content:center;border-radius:4px;
@@ -27666,13 +27871,31 @@ const COMMAND_HTML = `<!doctype html>
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
-  // Two or more raids at once (the bot names them only then): the cures and the healer mana
-  // below are this raid's, and this line says which raid that is.
+  // Two or more raids at once (the bot names them only then): one row per raid, its leader and
+  // how many players it has, yours marked — the cures and the healer mana below are yours
+  // (the guild lead, 2026-10-03: "raid leaders and player counts for when we have multiple
+  // raids going"). Yours first, then the biggest.
   function raidsNoteHtml(raids){
-    var mine = null;
-    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
-    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
-         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+    var list = raids.filter(function(r){ return !!r; }).slice().sort(function(a, b){
+      if (!!a.mine !== !!b.mine) return a.mine ? -1 : 1;
+      return (Number(b.size) || 0) - (Number(a.size) || 0);
+    });
+    var total = 0;
+    for (var i = 0; i < list.length; i++) total += Number(list[i].size) || 0;
+    var h = '<div class="card raids-card"><div class="head">' + secToggle('raids', '⚔ ' + list.length + ' raids · ' + total + ' players', null) + '</div>';
+    if (!_isCollapsed('raids')) {
+      h += '<div class="list">';
+      for (var j = 0; j < list.length; j++) {
+        var r = list[j];
+        h += '<div class="row' + (r.mine ? ' mine' : '') + '">'
+           +   '<span class="nm">👑 ' + esc(r.leader || '?') + '</span>'
+           +   (r.mine ? '<span class="yours">yours</span>' : '')
+           +   '<b class="cnt">' + esc(r.size) + '</b>'
+           + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
   }
 
   function render(s){
@@ -36103,6 +36326,10 @@ function _applyCharacterPrefsResponse(resp) {
       // normalization did) left the gate permanently falsy, so NO tells were ever
       // captured even with the web toggle on and the bot endpoint returning it.
       tell_relay:         !!(p && p.tell_relay),
+      // Display only (the guild lead, 2026-10-03: "hide these characters from anything but account
+      // inventory"): the dashboard's character lists read it via _hiddenFromLists. It gates NO upload —
+      // that is exclude_from_stats / exclude_inventory, and a hidden character keeps uploading everything.
+      hidden_from_lists:  !!(p && p.hidden_from_lists),
     };
   }
   stats.characterPrefs          = norm;
@@ -36155,6 +36382,14 @@ function shouldUploadForCharacter(character) {
   if (!character) return true;
   const p = stats.characterPrefs && stats.characterPrefs[String(character).toLowerCase()];
   return !p || !p.exclude_from_stats;
+}
+
+// True when the owner hid this character from the lists (characters.hidden_from_lists). DISPLAY ONLY:
+// nothing that uploads or collects asks this — shouldUploadForCharacter and the inventory gates read
+// exclude_from_stats / exclude_inventory and never this. Unknown (no prefs yet) is not hidden.
+function _hiddenFromLists(character) {
+  const p = stats.characterPrefs && stats.characterPrefs[String(character || '').toLowerCase()];
+  return !!(p && p.hidden_from_lists);
 }
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers

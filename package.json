@@ -15,6 +15,7 @@
     "lint": "eslint index.js commands utils packages/wolfpack-logsync/index.js",
     "test": "vitest run",
     "sync:dashboard": "node scripts/sync-dashboard-embed.js",
+    "sync:pop-quests": "node scripts/sync-pop-quests.js",
     "graphify": "bash scripts/graphify.sh"
   },
   "engines": {
