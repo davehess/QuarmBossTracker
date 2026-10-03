@@ -107,6 +107,16 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
   weekly eqemu sync. No live NPC positions without staff approval. DECISIONS-2026-09-21 §131.
+- **⏳ Buff queue headers take the click (beta `16bf4795`, FB-49, 2026-10-02).** Collapsed section headers
+  were `<div>`s the preload's hover handshake skipped, so a locked overlay passed the click to EQ and
+  the cursor stayed hidden behind the panel. They carry `data-wp-interact` now. §133.
+- **⏳ The first run after an update stays in the tray while EverQuest is open (beta `0bd27df1`, FB-50,
+  2026-10-02).** A member's game crashed about nine seconds after they clicked "Restart to install
+  update": the new build opened its window over the game. The new build now checks `lastRunVersion` and
+  `tasklist` on its first run. Reaches the fleet with the next stable. §133.
+- **⏳ Feral Avatar / Savagery time left on targets (asked 2026-10-02).** The ⏳ exists on the
+  Shaman/Beastlord queue. Gap found: non-Mimic targets are timed at the catalog's 65 ticks, while Zeal
+  showed 102 with buff-duration AAs. Waiting on the guild lead for which view showed no timer. §133.
 - **✅ / ⏳ The Oct 1–2 server patch notes consumed (bot 3.1.190 · web 1.8.77, 2026-10-02).** Done: the corpse DM
   says when and where a PoP corpse moves. Waiting: whether an open-world Classic–Luclin raid-target kill would
   start the instance board timer (need one Druzzil line). §130.
