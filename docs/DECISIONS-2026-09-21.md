@@ -6278,3 +6278,29 @@ preview b.wolfpack.quest for new versions of existing pages unless I say to make
   address until the item page graduates. Everything else on beta is a change to an existing page
   (about, the item page, /pop, /pop/guide, /pvp) and stays there.
 - The other seven parts of the same message are below as they land (§136 onward).
+
+### 136. Command Center: every raid's leader and player count (2026-10-03, agent 3.7.72 beta `1af59bd6`)
+
+The guild lead: *"command center could use raid overview information (raid leaders and player counts)
+for when we have multiple raids going."*
+
+- With two or more raids, the Command Center's one-line note ("⚔ 2 raids at once · yours: …") becomes a
+  **Raids card**: one row per raid with 👑 leader and player count, yours first (green, "yours"), then the
+  biggest. The header reads "⚔ 2 raids · 43 players" and collapses like the other sections.
+- **No new data or request.** The bot already names every raid on the buff-queue payload when there are
+  two or more (§124); the overlay only showed yours. With one raid nothing renders, as before.
+- Not added: zone or class mix per raid. The roster has no zone and no raid id; zone would need a join
+  to live state that covers only Mimic users. Ask if wanted.
+- A raid shows only if one of its members runs Mimic, and drops off two minutes after its last upload.
+
+### 137. Crash review moves to the Diagnostics tab (2026-10-03, agent 3.7.72 beta `1af59bd6`)
+
+The guild lead: *"crash reporting should be on the diagnostics tab of mimic"*.
+
+- The whole Crash review card (the "Automatically send crash reports" checkbox, Review my crashes, the
+  results) now leads the 🩺 Diagnostics tab. Nothing about it changed; the auto-review still runs once when
+  crash files exist.
+- **Reverses 2026-08-13**, when the card was put on Info on purpose. The tray toggle still drives the same
+  setting.
+- Not built (offered by the scoping pass, not asked for): a per-crash "send this one" button and a
+  sent/not-sent badge. They need an agent endpoint and a privacy-copy check, since reports are opt-in.

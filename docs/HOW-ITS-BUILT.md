@@ -248,7 +248,9 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
 - **Web `/raid`:** one tab per raid, keyed by leader (a tab no longer jumps when the other raid
   outgrows it), "N raids at once", crowns.
 - **Mimic (beta):** Extended Target's count line, the Buff queue, the Command Center and the dashboard
-  Raid tab say "⚔ N raids at once" and whose raid they show. The Command Center's guild-wide priest
+  Raid tab say "⚔ N raids at once" and whose raid they show. Since agent 3.7.72 the Command Center's
+  version is a Raids card (`raidsNoteHtml` in `apps/mimic/command.html`): one row per raid with the
+  leader and player count, yours first, totals in the collapsible header (§136). The Command Center's guild-wide priest
   mana keeps to this Mimic's raid window while two raids run (`_noteRaidSplit` / `_raidSplitNow`).
 - **Not split yet:** attendance ticks, the trigger relay, `/buffs`, the signup comp matcher, the essence
   queue, the `dedup_roster` election (§124 lists them).
@@ -3743,6 +3745,8 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Badge goes stale-silent 30s after the last pulse.
 
 ### Crash review (agent, beta)
+- **Where it lives:** the top of the dashboard's 🩺 Diagnostics tab (`renderDiag`), since agent 3.7.72
+  (the guild lead, 2026-10-03, §137). Before that it sat on Info (2026-08-13) and Triggers.
 - **🩺 Crash review card + `/api/crash-review` (agent 3.5.67)** — reads this
   machine's own Zeal crash zips and says, in plain language, what broke. The
   headline answer is *"was this Zeal/Mimic?"*, because that is what people ask

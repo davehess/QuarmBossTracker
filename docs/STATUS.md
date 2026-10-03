@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Command Center: a Raids card when two or more raids run (agent 3.7.72 on beta `1af59bd6`, 2026-10-03).** One row
+  per raid: the leader and the player count, yours first and marked, totals in the header, collapsible. Same data
+  as the old one-line note, no new request. Waiting on a night with two raids. DECISIONS-2026-09-21 §136.
+- **⏳ Crash review moved to the Diagnostics tab (agent 3.7.72 on beta `1af59bd6`, 2026-10-03).** The whole card (share
+  checkbox, Review button, results) now leads Diagnostics instead of Info. Reverses the 2026-08-13 placement. §137.
+- **✅ New pages go live with a `[beta]` tag (web 1.8.81, 2026-10-03).** `/zeal-icons` (+ `?v=b`) and
+  `/db/recipe/<id>` moved from beta to production with `web/components/NewPageTag.tsx` at the top. §135.
 - **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
