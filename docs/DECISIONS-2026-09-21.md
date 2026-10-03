@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **The eight-part request of Oct 3** | **§135–§142.** Live: `/zeal-icons` + `/db/recipe` and `/admin/extra-spells` with the `[beta]` tag (web 1.8.81–1.8.82), the loot panel (bot 3.1.192). Beta (agent 3.7.72–3.7.74): Command Center raids card, crash review on Diagnostics, Loot tab who-looted-what, traders and under-46 tucked away on `/pop` `/pop/guide` `/me`, PoP overlay Quests mode with the guide's words filled from the quest scripts. Alpha `5adafea8`: Canvas presets are the real overlays, tight margins, HUD ring + builder | the guild lead: (1) look at the beta pages and Mimic beta; (2) look at the Canvas on the alpha; (3) send a dozen log lines from a PoK trainer hand-in (extra spells phase 2); (4) pick a Zeal icons layout; (5) the calls listed in §139–§142 |
 | **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.80: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
 | **The Oct 1–2 server patch notes** | **§130, §132.** Bot 3.1.190 + web 1.8.77: the corpse DM says when and where a PoP corpse moves. Bot 3.1.191 + web 1.8.78: Xanamech is off the board and the 72 h override; his website row still needs one delete. Agent 3.7.71 on beta `c82ae5b4` reads all 168 unread Rallos Zek lines: NPC deaths, no-killer deaths, forfeits (🏃), the "exults" kill. NPC deaths post to #pvp again, about 50 a day. Still open: the Oct 2 "Glory lost/gained" wording (none seen yet); whether an open-world raid-target kill starts the instance timer | the guild lead: (0) approve or run `delete from bot_boards where boss_id = 'xanamech_nezmirthafen';` (§132); (1) on the beta, run Opt-in Logs from Sep 28 to send the missed deaths; (2) say if NPC deaths should record without posting to #pvp; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
@@ -6393,5 +6394,32 @@ things to say or do for any of the pop quests or flags so we can reference them.
   the Zeks. The factory "key" is a flag from hailing Nitram after Xanamech, not an item. Aerin`Dar's projection
   needs the last Mavuin hail too. The flag map is marked verified by the guild lead, so it was left alone.
 - All of it is upstream SecretsOTheP quest scripts; Quarm may differ in places nobody has checked.
+
+### 142. Canvas presets are the real overlays; the HUD ring, and its builder, on the Canvas (2026-10-03, alpha `5adafea8` · agent 3.7.74 beta)
+
+The guild lead: *"on alpha the canvas versions of existing overlays don't match the real overlays. they have
+many of the elements but they are so spread out. the canvas elements themselves do not all have to be prim and
+properly squared off with no overlay. the margins around the actual data is too large. the HUD overlay's circle
+mode is unconstructive (or meant to be) but the canvas version is a bunch of small dials. we need the ability to
+craft the circular HUD, but we also should have the default HUD circle view in canvas. when I look at an overlay
+outside of the canvas or choose it as a preset within the canvas they should be extremely close to being
+identical."*
+
+- **Why they differed:** every preset in the chooser's Groups tab was a stack of re-made pieces (`parts.js`), not
+  the overlay. The real pages were only under "Whole overlays".
+- **Now a preset IS the overlay:** choosing one puts the real page on the Canvas (same code, so a change to an
+  overlay reaches its preset). Each preset row keeps an "as pieces" chip for the old stack, and ✂ Take it apart
+  still works. Fifteen overlays are mapped; group, timers and target tabs stay pieces (no overlay of their own).
+- **Margins:** on the Canvas each overlay page drops its window padding and the gutters it kept for its own ✥/✕
+  (the panel owns those), and an overlay panel has no plate, border or padding — the data sits at the edge. A
+  preset is fitted to its content as data arrives (it only grows); the panel menu's "↕ Fit to content" is exact.
+  The Command Center's half is on beta (agent 3.7.74) because the agent serves that page.
+- **HUD ring:** "HUD (ring)" is the default HUD preset: the real ring, one piece. "HUD (box)" is the box. Both are
+  the same page pinned to a look (`?wpstyle=hud|a`), and either can be on the Canvas once.
+- **Craft the ring on the Canvas:** the panel menu's "⚙ Build the ring" opens the HUD's own builder; the panel
+  widens beside the ring instead of the window resizing. It edits the same per-character ring as the HUD window.
+- Not verified in Electron (only in tests and a headless load): how each trimmed page looks, the builder's widening
+  and click-through on a locked Canvas. Two calls for the guild lead: should "＋ Overlay → HUD" also mean the ring
+  (it does not yet), and fit-on-add only grows (an empty page would otherwise shrink to a sliver).
 - Because `popGuideMore.ts` is still a beta file, this graduates to stable only with the guide's beta
   layouts, or after that file moves to main on its own.
