@@ -97,8 +97,9 @@ describe('hosted picture files pass Zeal\'s checks', () => {
 
 describe('link previews', () => {
   it('the gallery and each guild page unfurl with their own title', () => {
-    expect(metaForPath('/zeal-icons').title).toBe('Zeal tag icons');
-    expect(metaForPath('/zeal-icons/eur').title).toBe('Europa — Zeal tag icon');
+    // New on production with the [beta] tag (DECISIONS §135); the tag comes off when the page settles.
+    expect(metaForPath('/zeal-icons').title).toBe('[beta] Zeal tag icons');
+    expect(metaForPath('/zeal-icons/eur').title).toBe('[beta] Europa — Zeal tag icon');
     expect(metaForPath('/zeal-icons/nope').title).toBe('WolfPack.quest');
     expect(guildByCode('eur')?.code).toBe('EUR');
   });
