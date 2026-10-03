@@ -15978,7 +15978,10 @@ function _serializeForDashboard() {
     sessionMends:       stats.sessionMends,
     abilityStats:       Object.fromEntries(stats.abilityStats),
     castCounts:         stats.castCounts,
-    watchedLogs:        stats.watchedLogs,
+    // `level` is the best the agent knows (Zeal's own label, else /who), null when unknown: the dashboard
+    // tucks characters KNOWN to be under 46 behind a toggle (the guild lead, 2026-10-03: "low level
+    // characters do not need to show up ... all of my traders and mule characters destroy my views").
+    watchedLogs:        (stats.watchedLogs || []).map(w => ({ ...w, level: _levelOf(w.character) })),
     // ── Buffs tab (the guild lead, 2026-09-02) ───────────────────────────────────────
     // Two provenances, never blended:
     //   buffsActive   what each watched character is carrying RIGHT NOW, from
@@ -18571,6 +18574,31 @@ function renderDash(s) {
   setSectionHTML('dash', h);
 }
 
+// Low-level characters (the guild lead, 2026-10-03: "low level characters do not need to show up on
+// the pop flag page. all of my traders and mule characters destroy my views anywhere we display all of
+// our logs"). A watched character the agent KNOWS is under level 46 (Zeal's own label, else /who; 46 is
+// the lowest zone-in gate in Planes of Power) waits behind a "show N low-level" toggle in the Me card's
+// Watched characters and the Replay log picker. Unknown level stays listed: no /who is not proof of a
+// low level. Per machine, in localStorage; the in-memory flag keeps the toggle working in a browser
+// that refuses storage.
+var WP_LOW_LEVEL = 46;
+var _wpShowLow = false;
+try { _wpShowLow = localStorage.getItem('wp:showLowLevel') === '1'; } catch (e) { void e; }
+function wpIsLowLevel(w) { return !!w && w.level != null && Number(w.level) > 0 && Number(w.level) < WP_LOW_LEVEL; }
+function wpLowToggleHtml(n) {
+  return '<a href="#" class="wp-low-toggle" style="color:var(--blue)" title="Characters known to be under level ' + WP_LOW_LEVEL
+    + ' (a mule, a trader) are tucked away so the lists stay about the characters that raid.">'
+    + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level</a>';
+}
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.classList || !t.classList.contains('wp-low-toggle')) return;
+  e.preventDefault();
+  _wpShowLow = !_wpShowLow;
+  try { localStorage.setItem('wp:showLowLevel', _wpShowLow ? '1' : '0'); } catch (err) { void err; }
+  try { refresh(); } catch (err2) { void err2; }   // repaint now instead of waiting for the next poll
+});
+
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
 // old logsync region). Pulls ENTIRELY from local state — the own Zeal client
 // (character + zone + buffs), watched logs (characters), local tells, and recent
@@ -18628,16 +18656,20 @@ function renderMeCard(s) {
 
   // Two-column body: watched characters + recent tells.
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px">';
-  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + chars.length + ')</div>';
+  const lowChars = chars.filter(wpIsLowLevel);
+  // All of them low: list them rather than an empty column (nothing to tuck them away from).
+  const listedChars = (_wpShowLow || lowChars.length === chars.length) ? chars : chars.filter(c => !wpIsLowLevel(c));
+  h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + listedChars.length + ')</div>';
   if (chars.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
   else {
     h += '<div style="font-size:12px;line-height:1.6">';
-    for (const c of chars.slice(0, 8)) {
+    for (const c of listedChars.slice(0, 8)) {
       const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
       h += (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
          + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
     }
     h += '</div>';
+    if (lowChars.length > 0 && lowChars.length < chars.length) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(lowChars.length) + '</div>';
   }
   h += '</div>';
 
@@ -20484,6 +20516,11 @@ function renderTriggers(s) {
   // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
+  // Characters known to be under 46 sit behind the same toggle as the Me card's list (never all of them:
+  // a picker with nothing in it is no use).
+  var _rlsLow = _rls.filter(wpIsLowLevel).length;
+  var _rlsHasLow = _rlsLow > 0 && _rlsLow < _rls.length;
+  if (_rlsHasLow && !_wpShowLow) _rls = _rls.filter(function(w){ return !wpIsLowLevel(w); });
   if (_rls.length === 0) {
     h += '<div class="dim" style="font-size:12px">No watched log files yet — point Mimic at your EverQuest folder first.</div>';
   } else {
@@ -20495,6 +20532,7 @@ function renderTriggers(s) {
       h += '<option value="' + esc(_rw.logPath) + '">' + esc(_rw.character || _rw.logPath) + '</option>';
     }
     h += '</select></label>';
+    if (_rlsHasLow) h += '<span class="dim" style="font-size:11px;padding-bottom:5px">' + wpLowToggleHtml(_rlsLow) + '</span>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">From</span><input type="datetime-local" step="1" id="replayFrom" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">To</span><input type="datetime-local" step="1" id="replayTo" style="' + _inStyle + '"></label>';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Pace</span><span style="display:flex;gap:10px;padding-top:4px">'

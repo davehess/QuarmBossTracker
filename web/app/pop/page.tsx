@@ -30,6 +30,9 @@
 // not just the one flagged as their main (the guild lead, 2026-08-26: "due to the
 // nature of pop flagging they may do it for many of their toons and we
 // shouldn't only track mains").
+//
+// ?all=1 — My Characters and the spell-needs table leave out Traders and characters under level 46
+// (web/lib/listableChars.ts); this shows them again. Not a scope: it composes with ?scope and ?view.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -42,6 +45,7 @@ import {
 import { WHO_ZONE_NAMES, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { LIST_MIN_LEVEL, loadLevels, loadTraderNames, partitionListable } from '@/lib/listableChars';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
 import SpellbookSubmit from './SpellbookSubmit';
 import EssencesQueue from './EssencesQueue';
@@ -107,9 +111,10 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam } = await searchParams;
+  const showAll = allParam === '1';
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
@@ -124,11 +129,33 @@ export default async function PopFlagsPage(
   // the My Characters view — that one deliberately ignores `scope`, see the
   // header note).
   const sbAdmin = supabaseAdmin();
-  const [{ data: needRows }, myChars] = await Promise.all([
+  const [{ data: needRows }, myCharsAll, traderNames] = await Promise.all([
     sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }),
     ownedCharacters(user.id),
+    loadTraderNames(sbAdmin),
   ]);
-  const spellNeeds = groupNeeds((needRows ?? []) as SpellNeed[]);
+  const spellNeedsAll = groupNeeds((needRows ?? []) as SpellNeed[]);
+
+  // Traders and characters under level 46 are tucked away on the two lists that name individual
+  // characters (My Characters and the spell-needs table), behind ?all=1 (the guild lead, 2026-10-03:
+  // "low level characters do not need to show up on the pop flag page. all of my traders and mule
+  // characters destroy my views"). They are filtered ONCE here, so every use below follows: the My
+  // Characters table, your spells needed, the spellbook picker and the /who sightings. The chart, matrix
+  // and planner count the raid roster already (popRoster). Only the names whose level is not already
+  // known to clear 46 are looked up, which keeps the me_levels call small.
+  const lookup = [
+    ...myCharsAll.map(c => c.name),
+    ...spellNeedsAll.filter(n => n.level == null || n.level < LIST_MIN_LEVEL).map(n => n.name),
+  ];
+  const bestLevels = await loadLevels(sbAdmin, lookup);
+  const bestLevel = (name: string, known: number | null) => Math.max(bestLevels.get(name.toLowerCase()) ?? 0, known ?? 0) || null;
+  const minePart = partitionListable(myCharsAll, c => ({ rank: c.rank, level: bestLevel(c.name, null) }));
+  const needPart = partitionListable(spellNeedsAll, n => ({
+    rank: traderNames.has(n.name.toLowerCase()) ? 'Trader' : null, level: bestLevel(n.name, n.level),
+  }));
+  const hiddenNames = new Set([...minePart.hidden.map(c => c.name), ...needPart.hidden.map(n => n.name)].map(n => n.toLowerCase()));
+  const myChars = showAll ? myCharsAll : minePart.listed;
+  const spellNeeds = showAll ? spellNeedsAll : needPart.listed;
   const scopedSpellNeeds = scope === 'all' ? spellNeeds : spellNeeds.filter(n => n.isMain);
 
   // My Characters' own spell-needs slice (main + alt, scope-independent) and
@@ -366,15 +393,16 @@ export default async function PopFlagsPage(
   // Nav + scope-toggle links. Every link preserves the OTHER dimension it
   // doesn't explicitly change — flipping scope while looking at a zone stays
   // on that zone; switching Chart/Matrix keeps whichever scope is set.
-  function hrefFor(overrides: { view?: string | null; zone?: string | null; scope?: string | null }) {
+  function hrefFor(overrides: { view?: string | null; zone?: string | null; scope?: string | null; all?: string | null }) {
     const next = {
-      view: view ?? null, zone: zoneKey ?? null, scope: scope === 'all' ? 'all' : null,
+      view: view ?? null, zone: zoneKey ?? null, scope: scope === 'all' ? 'all' : null, all: showAll ? '1' : null,
       ...overrides,
     };
     const params = new URLSearchParams();
     if (next.zone) params.set('zone', next.zone);
     if (next.view) params.set('view', next.view);
     if (next.scope) params.set('scope', next.scope);
+    if (next.all) params.set('all', next.all);
     const qs = params.toString();
     return '/pop' + (qs ? `?${qs}` : '');
   }
@@ -508,8 +536,16 @@ export default async function PopFlagsPage(
             </span>
           )}
           {totalUnmapped > 0 && <span className="text-orange">⚠ {totalUnmapped} unmapped grants (catalog TODO)</span>}
+          {hiddenNames.size > 0 && (
+            <span title={`Applies to My Characters and the spell-needs table. A character is hidden when it is a Trader or its level is known and under ${LIST_MIN_LEVEL}, the lowest level any Planes of Power zone lets in.`}>
+              {showAll ? `Traders and characters under ${LIST_MIN_LEVEL} shown. ` : `Traders and characters under ${LIST_MIN_LEVEL} hidden. `}
+              <Link href={hrefFor({ all: showAll ? null : '1' })} className="underline hover:text-text">
+                {showAll ? 'Hide them' : `Show all (${hiddenNames.size} hidden)`}
+              </Link>
+            </span>
+          )}
           <span className="ml-auto flex flex-wrap gap-2 items-center">
-            <span className="flex gap-1 mr-1" title="Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which always shows everything you own.">
+            <span className="flex gap-1 mr-1" title={`Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which shows every character you own (traders and characters under ${LIST_MIN_LEVEL} sit behind Show all).`}>
               <Link href={hrefFor({ scope: null })} className={navCls(scope === 'mains')}>Mains</Link>
               <Link href={hrefFor({ scope: 'all' })} className={navCls(scope === 'all')}>All characters</Link>
             </span>
@@ -606,10 +642,18 @@ export default async function PopFlagsPage(
 
           {myChars.length === 0 ? (
             <div className="bg-bg border border-orange/40 rounded p-4 text-sm">
-              <div className="text-orange mb-1">No characters linked to your account yet.</div>
+              <div className="text-orange mb-1">
+                {myCharsAll.length > 0
+                  ? `Every character on your account is a trader or under level ${LIST_MIN_LEVEL}.`
+                  : 'No characters linked to your account yet.'}
+              </div>
               <div className="text-dim text-xs">
-                Characters show up here once Mimic sees them in your EQ logs, or once an officer
-                links them on <Link href="/admin/links" className="underline">/admin/links</Link>.
+                {myCharsAll.length > 0 ? (
+                  <><Link href={hrefFor({ all: '1' })} className="underline">Show all</Link> to list them anyway.</>
+                ) : (
+                  <>Characters show up here once Mimic sees them in your EQ logs, or once an officer
+                  links them on <Link href="/admin/links" className="underline">/admin/links</Link>.</>
+                )}
               </div>
             </div>
           ) : (

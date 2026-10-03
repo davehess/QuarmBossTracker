@@ -65,10 +65,12 @@ describe('the character grid', () => {
   it('shows the last 3 months up front; older and never-uploaded fold into "more"', () => {
     expect(me).toMatch(/const RECENT_MS = 90 \* 24 \* 60 \* 60 \* 1000;/);
     expect(me).toMatch(/const isRecent = \(name: string\) => !anyRecent \|\| now - lastTouched\(name\) <= RECENT_MS;/);
-    expect(me).toMatch(/const olderRows = \[\.\.\.seenRows\.filter\(r => !isRecent\(r\.name\)\), \.\.\.neverRows\];/);
+    // Traders and characters known to be under 46 fold into the same section (test/listable-chars.test.js).
+    expect(me).toMatch(/const isFront = \(name: string\) => isRecent\(name\) && \(listedNames\.size === 0 \|\| listedNames\.has\(name\)\);/);
+    expect(me).toMatch(/const olderRows = \[\.\.\.seenRows\.filter\(r => !isFront\(r\.name\)\), \.\.\.neverRows\];/);
     expect(me).toMatch(/\{recentSeenRows\.map\(r => <SyncCard key=\{r\.name\} \{\.\.\.r\} \/>\)\}/);
     expect(me).toMatch(/\{olderRows\.map\(r => <SyncCard key=\{r\.name\} \{\.\.\.r\} \/>\)\}/);
-    expect(me).toMatch(/recent: isRecent\(c\.name\)/);
+    expect(me).toMatch(/recent: isFront\(c\.name\)/);
     const cards = fs.readFileSync(path.join(__dirname, '../web/app/me/MeCharacterCards.tsx'), 'utf8');
     expect(cards).toMatch(/visible\.filter\(n => byName\.get\(n\)!\.recent\)\.map\(renderCard\)/);
     expect(cards).toMatch(/visible\.filter\(n => !byName\.get\(n\)!\.recent\)\.map\(renderCard\)/);

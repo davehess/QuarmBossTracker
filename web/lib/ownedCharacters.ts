@@ -5,7 +5,8 @@
 
 import { supabaseAdmin } from '@/lib/supabase';
 
-export type OwnedChar = { name: string; main_name: string | null; class: string | null; active: boolean };
+// `rank` is here for lists that hide traders (web/lib/listableChars.ts); nothing else reads it.
+export type OwnedChar = { name: string; main_name: string | null; class: string | null; active: boolean; rank: string | null };
 
 export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   const admin = supabaseAdmin();
@@ -27,7 +28,7 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
 
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, active, discord_id')
+    .select('name, main_name, class, active, rank, discord_id')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (OwnedChar & { discord_id: string | null })[];
 
@@ -36,6 +37,6 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   if (roots.size === 0) return [];
   return all
     .filter(c => roots.has((c.main_name || c.name).toLowerCase()))
-    .map(({ name, main_name, class: cls, active }) => ({ name, main_name, class: cls, active }))
+    .map(({ name, main_name, class: cls, active, rank }) => ({ name, main_name, class: cls, active, rank }))
     .sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.name.localeCompare(b.name));
 }
