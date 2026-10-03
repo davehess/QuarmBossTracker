@@ -6379,8 +6379,19 @@ things to say or do for any of the pop quests or flags so we can reference them.
 - **One source, no second copy to drift:** the website's `web/lib/popGuide.ts` + `popGuideMore.ts`.
   `npm run sync:pop-quests` writes `apps/mimic/pop-quests.js`; `test/pop-quests-sync.test.js` fails when it
   is stale.
-- **Not every step has words yet:** 19 of 50 "talk to" places have none recorded; they say "hail them — no
-  words recorded" rather than guessing. A second pass is filling them from Quarm's own quest scripts (each
-  phrase cited to its script); the overlay picks them up with one re-sync.
+- **The missing words, filled from the quest scripts (beta `48048dd6` + `4c7dbe24`):** the guide now has 83
+  steps and 86 things to say (from 78 and 43). Every phrase is one of its script's own `findi("…")`
+  keywords and carries the script path (`src`); `test/pop-guide-steps.test.js` holds them to that. Filled:
+  Poxbourne, both Fuirstel visits, the hedge maze (outside, inside, the dagger hand-in), Tarkil Adan, Giwin,
+  the last Mavuin hail, Fahlia and Tylis, the three Halls of Honor trials, Nitram's factory trade, Muon's time
+  machine, and new steps for Maelin's cipher, "lore" and "information" (the Zek notes) and Miak in
+  Tranquility. Valor's globe and the Sol Ro wings are clicks, with their spots.
+- **Still words-free, on purpose:** the boss projections (every one only answers "hail"), and a few steps
+  whose NPC is spawned by a script or wanders (no fixed spot).
+- **Found while filling, not changed:** the flag map's note on `zebuxoruk_2` ("Karana's and Mithaniel's
+  notes") reads like `zebuxoruk_1` in Maelin's script ("lore"); `zebuxoruk_2` comes from "information" after
+  the Zeks. The factory "key" is a flag from hailing Nitram after Xanamech, not an item. Aerin`Dar's projection
+  needs the last Mavuin hail too. The flag map is marked verified by the guild lead, so it was left alone.
+- All of it is upstream SecretsOTheP quest scripts; Quarm may differ in places nobody has checked.
 - Because `popGuideMore.ts` is still a beta file, this graduates to stable only with the guide's beta
   layouts, or after that file moves to main on its own.
