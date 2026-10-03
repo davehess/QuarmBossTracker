@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-pages-live-2026-10-03',
+    title: 'The PoP pages and your character lists',
+    version: 'Web 1.8.85',
+    date: '2026-10-03',
+    headline: 'The Planes of Power pages get the words to say for every flag, flags proven by /who, and character lists without your traders and mules.',
+    features: [
+      { name: 'PoP guide', blurb: 'Every flag step now has the exact words to say and the hand-ins, taken from the server’s own quest scripts, with more steps added for the cipher, the Zek notes, Fire and Time.' },
+      { name: 'Flags from /who', blurb: 'If a /who shows you inside a plane, the PoP page counts the flags that plane needs, marked as seen by /who.' },
+      { name: 'Tidier character lists', blurb: 'Traders and characters under 46 step aside on the PoP pages and your character page; characters nobody has a level for fold away; “Show all” brings them back.' },
+      { name: 'Hide from lists', blurb: 'A new switch on your character page hides a character everywhere except your account inventory. Unhide it from the “Hidden by you” section.' },
+    ],
+    fixes: [
+      'The spellbook picker on the PoP page now lists every one of your characters, grouped, so a mule can always get a spellbook uploaded.',
+    ],
+  },
+  {
     key: 'extra-pop-spells-2026-10-03',
     title: 'Extra PoP spells, for officers',
     version: 'Web 1.8.84',
