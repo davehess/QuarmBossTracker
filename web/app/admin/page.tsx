@@ -85,6 +85,11 @@ export default function AdminPage() {
           href="/admin/spells"
         />
         <Card
+          title="📜 Extra PoP spells"
+          body="[beta] Reward scrolls a raider holds but has already scribed, with who still needs the spell in first-dibs order."
+          href="/admin/extra-spells"
+        />
+        <Card
           title="📜 Audit log"
           body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
           href="/admin/audit"
