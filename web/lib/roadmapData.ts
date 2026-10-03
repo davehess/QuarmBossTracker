@@ -39,13 +39,15 @@ export const releases: Release[] = [
   {
     key: 'extra-pop-spells-2026-10-03',
     title: 'Extra PoP spells, for officers',
-    version: 'Web 1.8.82',
+    version: 'Web 1.8.83',
     date: '2026-10-03',
     headline: 'Officers get a list of Planes of Power spell scrolls someone is carrying but already knows, with who needs each one.',
     features: [
       { name: 'Extra PoP spells [beta]', blurb: 'A trainer reward scroll in your bags whose spell you have already scribed shows up for officers, next to who still needs it in first-dibs order. It works from your inventory and spellbook exports.' },
     ],
-    fixes: [],
+    fixes: [
+      'On a phone, the PoP page’s “Submit a spellbook” row ran off the screen and made the whole page scroll sideways. It wraps now.',
+    ],
   },
   {
     key: 'new-pages-beta-tag-2026-10-03',
