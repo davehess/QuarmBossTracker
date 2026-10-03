@@ -1060,7 +1060,10 @@ missing Overlays-tab row):
 3. **hover-interact handshake** (`overlayHoverInteractive(true/false)` on
    mouseenter/leave) on EVERY clickable control — locked overlays are
    click-through (`setIgnoreMouseEvents(true,{forward:true})`), so without
-   the handshake clicks fall through to EQ ("the button does nothing");
+   the handshake clicks fall through to EQ ("the button does nothing").
+   The preload arms it for `button, a, input, select, textarea, [role=button]`
+   on its own; a clickable `<div>`/`<span>` needs `data-wp-interact` (the buff
+   queue's section headers lacked it, 2026-10-02, FB-49);
 4. a row in the dashboard's `WP_OVERLAY_ROWS` + its key in
    `wpRefreshOverlayToggles` + a case in the `toggle-overlay` IPC;
 5. visibility via its `apply*Visibility()` fn (unlocked override, quiet
