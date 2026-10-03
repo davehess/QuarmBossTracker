@@ -360,17 +360,17 @@ describe('agent dashboard', () => {
   const dashRaw = read('packages/wolfpack-logsync/dashboard.html');
   const dash = stripJs(dashRaw);
 
-  it('the watched-log payload carries the level _levelOf knows, null when unknown', () => {
+  it('the watched-log payload carries the level _levelOf knows (null when unknown) and the owner\'s hidden flag', () => {
     const agent = stripJs(sliceBlock(fs.readFileSync(AGENT_INDEX, 'utf8'), 'function _serializeForDashboard() {', '\n}\n'));
-    expect(agent).toMatch(/watchedLogs:\s+\(stats\.watchedLogs \|\| \[\]\)\.map\(w => \(\{ \.\.\.w, level: _levelOf\(w\.character\) \}\)\),/);
+    expect(agent).toMatch(/watchedLogs:\s+\(stats\.watchedLogs \|\| \[\]\)\.map\(w => \(\{ \.\.\.w, level: _levelOf\(w\.character\), hidden: _hiddenFromLists\(w\.character\) \}\)\),/);
   });
 
   // The helpers are sliced out of the real dashboard and run: no localStorage here, which is the
-  // browser-refuses-storage case, so the try/catch is exercised too.
-  const helpers = evalBlock(
-    sliceBlock(dashRaw, 'var WP_LOW_LEVEL = 46;', ` + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level</a>';\n}`),
-    ['WP_LOW_LEVEL', 'wpIsLowLevel', 'wpLowToggleHtml'],
-  );
+  // browser-refuses-storage case, so the try/catch is exercised too. __setShow flips the toggle.
+  const helperSrc = sliceBlock(dashRaw, 'var WP_LOW_LEVEL = 46;', ` + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level or hidden</a>';\n}`)
+    + '\nfunction __setShow(v) { _wpShowLow = v; }';
+  const helpers = evalBlock(helperSrc,
+    ['WP_LOW_LEVEL', 'wpIsLowLevel', 'wpIsTucked', 'wpHasLevel', 'wpPartitionChars', 'wpLowToggleHtml', '__setShow']);
   it('hides only characters KNOWN to be under 46', () => {
     expect(helpers.WP_LOW_LEVEL).toBe(46);
     expect(helpers.wpIsLowLevel({ character: 'Aldenmar', level: 20 })).toBe(true);
@@ -382,20 +382,261 @@ describe('agent dashboard', () => {
     expect(helpers.wpIsLowLevel(null)).toBe(false);
   });
   it('the toggle says how many, and works without storage', () => {
-    expect(helpers.wpLowToggleHtml(3)).toMatch(/class="wp-low-toggle"[^>]*>show 3 low-level<\/a>/);
+    expect(helpers.wpLowToggleHtml(3)).toMatch(/class="wp-low-toggle"[^>]*>show 3 low-level or hidden<\/a>/);
+    helpers.__setShow(true);
+    expect(helpers.wpLowToggleHtml(3)).toMatch(/>hide 3 low-level or hidden<\/a>/);
+    helpers.__setShow(false);
     expect(dash).toMatch(/try \{ _wpShowLow = localStorage\.getItem\('wp:showLowLevel'\) === '1'; \} catch \(e\)/);
     expect(dash).toMatch(/try \{ localStorage\.setItem\('wp:showLowLevel', _wpShowLow \? '1' : '0'\); \} catch \(err\)/);
   });
 
-  it('the Watched characters list and the Replay picker both filter, and never end up empty', () => {
+  describe('wpPartitionChars: who shows, who waits behind the toggle, who closes up as "no level"', () => {
+    const A = { character: 'Aldenmar', level: 60 };
+    const B = { character: 'Brackwyn', level: 20 };                     // known low
+    const C = { character: 'Corvale', level: 60, hidden: true };        // owner hid it
+    const R = { character: 'Rethlan', level: null };                    // no level known
+    const N = { character: 'Nyssara', level: 52 };
+    const Z = { character: 'Zarrin', level: null, hidden: true };       // hidden beats unknown
+    const names = (l) => l.map(w => w.character);
+    it('a known 46+ character shows; low-level and hidden are tucked; the rest are "no known level"', () => {
+      const p = helpers.wpPartitionChars([A, B, C, R, N, Z]);
+      expect(names(p.shown)).toEqual(['Aldenmar', 'Nyssara']);
+      expect(names(p.tucked)).toEqual(['Brackwyn', 'Corvale', 'Zarrin']);
+      expect(names(p.unknown)).toEqual(['Rethlan']);
+    });
+    it('the toggle adds the tucked ones back in their own order, and never the no-level group', () => {
+      helpers.__setShow(true);
+      const p = helpers.wpPartitionChars([A, B, C, R, N, Z]);
+      helpers.__setShow(false);
+      expect(names(p.shown)).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Zarrin']);
+      expect(names(p.unknown)).toEqual(['Rethlan']);
+    });
+    it('a level of 0 or a missing level is "unknown", not low', () => {
+      expect(helpers.wpHasLevel({ level: 0 })).toBe(false);
+      expect(helpers.wpHasLevel({})).toBe(false);
+      expect(helpers.wpHasLevel({ level: 46 })).toBe(true);
+      expect(names(helpers.wpPartitionChars([A, { character: 'Rethlan', level: 0 }]).unknown)).toEqual(['Rethlan']);
+    });
+    it('never leaves a list empty: when nothing would show inline, everything does and nothing is tucked', () => {
+      for (const list of [[B, C], [R, Z], [B, C, R, Z], [R], [C], [B]]) {
+        const p = helpers.wpPartitionChars(list);
+        expect(names(p.shown)).toEqual(names(list));
+        expect(p.tucked).toEqual([]);
+        expect(p.unknown).toEqual([]);
+      }
+      expect(helpers.wpPartitionChars([])).toEqual({ shown: [], unknown: [], tucked: [] });
+    });
+    it('one known 46+ character is enough to start tucking the others away', () => {
+      const p = helpers.wpPartitionChars([R, A]);
+      expect(names(p.shown)).toEqual(['Aldenmar']);
+      expect(names(p.unknown)).toEqual(['Rethlan']);
+    });
+  });
+
+  // The Me card is run for real: the helpers above, wpKeep and esc sliced out of the dashboard, and the
+  // few DOM calls it makes stubbed. `html` is what morphInto was handed.
+  describe('the Me card\'s Watched characters', () => {
+    const prefix = `
+      var _wpOpenDetails = {};
+      const __el = { style: {}, html: '' };
+      const document = { getElementById: () => __el, addEventListener() {} };
+      const _isPanelHidden = () => false;
+      const morphInto = (el, html) => { el.html = html; };
+      const fmtAgo = () => 'ago';
+      const fmtK = (n) => String(n);
+      ${sliceBlock(dashRaw, 'function esc(s) {', ')[c]); }')}
+      ${sliceBlock(dashRaw, 'function wpKeep(key, defaultOpen) {', '\n}\n')}
+      ${helperSrc}
+    `;
+    const meSrc = sliceBlock(dashRaw, 'function renderMeCard(s) {', '\n}\n');
+    const run = evalBlock(prefix + meSrc + '\nfunction __html() { return __el.html; }',
+      ['renderMeCard', '__setShow', '__html']);
+    // A fixed lastSeen ordering (newest first) makes the card's own sort deterministic.
+    const log = (character, level, extra = {}) => ({ character, level, lastSeen: Date.now() - (extra.age || 0), ...extra });
+    const column = (html) => html.slice(html.indexOf('Watched characters'), html.indexOf('Recent tells'));
+    const rowNames = (html) => [...html.matchAll(/<span class="name">([^<]*)<\/span>/g)].map(m => m[1]);
+    function card(watched, show = false) {
+      run.__setShow(show);
+      run.renderMeCard({ watchedLogs: watched, zealClients: [], recentTells: [], recentParses: [] });
+      run.__setShow(false);
+      const col = column(run.__html());
+      const details = (col.match(/<details[\s\S]*?<\/details>/) || [''])[0];
+      return { col, details, inline: col.replace(details, ''), toggle: (col.match(/<a href="#" class="wp-low-toggle"[^>]*>([^<]*)<\/a>/) || [])[1] };
+    }
+    const mixed = () => [
+      log('Aldenmar', 60, { age: 1000 }), log('Brackwyn', 20, { age: 2000 }),
+      log('Corvale', 60, { age: 3000, hidden: true }), log('Rethlan', null, { age: 4000 }),
+      log('Nyssara', 52, { age: 5000 }), log('Zarrin', null, { age: 6000, hidden: true }),
+    ];
+
+    it('lists the known 46+ characters, tucks low-level and hidden behind the toggle, closes up the no-level ones', () => {
+      const c = card(mixed());
+      expect(rowNames(c.inline)).toEqual(['Aldenmar', 'Nyssara']);
+      expect(c.toggle).toBe('show 3 low-level or hidden');
+      expect(c.details).toMatch(/^<details data-keep="me-nolevel"[^>]*>/);
+      expect(c.details).not.toMatch(/ open[ >]/);                       // collapsed until the user opens it
+      expect(c.details).toMatch(/<summary[^>]*>1 with no known level<\/summary>/);
+      expect(rowNames(c.details)).toEqual(['Rethlan']);                  // a hidden no-level one is tucked, not here
+      expect(c.col).toMatch(/Watched characters \(2\)/);
+    });
+
+    it('the toggle brings the low-level and hidden ones inline; the no-level group stays closed up', () => {
+      const c = card(mixed(), true);
+      expect(rowNames(c.inline)).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Zarrin']);
+      expect(c.toggle).toBe('hide 3 low-level or hidden');
+      expect(rowNames(c.details)).toEqual(['Rethlan']);
+    });
+
+    it('with no known level on anyone it lists them all, with no group and no toggle', () => {
+      const c = card([log('Rethlan', null, { age: 1000 }), log('Zarrin', undefined, { age: 2000 })]);
+      expect(rowNames(c.inline)).toEqual(['Rethlan', 'Zarrin']);
+      expect(c.details).toBe('');
+      expect(c.toggle).toBeUndefined();
+    });
+
+    it('with every character hidden or low-level it lists them all rather than an empty column', () => {
+      const c = card([log('Brackwyn', 20, { age: 1000 }), log('Corvale', 60, { age: 2000, hidden: true }), log('Rethlan', null, { age: 3000 })]);
+      expect(rowNames(c.inline)).toEqual(['Brackwyn', 'Corvale', 'Rethlan']);
+      expect(c.details).toBe('');
+      expect(c.toggle).toBeUndefined();
+    });
+
+    it('with nobody tucked and nobody unknown there is no group and no toggle', () => {
+      const c = card([log('Aldenmar', 60, { age: 1000 }), log('Nyssara', 52, { age: 2000 })]);
+      expect(rowNames(c.inline)).toEqual(['Aldenmar', 'Nyssara']);
+      expect(c.details).toBe('');
+      expect(c.toggle).toBeUndefined();
+    });
+  });
+
+  // The Replay picker: its form block (the picker plus its toggle) is sliced out of the real section
+  // renderer and run. A <select> cannot hold a <details>, so the no-level group is an <optgroup>.
+  describe('the Replay log picker', () => {
+    const pickerSrc = sliceBlock(dashRaw, 'var _rls = (s.watchedLogs || [])', "wpLowToggleHtml(_rlsLow) + '</span>';") + '\n  }';
+    const prefix = `
+      ${sliceBlock(dashRaw, 'function esc(s) {', ')[c]); }')}
+      ${helperSrc}
+    `;
+    const picker = evalBlock(prefix + `
+      function __picker(s) { var h = ''; ${pickerSrc} return h; }`, ['__picker', '__setShow']);
+    const log = (character, level, extra = {}) => ({ character, level, logPath: '/eq/eqlog_' + character + '_pq.proj.txt', ...extra });
+    function pick(watched, show = false) {
+      picker.__setShow(show);
+      const html = picker.__picker({ watchedLogs: watched });
+      picker.__setShow(false);
+      const opts = (s) => [...s.matchAll(/<option value="[^"]*">([^<]*)<\/option>/g)].map(m => m[1]);
+      const group = (html.match(/<optgroup label="([^"]*)">([\s\S]*?)<\/optgroup>/) || []);
+      return { html, plain: opts(html.replace(/<optgroup[\s\S]*?<\/optgroup>/, '')), group: group[1], grouped: group[2] ? opts(group[2]) : [],
+        toggle: (html.match(/class="wp-low-toggle"[^>]*>([^<]*)<\/a>/) || [])[1] };
+    }
+    const mixed = () => [log('Aldenmar', 60), log('Brackwyn', 20), log('Corvale', 60, { hidden: true }), log('Rethlan', null), log('Nyssara', 52)];
+
+    it('offers known 46+ characters, tucks low-level and hidden behind the toggle, and groups the no-level ones last', () => {
+      const p = pick(mixed());
+      expect(p.plain).toEqual(['Aldenmar', 'Nyssara']);
+      expect(p.group).toBe('1 with no known level');
+      expect(p.grouped).toEqual(['Rethlan']);
+      expect(p.toggle).toBe('show 2 low-level or hidden');
+      expect(p.html.indexOf('<optgroup')).toBeGreaterThan(p.html.lastIndexOf('>Nyssara<'));   // group comes after the list
+    });
+
+    it('the toggle adds the tucked characters to the list; the no-level group stays a group', () => {
+      const p = pick(mixed(), true);
+      expect(p.plain).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara']);
+      expect(p.grouped).toEqual(['Rethlan']);
+      expect(p.toggle).toBe('hide 2 low-level or hidden');
+    });
+
+    it('never an empty picker: nothing to list means everyone is listed, ungrouped', () => {
+      const p = pick([log('Brackwyn', 20), log('Corvale', 60, { hidden: true }), log('Rethlan', null)]);
+      expect(p.plain).toEqual(['Brackwyn', 'Corvale', 'Rethlan']);
+      expect(p.group).toBeUndefined();
+      expect(p.toggle).toBeUndefined();
+    });
+
+    it('still skips a watched entry with no log file, and says so when there are none', () => {
+      expect(pick([log('Aldenmar', 60), { character: 'Rethlan', level: 60 }]).plain).toEqual(['Aldenmar']);
+      expect(picker.__picker({ watchedLogs: [] })).toMatch(/No watched log files yet/);
+    });
+  });
+
+  it('the Watched characters list and the Replay picker both use the partition, and only they do', () => {
     const me = stripJs(sliceBlock(dashRaw, 'function renderMeCard(s) {', '\n}\n'));
-    expect(me).toMatch(/const listedChars = \(_wpShowLow \|\| lowChars\.length === chars\.length\) \? chars : chars\.filter\(c => !wpIsLowLevel\(c\)\);/);
-    expect(me).toMatch(/for \(const c of listedChars\.slice\(0, 8\)\)/);
-    expect(me).toMatch(/wpLowToggleHtml\(lowChars\.length\)/);
-    expect(dash).toMatch(/var _rlsHasLow = _rlsLow > 0 && _rlsLow < _rls\.length;/);
-    expect(dash).toMatch(/if \(_rlsHasLow && !_wpShowLow\) _rls = _rls\.filter\(function\(w\)\{ return !wpIsLowLevel\(w\); \}\);/);
+    expect(me).toMatch(/const part = wpPartitionChars\(chars\);/);
+    expect(me).toMatch(/for \(const c of listedChars\.slice\(0, 8\)\) h \+= charRow\(c\);/);
+    // The group is a <details>, and every <details> in the dashboard is built with wpKeep (check:dashboard
+    // enforces it for the whole file; this pins the key and that it starts closed).
+    expect(me).toMatch(/'<details ' \+ wpKeep\('me-nolevel'\) \+ '/);
+    expect(me).toMatch(/wpLowToggleHtml\(part\.tucked\.length\)/);
+    expect(dash).toMatch(/var _rlsPart = wpPartitionChars\(_rls\);/);
+    // Defined once, called twice. No inventory, upload or Logsync-pane code asks.
+    expect(dash.match(/wpPartitionChars\(/g)).toHaveLength(3);
+    expect(dash.match(/wpIsTucked\(/g)).toHaveLength(2);   // its definition, and the partition's one call
     // The Watched Logs diagnostic card and the opt-in log panel still list every file.
     const logsCard = stripJs(sliceBlock(dashRaw, 'function renderWatchedLogsCard(s) {', '\n}\n'));
-    expect(logsCard).not.toMatch(/wpIsLowLevel/);
+    expect(logsCard).not.toMatch(/wpIsLowLevel|wpIsTucked|wpPartitionChars|\.hidden/);
+  });
+});
+
+// The agent half: the pref is carried through the prefs poll, read for the dashboard payload, and asked
+// by nothing that uploads or collects (the guild lead, 2026-10-03: "hide these characters from anything
+// but account inventory" — a display rule).
+describe('agent: hidden_from_lists is carried for display and gates nothing', () => {
+  const agentRaw = fs.readFileSync(AGENT_INDEX, 'utf8');
+  const applyFn = sliceBlock(agentRaw, 'function _applyCharacterPrefsResponse(resp) {', '\n}\n');
+  const hiddenFn = sliceBlock(agentRaw, 'function _hiddenFromLists(character) {', '\n}\n');
+  const uploadFn = sliceBlock(agentRaw, 'function shouldUploadForCharacter(character) {', '\n}\n');
+  const quarmyFn = sliceBlock(agentRaw, 'function _quarmyPrefsBlock(lowerName) {', '\n}\n');
+  const env = evalBlock(
+    `const stats = {}; function scheduleRender() {}\n${applyFn}\n${hiddenFn}\n${uploadFn}\n${quarmyFn}`,
+    ['stats', '_applyCharacterPrefsResponse', '_hiddenFromLists', 'shouldUploadForCharacter', '_quarmyPrefsBlock'],
+  );
+
+  it('is false until prefs have loaded, for an unknown name, and for no name', () => {
+    expect(env._hiddenFromLists('Aldenmar')).toBe(false);
+    env._applyCharacterPrefsResponse({ prefs: { Aldenmar: { hidden_from_lists: true } } });
+    expect(env._hiddenFromLists('Brackwyn')).toBe(false);
+    expect(env._hiddenFromLists('')).toBe(false);
+    expect(env._hiddenFromLists(null)).toBe(false);
+  });
+
+  it('survives the prefs normalization, case-blind, and is a real boolean', () => {
+    env._applyCharacterPrefsResponse({ prefs: {
+      Aldenmar: { hidden_from_lists: true },
+      Brackwyn: { hidden_from_lists: false, exclude_from_stats: true },
+      Corvale: { tell_relay: true },
+      Rethlan: null,
+    } });
+    expect(env.stats.characterPrefs.aldenmar.hidden_from_lists).toBe(true);
+    expect(env.stats.characterPrefs.brackwyn.hidden_from_lists).toBe(false);
+    expect(env.stats.characterPrefs.corvale.hidden_from_lists).toBe(false);
+    expect(env.stats.characterPrefs.rethlan.hidden_from_lists).toBe(false);
+    expect(env._hiddenFromLists('ALDENMAR')).toBe(true);
+    expect(env._hiddenFromLists('Corvale')).toBe(false);
+    // the prefs it always carried are untouched
+    expect(env.stats.characterPrefs.brackwyn.exclude_from_stats).toBe(true);
+    expect(env.stats.characterPrefs.corvale.tell_relay).toBe(true);
+  });
+
+  it('a hidden character still uploads and still sends inventory; only the exclude flags stop those', () => {
+    env._applyCharacterPrefsResponse({ prefs: {
+      Aldenmar: { hidden_from_lists: true },
+      Brackwyn: { exclude_from_stats: true },
+      Corvale: { exclude_inventory: true },
+    } });
+    expect(env.shouldUploadForCharacter('Aldenmar')).toBe(true);
+    expect(env._quarmyPrefsBlock('aldenmar')).toBe(false);
+    // the controls: the flags that DO stop collection still do
+    expect(env.shouldUploadForCharacter('Brackwyn')).toBe(false);
+    expect(env._quarmyPrefsBlock('brackwyn')).toBe(true);
+    expect(env._quarmyPrefsBlock('corvale')).toBe(true);
+  });
+
+  it('nothing else in the agent reads it: only the prefs normalization and _hiddenFromLists', () => {
+    const agent = stripJs(agentRaw);
+    const own = stripJs(applyFn) + stripJs(hiddenFn);
+    expect(agent.match(/hidden_from_lists/g).length).toBe(own.match(/hidden_from_lists/g).length);
+    // _hiddenFromLists is defined once and called once: the dashboard payload.
+    expect(agent.match(/_hiddenFromLists\(/g)).toHaveLength(2);
   });
 });

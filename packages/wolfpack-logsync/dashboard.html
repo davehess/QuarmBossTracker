@@ -1548,18 +1548,44 @@ function renderDash(s) {
 // Low-level characters (the guild lead, 2026-10-03: "low level characters do not need to show up on
 // the pop flag page. all of my traders and mule characters destroy my views anywhere we display all of
 // our logs"). A watched character the agent KNOWS is under level 46 (Zeal's own label, else /who; 46 is
-// the lowest zone-in gate in Planes of Power) waits behind a "show N low-level" toggle in the Me card's
-// Watched characters and the Replay log picker. Unknown level stays listed: no /who is not proof of a
-// low level. Per machine, in localStorage; the in-memory flag keeps the toggle working in a browser
-// that refuses storage.
+// the lowest zone-in gate in Planes of Power) waits behind a "show N low-level or hidden" toggle in the Me card's
+// Watched characters and the Replay log picker. Per machine, in localStorage; the in-memory flag keeps
+// the toggle working in a browser that refuses storage.
+// The same day the guild lead added two more: "put any unknown characters into a minimized area and make
+// it so I can hide these characters from anything but account inventory". So (1) a character the owner
+// hid on wolfpack.quest (`hidden`, characters.hidden_from_lists) joins the tucked-away set behind the same
+// toggle, and (2) a character with NO known level — no /who is not proof of a low level, so it is not
+// tucked behind the toggle — closes up under its own "N with no known level" group instead of sitting
+// among the ones that raid. Display only: nothing about inventory or uploading reads either rule.
 var WP_LOW_LEVEL = 46;
 var _wpShowLow = false;
 try { _wpShowLow = localStorage.getItem('wp:showLowLevel') === '1'; } catch (e) { void e; }
 function wpIsLowLevel(w) { return !!w && w.level != null && Number(w.level) > 0 && Number(w.level) < WP_LOW_LEVEL; }
+function wpIsTucked(w) { return !!w && (!!w.hidden || wpIsLowLevel(w)); }
+function wpHasLevel(w) { return !!w && w.level != null && Number(w.level) > 0; }
+// Split a character list into what shows inline (`shown`), what waits behind the toggle (`tucked`: low-level
+// or hidden) and what closes up under "no known level" (`unknown`). The toggle adds the tucked ones back to
+// `shown` in their own order; `unknown` never joins it. Never an empty list: if nothing would be left inline
+// (every character is hidden, low-level or unknown), nothing is tucked away and they are all `shown`.
+function wpPartitionChars(list) {
+  var main = [], unknown = [], tucked = [];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i];
+    if (wpIsTucked(w)) tucked.push(w);
+    else if (wpHasLevel(w)) main.push(w);
+    else unknown.push(w);
+  }
+  if (main.length === 0) return { shown: list.slice(), unknown: [], tucked: [] };
+  return {
+    shown: _wpShowLow ? list.filter(function (w) { return unknown.indexOf(w) < 0; }) : main,
+    unknown: unknown,
+    tucked: tucked,
+  };
+}
 function wpLowToggleHtml(n) {
   return '<a href="#" class="wp-low-toggle" style="color:var(--blue)" title="Characters known to be under level ' + WP_LOW_LEVEL
-    + ' (a mule, a trader) are tucked away so the lists stay about the characters that raid.">'
-    + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level</a>';
+    + ', and any you hid on wolfpack.quest (a mule, a trader), are tucked away so the lists stay about the characters that raid.">'
+    + (_wpShowLow ? 'hide ' : 'show ') + n + ' low-level or hidden</a>';
 }
 document.addEventListener('click', function (e) {
   var t = e.target;
@@ -1627,20 +1653,28 @@ function renderMeCard(s) {
 
   // Two-column body: watched characters + recent tells.
   h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px">';
-  const lowChars = chars.filter(wpIsLowLevel);
-  // All of them low: list them rather than an empty column (nothing to tuck them away from).
-  const listedChars = (_wpShowLow || lowChars.length === chars.length) ? chars : chars.filter(c => !wpIsLowLevel(c));
+  // Low-level, hidden and no-known-level characters are tucked away (see wpPartitionChars); when that would
+  // leave nothing inline it shows them all rather than an empty column.
+  const part = wpPartitionChars(chars);
+  const listedChars = part.shown;
+  const charRow = (c) => {
+    const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
+    return (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
+         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
+  };
   h += '<div><div class="dim" style="font-size:11px;margin-bottom:3px">👥 Watched characters (' + listedChars.length + ')</div>';
   if (chars.length === 0) h += '<div class="dim" style="font-size:11px">none yet</div>';
   else {
     h += '<div style="font-size:12px;line-height:1.6">';
-    for (const c of listedChars.slice(0, 8)) {
-      const hot = c.lastSeen && (Date.now() - c.lastSeen) < 3600000;
-      h += (hot ? '<span style="color:var(--green)">●</span> ' : '<span class="dim">○</span> ')
-         + '<span class="name">' + esc(c.character) + '</span> <span class="dim" style="font-size:10px">' + fmtAgo(c.lastSeen) + '</span><br>';
-    }
+    for (const c of listedChars.slice(0, 8)) h += charRow(c);
     h += '</div>';
-    if (lowChars.length > 0 && lowChars.length < chars.length) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(lowChars.length) + '</div>';
+    if (part.unknown.length > 0) {
+      // Collapsed by default; wpKeep keeps it however the user left it across this card's repaints.
+      h += '<details ' + wpKeep('me-nolevel') + ' style="margin-top:4px"><summary class="dim" style="cursor:pointer;font-size:11px">'
+         + part.unknown.length + ' with no known level</summary>'
+         + '<div style="font-size:12px;line-height:1.6;max-height:9.6em;overflow-y:auto">' + part.unknown.map(charRow).join('') + '</div></details>';
+    }
+    if (part.tucked.length > 0) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(part.tucked.length) + '</div>';
   }
   h += '</div>';
 
@@ -3482,25 +3516,33 @@ function renderTriggers(s) {
   // ⏪ Replay (#101) — walk a slice of a watched log back through the real
   // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
   // byte-stable — its picker uses only stable watchedLog fields (character +
-  // logPath), so idle polls don't rewrite it and the user's from/to typing +
-  // datetime focus survive. The volatile progress/results live in the nested
+  // logPath, plus level + hidden, which change once when /who or the prefs poll
+  // learns them, never per poll), so idle polls don't rewrite it and the user's
+  // from/to typing + datetime focus survive. The volatile progress/results live in the nested
   // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
-  // Characters known to be under 46 sit behind the same toggle as the Me card's list (never all of them:
-  // a picker with nothing in it is no use).
-  var _rlsLow = _rls.filter(wpIsLowLevel).length;
-  var _rlsHasLow = _rlsLow > 0 && _rlsLow < _rls.length;
-  if (_rlsHasLow && !_wpShowLow) _rls = _rls.filter(function(w){ return !wpIsLowLevel(w); });
+  // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
+  // list, and ones with no known level close up in a trailing "no known level" group (a <select> cannot hold
+  // a <details>, so an optgroup is its native minimized area). Never all of them tucked: a picker with
+  // nothing in it is no use (wpPartitionChars shows them all then).
+  var _rlsPart = wpPartitionChars(_rls);
+  var _rlsLow = _rlsPart.tucked.length;
+  var _rlsHasLow = _rlsLow > 0;
+  var _rlsNoLevel = _rlsPart.unknown;
+  _rls = _rlsPart.shown;
+  function _rlsOption(w) { return '<option value="' + esc(w.logPath) + '">' + esc(w.character || w.logPath) + '</option>'; }
   if (_rls.length === 0) {
     h += '<div class="dim" style="font-size:12px">No watched log files yet — point Mimic at your EverQuest folder first.</div>';
   } else {
     var _inStyle = 'background:#0d1117;color:var(--text);border:1px solid var(--border);padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px';
     h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;font-size:12px">';
     h += '<label style="display:flex;flex-direction:column;gap:2px"><span class="dim">Log</span><select id="replayLog" style="' + _inStyle + '">';
-    for (var _ri = 0; _ri < _rls.length; _ri++) {
-      var _rw = _rls[_ri];
-      h += '<option value="' + esc(_rw.logPath) + '">' + esc(_rw.character || _rw.logPath) + '</option>';
+    for (var _ri = 0; _ri < _rls.length; _ri++) h += _rlsOption(_rls[_ri]);
+    if (_rlsNoLevel.length > 0) {
+      h += '<optgroup label="' + _rlsNoLevel.length + ' with no known level">';
+      for (var _rn = 0; _rn < _rlsNoLevel.length; _rn++) h += _rlsOption(_rlsNoLevel[_rn]);
+      h += '</optgroup>';
     }
     h += '</select></label>';
     if (_rlsHasLow) h += '<span class="dim" style="font-size:11px;padding-bottom:5px">' + wpLowToggleHtml(_rlsLow) + '</span>';
