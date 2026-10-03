@@ -431,6 +431,30 @@ describe('Buff queue mini: the page', () => {
     expect(p.hovers).toEqual([true, false]);
   });
 
+  // The guild lead, 2026-10-02: "i do not see my mouse over the buff queue and can't click it."
+  // Sections start collapsed, and a header is a <div>: the preload's hover handshake only arms the
+  // window over controls, so the click went to EQ. Runs the preload's own test on each header.
+  it('every section header arms the hover handshake, so a locked overlay takes the click', async () => {
+    const preload = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
+    const { _wpIsInteractive } = evalBlock(
+      'const document = { body: null };\n' + sliceBlock(preload, 'function _wpIsInteractive(el) {', '\n}'),
+      ['_wpIsInteractive'],
+    );
+    // An element that answers matches() for the selector list the preload actually passes.
+    const asEl = (tag) => {
+      const name = /^<(\w+)/.exec(tag)[1];
+      const attrs = new Set([...tag.matchAll(/\s([\w-]+)(?==|\s|>)/g)].map((m) => m[1]));
+      return { nodeType: 1, parentElement: null, matches: (sel) => sel.split(',').map((s) => s.trim())
+        .some((s) => s === name || (/^\[([\w-]+)\]$/.test(s) && attrs.has(s.slice(1, -1)))) };
+    };
+    const p = runPage(buffHtml, { state: { current: payload() }, snap: 'body' });
+    await flush();
+    const hdrs = p.el('body').innerHTML.match(/<div class="cathdr"[^>]*>/g) || [];
+    expect(hdrs.length).toBeGreaterThan(0);
+    for (const h of hdrs) expect(_wpIsInteractive(asEl(h))).toBe(true);
+    expect(_wpIsInteractive(asEl('<div class="cat">'))).toBe(false);   // the test can say no
+  });
+
   it('the title row (class picker, lag?) hides in mini', () => {
     expect(markupOf(buffHtml)).toContain('<div class="title wp-mini-hide">');
   });
