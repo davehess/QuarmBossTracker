@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **PoP pages live; stable Mimic 2.7.8; self-ticked flags** | **§143–§145.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194). Building: members tick their own PoP flags on /pop | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready |
 | **The eight-part request of Oct 3** | **§135–§142.** Live: `/zeal-icons` + `/db/recipe` and `/admin/extra-spells` with the `[beta]` tag (web 1.8.81–1.8.82), the loot panel (bot 3.1.192). Beta (agent 3.7.72–3.7.74): Command Center raids card, crash review on Diagnostics, Loot tab who-looted-what, traders and under-46 tucked away on `/pop` `/pop/guide` `/me`, PoP overlay Quests mode with the guide's words filled from the quest scripts. Alpha `5adafea8`: Canvas presets are the real overlays, tight margins, HUD ring + builder | the guild lead: (1) look at the beta pages and Mimic beta; (2) look at the Canvas on the alpha; (3) send a dozen log lines from a PoK trainer hand-in (extra spells phase 2); (4) pick a Zeal icons layout; (5) the calls listed in §139–§142 |
 | **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.80: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
@@ -6449,3 +6450,26 @@ of b.wolfpack.quest/pop: *"clarification on breaking the page"*.
   "Hidden". A spellbook upload is how an unknown character gets a level, so the filter must never block one.
 - Not changed: who may flip the switch is the owner (or the owner's main's account) only, like the other /me
   switches; officers have no bypass there.
+
+### 144. The PoP pages go live; stable Mimic 2.7.8; the release posted to #raid-chat (2026-10-03, web 1.8.85 · Mimic 2.7.8 · agent 3.7.75 · bot 3.1.194)
+
+The guild lead: *"push this up to live. then cut a new stable release of mimic with the new things that we put
+in."*, then *"post the release to raid chat"*.
+
+- **Web 1.8.85, file-level from beta:** /pop, /pop/guide and /me with their libs and tests, as they stood on
+  beta — the character tiers and Hide from lists (§140, §143), the spellbook picker that keeps everyone, the
+  guide's words from the quest scripts (§141), and the /who-proven flag marks (§230's work). ⚠ Those files also
+  carry two unpicked previews, the guide redesign and the Essences queue; on production they are reachable only
+  at `?v=b` / `?v=c` and change nothing by default. They are still waiting on a pick, not graduated. Left on
+  beta: /about, the item page, /pvp.
+- **Stable Mimic 2.7.8 (agent 3.7.75), `d2862878`:** apps/mimic and packages/wolfpack-logsync byte-identical to
+  beta, plus `scripts/sync-pop-quests.js`, the `sync:pop-quests` script line and their tests (dashboard-tabs,
+  listable-chars, night-loot-section, pop-overlay-quests, pop-quests-sync, raid-split-agent). Gate: 398 files,
+  5,370 tests, lint, check:dashboard, golden logs. Pushed alone so the release body is its own (verified). No
+  FB numbers since 2.7.7. Beta re-parked at 2.7.9 (`52526491`).
+- **Raid chat:** bot 3.1.194 `_announceMimic278Once`, the 2.7.1 card's shape — one embed, pings nobody, posts
+  only once v2.7.8 carries its installer (it did), latched in `bot_kv` `announce_mimic_2_7_8_raid_chat`.
+- **Found and fixed on the way:** a `web/node_modules` symlink had been committed to beta in a sync-resolution
+  commit (`9d0510a5`): `node_modules/` matches only directories. Removed, and `.gitignore` now also ignores a
+  bare `node_modules` (`d1522e16`, on main with 2.7.8).
+- **Next, building:** members ticking their own PoP flags on /pop without Mimic (§145).
