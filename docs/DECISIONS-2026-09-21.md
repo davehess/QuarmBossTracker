@@ -6253,3 +6253,21 @@ being available yet. please roll out a fresh stable release"*.
   skipped the build and the sweep never deployed. Fixed by web 1.8.80 on top. Rule added to
   CLAUDE.md: a push whose last commit does not touch `web/` deploys nothing for the website, even if
   an earlier commit in the same push did.
+
+### 135. New pages go live marked [beta]; beta pages come with links; Sonnet agents do the scoping (2026-10-03)
+
+The guild lead, opening an eight-part request: *"for research or preliminary coding you need to do spin
+up sonnet agents. first, give me the links for beta pages when you reference them. I'm not always going
+to scroll through beta to check. push them up to live to start if it's a new page that didn't exist
+previously, and mark the page as a [beta] at the top so people know it's new. we can iterate over the
+preview b.wolfpack.quest for new versions of existing pages unless I say to make main changes."*
+
+- **A new page ships to `main`, with a `[beta]` marker at the top.** A route that does not exist on
+  `main` no longer waits on `beta` for a pick. Changes to a page that already exists keep iterating on
+  `b.wolfpack.quest` until the guild lead says to put them on main. This narrows the 2026-09-04
+  "never straight to production" rule to existing pages. CLAUDE.md updated.
+- **Every beta page I mention comes with its link** — `https://b.wolfpack.quest/<path>`, with the `?v=`
+  for a variant.
+- **Scoping and first-draft code go to Sonnet subagents**, several in parallel. The shipping session
+  still reviews, runs the gate and writes the docs. CLAUDE.md has the rule.
+- The other seven parts of the same message are below as they land (§136 onward).

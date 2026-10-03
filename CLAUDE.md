@@ -35,6 +35,13 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
+### Working rule — research and first-draft code go to Sonnet agents (guild lead, 2026-10-03)
+*"for research or preliminary coding you need to do spin up sonnet agents."* Fan the scoping
+(where does X live, what data exists, what would it touch) and first-draft code out to Sonnet
+subagents (Agent tool, `model: sonnet`), in parallel where the items are independent. The session
+that ships still reviews the diff, runs the gate, routes the branch and writes the docs — an agent's
+report is input, not a verdict (DECISIONS §135).
+
 ### Working rule — UI gets OPTIONS, previewed on beta, never straight to production (guild lead, 2026-09-04)
 The guild lead's standing preference: *"When a request involves UI, don't give me one
 design. Give me two or three genuinely different approaches to choose from."*
@@ -51,6 +58,16 @@ design. Give me two or three genuinely different approaches to choose from."*
   deployments per variant need a wildcard redirect
   (`https://*-davehess-projects.vercel.app/**`) added in the Supabase
   dashboard first — the guild lead's action, not a session's.
+- **A NEW page goes LIVE first, marked [beta] (the guild lead, 2026-10-03; DECISIONS §135).**
+  *"push them up to live to start if it's a new page that didn't exist previously, and mark the
+  page as a [beta] at the top so people know it's new. we can iterate over the preview
+  b.wolfpack.quest for new versions of existing pages unless I say to make main changes."* So the
+  beta-first rule above now covers changes to EXISTING pages only. A route that does not exist on
+  `main` ships to `main` with the `[beta]` marker at the top of the page; it drops the marker when
+  the guild lead says it is settled.
+- **Every mention of a beta page carries its link** — `https://b.wolfpack.quest/<path>` (with the
+  `?v=` when it is a variant), and `https://wolfpack.quest/<path>` for a live one. *"give me the links
+  for beta pages when you reference them. I'm not always going to scroll through beta to check."*
 - **Everything else (Mimic overlays, the agent dashboard, Discord cards):**
   the framework plus notes on how the designs differ and what each costs.
 - **Cost is FOUR numbers, never one "harder":** build (time to get right),
