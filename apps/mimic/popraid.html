@@ -149,6 +149,16 @@
   .qcopy.map{border-color:rgba(88,166,255,0.4);background:rgba(88,166,255,0.10);color:#79c0ff}
   .qcopy.sit{border-color:rgba(240,180,41,0.45);background:rgba(240,180,41,0.10);color:#f0b429}
   .qcopy.ok{border-color:rgba(126,231,135,0.5);background:rgba(126,231,135,0.12);color:#7ee787}
+  /* A step's seq: one numbered list (the guild lead, 2026-10-03: "the hand in items should be in order with
+     the text we say to them"). The zone-in that flags you is gold; a note hangs under its row, unnumbered. */
+  .qseq{list-style:none;margin:0;padding:0}
+  .qs{display:flex;gap:4px;padding:3px 0;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;line-height:1.5}
+  .ph + .qseq .qs:first-child{border-top:0}
+  .qs.zone{border-left:2px solid rgba(240,180,41,0.7);background:rgba(240,180,41,0.06);padding-left:4px}
+  .qn{flex:0 0 auto;min-width:14px;text-align:right;color:#8b949e;font-variant-numeric:tabular-nums}
+  .qb{min-width:0;flex:1 1 auto;word-break:break-word}
+  .qx{color:#f0b429;font-size:9px}
+  .qnote{color:#8b949e;font-size:9px;margin-top:1px}
   .qnext{padding:1px 4px;font-size:10px;color:#8b949e;cursor:pointer;line-height:1.4;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #000}
   .qnext:hover{color:#e9d5ff;background:rgba(163,113,247,0.12)}
@@ -641,16 +651,72 @@
       + (get ? ' <span class="qk">→ get</span> <span>' + esc(get) + '</span>' : '')
       + '</div>';
   }
+  // A step's seq (pop-quests.js): the whole step as ONE ordered list (the guild lead, 2026-10-03: "some of
+  // the steps require you to hail after something else or say a line multiple times. the hand in items
+  // should be in order with the text we say to them"). The same rows the website draws (web/lib/popGuide.ts
+  // seqRows is the rule, this is its copy): every act is a numbered row except a `get`, which rides on the
+  // row before it ("→ get …"), and a `note`, which hangs under its row (before any row it leads the list).
+  // The words are the guide's: a hail is "/say Hail", a say is its text, nothing is filled in.
+  function seqRows(seq){
+    var lead = [], rows = [];
+    (seq || []).forEach(function(a){
+      var last = rows[rows.length - 1];
+      if (a.kind === 'note') (last ? last.notes : lead).push(a);
+      else if (a.kind === 'get' && last) last.gets.push(a);
+      else rows.push({ n: rows.length + 1, act: a, gets: [], notes: [] });
+    });
+    return { lead: lead, rows: rows };
+  }
+  // Item names (the generator turned [[Name#id]] into Name). The same item twice reads "Name ×2".
+  function qItems(items){
+    var order = [], count = {};
+    (items || []).forEach(function(t){ if (!count[t]) { count[t] = 0; order.push(t); } count[t]++; });
+    return order.map(function(t){ return esc(t) + (count[t] > 1 ? ' ×' + count[t] : ''); }).join(', ');
+  }
+  function qGetBits(a){
+    var has = a.items && a.items.length;
+    return (has ? qItems(a.items) : '') + (a.text ? (has ? ' <span class="qk">(' + esc(a.text) + ')</span>' : esc(a.text)) : '');
+  }
+  function qActLine(a){
+    var who = a.to ? '<span class="qwho">' + esc(a.to) + '</span>' : '';
+    var aside = (a.text && a.kind !== 'say' && a.kind !== 'get') ? ' <span class="qk">(' + esc(a.text) + ')</span>' : '';
+    switch (a.kind) {
+      case 'hail': return '<span class="qk">Hail</span> ' + who + aside + ' ' + qChip('say', '/say Hail');
+      case 'say': return '<span class="qk">Say to</span> ' + who + '<span class="qk">:</span> ' + qSay(a)
+        + (a.times > 1 ? ' <span class="qx" title="Say it this many times in a row">×' + a.times + '</span>' : '')
+        + (a.until ? ' <span class="qx">repeat until ' + esc(a.until) + '</span>' : '');
+      case 'give': return '<span class="qk">Give</span> ' + who + '<span class="qk">:</span> ' + qItems(a.items) + aside;
+      case 'get': return '<span class="qk">Get</span> ' + qGetBits(a);
+      case 'kill': return '<span class="qk">Kill</span> ' + who + aside;
+      case 'click': return '<span class="qk">Click</span> ' + who + (a.items && a.items.length ? '<span class="qk">:</span> ' + qItems(a.items) : '') + aside;
+      case 'zone': return '<span class="qx">Zone in:</span> ' + who + '<div class="qnote">' + esc(a.text) + '</div>';
+      case 'wait': return '<span class="qk">Wait for</span> ' + esc(a.text);
+      default: return esc(a.text);
+    }
+  }
+  function qSeqRow(r){
+    var h = '<li class="qs' + (r.act.kind === 'zone' ? ' zone' : '') + '"><span class="qn">' + r.n + '.</span><div class="qb">' + qActLine(r.act);
+    r.gets.forEach(function(g){ h += ' <span class="qx">→</span> <span class="qk">get</span> ' + qGetBits(g); });
+    r.notes.forEach(function(n){ h += '<div class="qnote">' + esc(n.text) + (n.items && n.items.length ? ' ' + qItems(n.items) : '') + '</div>'; });
+    return h + '</div></li>';
+  }
+  function qSeqHtml(seq){
+    var s = seqRows(seq);
+    return '<div class="panel"><div class="ph">🧭 In order <span class="ct">' + s.rows.length + '</span></div>'
+      + s.lead.map(function(n){ return '<div class="qnote">' + esc(n.text) + (n.items && n.items.length ? ' ' + qItems(n.items) : '') + '</div>'; }).join('')
+      + '<ol class="qseq">' + s.rows.map(qSeqRow).join('') + '</ol></div>';
+  }
   // A chain quest (Willamina's Needles): where to start and what to say, then the hand-ins in the order
-  // you walk them and the optional story each NPC tells, both folded away until asked for.
-  function qChain(q, c){
+  // you walk them and the optional story each NPC tells, both folded away until asked for. With a seq the
+  // hand-ins are already in it, in order (skipHandins), so the folded copy is left out.
+  function qChain(q, c, skipHandins){
     var h = '<div class="panel"><div class="ph">🔗 Start here</div>'
       + '<div class="callout">' + esc(c.first.text) + '</div>'
       + '<div class="qstop"><div class="qrow">' + qWhere(c.first.at) + '</div>'
       + qSayRow((c.first.say || []).map(function(t){ return { text: t }; }), true) + '</div>'
       + (c.first.fetch ? '<div class="qstop"><div class="qrow"><span class="qk">fetch from</span> ' + qWhere(c.first.fetch) + '</div></div>' : '')
       + '</div>';
-    var hand = (c.handins || []).map(function(s, n){
+    var hand = skipHandins ? '' : (c.handins || []).map(function(s, n){
       return '<div class="qstop"><div class="qrow"><span class="qk">' + (n + 1) + '.</span> ' + qWhere(s.at) + '</div>' + qGiveGet(s.give, s.get) + '</div>';
     }).join('');
     if (hand) h += qDetails(q.key + '|handins', 'Hand-ins, in order · ' + c.handins.length, hand);
@@ -667,10 +733,21 @@
     var what = (q.detail ? '<div class="callout">' + esc(q.detail) + '</div>' : '')
       + (q.expect ? '<div class="callout"><b>Expect</b> ' + esc(q.expect) + '</div>' : '');
     if (what) h += '<div class="panel"><div class="ph">📝 What to do</div>' + what + '</div>';
-    if (q.chain) h += qChain(q, q.chain);
-    var stops = questStops(q);
-    if (stops.length) h += '<div class="panel"><div class="ph">🗣 Talk to <span class="ct">' + stops.length + '</span></div>' + stops.map(qStop).join('') + '</div>';
-    if (q.turnIn && q.turnIn.length) {
+    var hasSeq = !!(q.seq && q.seq.length);
+    if (q.chain) h += qChain(q, q.chain, hasSeq);
+    if (hasSeq) {
+      // The order is the seq's, so "Talk to" and "Turn in" (each half of it) give way to it; the places
+      // stay, with their /map chips, since the seq says who and not where.
+      h += qSeqHtml(q.seq);
+      if (q.where && q.where.length) {
+        h += '<div class="panel"><div class="ph">📍 Where <span class="ct">' + q.where.length + '</span></div>'
+          + q.where.map(function(l){ return '<div class="qstop"><div class="qrow">' + qWhere(l) + '</div></div>'; }).join('') + '</div>';
+      }
+    } else {
+      var stops = questStops(q);
+      if (stops.length) h += '<div class="panel"><div class="ph">🗣 Talk to <span class="ct">' + stops.length + '</span></div>' + stops.map(qStop).join('') + '</div>';
+    }
+    if (!hasSeq && q.turnIn && q.turnIn.length) {
       h += '<div class="panel"><div class="ph">📦 Turn in</div>' + q.turnIn.map(function(t){
         return '<div class="qstop"><div class="qrow">' + qWhere(t.to) + '</div>' + qGiveGet(t.give, t.get)
           + (t.note ? '<div class="qrow"><span class="qk">' + esc(t.note) + '</span></div>' : '') + '</div>';
