@@ -47,9 +47,18 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; erro
   const admin = supabaseAdmin();
   const [{ data: me }, { data: ch }] = await Promise.all([
     admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle(),
-    admin.from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
+    admin.from('characters').select('name, discord_id, main_name').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
   ]);
-  if (me?.discord_id && ch?.discord_id && me.discord_id === ch.discord_id) return { ok: true };
+  if (!me?.discord_id || !ch) return { ok: false, error: 'not your character' };
+  if (ch.discord_id === me.discord_id) return { ok: true };
+  // Alts often carry a NULL or stale discord_id, so fall back to the family root (main_name), the same
+  // rule /me's toggles use (actions.ts setCharacterExclusion). Without it, 11 alts got "not your
+  // character" on a spellbook upload (the guild lead, 2026-10-03: "spellbook upload is screwing up").
+  if (ch.main_name && ch.main_name.toLowerCase() !== String(ch.name).toLowerCase()) {
+    const { data: root } = await admin
+      .from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', ch.main_name).maybeSingle();
+    if (root?.discord_id === me.discord_id) return { ok: true };
+  }
   return { ok: false, error: 'not your character' };
 }
 
