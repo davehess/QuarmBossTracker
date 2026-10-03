@@ -1,5 +1,5 @@
 // Data for the PoP checklist's beta layouts (?v=b, ?v=c): each character's hand ticks plus the steps
-// Mimic, our records or /who already prove (web/lib/popGuideAuto.ts), and the zone outlines for the maps.
+// Mimic, our records, /who or loot already prove (web/lib/popGuideAuto.ts), and the zone outlines for the maps.
 // Only the viewer's own characters; inventory is skipped for a character that hides it.
 
 import { unstable_cache } from 'next/cache';
@@ -8,6 +8,7 @@ import { GUIDE_ITEMS } from '@/lib/popGuide';
 import { STEP_MORE, stepPlaces } from '@/lib/popGuideMore';
 import { AUTO_ITEM_IDS, guideEvidence } from '@/lib/popGuideAuto';
 import { WHO_ZONE, WHO_ZONE_NAMES, type Sighting } from '@/lib/popWho';
+import { loadLootSightings, type LootRow } from '@/lib/popLootRows';
 import type { RouteChar } from './GuideRoute';
 import type { ZoneOutline } from './ZoneMap';
 
@@ -30,7 +31,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
   const none = Promise.resolve({ data: [] as unknown[] });
   const zones = [...new Set(GUIDE_ITEMS.flatMap(i => stepPlaces(i, STEP_MORE[i.key]).map(p => p.zone)))];
 
-  const [ticks, flags, loots, inv, chars, who, live, sights, ...outlineList] = await Promise.all([
+  const [ticks, flags, loots, inv, chars, who, live, sights, lootSights, ...outlineList] = await Promise.all([
     names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', 'wolfpack').in('character_name', names) : none,
     names.length ? admin.from('pop_flags').select('character, flag_key, earned_at').neq('flag_key', 'unmapped')
       .or(names.map(n => `character.ilike.${n}`).join(',')).order('earned_at', { ascending: true }).limit(1000) : none,
@@ -43,6 +44,8 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     names.length ? admin.from('character_live_state').select('character, updated_at').in('character', names) : none,
     // Where /who has shown each of them inside a gated plane (popWho.ts says what that proves).
     names.length ? admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_NAMES }) : none,
+    // …and what they looted inside one (the same proof of presence; popWho.ts flagsFromLoot).
+    names.length ? loadLootSightings(admin) : Promise.resolve([] as LootRow[]),
     ...zones.map(z => zoneOutline(z)),
   ]);
 
@@ -56,6 +59,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
       .find(r => r.name.toLowerCase() === lc);
     const w = rows<{ character_key: string; level: number | null; last_seen: string | null }>(who).find(r => r.character_key === lc);
     const seen = rows<Sighting & { character_key: string }>(sights).filter(r => r.character_key === lc);
+    const looted = (lootSights as LootRow[]).filter(r => r.character_key === lc);
     const auto = guideEvidence({
       flags: rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc),
       loots: rows<{ looter_lower: string; item_name: string; looted_at: string | null }>(loots).filter(r => r.looter_lower === lc),
@@ -66,6 +70,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
       spellbook: !!meta?.spellbook_checksum,
       liveAt: rows<{ character: string; updated_at: string }>(live).find(r => r.character.toLowerCase() === lc)?.updated_at ?? null,
       seen,
+      looted,
     });
     // The planes /who placed them in, earliest first, for the sidebar.
     const planes = new Map<string, string>();

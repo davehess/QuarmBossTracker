@@ -52,9 +52,10 @@ function when(at: string | null) {
 
 function SourceBadge({ ev, manual }: { ev?: Evidence; manual: boolean }) {
   if (ev) {
-    const label = ev.source === 'mimic' ? '✓ filled by Mimic' : ev.source === 'who' ? '✓ seen on /who' : '✓ from our records';
+    const label = ev.source === 'mimic' ? '✓ filled by Mimic' : ev.source === 'who' ? '✓ seen on /who'
+      : ev.source === 'loot' ? '✓ looted there' : '✓ from our records';
     return (
-      <span className={`px-1.5 rounded border ${ev.source === 'mimic' ? 'border-green/60 text-green' : 'border-blue/60 text-blue'}`}
+      <span className={`px-1.5 rounded border ${ev.source === 'mimic' ? 'border-green/60 text-green' : ev.source === 'loot' ? 'border-purple/60 text-purple' : 'border-blue/60 text-blue'}`}
             title={ev.what}>
         {label}{when(ev.at)}
       </span>

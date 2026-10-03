@@ -8,7 +8,7 @@
 // The provider holds the viewer's ticks, because one flag sits in several gates (the Justice flag opens
 // Valor AND Storms) and a tick must show in every cell and in the row's count at once. It follows the
 // optimistic pattern of the admin lists: flip the state, call the server action in a transition, put it
-// back and say why if the save fails. A cell whose every flag Mimic or /who proved is a plain mark, not a
+// back and say why if the save fails. A cell whose every flag Mimic, /who or loot proved is a plain mark, not a
 // button: there is nothing of the owner's word to add (web/lib/popGateCell.ts holds that rule, apart from
 // popSelfFlags.ts so the browser does not load the guide catalog).
 
@@ -63,13 +63,13 @@ type GateProps = {
   character: string;
   zone: string;                              // the zone's full name, for the label
   requires: { key: string; label: string }[];
-  proof: Record<string, FlagProof>;          // the required flags Mimic or /who proved
-  whoTitle: string;                          // where /who saw them, '' when it did not
+  proof: Record<string, FlagProof>;          // the required flags Mimic, /who or loot proved
+  proofTitle: string;                        // where /who saw them or they looted, '' when neither did
 };
 
 const markOf = (g: GateState) => (g.access && g.mark !== 'none' ? g.mark : null);
 
-export function OwnedGateCell({ character, zone, requires, proof, whoTitle }: GateProps) {
+export function OwnedGateCell({ character, zone, requires, proof, proofTitle }: GateProps) {
   const ctx = useContext(SelfFlags);
   const g = gateState(requires.map(r => r.key), proof, ctx?.self(character) ?? NONE);
   const names = (keys: string[]) => keys.map(k => requires.find(r => r.key === k)?.label ?? k).join(', ');
@@ -77,10 +77,10 @@ export function OwnedGateCell({ character, zone, requires, proof, whoTitle }: Ga
 
   // Everything proven (or no provider): a mark to read, nothing to press.
   if (!ctx || !g.toggle) {
-    return mark ? <GateMark kind={mark} title={whoTitle || undefined} /> : <span className="text-dim">—</span>;
+    return mark ? <GateMark kind={mark} title={proofTitle || undefined} /> : <span className="text-dim">—</span>;
   }
   const t = g.toggle;
-  const held = [g.selfFlags.length > 0 ? `${SELF_TICK_TITLE}: ${names(g.selfFlags)}.` : '', whoTitle].filter(Boolean).join(' ');
+  const held = [g.selfFlags.length > 0 ? `${SELF_TICK_TITLE}: ${names(g.selfFlags)}.` : '', proofTitle].filter(Boolean).join(' ');
   return (
     <button
       type="button"
