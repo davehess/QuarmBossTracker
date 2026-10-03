@@ -301,6 +301,18 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   ("Looted in <plane>"); precedence Mimic > /who > loot > owner's tick. The guide checklist auto-ticks from it
   ("looted there"). Test: `test/pop-loot-proof.test.js`. §146.
 
+### PoP guide steps in script order (web 1.8.88, Mimic beta, 2026-10-03)
+- `GuideItem.seq?: Act[]` in `web/lib/popGuide.ts` (the `SEQ` table): hail / say / give / get / kill / click /
+  zone / wait / note, with `times`, `until`, `sit`, and `src` (the `eqemu_quest_scripts` path). `seqRows` turns
+  it into numbered rows (a get rides on the row before, a note hangs under it). Drawn by `SeqView`
+  (`GuideChecklist.tsx`, used by the checklist and `GuideRoute.tsx`) and by `popraid.html`'s Quests mode; a step
+  without a seq keeps the old `says` / `turnIn` rendering. `scripts/sync-pop-quests.js` carries it into
+  `apps/mimic/pop-quests.js`.
+- A flag sits on the step where the server sets it: `trial_justice` on the Mavuin hail, `askr_quest` on the
+  shrine click. `STEPS_BEFORE` in `web/lib/popGuideAuto.ts` ticks the steps a flag needs, from Mimic, /who or
+  loot. Tests: `test/pop-guide-seq.test.js` (every say is one of its script's keywords, every item a real id).
+  DECISIONS-2026-09-21 §147.
+
 ### PoP overlay Quests mode (Mimic beta, 2026-10-03)
 - `apps/mimic/popraid.html`: Slides / Quests toggle (`wp:pop:mode`, `wp:pop:quest`), quest renderer with copy
   chips (`/map`, `/sit`, `/say`), mini shows the next quest.
