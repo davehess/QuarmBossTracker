@@ -14,6 +14,80 @@ one checklist step; it does not absorb or redesign it.
 
 ---
 
+## 2026-10-03 refresh — what is broken today, and three options (awaiting the guild lead's pick)
+
+The guild lead, 2026-10-03, with two phone screenshots of the shared onboarding thread: *"the onboarding
+command needs an overhaul"*. Re-mapped from `main` at bot 3.1.194 / stable Mimic 2.7.8. The rest of this doc
+(July 31) predates `/start` (live since 2026-08-28) and its line numbers are stale; this section supersedes
+its current-state map.
+
+**Broken or wrong right now (fixed by whichever option is picked):**
+- "Set up the parser" card (`utils/onboarding.js` `buildParseOverviewEmbed`):
+  - "Wolf Pack Mimic v1.0.0" is a hardcoded string. The live resolver `utils/mimicReleases.js`
+    `getMimicDownloadUrls()` exists and `/parsehelp` already uses it.
+  - The Mimic link renders as raw text, because Discord refuses a masked link whose label is a URL.
+  - The WolfPackParser.zip link 404s: no release since 2026-05-31 carries it.
+  - It says "paste your /token value". The real first run is **Sign in with Discord**: a 6-character code
+    confirmed at wolfpack.quest/auth/mimic-link. A token is only an Advanced fallback, and a brand-new joiner
+    usually cannot run `/token` (role gate plus the 6-hourly member sync).
+- Welcome card (`buildWelcomeEmbed`):
+  - It tells newcomers to "click its button on the board" to log a kill. Agents record kills themselves, and
+    board buttons need the Pack Member role.
+  - It never links `/start`, the live, current install walkthrough.
+- The organizer button tells members to use `/announce`, which needs an officer role. There is no organizer
+  role.
+- When a joiner's DMs are closed, the welcome posts into the SHARED `ONBOARDING_THREAD_ID` thread with an
+  @mention. That adds them to the thread, and live buttons pile up there (the "99" badge).
+- `maybeShowWelcome` re-shows the full welcome after slash commands, gated on volatile `state.json`
+  (`seenWelcome`) rather than `member_onboarding_state`.
+- The agent-release DM (`announceAgentReleaseIfNew`) fired 8 times between 2026-09-24 and 10-03:
+  - `data/agent_release_notes.json` stops at agent 2.4.19, so 3.x members get only "Re-launch Parser.bat";
+  - the button is the dead zip, and the text names port 7777 (Mimic uses 7779);
+  - Mimic updates itself anyway.
+- The Quick Start card in the thread is an officer command reference a newcomer cannot run.
+- `/raidbosshelp` lists about 30 of 88 commands (no `/dkp`, `/wishlist`, `/who`, `/feedback`) and still
+  promotes EQLogParser paste.
+- No test asserts on any of this copy, so there is no guard today. Constraints on a rewrite:
+  - `test/thread-anchor.test.js` needs the `postOrEditCard(thread, {` wiring kept.
+  - `test/start-page.test.js` ties `/parsehelp`'s step labels to `/start`.
+
+**Must not be hardcoded:**
+- the installer version (use `/mimic?direct=1` or `getMimicDownloadUrls()`);
+- agent, bot and web versions;
+- role names (`getAllowedRoles()`);
+- channel names;
+- raid days and hours (no formal raids until 2026-10-14; link Discord events instead).
+
+**The options** (costs as build / maintenance / runtime / change):
+
+| | A. Doorway card | B. Paged walkthrough in Discord | C. Checklist that ticks itself |
+|---|---|---|---|
+| What the member sees | One short card: a two-line welcome, **▶ Start here → wolfpack.quest/start**, the privacy line, then buttons: ⬇ Get Mimic (live installer link), 📖 Setup steps (`/parsehelp`), ⚔ PvP pings, 🔕 | The welcome is page 1 of 5 with Next/Back: Welcome + privacy → Get Mimic → Sign in, EQ folder, logging → Your characters + /me → Raids + PoP | A card of 5 lines, each ✅ or ⬜ from data we already hold: Mimic signed in, first upload, characters linked, site sign-in, PoP flags recorded. `/onboarding` re-draws it; each ⬜ carries its one link |
+| Build | ~2 h | ~half a day (reuses `/parsehelp`'s pager) | ~1 day (queries, card, tests) |
+| Maintenance | Lowest: the install steps live only on `/start` | Medium: a second copy of the steps beside `/start` (the `/start` test limits drift) | Medium: a signal can lie (a linked Mimic ≠ installed) |
+| Runtime | Nil | Nil | A few small reads per view |
+| Change | Cheap: edit `/start` | Medium: two places | Highest: each line is tied to a data signal |
+
+Recommended: **A** now. It removes every broken fact, and the steps stay current because they live on one
+page. C belongs on `/start` (the web) later, not in Discord.
+
+**Ships with any option:**
+- the live installer link;
+- Sign in with Discord, no token;
+- Parser.bat out of every newcomer surface;
+- the privacy line kept above the fold (`/privacy` + `/me`);
+- organizer copy pointing at what a member can actually use (`/suggest`, event sign-ups);
+- the Quick Start card rewritten to match;
+- no more per-joiner posts into the shared thread;
+- the welcome gate moved off `state.json`;
+- the dead `handleWelcome*` code deleted;
+- `/raidbosshelp` filled in.
+
+**Open for the guild lead:** (1) A, B or C. (2) The agent-release DMs: stop them (Mimic updates itself;
+recommended) or keep them pointing at the Mimic installer.
+
+---
+
 ## TL;DR — what we found and what we're proposing
 
 The overhaul is not just a cosmetic rewrite. While mapping the current surfaces
