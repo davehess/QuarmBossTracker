@@ -331,7 +331,9 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     of every branch that still exists, indefinitely. It hit 10.32 GB on 2026-09-29 (DECISIONS §108). So
     `"ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."` skips a push that changes nothing under `web/`:
     skipped builds store nothing. It is safe because the site imports nothing from outside `web/`; if that
-    ever changes, widen the path;
+    ever changes, widen the path. ⚠ It compares only the push's LAST commit with its parent: a web commit
+    followed by a non-web commit in the same push deploys nothing (a stable Mimic cut on top of a web sweep,
+    2026-10-02, DECISIONS §134). Make the web commit the last one, or push it on its own;
   - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
     environment, then set Git Branch to `beta`.** There is no "beta"
     environment and there should not be — Vercel's environments are
