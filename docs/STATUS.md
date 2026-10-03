@@ -107,13 +107,18 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
   weekly eqemu sync. No live NPC positions without staff approval. DECISIONS-2026-09-21 §131.
-- **⏳ Buff queue headers take the click (beta `16bf4795`, FB-49, 2026-10-02).** Collapsed section headers
+- **✅ Stable Mimic 2.7.7 (agent 3.7.71, 2026-10-02).** Everything on beta since 2.7.6, promoted file by file;
+  the beta website previews stayed on beta. Beta re-parked at 2.7.8. §134.
+- **✅ The website no longer says PoP is locked (web 1.8.79, 2026-10-02).** Guide locks, /pop "(Preview)", the
+  spells page's "locked until Oct 1" and the gear page's PoP AA count are gone; PoP AAs and spells list as
+  available. §134.
+- **✅ Buff queue headers take the click (beta `16bf4795`; stable 2.7.7, FB-49, 2026-10-02).** Collapsed section headers
   were `<div>`s the preload's hover handshake skipped, so a locked overlay passed the click to EQ and
   the cursor stayed hidden behind the panel. They carry `data-wp-interact` now. §133.
-- **⏳ The first run after an update stays in the tray while EverQuest is open (beta `0bd27df1`, FB-50,
+- **✅ The first run after an update stays in the tray while EverQuest is open (beta `0bd27df1`; stable 2.7.7, FB-50,
   2026-10-02).** A member's game crashed about nine seconds after they clicked "Restart to install
   update": the new build opened its window over the game. The new build now checks `lastRunVersion` and
-  `tasklist` on its first run. Reaches the fleet with the next stable. §133.
+  `tasklist` on its first run. In stable 2.7.7. §133.
 - **⏳ Feral Avatar / Savagery time left on targets (asked 2026-10-02).** The ⏳ exists on the
   Shaman/Beastlord queue. Gap found: non-Mimic targets are timed at the catalog's 65 ticks, while Zeal
   showed 102 with buff-duration AAs. Waiting on the guild lead for which view showed no timer. §133.

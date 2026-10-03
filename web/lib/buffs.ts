@@ -6,7 +6,7 @@
 // damage shield, …). EQ/Quarm spell names are stable enough to keyword-match;
 // anything we don't recognize lands in "Other" so nothing is silently dropped.
 //
-// ⚠️ BEST-EFFORT MAP. Quarm is Classic→Luclin (PoP locked), and Zeal reports the
+// ⚠️ BEST-EFFORT MAP. Quarm is Classic→Planes of Power (PoP since 2026-10-01), and Zeal reports the
 // raw buff-window name. This list is seeded from era spell knowledge and WILL
 // have gaps until tuned against a real raid's buff names — send the "Other"
 // column's contents and we fold them in. Categorization is intentionally

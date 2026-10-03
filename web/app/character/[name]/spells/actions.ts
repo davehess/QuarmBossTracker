@@ -1,8 +1,8 @@
 'use server';
 
 // Officer-only spell-level seeding for the missing-spells page. Levels aren't
-// in the eqemu mirror and PoP spells aren't scribable until the 2026-10-01
-// unlock, so officers record the canonical scribe level here. Global per
+// in the eqemu mirror, and few guild spellbooks held PoP spells before the
+// 2026-10-01 unlock, so officers record the canonical scribe level here. Global per
 // spell_id — set it once, every character's page picks it up. A real scribed
 // level (from a guild spellbook upload) always overrides this seed.
 

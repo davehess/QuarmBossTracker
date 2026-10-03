@@ -34,10 +34,6 @@ const EXPANSION_META: Record<string, { label: string; accent: string }> = {
   PoP:     { label: '🔥 Planes of Power',   accent: 'border-red/60'    },
 };
 
-// PoP is locked until 2026-10-01 (utils/config.js isPopLocked) — locked bosses
-// list, but generate nothing. Mirrors the boards' posture.
-const POP_UNLOCK_MS = Date.parse('2026-10-01T00:00:00Z');
-
 type BoardRow = {
   boss_id: string; name: string | null; zone: string | null;
   expansion: string | null; emoji: string | null;
@@ -48,13 +44,12 @@ type EncRow   = { npc_id: number; duration_sec: number | null; total_damage: num
 type GuideIndexRow = {
   bossId: string; name: string; zone: string | null; emoji: string | null;
   expansion: string; npcId: number | null;
-  kills: number; medianDurationSec: number | null; hasNotes: boolean; locked: boolean;
+  kills: number; medianDurationSec: number | null; hasNotes: boolean;
 };
 
 async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> {
   try {
     const sb = supabaseAdmin();
-    const popLocked = Date.now() < POP_UNLOCK_MS;
 
     const [boardRes, localRes, encRes] = await Promise.all([
       sb.from('bot_boards').select('boss_id, name, zone, expansion, emoji'),
@@ -82,8 +77,7 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
     const rows: GuideIndexRow[] = boards.map((b) => {
       const local = localByInternal.get(b.boss_id) || null;
       const expansion = b.expansion || 'Classic';
-      const locked = popLocked && expansion === 'PoP';
-      const fights = (!locked && local) ? (byNpc.get(local.npc_id) ?? []) : [];
+      const fights = local ? (byNpc.get(local.npc_id) ?? []) : [];
       // Index-level floor: half the median damage. The per-boss page uses the
       // stronger catalog-HP floor (see raidGuide.bucketEncounters).
       const medDmg = median(fights.map(f => f.total_damage)) ?? 0;
@@ -98,7 +92,6 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
         kills: complete.length,
         medianDurationSec: median(complete.map(f => f.duration_sec)),
         hasNotes: !!(local?.strat_notes && local.strat_notes.trim()),
-        locked,
       };
     });
 
@@ -168,12 +161,11 @@ export default async function GuideIndex() {
                 </thead>
                 <tbody>
                   {section.map((r) => (
-                    <tr key={r.bossId} className={`border-b border-border/30 hover:bg-[#1a212c] ${r.locked ? 'opacity-50' : ''}`}>
+                    <tr key={r.bossId} className="border-b border-border/30 hover:bg-[#1a212c]">
                       <td className="py-1 pr-2 text-text">
                         <Link href={`/guide/${encodeURIComponent(r.bossId)}`} className="hover:text-blue hover:underline">
                           {r.emoji ? `${r.emoji} ` : ''}{r.name}
                         </Link>
-                        {r.locked && <span className="text-dim ml-1" title="PoP is locked until 2026-10-01">🔒</span>}
                       </td>
                       <td className="py-1 pr-2 text-dim hidden sm:table-cell">{r.zone || '—'}</td>
                       <td className="py-1 pr-2 text-right text-dim tabular-nums">{r.kills || '—'}</td>

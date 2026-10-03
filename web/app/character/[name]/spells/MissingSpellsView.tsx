@@ -183,7 +183,7 @@ export default function MissingSpellsView({
                         </span>
                         <button
                           onClick={() => toggle(m.spell_name)}
-                          className={`${m.pop ? 'text-dim' : 'text-text'} hover:text-blue text-left`}
+                          className="text-text hover:text-blue text-left"
                           title="Show where this comes from"
                         >
                           {m.spell_name} <span className="text-dim text-[10px]">{isOpen(m.spell_name) ? '▾' : '▸'}</span>
@@ -245,7 +245,7 @@ export default function MissingSpellsView({
               <ul className="text-sm space-y-0.5">
                 {z.spells.map(s => (
                   <li key={s.spellName} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                    <span className={s.pop ? 'text-dim' : 'text-text'}>
+                    <span className="text-text">
                       {s.spellName}
                       {s.level != null && <span className="text-dim text-[10px]"> · L{s.level}</span>}
                     </span>
@@ -283,7 +283,7 @@ export default function MissingSpellsView({
               <p className="text-xs text-dim mb-1">Open these in the By-level view for their droppers.</p>
               <ul className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
                 {shopping.noVendor.map(m => (
-                  <li key={m.spell_name} className={m.pop ? 'text-dim' : 'text-text'}>
+                  <li key={m.spell_name} className="text-text">
                     {m.spell_name}{m.scribe_level != null && <span className="text-dim text-[10px]"> · L{m.scribe_level}</span>}
                   </li>
                 ))}

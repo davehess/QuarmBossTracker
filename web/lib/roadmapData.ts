@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-7-2026-10-02',
+    title: 'Mimic 2.7.7',
+    version: 'Mimic 2.7.7 · Agent 3.7.71 · Web 1.8.79',
+    date: '2026-10-02',
+    headline: 'Everything from the beta since 2.7.6 reaches every raider, and the website stops saying Planes of Power is locked.',
+    features: [
+      { name: 'Planes of Power', blurb: 'Flags are named the way the flag NPCs and the Seer say them. Target Info keeps mob info on your machine, so PoP zones load at once. The website’s raid guide, spells and AA pages treat PoP as open.' },
+      { name: 'Raid tools', blurb: 'The main assist’s target sits on top of Extended Target. Loot auctions get timers. A new loot call with the same numbers starts new rolls. Two raids at once: each window says whose raid it shows.' },
+      { name: 'HUD and meters', blurb: 'The DPS/Tank Meter splits back-to-back fights. Damage shield shows OFF under Mark of the Plague Lords. Bards get a Boastful Bellow timer. Clicky charges are counted.' },
+      { name: 'Target Info', blurb: 'A targeted player’s known timers show: disciplines, Lay on Hands, Harm Touch, Feign Death.' },
+      { name: 'Triggers', blurb: 'Fifteen more one-click suggestions, four old ones that never fired now do, and a resist alert names the mob. Trigger timing votes can be switched off.' },
+      { name: 'PvP', blurb: 'Every Rallos Zek line is read: deaths to a mob, a death with no worthy foe, fleeing the battlefield, and the newer kill line.' },
+      { name: 'Threat meter', blurb: 'Concussion counts, Jolt has the right values, and zoning clears your hate.' },
+      { name: 'Zeal', blurb: 'Zeal can be installed from the guild’s test build, and updating it no longer piles up copies of unchanged files.' },
+    ],
+    fixes: [
+      'Updating Mimic while EverQuest is running no longer opens the Mimic window over the game: it waits in the tray.',
+      'Buff queue section headers can be clicked with overlays locked.',
+      'Zeal update notices link straight to the place you update it; the feedback form no longer clears itself; an overlay keeps its size after reopening.',
+    ],
+  },
+  {
     key: 'xanamech-glory-lines-2026-10-02',
     title: 'Xanamech off the board, every Rallos Zek line read',
     version: 'Bot 3.1.191 · Web 1.8.78 · Agent 3.7.71 beta',
