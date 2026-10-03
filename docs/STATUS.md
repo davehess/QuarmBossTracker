@@ -104,8 +104,9 @@ next touch one rather than assuming a missing row means a missing doc.
 ## The work ledger
 
 - **⏳ PoP overlay Quests mode (Mimic beta `b84e25b8`, 2026-10-03).** Slides / Quests toggle; every PoP guide step with
-  copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). 19 of 50 places have no
-  words recorded yet — being filled from the quest scripts. §141.
+  copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
+  hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
+  `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
 - **⏳ Traders and characters under 46 leave the character lists (agent 3.7.73 beta, 2026-10-03).** `/pop`, `/pop/guide`,
   `/me` on b.wolfpack.quest + the dashboard's Watched characters / Replay picker; "show all" everywhere. `me_levels`
   rewritten to use its indexes (applied). §140.
