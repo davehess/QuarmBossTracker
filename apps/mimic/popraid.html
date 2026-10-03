@@ -118,6 +118,40 @@
   #flagForm .fr{display:flex;gap:5px;margin-top:3px;align-items:center}
   #flagStatus{font-size:9px;color:#8b949e}
   #flagStatus.ok{color:#56d364} #flagStatus.err{color:#f87171}
+  /* Quests mode (the guild lead, 2026-10-03: "the pop overlay should include the quests and a mode for
+     selecting them and all of the things to say or do for any of the pop quests or flags so we can
+     reference them"). Data module: pop-quests.js, generated from the website's PoP guide. */
+  .navbtns{min-width:0} select.pick{min-width:0}   /* the picker gives way when the mode toggle crowds the bar */
+  .seg{display:flex;flex:0 0 auto}
+  .seg .nbtn{border-radius:0}
+  .seg .nbtn:first-child{border-radius:3px 0 0 3px}
+  .seg .nbtn:last-child{border-radius:0 3px 3px 0;margin-left:-1px}
+  body.quests #flagBtn{display:none}   /* ⚑ reports an encounter anomaly; a quest has none */
+  .qtag{display:inline-block;padding:0 5px;margin-right:3px;border-radius:3px;font-size:9px;line-height:1.5;
+    border:1px solid rgba(255,255,255,0.18);color:#c9d1d9}
+  .qtag.who-raid{border-color:rgba(248,113,113,0.5);color:#fca5a5}
+  .qtag.who-group{border-color:rgba(240,180,41,0.5);color:#f0b429}
+  .qtag.who-solo{border-color:rgba(126,231,135,0.45);color:#7ee787}
+  .qtag.must{border-color:rgba(212,167,44,0.6);color:#e3b341}
+  .callout b{color:#fde68a;font-weight:600}
+  .qstop{padding:3px 0;border-top:1px solid rgba(255,255,255,0.06)}
+  .ph + .qstop, summary + .qstop{border-top:0}
+  .qrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:2px;font-size:10px}
+  .qwho{color:#e6edf3;font-weight:600}
+  .qzone{color:#79c0ff;font-size:9px}
+  .qk{color:#8b949e;font-size:9px}
+  .qnone{color:rgba(255,255,255,0.45);font-size:9px;font-style:italic}
+  .qsit{color:#f0b429;font-size:9px}
+  .qcopy{display:inline-block;max-width:100%;box-sizing:border-box;padding:1px 6px;border-radius:3px;font-size:10px;
+    line-height:1.5;cursor:pointer;white-space:normal;word-break:break-word;
+    border:1px solid rgba(163,113,247,0.45);background:rgba(163,113,247,0.12);color:#e9d5ff}
+  .qcopy:hover{background:rgba(163,113,247,0.25)}
+  .qcopy.map{border-color:rgba(88,166,255,0.4);background:rgba(88,166,255,0.10);color:#79c0ff}
+  .qcopy.sit{border-color:rgba(240,180,41,0.45);background:rgba(240,180,41,0.10);color:#f0b429}
+  .qcopy.ok{border-color:rgba(126,231,135,0.5);background:rgba(126,231,135,0.12);color:#7ee787}
+  .qnext{padding:1px 4px;font-size:10px;color:#8b949e;cursor:pointer;line-height:1.4;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #000}
+  .qnext:hover{color:#e9d5ff;background:rgba(163,113,247,0.12)}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -162,6 +196,10 @@
       <span id="conn" class="conn bad" title="agent connection">○</span>
       <span>⚔ PoP raids</span>
       <div class="navbtns">
+        <span class="seg" id="modeSeg">
+          <button id="modeSlides" class="nbtn on" title="Boss slideshow: one encounter at a time">Slides</button>
+          <button id="modeQuests" class="nbtn" title="Quests and flags: who to talk to, what to say, where to go">Quests</button>
+        </span>
         <select id="encPick" class="pick" title="Jump to an encounter"></select>
         <button id="prevBtn" class="nbtn" title="Previous encounter">◀</button>
         <button id="nextBtn" class="nbtn" title="Next encounter">▶</button>
@@ -172,6 +210,7 @@
     <div id="content"></div>
   </div>
 <script src="pop-raids.js"></script>
+<script src="pop-quests.js"></script>
 <script>
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
@@ -246,7 +285,7 @@
   // Locked overlays are click-through; every interactive control needs the
   // handshake or "the button does nothing". Content rerenders on slide change,
   // so delegate ONCE at document level for anything interactive.
-  var _IA_SEL = 'button, select, input, textarea, a, .obj, .lnk, .dg, summary';
+  var _IA_SEL = 'button, select, input, textarea, a, .obj, .lnk, .dg, summary, .qcopy, .qnext';
   document.addEventListener('mouseover', function(e){
     if (e.target && e.target.closest && e.target.closest(_IA_SEL)) {
       try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
@@ -276,6 +315,24 @@
   var framed = false;
   try { framed = localStorage.getItem('wp:pop:framed') === '1'; } catch (e) {}
 
+  // Quests mode state: every quest the web guide has, flattened in guide order. The mode and the
+  // selected quest persist like the slide does (wp:pop:enc). No quest data (a build without
+  // pop-quests.js) leaves the overlay in Slides, with the toggle hidden.
+  var QDB = window.POP_QUESTS || { levels: [] };
+  var QUESTS = [];
+  (QDB.levels || []).forEach(function(lv){
+    (lv.sections || []).forEach(function(sec){
+      (sec.quests || []).forEach(function(q){ QUESTS.push({ q: q, level: lv, sec: sec }); });
+    });
+  });
+  var popMode = 'slides';
+  try { if (localStorage.getItem('wp:pop:mode') === 'quests' && QUESTS.length) popMode = 'quests'; } catch (e) {}
+  var qIdx = 0;
+  try {
+    var savedQ = localStorage.getItem('wp:pop:quest');
+    if (savedQ) { var fq = QUESTS.findIndex(function(e){ return e.q.key === savedQ; }); if (fq >= 0) qIdx = fq; }
+  } catch (e) {}
+
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); }); }
   function imgUrl(f){ return /^https?:/i.test(f) ? f : (DB.imageBase + f); }
   function openExt(url){
@@ -285,6 +342,7 @@
 
   // Encounter picker — grouped by section.
   var encPick = document.getElementById('encPick');
+  var _slidePickHtml = '';
   (function buildPicker(){
     var html = '';
     (DB.sections || []).forEach(function(sec){
@@ -299,16 +357,28 @@
       html += '</optgroup>';
     });
     encPick.innerHTML = html;
+    _slidePickHtml = html;
   })();
   encPick.addEventListener('change', function(){
     var v = encPick.value;
+    if (popMode === 'quests') {
+      var qi = QUESTS.findIndex(function(e){ return e.q.key === v; });
+      if (qi >= 0) { qIdx = qi; renderSlide(); }
+      return;
+    }
     var f = SLIDES.findIndex(function(s){
       return v.indexOf('sec:') === 0 ? (!s.enc && s.sec.id === v.slice(4)) : (s.enc && s.enc.id === v);
     });
     if (f >= 0) { idx = f; renderSlide(); }
   });
-  document.getElementById('prevBtn').addEventListener('click', function(){ idx = (idx - 1 + SLIDES.length) % SLIDES.length; renderSlide(); });
-  document.getElementById('nextBtn').addEventListener('click', function(){ idx = (idx + 1) % SLIDES.length; renderSlide(); });
+  document.getElementById('prevBtn').addEventListener('click', function(){
+    if (popMode === 'quests') { qIdx = (qIdx - 1 + QUESTS.length) % QUESTS.length; renderSlide(); return; }
+    idx = (idx - 1 + SLIDES.length) % SLIDES.length; renderSlide();
+  });
+  document.getElementById('nextBtn').addEventListener('click', function(){
+    if (popMode === 'quests') { qIdx = (qIdx + 1) % QUESTS.length; renderSlide(); return; }
+    idx = (idx + 1) % SLIDES.length; renderSlide();
+  });
 
   var frameBtn = document.getElementById('frameBtn');
   function applyFramed(){
@@ -330,6 +400,7 @@
   function currentEnc(){ var s = SLIDES[idx]; return s && s.enc; }
 
   async function pollObjectives(){
+    if (popMode === 'quests') return;   // Quests mode has no shared checklist to poll
     var enc = currentEnc();
     if (!enc || !enc.tracker || !enc.tracker.length) return;
     try {
@@ -491,8 +562,136 @@
           : '<div class="empty">no shared checklist on this slide</div>');
   }
 
+  // ── PoP quests — renderers ─────────────────────────────────────────────────
+  // Pure string builders over one quest from pop-quests.js (test/pop-overlay-quests.test.js runs this
+  // block as it stands). Three rules, all load-bearing:
+  //  · The words are the guide's and nobody else's. A place with no recorded words says so (qNone);
+  //    a phrase is never filled in.
+  //  · Every chip is a clickable <span>: it carries data-wp-interact (a locked overlay is click-through
+  //    and a span is not on the preload's own list) and its class is in _IA_SEL.
+  //  · <details> open state lives in _qOpen, keyed per quest, never in the DOM: the panel is rewritten
+  //    on every quest change and a bare <details> would snap shut (mobinfo.html's _qOpen, same reason).
+  var _qOpen = {};
+  var Q_WHO = { solo: 'Solo', group: 'Group', raid: 'Raid' };
+  var Q_NONE = 'hail them — no words recorded';
+  // "Aid Eino (PoK, optional)" and "Aid Eino" are one person: compare without a trailing parenthetical.
+  function qNorm(s){ return String(s || '').replace(/\s*\([^)]*\)\s*$/, '').toLowerCase(); }
+  function qChip(kind, text){
+    return '<span class="qcopy ' + kind + '" data-wp-interact data-copy="' + esc(text) + '" title="Click to copy">' + esc(text) + '</span>';
+  }
+  function qMap(l){ return qChip('map', '/map ' + l.y + ' ' + l.x); }
+  // One thing to say; "sit first" + a /sit chip ahead of it when the NPC only answers while you sit.
+  function qSay(s){
+    return (s.sit ? '<span class="qsit">sit first</span> ' + qChip('sit', '/sit') + ' ' : '') + qChip('say', '/say ' + s.text);
+  }
+  function qNone(){ return '<span class="qnone">' + Q_NONE + '</span>'; }
+  function qWhere(l){
+    return '<span class="qwho">' + esc(l.npc) + '</span> <span class="qzone">' + esc(l.zone) + (l.note ? ' · ' + esc(l.note) : '') + '</span> ' + qMap(l);
+  }
+  function qDetails(key, label, body){
+    return '<details class="sub panel" data-dk="' + esc(key) + '"' + (_qOpen[key] ? ' open' : '') + '>'
+      + '<summary>' + esc(label) + '</summary>' + body + '</details>';
+  }
+  // "Before the planes — Start here" where a level holds several sections; the section's own title where
+  // it is the level's only one (the tiers), as the web guide's sidebar groups them.
+  function qGroupLabel(lv, sec){
+    return (lv.sections && lv.sections.length > 1) ? lv.title + ' — ' + sec.title : sec.title;
+  }
+  function questTags(q){
+    return '<span class="qtag who-' + esc(q.who) + '">' + esc(Q_WHO[q.who] || q.who) + '</span>'
+      + (q.must ? '<span class="qtag must" title="Needed for the flags that follow">★ must</span>' : '')
+      + (q.check ? '<span class="qtag" title="Classic detail, not yet confirmed on Quarm">verify at launch</span>' : '');
+  }
+  // Who to talk to, in the guide's order: each place with the words addressed to it, then words addressed
+  // to someone the guide gives no place for (kept under their own name, no /map). A place with no words
+  // is `quiet` only when every set of words found its place, so a name the guide spells two ways never
+  // turns a real phrase into a false "no words recorded".
+  function questStops(q){
+    var says = q.says || [], where = q.where || [];
+    var placed = {};
+    where.forEach(function(w){ placed[qNorm(w.npc)] = true; });
+    var stops = where.map(function(w){
+      return { at: w, label: w.npc, says: says.filter(function(s){ return qNorm(s.to) === qNorm(w.npc); }), quiet: false };
+    });
+    var seen = {}, orphan = false;
+    says.forEach(function(s){
+      var k = qNorm(s.to);
+      if (placed[k] || seen[k]) return;
+      seen[k] = true; orphan = true;
+      stops.push({ at: null, label: s.to, says: says.filter(function(t){ return qNorm(t.to) === k; }), quiet: false });
+    });
+    stops.forEach(function(s){ s.quiet = !!s.at && !s.says.length && !orphan; });
+    return stops;
+  }
+  function qSayRow(says, quiet){
+    if (says.length) return '<div class="qrow">' + says.map(qSay).join(' ') + '</div>';
+    return quiet ? '<div class="qrow">' + qNone() + '</div>' : '';
+  }
+  function qStop(s){
+    return '<div class="qstop"><div class="qrow">' + (s.at ? qWhere(s.at) : '<span class="qwho">' + esc(s.label) + '</span>') + '</div>'
+      + qSayRow(s.says, s.quiet) + '</div>';
+  }
+  function qGiveGet(give, get){
+    return '<div class="qrow">'
+      + (give ? '<span class="qk">give</span> <span>' + esc(give) + '</span>' : '')
+      + (get ? ' <span class="qk">→ get</span> <span>' + esc(get) + '</span>' : '')
+      + '</div>';
+  }
+  // A chain quest (Willamina's Needles): where to start and what to say, then the hand-ins in the order
+  // you walk them and the optional story each NPC tells, both folded away until asked for.
+  function qChain(q, c){
+    var h = '<div class="panel"><div class="ph">🔗 Start here</div>'
+      + '<div class="callout">' + esc(c.first.text) + '</div>'
+      + '<div class="qstop"><div class="qrow">' + qWhere(c.first.at) + '</div>'
+      + qSayRow((c.first.say || []).map(function(t){ return { text: t }; }), true) + '</div>'
+      + (c.first.fetch ? '<div class="qstop"><div class="qrow"><span class="qk">fetch from</span> ' + qWhere(c.first.fetch) + '</div></div>' : '')
+      + '</div>';
+    var hand = (c.handins || []).map(function(s, n){
+      return '<div class="qstop"><div class="qrow"><span class="qk">' + (n + 1) + '.</span> ' + qWhere(s.at) + '</div>' + qGiveGet(s.give, s.get) + '</div>';
+    }).join('');
+    if (hand) h += qDetails(q.key + '|handins', 'Hand-ins, in order · ' + c.handins.length, hand);
+    var talk = (c.talk || []).map(function(s, n){
+      return '<div class="qstop"><div class="qrow"><span class="qk">' + (n + 1) + '.</span> ' + qWhere(s.at) + '</div>'
+        + qSayRow((s.say || []).map(function(t){ return { text: t }; }), true)
+        + (s.note ? '<div class="qrow"><span class="qk">' + esc(s.note) + '</span></div>' : '') + '</div>';
+    }).join('');
+    if (talk) h += qDetails(q.key + '|story', 'Optional: the story, from ' + c.talk[0].at.npc + ' · ' + c.talk.length, talk);
+    return h;
+  }
+  function questHtml(q){
+    var h = '';
+    var what = (q.detail ? '<div class="callout">' + esc(q.detail) + '</div>' : '')
+      + (q.expect ? '<div class="callout"><b>Expect</b> ' + esc(q.expect) + '</div>' : '');
+    if (what) h += '<div class="panel"><div class="ph">📝 What to do</div>' + what + '</div>';
+    if (q.chain) h += qChain(q, q.chain);
+    var stops = questStops(q);
+    if (stops.length) h += '<div class="panel"><div class="ph">🗣 Talk to <span class="ct">' + stops.length + '</span></div>' + stops.map(qStop).join('') + '</div>';
+    if (q.turnIn && q.turnIn.length) {
+      h += '<div class="panel"><div class="ph">📦 Turn in</div>' + q.turnIn.map(function(t){
+        return '<div class="qstop"><div class="qrow">' + qWhere(t.to) + '</div>' + qGiveGet(t.give, t.get)
+          + (t.note ? '<div class="qrow"><span class="qk">' + esc(t.note) + '</span></div>' : '') + '</div>';
+      }).join('') + '</div>';
+    }
+    if (q.back && q.back.length) {
+      h += '<div class="panel"><div class="ph">↩ Then go back to</div>'
+        + q.back.map(function(l){ return '<div class="qstop"><div class="qrow">' + qWhere(l) + '</div></div>'; }).join('') + '</div>';
+    }
+    return h || '<div class="empty">Nothing more is recorded for this step.</div>';
+  }
+  // Mini: the selected quest's title and the title of the step after it (the guide is an ordered
+  // checklist and its titles are the steps). The next row is clickable so mini can walk on without
+  // flipping to full mode.
+  function questMiniHtml(list, i){
+    var e = list[i], nx = list[i + 1];
+    return '<div class="mini-ttl"><span class="wp-mini-name">PoP · ' + esc(e.q.title) + '</span></div>'
+      + (nx ? '<div class="qnext" data-wp-interact title="Next step: click to move on">next · ' + esc(nx.q.title) + '</div>'
+            : '<div class="empty">last step in the guide</div>');
+  }
+  // ── /PoP quests — renderers ────────────────────────────────────────────────
+
   // ── Slide renderer ──────────────────────────────────────────────────────────
   function renderSlide(){
+    if (popMode === 'quests') { renderQuest(); return; }
     var s = SLIDES[idx]; if (!s) return;
     var sec = s.sec, enc = s.enc;
     _lootLoadedFor = null;
@@ -633,8 +832,94 @@
     }
   });
 
+  // ── Quests mode: picker, the selected quest, copy chips, mode toggle ───────
+  // Grouped as the web guide groups them: levels, then sections.
+  var _questPickHtml = (function(){
+    var html = '';
+    (QDB.levels || []).forEach(function(lv){
+      (lv.sections || []).forEach(function(sec){
+        html += '<optgroup label="' + esc(qGroupLabel(lv, sec)) + '">';
+        (sec.quests || []).forEach(function(q){ html += '<option value="' + esc(q.key) + '">' + esc(q.title) + '</option>'; });
+        html += '</optgroup>';
+      });
+    });
+    return html;
+  })();
+
+  function renderQuest(){
+    var content = document.getElementById('content');
+    var e = QUESTS[qIdx];
+    if (!e) { content.innerHTML = '<div class="empty">no quests loaded</div>'; _fit(); return; }
+    var q = e.q;
+    try { localStorage.setItem('wp:pop:quest', q.key); } catch (er) {}
+    encPick.value = q.key;
+    if (document.body.classList.contains('wp-mini')) {
+      content.innerHTML = questMiniHtml(QUESTS, qIdx);
+      _fit();
+      return;
+    }
+    content.innerHTML = '<div class="enc-hdr">'
+      +   '<span class="pos">' + (qIdx + 1) + '/' + QUESTS.length + '</span>'
+      +   '<div class="nm">' + esc(q.title) + '</div>'
+      +   '<div class="zone">' + questTags(q) + '</div>'
+      +   '<div class="sect">' + esc(qGroupLabel(e.level, e.sec)) + '</div>'
+      + '</div>'
+      + '<div id="panels">' + questHtml(q)
+      +   (e.sec.blurb ? qDetails('sec|' + e.sec.key, 'About this section', '<div class="callout">' + esc(e.sec.blurb) + '</div>') : '')
+      + '</div>';
+    _fit();
+  }
+
+  // Copy for the /say, /sit and /map chips (the pattern mobinfo.html uses). Clipboard first, the
+  // textarea route when the API is refused.
+  function _copyText(text){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+  }
+  var _questBox = document.getElementById('content');
+  _questBox.addEventListener('click', function(e){
+    var t = (e.target && e.target.closest) ? e.target : null;
+    if (!t) return;
+    var chip = t.closest('.qcopy');
+    if (chip) {
+      _copyText(chip.getAttribute('data-copy') || '');
+      chip.classList.add('ok');
+      chip.textContent = '✓ copied';
+      // Nothing repaints Quests mode on a timer, so the chip puts its own text back.
+      setTimeout(function(){ chip.classList.remove('ok'); chip.textContent = chip.getAttribute('data-copy') || ''; }, 1200);
+      return;
+    }
+    if (t.closest('.qnext') && qIdx < QUESTS.length - 1) { qIdx++; renderSlide(); }
+  });
+  // <details> do not bubble `toggle`; the capture phase sees it. Open state goes to _qOpen.
+  _questBox.addEventListener('toggle', function(e){
+    var d = e.target;
+    var k = (d && d.getAttribute) ? d.getAttribute('data-dk') : null;
+    if (k) _qOpen[k] = !!d.open;
+  }, true);
+
+  var modeSlidesBtn = document.getElementById('modeSlides');
+  var modeQuestsBtn = document.getElementById('modeQuests');
+  function applyMode(){
+    var q = popMode === 'quests';
+    modeSlidesBtn.classList.toggle('on', !q);
+    modeQuestsBtn.classList.toggle('on', q);
+    document.body.classList.toggle('quests', q);
+    encPick.innerHTML = q ? _questPickHtml : _slidePickHtml;
+    try { localStorage.setItem('wp:pop:mode', q ? 'quests' : 'slides'); } catch (e) {}
+    renderSlide();
+  }
+  modeSlidesBtn.addEventListener('click', function(){ if (popMode !== 'slides') { popMode = 'slides'; applyMode(); } });
+  modeQuestsBtn.addEventListener('click', function(){ if (popMode !== 'quests' && QUESTS.length) { popMode = 'quests'; applyMode(); } });
+  if (!QUESTS.length) document.getElementById('modeSeg').style.display = 'none';
+
   applyFramed();
-  renderSlide();
+  applyMode();
   // Mini flipped: redraw the same slide in the other rendition; renderSlide
   // ends in _fit(), so the window re-measures after the new content is in.
   window.addEventListener('wp-mini-change', renderSlide);
