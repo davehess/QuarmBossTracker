@@ -185,3 +185,24 @@ describe('target of target off the pipe is a term (drafted Zeal change)', () => 
       .toBe(sigOf({ ...BASE, target_of_target: { id: 77, name: 'Currygoat', authoritative: true } }));
   });
 });
+
+describe('your own timers starting is a term (another raider\'s Target Info shows them)', () => {
+  // The guild lead, 2026-10-02: "When we have a known timer, for someone's
+  // disciplines or mend or area taunt, we should display those on target info".
+  // A disc or a Mend starting is an event; the ready time is absolute, so a
+  // timer counting down never re-sends.
+  const cd = (key, readyAt) => ({ key, label: key, ready_at: readyAt, total_ms: 60_000, est: false });
+  it('a timer starting re-sends', () => {
+    expect(sigOf({ ...BASE, cooldowns: null }))
+      .not.toBe(sigOf({ ...BASE, cooldowns: [cd('mend', '2026-10-02T06:04:49.000Z')] }));
+  });
+  it('the same timer started again re-sends', () => {
+    expect(sigOf({ ...BASE, cooldowns: [cd('mend', '2026-10-02T06:04:49.000Z')] }))
+      .not.toBe(sigOf({ ...BASE, cooldowns: [cd('mend', '2026-10-02T06:20:00.000Z')] }));
+  });
+  it('the same timers a poll later do not', () => {
+    const list = [cd('disc', '2026-10-02T06:30:00.000Z'), cd('mend', '2026-10-02T06:04:49.000Z')];
+    expect(sigOf({ ...BASE, cooldowns: list }, { now: 1_000_000 }))
+      .toBe(sigOf({ ...BASE, cooldowns: list.map(c => ({ ...c })) }, { now: 1_005_000 }));
+  });
+});

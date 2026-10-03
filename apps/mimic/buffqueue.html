@@ -97,6 +97,9 @@
   .casting .sp{color:#c9d1d9}
   .casting .t{color:#6e7681;font-variant-numeric:tabular-nums}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:6px 4px;font-style:italic}
+  /* Two or more raids at once: which one these queues are for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -630,8 +633,12 @@
           if (rowsC.length > 3) nms += ' +' + (rowsC.length - 3);
           preview = '<span style="color:#8b949e;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">'+esc(nms)+'</span>';
         }
+        // data-wp-interact: a header is a <div>, which the preload's hover
+        // handshake did not count as a control, so on a locked overlay the
+        // click went to EQ and the cursor stayed hidden behind the panel
+        // (the guild lead, 2026-10-02: "can't click it").
         html += '<div class="cat">'
-              +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
+              +   '<div class="cathdr" data-wp-interact data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
               +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
               +     '<span style="font-weight:600">'+esc(label)+'</span>'
               +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
@@ -733,12 +740,23 @@
     // before deciding what's visible.
     reconcileDismissed(dq);
     var html = document.body.classList.contains('wp-mini') ? buildMiniHtml(payload) : buildHtml(payload);
+    // Two or more raids at once (the bot names them only then): the queues are your raid's; say
+    // whose. Not in mini mode, which has no room for it.
+    var raids = (payload && Array.isArray(payload.raids) && payload.raids.length > 1) ? payload.raids : null;
+    if (html && raids && !document.body.classList.contains('wp-mini')) {
+      var mine = null;
+      for (var ri = 0; ri < raids.length; ri++) if (raids[ri] && raids[ri].mine) mine = raids[ri];
+      html = '<div class="raids-note"><span class="n">⚔ ' + esc(raids.length) + ' raids at once</span>'
+           + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>' + html;
+    }
     if (!html) {
       // Nothing to show — either no roster or everything is covered/dismissed.
       if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
       empty.style.display = '';
       var noun = groupMode ? 'group' : 'raid';
-      empty.textContent = bufferClass
+      empty.textContent = (payload && payload.local_only)
+        ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : bufferClass
         ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
         : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
       return;

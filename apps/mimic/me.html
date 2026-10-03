@@ -568,7 +568,7 @@
   }
   var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
     'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
-    'Feign Death': 'FD', 'Lay on Hands': 'LOH' };
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB' };
   function cdShort(c){ return c.key === 'disc' ? 'DISC' : (CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase()); }
   // A class cooldown not used yet this session is UNKNOWN — dim, never green:
   // we cannot tell ready from used-before-Mimic-started.
@@ -626,6 +626,7 @@
       d.t = { name: t.name, hp: t.hp_pct, corpse: corpse,
               tot: !corpse && t.tot && t.tot.name ? { name: t.tot.name, hp: t.tot.hp_pct } : null,
               slow: slowText(t), enrage: !corpse && t.enrage === true, enraged: !corpse && t.enraged === true,
+              enrageEnded: t.enrage_ended === true, enragePct: Number(t.enrage_pct) > 0 ? Number(t.enrage_pct) : ENRAGE_PCT,
               summon: !corpse && t.summon === true,
               level: t.level != null ? t.level : null, level_max: t.level_max || null, level_src: t.level_src || null, cls: t['class'] || null,
               res: !corpse && t.resists ? [['MR', t.resists.mr, 'magic'], ['FR', t.resists.fr, 'fire'], ['CR', t.resists.cr, 'cold'], ['PR', t.resists.pr, 'poison'], ['DR', t.resists.dr, 'disease']] : null,
@@ -635,11 +636,16 @@
     var c = s.combat || null;
     d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
     d.ds = c && c.ds ? c.ds : null;
+    DS_LANE_COLOR = dsColor(d.ds ? d.ds.kind : null);
+    d.ramp = s.rampage && s.rampage.name ? { name: s.rampage.name, hp: s.rampage.hp_pct, fresh: s.rampage.fresh === true } : null;
+    d.low = (Array.isArray(s.low_hp) ? s.low_hp : []).filter(function(m){ return m && m.name; })
+      .map(function(m){ return { name: m.name, hp: m.hp_pct }; });
+    d.clk = (Array.isArray(s.clickies) ? s.clickies : []).filter(function(c){ return c && c.name; });
     d.tallies = c && Array.isArray(c.tallies) ? c.tallies : [];
     d.feed = (c && c.feed ? c.feed : []).map(function(f){
       // A weapon proc is purple (round eight: "Procs should be purple") — the
       // agent marks your spell damage landing with your own swing.
-      var col = f.kind === 'ds' ? 'var(--orange)'
+      var col = f.kind === 'ds' ? DS_LANE_COLOR
         : f.dir === 'in' ? (f.kind === 'melee' ? 'var(--red)' : (EL_COLOR[f.el] || 'var(--red)'))
         : (f.proc ? 'var(--purple)' : (f.kind === 'melee' ? 'var(--melee)' : (EL_COLOR[f.el] || '#8b949e')));
       // Names are cut to 12 characters so a hit line never reaches the middle.
@@ -758,6 +764,8 @@
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
       ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
+    ['Raid', [['ramp', 'Rampage target (top right)'], ['lowhp', 'Raiders under 25% (top left)']]],
+    ['Items', [['clickies', 'Clicky counters (charges left)']]],
     ['Tracking', [['track', 'Arrows toward what you track'], ['trackShow', 'Arrows drawn', ['all', 'lit']]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
@@ -768,7 +776,7 @@
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
-    track: 1, trackShow: 'all', sizes: {} };
+    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
@@ -952,7 +960,7 @@
       var w = textW(txt, fs), x = flushX(L, yT, fs, w);
       totPos[t.key] = { x: x, y: yT, w: w };
       items.push({ key: id + '|T|' + t.key, x: x, y: yT, anchor: 'start', lane: id, merged: true, total: true,
-        text: txt, color: L.color, op: t.dead_at != null ? '0.55' : '1', size: fs });
+        text: txt, color: id === 'hds' ? DS_LANE_COLOR : L.color, op: t.dead_at != null ? '0.55' : '1', size: fs });
       yT += step;
     });
     // Each hit's key: its round, its amount, and which of that amount it is in
@@ -997,7 +1005,7 @@
         var sum = e.rd.hits.reduce(function(a, h){ return a + (+h.f.amount || 0); }, 0);
         var txt = n0(sum), w = textW(txt, fs0), x = flushX(L, e.y, fs0, w), key = id + '|R|' + e.rd.at;
         sumPos[e.rd.at] = { x: x, y: e.y, w: w };
-        items.push({ key: key, x: x, y: e.y, anchor: 'start', lane: id, merged: true, text: txt, color: L.color, op: e.rd.op, size: fs0 });
+        items.push({ key: key, x: x, y: e.y, anchor: 'start', lane: id, merged: true, text: txt, color: id === 'hds' ? DS_LANE_COLOR : L.color, op: e.rd.op, size: fs0 });
         return;
       }
       e.lr.lines.forEach(function(ln){
@@ -1065,16 +1073,53 @@
   // their own bars underneath abilities" · "Everything feels very bold" · "The
   // ENRAGES section should just make a red outline for the last 8% of the
   // healthbar".
-  var ENRAGE_PCT = 8;   // Quarm bosses enrage at ~8% HP (same as the Tank overlay)
+  // 10%, not 8% (the guild lead, 2026-10-02: "it's going off too late and I'm
+  // getting hit"); the agent sends it as target.enrage_pct, this is the fallback.
+  var ENRAGE_PCT = 10;
+  // The damage shield's look (the guild lead, 2026-10-02: "wrapped in a thorny
+  // green area if it's druid DS or glowing lava if mage ds"). The agent names
+  // the kind from the shield you wear, else from the last shield hit; anything
+  // else (Feedback, a Psalm) keeps the plain orange ring. Static on purpose: a
+  // glow that pulses would pull the eye mid-fight.
+  var DS_LANE_COLOR = 'var(--orange)';
+  function dsColor(kind){ return kind === 'thorns' ? 'var(--green)' : (kind === 'fire' ? '#ffb347' : 'var(--orange)'); }
+  function dsWrap(cx, cy, kind, W){
+    if (kind === 'thorns') {
+      // A ring of thorns: 14 hooked spikes, every other one longer.
+      var pts = [], n = 14;
+      for (var i = 0; i < n; i++) {
+        var a = i * 360 / n, half = 360 / n * 0.32, tip = i % 2 ? 19.5 : 17.5;
+        pts.push(P2(cx, cy, 13, a - half), P2(cx, cy, tip, a + 5), P2(cx, cy, 13, a + half));
+      }
+      return '<path d="M' + pts.map(function(q){ return f1(q[0]) + ' ' + f1(q[1]); }).join(' L') + ' Z" fill="#1d5c2e" stroke="var(--green)" stroke-width="' + f1(0.6 * W + 0.3) + '" stroke-linejoin="round"/>';
+    }
+    if (kind === 'fire') {
+      // Glowing lava: a molten halo, hottest at the rim of the button.
+      return '<defs><radialGradient id="dslava"><stop offset="55%" stop-color="#ffd166" stop-opacity="0.95"/><stop offset="72%" stop-color="#ff7b00" stop-opacity="0.85"/>'
+        + '<stop offset="88%" stop-color="#c2410c" stop-opacity="0.55"/><stop offset="100%" stop-color="#7f1d1d" stop-opacity="0"/></radialGradient>'
+        + '<filter id="dsglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6"/></filter></defs>'
+        + '<circle cx="' + f1(cx) + '" cy="' + f1(cy) + '" r="21" fill="url(#dslava)" filter="url(#dsglow)"/>';
+    }
+    return '';
+  }
+  // A thin health arc with its name and health written along the outside —
+  // the target-of-target's shape, for the rampage target and low raiders.
+  function sideArc(id, r, a0, a1, label, hp, col, W, size){
+    var txt = label + ' ' + pctTxt(hp), fs = fitSize(size, txt.length, a1 - a0, r + 2.5);
+    return gauge(r, a0, a1, (hp || 0) / 100, hpColor(hp), 1.8 * W)
+      + ringLabel(id, r + 2.5, a0, a1, '<tspan fill="' + col + '">' + esc(label) + ' </tspan><tspan fill="' + hpColor(hp) + '">' + pctTxt(hp) + '</tspan>', fs);
+  }
+  function P2(cx, cy, r, deg){ var t = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; }
   var SUMMON_PCT = 97;  // the server's default: a summoner starts pulling below 97%
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
     var W = HUD_WEIGHTS[p.weight] || HUD_WEIGHTS.thin;
     if (p.target && d.t) {
-      // The enrage zone: a red outline round the last 8% of the health bar
+      // The enrage zone: a red outline round the last 10% of the health bar
       // (its low end — the bar empties toward the left), solid while it IS
-      // enraged. The outline goes under the bar so the bar stays readable.
-      if (p.status && d.t.enrage) h += stroke(arcD(R, -44, -44 + 88 * ENRAGE_PCT / 100), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', 6 * W + 5);
+      // enraged, gone once its enrage has ended ("when it ends, it should no
+      // longer be red underneath the name"). Under the bar so it stays readable.
+      if (p.status && d.t.enrage && !d.t.enrageEnded) h += stroke(arcD(R, -44, -44 + 88 * d.t.enragePct / 100), d.t.enraged ? 'var(--red)' : 'rgba(248,81,73,0.6)', 6 * W + 5);
       h += gauge(R, -44, 44, d.t.hp == null ? 0 : d.t.hp / 100, hpColor(d.t.hp), 6 * W);
       // A summoner: a marker across the bar at 97%, where it starts pulling
       // its target in (the guild lead, round five: "if a mob summons we should
@@ -1188,13 +1233,52 @@
     });
     // Hits are their own layer (hudLanes / paintLanes), so they can move; the
     // ring only carries the damage shield's per-hit button, left of its column.
-    if (p.ds && d.ds) {
-      var bp = [286, 272];
-      h += '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="rgba(13,17,23,0.72)" stroke="var(--orange)" stroke-width="' + f1(1.2 * W + 0.3) + '"/>'
-        + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, 'var(--orange)')
-        + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5 * Math.min(1.2, sz('ds')), 'var(--orange)', 'middle', 700);
+    if (p.ds && d.ds && d.ds.off) {
+      // A shield-cancelling debuff (Mark of the Plague Lords): no shield at all,
+      // and each hit heals the mob — red, no thorns or lava, with the time left
+      // (the guild lead, 2026-10-02: "should be reflected in the hud").
+      var op = [286, 272], oc = '#f85149', ol = d.ds.off.seconds != null ? mmss(d.ds.off.seconds * 1000) : '—';
+      h += '<circle cx="' + f1(op[0]) + '" cy="' + f1(op[1]) + '" r="13" fill="rgba(60,8,8,0.82)" stroke="' + oc + '" stroke-width="' + f1(1.2 * W + 0.3) + '" stroke-dasharray="3 2"/>'
+        + T(op[0], op[1] - 3.5, 'DS OFF', 5.5, oc, 'middle', 700)
+        + T(op[0], op[1] + 7, ol, 8 * Math.min(1.2, sz('ds')), oc, 'middle', 700);
+    } else if (p.ds && d.ds) {
+      var bp = [286, 272], dsc = dsColor(d.ds.kind);
+      h += dsWrap(bp[0], bp[1], d.ds.kind, W)
+        + '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="' + (d.ds.kind === 'fire' ? 'rgba(48,14,4,0.82)' : 'rgba(13,17,23,0.72)') + '" stroke="' + dsc + '" stroke-width="' + f1(1.2 * W + 0.3) + '"/>'
+        + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, dsc)
+        + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5 * Math.min(1.2, sz('ds')), dsc, 'middle', 700);
     }
+    // The rampage target beside its target's arc on the right, and raiders
+    // running low on the left (the guild lead, 2026-10-02: "when there's a
+    // rampage, it can be listed next to the main tank on the side as an arc" ·
+    // "characters that are approaching 20% or less HP on the left side of the
+    // top of the HUD in the same arc that we would have for the main tank").
+    // The same thin bar as its target's, in the ring's upper corners, each
+    // further one a step outward — nothing new reaches toward the middle.
+    var SIDE_R = R + 19, sideSz = 8 * sz('tot');
+    if (p.ramp && d.ramp) h += sideArc('hrp', SIDE_R, 34, 56, 'R ' + d.ramp.name, d.ramp.hp, d.ramp.fresh ? 'var(--orange)' : '#c9d1d9', W, sideSz);
+    if (p.lowhp) d.low.forEach(function(m, i){
+      h += sideArc('hlh' + i, SIDE_R + i * 13 * sz('tot'), -56, -34, m.name, m.hp, '#c9d1d9', W, sideSz);
+    });
     if (p.resists && d.res) h += ringLabel('hrs', 136, 146, 214, resTspans(d.res), 8 * sz('resists'), true);
+    // Clicky counters (the guild lead, 2026-10-02: "On the hud, there should be
+    // clicky counters for each item you have"): one line just inside the
+    // resists, each item short-named with the charges it has left — orange at
+    // one, red at none, ∞ when it never runs out, no number when that is not
+    // known yet. Names come from the newer of your /output inventory and your
+    // Quarmy export.
+    if (p.clickies && d.clk.length) {
+      var plainC = '', spans = d.clk.map(function(c, i){
+        var nm = String(c.name).replace(/^(?:the|a|an)\s+/i, '');
+        nm = nm.length > 12 ? nm.split(/\s+/)[0].slice(0, 11) + '…' : nm;
+        var n = c.unlimited ? '∞' : (c.left == null ? '' : String(c.left));
+        var col = c.left === 0 ? 'var(--red)' : (c.left === 1 ? 'var(--orange)' : '#c9d1d9');
+        plainC += (i ? ' · ' : '') + nm + (n ? ' ' + n : '');
+        return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#8b949e">' + esc(nm) + '</tspan>'
+          + (n ? '<tspan fill="' + col + '" font-weight="700"> ' + n + '</tspan>' : '');
+      }).join('');
+      h += ringLabel('hcl', 122, 140, 220, spans, fitSize(7.5 * sz('resists'), plainC.length, 80, 122), true);
+    }
     if (p.track && d.track) h += trackArrows(d.track, p.trackShow === 'lit', W, sz('track'));
     return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
   }

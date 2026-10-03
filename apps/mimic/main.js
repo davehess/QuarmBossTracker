@@ -279,6 +279,9 @@ function defaultConfig() {
     // Zeal.asi (that stays a one-click user action; the game may have it loaded).
     zealInstalledTag: null,
     zealAutoCheck: true,
+    // Where Zeal installs come from: 'official' (CoastalRedwood) or 'test' (the
+    // guild's fork, test-all build). zealUpdater.ZEAL_SOURCES; set from Settings.
+    zealSource: 'official',
     // Custom UI packs (Nillipuss etc.) installed via the uiPacks updater —
     // map of pack id → last-installed release tag. Same idea as zealInstalledTag
     // but per-pack, since a user can install more than one.
@@ -417,6 +420,7 @@ function storeUploadToken(cfg, plain, identity) {
   if (identity) cfg.session.identity = identity;
   cfg.session.linked_at = cfg.session.linked_at || Date.now();
   delete cfg.token;             // retire legacy top-level pasted token
+  delete cfg.localOnly;         // signed in: no longer the local-mode choice
   return cfg;
 }
 
@@ -431,7 +435,10 @@ function storeUploadToken(cfg, plain, identity) {
 function _setupIssue() {
   try {
     const cfg = loadConfig();
-    if (!resolveUploadToken(cfg)) return 'Not signed in to Discord';
+    // Local mode (cfg.localOnly, chosen in setup or from the dashboard banner) is a finished setup, not a
+    // missing step: no launch toast, closes to the tray, no "SETUP NEEDED" (the guild lead, 2026-10-01: a
+    // purely local Mimic for players who only want the overlays).
+    if (!resolveUploadToken(cfg) && !cfg.localOnly) return 'Not signed in to Discord';
     if (!Array.isArray(cfg.eqPaths) || cfg.eqPaths.length === 0) return 'No EverQuest folder selected';
     return null;
   } catch { return null; }
@@ -493,7 +500,37 @@ function ensureWritableAgent() {
   if (refresh && bundledVer) {
     try { appendAgentLog(`[mimic] refreshed userData agent ${installedVer || '(none)'} → bundled v${bundledVer}\n`); } catch {}
   }
+  seedBundledCatalog(path.join(src, 'catalog'), dst);
   return path.join(dst, 'index.js');
+}
+
+// Spell and item data shipped inside the installer (local mode, the guild lead
+// 2026-10-01; DECISIONS §118). A local-only install never fetches it, so the
+// installer's snapshot is all it has. Copied into the agent's folder under the
+// agent's own cache names, only when it is NEWER than what is there: a
+// signed-in install keeps the fresher copy it fetched itself.
+function _catalogFetchedAt(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(256);
+    const n = fs.readSync(fd, buf, 0, 256, 0);
+    fs.closeSync(fd);
+    const m = /"fetched_at":"([^"]+)"/.exec(buf.toString('utf8', 0, n));
+    return m ? (Date.parse(m[1]) || 0) : 0;
+  } catch { return 0; }
+}
+function seedBundledCatalog(catalogDir, agentDir) {
+  let names = [];
+  try { names = fs.readdirSync(catalogDir).filter(f => /^logsync\.[a-z-]+\.json$/.test(f)); } catch { return; }
+  for (const f of names) {
+    const s = path.join(catalogDir, f);
+    const d = path.join(agentDir, f);
+    try {
+      if (fs.existsSync(d) && _catalogFetchedAt(s) <= _catalogFetchedAt(d)) continue;
+      fs.copyFileSync(s, d);
+      appendAgentLog(`[mimic] seeded ${f} from the installer\n`);
+    } catch {}
+  }
 }
 
 // ── Free-port probe ─────────────────────────────────────────────────────────
@@ -2953,11 +2990,29 @@ function createMainWindow() {
     _autoInstalled ||
     process.argv.includes('--autostart') ||
     (process.platform === 'win32' && app.getLoginItemSettings && app.getLoginItemSettings().wasOpenedAtLogin);
+  // ...but a "Restart to install" click is not proof the game is shut. A member
+  // clicked it mid-raid, went back to EverQuest, and the new build opened its
+  // window over the game a few seconds later: the game crashed (FB-50, 2026-10-02;
+  // DECISIONS §133). So the first run of a new version starts hidden and shows
+  // the window only once tasklist says EverQuest is not running. Decided HERE,
+  // in the new build, because the old build that ran the update set no flag.
+  // An existing config without the mark is an older build's install: an update too.
+  let _firstRunAfterUpdate = false;
+  try {
+    const _raw = _readConfigRaw();
+    const _ver = String(app.getVersion() || '');
+    if (_raw && _raw.lastRunVersion !== _ver) {
+      _firstRunAfterUpdate = true;
+      const _c = loadConfig();
+      _c.lastRunVersion = _ver;
+      saveConfig(_c);
+    }
+  } catch (e) { void e; }
   mainWindow = new BrowserWindow({
     width: 1200, height: 800, minWidth: 800, minHeight: 600,
     backgroundColor: '#0e1116',
     title: 'Wolf Pack miMIC — Main window (Dashboard)',
-    show: !_autoStarted,
+    show: !_autoStarted && !_firstRunAfterUpdate,
     // Window + taskbar icon while running. build/icon.ico is buildResources
     // (not shipped), so use the packaged assets PNG. The Start-menu/.exe icon
     // comes separately from build/icon.ico via electron-builder win.icon.
@@ -2968,6 +3023,20 @@ function createMainWindow() {
   // (loading.html → the agent dashboard) overwrite it — so this process stays
   // identifiable as the main window rather than "Mimic — getting ready" etc.
   mainWindow.on('page-title-updated', (e) => e.preventDefault());
+  if (_firstRunAfterUpdate && !_autoStarted) {
+    _checkEqRunning().then((eqUp) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!eqUp) { mainWindow.show(); return; }
+      appendAgentLog(`[updater] first run of v${app.getVersion()} with EverQuest open — starting to tray, not over the game\n`);
+      try {
+        if (Notification.isSupported()) new Notification({
+          title:  `Mimic ${app.getVersion()} is installed`,
+          body:   'It is in the tray, so it does not jump in front of EverQuest.',
+          silent: true,
+        }).show();
+      } catch (e) { void e; }
+    }, () => {});
+  }
 
   // ── Load diagnostics ──────────────────────────────────────────────────────
   // These make a blank window self-explanatory from the agent log: which URL
@@ -3381,7 +3450,7 @@ async function _askAboutDisplays() {
 // sitting whole on another screen is where the raider keeps it (§80a).
 // → { lost, away: [{…entry, from: display}], home, nudge: [{…entry, to}] }
 const _OVERLAY_NAMES = {
-  dock: 'Dock', hud: 'DPS HUD', trigger: 'Trigger alerts', charm: 'Charm tracker',
+  dock: 'Dock', hud: 'DPS/Tank Meter', trigger: 'Trigger alerts', charm: 'Charm tracker',
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
@@ -3674,9 +3743,26 @@ function _validScale(v) {
 function overlayScale() {
   return _validScale(loadConfig().overlayScale) ?? 1.0;
 }
+// The key an overlay's OWN setup bar (size slider, opacity in Setup THIS)
+// writes under: the _overlayEntries() name, the one every reader uses. It used
+// to be derived from the bounds key ('mobInfo', 'extTarget', 'chChain',
+// 'popRaid', 'panelBounds_<x>'), so those overlays saved a scale nothing read
+// back: closed and reopened, the window came back at its saved larger size
+// but normal scale (FB-48). The dock and the Canvas stay out, as before.
+function _ownOverlayKey(win) {
+  const hit = _overlayEntries().find(([, w]) => w === win);
+  return hit && hit[0] !== 'dock' && hit[0] !== 'canvas' ? hit[0] : null;
+}
+// Where FB-48's scales were saved, so a size a member already chose still applies.
+const _LEGACY_SCALE_KEYS = { mobinfo: 'mobInfo', chchain: 'chChain', exttarget: 'extTarget', popraid: 'popRaid' };
+function _legacyScaleKey(key) {
+  return String(key).startsWith('panel:') ? 'panelBounds_' + String(key).slice(6) : (_LEGACY_SCALE_KEYS[key] || null);
+}
 function overlayScaleFor(key) {
   const cfg = loadConfig();
-  const own = _validScale((cfg.overlayScaleByKey || {})[key]);
+  const byKey = cfg.overlayScaleByKey || {};
+  let own = _validScale(byKey[key]);
+  if (own == null && _legacyScaleKey(key)) own = _validScale(byKey[_legacyScaleKey(key)]);
   if (own != null) return own;
   // The dock sits out of the global scale unless opted in (the guild lead
   // 2026-08-19: "don't change the [dock] with the scale by default") — it's
@@ -4214,7 +4300,7 @@ function createOverlayWindow() {
     alwaysOnTop: true, skipTaskbar: true,
     focusable: true, // needed so it can be dragged when unlocked
     show: false,     // visibility decided from config + quiet mode below
-    webPreferences: _wpPrefs('DPS HUD'),
+    webPreferences: _wpPrefs('DPS/Tank Meter'),
   });
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true);
@@ -4265,13 +4351,22 @@ function createTriggerOverlay() {
   });
 }
 
-function openSettings() {
-  if (settingsWindow) { settingsWindow.focus(); return; }
+// `section` opens Settings scrolled to that part ('zeal' — FB-46: a Zeal update
+// notice should go "directly to the area that has the ability to update zeal").
+// A tray item calls this with its menu item as the first argument, so only a
+// plain word counts.
+function openSettings(section) {
+  const sec = (typeof section === 'string' && /^[a-z]{1,20}$/.test(section)) ? section : null;
+  if (settingsWindow) {
+    settingsWindow.focus();
+    if (sec) { try { settingsWindow.webContents.send('settings-goto', sec); } catch {} }
+    return;
+  }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
     webPreferences: _wpPrefs('Settings'),
   });
-  settingsWindow.loadFile('settings.html');
+  settingsWindow.loadFile('settings.html', sec ? { hash: sec } : undefined);
   settingsWindow.on('closed', () => { settingsWindow = null; });
 }
 
@@ -6121,7 +6216,7 @@ const _OVERLAY_WINDOWS = [
 // value is remembered in cfg.dockedPrev so undocking restores what the user
 // had rather than guessing.
 const _DOCK_CATALOG = [
-  { key: 'hud',       label: 'DPS HUD',        file: 'overlay.html',      flag: 'showHud' },
+  { key: 'hud',       label: 'DPS/Tank Meter', file: 'overlay.html',      flag: 'showHud' },
   { key: 'chchain',   label: 'CH chain',       file: 'chchain.html',      flag: 'showChChain' },
   { key: 'tank',      label: 'Tank',           file: 'tank.html',         flag: 'showTank' },
   { key: 'buffQueue', label: 'Buff queue',     file: 'buffqueue.html',    flag: 'showBuffQueue' },
@@ -6730,6 +6825,9 @@ function currentStatus() {
     miniAllActive: !!_miniAllActive,
     agentRunning: !!agentProc,
     localOnly,
+    // Local mode chosen on purpose (setup's "run local-only", or the banner's "Stay local-only"), so the
+    // dashboard's "Not connected" banner stays away.
+    localModeChosen: localOnly && !!cfg.localOnly,
     quietMode: !!cfg.quietMode,
     hideOverlays: !!cfg.hideOverlays,
     tellsMode: cfg.tellsMode || 'off',
@@ -6999,7 +7097,7 @@ function buildTrayMenu() {
         pushStatus();
       } },
     { type: 'separator' },
-    { label: 'DPS HUD', type: 'checkbox', checked: s.showHud, enabled: !s.hideOverlays && !_dockedNow.includes('hud'), click: (mi) => {
+    { label: 'DPS/Tank Meter', type: 'checkbox', checked: s.showHud, enabled: !s.hideOverlays && !_dockedNow.includes('hud'), click: (mi) => {
         const cfg = loadConfig(); cfg.showHud = mi.checked; saveConfig(cfg);
         if (mi.checked && !overlayWindow) createOverlayWindow(); else applyOverlayVisibility(); _reapDisabledOverlays();
         pushStatus();
@@ -7486,6 +7584,12 @@ async function checkAgentUpdate(opts) {
   // 2) + the LKG crash-loop rollback below are the gates that catch a bad beta
   // agent (the four-gate rule). Was: beta builds skipped the hot-swap entirely.
   const isBetaBuild = /-/.test(String(app.getVersion() || ''));
+  // Local mode (no token): the agent arrives inside Mimic's own releases (from GitHub), so this check,
+  // which asks the guild server, is skipped and a local Mimic contacts the guild server not at all.
+  if (!resolveUploadToken(loadConfig())) {
+    if (manual) appendAgentLog('[mimic] manual agent check: local mode — the agent updates with Mimic itself\n');
+    return;
+  }
   _agentUpdateInFlight = true;
   try {
     const cfg = loadConfig();
@@ -9409,6 +9513,16 @@ ipcMain.handle('set-quiet-mode', (_e, on) => {
   pushStatus();
   return currentStatus();
 });
+// Local mode as a saved choice (setup's "run local-only", the dashboard banner's "Stay local-only"). It
+// changes nothing the agent does (no token already means nothing is sent); it only marks setup as finished,
+// so Mimic stops asking. Signing in clears it (storeUploadToken).
+ipcMain.handle('set-local-only', (_e, on) => {
+  const cfg = loadConfig();
+  if (on) cfg.localOnly = true; else delete cfg.localOnly;
+  saveConfig(cfg);
+  pushStatus();
+  return currentStatus();
+});
 ipcMain.handle('set-tells-mode', (_e, mode) => {
   const valid = ['off', 'local', 'synced'];
   const cfg = loadConfig();
@@ -9473,7 +9587,7 @@ ipcMain.handle('capture-screens', async (e) => {
   }
 });
 // Gear icon on the dashboard opens the Settings window.
-ipcMain.handle('open-settings', () => { openSettings(); return true; });
+ipcMain.handle('open-settings', (_e, section) => { openSettings(section); return true; });
 // Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
 ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
@@ -9514,7 +9628,7 @@ function _exitSingleSetup(win) {
     _singleSetupWins.delete(win.webContents.id);
     const cfg = loadConfig();
     const locked = cfg.overlaysLocked !== false;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
     try { win.setIgnoreMouseEvents(locked, { forward: true }); } catch {}
     try { win.setResizable(!locked); } catch {}
     try {
@@ -9540,7 +9654,8 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return false;
     // Done — exit single-overlay setup mode for THIS window. Restore the
     // persisted lock state instead of forcing unlocked, so the Done button
     // actually puts things back the way the user had them. Without this,
@@ -9606,12 +9721,15 @@ ipcMain.handle('set-overlay-scale-this', (e, value) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return null;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return null;
     const cfg = loadConfig();
     cfg.overlayScaleByKey = cfg.overlayScaleByKey || {};
     const s = _validScale(value);
     if (s == null) delete cfg.overlayScaleByKey[key];
     else cfg.overlayScaleByKey[key] = s;
+    // The old name goes once the new one is written (FB-48).
+    if (_legacyScaleKey(key)) delete cfg.overlayScaleByKey[_legacyScaleKey(key)];
     saveConfig(cfg);
     applyOverlayScale(win, key);
     return overlayScaleFor(key);
@@ -9621,10 +9739,12 @@ ipcMain.handle('get-overlay-scale-this', (e) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return null;
-    const key = _boundsKeyForWindow(win).replace(/Bounds$/, '');
+    const key = _ownOverlayKey(win);
+    if (!key) return null;
+    const byKey = loadConfig().overlayScaleByKey || {};
     return {
       global: overlayScale(),
-      own: _validScale((loadConfig().overlayScaleByKey || {})[key]),
+      own: _validScale(byKey[key]) ?? (_legacyScaleKey(key) ? _validScale(byKey[_legacyScaleKey(key)]) : null),
       effective: overlayScaleFor(key),
     };
   } catch { return null; }
@@ -10146,8 +10266,21 @@ ipcMain.handle('clock-resync', async () => {
 ipcMain.handle('zeal-status', () => {
   try {
     const cfg = loadConfig();
-    return zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag);
-  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null }; }
+    return { ...zealUpdater.localStatus(_zealEqDir(), cfg.zealInstalledTag), source: zealUpdater._zealSource(cfg.zealSource) };
+  } catch (e) { return { eqDir: null, hasZealAsi: false, installedTag: null, source: 'official' }; }
+});
+// Switch where Zeal installs come from. Saved at once, not with the Settings
+// form, because the Check / Install buttons beside it act straight away. Nothing
+// is installed here; the next Check offers the other source's build.
+ipcMain.handle('zeal-set-source', (_e, source) => {
+  try {
+    const cfg = loadConfig();
+    cfg.zealSource = zealUpdater._zealSource(source);
+    saveConfig(cfg);
+    _zealNotifiedTag = null;     // the other source's newest build is news again
+    appendAgentLog(`[zeal-update] Zeal source set to ${cfg.zealSource}\n`);
+    return { ok: true, source: cfg.zealSource };
+  } catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 // Check GitHub for the latest release (network). Returns the comparison the UI
 // needs; never writes anything.
@@ -10156,9 +10289,10 @@ ipcMain.handle('zeal-check-update', async () => {
     const cfg = loadConfig();
     const eqDir = _zealEqDir();
     const local = zealUpdater.localStatus(eqDir, cfg.zealInstalledTag);
-    const latest = await zealUpdater.checkLatest();
+    const latest = await zealUpdater.checkLatest(cfg.zealSource);
     return {
       ok: true,
+      source: latest.source,
       eqDir,
       installedTag: local.installedTag,
       hasZealAsi: local.hasZealAsi,
@@ -10198,8 +10332,8 @@ ipcMain.handle('zeal-install-update', async () => {
     if (await _isEqRunning()) {
       return { ok: false, error: 'Close EverQuest first — Zeal.asi is loaded by the running game and can\'t be replaced while it\'s open.' };
     }
-    const res = await zealUpdater.install(eqDir);
     const cfg = loadConfig();
+    const res = await zealUpdater.install(eqDir, { source: cfg.zealSource });
     cfg.zealInstalledTag = res.tag || cfg.zealInstalledTag;
     saveConfig(cfg);
     appendAgentLog(`[zeal-update] installed ${res.tag} into ${eqDir} — ${res.written.length} file(s), ${res.backedUp.length} backed up\n`);
@@ -10231,13 +10365,16 @@ function _pushZealUpdateToAgent(tag, installed) {
   } catch { /* agent not up yet — the next 12h check (or a manual one) re-pushes */ }
 }
 let _zealNotifiedTag = null;
+// Held so the notice is not garbage-collected before it is clicked — a dropped
+// Notification loses its click handler (FB-46).
+let _zealNotice = null;
 async function checkZealUpdate({ manual = false } = {}) {
   try {
     const cfg = loadConfig();
     if (!manual && cfg.zealAutoCheck === false) return;
     const eqDir = _zealEqDir();
     if (!eqDir) return;                              // no EQ folder yet — nothing to update
-    const latest = await zealUpdater.checkLatest();
+    const latest = await zealUpdater.checkLatest(cfg.zealSource);
     if (!latest.tag) return;
     const current = latest.tag === cfg.zealInstalledTag;
     // Tell the agent on EVERY check, before the once-per-tag latch below.
@@ -10251,11 +10388,15 @@ async function checkZealUpdate({ manual = false } = {}) {
     appendAgentLog(`[zeal-update] newer Zeal available: ${latest.tag} (installed: ${cfg.zealInstalledTag || 'unknown'})\n`);
     if (Notification.isSupported()) {
       const n = new Notification({
-        title: 'Zeal update available',
-        body: `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
+        title: latest.source === 'test' ? 'New Zeal test build' : 'Zeal update available',
+        body: latest.source === 'test'
+          ? `Zeal test build ${latest.tag} is ready. Open Mimic Settings → Zeal to install it in one click.`
+          : `Zeal ${latest.tag} is out. Open Mimic Settings → Zeal to install it in one click.`,
         silent: true,
       });
-      n.on('click', () => { try { openSettings(); } catch {} });
+      // Straight to the Zeal part of Settings, where Install is (FB-46).
+      n.on('click', () => { try { openSettings('zeal'); } catch {} });
+      _zealNotice = n;
       n.show();
     }
   } catch (e) { appendAgentLog(`[zeal-update] background check failed: ${e && e.message}\n`); }

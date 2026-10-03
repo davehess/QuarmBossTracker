@@ -57,6 +57,8 @@
   .fb-btn.voted{ opacity:0.45; cursor:default; pointer-events:none }
   .fb-btn.earlier:hover{ background:rgba(240,165,45,0.55); border-color:#f0a52d }
   .fb-btn.good:hover{    background:rgba(86,211,100,0.55); border-color:#56d364 }
+  .fb-btn.off{ padding:5px 7px }
+  .fb-btn.off:hover{     background:rgba(110,118,129,0.55); border-color:#6e7681 }
   .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
   #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
   #fbThanks.show{display:inline}
@@ -272,6 +274,7 @@
       <button class="fb-btn earlier" data-dir="earlier" title="The actual event happened BEFORE the trigger fired — push the trigger earlier next time.">« Earlier</button>
       <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
+      <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
     <div id="sticky"></div>
@@ -586,7 +589,29 @@
   let _lastTrigger = null;
   const fbWrap   = document.getElementById('feedback');
   const fbThanks = document.getElementById('fbThanks');
+  // Timing votes can be switched off (the guild lead, 2026-10-01: "Need to be able to opt out for
+  // tts timing feedback"): the dashboard's Timing votes switch, or 🔕 on this row. The agent keeps
+  // the setting and drops any feedback while it is off; this only decides whether to ask.
+  let _votesOn = true;
+  function readVotePref(){
+    fetch('http://127.0.0.1:' + PORT + '/api/callout-prefs')
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if (j && typeof j.timingFeedback === 'boolean') _votesOn = j.timingFeedback; })
+      .catch(function(){});
+  }
+  setTimeout(readVotePref, 1500);
+  setInterval(readVotePref, 30000);
+  function stopAsking(){
+    _votesOn = false;
+    fbWrap.classList.remove('show');
+    try { window.mimic.overlayHoverInteractive(false); } catch (e) {}
+    fetch('http://127.0.0.1:' + PORT + '/api/callout-prefs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timingFeedback: false }),
+    }).catch(function(){});
+  }
   function showFeedback(t){
+    if (!_votesOn) return;
     // Reset button visual state (un-grey if a previous fire was voted on).
     fbWrap.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('voted'));
     fbThanks.classList.remove('show');
@@ -623,7 +648,9 @@
     // through to EQ.
     b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
     b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
-    b.addEventListener('click', function(){ castVote(b.getAttribute('data-dir')); });
+    b.addEventListener('click', function(){
+      if (b.getAttribute('data-dir') === 'off') stopAsking(); else castVote(b.getAttribute('data-dir'));
+    });
   });
 
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that

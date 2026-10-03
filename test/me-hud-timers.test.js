@@ -31,7 +31,8 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
-  '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed'];
+  '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
+  '_xpNoteRawLine', '_xpPending', '_xpFlush'];
 
 function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
   const pre = `
@@ -40,7 +41,9 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
     const whoData = new Map();
     const _raidClassByName = new Map();
     const CHARM_SPELLS = new Map();
-    const stats = { currentEncounterThreat: null };
+    const stats = { currentEncounterThreat: null, characterInventories: globalThis.__invs || {} };
+    const _itemClickyByNameLower = globalThis.__clk || new Map();
+    function _quarmyLocalItems() { return globalThis.__quarmy || null; }
     const _blindState = {};
     function normalizeClass(s) { return s ? String(s).trim() : s; }
     ${failRx}
@@ -57,8 +60,24 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
     function _resolveHpValuesForName() { return null; }
     ${dsSlack}
     ${slainRx}
-    function _knownDsPerHitFor() { return ${Number(dsKnown) || 0}; }
+    function _knownDsPerHitFor(n, out) {
+      if (out && globalThis.__dsWornKind) out.kind = globalThis.__dsWornKind;
+      if (out && globalThis.__dsWornOff) { out.off = globalThis.__dsWornOff; return 0; }
+      return ${Number(dsKnown) || 0};
+    }
+    ${sliceBlock(agent, 'function _dsKindOf(text) {', '\n}')}
     function _targetPlayerInfo() { return ${JSON.stringify(player)}; }
+    function _currentTargetState() { return globalThis.__enrageTgt || null; }
+    function _pushOverlay(o) { (globalThis.__enragePushed = globalThis.__enragePushed || []).push(o); }
+    function _isEnrageBoss() { return false; }
+    const RAMPAGE_FRESH_MS = 8000;
+    function _currentRampageForDisplay() { return globalThis.__ramp || null; }
+    function _resolveHpForName(n) { const m = globalThis.__hpByName || {}; return n in m ? m[n] : null; }
+    const _lastRaidPipe = globalThis.__raidPipe || null;
+    function _zoneName(z) { return Number(z) === 206 ? 'Plane of Innovation' : null; }
+    const AGENT_VERSION = 'test';
+    function shouldUploadForCharacter() { return true; }
+    function enqueueUpload(kind, payload) { (globalThis.__uploads = globalThis.__uploads || []).push({ kind, payload }); return 1; }
     // A fake disk shared across load() calls — a second load() is an agent
     // restart reading what the first one saved.
     const __dirname = '/agent';
@@ -280,6 +299,41 @@ describe('target read-outs', () => {
     expect(t.enraged).toBe(false);
   });
 
+  // The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's
+  // going off too late and I'm getting hit. And then when it ends, it should no longer be red
+  // underneath the name."
+  it('says "Enrage soon" once as the target crosses 10%, re-arms for a fresh mob, and an ended enrage clears', () => {
+    const h = load();
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
+    globalThis.__enragePushed = [];
+    const at = (hp, id = 7) => { globalThis.__enrageTgt = st({ target_hp_pct: hp, target_id: id }); h._tickEnrageWarn(clock); };
+    at(40); at(11);
+    expect(globalThis.__enragePushed).toHaveLength(0);              // 11% is not yet
+    at(10); at(9); at(4);
+    expect(globalThis.__enragePushed).toHaveLength(1);              // once, at 10%
+    expect(globalThis.__enragePushed[0]).toMatchObject({ tts: 'Enrage soon', scope: 'enrage', color: 'red' });
+    at(9, 8);                                                       // another of the same name, already low
+    expect(globalThis.__enragePushed).toHaveLength(2);
+    at(100, 7); at(10, 7);                                          // a respawn under the old id re-arms
+    expect(globalThis.__enragePushed).toHaveLength(3);
+    // A mob that cannot enrage says nothing.
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [] } });
+    at(100, 9); at(5, 9);
+    expect(globalThis.__enragePushed).toHaveLength(3);
+
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
+    say(h, 'Aldenmar', 'a gnoll warlord has become ENRAGED.');
+    let t = h._meTargetExtras(st(), 'Aldenmar', clock);
+    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 10 });
+    say(h, 'Aldenmar', 'a gnoll warlord is no longer enraged.');
+    t = h._meTargetExtras(st(), 'Aldenmar', clock);
+    expect(t).toMatchObject({ enraged: false, enrage_ended: true });   // the red goes
+    // Its death clears it, so the next one of that name starts clean.
+    h._meNoteMobDeath('a gnoll warlord', clock);
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).enrage_ended).toBe(false);
+    globalThis.__enrageTgt = null;
+  });
+
   it('an uncached mob says "unknown" (null), not "cannot enrage"', () => {
     expect(load()._meTargetExtras(st(), 'Aldenmar', clock).enrage).toBeNull();
     expect(load()._meTargetExtras(st(), 'Aldenmar', clock).summon).toBeNull();
@@ -429,6 +483,58 @@ describe('class cooldowns, Feign Death, Lay on Hands / Harm Touch, /pipe', () =>
     say(h, 'Aldenmar', 'a gnoll warlord writhes in the grip of agony.');
     expect(cd(h, 'ht').seen).toBe(true);
   });
+
+  // The guild lead, 2026-10-02: "add Boastful Bellow AA as a timer for Bards that have the AA".
+  // Reuse 18 s (Quarm aa_actions, AA 592). Instant, so no "begin casting" line.
+  describe('Boastful Bellow', () => {
+    it('is no slot for a bard who has not used it — the HUD cannot see AAs owned', () => {
+      expect(cd(load({ zeal: zeal('Bard') }), 'bellow')).toBeUndefined();
+    });
+
+    it('starts on a landing paired with your own damage on that mob, either order', () => {
+      let h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      expect(cd(h, 'bellow')).toBeUndefined();   // the landing alone: anyone near the mob sees it
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 37 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toMatchObject({ label: 'Boastful Bellow', seen: true, ms_left: 18_000, total_ms: 18_000 });
+      h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'You hit A gnoll warlord for 12 points of non-melee damage.');
+      clock += 800;
+      say(h, 'Aldenmar', 'A gnoll warlord is shaken by a loud bellow.');
+      expect(cd(h, 'bellow').ms_left).toBe(17_200);
+    });
+
+    it('another bard\'s bellow on your mob, your damage on a different mob or too late, starts nothing', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      say(h, 'Aldenmar', 'You hit a gnoll guard for 30 points of non-melee damage.');
+      clock += 2000;
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 30 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toBeUndefined();
+    });
+
+    it('a resist names it and only you see it — that starts it too', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'Your target resisted the Boastful Bellow spell.');
+      expect(cd(h, 'bellow').ms_left).toBe(18_000);
+    });
+
+    it('never for another class', () => {
+      const h = load({ zeal: zeal('Cleric') });
+      say(h, 'Aldenmar', 'a gnoll warlord is shaken by a loud bellow.');
+      say(h, 'Aldenmar', 'You hit a gnoll warlord for 37 points of non-melee damage.');
+      expect(cd(h, 'bellow')).toBeUndefined();
+    });
+
+    it('pressing it early puts the one timer right — no second AA slot', () => {
+      const h = load({ zeal: zeal('Bard') });
+      say(h, 'Aldenmar', 'Your target resisted the Boastful Bellow spell.');
+      clock += 3000;
+      say(h, 'Aldenmar', 'You can use the ability Boastful Bellow again in 0 minute(s) 12 seconds.');
+      expect(cd(h, 'bellow').ms_left).toBe(12_000);
+      expect(h._serializeMeState().cooldowns.filter(c => /bellow/i.test(c.label)).length).toBe(1);
+    });
+  });
 });
 
 // The guild lead, 2026-09-24: "Damage shield hits are also mixed in there - those
@@ -490,10 +596,198 @@ describe('damage shield — its own kind, and its per-hit value', () => {
     expect(load({ zeal: Z.zeal })._serializeMeState().combat.ds).toBeFalsy();   // no shield, no button
   });
 
+  // The guild lead, 2026-10-02: "wrapped in a thorny green area if it's druid DS or glowing lava
+  // if mage ds".
+  it('names the shield\'s kind — thorns or fire — from the one you wear, else from the last hit', () => {
+    expect(load({ zeal: Z.zeal })._dsKindOf('Shield of Thistles')).toBe('thorns');
+    try {
+      globalThis.__dsWornKind = 'fire';
+      expect(load({ zeal: Z.zeal, dsKnown: 40 })._serializeMeState().combat.ds.kind).toBe('fire');
+    } finally { globalThis.__dsWornKind = null; }
+    const h = load({ zeal: Z.zeal });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+    expect(h._serializeMeState().combat.ds.kind).toBe('thorns');
+    const plain = load({ zeal: Z.zeal });
+    plain._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'feedback', amount: 9, ds: true });
+    expect(plain._serializeMeState().combat.ds.kind).toBeNull();
+  });
+
+  // The guild lead, 2026-10-02 (Mark of the Plague Lords): a shield-cancelling debuff "should be
+  // reflected in the hud" — 0 a hit and no thorns/lava look, even with a shield hit this fight.
+  it('a shield-cancelling debuff makes the DS button 0 a hit and names the debuff', () => {
+    const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 150 };
+    try {
+      globalThis.__dsWornOff = off;
+      const bare = load({ zeal: Z.zeal })._serializeMeState().combat.ds;   // no shield hit yet: the button still shows
+      expect(bare.off).toEqual(off);
+      expect(bare.per_hit).toBe(0);
+      const h = load({ zeal: Z.zeal });
+      h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+      const ds = h._serializeMeState().combat.ds;
+      expect(ds.per_hit).toBe(0);
+      expect(ds.kind).toBeNull();
+      expect(ds.off.name).toBe('Mark of the Plague Lords');
+    } finally { globalThis.__dsWornOff = null; }
+  });
+
   it('every hit carries its log second, so the HUD can draw one round per line', () => {
     const h = load({ zeal: Z.zeal });
     h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'punch', amount: 45 });
     expect(h._serializeMeState().combat.feed[0].at).toBe(clock);
+  });
+});
+
+// The guild lead, 2026-10-02: "when there's a rampage, it can be listed next to the main tank on the
+// side as an arc. we can show characters that are approaching 20% or less HP on the left side of the
+// top of the HUD in the same arc that we would have for the main tank."
+describe('side arcs: the rampage target and raiders running low', () => {
+  const gauges = [
+    { slot: 1, text: 'Aldenmar', hp_pct: 12 },       // you: your own bar, never listed
+    { slot: 11, text: 'Brackwyn', hp_pct: 18 },
+    { slot: 12, text: 'Corvale', hp_pct: 60 },
+    { slot: 13, text: 'Rethlan', hp_pct: 0 },        // dead: nothing to heal
+  ];
+  const Z = () => ({ Aldenmar: { charInfo: [{ id: 3, value: 'Cleric' }], gauges, updatedAt: clock } });
+  afterEach(() => { globalThis.__ramp = null; globalThis.__hpByName = null; globalThis.__raidPipe = null; });
+
+  it('lists raiders at 25% or under, lowest first, from the raid window and your group — not you, not the dead', () => {
+    globalThis.__raidPipe = { at: clock - 1000, members: [
+      { name: 'Nyssara', hp_pct: 9 }, { name: 'Zarrin', hp_pct: 24 }, { name: 'Brackwyn', hp_pct: 40 }, { name: 'Ordeth', hp_pct: 26 }] };
+    const s = load({ zeal: Z() })._serializeMeState();
+    // Your group's own bar wins over the raid window's older reading for the same raider.
+    expect(s.low_hp).toEqual([{ name: 'Nyssara', hp_pct: 9 }, { name: 'Brackwyn', hp_pct: 18 }, { name: 'Zarrin', hp_pct: 24 }]);
+  });
+
+  it('a stale raid window is ignored, and the list holds three at most', () => {
+    globalThis.__raidPipe = { at: clock - 60_000, members: [{ name: 'Nyssara', hp_pct: 9 }] };
+    expect(load({ zeal: Z() })._serializeMeState().low_hp.map(m => m.name)).toEqual(['Brackwyn']);
+    globalThis.__raidPipe = { at: clock, members: ['A', 'B', 'C', 'D', 'E'].map((n, i) => ({ name: 'Raider' + n, hp_pct: 5 + i })) };
+    expect(load({ zeal: Z() })._serializeMeState().low_hp).toHaveLength(3);
+  });
+
+  it('carries the rampage target with its health, and does not list them twice', () => {
+    globalThis.__ramp = { target: 'Brackwyn', attacker: 'a gnoll warlord', at: clock - 2000 };
+    globalThis.__hpByName = { brackwyn: 18 };
+    const s = load({ zeal: Z() })._serializeMeState();
+    expect(s.rampage).toEqual({ name: 'Brackwyn', hp_pct: 18, fresh: true });
+    expect(s.low_hp.map(m => m.name)).not.toContain('Brackwyn');
+    globalThis.__ramp = null;
+    expect(load({ zeal: Z() })._serializeMeState().rampage).toBeNull();
+  });
+});
+
+// FB-37 option B and the guild lead, 2026-10-02: "observe group composition and xp totals for groups
+// that are together during the day and find what compositions work and in what area in what zone,
+// with what mobs we're killing" · "Also track when we have an XP potion on".
+describe('XP events', () => {
+  afterEach(() => { vi.useRealTimers(); globalThis.__uploads = null; });
+  const zeal = (xp, aa, extra = {}) => ({ Aldenmar: Object.assign({
+    charInfo: [{ id: 2, value: '58' }, { id: 3, value: 'Cleric' }, { id: 26, value: xp + '%' }, { id: 27, value: aa + '%' }, { id: 71, value: '3' }],
+    gauges: [{ slot: 11, text: 'Brackwyn', hp_pct: 90 }, { slot: 12, text: 'Corvale', hp_pct: 100 }],
+    zone: 206, loc: { x: 10, y: -20, z: 3 }, buffs: [{ name: "Maelin's Magical Concoction", seconds: 3000 }],
+    updatedAt: clock }, extra) });
+
+  it('records the bars before the line and three seconds after, with the zone, loc, group, mob and potion', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    const z = zeal(41.5, 10);
+    const h = load({ zeal: z });
+    h._xpNoteRawLine(ts(clock) + 'You have slain a clockwork gnome!', 'Aldenmar', clock);
+    h._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    // The pipe moves the bar after the line.
+    h._zealState.Aldenmar.charInfo[2].value = '42.25%';   // label 26
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending).toHaveLength(1);
+    expect(h._xpPending[0]).toMatchObject({
+      character: 'Aldenmar', kind: 'party', level: 58, xp_before: 41.5, xp_after: 42.25, aa_before: 10, aa_banked_before: 3,
+      zone_id: 206, zone_name: 'Plane of Innovation', loc_x: 10, loc_y: -20, mob: 'a clockwork gnome', potion: true, class: 'Cleric',
+    });
+    expect(h._xpPending[0].group_members.map(g => g.name)).toEqual(['Brackwyn', 'Corvale']);
+    expect(h._xpFlush()).toBe(1);
+    expect(globalThis.__uploads[0]).toMatchObject({ kind: 'xp_events' });
+    expect(h._xpPending).toHaveLength(0);
+  });
+
+  it('a bar that moved just before the line still counts as "after"; same-second lines stay distinct', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    const z = zeal(41.5, 10, { buffs: [] });
+    const h = load({ zeal: z });
+    h._xpNoteRawLine(ts(clock) + 'You gain experience!!', 'Aldenmar', clock);   // primes the bar reading
+    vi.advanceTimersByTime(3000);
+    h._zealState.Aldenmar.charInfo[2].value = '43%';
+    h._xpNoteRawLine(ts(clock) + 'You gain experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    const [a, b] = h._xpPending;
+    expect(b).toMatchObject({ kind: 'solo', xp_before: 41.5, xp_after: 43, potion: false, mob: null });
+    expect(Date.parse(b.at)).toBe(Date.parse(a.at) + 1);
+  });
+
+  it('raid experience is its own kind', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    const h = load({ zeal: zeal(1, 1) });
+    h._xpNoteRawLine(ts(clock) + 'You gained raid experience!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending[0].kind).toBe('raid');
+  });
+});
+
+// The guild lead, 2026-10-02: "On the hud, there should be clicky counters for each item you have."
+describe('clicky counters', () => {
+  afterEach(() => { globalThis.__invs = null; globalThis.__clk = null; });
+  const fileAt = Date.parse('2026-09-24T19:00:00Z');
+  const setup = (maxcharges) => {
+    globalThis.__invs = { Aldenmar: { _updatedAt: new Date(fileAt).toISOString(), items: [
+      { loc: 'Fingers', name: 'Ring of Shadows', count: 5 },
+      { loc: 'General1-Slot2', name: 'Rod of Insidious Glamour', count: 1 },
+      { loc: 'General2-Slot1', name: 'Bread Loaf', count: 20 },            // not a clicky
+      { loc: 'Bank1', name: 'Ring of Shadows', count: 9 },                 // not on you
+    ] } };
+    globalThis.__clk = new Map([
+      ['ring of shadows', { name: 'Ring of Shadows', clickeffect: 2577, maxcharges: maxcharges ? 5 : null }],
+      ['rod of insidious glamour', { name: 'Rod of Insidious Glamour', clickeffect: 1000, maxcharges: maxcharges ? -1 : null }],
+    ]);
+  };
+
+  it('lists the clickies on you with charges left; each glow after the export spends one', () => {
+    setup(true);
+    const h = load();
+    expect(h._meClickies('Aldenmar')).toEqual([
+      { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true },
+      { name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false },
+    ]);
+    h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt - 60_000);   // before the export: already counted in it
+    h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);
+    h._noteClickyUse('Aldenmar', 'ring of shadows', fileAt + 120_000);
+    expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 3, used: 2 });
+  });
+
+  it('without the catalog\'s charge count, a 1 is not shown as "1 left"', () => {
+    setup(false);
+    const c = load()._meClickies('Aldenmar');
+    expect(c.find(x => x.name === 'Ring of Shadows').left).toBe(5);       // more than one: charges
+    expect(c.find(x => x.name === 'Rod of Insidious Glamour')).toMatchObject({ left: null, unlimited: false });
+  });
+
+  it('no export, no counters', () => {
+    expect(load()._meClickies('Aldenmar')).toEqual([]);
+  });
+
+  // The guild lead, 2026-10-02: "quarmy has the charges per item".
+  it('reads the Quarmy export too, and the newer of the two exports wins', () => {
+    try {
+      setup(true);
+      globalThis.__quarmy = { at: fileAt + 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
+      const h = load();
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);        // before the Quarmy export: in its count
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 3_700_000);     // after it: spends one
+      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true }]);
+      // An older Quarmy export loses to the newer /output inventory.
+      globalThis.__quarmy = { at: fileAt - 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
+      expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ name: 'Ring of Shadows', left: 5 });
+      // Only a Quarmy export at all: it is used.
+      globalThis.__invs = null;
+      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Rod of Insidious Glamour', count: 1 }] };
+      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false }]);
+    } finally { globalThis.__quarmy = null; }
   });
 });
 

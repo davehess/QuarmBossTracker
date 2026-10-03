@@ -580,6 +580,9 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// The words typed so far, so a rebuilt card gets them back (FB-47: "This send
+// feedback section refreshes and we lose what we were ready to submit").
+var _wpFbDraft = '';
 // Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
 // than one monitor, the captured screens still waiting to be picked.
 var _wpFbShots = [];
@@ -714,8 +717,10 @@ async function _wpFbPreviewNow() {
 function _wpFbWire() {
   var root = document.getElementById('wpFeedback');
   if (!root) return;
-  _wpFbSetKind('bug');
+  // A rebuilt card comes back as it was: kind, words and pictures (FB-47).
+  _wpFbSetKind(_wpFbKind);
   _wpFbSetMin(_wpFbMin);
+  _wpFbRenderShots();
   var snapBtn = document.getElementById('wpFbSnap');
   if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
   var fileIn = document.getElementById('wpFbFile');
@@ -726,6 +731,10 @@ function _wpFbWire() {
     await _wpFbAddShots(urls);
   });
   var fbText = document.getElementById('wpFbText');
+  if (fbText) {
+    fbText.value = _wpFbDraft;
+    fbText.addEventListener('input', function () { _wpFbDraft = fbText.value; });
+  }
   if (fbText) fbText.addEventListener('paste', async function (e) {
     var files = [];
     var items = (e.clipboardData && e.clipboardData.files) || [];
@@ -793,6 +802,7 @@ async function _wpFbSend() {
     var j = await r.json();
     if (j && j.ok) {
       if (ta) ta.value = '';
+      _wpFbDraft = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
       _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
@@ -1505,22 +1515,10 @@ function renderDash(s) {
   // actionable info. The Triggers tab has the real config + recent fires.)
 
   h += '<div class="grid">';
-  // Recent parses — hide placeholder rows from older uploads (boss "?" with
-  // zero events / zero damage). The recordUploadForDashboard write path also
-  // skips creating these going forward, but in-memory stale ones live until a
-  // session reset; filtering here makes them disappear immediately.
-  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
-  h += '<div class="card"><h2>Recent Parses</h2>';
-  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
-  else {
-    h += '<table>';
-    for (const p of _validParses.slice(0, 5)) {
-      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
-           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Recent parses — isolated (a new kill adds a row). renderRecentParsesCard.
+  // It sat inline here, so every kill rewrote all of #dash and with it the
+  // feedback card's half-typed report (FB-47).
+  h += '<div id="wpRecentParses" class="card"></div>';
   // Session damage — isolated (live numbers change every poll). renderDamageDoneCard.
   h += '<div id="wpDamageDone" class="card" style="display:none"></div>';
 
@@ -1541,8 +1539,7 @@ function renderDash(s) {
   // Top Damage — isolated (live during combat; owns its dismiss-button wiring). renderTopDamageCard.
   h += '<div id="wpTopDamage" class="card wide" style="display:none"></div>';
   h += '</div>';  // grid
-  // #dash now contains only STATIC content (Recent Parses + the trigger chip)
-  // plus the wp* placeholders, so its HTML is byte-identical between polls and
+  // #dash now contains only the wp* placeholders, so its HTML is byte-identical between polls and
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
@@ -2145,6 +2142,26 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+}
+// Recent parses — hide placeholder rows from older uploads (boss "?" with
+// zero events / zero damage). The recordUploadForDashboard write path also
+// skips creating these going forward, but in-memory stale ones live until a
+// session reset; filtering here makes them disappear immediately.
+function renderRecentParsesCard(s) {
+  const el = document.getElementById('wpRecentParses');
+  if (!el) return;
+  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
+  let h = '<h2>Recent Parses</h2>';
+  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
+  else {
+    h += '<table>';
+    for (const p of _validParses.slice(0, 5)) {
+      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
+           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -3473,6 +3490,17 @@ function renderTriggers(s) {
   h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
+  // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
+  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
+  h += '<span>Ask whether a callout&rsquo;s timing was right &mdash; &laquo; Earlier / &#10003; Good! / &raquo; Too early under the alert</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
+  h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -3555,7 +3583,7 @@ function renderTriggers(s) {
 // the one-liner from WP_OVERLAY_BLURB below.
 var WP_OVERLAY_ROWS = [
   ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use each overlay\'s DOCK button (or + Panes on the dock itself) to pick what lives in it.'],
-  ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['hud',     'DPS/Tank Meter',      'Running session DPS, top damage seen, current encounter.'],
   ['canvas',  'Canvas',              'The trigger overlay taken apart: the callouts and the timers become panels you place and size anywhere on the screen, one by one. Add timer panels of your own — charm timers, lulls, one debuff by name — and each takes those countdowns out of the main stack. The voice is unchanged. Arrange it with ✏ Arrange on screen. Beta.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
@@ -3565,13 +3593,13 @@ var WP_OVERLAY_ROWS = [
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\'s clock offset.'],
-  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
+  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -6061,6 +6089,10 @@ var _CLASS_CHECKLIST = {
   beastlord: ['Attack', 'HP Regen'],
   magician:  ['Dmg Shield'],
 };
+// Zeal sends the rank as text ("Raid Leader" / "Group Leader"); this tab looked for '2' / '1' and
+// never showed a crown (2026-10-01). Both spellings count.
+function _isRaidLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '2' || /^raid\s*leader$/i.test(r); }
+function _isGroupLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '1' || /^group\s*leader$/i.test(r); }
 function renderRaidTab(q) {
   var root = document.getElementById('raid');
   if (!root) return;
@@ -6087,6 +6119,14 @@ function renderRaidTab(q) {
     h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
   } else {
     var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    // Two or more raids at once (the bot names them only then): this roster is your raid's; list
+    // every raid so the other one is visible too.
+    var raids = (q && Array.isArray(q.raids) && q.raids.length > 1) ? q.raids : null;
+    if (raids) {
+      h += '<div style="font-size:11px;margin:4px 0 0"><span style="color:var(--orange)">⚔ ' + raids.length + ' raids at once:</span> '
+        + raids.map(function(r){ return (r.mine ? '<b>' : '') + '👑 ' + esc(r.leader) + ' (' + esc(r.size) + ')' + (r.mine ? ' · yours</b>' : ''); }).join(' · ')
+        + '</div>';
+    }
     h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic · click a name for their buffs</div>';
     var byGroup = {};
     var groupOrder = [];
@@ -6107,7 +6147,7 @@ function renderRaidTab(q) {
         var selected = _raidSelName === m.name;
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
-          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (_isRaidLeadRank(m.rank) ? '👑 ' : (_isGroupLeadRank(m.rank) ? '⭐ ' : '')) + esc(m.name)
           + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'
@@ -6780,7 +6820,8 @@ async function refresh() {
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
                      ['setupchecks', renderSetupChecks],
-                     ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
+                     ['triggeralerts', renderTriggerAlertsCard], ['recentparses', renderRecentParsesCard],
+                     ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
@@ -7352,11 +7393,22 @@ function wpRenderMailPanel(){
        + (crit ? "<span style='color:var(--red,#f87171);font-weight:700'>CRITICAL · </span>" : "")
        + "<span style='font-weight:700'>" + wpEscN(n.title) + "</span>"
        + "<div style='margin-top:3px;white-space:pre-wrap'>" + wpEscN(n.body) + "</div>"
+       // A Zeal update goes straight to where Install is (FB-46). Mimic only:
+       // Zeal installs from Mimic's Settings, not from a browser.
+       + (n.action === "zeal" && window.mimic && window.mimic.openSettings
+           ? "<button type='button' class='wp-notice-zeal' style='margin-top:6px'>⚙ Open Settings → Zeal</button>" : "")
        + "<div style='color:var(--dim);font-size:11px;margin-top:3px'>" + wpEscN((n.created_at || "").slice(0, 10)) + "</div>"
        + "</div>";
   }
   panel.innerHTML = h;
 }
+(function(){
+  var panel = document.getElementById("wpMailPanel");
+  if (panel) panel.addEventListener("click", function(e){
+    var b = e.target && e.target.closest ? e.target.closest(".wp-notice-zeal") : null;
+    if (b && window.mimic && window.mimic.openSettings) { try { window.mimic.openSettings("zeal"); } catch (err) { void err; } }
+  });
+})();
 function wpPollNotices(){
   fetch("/api/notices").then(function(r){ return r.json(); }).then(function(j){
     _wpNotices = (j && Array.isArray(j.notices)) ? j.notices : [];
@@ -9598,9 +9650,10 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
-  // #136 raid callout allow-list toggle — persist the on/off choice.
-  async function saveCalloutPref(body) {
-    var msg = document.getElementById('calloutMsg');
+  // #136 raid callout allow-list toggle — persist the on/off choice. The timing-votes
+  // switch shares the route and passes its own message line.
+  async function saveCalloutPref(body, msgId) {
+    var msg = document.getElementById(msgId || 'calloutMsg');
     try {
       await fetch('/api/callout-prefs', {
         method: 'POST',
@@ -9938,6 +9991,8 @@ async function dismissTopDamage(key) {
           saveLootPref({ lootAuctionDefaultSec: v });
         } else if (t.id === 'calloutAllow') {
           saveCalloutPref({ calloutAllowlist: !!t.checked });
+        } else if (t.id === 'timingVotes') {
+          saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
       });
       section._wpTrigChangeBound = true;
@@ -9993,7 +10048,7 @@ async function dismissTopDamage(key) {
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : esc(t.overlay_preview || t.overlay_text)) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
            : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
@@ -10038,7 +10093,7 @@ async function dismissTopDamage(key) {
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
-      html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
+      html += groupHtml('utility', '🔧 Utility (HP, mana, range, invis)',  groups.utility);
       listEl.innerHTML = html;
       var sel = document.getElementById('trgSugFor');
       if (sel) sel.addEventListener('change', function(){

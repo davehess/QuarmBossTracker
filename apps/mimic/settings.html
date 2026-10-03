@@ -156,8 +156,12 @@
     <div id="uiStudioCharList" style="margin-top:8px"></div>
   </div>
 
-  <h2>Zeal</h2>
+  <h2 id="zeal">Zeal</h2>
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
+
+  <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Official Zeal — CoastalRedwood's latest release</label></div>
+  <div class="row"><input type="radio" name="zealSource" value="test" id="zealSrcTest"><label for="zealSrcTest">Test build — our Zeal fork: the current Zeal plus the tag changes we're testing (shapes, pictures, corpses, tags that survive zoning). May be unstable</label></div>
+  <div class="hint">Switching installs nothing by itself: Check then offers that build. To go back, pick Official and install.</div>
 
   <div id="zealPanel" style="margin-top:10px">
     <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
@@ -193,7 +197,7 @@
 
   <div class="row">
     <input id="showHud" type="checkbox" />
-    <label for="showHud">Show DPS HUD overlay</label>
+    <label for="showHud">Show DPS/Tank Meter overlay</label>
   </div>
   <div class="row">
     <input id="enableTriggerTts" type="checkbox" />
@@ -691,7 +695,19 @@
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
+    // Opened for one part (a Zeal update notice opens #zeal — FB-46).
+    _gotoSection((location.hash || '').slice(1));
   }
+  // Scroll a part of Settings into view. Once more a moment later: the UI
+  // Studio list above Zeal fills in after load and pushes it down.
+  function _gotoSection(id) {
+    const el = id && /^[a-z]{1,20}$/.test(id) ? document.getElementById(id) : null;
+    if (!el) return;
+    el.scrollIntoView({ block: 'start' });
+    setTimeout(() => { try { el.scrollIntoView({ block: 'start' }); } catch {} }, 700);
+  }
+  // Already open: main sends the part to show instead of reloading.
+  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto(_gotoSection);
 
   // Overlay scale — label follows the drag; the scale applies on RELEASE
   // ('change'), and main glides every overlay's zoom + window bounds to the
@@ -1085,12 +1101,17 @@
     if (!line) return;
     try {
       var s = await window.mimic.zealStatus();
+      var srcRadio = document.getElementById(s && s.source === 'test' ? 'zealSrcTest' : 'zealSrcOfficial');
+      if (srcRadio) srcRadio.checked = true;
       if (!s || !s.eqDir) {
         line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
         return;
       }
+      // A test build's tag is "testall-<commit>", the same label Zeal's options window shows.
+      var isTestBuild = /^testall-/.test(String(s.installedTag || ''));
       var installed = s.installedTag
         ? 'Installed via Mimic: <b style="color:#7ee787">' + String(s.installedTag).replace(/</g,'&lt;') + '</b>'
+          + (isTestBuild ? ' (test build)' : '')
         : (s.hasZealAsi
             ? '<b style="color:#f6c365">Zeal.asi present</b> (version unknown — install below to be sure you\'re current)'
             : '<b style="color:#ff9b9b">Zeal not installed</b> in this folder');
@@ -1104,6 +1125,18 @@
     var installBtn = document.getElementById('zealInstallBtn');
     var msg        = document.getElementById('zealMsg');
     if (!checkBtn) return;
+    // Official ↔ test build: saved at once (main.js zeal-set-source), then Check
+    // runs so the Install button offers the chosen source's build.
+    document.querySelectorAll('input[name=zealSource]').forEach(function(r){
+      r.addEventListener('change', async function(){
+        if (!r.checked) return;
+        try {
+          var res = await window.mimic.zealSetSource(r.value);
+          if (!res || !res.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((res && res.error) || 'could not switch'); return; }
+          checkBtn.click();
+        } catch (err) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err); }
+      });
+    });
     checkBtn.addEventListener('click', async function(){
       var orig = checkBtn.textContent; checkBtn.disabled = true; checkBtn.textContent = 'Checking…';
       installBtn.style.display = 'none';
@@ -1112,14 +1145,15 @@
         var r = await window.mimic.zealCheckUpdate();
         if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
         _zealLatestTag = r.latestTag;
+        var what = r.source === 'test' ? 'test build' : 'Zeal';
         if (r.updateAvailable) {
           msg.style.color = '#7ee787';
-          msg.textContent = 'Latest is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
+          msg.textContent = 'Latest ' + what + ' is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
           installBtn.textContent = '⬇ Install ' + (r.latestTag || 'latest');
           installBtn.style.display = 'inline-block';
         } else {
           msg.style.color = '#7ee787';
-          msg.textContent = '✓ You\'re on the latest Zeal (' + (r.latestTag || '?') + ').';
+          msg.textContent = '✓ You\'re on the latest ' + what + ' (' + (r.latestTag || '?') + ').';
         }
       } catch (err) {
         msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);

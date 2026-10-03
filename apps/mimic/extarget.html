@@ -491,6 +491,10 @@
     }
     // #194 — the in-game Zeal /tag, welded to this instance by the bot.
     if (t.tag_text || t.tag_shape) nm += ztagHtml(t.tag_text, t.tag_shape);
+    // The main assist's target, pinned to the top by the bot (the guild lead,
+    // 2026-10-02: "when someone is declared as main assist in raid chat, their
+    // target should be at the top of the extended target list").
+    if (t.ma_target) nm += '<span class="tank-tag" style="color:#d29922" title="The main assist is on this one">MA</span>';
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -696,17 +700,29 @@
     // Outside a raid the agent scopes the board to YOUR group (scope 'group'),
     // so the count is your group, not the zone's online raiders.
     var groupScope = !!(payload && payload.scope === 'group');
+    // Two or more raids at once (the bot names them only then): this list is your raid's, and the
+    // first count line says whose raid that is.
+    var raids = (payload && Array.isArray(payload.raids) && payload.raids.length > 1) ? payload.raids : null;
+    var myRaid = null;
+    if (raids) for (var ri = 0; ri < raids.length; ri++) if (raids[ri] && raids[ri].mine) myRaid = raids[ri];
     // Header count: one line per fact, stacked — never side by side.
     function cntHtml(withOnline){
       var h = '';
+      if (raids) h += '<span title="' + esc(raids.length) + ' raids at once. These targets are your raid&#39;s.">'
+                   + '<span style="color:#ffa657">⚔ ' + esc(raids.length) + ' raids</span>'
+                   + (myRaid ? ' · 👑 ' + esc(myRaid.leader) : '') + '</span>';
       if (withOnline && payload && payload.online != null) h += '<span>' + esc(payload.online) + (groupScope ? ' in group' : ' online') + '</span>';
       if (!_showOffTank && offTankCount) h += '<span>🛡 ' + esc(offTankCount) + ' off-tanked</span>';
+      // Who the raid named main assist, and (when known) what they are on.
+      var ma = payload && payload.main_assist;
+      if (ma && ma.name) h += '<span style="color:#d29922" title="Main assist, named in raid chat by ' + esc(ma.declared_by || 'a raider') + '">MA ' + esc(ma.name) + '</span>';
       return h;
     }
     if (!targets.length) {
       rowsEl.innerHTML = '';
       emptyEl.style.display = 'block';
-      emptyEl.textContent = (payload && payload.loading) ? 'loading…'
+      emptyEl.textContent = (payload && payload.local_only) ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : (payload && payload.loading) ? 'loading…'
         : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held'
                       : (groupScope ? 'waiting for group targets…' : 'waiting for raid targets…'));
       cntEl.innerHTML = cntHtml(false);

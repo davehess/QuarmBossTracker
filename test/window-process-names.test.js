@@ -80,7 +80,7 @@ describe('every window goes through it', () => {
     const literals = names.filter(n => !n.includes('panelKey'));
     expect(new Set(literals).size, 'two windows sharing a name defeats the point')
       .toBe(literals.length);
-    for (const want of ['DPS HUD', 'Charm tracker', 'Mob Info', 'CH chain', 'Dashboard', 'Resource use', 'Dock']) {
+    for (const want of ['DPS/Tank Meter', 'Charm tracker', 'Mob Info', 'CH chain', 'Dashboard', 'Resource use', 'Dock']) {
       expect(literals, `${want} should be named`).toContain(want);
     }
   });

@@ -1,6 +1,6 @@
 {
   "name": "wolfpack-mimic",
-  "version": "2.7.6",
+  "version": "2.7.7",
   "private": true,
   "description": "Wolf Pack Mimic — Electron desktop client. Wraps the wolfpack-logsync agent in a native shell with a real window + always-on-top overlay. Bundles its own Node runtime, so no separate Node install.",
   "license": "AGPL-3.0-or-later",
@@ -12,6 +12,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "predist": "node scripts/stage-catalog.js",
     "dist": "electron-builder --win nsis --publish never",
     "dist:dir": "electron-builder --dir",
     "postinstall": "node scripts/stage-agent.js"

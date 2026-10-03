@@ -152,6 +152,9 @@
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* Two or more raids at once: which one this board is for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -365,6 +368,14 @@
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
+  // Two or more raids at once (the bot names them only then): the cures and the healer mana
+  // below are this raid's, and this line says which raid that is.
+  function raidsNoteHtml(raids){
+    var mine = null;
+    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
+    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
+         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -375,6 +386,7 @@
     whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
 
     var html = '';
+    if (s.raids && s.raids.length > 1) html += raidsNoteHtml(s.raids);
 
     // Target HP + boss enrage warning (same data the Tank overlay shows).
     if (s.target && s.target.name) {
@@ -384,10 +396,11 @@
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
            +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
            +  '</div>';
-      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
-        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+      // Gone once its enrage has ended (the guild lead, 2026-10-02).
+      if (s.enrage && s.enrage.enrages && !s.enrage.ended && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = s.enrage.enraged || thp <= (s.enrage.threshold_pct + 2);
         html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
-             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +    (s.enrage.enraged ? '⚠️ ENRAGED (currently ' + thp + '%)' : '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)')
              +  '</div>';
       }
     }
@@ -502,6 +515,28 @@
       // DI available but no mana call-outs yet — show the chips on their own
       // compact line rather than losing them.
       html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // Live OpenDKP auctions, one row each, soonest first (the guild lead,
+    // 2026-10-02: "add in loot auction timers on the control center ... as people
+    // bid when it's low time left, it does extend it further out"). The agent
+    // re-reads each end every poll, so a late bid moves the time and the row
+    // says "extended".
+    if (s.auctions && s.auctions.length) {
+      html += '<div class="card"><div class="head">' + secToggle('auctions', '⚖ Auctions', s.auctions.length) + '</div>';
+      if (!_isCollapsed('auctions')) {
+        for (var ai = 0; ai < s.auctions.length && ai < 8; ai++) {
+          var au = s.auctions[ai], aLeft = Math.max(0, Math.round((au.ms_left || 0) / 1000));
+          var aTxt = Math.floor(aLeft / 60) + ':' + String(aLeft % 60).padStart(2, '0');
+          var aCol = aLeft <= 15 ? '#f85149' : (aLeft <= 60 ? '#ffa657' : '#d29922');
+          html += '<div class="row" style="display:flex;gap:6px;align-items:baseline">'
+               +    '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(au.item) + '</span>'
+               +    (au.extended ? '<span class="dim" style="font-size:10px" title="A late bid moved the end">extended</span>' : '')
+               +    '<b style="color:' + aCol + ';font-variant-numeric:tabular-nums">' + aTxt + '</b>'
+               +  '</div>';
+        }
+      }
+      html += '</div>';
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"

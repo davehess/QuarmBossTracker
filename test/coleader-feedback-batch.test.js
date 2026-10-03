@@ -122,6 +122,22 @@ describe('server tick as its own bar', () => {
     agent._setPersonalTriggersForTest([]);
     expect(row).toMatchObject({ remaining_ms: 3000, cycle_ms: 6000, effect: 'Server tick', pinned: true });
   });
+
+  // The guild lead, 2026-10-02: "add Boastful Bellow AA as a timer for Bards that have the AA".
+  it('the Boastful Bellow switch gives each of your bards a bar while it comes back, none once ready', () => {
+    const now = Date.now();
+    agent._setWatchedLogsForTest([{ character: 'Rethlan' }]);
+    agent._meSkillCds.set('rethlan', new Map([['bellow', { label: 'Boastful Bellow', at: now - 5000, secs: 18, est: false }]]));
+    const tpl = agent.SUGGESTED_TRIGGERS.find(t => t.id === 'timer_boastful_bellow');
+    agent._setPersonalTriggersForTest([agent._compilePersonalTrigger(agent._templateToPersonalRow(tpl))]);
+    const row = agent._builtinTimerRows(now).find(r => r.id.startsWith('bt|bellow|rethlan|'));
+    const later = agent._builtinTimerRows(now + 14_000).find(r => r.id.startsWith('bt|bellow|'));
+    agent._meSkillCds.delete('rethlan');
+    agent._setWatchedLogsForTest([]);
+    agent._setPersonalTriggersForTest([]);
+    expect(row).toMatchObject({ remaining_ms: 13_000, duration_sec: 18, effect: 'Boastful Bellow', group: 'spell' });
+    expect(later).toBeUndefined();
+  });
 });
 
 describe('Settings keeps a draft and asks before closing', () => {

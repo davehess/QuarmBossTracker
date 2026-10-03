@@ -69,6 +69,11 @@ function load({ zeal = {}, et = null, blind = {} } = {}) {
     function _resolveHpValuesForName() { return null; }
     const DS_UNLISTED_SLACK = 30;
     function _knownDsPerHitFor() { return 0; }
+    function _dsKindOf() { return null; }
+    const RAMPAGE_FRESH_MS = 8000;
+    function _currentRampageForDisplay() { return null; }
+    function _resolveHpForName() { return null; }
+    const _lastRaidPipe = null;
   `;
   // eslint-disable-next-line no-new-func
   return new Function(pre + meBlock + '\nreturn { _serializeMeState, _meNoteSelfCast, _meNoteCastFailed, _meNoteFight, _meRate, _meNightKey, _meNoteHit, _meNoteSelfLanding };')();
@@ -355,8 +360,9 @@ describe('the three HUDs', () => {
     });
 
     // Round four, the guild lead: "The ENRAGES section should just make a red
-    // outline for the last 8% of the healthbar".
-    it(name + ' outlines the last 8% of the target\'s health bar in red for a mob that can enrage', () => {
+    // outline for the last 8% of the healthbar" — 10% since 2026-10-02 ("8% is
+    // going off too late and I'm getting hit").
+    it(name + ' outlines the last 10% of the target\'s health bar in red for a mob that can enrage', () => {
       const RED = /<path d="M([\d.]+) ([\d.]+) A172 172 0 0 1 ([\d.]+) ([\d.]+)" stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/;
       const can = fn(base), not = fn(cleric);
       const m = can.match(RED);
@@ -365,11 +371,15 @@ describe('the three HUDs', () => {
       // Clockwise degrees from 12 o'clock: the bar runs -44..44, the outline covers its low end only.
       const deg = (x, y) => Math.atan2(x - 200, 200 - y) * 180 / Math.PI;
       expect(deg(+m[1], +m[2])).toBeCloseTo(-44, 0);
-      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.08, 0);
+      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.10, 0);
       expect(can).not.toMatch(/>enrages</);                        // the outline says it; no word
       const on = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enraged: true }) }));
       expect(on).toContain('ENRAGED');
       expect(on).toMatch(/A172 172 0 0 1 [\d.]+ [\d.]+" stroke="var\(--red\)"/);   // solid while it is
+      // "when it ends, it should no longer be red underneath the name"
+      const over = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enrage_ended: true }) }));
+      expect(over).not.toMatch(RED);
+      expect(over).not.toContain('ENRAGED');
     });
 
     it(name + ' carries the target\'s target with their HP, and the slow state', () => {
@@ -496,6 +506,60 @@ describe('the three HUDs', () => {
   // character), not just its anchor — a line anchored at the ring can still
   // reach the middle, which is exactly what the first side-hit columns did.
   // Curved labels sit on the ring by construction.
+  // The guild lead, 2026-10-02: the rampage target "listed next to the main tank on the side as an
+  // arc" and raiders "approaching 20% or less HP on the left side of the top of the HUD".
+  it('HUD draws the rampage target top right and low raiders top left, each as its own arc', () => {
+    const fn = HUDS.HUD;
+    const snap = Object.assign({}, base, { rampage: { name: 'Brackwyn', hp_pct: 18, fresh: true },
+      low_hp: [{ name: 'Nyssara', hp_pct: 9 }, { name: 'Zarrin', hp_pct: 24 }] });
+    const h = fn(snap);
+    expect(h).toContain('R Brackwyn');
+    expect(h).toContain('Nyssara');
+    expect(h).toContain('Zarrin');
+    expect(h).toMatch(/id="hrp"/);
+    expect(h).toMatch(/id="hlh0"/);
+    expect(h).toMatch(/id="hlh1"/);
+    expect(fn(base)).not.toMatch(/id="hrp"|id="hlh0"/);   // nothing to show, nothing drawn
+  });
+
+  it('HUD carries a clicky counter line — charges left, ∞ for unlimited, red at none', () => {
+    const h = HUDS.HUD(Object.assign({}, base, { clickies: [
+      { name: 'Ring of Shadows', left: 0, unlimited: false }, { name: 'Rod of Insidious Glamour', left: null, unlimited: true },
+      { name: 'Bracer', left: null, unlimited: false }] }));
+    expect(h).toMatch(/id="hcl"/);
+    expect(h).toMatch(/Ring…<\/tspan><tspan fill="var\(--red\)" font-weight="700"> 0</);
+    expect(h).toMatch(/Rod…<\/tspan><tspan fill="#c9d1d9" font-weight="700"> ∞</);
+    expect(h).toMatch(/Bracer<\/tspan>(?!<tspan fill="(?:var|#c9))/);   // not known: no number
+    expect(HUDS.HUD(base)).not.toMatch(/id="hcl"/);
+  });
+
+  // The guild lead, 2026-10-02: the DS amount "wrapped in a thorny green area if it's druid DS or
+  // glowing lava if mage ds".
+  it('HUD wraps the damage-shield button in thorns for a druid shield and lava for a mage one', () => {
+    const fn = HUDS.HUD || Object.values(HUDS)[0];
+    const ds = (kind) => fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 38, from_buffs: true, kind } }) }));
+    const thorns = ds('thorns'), fire = ds('fire'), plain = ds(null);
+    expect(thorns).toMatch(/<path d="M[^"]+ Z" fill="#1d5c2e" stroke="var\(--green\)"/);
+    expect(thorns).not.toContain('dslava');
+    expect(fire).toContain('fill="url(#dslava)"');
+    expect(fire).not.toContain('#1d5c2e');
+    expect(plain).not.toContain('#1d5c2e');
+    expect(plain).not.toContain('dslava');
+    expect(plain).toMatch(/r="13" fill="rgba\(13,17,23,0\.72\)" stroke="var\(--orange\)"/);
+  });
+
+  // The guild lead, 2026-10-02 (Mark of the Plague Lords): "should be reflected in the hud".
+  it('HUD shows the damage-shield button red "DS OFF" with the time left while a cancelling debuff is up', () => {
+    const fn = HUDS.HUD || Object.values(HUDS)[0];
+    const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 125 };
+    const h = fn(Object.assign({}, base, { combat: Object.assign({}, base.combat, { ds: { hits: 3, total: 114, last: 38, per_hit: 0, from_buffs: true, kind: null, off } }) }));
+    expect(h).toMatch(/r="13" fill="rgba\(60,8,8,0\.82\)" stroke="#f85149"[^>]*stroke-dasharray="3 2"/);
+    expect(h).toMatch(/>DS OFF</);
+    expect(h).toMatch(/>2:05</);
+    expect(h).not.toContain('#1d5c2e');
+    expect(h).not.toContain('dslava');
+  });
+
   for (const [name, fn] of Object.entries(HUDS)) {
     it(name + ' keeps the middle open — no straight text within 95 units of the centre', () => {
       // Round eight curved the level and slow lines, so the straight text left is

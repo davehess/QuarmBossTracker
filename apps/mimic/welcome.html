@@ -256,7 +256,7 @@
       copy:   function () { try { navigator.clipboard.writeText($('#wCode', el).textContent); } catch (e) { void e; } },
       cancel: function () { Promise.resolve(M.mimicLinkCancel()).catch(function () {}); },
       signout:function () { Promise.resolve(M.mimicLinkSignOut()).catch(function () {}); },
-      local:  function () { S.localOnly = true; changed('account'); },
+      local:  function () { S.localOnly = true; if (M.setLocalOnly) Promise.resolve(M.setLocalOnly(true)).catch(function () {}); changed('account'); },
     });
   }
 
@@ -481,7 +481,7 @@
   }
 
   var OVERLAYS = [
-    ['showHud',          '⚔️ DPS HUD',          'Live damage for the fight you are in.'],
+    ['showHud',          '⚔️ DPS/Tank Meter',   'Live damage for the fight you are in.'],
     ['enableTriggerTts', '⚡ Trigger alerts',     'Speaks and flashes raid callouts; debuff timers.'],
     ['showMobInfo',      '👁 Target Info',        'Your target\'s stats, loot, spells and buffs.'],
     ['showCharm',        '🔮 Charm tracker',      'Recharm countdown for charm classes.'],

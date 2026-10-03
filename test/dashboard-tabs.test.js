@@ -128,6 +128,8 @@ describe('placeholders have exactly one owner, filled after it', () => {
     wpBackupsCard:    'renderInfo',
     wpMeCard:         'renderDash',
     wpEngine:         'renderDash',
+    wpFeedback:       'renderDash',
+    wpRecentParses:   'renderDash',
   };
 
   for (const [id, owner] of Object.entries(OWNERSHIP)) {
@@ -152,6 +154,8 @@ describe('placeholders have exactly one owner, filled after it', () => {
       wpBackupsCard:    'renderBackupsCard',
       wpMeCard:         'renderMeCard',
       wpEngine:         'renderEngine',
+      wpFeedback:       'renderFeedback',
+      wpRecentParses:   'renderRecentParsesCard',
     };
     for (const [id, filler] of Object.entries(fillers)) {
       const emitAt = order.indexOf(OWNERSHIP[id]);

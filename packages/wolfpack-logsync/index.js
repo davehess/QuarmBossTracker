@@ -199,8 +199,8 @@ const PROC_HATE = {
 // hate per cast. Bumps the caster's `spell` bucket so the breakdown reads
 // honestly. Community-sourced PoP-era ballparks; correct as observed.
 const CAST_HATE = {
-  // Knight aggro AAs
-  'voice of thule':                  3000,   // SHD AA — pulls a single mob hard
+  // Knight aggro AAs. Voice of Thule is not here: in eqemu_spells it is a 12% hate
+  // multiplier (SPA 114), not a flat amount, and the flat 3000 it carried was a guess.
   'disruptive persecution':          1500,   // PAL AA — burst aggro
   'projection of fury':               750,   // SHD AA — burst aggro
   // Warrior provocation chain
@@ -212,12 +212,19 @@ const CAST_HATE = {
   // Negative-hate / fade — let them surface as a *spell* row so the user
   // can see them in the breakdown even though they reduce hate. Negative
   // values shrink the spell bucket; the row still shows but doesn't lead.
-  'voice of quellious':             -2500,
+  // (Voice of Quellious sat here at -2500; it is an enchanter mana buff with no
+  // hate effect, so every cast dropped the enchanter's own meter. Removed.)
   'quivering veil of xarn':         -2000,
   'fading memories':                -1500,
-  // Classic wizard/caster de-aggro nukes — flat hate reduction per cast.
-  'jolt':                            -400,
-  'cinder jolt':                     -570,
+  // Wizard de-aggro spells (the guild lead, 2026-10-01: for the non-tanks who
+  // don't want to get hit). The values are each spell's own hate effect (SPA 92)
+  // in eqemu_spells. The server takes it off even when the mob resists the
+  // spell; a fizzle or an interrupt takes nothing off, so _threatLine hands the
+  // amount back when one follows the cast.
+  'jolt':                            -500,
+  'cinder jolt':                     -500,
+  'concussion':                      -400,
+  'ancient: greater concussion':     -600,
 };
 
 // Resisted detrimental spells STILL generate aggro on EQ — the spell's base
@@ -7223,6 +7230,19 @@ function uploadRollSets() {
   enqueueUpload('rolls', { agent_version: AGENT_VERSION, sets });
 }
 
+// A set is superseded when a loot call made after it started gives its number to a
+// different item. A labelled set: any other name. An unlabelled set: only a call made
+// well after it went quiet, because a call often follows the first rolls by up to a
+// minute (measured: 54 s and 10 s late) and that one names this set, not a new one.
+// The same item posted again (a reminder) never starts a new set.
+const ROLL_RELABEL_QUIET_MS = 2 * 60 * 1000;
+function _rollSetSuperseded(s, linked) {
+  if (!linked || linked.atMs <= s.startMs) return false;
+  const same = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  if (s.item) return !same(s.item, linked.item);
+  return (linked.atMs - s.lastMs) > ROLL_RELABEL_QUIET_MS;
+}
+
 function trackRollLine(line, character) {
   if (!line || !character) return;
   const cl = String(character).toLowerCase();
@@ -7245,10 +7265,20 @@ function trackRollLine(line, character) {
   if (!pending || Math.abs(atMs - pending.atMs) > 2000) return;
   const from = parseInt(m[1], 10), to = parseInt(m[2], 10), value = parseInt(m[3], 10);
   if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(value)) return;
+  // Only the NEWEST set of this range can take the roll, and not once a later loot call
+  // has given the number to something else (FB-45). The guild lead, 2026-10-01: "when we do
+  // rolls way later we should post the new items - we had a long time in between these
+  // rolls and we should have made them separate rolls even if it's the same numbers".
+  // One call put 111/222/333 on three items at 22:08, the next put the same numbers on
+  // three new ones at 22:15, and the second wave's rolls joined the first wave's sets
+  // under the old names. Stopping at the newest set matters too: walking further back
+  // would hand a third call that reuses an older item's name the older set.
   let set = null;
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     const s = _rollSets[i];
-    if (s.from === from && s.to === to && (atMs - s.lastMs) <= ROLL_SET_GAP_MS) { set = s; break; }
+    if (s.from !== from || s.to !== to) continue;
+    if ((atMs - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(to))) set = s;
+    break;
   }
   if (!set) {
     set = { from, to, item: null, qty: null, rolls: [], startMs: atMs, lastMs: atMs };
@@ -7611,7 +7641,8 @@ function rollSetsSnapshot(maxAgeMs) {
       from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
       players: firstByName.size,
       winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
-      open: (now - s.lastMs) <= ROLL_SET_GAP_MS,
+      // A later call that gave this number to another item closes it (FB-45).
+      open: (now - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(s.to)),
       started_at_ms: s.startMs, last_at_ms: s.lastMs,
       rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
     });
@@ -8383,6 +8414,54 @@ class EncounterBuilder {
       ab.count++;
       ab.total += amount;
     }
+  }
+
+  // Threat changes that only a RAW line shows (the guild lead, 2026-10-01). Both
+  // lines miss the keep-list, so the live tail hands every line here before
+  // shouldKeep, as it does for _pvpAssistLine. (A silent backfill builder never
+  // counts cast hate, so it has nothing to take back.)
+  //   · "Your spell fizzles!" / "Your spell is interrupted." inside the cast
+  //     time of a CAST_HATE spell: the server applied nothing, so hand back what
+  //     the cast added.
+  //   · "LOADING, PLEASE WAIT...": you zoned. Zoning takes you off every hate
+  //     list, despawns your pet and breaks your charm (EQMacEmu
+  //     Client::RequestZoneTransferApproval), and the evac spells (Evacuate,
+  //     Exodus, Succor, Levant, Abscond, Egress, Decession) reload the zone, so
+  //     they print this line and do the same. Your hate and your pet's go to 0;
+  //     damage dealt stays on the damage meter.
+  _threatLine(line) {
+    if (!line || !this.character) return;
+    if (line.indexOf('LOADING, PLEASE WAIT') !== -1) {
+      if (!/\]\s+LOADING, PLEASE WAIT/.test(line)) return;
+      this._castHatePending = null;
+      const me = this.character;
+      for (const [name, t] of this.threatBy) {
+        const nl = name.toLowerCase();
+        let owner = (this._activeCharms?.get(nl)?.owner)
+          || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
+          || (!/^an?\s/i.test(nl) ? (this.petLeaders[nl] || null) : null);
+        if (owner === '__SELF__') owner = me;
+        if (name !== me && owner !== me) continue;
+        if (!(t.swing || t.proc || t.spell || t.heal)) continue;
+        t.swing = 0; t.proc = 0; t.spell = 0; t.heal = 0;
+        if (!t.procDetail) t.procDetail = {};
+        t.procDetail['Zoned (hate cleared)'] = (t.procDetail['Zoned (hate cleared)'] || 0) + 1;
+      }
+      return;
+    }
+    const p = this._castHatePending;
+    if (!p) return;
+    if (line.indexOf('interrupted') === -1 && line.indexOf('fizzles') === -1
+        && line.indexOf('miss the gem') === -1) return;
+    if (!_CAST_FAIL_RX.test(line)) return;
+    this._castHatePending = null;
+    const ts = parseEqTimestamp(line);
+    const atMs = ts ? ts.getTime() : Date.now();
+    if (atMs - p.atMs > p.windowMs) return;   // a later cast's failure, not this one
+    const t = this.threatBy.get(this.character);
+    if (!t) return;
+    t.spell -= p.hate;
+    if (t.procDetail && t.procDetail[p.spell] > 0) t.procDetail[p.spell]--;
   }
 
   _publishLiveThreat() {
@@ -9654,7 +9733,10 @@ class EncounterBuilder {
     if (event.type === 'spell_resisted' && this.character) {
       const attacker = this.character;
       const sl = String(event.ability || '').toLowerCase();
-      const hate = RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
+      // A CAST_HATE spell already counted its own amount when it was cast, and
+      // the server applies that same amount on a resist, so nothing more here.
+      const hate = CAST_HATE[sl] !== undefined ? 0
+        : RESIST_HATE[sl] != null ? RESIST_HATE[sl] : RESIST_HATE_DEFAULT;
       if (!this.threatBy.has(attacker)) {
         this.threatBy.set(attacker, { swing: 0, proc: 0, spell: 0, heal: 0, dmg: 0, healRaw: 0, procDetail: {} });
       }
@@ -9797,7 +9879,7 @@ class EncounterBuilder {
         // which spell opened the session (Allure / Boltran's / …) in its
         // "pending charm staged?" diagnostic line.
         if (ci) _pendingCharmSpell = { cls: ci.cls, dur: ci.catalogDur ? _charmDurationSec(spell, ci.dur, this.character) : ci.dur, name: spell, owner: this.character || null, ts: Date.now() };
-        // Direct-hate AAs / spells — Voice of Thule, Disruptive Persecution,
+        // Direct-hate AAs / spells — Disruptive Persecution, Concussion,
         // Hate's Attraction, etc. — never produce a damage line, so they're
         // invisible to the rest of the threat math. Bump the caster's spell
         // bucket by the catalog hate so the Threat overlay reads honestly.
@@ -9811,6 +9893,10 @@ class EncounterBuilder {
           const ct = this.threatBy.get(this.character);
           ct.spell += ch;
           ct.procDetail[spell] = (ct.procDetail[spell] || 0) + 1;
+          // Counted at cast begin; _threatLine takes it back if the cast fizzles
+          // or is interrupted inside its cast time.
+          this._castHatePending = { spell, hate: ch, atMs: Date.parse(event.ts) || Date.now(),
+                                    windowMs: _spellCastSecs(spell) * 1000 + 1500 };
         }
       }
       // Bard melody tracker — singing-only (the parseEvent split tags bard
@@ -10017,6 +10103,22 @@ class EncounterBuilder {
       const last = new Date(this.lastEvent).getTime();
       if (now - last > 120_000) this.flush();
     }
+  }
+  // This client's own target window saw the fight's mob die (its corpse, or its bar at 0) — the
+  // same split the slain line makes above, for when that line never reached this log: it is
+  // range-limited, and nearby casts keep the 120 s idle from ever firing between pulls. Without
+  // it two back-to-back kills of one name were one 479 s fight on the meter (the guild lead,
+  // 2026-10-02: "This fight was backtoback with the same name"). Only the fight's TOP target
+  // counts, exactly as for the slain line.
+  noteZealTargetDead(name) {
+    if (!this.events.length || !name) return false;
+    let top = null, topDmg = -1;
+    for (const [n, dmg] of this.targets) if (dmg > topDmg) { top = n; topDmg = dmg; }
+    if (!top || top.toLowerCase() !== String(name).toLowerCase()) return false;
+    this.bossName = top;
+    this.bossKillConfirmed = true;
+    this.flush();
+    return true;
   }
   // ── Proven-ours pets, for the UPLOAD payload ───────────────────────────────
   // The DPS HUD admits a pet row when ANY of the ownership trackers can prove
@@ -10636,7 +10738,7 @@ class EncounterBuilder {
     if (stats.currentEncounterThreat) {
       stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
     }
-    _recordFightHistory(stats.currentEncounterThreat);
+    _recordFightHistory(stats.currentEncounterThreat, this.character);
     // Mirror to the per-character map so the 2-min stale window applies
     // independently per character (a player's other character can
     // still be mid-fight while this one wraps up).
@@ -11032,6 +11134,7 @@ function _endpointForKind(kind, botUrl) {
     case 'tells':           return base + '/tells';
     case 'corpse':          return base + '/corpse';
     case 'threat_snapshot': return base + '/threat-snapshot';
+    case 'xp_events':       return base + '/xp-events';
     case 'raid_roster':     return base + '/raid-roster';
     case 'rolls':           return base + '/rolls';
     case 'looted':          return base + '/looted';
@@ -11190,7 +11293,16 @@ function _primaryCharacter() {
   return null;
 }
 
+// Local mode: the agent was started with no token (a player outside the guild, or a member who chose
+// local-only), so it sends NOTHING to the guild server. The guild lead, 2026-10-01: "a purely local
+// version" for players who want only the overlays. Before this, the upload queue and the live-state push
+// still posted to the guild bot without a token (each rejected with a 401, but the data had left the
+// machine). Null-safe before main() runs, so a test that never starts the agent is unaffected.
+function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
+
 function enqueueUpload(kind, payload) {
+  // Local mode: nothing is queued, so nothing can be sent.
+  if (_localOnly()) return null;
   // Cross-instance guard: only the elected uploader sends. A read-only
   // instance (another Parser/Mimic on this machine already owns the lock)
   // drops outbound uploads so the same line isn't posted twice. Its local
@@ -12083,6 +12195,9 @@ function saveSessionState() {
       sessionTotalDamage: stats.sessionTotalDamage,
       sessionDamageBy:    stats.sessionDamageBy,
       recentParses:       stats.recentParses,
+      // The DPS/Tank Meter's History survives a restart (the guild lead, 2026-10-02: "History
+      // should be much longer").
+      fightHistory:       stats.fightHistory,
       topDamageSaw:       stats.topDamageSaw,
       topDamageDid:       stats.topDamageDid,
       sessionDefenders:   stats.sessionDefenders,
@@ -12121,6 +12236,7 @@ function loadSessionState() {
     if (raw.sessionTotalDamage) stats.sessionTotalDamage = raw.sessionTotalDamage;
     if (raw.sessionDamageBy)    stats.sessionDamageBy    = raw.sessionDamageBy;
     if (raw.recentParses)       stats.recentParses       = raw.recentParses;
+    if (Array.isArray(raw.fightHistory)) stats.fightHistory = raw.fightHistory.slice(0, FIGHT_HISTORY_MAX);
     if (raw.topDamageSaw)       stats.topDamageSaw       = raw.topDamageSaw;
     if (raw.topDamageDid)       stats.topDamageDid       = raw.topDamageDid;
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
@@ -12851,7 +12967,7 @@ function _resolveBuffsForName(name, active, buffsOut) {
 // Feeds _settleDsPending: it vouches for a small anonymous hit on the tank and
 // rules out a 150-point proc that a same-second flavor line would otherwise
 // have named as their shield.
-function _knownDsPerHitFor(name) {
+function _knownDsPerHitFor(name, out) {
   const nameLower = String(name || '').toLowerCase();
   if (!nameLower) return 0;
   let list = null;
@@ -12867,13 +12983,51 @@ function _knownDsPerHitFor(name) {
     const relay = _targetBuffsByName.get(_relayCacheKey(name));
     for (const b of ((relay && relay.buffs) || [])) list.push(b);
   }
-  let sum = 0;
+  let sum = 0, big = 0;
   for (const b of list) {
     if (!b || !b.name || b.fell_off) continue;
     const cat = _spellByNameLower.get(String(b.name).toLowerCase());
-    if (cat && cat.ds > 0) sum += Number(cat.ds) || 0;
+    if (cat && cat.ds > 0) {
+      sum += Number(cat.ds) || 0;
+      // `out.kind`: which look the HUD gives the shield — the biggest one up.
+      if (out && Number(cat.ds) > big) { big = Number(cat.ds); out.kind = _dsKindOf(b.name); }
+    }
   }
+  // A shield-cancelling debuff up (Mark of the Plague Lords) means no shield at
+  // all, whatever else is worn — see _dsOffFrom.
+  const off = _dsOffFrom(list);
+  if (off) { if (out) out.off = off; return 0; }
   return sum;
+}
+// The debuff that turns a damage shield OFF (the guild lead, 2026-10-02: "this debuff exists for
+// damage shield reduction and should be reflected in the hud and overlays"). The catalog's
+// `ds_heal` is a POSITIVE SPA 59, and on the Quarm server that is not a smaller shield: the
+// positive value replaces every shield the wearer has, and each melee hit that lands on them
+// HEALS the attacker by that much (zone/bonuses.cpp SE_DamageShield, zone/attack.cpp
+// Mob::DamageShield). So Mark of the Plague Lords (+50) on a tank = no shield for 3m12s and a mob
+// healed 50 a hit. → { name, heals, seconds } for the biggest one up, else null.
+function _dsOffFrom(list) {
+  let off = null;
+  for (const b of (list || [])) {
+    if (!b || !b.name || b.fell_off) continue;
+    const cat = _spellByNameLower.get(String(b.name).toLowerCase());
+    const heals = cat ? Number(cat.ds_heal) || 0 : 0;
+    if (heals > 0 && (!off || heals > off.heals)) {
+      const secs = typeof b.seconds === 'number' ? b.seconds
+                 : (typeof b.remaining_secs === 'number' ? b.remaining_secs : null);
+      off = { name: b.name, heals, seconds: secs };
+    }
+  }
+  return off;
+}
+// The guild lead, 2026-10-02: the damage-shield amount "should show as wrapped in a thorny green
+// area if it's druid DS or glowing lava if mage ds". 'thorns' for the druid/ranger family, 'fire'
+// for the magician's; anything else (Feedback, the bard Psalms, a proc) keeps the plain look.
+function _dsKindOf(text) {
+  const s = String(text || '');
+  if (/fire|flame|lava|inferno|combust|immolat|burn|blaze|cadeau/i.test(s)) return 'fire';
+  if (/thorn|thistl|brambl|spike|barb|legacy\s+of|nettle|briar/i.test(s)) return 'thorns';
+  return null;
 }
 // Divine Aura lookup within a buff list — shared by the self DA banner and
 // Rampage-target DA highlight. `greenSecs` is the "about to fall, get ready
@@ -13211,7 +13365,8 @@ function _meCombatSince(cl, sinceMs, now) {
     .map(h => ({ dir: h.dir, amount: h.amount, kind: h.kind, name: h.name, el: h.el, other: h.other, proc: !!h.proc, at: h.t, age_ms: Math.max(0, now - h.t) }));
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
-  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount } : null;
+  const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount,
+    kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
   return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
 }
 // Damage per MOB — done, taken and your damage shield — so the HUD can roll
@@ -13231,6 +13386,10 @@ const _ME_TALLY_IDLE_MS = 30_000, _ME_TALLY_DEAD_MS = 10_000;
 function _meNoteMobDeath(name, t) {
   const k = String(name || '').trim().toLowerCase();
   if (!k) return;
+  // A mob that dies enraged prints no end line; the next one of that name starts clean.
+  _meEnraged.delete(k);
+  _meEnrageEnded.delete(k);
+  for (const wk of [..._enrageWarned.keys()]) if (wk.startsWith(k + '#')) _enrageWarned.delete(wk);
   const list = _meMobDeaths.get(k) || [];
   list.push(t);
   if (list.length > 8) list.shift();
@@ -13436,6 +13595,13 @@ const _ME_SKILL_LINES = [
   { key: 'fd',    label: 'Feign Death',  secs: 10,   est: true,  rx: /^You feign death\./ },   // failures: _meFdFailed
   { key: 'loh',   label: 'Lay on Hands', secs: 4320, est: true,  rx: /^You begin casting Lay on Hands\./ },
   { key: 'ht',    label: 'Harm Touch',   secs: 4320, est: true,  rx: /^You (?:harm touch\b|begin casting Harm Touch\.)/ },
+  // Boastful Bellow, the bard PoP AA (the guild lead, 2026-10-02: "add Boastful Bellow AA as a
+  // timer for Bards that have the AA"). Reuse 18 s — Quarm's aa_actions row for AA 592 (spell
+  // 3282). It is instant, so no "begin casting" line exists (zone/spells.cpp sends the begin-cast
+  // only when cast_time > 0). A resist names it and only the caster sees that; a landing is
+  // paired with your own damage on that mob (_meNoteBellow). Not in _ME_CLASS_CDS: the slot
+  // appears once a bard has used it, which is how we know they have the AA.
+  { key: 'bellow', label: 'Boastful Bellow', secs: 18, est: false, aa: true, rx: /^Your target resisted the Boastful Bellow spell\./ },
 ];
 const _ME_SKILL_BY_KEY = new Map(_ME_SKILL_LINES.map(s => [s.key, s]));
 // The cooldowns each class always sees, even before the first use this
@@ -13469,6 +13635,25 @@ function _meStartSkill(cl, key, atMs) {
   if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
   mp.set(key, { label: s.label, at: atMs, secs: _meSkillSecs(cl, s), est: s.est });
   _meTimersSave();
+}
+// A landed Boastful Bellow. Everyone near the mob sees "<mob> is shaken by a loud
+// bellow." — so a second bard on the same mob would start YOUR timer off THEIR
+// bellow. Only the caster sees "You hit <mob> for N points of non-melee damage.",
+// and the bellow's damage arrives in the same server tick; the pair, on the same
+// mob within 1.5 s, is yours. Bards only. `kind` 'land' | 'hit'.
+const _meBellowSeen = new Map();   // charLower → { land: { mob, at }, hit: { mob, at } }
+function _meNoteBellow(cl, kind, mob, atMs) {
+  const zst = _meZealFor(cl);
+  const cls = zst ? normalizeClass(_meLabel(zst, 3) || '') : null;
+  if (cls !== 'Bard' || !mob) return;
+  let e = _meBellowSeen.get(cl);
+  if (!e) { e = {}; _meBellowSeen.set(cl, e); }
+  e[kind] = { mob: String(mob).toLowerCase(), at: atMs };
+  const o = e[kind === 'land' ? 'hit' : 'land'];
+  if (o && o.mob === e[kind].mob && Math.abs(o.at - atMs) <= 1500) {
+    _meBellowSeen.delete(cl);
+    _meStartSkill(cl, 'bellow', Math.min(o.at, atMs));
+  }
 }
 // A Feign Death that FAILED (the guild lead, 2026-09-24: "I did not get an 'FD
 // Failure' message when this happened - FD cooldown in the Hud should show an
@@ -13504,6 +13689,8 @@ function _meNotePipeCooldowns(cl, st) {
     const w = String(e.text || '').trim().toLowerCase().replace(/^cd\s+/, '');
     if (_ME_PIPE_WORDS[w]) _meStartSkill(cl, _ME_PIPE_WORDS[w], e.at);
     else if (_ME_ABILITIES[w]) _meNoteAbility(cl, w, e.at);
+    else if (_ME_AA_PIPE[w]) _meNoteAaPress(cl, _ME_AA_PIPE[w], e.at);
+    else if (w.startsWith('aa ') && w.length > 3) _meNoteAaPress(cl, w.slice(3).trim().replace(/\b\w/g, ch => ch.toUpperCase()), e.at);
   }
   _mePipeSeen.set(cl, newest);
 }
@@ -13630,6 +13817,186 @@ function _meDisc(cl, now) {
   return { key: 'disc', label: act.name, ms_left: Math.max(0, left), total_ms: act.total_ms, est: true, seen: true };
 }
 
+// ── A targeted player's known timers, on Target Info (the guild lead, 2026-10-02:
+// "When we have a known timer, for someone's disciplines or mend or area taunt,
+// we should display those on target info. When we're targeting them") ──────────
+// Three sources: your own characters (the timers above), another raider's Mimic
+// (their own timers ride their live-state upload, _liveCooldownsFor), and a
+// discipline you SAW another player start (_ME_DISC_OTHER). Mend, Lay on Hands,
+// Harm Touch and AAs print nothing a bystander can see, so for those only the
+// player's own Mimic knows.
+//
+// AAs: the server tells you nothing when one fires (zone/aa.cpp ActivateAA
+// starts the timer silently; Area Taunt makes the mobs say nothing either), and
+// prints the time left only when you press one that is not ready:
+//   "You can use the ability %s again in %u hour(s) %u minute(s) %u seconds."
+//   "You can use the ability %s again in %u minute(s) %u seconds."
+// That line is exact. The press itself can come from a `/pipe` line on the AA's
+// hotkey (`/pipe at`, `/pipe area taunt`, or `/pipe aa <name>`), as Feign Death
+// does; its reuse is not in our data (aa_actions is not mirrored), so it is
+// LEARNED: the first refusal after a press gives press-to-ready, and later
+// presses count down from that.
+const _ME_AA_REFUSAL_RX = /^You can use the ability (.+?) again in (?:(\d+) hour\(s\) )?(\d+) minute\(s\) (\d+) seconds\.$/;
+const _ME_AA_PIPE = { 'at': 'Area Taunt', 'area taunt': 'Area Taunt' };
+const _meAaTimers = new Map();   // charLower → Map(aaKey → { name, ready, total_ms, press, learned })
+function _meAaKey(name) { return 'aa:' + String(name).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 29); }
+function _meAaSlot(cl, name) {
+  let mp = _meAaTimers.get(cl);
+  if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
+  const k = _meAaKey(name);
+  let e = mp.get(k);
+  if (!e) { e = { name, ready: 0, total_ms: null, press: 0, learned: null, est: false }; mp.set(k, e); }
+  return e;
+}
+function _meNoteAaRefusal(cl, msg, atMs) {
+  const m = _ME_AA_REFUSAL_RX.exec(msg);
+  if (!m) return false;
+  const left = ((m[2] ? parseInt(m[2], 10) : 0) * 3600 + parseInt(m[3], 10) * 60 + parseInt(m[4], 10)) * 1000;
+  // An AA whose reuse we know (Boastful Bellow) keeps its one HUD timer: the
+  // refusal just puts it right.
+  const known = _ME_SKILL_LINES.find(s => s.aa && s.label.toLowerCase() === m[1].toLowerCase());
+  if (known) { _meStartSkill(cl, known.key, atMs + left - known.secs * 1000); return true; }
+  const e = _meAaSlot(cl, m[1]);
+  e.name = m[1];   // the server's spelling over a /pipe line's
+  e.ready = atMs + left;
+  e.est = false;
+  // A press inside the last 4 hours that this refusal falls after: its reuse.
+  if (e.press && e.press < atMs && atMs - e.press < 4 * 3600_000) {
+    e.learned = Math.round((e.ready - e.press) / 1000) * 1000;
+    e.total_ms = e.learned;
+  }
+  _meTimersSave();
+  return true;
+}
+function _meNoteAaPress(cl, name, atMs) {
+  const e = _meAaSlot(cl, name);
+  // A press while the timer still runs is not a use (the refusal line says so).
+  if (e.ready > atMs + 2000) return;
+  e.press = atMs;
+  if (e.learned) { e.ready = atMs + e.learned; e.total_ms = e.learned; e.est = true; }
+  _meTimersSave();
+}
+
+// Another player's discipline, from the text everyone near them sees — the disc
+// spell's cast_on_other (eqemu_spells 4498-4520, 4585-4587, 4670-4678; every one
+// unique in the catalog). Keyed to the self text in _ME_DISCS for the name,
+// reuse and unlock levels. The reuse is ESTIMATED from their /who level, or the
+// disc's longest when the level is unknown.
+const _ME_DISC_OTHER = new Map([
+  ['assumes an aggressive fighting style', 'You assume an aggressive fighting style.'],
+  ["'s assumes a precise fighting style", 'You assume a precise fighting style.'],
+  ['assumes a defensive fighting style', 'You assume a defensive fighting style.'],
+  ['assumes an evasive fighting style', 'You assume an evasive fighting style.'],
+  ["'s fist clenches with fatal fervor", 'Your hands clench with fatal fervor.'],
+  ["'s body is consumed in rage", 'A consuming rage takes over your weapons.'],
+  ["'s face becomes twisted with fury", 'Your instincts take over as you turn aside every attack.'],
+  ["'s weapons move with uncanny grace", 'Your weapons move with uncanny grace.'],
+  ["'s feet become one with the earth", 'Your body becomes one with the earth.'],
+  ['is guarded by a protective spirit', 'A protective spirit guards you.'],
+  ["'s feet glow with mystic power", 'Your feet glow with mystic power.'],
+  ["'s body begins to move with instinctual grace", 'You instincts take over as you avoid every attack.'],
+  ['becomes untouchable', 'You become untouchable.'],
+  ["'s weapons strike true", 'Your weapons strike true.'],
+  ["'s muscles bulge with the force of will", 'Your muscles bulge with the force of will.'],
+  ["'s eyes gleam with energy", 'Your muscles quiver with power.'],
+  ['is consumed in a bestial fury', 'A bestial fury consumes you.'],
+  ["'s fists begin to blur", 'Your fists begin to blur.'],
+  ["'s hands speeds up", 'Your hands speeds up.'],
+  ["'s focus becomes perfect", 'Your focus becomes perfect.'],
+  ['feels unstoppable', 'You feel unstoppable.'],
+  ['feels like a killing machine', 'You feel like a killing machine.'],
+  ['bounces about nimbly', 'You bounce about nimbly.'],
+  ["'s body is filled with silent fury", 'Your body is filled with silent fury.'],
+  ["'s arms feel alive with mystic energy", 'Your arms feel alive with mystic energy.'],
+  ["'s weapon is bathed in a holy light", 'Your weapon is bathed in a holy light.'],
+  ['is surrounded in an aura of sanctification', 'Your body is surrounded in an aura of sanctification.'],
+  ["'s bow crackles with natural energy", 'Your bow crackles with natural energy.'],
+  ["'s weapons begin to spin", 'Your weapons begin to spin.'],
+  ['is enveloped in an unholy aura', 'An unholy aura envelopes your body.'],
+  ["'s skin glows with dark energy", 'Your skin glows with dark energy.'],
+  ['dances about nimbly', 'You dance about nimbly.'],
+  ["'s voice becomes perfectly melodious", 'Your voice becomes perfectly melodious.'],
+  ['has become more resistant', 'You channel your will into magical resistance.'],
+  ["'s eyes gleam with iron will", 'Your will drives fear from your mind.'],
+]);
+const _meObsDiscs = new Map();   // nameLower → { name (disc), who, at, total_ms }
+// Returns true when the line was another player's discipline.
+function _meNoteOtherDisc(msg, cl, atMs) {
+  const sp = msg.indexOf(' ');
+  if (sp < 3) return false;
+  const apos = msg.indexOf("'s ");
+  const cut = (apos > 0 && apos < sp) ? apos : sp;
+  const who = msg.slice(0, cut);
+  if (!/^[A-Z][a-z]{2,14}$/.test(who) || who.toLowerCase() === cl) return false;
+  const rest = msg.slice(cut === apos ? cut : cut + 1).replace(/\.$/, '');
+  const selfText = _ME_DISC_OTHER.get(rest);
+  if (!selfText) return false;
+  const def = _ME_DISCS.get(selfText);
+  if (!def) return false;
+  const wl = who.toLowerCase();
+  const w = whoData.get(wl);
+  const cls = normalizeClass((w && w.class) || _raidClassByName.get(wl) || '') || null;
+  const unlock = (cls && def[2][cls]) || Math.min(...Object.values(def[2]));
+  // No level: the reuse AT the unlock level, the longest it can be.
+  const level = w && Number(w.level) > 0 ? Number(w.level) : null;
+  _meObsDiscs.set(wl, { name: def[0], who, at: atMs, total_ms: _meDiscReuseSecs(def[1], unlock, level) * 1000, level_known: level != null });
+  if (_meObsDiscs.size > 200) _meObsDiscs.delete(_meObsDiscs.keys().next().value);
+  return true;
+}
+
+// This character's own known timers in the shape another raider's Target Info
+// reads (uploaded with live-state; the bot keeps them as character_live_state
+// .cooldowns). Absolute ready times, so the reader counts down on its own and a
+// re-send is needed only when a timer starts. Only timers a minute or longer:
+// Taunt, Kick and Feign Death come back before anyone could act on them.
+const _LIVE_CD_KEEP_MS = 12 * 3600_000;
+function _liveCooldownsFor(cl, now) {
+  _meTimersLoad();
+  const out = [];
+  const add = (key, label, readyAt, totalMs, est) => {
+    if (!Number.isFinite(readyAt) || readyAt < now - _LIVE_CD_KEEP_MS) return;
+    out.push({ key, label, ready_at: new Date(readyAt).toISOString(), total_ms: Number.isFinite(totalMs) ? totalMs : null, est: !!est });
+  };
+  const act = _meDiscs.get(cl) || null;
+  const ref = _discReadyAt.get(cl) || null;
+  if (ref && ref.at > now) add('disc', act ? act.name : 'Discipline', ref.at, act ? Math.max(act.total_ms, ref.at - act.at) : null, false);
+  else if (act) add('disc', act.name, act.at + act.total_ms, act.total_ms, true);
+  for (const [k, c] of _meSkillCds.get(cl) || []) {
+    if (c.secs < 60) continue;
+    add(k, c.label, c.at + c.secs * 1000, c.secs * 1000, c.est);
+  }
+  for (const [k, e] of _meAaTimers.get(cl) || []) {
+    if (e.ready) add(k, e.name, e.ready, e.total_ms, e.est);
+  }
+  return out.slice(0, 12);
+}
+
+// What Target Info shows for a PLAYER target: their timers, best source first —
+// yours (one of your own characters), theirs (their Mimic's upload), then a
+// discipline you saw them start. Null for an NPC or when nothing is known.
+function _targetPlayerTimers(st, cached, now) {
+  const name = String(st.target_name || '').trim();
+  if (!name || /\s/.test(name) || name.startsWith('#') || (cached && cached.mob)) return null;
+  const k = name.toLowerCase();
+  const out = [];
+  let list = null, source = null;
+  if (_meZealFor(k)) { list = _liveCooldownsFor(k, now); source = 'own'; }
+  else {
+    const live = _mtLiveStateByName.get(k);
+    if (live && live.state && Array.isArray(live.state.cooldowns) && live.state.cooldowns.length) { list = live.state.cooldowns; source = 'mimic'; }
+  }
+  for (const c of list || []) {
+    const ready = Date.parse(c && c.ready_at);
+    if (!c || !c.key || !c.label || !Number.isFinite(ready)) continue;
+    out.push({ key: c.key, label: c.label, ms_left: Math.max(0, ready - now), total_ms: c.total_ms || null, est: !!c.est, source });
+  }
+  const seen = _meObsDiscs.get(k);
+  if (seen && !out.some(c => c.key === 'disc') && now - seen.at < _LIVE_CD_KEEP_MS) {
+    out.unshift({ key: 'disc', label: seen.name, ms_left: Math.max(0, seen.at + seen.total_ms - now), total_ms: seen.total_ms, est: true, source: 'seen', level_known: seen.level_known });
+  }
+  return out.length ? out : null;
+}
+
 // The DIRGE NUKE board on the Melody overlay (the guild lead, 2026-09-26): the
 // pre-buffs it waits for that the bard strip does not carry, Puretone
 // Discipline (up now, or ready by the shared disc timer), and mana for the
@@ -13689,6 +14056,13 @@ function _meTimersLoad() {
         if (!mp) { mp = new Map(); _meSkillCds.set(cl, mp); }
         if (!mp.has(k)) mp.set(k, c);
       }
+      // AAs: the timer, and the reuse learned for one (kept while it is known).
+      for (const [k, a] of Object.entries(e.aa || {})) {
+        if (!a || !a.name || !(a.learned || a.ready > now - _ME_TIMER_KEEP_MS)) continue;
+        let mp = _meAaTimers.get(cl);
+        if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
+        if (!mp.has(k)) mp.set(k, a);
+      }
     }
   } catch { /* first run, or not writable — nothing to restore */ }
 }
@@ -13705,6 +14079,9 @@ function _meTimersSave() {
       for (const [cl, mp] of _meSkillCds) {
         for (const [k, c] of mp) if (c.at + c.secs * 1000 > now - _ME_TIMER_KEEP_MS) (slot(cl).skills = slot(cl).skills || {})[k] = c;
       }
+      for (const [cl, mp] of _meAaTimers) {
+        for (const [k, a] of mp) if (a.learned || a.ready > now - _ME_TIMER_KEEP_MS) (slot(cl).aa = slot(cl).aa || {})[k] = a;
+      }
       fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
     } catch { /* best effort */ }
   }, 2000);
@@ -13715,6 +14092,46 @@ function _meTimersSave() {
 // "%1 has become ENRAGED." / "%1 is no longer enraged.", 10 s by default
 // (EnragedDurationTimer), so an entry with no end line expires after 12 s.
 const _meEnraged = new Map();   // mobLower → until
+// The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's going
+// off too late and I'm getting hit. And then when it ends, it should no longer be red underneath the
+// name." So the warning line is 10%, a spoken "Enrage soon" plays once per mob as it crosses it, an
+// enrage that has ended clears the red, and a mob's death clears all of it for the next one.
+const ENRAGE_WARN_PCT = 10;
+const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
+const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
+function _mobCanEnrage(name, zoneId) {
+  if (_isEnrageBoss(name)) return true;
+  const c = _mobInfoByName.get(_mobInfoCacheKey(name, zoneId));
+  const sp = c && c.mob && c.mob.specials;
+  return Array.isArray(sp) && sp.includes('Enrage');
+}
+// 1 s tick: the active character's target crossing 10% says so, once per mob.
+function _tickEnrageWarn(nowMs) {
+  const st = _currentTargetState();
+  if (!st || !st.target_name) return;
+  const tgtG = st.target_hp_pct == null ? _meGauge(st, 6) : null;
+  const hp = Number(st.target_hp_pct != null ? st.target_hp_pct : (tgtG ? tgtG.pct : NaN));
+  const name = String(st.target_name).replace(/^#/, '').replace(/_/g, ' ').trim();
+  const key = name.toLowerCase() + '#' + (Number.isFinite(st.target_id) ? st.target_id : '');
+  if (hp > 20) { _enrageWarned.delete(key); return; }   // a fresh mob of the same name re-arms it
+  if (!(hp > 0 && hp <= ENRAGE_WARN_PCT) || _enrageWarned.has(key)) return;
+  const zoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  if (!_mobCanEnrage(st.target_name, zoneId)) return;
+  _enrageWarned.set(key, nowMs);
+  if (_enrageWarned.size > 100) _enrageWarned.delete(_enrageWarned.keys().next().value);
+  _pushOverlay({
+    text:        '⚠ ' + name + ' at ' + Math.round(hp) + '% — enrage soon',
+    tts:         'Enrage soon',
+    color:       'red',
+    duration_ms: 5000,
+    shownAt:     nowMs,
+    firedAt:     nowMs,
+    trigger:     'Enrage soon',
+    scope:       'enrage',
+    test:        false,
+  });
+}
+setInterval(() => { try { _tickEnrageWarn(Date.now()); } catch { void 0; } }, 1000).unref();
 
 // TRACKING — the HUD's eight arrows (a member's idea, 2026-09-25: "for tracking.
 // Ahead, Ahead and to right/left, behind left/right behind you"; the guild lead:
@@ -13806,11 +14223,24 @@ function _meNoteRawLine(line, character) {
   if (msg.startsWith('You')) {
     // The refusal line is parsed by trackDisciplineTimerLine; save what it set.
     if (msg.startsWith('You can use a new discipline')) _meTimersSave();
+    // An AA pressed before it was ready: the exact time left (_meNoteAaRefusal).
+    if (msg.startsWith('You can use the ability ')) {
+      const ts = parseEqTimestamp(line);
+      _meNoteAaRefusal(cl, msg, ts ? ts.getTime() : now);
+      return;
+    }
     // What you are casting, so its damage is not taken for a proc (_meNoteHit).
     if (msg.startsWith('You begin casting ')) {
       const d = parseEqTimestamp(line);
-      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now });
+      // `target`: who it was cast at, from Zeal — what {mytarget} names when the
+      // spell is resisted (_myTargetFor).
+      const zst = _meZealFor(cl);
+      _meLastCast.set(cl, { name: msg.slice('You begin casting '.length).replace(/\.$/, '').toLowerCase(), t: d ? d.getTime() : now,
+                            target: (zst && zst.target_name) ? String(zst.target_name) : null });
     }
+    // Your own spell damage — the other half of a landed Boastful Bellow (_meNoteBellow).
+    const nm = msg.indexOf('non-melee') !== -1 ? /^You hit (.+) for \d+ points? of non-melee damage\.$/.exec(msg) : null;
+    if (nm) _meNoteBellow(cl, 'hit', nm[1], now);
     let m = msg.indexOf('non-melee') === -1 ? _ME_SWING_RX.exec(msg) : null;
     if (m) { const d = parseEqTimestamp(line); _meNoteSwing(cl, m[1].toLowerCase(), now, line.slice(1, at), d ? d.getTime() : null); return; }
     m = _ME_ABILITY_RX.exec(msg);
@@ -13821,8 +14251,14 @@ function _meNoteRawLine(line, character) {
       return;
     }
   }
+  if (msg.endsWith(' is shaken by a loud bellow.')) {
+    _meNoteBellow(cl, 'land', msg.slice(0, -' is shaken by a loud bellow.'.length), now);
+    return;
+  }
   const disc = _ME_DISCS.get(msg);
   if (disc) { _meNoteDisc(cl, disc, now); return; }
+  // Someone else's discipline — for Target Info when you target them.
+  if (_meNoteOtherDisc(msg, cl, now)) return;
   // Lay on Hands / Harm Touch are instant (cast_time 0) and may print no
   // "begin casting" line; the landing text does print, but a bystander sees the
   // same text. Credit it to you only when you are the class that has it and it
@@ -13842,9 +14278,14 @@ function _meNoteRawLine(line, character) {
     return;
   }
   if (msg.endsWith(' has become ENRAGED.')) {
-    _meEnraged.set(msg.slice(0, -' has become ENRAGED.'.length).toLowerCase(), now + 12_000);
+    const mob = msg.slice(0, -' has become ENRAGED.'.length).toLowerCase();
+    _meEnraged.set(mob, now + 12_000);
+    _meEnrageEnded.delete(mob);
   } else if (msg.endsWith(' is no longer enraged.')) {
-    _meEnraged.delete(msg.slice(0, -' is no longer enraged.'.length).toLowerCase());
+    const mob = msg.slice(0, -' is no longer enraged.'.length).toLowerCase();
+    _meEnraged.delete(mob);
+    _meEnrageEnded.set(mob, now);
+    if (_meEnrageEnded.size > 100) _meEnrageEnded.delete(_meEnrageEnded.keys().next().value);
   } else {
     // A flurry or a rampage as it happens, so the HUD's F / R badge can light
     // up (the guild lead, 2026-09-24). Server strings NPC_FLURRY "%1 executes a
@@ -13996,6 +14437,9 @@ function _meTargetExtras(st, active, now) {
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
     enraged: !!(until && until > now),
+    // Its enrage has come and gone: the HUD stops marking the enrage zone red.
+    enrage_ended: !(until && until > now) && _meEnrageEnded.has(tl),
+    enrage_pct: ENRAGE_WARN_PCT,
     level, level_max, level_src, class: klass,
     // The mob's own resists, for the line under its name (the guild lead,
     // round eight: "Put their resists below their name").
@@ -14031,6 +14475,181 @@ function _meCastRemaining(cl, st, castG, castE) {
   if (dp >= 5 && dt >= 250) return { ms: Math.max(0, Math.round(dt * (100 - p) / dp)), measured: true };
   if (castE && castE.cast_ms) return { ms: Math.max(0, Math.round(castE.cast_ms * (1 - p / 100))), measured: false };
   return null;
+}
+
+// The HUD's side arcs (the guild lead, 2026-10-02): "when there's a rampage, it can be listed next to
+// the main tank on the side as an arc. we can show characters that are approaching 20% or less HP on
+// the left side of the top of the HUD in the same arc that we would have for the main tank." The
+// rampage target is the Tank overlay's (whole fight, _currentRampageForDisplay); the low list reads
+// the Zeal raid window when it is fresh and your group's bars, lowest first, never you (your own
+// health has its bar), never the dead, never the one already shown as its target or the rampage.
+// Clicky counters (the guild lead, 2026-10-02: "On the hud, there should be clicky counters for each
+// item you have"). The items are your last /output inventory's rows that the clicky catalog knows;
+// that file's Count column is a charged item's charges, and every "Your <item> begins to glow." after
+// the file was written spends one. eqemu_items.maxcharges (weekly sync) says which items have charges
+// at all — until it is known, a count of 1 is shown as a clicky with no number rather than "1 left".
+const _clickyUses = new Map();   // "char|itemLower" → [ms, …] (glow lines, by log time)
+function _noteClickyUse(character, itemName, atMs) {
+  const k = String(character).toLowerCase() + '|' + String(itemName).toLowerCase();
+  const list = _clickyUses.get(k) || [];
+  list.push(atMs);
+  if (list.length > 50) list.shift();
+  _clickyUses.set(k, list);
+}
+const ME_CLICKIES_MAX = 8;
+function _meClickies(character) {
+  const invs = stats.characterInventories || {};
+  const cl = String(character || '').toLowerCase();
+  const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
+  const inv = key ? invs[key] : null;
+  // Two exports carry the counts: /output inventory and the Quarmy export (the guild lead,
+  // 2026-10-02: "quarmy has the charges per item"). The newer one wins; glows count from it.
+  let items = inv && Array.isArray(inv.items) ? inv.items : null;
+  let since = inv ? (Date.parse(inv._updatedAt || '') || 0) : 0;
+  let q = null;
+  try { q = _quarmyLocalItems(character); } catch { q = null; }
+  if (q && Array.isArray(q.items) && (!items || q.at > since)) { items = q.items; since = q.at; }
+  if (!items) return [];
+  const seen = new Map();
+  for (const it of items) {
+    if (/^(?:Bank|SharedBank)/i.test(it.loc || '')) continue;   // not on you
+    const lower = String(it.name).toLowerCase();
+    const cat = _itemClickyByNameLower.get(lower);
+    if (!cat || !cat.clickeffect) continue;
+    const prev = seen.get(lower);
+    if (prev) { prev.count += it.count; continue; }   // two of the same: one counter
+    seen.set(lower, { name: it.name, count: it.count, max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
+      worn: !/^General|^Bank|^SharedBank/i.test(it.loc || '') });
+  }
+  return [...seen.values()].map(c => {
+    const used = (_clickyUses.get(cl + '|' + c.name.toLowerCase()) || []).filter(t => t >= since).length;
+    const unlimited = c.max != null && c.max < 0;
+    const charged = c.max != null ? c.max > 0 : c.count > 1;
+    return { name: c.name, left: charged ? Math.max(0, c.count - used) : null, unlimited, used, worn: c.worn };
+  }).sort((a, b) => (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_MAX);
+}
+// ── XP events (FB-37 option B, docs/DESIGN-xp-tracking.md) ─────────────────────
+// The guild lead, 2026-10-02: "observe group composition and xp totals for groups that are together
+// during the day and find what compositions work and in what area in what zone, with what mobs we're
+// killing" · "Also track when we have an XP potion on". EQ prints no amount, so each experience line
+// records the XP and AA bars just before it and three seconds after (Zeal labels 2/26/27/71), the
+// zone, loc, your group, the mob that just died and whether Maelin's Magical Concoction is up; the
+// bot works out the amount at read time. Live tail only, batched once a minute, never for a character
+// excluded from stats.
+const _XP_LINE_RX = /\]\s+You gain(?:ed)?\s+(party\s+|raid\s+|group\s+)?experience/i;
+const _xpBars = new Map();      // charLower → { cur: {level,xp,aa,banked,at}, prev }
+const _xpLastKill = new Map();  // charLower → { mob, at }
+const _xpLastAt = new Map();    // charLower → last event's ms (same-second lines get +1 ms each)
+const _xpPending = [];
+function _xpBarsOf(st) {
+  if (!st) return null;
+  const xp = _meNum(_meLabel(st, 26)) ?? (_meGauge(st, 4) ? _meGauge(st, 4).pct : null);
+  const aa = _meNum(_meLabel(st, 27)) ?? (_meGauge(st, 5) ? _meGauge(st, 5).pct : null);
+  if (xp == null && aa == null) return null;
+  return { level: _meNum(_meLabel(st, 2)), xp, aa, banked: _meNum(_meLabel(st, 71)) };
+}
+// Every character's bars, keeping the reading from before the latest change: the pipe can move the
+// bar a moment before or after the log line, and the line must get the bar from before its kill.
+function _xpSampleBars(nowMs) {
+  for (const ch of Object.keys(_zealState || {})) {
+    const b = _xpBarsOf(_zealState[ch]);
+    if (!b) continue;
+    const k = ch.toLowerCase(), e = _xpBars.get(k);
+    if (e && e.cur.level === b.level && e.cur.xp === b.xp && e.cur.aa === b.aa && e.cur.banked === b.banked) continue;
+    _xpBars.set(k, { cur: { ...b, at: nowMs }, prev: e ? e.cur : null });
+  }
+}
+function _xpNoteRawLine(line, character, nowMs) {
+  if (!character) return;
+  const cl = String(character).toLowerCase();
+  let m = _SLAIN_YOU_RX.exec(line) || _SLAIN_BY_RX.exec(line);
+  if (m) { _xpLastKill.set(cl, { mob: m[1].trim().replace(/[.!]+$/, '').slice(0, 80), at: nowMs }); return; }
+  m = _XP_LINE_RX.exec(line);
+  if (!m) return;
+  const word = (m[1] || '').trim().toLowerCase();
+  const kind = word === 'raid' ? 'raid' : (word ? 'party' : 'solo');
+  const key = Object.keys(_zealState || {}).find(k => k.toLowerCase() === cl);
+  const st = key ? _zealState[key] : null;
+  _xpSampleBars(nowMs);
+  const e = _xpBars.get(cl);
+  const before = e ? ((nowMs - e.cur.at <= 1500 && e.prev) ? e.prev : e.cur) : null;
+  const ts = parseEqTimestamp(line);
+  let atMs = ts ? ts.getTime() : nowMs;
+  const last = _xpLastAt.get(cl);
+  if (last != null && atMs <= last) atMs = last + 1;   // AoE: many lines in one second
+  _xpLastAt.set(cl, atMs);
+  const kill = _xpLastKill.get(cl);
+  const who = whoData.get(cl);
+  const group = [];
+  for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
+    if (!g || !g.text || g.slot < 11 || g.slot > 15) continue;
+    const gl = String(g.text).toLowerCase(), gw = whoData.get(gl);
+    group.push({ name: String(g.text), class: _raidClassByName.get(gl) || (gw && gw.class) || null, level: gw && gw.level ? gw.level : null });
+  }
+  const ev = {
+    character, at: new Date(atMs).toISOString(), kind,
+    level: before ? before.level : null, xp_before: before ? before.xp : null, aa_before: before ? before.aa : null,
+    aa_banked_before: before ? before.banked : null,
+    zone_id: st && st.zone != null && Number.isFinite(Number(st.zone)) ? Number(st.zone) : null,
+    zone_name: st ? (_zoneName(st.zone) || null) : null,
+    loc_x: st && st.loc ? Number(st.loc.x) : null, loc_y: st && st.loc ? Number(st.loc.y) : null, loc_z: st && st.loc ? Number(st.loc.z) : null,
+    mob: kill && nowMs - kill.at <= 5000 ? kill.mob : null,
+    group_members: group.length ? group : null,
+    potion: !!(st && Array.isArray(st.buffs) && st.buffs.some(b => b && b.name && /maelin/i.test(b.name))),
+    race: who && who.race ? who.race : null,
+    class: (st && normalizeClass(_meLabel(st, 3) || '')) || (who && who.class) || null,
+    agent_version: AGENT_VERSION,
+  };
+  const t = setTimeout(() => {
+    _xpSampleBars(Date.now());
+    const a = _xpBars.get(cl);
+    if (a) { ev.level_after = a.cur.level; ev.xp_after = a.cur.xp; ev.aa_after = a.cur.aa; ev.aa_banked_after = a.cur.banked; }
+    _xpPending.push(ev);
+    if (_xpPending.length > 500) _xpPending.splice(0, _xpPending.length - 500);
+  }, 3000);
+  if (t.unref) t.unref();
+}
+function _xpFlush() {
+  if (!_xpPending.length) return 0;
+  const batch = _xpPending.splice(0, 200).filter(ev => {
+    try { return shouldUploadForCharacter(ev.character); } catch { return true; }
+  });
+  if (batch.length) enqueueUpload('xp_events', { events: batch });
+  return batch.length;
+}
+{
+  const t1 = setInterval(() => { try { _xpSampleBars(Date.now()); } catch { void 0; } }, 1000);
+  const t2 = setInterval(() => { try { _xpFlush(); } catch { void 0; } }, 60_000);
+  if (t1.unref) t1.unref();
+  if (t2.unref) t2.unref();
+}
+const ME_LOW_HP_PCT = 25;   // "approaching 20% or less"
+const ME_LOW_HP_MAX = 3;
+function _meSideArcs(active, st, now, skip) {
+  let rampage = null;
+  const r = _currentRampageForDisplay(now);
+  if (r && r.target) {
+    rampage = { name: r.target, hp_pct: _resolveHpForName(String(r.target).toLowerCase(), active, st),
+      fresh: (now - r.at) <= RAMPAGE_FRESH_MS };
+  }
+  const hp = new Map();   // lower → { name, hp_pct }
+  if (_lastRaidPipe && now - _lastRaidPipe.at < 30_000) {
+    for (const m of _lastRaidPipe.members || []) {
+      if (m && m.name && typeof m.hp_pct === 'number') hp.set(String(m.name).toLowerCase(), { name: String(m.name), hp_pct: m.hp_pct });
+    }
+  }
+  for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
+    if (!g || !g.text || g.hp_pct == null || g.slot === 1 || g.slot === 6 || g.slot === 16) continue;
+    hp.set(String(g.text).toLowerCase(), { name: String(g.text), hp_pct: Math.round(Number(g.hp_pct)) });
+  }
+  const not = new Set([String(active || '').toLowerCase(), ...(skip || []).map(s => String(s || '').toLowerCase()),
+    rampage ? String(rampage.name).toLowerCase() : '']);
+  const low = [...hp.entries()]
+    .filter(([k, v]) => !not.has(k) && v.hp_pct > 0 && v.hp_pct <= ME_LOW_HP_PCT)
+    .map(([, v]) => v)
+    .sort((a, b) => a.hp_pct - b.hp_pct)
+    .slice(0, ME_LOW_HP_MAX);
+  return { rampage, low_hp: low };
 }
 
 function _serializeMeState() {
@@ -14151,9 +14770,15 @@ function _serializeMeState() {
   // Your damage shield per hit — the HUD's DS button ("a button with current DS
   // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
   // right now, else the last one that landed.
-  const dsKnown = _knownDsPerHitFor(active);
-  if (!combat.ds && dsKnown) combat.ds = { hits: 0, total: 0, last: null };
-  if (combat.ds) { combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown; }
+  const dsWorn = {};
+  const dsKnown = _knownDsPerHitFor(active, dsWorn);
+  if (!combat.ds && (dsKnown || dsWorn.off)) combat.ds = { hits: 0, total: 0, last: null };
+  if (combat.ds) {
+    combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
+    // Shield cancelled (_dsOffFrom): 0 a hit, whatever landed before the debuff.
+    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.from_buffs = true; combat.ds.kind = null; }
+  }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.
   const swing = _meSwingState(cl, st, now);
@@ -14202,6 +14827,8 @@ function _serializeMeState() {
     },
     blind: !!(blind && blind.active),
     track: _meTrackFor(cl, st, now),
+    ..._meSideArcs(active, st, now, [tx && tx.tot ? tx.tot.name : null]),
+    clickies: _meClickies(active),
   };
 }
 
@@ -14302,6 +14929,7 @@ function _serializeTankState() {
     if (cat && cat.ds) dsSources.push({ name: b.name, per_hit: cat.ds });
   }
   dsSources.sort((a, b) => b.per_hit - a.per_hit);
+  const dsOff = _dsOffFrom(buffsOut);   // Mark of the Plague Lords: those sources return nothing
 
   // Rampage target — persists for the WHOLE fight (see
   // _currentRampageForDisplay: the rampage target doesn't change between
@@ -14411,7 +15039,7 @@ function _serializeTankState() {
       hp_cur:  mtHpCur,
       hp_max:  mtHpMax,
       buffs:   (mtBuffs || []).slice(0, 20),
-      ds:      mtDs ? { ...mtDs, sources: mtDsSources.slice(0, 8) } : { total: 0, hits: 0, avg_per_hit: 0, abilities: [], sources: mtDsSources.slice(0, 8) },
+      ds:      { ...(mtDs || { total: 0, hits: 0, avg_per_hit: 0, abilities: [] }), sources: mtDsSources.slice(0, 8), off: _dsOffFrom(mtBuffs) },
     };
   }
 
@@ -14505,12 +15133,17 @@ function _serializeTankState() {
   // active boss name from the DS reflects struct as a fallback when the
   // target gauge is empty (e.g. tank is targeting an offtank).
   const bossName = (dsr && dsr.bossName) || targetName || null;
+  const bossLower = bossName ? String(bossName).toLowerCase() : null;
+  const enrageUntil = bossLower ? _meEnraged.get(bossLower) : null;
   const enrage = {
     boss_name:        bossName,
     enrages:          _isEnrageBoss(bossName),
-    threshold_pct:    8,                 // Quarm bosses enrage at ~8% HP
+    threshold_pct:    ENRAGE_WARN_PCT,   // 10% (the guild lead, 2026-10-02: 8% "is going off too late")
     warn_pct:         15,                // warn the tank starting at 15%
     target_hp_pct:    targetHpPct,
+    // Enraged now; or its enrage has already ended (the warning box stops flashing red).
+    enraged:          !!(enrageUntil && enrageUntil > Date.now()),
+    ended:            !!(bossLower && _meEnrageEnded.has(bossLower)) && !(enrageUntil && enrageUntil > Date.now()),
     // Light projection — overlay can compute its own based on session DPS.
     projection_ready: targetHpPct != null && targetHpPct <= 15,
   };
@@ -14573,6 +15206,7 @@ function _serializeTankState() {
       avg_per_hit: dsHits > 0 ? Math.round(dsTotal / dsHits) : 0,
       abilities: dsBreakdown.slice(0, 8),
       sources: dsSources.slice(0, 8),
+      off: dsOff,
     },
     rampage,
     enrage,
@@ -14661,6 +15295,9 @@ function _serializeCommandCenterState() {
 
   return {
     character:     activeChar,
+    // Two or more raids at once (§124): which they are and which is yours. Absent with one raid.
+    raids:         (bqCached && bqCached.payload && Array.isArray(bqCached.payload.raids) && bqCached.payload.raids.length > 1)
+                     ? bqCached.payload.raids : undefined,
     target:        tank.target,
     mt:            tank.mt,
     rampage:       tank.rampage,
@@ -14711,8 +15348,12 @@ function _serializeCommandCenterState() {
           put(s.name, scls, s.mana, s.lastAtMs ? (nowMs - s.lastAtMs) / 1000 : 0, false);
         }
       }
-      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback).
+      // 2. Mimic priests raid-wide (exact, via the /di-status piggyback). That list is guild-wide, so
+      // with two raids at once it keeps to the priests in this Mimic's own raid window (§124).
+      const _ownRaidOnly = !!_raidSplitNow(nowMs) && _raidRosterMembers.size > 0 &&
+                           !!_lastRaidPipe && (nowMs - (_lastRaidPipe.at || 0)) < 60_000;
       for (const h of (_diStatusCache.healer_mana || [])) {
+        if (_ownRaidOnly && !_raidRosterMembers.has(String(h.name || '').toLowerCase())) continue;
         const age = h.updated_at ? Math.max(0, (nowMs - Date.parse(h.updated_at)) / 1000) : 0;
         put(h.name, h.class, h.mana_pct, age, true);
       }
@@ -14731,6 +15372,8 @@ function _serializeCommandCenterState() {
     })(),
     // Recent /random sets — "333 (Item name) — winner names" rows.
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
+    // Live OpenDKP auctions, soonest to close first; a late bid moves an end (2026-10-02).
+    auctions:      _dkpAuctionsSnapshot(Date.now()),
     cures,
     // Per-cleric Divine Intervention readiness — chips on the board.
     di:            diStatusSnapshot(),
@@ -15370,6 +16013,9 @@ function _serializeForDashboard() {
     // session token, refreshed on every latest-version poll, so the
     // signal flips to true within a few seconds of a successful sign-in.
     mimicSignedIn:      !!(_mimicSessionToken && _mimicIdentity),
+    // Local mode: started with no token, so nothing goes to the guild server. The dashboard's
+    // "(local-only)" tag and its "Uploading enabled" row read this; nothing set it before.
+    localOnly:          _localOnly(),
     // #120 — token present (signed in) but identity may not be confirmed yet.
     // Lets the header show a soft "verifying" state instead of the hard "not
     // signed in" banner, and gate the scary banner on the no-token case only.
@@ -16282,6 +16928,7 @@ function _serializeForDashboard() {
     lootAuctionDefaultSec: _lootAuctionDefaultSec(),
     // #136 raid callout allow-list — dashboard Triggers-tab toggle (default ON).
     calloutAllowlist:      _optinState.calloutAllowlist !== false,
+    timingFeedback:        _optinState.timingFeedback !== false,
     ..._serializeZealForWeb(),
 
     lifetime:           stats.lifetime,
@@ -16959,6 +17606,9 @@ function renderFeedback(s) {
 // selected minutes must survive a preview refresh.
 var _wpFbKind = 'bug';
 var _wpFbMin  = 30;
+// The words typed so far, so a rebuilt card gets them back (FB-47: "This send
+// feedback section refreshes and we lose what we were ready to submit").
+var _wpFbDraft = '';
 // Screenshots chosen for this report (JPEG data URLs, ≤1920 px) and, with more
 // than one monitor, the captured screens still waiting to be picked.
 var _wpFbShots = [];
@@ -17093,8 +17743,10 @@ async function _wpFbPreviewNow() {
 function _wpFbWire() {
   var root = document.getElementById('wpFeedback');
   if (!root) return;
-  _wpFbSetKind('bug');
+  // A rebuilt card comes back as it was: kind, words and pictures (FB-47).
+  _wpFbSetKind(_wpFbKind);
   _wpFbSetMin(_wpFbMin);
+  _wpFbRenderShots();
   var snapBtn = document.getElementById('wpFbSnap');
   if (snapBtn && window.mimic && window.mimic.captureScreens) snapBtn.style.display = '';
   var fileIn = document.getElementById('wpFbFile');
@@ -17105,6 +17757,10 @@ function _wpFbWire() {
     await _wpFbAddShots(urls);
   });
   var fbText = document.getElementById('wpFbText');
+  if (fbText) {
+    fbText.value = _wpFbDraft;
+    fbText.addEventListener('input', function () { _wpFbDraft = fbText.value; });
+  }
   if (fbText) fbText.addEventListener('paste', async function (e) {
     var files = [];
     var items = (e.clipboardData && e.clipboardData.files) || [];
@@ -17172,6 +17828,7 @@ async function _wpFbSend() {
     var j = await r.json();
     if (j && j.ok) {
       if (ta) ta.value = '';
+      _wpFbDraft = '';
       if (cb) { cb.checked = false; }
       _wpFbRenderPreview(null);
       _wpFbShots = []; _wpFbCands = []; _wpFbRenderShots();
@@ -17884,22 +18541,10 @@ function renderDash(s) {
   // actionable info. The Triggers tab has the real config + recent fires.)
 
   h += '<div class="grid">';
-  // Recent parses — hide placeholder rows from older uploads (boss "?" with
-  // zero events / zero damage). The recordUploadForDashboard write path also
-  // skips creating these going forward, but in-memory stale ones live until a
-  // session reset; filtering here makes them disappear immediately.
-  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
-  h += '<div class="card"><h2>Recent Parses</h2>';
-  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
-  else {
-    h += '<table>';
-    for (const p of _validParses.slice(0, 5)) {
-      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
-           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
-    }
-    h += '</table>';
-  }
-  h += '</div>';
+  // Recent parses — isolated (a new kill adds a row). renderRecentParsesCard.
+  // It sat inline here, so every kill rewrote all of #dash and with it the
+  // feedback card's half-typed report (FB-47).
+  h += '<div id="wpRecentParses" class="card"></div>';
   // Session damage — isolated (live numbers change every poll). renderDamageDoneCard.
   h += '<div id="wpDamageDone" class="card" style="display:none"></div>';
 
@@ -17920,8 +18565,7 @@ function renderDash(s) {
   // Top Damage — isolated (live during combat; owns its dismiss-button wiring). renderTopDamageCard.
   h += '<div id="wpTopDamage" class="card wide" style="display:none"></div>';
   h += '</div>';  // grid
-  // #dash now contains only STATIC content (Recent Parses + the trigger chip)
-  // plus the wp* placeholders, so its HTML is byte-identical between polls and
+  // #dash now contains only the wp* placeholders, so its HTML is byte-identical between polls and
   // setSectionHTML short-circuits → no whole-section repaint (the stutter). The
   // volatile cards fill their own placeholders via the render fns below.
   setSectionHTML('dash', h);
@@ -18524,6 +19168,26 @@ function wpWireFixerButtons(s) {
       });
     }
   }
+}
+// Recent parses — hide placeholder rows from older uploads (boss "?" with
+// zero events / zero damage). The recordUploadForDashboard write path also
+// skips creating these going forward, but in-memory stale ones live until a
+// session reset; filtering here makes them disappear immediately.
+function renderRecentParsesCard(s) {
+  const el = document.getElementById('wpRecentParses');
+  if (!el) return;
+  const _validParses = (s.recentParses || []).filter(p => p && (p.eventCount > 0 || p.totalDamage > 0) && p.bossName && p.bossName !== '?');
+  let h = '<h2>Recent Parses</h2>';
+  if (_validParses.length === 0) h += '<div class="dim">(no uploads yet)</div>';
+  else {
+    h += '<table>';
+    for (const p of _validParses.slice(0, 5)) {
+      h += '<tr><td class="name">' + esc(p.bossName) + '</td><td class="dim">' + p.eventCount + ' ev</td>' +
+           '<td class="num">' + fmtK(p.totalDamage) + '</td><td class="dim">(' + fmtK(p.spellDotDamage) + ' spell)</td></tr>';
+    }
+    h += '</table>';
+  }
+  morphInto(el, h);
 }
 function renderDamageDoneCard(s) {
   const el = document.getElementById('wpDamageDone');
@@ -19852,6 +20516,17 @@ function renderTriggers(s) {
   h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
+  // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
+  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
+  h += '<span>Ask whether a callout&rsquo;s timing was right &mdash; &laquo; Earlier / &#10003; Good! / &raquo; Too early under the alert</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
+  h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -19934,7 +20609,7 @@ function renderTriggers(s) {
 // the one-liner from WP_OVERLAY_BLURB below.
 var WP_OVERLAY_ROWS = [
   ['dock',    'Dock',                'One window that collects overlays as panes — one renderer instead of one per overlay. Use each overlay\\'s DOCK button (or + Panes on the dock itself) to pick what lives in it.'],
-  ['hud',     'DPS HUD',             'Running session DPS, top damage seen, current encounter.'],
+  ['hud',     'DPS/Tank Meter',      'Running session DPS, top damage seen, current encounter.'],
   ['canvas',  'Canvas',              'The trigger overlay taken apart: the callouts and the timers become panels you place and size anywhere on the screen, one by one. Add timer panels of your own — charm timers, lulls, one debuff by name — and each takes those countdowns out of the main stack. The voice is unchanged. Arrange it with ✏ Arrange on screen. Beta.'],
   ['trigger', 'Trigger alerts (TTS)','Centered big-text alert from triggers (guild + personal), spoken via Web Speech.'],
   ['charm',   'Charm tracker',       'Charm-pet recharm timer + 6s mob-tick counter; lingers 5m after a break.'],
@@ -19944,13 +20619,13 @@ var WP_OVERLAY_ROWS = [
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
-  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. AAs like Voice of Thule + Disruptive Persecution count via a CAST_HATE map.'],
+  ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
   ['chchain', 'CH chain',            'Cleric Complete Heal rotation from the shout/raid callouts: slot order, caller + mana, who is casting, who is NEXT, and a beat countdown for the next cast.'],
   ['tank',    'Tank HUD',            'Main-Tank focus card: MT HP + THEIR buffs and DS returns (CH-chain target or whoever the boss is meleeing), boss HP + enrage warning, Divine Aura countdown with start-CH callout, current Rampage target. Falls back to your own view when no MT is resolved. Reads /api/tank-state.'],
   ['exttarget','Extended Target',    'Raid-wide target list: every mob/player raiders are on, sorted by how many are targeting it, with HP + debuffs and 🎯 target-of-target (who each mob is meleeing). Named mobs flagged; non-unique names asterisked. Players/pets are hidden by default (👥 toggle to show); ✕ hides any single row.'],
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
-  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 8% if it enrages, damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button, a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -22440,6 +23115,10 @@ var _CLASS_CHECKLIST = {
   beastlord: ['Attack', 'HP Regen'],
   magician:  ['Dmg Shield'],
 };
+// Zeal sends the rank as text ("Raid Leader" / "Group Leader"); this tab looked for '2' / '1' and
+// never showed a crown (2026-10-01). Both spellings count.
+function _isRaidLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '2' || /^raid\\s*leader$/i.test(r); }
+function _isGroupLeadRank(r) { r = String(r == null ? '' : r).trim(); return r === '1' || /^group\\s*leader$/i.test(r); }
 function renderRaidTab(q) {
   var root = document.getElementById('raid');
   if (!root) return;
@@ -22466,6 +23145,14 @@ function renderRaidTab(q) {
     h += '<div class="dim" style="font-size:12px">No raid roster flowing yet — join a raid (or group) with Mimic running and this fills in within seconds.</div>';
   } else {
     var mimics = roster.filter(function(r){ return r.mimic; }).length;
+    // Two or more raids at once (the bot names them only then): this roster is your raid's; list
+    // every raid so the other one is visible too.
+    var raids = (q && Array.isArray(q.raids) && q.raids.length > 1) ? q.raids : null;
+    if (raids) {
+      h += '<div style="font-size:11px;margin:4px 0 0"><span style="color:var(--orange)">⚔ ' + raids.length + ' raids at once:</span> '
+        + raids.map(function(r){ return (r.mine ? '<b>' : '') + '👑 ' + esc(r.leader) + ' (' + esc(r.size) + ')' + (r.mine ? ' · yours</b>' : ''); }).join(' · ')
+        + '</div>';
+    }
     h += '<div class="dim" style="font-size:11px;margin:4px 0 8px">' + roster.length + ' raiders · ' + mimics + ' on Mimic · click a name for their buffs</div>';
     var byGroup = {};
     var groupOrder = [];
@@ -22486,7 +23173,7 @@ function renderRaidTab(q) {
         var selected = _raidSelName === m.name;
         h += '<div class="wp-raid-row" data-raider="' + esc(m.name) + '" style="position:relative;cursor:pointer;padding:3px 6px 4px;font-size:11px;border-left:3px solid ' + _raidTierColor(m.tier) + ';margin-bottom:2px;background:' + (selected ? 'rgba(88,166,255,0.12)' : 'rgba(8,5,16,0.35)') + ';border-radius:3px;overflow:hidden">'
           + '<div style="display:flex;align-items:baseline;gap:5px">'
-          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (m.rank === '2' ? '👑 ' : (m.rank === '1' ? '⭐ ' : '')) + esc(m.name)
+          + '<span style="color:var(--text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (_isRaidLeadRank(m.rank) ? '👑 ' : (_isGroupLeadRank(m.rank) ? '⭐ ' : '')) + esc(m.name)
           + (m.mgb ? ' <span title="Mass Group Buff AA trained (Quarmy export)" style="color:#a371f7;font-size:8px;font-weight:600">MGB</span>' : '') + '</span>'
           + (hp != null ? '<span class="num" style="margin-left:auto;font-size:10px;color:' + hpColor + '">' + hp + '%</span>' : '')
           + '</div>'
@@ -23159,7 +23846,8 @@ async function refresh() {
                      // Isolated dashboard volatile cards (fill their own wp* placeholders
                      // so #dash stops repainting every poll — the stutter fix).
                      ['setupchecks', renderSetupChecks],
-                     ['triggeralerts', renderTriggerAlertsCard], ['damagedone', renderDamageDoneCard],
+                     ['triggeralerts', renderTriggerAlertsCard], ['recentparses', renderRecentParsesCard],
+                     ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
@@ -23731,11 +24419,22 @@ function wpRenderMailPanel(){
        + (crit ? "<span style='color:var(--red,#f87171);font-weight:700'>CRITICAL · </span>" : "")
        + "<span style='font-weight:700'>" + wpEscN(n.title) + "</span>"
        + "<div style='margin-top:3px;white-space:pre-wrap'>" + wpEscN(n.body) + "</div>"
+       // A Zeal update goes straight to where Install is (FB-46). Mimic only:
+       // Zeal installs from Mimic's Settings, not from a browser.
+       + (n.action === "zeal" && window.mimic && window.mimic.openSettings
+           ? "<button type='button' class='wp-notice-zeal' style='margin-top:6px'>⚙ Open Settings → Zeal</button>" : "")
        + "<div style='color:var(--dim);font-size:11px;margin-top:3px'>" + wpEscN((n.created_at || "").slice(0, 10)) + "</div>"
        + "</div>";
   }
   panel.innerHTML = h;
 }
+(function(){
+  var panel = document.getElementById("wpMailPanel");
+  if (panel) panel.addEventListener("click", function(e){
+    var b = e.target && e.target.closest ? e.target.closest(".wp-notice-zeal") : null;
+    if (b && window.mimic && window.mimic.openSettings) { try { window.mimic.openSettings("zeal"); } catch (err) { void err; } }
+  });
+})();
 function wpPollNotices(){
   fetch("/api/notices").then(function(r){ return r.json(); }).then(function(j){
     _wpNotices = (j && Array.isArray(j.notices)) ? j.notices : [];
@@ -25977,9 +26676,10 @@ async function dismissTopDamage(key) {
       if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
     }
   }
-  // #136 raid callout allow-list toggle — persist the on/off choice.
-  async function saveCalloutPref(body) {
-    var msg = document.getElementById('calloutMsg');
+  // #136 raid callout allow-list toggle — persist the on/off choice. The timing-votes
+  // switch shares the route and passes its own message line.
+  async function saveCalloutPref(body, msgId) {
+    var msg = document.getElementById(msgId || 'calloutMsg');
     try {
       await fetch('/api/callout-prefs', {
         method: 'POST',
@@ -26317,6 +27017,8 @@ async function dismissTopDamage(key) {
           saveLootPref({ lootAuctionDefaultSec: v });
         } else if (t.id === 'calloutAllow') {
           saveCalloutPref({ calloutAllowlist: !!t.checked });
+        } else if (t.id === 'timingVotes') {
+          saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
       });
       section._wpTrigChangeBound = true;
@@ -26372,7 +27074,7 @@ async function dismissTopDamage(key) {
     return '<tr data-tid="' + t.id + '">'
          + '<td style="padding:4px 6px"><input type="checkbox" class="trgEn" ' + (on ? 'checked' : '') + (!forChar && t.enabled && t.characters ? ' data-partial="1"' : '') + '></td>'
          + '<td style="padding:4px 6px">' + badge(t.category) + '</td>'
-         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : t.overlay_text) + '</span></div>' + who + '</td>'
+         + '<td style="padding:4px 6px;color:var(--text)"><b>' + t.label + '</b><div style="color:var(--dim);font-size:10px;margin-top:2px">→ <span style="color:#f6c365">' + (t.no_tts ? 'a countdown bar in the trigger overlay' : esc(t.overlay_preview || t.overlay_text)) + '</span></div>' + who + '</td>'
          + (t.no_tts
            ? '<td style="padding:4px 6px;text-align:center;color:var(--dim)">—</td>'
            : '<td style="padding:4px 6px;text-align:center"><label title="Speak the alert (TTS) — for every character it is on for" style="cursor:pointer;display:inline-block"><input type="checkbox" class="trgTts" ' + (t.tts ? 'checked' : '') + (t.enabled ? '' : ' disabled') + '> 🔊</label></td>')
@@ -26417,7 +27119,7 @@ async function dismissTopDamage(key) {
       html += groupHtml('debuff',  '🛡 Debuffs / resists',     groups.debuff);
       html += groupHtml('self',    '⚠ Self-status alerts',    groups.self);
       html += groupHtml('mob',     '👹 Boss / mob callouts',  groups.mob);
-      html += groupHtml('utility', '🔧 Utility (HP / mana)',  groups.utility);
+      html += groupHtml('utility', '🔧 Utility (HP, mana, range, invis)',  groups.utility);
       listEl.innerHTML = html;
       var sel = document.getElementById('trgSugFor');
       if (sel) sel.addEventListener('change', function(){
@@ -26748,6 +27450,9 @@ const COMMAND_HTML = `<!doctype html>
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
+  /* Two or more raids at once: which one this board is for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -26961,6 +27666,14 @@ const COMMAND_HTML = `<!doctype html>
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
+  // Two or more raids at once (the bot names them only then): the cures and the healer mana
+  // below are this raid's, and this line says which raid that is.
+  function raidsNoteHtml(raids){
+    var mine = null;
+    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
+    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
+         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+  }
 
   function render(s){
     if (!s || s.character == null) {
@@ -26971,6 +27684,7 @@ const COMMAND_HTML = `<!doctype html>
     whoEl.textContent = '· ' + ((s.mt && s.mt.name) ? 'MT ' + s.mt.name : s.character);
 
     var html = '';
+    if (s.raids && s.raids.length > 1) html += raidsNoteHtml(s.raids);
 
     // Target HP + boss enrage warning (same data the Tank overlay shows).
     if (s.target && s.target.name) {
@@ -26980,10 +27694,11 @@ const COMMAND_HTML = `<!doctype html>
            +    '<div class="hpwrap"><div class="hpbar ' + hpClass(100 - (thp || 0)) + '" style="width:' + (thp == null ? 0 : thp) + '%"></div>'
            +      '<div class="val">' + (thp == null ? '—' : thp + '%') + '</div></div>'
            +  '</div>';
-      if (s.enrage && s.enrage.enrages && thp != null && thp <= s.enrage.warn_pct) {
-        var critEnrage = thp <= (s.enrage.threshold_pct + 2);
+      // Gone once its enrage has ended (the guild lead, 2026-10-02).
+      if (s.enrage && s.enrage.enrages && !s.enrage.ended && thp != null && thp <= s.enrage.warn_pct) {
+        var critEnrage = s.enrage.enraged || thp <= (s.enrage.threshold_pct + 2);
         html += '<div class="enrage ' + (critEnrage ? 'crit' : '') + '">'
-             +    '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)'
+             +    (s.enrage.enraged ? '⚠️ ENRAGED (currently ' + thp + '%)' : '⚠️ Enrage near — watch for ≤' + s.enrage.threshold_pct + '% (currently ' + thp + '%)')
              +  '</div>';
       }
     }
@@ -27098,6 +27813,28 @@ const COMMAND_HTML = `<!doctype html>
       // DI available but no mana call-outs yet — show the chips on their own
       // compact line rather than losing them.
       html += '<div class="card"><div class="head mana-head">Healer mana' + diChipsHtml + '</div></div>';
+    }
+
+    // Live OpenDKP auctions, one row each, soonest first (the guild lead,
+    // 2026-10-02: "add in loot auction timers on the control center ... as people
+    // bid when it's low time left, it does extend it further out"). The agent
+    // re-reads each end every poll, so a late bid moves the time and the row
+    // says "extended".
+    if (s.auctions && s.auctions.length) {
+      html += '<div class="card"><div class="head">' + secToggle('auctions', '⚖ Auctions', s.auctions.length) + '</div>';
+      if (!_isCollapsed('auctions')) {
+        for (var ai = 0; ai < s.auctions.length && ai < 8; ai++) {
+          var au = s.auctions[ai], aLeft = Math.max(0, Math.round((au.ms_left || 0) / 1000));
+          var aTxt = Math.floor(aLeft / 60) + ':' + String(aLeft % 60).padStart(2, '0');
+          var aCol = aLeft <= 15 ? '#f85149' : (aLeft <= 60 ? '#ffa657' : '#d29922');
+          html += '<div class="row" style="display:flex;gap:6px;align-items:baseline">'
+               +    '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(au.item) + '</span>'
+               +    (au.extended ? '<span class="dim" style="font-size:10px" title="A late bid moved the end">extended</span>' : '')
+               +    '<b style="color:' + aCol + ';font-variant-numeric:tabular-nums">' + aTxt + '</b>'
+               +  '</div>';
+        }
+      }
+      html += '</div>';
     }
 
     // /random roll sets (last 15 min) — "333 (Item name) — Winner names"
@@ -27593,6 +28330,12 @@ function startWebDashboard(port) {
         try { payload = JSON.parse(_body || '{}'); }
         catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
         const dir = String(payload.direction || '').toLowerCase();
+        // Timing feedback switched off here (dashboard, or 🔕 on the vote row): an overlay that
+        // has not caught up yet still gets a 200, and nothing is recorded or sent.
+        if (_optinState.timingFeedback === false) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          return res.end('{"ok":true,"off":true}');
+        }
         // #207 implicit directions — the overlay reports a CALLOUT (sticky row /
         // centre flash) being cleared or aging out. Countdown chips take the
         // /api/timers/cancel path instead, because the agent owns those rows and
@@ -27817,7 +28560,10 @@ function startWebDashboard(port) {
         fetchRaidBuffQueue(bufferClass, bufferCharacter);
         const cacheKey = String(bufferClass || '').toLowerCase() + '|' + String(bufferCharacter || '').toLowerCase();
         const cached = _buffQueueCache.get(cacheKey);
-        const payload = (cached && cached.payload) || { buff_queue: [], debuff_queue: [], loading: true };
+        // Local mode never asks the guild server, so "loading" would never end.
+        const payload = (cached && cached.payload)
+          || (_localOnly() ? { buff_queue: [], debuff_queue: [], local_only: true }
+                           : { buff_queue: [], debuff_queue: [], loading: true });
         // Enrich with the buffer's recent casts (the melody/rotation tracker
         // keeps the last cast cycle per character) so the overlay can mark
         // category sections "likely memmed" — you cast it this session, it's
@@ -27858,7 +28604,8 @@ function startWebDashboard(port) {
         } catch { /* */ }
         fetchExtendedTarget(selfCharacter);
         const cached = _extTargetCache.get(String(selfCharacter || '').toLowerCase());
-        const payload = (cached && cached.payload) || { targets: [], loading: true };
+        const payload = (cached && cached.payload)
+          || (_localOnly() ? { targets: [], local_only: true } : { targets: [], loading: true });
         let outPayload = payload;
         // #128 — near-live HP for the row that IS this client's own Zeal slot-6
         // target. Every row's hp_pct arrives from the bot aggregate (slow: 3s
@@ -27945,6 +28692,8 @@ function startWebDashboard(port) {
                 + 'an out-of-date Zeal quietly degrades all of them.',
             severity: 'normal',
             created_at: _zealUpdate.at || new Date().toISOString(),
+            // The dashboard gives this notice a button to Settings → Zeal (FB-46).
+            action: 'zeal',
           });
         }
         return res.end(JSON.stringify({ notices: out }));
@@ -28717,6 +29466,8 @@ function startWebDashboard(port) {
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
+          // The fight's mob seen dead in the target window: split the DPS/Tank Meter's fight there.
+          try { _noteMobDeathFromState(character, prevState, st); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
           // that owes nothing to the log text. Feeds the death registry.
           try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
@@ -28941,6 +29692,9 @@ function startWebDashboard(port) {
             label:     tpl.label,
             pattern:   tpl.pattern,
             overlay_text: tpl.overlay_text,
+            // What the alert reads with its words filled in ("RESISTED: Tashanian —
+            // a gnoll warlord"), for the panel; overlay_text keeps the {tokens}.
+            overlay_preview: tpl.overlay_preview || null,
             overlay_color: tpl.overlay_color || 'red',
             overlay_ms: tpl.overlay_ms || 4000,
             tts_default: !!tpl.tts_default,
@@ -29046,7 +29800,8 @@ function startWebDashboard(port) {
             };
           }
           const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
-          if (!hasPattern && !zealCond && !builtinTimer) continue;
+          const catalogMatch = !hasPattern && t ? _normCatalogMatch(t.catalog_match) : null;
+          if (!hasPattern && !zealCond && !builtinTimer && !catalogMatch) continue;
           // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
           const row = {
             id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
@@ -29263,6 +30018,7 @@ function startWebDashboard(port) {
           _lootAuctions.delete(sig);
           if (_lastLootSig === sig) _lastLootSig = null;
         }
+        if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
@@ -29289,20 +30045,25 @@ function startWebDashboard(port) {
         }));
       }
 
-      // POST /api/callout-prefs — dashboard Triggers-tab toggle for the #136
-      // raid callout allow-list. Body: { calloutAllowlist: boolean }. Persists
-      // to logsync.optin.json alongside the other trigger prefs.
-      if (req.url === '/api/callout-prefs' && req.method === 'POST') {
-        const body = await _readBody(req).catch(() => '');
-        let payload = {};
-        try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
-        if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
-        _saveOptInState();
-        scheduleRender();
+      // POST /api/callout-prefs — dashboard Triggers-tab toggles for the #136
+      // raid callout allow-list and the timing votes. Body: { calloutAllowlist?,
+      // timingFeedback? } (booleans). Persists to logsync.optin.json alongside
+      // the other trigger prefs. GET returns both, for the trigger overlay.
+      if (req.url === '/api/callout-prefs' && (req.method === 'POST' || req.method === 'GET')) {
+        if (req.method === 'POST') {
+          const body = await _readBody(req).catch(() => '');
+          let payload = {};
+          try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
+          if (typeof payload.calloutAllowlist === 'boolean') _optinState.calloutAllowlist = payload.calloutAllowlist;
+          if (typeof payload.timingFeedback === 'boolean') _optinState.timingFeedback = payload.timingFeedback;
+          _saveOptInState();
+          scheduleRender();
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
           ok: true,
           calloutAllowlist: _optinState.calloutAllowlist !== false,
+          timingFeedback:   _optinState.timingFeedback !== false,
         }));
       }
 
@@ -30252,6 +31013,11 @@ const _optinState = {
   // Personal triggers the user created themselves are never gated. Persisted
   // here like the other dashboard-set flags.
   calloutAllowlist: true,
+  // Trigger timing feedback (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
+  // feedback"). ON (default): the trigger overlay offers « Earlier / ✓ Good! / » Too early after a
+  // fire, and those votes plus each callout's ✕ / age-out go to trigger_timing_feedback. OFF: no
+  // vote row, and nothing about callout timing leaves this machine.
+  timingFeedback: true,
   // Buff-queue overlay section filters (the guild lead, 2026-08-19: "add some options
   // on the dashboard for debuff / feral only"). All ON by default; a curer
   // unticks buffs+burst to run cures-only, a shaman unticks the rest for a
@@ -30296,6 +31062,7 @@ function _loadOptInState() {
     }
     // #136 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.calloutAllowlist     = (raw.calloutAllowlist !== false);
+    _optinState.timingFeedback       = (raw.timingFeedback !== false);
     // Buff-queue section filters — same absent-means-on convention.
     _optinState.bqShowDebuffs        = (raw.bqShowDebuffs !== false);
     _optinState.bqShowBuffs          = (raw.bqShowBuffs !== false);
@@ -30314,6 +31081,7 @@ function _saveOptInState() {
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
       calloutAllowlist:      _optinState.calloutAllowlist !== false,
+      timingFeedback:        _optinState.timingFeedback !== false,
       bqShowDebuffs:         _optinState.bqShowDebuffs !== false,
       bqShowBuffs:           _optinState.bqShowBuffs !== false,
       bqShowBurst:           _optinState.bqShowBurst !== false,
@@ -30750,7 +31518,9 @@ function parseInventoryFile(text) {
   //   - Tab-separated: Location, Name, ID, Count, Slots
   //   - Empty slots use literal 'Empty' with ID 0
   //   - Bag contents follow `<bag>-Slot<n>` pattern, e.g. 'General1-Slot1'
-  const inv = { worn: {}, weapons: {}, bagged: [] };
+  // `items`: every row with its location — the HUD's clicky counters read it (worn keeps one entry
+  // per slot NAME, so a second ring or ear would be lost there).
+  const inv = { worn: {}, weapons: {}, bagged: [], items: [] };
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     if (!line) continue;
@@ -30765,6 +31535,7 @@ function parseInventoryFile(text) {
     if (!loc || !itemName || itemName === '-' || itemName.toLowerCase() === 'empty') continue;
 
     const entry = { name: itemName, id: Number.isFinite(itemId) ? itemId : null, count };
+    inv.items.push({ ...entry, loc });
     if (INVENTORY_WEAPON_SLOTS.has(loc)) {
       inv.weapons[loc.toLowerCase()] = entry;
     }
@@ -30957,6 +31728,39 @@ function parseQuarmyExport(text) {
     }
   }
   return out;
+}
+
+// The HUD's clicky counters read a character's Quarmy export too (the guild lead, 2026-10-02:
+// "quarmy has the charges per item"): its Count column is a charged item's charges, like
+// /output inventory's. Local only — read here, never uploaded by this path; bank and coin rows are
+// already dropped by parseQuarmyExport. The directory is looked at every 30 s at most and the file
+// is parsed only when it changes.
+const _quarmyLocal = new Map();   // charLower → { checkedAt, fp, at, items }
+function _quarmyLocalItems(character) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  const now = Date.now();
+  const c = _quarmyLocal.get(cl);
+  if (c && now - c.checkedAt < 30_000) return c.items ? c : null;
+  const firstLog = stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+  const entry = { checkedAt: now, fp: c ? c.fp : null, at: c ? c.at : 0, items: c ? c.items : null };
+  _quarmyLocal.set(cl, entry);
+  if (!firstLog) return entry.items ? entry : null;
+  try {
+    const dir = path.dirname(firstLog);
+    const name = fs.readdirSync(dir).find(n => { const m = n.match(QUARMY_FILENAME_RX); return m && m[1].toLowerCase() === cl; });
+    if (!name) return entry.items ? entry : null;
+    const full = path.join(dir, name);
+    const st = fs.statSync(full);
+    const fp = _fileFingerprint(st);
+    if (fp !== entry.fp) {
+      const q = parseQuarmyExport(fs.readFileSync(full, 'utf8'));
+      entry.items = [...q.equipped, ...q.bags].map(i => ({ name: i.item_name, id: i.item_id, count: i.count, loc: i.slot }));
+      entry.fp = fp;
+      entry.at = st.mtimeMs;
+    }
+  } catch { /* unreadable — keep what we had */ }
+  return entry.items ? entry : null;
 }
 
 function _quarmyPrefsBlock(lowerName) {
@@ -32496,8 +33300,42 @@ const PVP_GLORY_CLAUSE_RX = /^(.+?),\s+((?:but|and|yet|who|as|so)\b.*)$/i;
 // Aldenmar with his favor for spilling Brackwyn's blood in Ruins of Sebilis. Aldenmar now bears 1 of 10
 // measures of Rallosian Glory."). The zone ends at the sentence break before "<name> now bears".
 const PVP_GLORY_WORTHY_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek marks (\w+) with his favor for spilling (\w+)'s blood in (.+?)\.\s+(\w+ now bears .+?)\s*$/;
+// Every other way the PoP patch announces a death or a Glory change, from the 168 unread lines the guild
+// lead sent on 2026-10-02 (DECISIONS §132). Real wording, invented names:
+//   "Rallos Zek exults as Aldenmar cuts down Brackwyn in Ruins of Sebilis and claims 1 measure of
+//    hard-won Glory. Aldenmar now bears 1 of 10."                                   → a worthy kill
+//   "Rallos Zek looks on as Brackwyn falls to froglok bok knight in Ruins of Sebilis, but grants no Glory."
+//   "Rallos Zek looks down in disgust as Brackwyn <Zek> falls to a small mushroom in The Fungus Grove."
+//                                                                                    → killed by an NPC
+//   "Rallos Zek looks down in disgust as Brackwyn falls in Kedge Keep without a worthy foe."
+//                                                                                    → dead, no killer named
+//   "Rallos Zek looks down in disgust as Brackwyn flees the battlefield like a cowardly dog, surrendering
+//    1 measure of Rallosian Glory."   (also "abandons the battlefield")             → a forfeit, not a death
+// The disgust wording puts the guild after the name when there is one ("Brackwyn <Zek>"). A guild the line
+// carries is sent; a missing one stays null for the bot to fill from /who, as before.
+const PVP_GLORY_EXULTS_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek exults as (\w+)(?:\s+<([^>]*)>)? cuts down (\w+)(?:\s+<([^>]*)>)? in (.+?) and (claims .+?)\s*$/;
+const PVP_GLORY_FALLS_TO_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek (?:looks on|looks down in disgust) as (\w+)(?:\s+<([^>]*)>)? falls to (.+?)\s*$/;
+const PVP_GLORY_NO_FOE_RX  = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? falls in (.+?) (without a worthy foe.*?)[.!]?\s*$/;
+const PVP_GLORY_FORFEIT_RX = /^\[(.+?)\]\s+\[PVP\]\s+Rallos Zek looks down in disgust as (\w+)(?:\s+<([^>]*)>)? (?:flees|abandons) the battlefield(.*?),\s+(surrendering\b.*?)[.!]?\s*$/;
+// "<NPC> in <zone>[, <clause>][. <more>]" → the NPC, the zone and the text after it. No zone name has a
+// period or " in " in it (eqemu_zone, checked 2026-10-02) but one NPC does ("a lady in waiting"), so the
+// zone starts after the LAST " in ", once the clause is off.
+function _gloryNpcZone(s) {
+  let place = String(s || '').trim(), tail = '';
+  const sent = /^(.+?)\.\s+(\S.*)$/.exec(place);
+  if (sent) { place = sent[1]; tail = sent[2]; }
+  place = place.replace(/[.!]\s*$/, '');
+  const clause = PVP_GLORY_CLAUSE_RX.exec(place);
+  if (clause) { place = clause[1]; tail = clause[2] + (tail ? '. ' + tail : ''); }
+  const at = place.toLowerCase().lastIndexOf(' in ');
+  if (at <= 0) return null;
+  return { npc: place.slice(0, at).trim(), zone: place.slice(at + 4).trim(), tail: tail.trim() || null };
+}
+const _gloryGuild = (g) => (g == null ? null : String(g).trim());
 function parseGloryKill(line) {
   if (line.indexOf('Rallos Zek') === -1) return null;   // cheap gate
+  const tsIso = () => { const t = parseEqTimestamp(line); return t ? t.toISOString() : new Date().toISOString(); };
+  const text = () => line.replace(/^\[.+?\]\s*(?:\[PVP\]\s*)?/, '').trim();
   const w = PVP_GLORY_WORTHY_RX.exec(line);
   if (w) {
     const ts = parseEqTimestamp(line);
@@ -32511,6 +33349,38 @@ function parseGloryKill(line) {
       zone: w[4].trim(),
       glory: true,
       gloryText: w[5].trim(),
+    };
+  }
+  const ex = PVP_GLORY_EXULTS_RX.exec(line);
+  if (ex) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: ex[2], killerGuild: _gloryGuild(ex[3]),
+    victim: ex[4], victimGuild: _gloryGuild(ex[5]),
+    zone: ex[6].trim(), glory: true, gloryText: ex[7].trim(),
+  };
+  const ft = PVP_GLORY_FALLS_TO_RX.exec(line);
+  const nz = ft && _gloryNpcZone(ft[4]);
+  if (nz) return {
+    ts: tsIso(), text: text(), killType: 'npc', source: 'rallos_glory',
+    killer: nz.npc, killerGuild: null,
+    victim: ft[2], victimGuild: _gloryGuild(ft[3]),
+    zone: nz.zone, glory: false, gloryText: nz.tail,
+  };
+  const nf = PVP_GLORY_NO_FOE_RX.exec(line);
+  if (nf) return {
+    ts: tsIso(), text: text(), killType: 'pvp', source: 'rallos_glory',
+    killer: null, killerGuild: null,
+    victim: nf[2], victimGuild: _gloryGuild(nf[3]),
+    zone: nf[4].trim(), glory: false, gloryText: nf[5].trim(),
+  };
+  const ff = PVP_GLORY_FORFEIT_RX.exec(line);
+  if (ff) {
+    const where = /\bin\s+(.+)$/.exec(ff[4]);
+    return {
+      ts: tsIso(), text: text(), killType: 'forfeit', source: 'rallos_glory',
+      killer: null, killerGuild: null,
+      victim: ff[2], victimGuild: _gloryGuild(ff[3]),
+      zone: where ? where[1].trim() : null, glory: false, gloryText: ff[5].trim(),
     };
   }
   const m = PVP_GLORY_RX.exec(line);
@@ -33492,6 +34362,7 @@ function startReporterHeartbeat() {
   setInterval(_reporterHeartbeatOnce, REPORTER_HEARTBEAT_MS).unref();
   // True-time reference, independent of the bot — see _refreshNtpOffset.
   startNtpRefresh();
+  startMobPacks();   // mob info kept on this machine; needs the bot, like the heartbeat
 }
 let _chatRelayOn   = false;     // true once the 5s relay interval is running
 
@@ -33691,9 +34562,14 @@ function startChatRelay() {
 // past that the fight has aged out of the query window and the answer is empty,
 // which would blank an entry that already had good numbers in it. Hence the
 // "only overwrite on a non-empty response" rule below.
-const FIGHT_HISTORY_MAX = 6;
+// The guild lead, 2026-10-02: "History should be much longer and specific if it's local or
+// synced." So 30 fights instead of 6, kept across a restart (saveSessionState), and each entry
+// says where it stands: `upload` 'local' (never leaves this machine — no token, dry run, or the
+// character is excluded from stats) or 'sent' (in the upload queue); `settled` (below) is the
+// guild's merged numbers having come back, which the meter shows as synced.
+const FIGHT_HISTORY_MAX = 30;
 const FIGHT_HISTORY_SETTLE_MS = [40_000, 100_000];
-function _recordFightHistory(et) {
+function _recordFightHistory(et, character) {
   if (!et) return;
   const boss = et.bossName || et.targetName || null;
   if (!boss) return;
@@ -33701,11 +34577,15 @@ function _recordFightHistory(et) {
   stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
   // A multi-log install flushes once per builder, and flush() also propagates
   // to peer builders on the same fight — so the same kill arrives several
-  // times. One entry per (boss, start within 60s).
+  // times, a few seconds apart. One entry per (boss, start within 8 s): the
+  // old 60 s window also swallowed a real second kill of the same name pulled
+  // right behind the first (2026-10-02).
   const dupe = stats.fightHistory.find(h =>
     String(h.boss).toLowerCase() === String(boss).toLowerCase()
-    && Math.abs((h.startedMs || 0) - startedMs) < 60_000);
+    && Math.abs((h.startedMs || 0) - startedMs) < 8_000);
   if (dupe) return;
+  let sends = !!(_uploadOpts && _uploadOpts.token && !_uploadOpts.dryRun);
+  try { if (sends && character) sends = shouldUploadForCharacter(character); } catch { void 0; }
   // This machine's own view, kept alongside the guild's — the "(what you saw)"
   // half of the row is the thing a local-only meter can never give you.
   const local = [];
@@ -33723,6 +34603,7 @@ function _recordFightHistory(et) {
     players: [],        // guild view; filled by the settle passes below
     uploaders: 0,
     settled: false,
+    upload: sends ? 'sent' : 'local',
   };
   stats.fightHistory.unshift(entry);
   if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
@@ -33735,7 +34616,9 @@ function _recordFightHistory(et) {
     const t = setTimeout(async () => {
       try {
         const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
-        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}`, {
+        // fight_start: this fight's numbers, not the next same-name pull's (bot 3.1.187+; older bots ignore it).
+        const fs0 = startedMs ? `&fight_start=${encodeURIComponent(new Date(startedMs).toISOString())}` : '';
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}${fs0}`, {
           headers: { Authorization: `Bearer ${_uploadOpts.token}` },
         });
         if (!r.ok) return;                          // old bot → History shows local only
@@ -36425,10 +37308,26 @@ function loadPersonalTriggers() {
 }
 function _migrateRetiredSuggestedPattern(t) {
   const id = (t && typeof t.id === 'string' && t.id.startsWith('suggested:')) ? t.id.slice('suggested:'.length) : null;
-  const dead = id ? SUGGESTED_RETIRED_PATTERNS[id] : null;
-  if (!dead || !dead.includes(t.pattern)) return false;
-  const tpl = SUGGESTED_TRIGGERS.find(x => x.id === id);
-  if (!tpl || !tpl.pattern) return false;
+  const tpl = id ? SUGGESTED_TRIGGERS.find(x => x.id === id) : null;
+  if (!tpl) return false;
+  let moved = false;
+  // Alert text the template has since changed — only an exact match moves.
+  const deadText = SUGGESTED_RETIRED_OVERLAYS[id];
+  const act = Array.isArray(t.actions) ? t.actions.find(a => a && a.type === 'text_overlay') : null;
+  if (deadText && act && deadText.includes(act.text)) {
+    if (act.tts === act.text) act.tts = tpl.overlay_text;
+    act.text = tpl.overlay_text;
+    moved = true;
+  }
+  const dead = SUGGESTED_RETIRED_PATTERNS[id];
+  if (!dead || !dead.includes(t.pattern)) return moved;
+  if (tpl.catalog_match) {
+    // Moved from a dead pattern to matching by the spell's effect.
+    t.pattern = '';
+    t.catalog_match = tpl.catalog_match;
+    return true;
+  }
+  if (!tpl.pattern) return moved;
   t.pattern = tpl.pattern;
   return true;
 }
@@ -36491,7 +37390,7 @@ function _serializePersonalTriggers() {
     //     pattern)" in the dashboard.
     // A trigger is valid if it has something to fire on: a compiled pattern or
     // a gauge condition. The genuinely-broken ones are reported via `dropped`.
-    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer };
+    return { ...rest, valid: !!_regex || !!t.zeal_condition || !!t.builtin_timer || !!t.catalog_match };
   });
 }
 
@@ -36510,7 +37409,10 @@ function _compilePersonalTrigger(t) {
     for (const w of c.warnings) console.warn('[triggers] "' + (t.name || '?') + '": ' + w);
   }
   const characters = _normCharList(t.characters);   // per-character scope (FB-34); none = every character
-  return { ...t, characters: characters || undefined, _regex: regex, _conditions: conditions, _aliases: aliases,
+  // Matching by the spell catalog instead (catalog_match) — only with no pattern.
+  const catalogMatch = regex ? null : _normCatalogMatch(t.catalog_match);
+  return { ...t, characters: characters || undefined, catalog_match: catalogMatch || undefined,
+           _regex: regex, _conditions: conditions, _aliases: aliases,
            _excludes: excludes, _endRegex: _compileEndEarlyRegex(t), _scope: 'personal' };
 }
 
@@ -36564,6 +37466,86 @@ function _compileEndEarlyRegex(t) {
 // {S1}/{S2}/etc captures are NOT used here — these templates are first-
 // person ("you are…") so there's no name to extract. Adding cooldown_seconds
 // where the trigger could otherwise spam (resists fire every tick).
+//
+// Matching by the CATALOG instead of a pattern (`catalog_match`, the guild lead, 2026-10-02:
+// "We need more in suggested triggers"). Three "on you" templates named texts no spell
+// prints ("You have been ensnared", "You feel calm", "You are afraid") — checked against
+// eqemu_spells — while the real ones run to 70+ snare and 30+ mez landings. So those
+// match a spell's own `you` text whose catalog `cc` (bot 3.1.189) holds the kind:
+//   { on: 'you',      cc: ['mez'] }  — a mez landed on you
+//   { on: 'worn_off', cc: ['mez'] }  — "Your <spell> spell has worn off." for a spell of
+//     yours with that kind (the server names the spell, never the mob — zone/spell_effects.cpp
+//     BuffFadeBySlot sends SPELL_WORN_OFF, and calls charm "charm" and fear "fear").
+const CATALOG_MATCH_ON = ['you', 'worn_off'];
+const CATALOG_CC_KINDS = ['mez', 'charm', 'fear', 'stun', 'root', 'snare', 'slow', 'silence'];
+function _normCatalogMatch(cm) {
+  if (!cm || !CATALOG_MATCH_ON.includes(cm.on)) return null;
+  const cc = (Array.isArray(cm.cc) ? cm.cc : []).filter(k => CATALOG_CC_KINDS.includes(k));
+  return cc.length ? { on: cm.on, cc } : null;
+}
+// Landing text → the kinds EVERY spell printing it carries. A text one spell
+// without that kind also prints is left out of that kind, the Blind Mode rule
+// (_blindCatalogTexts), so a shared line can never cry mez.
+let _ccTextsFor = null, _ccTexts = null;
+function _ccCatalogTexts() {
+  if (_ccTexts && _ccTextsFor === _spellByNameLower) return _ccTexts;
+  const byText = new Map();
+  for (const e of _spellByNameLower.values()) {
+    const you = e && e.you ? String(e.you).trim() : '';
+    if (!you) continue;
+    const kinds = new Set(Array.isArray(e.cc) ? e.cc : []);
+    const had = byText.get(you);
+    byText.set(you, had ? new Set([...had].filter(k => kinds.has(k))) : kinds);
+  }
+  for (const [t, ks] of byText) if (!ks.size) byText.delete(t);
+  _ccTexts = byText;
+  _ccTextsFor = _spellByNameLower;
+  return _ccTexts;
+}
+// The match a catalog trigger fires with, shaped like a RegExp result so the
+// rest of the fire path (capture bag, cooldown, actions) is the pattern one's.
+function _catalogTriggerMatch(cm, msg) {
+  if (!cm || !msg) return null;
+  if (cm.on === 'you') {
+    const ks = _ccCatalogTexts().get(msg);
+    const hit = ks && cm.cc.find(k => ks.has(k));
+    if (!hit) return null;
+    const m = [msg, hit];
+    m.groups = { cc: hit };
+    return m;
+  }
+  if (cm.on === 'worn_off') {
+    const w = /^Your (.+?) spell has worn off\.$/.exec(msg);
+    const e = w && _spellByNameLower.get(w[1].toLowerCase());
+    const hit = e && Array.isArray(e.cc) && cm.cc.find(k => e.cc.includes(k));
+    if (!hit) return null;
+    const m = [msg, w[1], hit];
+    m.groups = { spell: w[1], cc: hit };
+    return m;
+  }
+  return null;
+}
+// {mytarget} in an alert: the mob a resist or an immunity line is about. EQ's
+// "Your target resisted the Tashanian spell." never names it (the guild lead, 2026-10-02:
+// "spell resisted <spell name - mob name>"), so it is the target you had when you
+// began casting that spell — read from Zeal then — or, for an instant spell or a
+// line with no spell, your target now. Null when Zeal is not running.
+function _myTargetFor(character, spell) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl) return null;
+  const lc = _meLastCast.get(cl);
+  if (lc && lc.target && Date.now() - lc.t < 15_000
+      && (!spell || lc.name === String(spell).toLowerCase())) return lc.target;
+  const zst = _meZealFor(cl);
+  return zst && zst.target_name ? String(zst.target_name) : null;
+}
+// Adds {mytarget} to a fire's captures when the trigger's text asks for it.
+function _addMyTarget(t, captures, character) {
+  if (!captures || captures.mytarget != null) return;
+  if (t._usesMyTarget === undefined) t._usesMyTarget = /mytarget/i.test(JSON.stringify(t.actions || []));
+  if (!t._usesMyTarget) return;
+  captures.mytarget = _myTargetFor(character, captures.spell || captures['1']) || 'your target';
+}
 const SUGGESTED_TRIGGERS = [
   // ── Buff drops on YOU — the most-requested alert class. The pattern matches
   //    the EQ "Your <buff> spell has worn off." line; we cover common Clarity /
@@ -36590,15 +37572,33 @@ const SUGGESTED_TRIGGERS = [
     overlay_text: 'DAMAGE SHIELD DROPPED', overlay_color: 'cyan', overlay_ms: 4000,
     tts_default: false, cooldown_seconds: 3 },
 
-  // ── Debuffs landing ON you — actionable: cure, run, recast.
+  // ── Debuffs landing ON you — actionable: cure, run, recast. Matched by the
+  //    spell's effect in the catalog (catalog_match above): the texts these
+  //    three used to name appear in no spell.
   { id: 'self_snared', category: 'self', label: 'You are snared / rooted',
-    pattern: '^You have been (?:ensnared|rooted|bound)\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['root', 'snare'] },
     overlay_text: 'SNARED / ROOTED', overlay_color: 'yellow', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'self_mezzed', category: 'self', label: 'You are mezzed / charmed',
-    pattern: '^You feel (?:calm|charmed)\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['mez', 'charm'] },
     overlay_text: 'MEZZED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
+  { id: 'self_silenced', category: 'self', label: 'You are silenced',
+    pattern: '', catalog_match: { on: 'you', cc: ['silence'] },
+    overlay_text: 'SILENCED', overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 5 },
+  // Feign Death, from the server's own messages (zone/string_ids.h). A failed
+  // feign is said in the third person with your own name (STRING_FEIGNFAILED,
+  // "%1 has fallen to the ground." — the HUD's ✗ reads the same line); {c} is
+  // your characters, so a monk beside you failing does not call it.
+  { id: 'self_fd_failed', category: 'self', label: 'Your Feign Death failed',
+    pattern: '{c} has fallen to the ground\\.',
+    overlay_text: 'FD FAILED', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'self_fd_broken', category: 'self', label: 'A spell broke your Feign Death',
+    pattern: 'You are no longer feigning death, because a spell hit you\\.',
+    overlay_text: 'FD BROKEN — A SPELL HIT YOU', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 2 },
   // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
   // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
   // guard, and only speaks while that overlay is open. This fires on the log
@@ -36610,7 +37610,7 @@ const SUGGESTED_TRIGGERS = [
     overlay_text: 'CHARM BREAK', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
   { id: 'self_feared', category: 'self', label: 'You are feared',
-    pattern: '^You are afraid\\.',
+    pattern: '', catalog_match: { on: 'you', cc: ['fear'] },
     overlay_text: 'FEARED!', overlay_color: 'red', overlay_ms: 4000,
     tts_default: true,  cooldown_seconds: 5 },
   { id: 'self_stunned', category: 'self', label: 'You are stunned',
@@ -36641,12 +37641,60 @@ const SUGGESTED_TRIGGERS = [
     tts_default: true,  cooldown_seconds: 3 },
 
   // ── Cast feedback — fast-paced raids need quick "did it land?" answers.
-  { id: 'cast_resisted_self', category: 'debuff', label: 'Your spell was resisted',
+  //    Server text from zone/string_ids.h. The resist and immunity lines never
+  //    name the mob, so {mytarget} does (_myTargetFor: your target when you began
+  //    the cast, from Zeal).
+  { id: 'cast_resisted_self', category: 'debuff', label: 'Your spell was resisted (spell and mob)',
     pattern: '^Your target resisted the (.+?) spell\\.',
-    overlay_text: 'RESISTED: {1}', overlay_color: 'yellow', overlay_ms: 3000,
+    overlay_text: 'RESISTED: {1} — {mytarget}', overlay_preview: 'RESISTED: Tashanian — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
     tts_default: false, cooldown_seconds: 1 },
+  { id: 'cast_immune_slow', category: 'debuff', label: 'Your target is immune to slow',
+    pattern: 'Your target is immune to changes in its attack speed\\.',
+    overlay_text: 'IMMUNE TO SLOW — {mytarget}', overlay_preview: 'IMMUNE TO SLOW — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'cast_immune_snare', category: 'debuff', label: 'Your target is immune to snare',
+    pattern: 'Your target is immune to changes in its run speed\\.',
+    overlay_text: 'IMMUNE TO SNARE — {mytarget}', overlay_preview: 'IMMUNE TO SNARE — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_cannot_mez', category: 'debuff', label: 'Your target cannot be mezzed',
+    pattern: 'Your target cannot be mesmerized',
+    overlay_text: 'CANNOT MEZ — {mytarget}', overlay_preview: 'CANNOT MEZ — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  { id: 'cast_immune_stun', category: 'debuff', label: 'Your target is immune to stun',
+    pattern: 'Your target is immune to the stun portion of this effect\\.',
+    overlay_text: 'STUN IMMUNE — {mytarget}', overlay_preview: 'STUN IMMUNE — a gnoll warlord',
+    overlay_color: 'yellow', overlay_ms: 3000,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_cannot_charm', category: 'debuff', label: 'Your target cannot be charmed',
+    pattern: 'Your target is too high of a level for your charm spell\\.|This NPC cannot be charmed\\.',
+    overlay_text: 'CAN\'T CHARM — {mytarget}', overlay_preview: 'CAN\'T CHARM — a gnoll warlord',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 2 },
+  // Your crowd control wearing off a mob. The server names the spell, not the
+  // mob ("Your Mesmerize spell has worn off.") — catalog_match keeps it to your
+  // spells that mez, or that slow, root or snare.
+  { id: 'cast_mez_off', category: 'debuff', label: 'Your mez wore off',
+    pattern: '', catalog_match: { on: 'worn_off', cc: ['mez'] },
+    overlay_text: 'MEZ OFF: {spell}', overlay_preview: 'MEZ OFF: Mesmerize',
+    overlay_color: 'red', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 0 },
+  { id: 'cast_slow_off', category: 'debuff', label: 'Your slow / root / snare wore off',
+    pattern: '', catalog_match: { on: 'worn_off', cc: ['slow', 'root', 'snare'] },
+    overlay_text: '{spell} WORE OFF', overlay_preview: 'Turgur\'s Insects WORE OFF',
+    overlay_color: 'yellow', overlay_ms: 4000,
+    tts_default: false, cooldown_seconds: 0 },
+  { id: 'cast_fear_off', category: 'debuff', label: 'Your fear wore off',
+    pattern: 'Your fear spell has worn off\\.',
+    overlay_text: 'FEAR OFF', overlay_color: 'red', overlay_ms: 3000,
+    tts_default: true,  cooldown_seconds: 0 },
+  // "Your spell is interrupted." (INTERRUPT_SPELL). This read "Your spell
+  // interrupted" / "Your target was interrupted", which the game never prints.
   { id: 'cast_interrupted', category: 'self', label: 'Your cast was interrupted',
-    pattern: '^Your (?:spell|target) (?:was )?interrupted',
+    pattern: 'Your spell is interrupted\\.',
     overlay_text: 'INTERRUPTED', overlay_color: 'yellow', overlay_ms: 2500,
     tts_default: false, cooldown_seconds: 1 },
   { id: 'cast_fizzle', category: 'self', label: 'Spell fizzle',
@@ -36665,6 +37713,23 @@ const SUGGESTED_TRIGGERS = [
     zeal_condition: { field: 'self_hp_pct', op: '<=', value: 30 },
     overlay_text: 'LOW HP', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 15 },
+  // Casting and pulling, from the server's own messages (zone/string_ids.h).
+  { id: 'cast_no_los', category: 'utility', label: 'You cannot see your target',
+    pattern: 'You cannot see your target\\.',
+    overlay_text: 'NO LINE OF SIGHT', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_out_of_range', category: 'utility', label: 'Your target is out of range',
+    pattern: 'Your target is out of range, get closer!',
+    overlay_text: 'OUT OF RANGE', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 2 },
+  { id: 'cast_no_mana', category: 'utility', label: 'Not enough mana for that spell',
+    pattern: 'Insufficient Mana to cast this spell!',
+    overlay_text: 'NOT ENOUGH MANA', overlay_color: 'yellow', overlay_ms: 2500,
+    tts_default: false, cooldown_seconds: 3 },
+  { id: 'self_invis_fading', category: 'utility', label: 'Your invisibility is about to drop',
+    pattern: 'You feel yourself starting to appear\\.',
+    overlay_text: 'INVIS FADING', overlay_color: 'yellow', overlay_ms: 4000,
+    tts_default: true,  cooldown_seconds: 5 },
 
   // ── Timer bars — EQLogParser-style countdown rows in the trigger overlay,
   //    built by the agent from what it already tracks rather than from a log
@@ -36684,6 +37749,10 @@ const SUGGESTED_TRIGGERS = [
   // standalone timer". The same Zeal gauge-24 tick the HUD draws, as a bar.
   { id: 'timer_server_tick', category: 'timer', label: 'Server tick (the 6s tick from Zeal, like the HUD\'s)',
     builtin_timer: 'server_tick', no_tts: true },
+  // The guild lead, 2026-10-02: "add Boastful Bellow AA as a timer for Bards that have the AA".
+  // The HUD's own Bellow cooldown (_ME_SKILL_LINES 'bellow') as a bar.
+  { id: 'timer_boastful_bellow', category: 'timer', label: 'Boastful Bellow reuse (bards with the AA — 18s from each one you land or get resisted)',
+    builtin_timer: 'bellow', no_tts: true },
 ];
 
 const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
@@ -36691,13 +37760,24 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 // (EQLogParser imports set the first three; guild-parity rows the rest).
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns', 'characters'];
+  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
 // exact matches move — a pattern the user edited by hand is theirs.
 const SUGGESTED_RETIRED_PATTERNS = {
   mob_rampage: ['\\brampages?\\s+on\\s+(?:you|YOU)\\b'],
+  // 2026-10-02: texts no spell or server message prints (checked against
+  // eqemu_spells and zone/string_ids.h). The first three move to catalog_match.
+  self_snared:      ['^You have been (?:ensnared|rooted|bound)\\.'],
+  self_mezzed:      ['^You feel (?:calm|charmed)\\.'],
+  self_feared:      ['^You are afraid\\.'],
+  cast_interrupted: ['^Your (?:spell|target) (?:was )?interrupted'],
+};
+// The same for a template's alert text: a saved row still saying exactly this
+// gets the current text (cast_resisted_self now names the mob, 2026-10-02).
+const SUGGESTED_RETIRED_OVERLAYS = {
+  cast_resisted_self: ['RESISTED: {1}'],
 };
 
 // Convert a SUGGESTED_TRIGGERS template into a personal-trigger row (the
@@ -36735,6 +37815,7 @@ function _templateToPersonalRow(tpl, opts) {
     end_early_pattern:  null,
     end_use_regex:      true,
     zeal_condition:     tpl.zeal_condition || null,
+    catalog_match:      tpl.catalog_match || undefined,
     actions:            [action],
   };
 }
@@ -37366,6 +38447,26 @@ const FIRE_DEDUP_WINDOW_MS = 8_000;
 // cross-uploader duplicates collapse at the web read layer.
 const MOB_HEAL_MIN_RISE = 5;          // percentage points
 const MOB_HEAL_DEBOUNCE_MS = 10_000;
+// The mob you had targeted died, as your own target window saw it: its name became "<name>'s
+// corpse", or its bar went to 0 under the same name. Settles 1.5 s so the killing blow's lines
+// land in this fight first, then hands it to EncounterBuilder.noteZealTargetDead.
+const ZEAL_DEATH_SETTLE_MS = 1500;
+function _noteMobDeathFromState(character, prev, next) {
+  if (!character || !prev || !next || !prev.target_name || !next.target_name) return;
+  const pn = String(prev.target_name).replace(/^#/, '').trim();
+  const nn = String(next.target_name).replace(/^#/, '').trim();
+  const base = nn.replace(/'s\s+corpse\d*$/i, '');
+  const becameCorpse = base !== nn && base.toLowerCase() === pn.toLowerCase();
+  const hitZero = pn.toLowerCase() === nn.toLowerCase()
+    && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0 && next.target_hp_pct === 0;
+  if (!becameCorpse && !hitZero) return;
+  const cl = String(character).toLowerCase();
+  for (const b of _liveBuilders) {
+    if (String(b.character || '').toLowerCase() !== cl) continue;
+    const t = setTimeout(() => { try { b.noteZealTargetDead(base); } catch (e) { void e; } }, ZEAL_DEATH_SETTLE_MS);
+    if (t.unref) t.unref();
+  }
+}
 function _noteMobHealFromState(character, prev, next) {
   if (!character || !prev || !next) return;
   const pn = prev.target_name, nn = next.target_name;
@@ -37949,15 +39050,210 @@ function _mobCaseKey(n) {
 function _mobInfoCacheKey(name, zoneId) {
   return _normMobNameAgent(name) + '|' + (zoneId != null ? zoneId : '*') + '|' + _mobCaseKey(name);
 }
-function fetchMobInfo(name, selfChar, zoneId) {
+// ── Mob info kept on this machine: zone packs ────────────────────────────────
+// The guild lead, 2026-09-30, on Target Info loading slowly: "keep all of the PoP mobs
+// cached on a user's machine, as well as zones that the user frequents". The bot's
+// /api/agent/mob-pack?zone=<id> answers every mob in a zone, built the same way as a
+// single mob-info lookup. They are kept in mobinfo-cache/ beside this file, one file a
+// zone plus index.json, so a target in a cached zone shows with no round trip to the
+// bot, across restarts and updates.
+//   • Pinned: the zones the bot lists (?pinned=1, the Planes of Power) are fetched in
+//     the background, one per tick, and never evicted.
+//   • Visited: a zone any character stands in is fetched on arrival and kept while it
+//     keeps being visited; one not visited for 90 days is dropped, and past 80 MB the
+//     least recently visited go first.
+//   • A held pack is revalidated once a day with its ETag, so an unchanged one costs a 304.
+//   • A name the pack does not hold (a pet, a mob from another zone) still takes the
+//     live lookup below, as before.
+const MOB_PACK_DIR           = path.join(__dirname, 'mobinfo-cache');
+const MOB_PACK_INDEX         = path.join(MOB_PACK_DIR, 'index.json');
+const MOB_PACK_TICK_MS       = 20 * 1000;
+const MOB_PACK_REVALIDATE_MS = 24 * 60 * 60 * 1000;
+const MOB_PACK_UNVISITED_MS  = 90 * 24 * 60 * 60 * 1000;
+const MOB_PACK_MAX_BYTES     = 80 * 1024 * 1024;
+let _mobPackIndex = null;               // zone id (string) → { etag, fetchedAt, visitedAt, bytes, pinned, retryAt }
+const _mobPackMobs = new Map();         // zone id (string) → { caseKey: mob }, read from disk on first use
+const _mobPackInflight = new Set();
+let _mobPackPinned = [];                // zone ids from the bot, refreshed every 6h
+let _mobPackPinnedAt = 0;
+let _mobPackEvictedAt = Date.now();     // the first sweep waits an hour, until the pinned list is known
+let _mobPackSaveTimer = null;
+
+function _mobPackIdx() {
+  if (!_mobPackIndex) {
+    try { _mobPackIndex = JSON.parse(fs.readFileSync(MOB_PACK_INDEX, 'utf8')) || {}; }
+    catch { _mobPackIndex = {}; }
+  }
+  return _mobPackIndex;
+}
+function _mobPackSaveIndex() {
+  if (_mobPackSaveTimer) return;
+  _mobPackSaveTimer = setTimeout(() => {
+    _mobPackSaveTimer = null;
+    try {
+      fs.mkdirSync(MOB_PACK_DIR, { recursive: true });
+      fs.writeFileSync(MOB_PACK_INDEX + '.tmp', JSON.stringify(_mobPackIdx()));
+      fs.renameSync(MOB_PACK_INDEX + '.tmp', MOB_PACK_INDEX);
+    } catch (e) { console.warn('[mob-pack] index save failed:', e && e.message); }
+  }, 5000);
+  if (_mobPackSaveTimer.unref) _mobPackSaveTimer.unref();
+}
+function _mobPackZoneMobs(zoneId) {
+  const k = String(zoneId);
+  if (_mobPackMobs.has(k)) return _mobPackMobs.get(k);
+  const e = _mobPackIdx()[k];
+  if (!e || !e.bytes) return null;
+  try {
+    const mobs = JSON.parse(fs.readFileSync(path.join(MOB_PACK_DIR, k + '.json'), 'utf8')).mobs;
+    if (mobs && typeof mobs === 'object') { _mobPackMobs.set(k, mobs); return mobs; }
+  } catch { /* gone or torn: fetch it again */ }
+  e.bytes = 0; e.etag = null;
+  _mobPackSaveIndex();
+  return null;
+}
+function _mobPackLookup(name, zoneId) {
+  if (zoneId == null) return null;
+  const mobs = _mobPackZoneMobs(zoneId);
+  return (mobs && mobs[_mobCaseKey(name)]) || null;
+}
+function _mobPackDue(e, now) {
+  if (e.retryAt && now < e.retryAt) return false;
+  return !e.bytes || !e.fetchedAt || (now - e.fetchedAt) >= MOB_PACK_REVALIDATE_MS;
+}
+function _mobPackGet(query, etag, done) {
   const opts = _uploadOpts;
-  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/mob-pack') + query;
+  const u = new URL(url);
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`, 'Accept-Encoding': 'gzip' };
+  if (etag) headers['If-None-Match'] = etag;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 30000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      try {
+        let buf = Buffer.concat(chunks);
+        if (/gzip/i.test(String(res.headers['content-encoding'] || '')) && buf.length) buf = zlib.gunzipSync(buf);
+        done(null, res.statusCode, buf, res.headers.etag || null);
+      } catch (e) { done(e); }
+    });
+  });
+  req.on('error',   (e) => done(e));
+  req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
+  req.end();
+}
+function _mobPackFetch(zoneId) {
+  const k = String(zoneId);
+  if (_mobPackInflight.has(k)) return;
+  const idx = _mobPackIdx();
+  const e = idx[k] || (idx[k] = {});
+  _mobPackInflight.add(k);
+  try {
+    _mobPackGet('?zone=' + encodeURIComponent(k), e.bytes ? e.etag : null, (err, status, buf, etag) => {
+      _mobPackInflight.delete(k);
+      const now = Date.now();
+      try {
+        if (err || !(status === 200 || status === 304)) {
+          // 202: the bot is building it; anything else, back off longer.
+          e.retryAt = now + (status === 202 ? 2 * 60 * 1000 : 30 * 60 * 1000);
+        } else if (status === 304) {
+          e.fetchedAt = now; e.retryAt = 0;
+        } else {
+          const body = JSON.parse(buf.toString('utf8'));
+          if (!body || !body.mobs || typeof body.mobs !== 'object') throw new Error('no mobs');
+          fs.mkdirSync(MOB_PACK_DIR, { recursive: true });
+          const file = path.join(MOB_PACK_DIR, k + '.json');
+          fs.writeFileSync(file + '.tmp', buf);
+          fs.renameSync(file + '.tmp', file);
+          _mobPackMobs.set(k, body.mobs);
+          Object.assign(e, { etag, fetchedAt: now, bytes: buf.length, retryAt: 0 });
+        }
+      } catch (e2) {
+        e.retryAt = now + 30 * 60 * 1000;
+        console.warn(`[mob-pack] zone ${k}:`, e2 && e2.message);
+      }
+      _mobPackSaveIndex();
+    });
+  } catch { _mobPackInflight.delete(k); }
+}
+function _mobPackFetchPinned() {
+  try {
+    _mobPackGet('?pinned=1', null, (err, status, buf) => {
+      if (err || status !== 200) return;
+      try {
+        const zones = (JSON.parse(buf.toString('utf8')).zones || []).map(String);
+        _mobPackPinned = zones;
+        const idx = _mobPackIdx();
+        for (const z of zones) if (!idx[z]) idx[z] = {};
+        for (const [z, e] of Object.entries(idx)) e.pinned = zones.includes(z);
+        _mobPackSaveIndex();
+      } catch { /* try again next refresh */ }
+    });
+  } catch { /* bad bot URL: the live lookup still works */ }
+}
+function _mobPackEvict(now) {
+  const idx = _mobPackIdx();
+  const drop = (z) => {
+    try { fs.unlinkSync(path.join(MOB_PACK_DIR, z + '.json')); } catch { /* already gone */ }
+    delete idx[z];
+    _mobPackMobs.delete(z);
+  };
+  for (const [z, e] of Object.entries(idx)) {
+    if (!e.pinned && (!e.visitedAt || now - e.visitedAt > MOB_PACK_UNVISITED_MS)) drop(z);
+  }
+  let total = Object.values(idx).reduce((s, e) => s + (e.bytes || 0), 0);
+  const oldestFirst = Object.keys(idx).filter(z => !idx[z].pinned)
+    .sort((a, b) => (idx[a].visitedAt || 0) - (idx[b].visitedAt || 0));
+  while (total > MOB_PACK_MAX_BYTES && oldestFirst.length) {
+    const z = oldestFirst.shift();
+    total -= idx[z].bytes || 0;
+    drop(z);
+  }
+  _mobPackSaveIndex();
+}
+function _mobPackTick() {
+  try {
+    const opts = _uploadOpts;
+    if (!opts || !opts.botUrl || !opts.token || _controlStandDown().down) return;
+    const now = Date.now();
+    const idx = _mobPackIdx();
+    // Where each character stands now: record the visit, fetch or revalidate the pack.
+    for (const st of Object.values(_zealState)) {
+      const z = Number(st && st.zone);
+      if (!(z > 0)) continue;
+      const e = idx[z] || (idx[z] = {});
+      if (!e.visitedAt || now - e.visitedAt > 60 * 60 * 1000) { e.visitedAt = now; _mobPackSaveIndex(); }
+      if (_mobPackDue(e, now)) _mobPackFetch(z);
+    }
+    if (now - _mobPackPinnedAt > 6 * 60 * 60 * 1000) { _mobPackPinnedAt = now; _mobPackFetchPinned(); }
+    // The pinned zones, one a tick, so a first run spreads over a few minutes.
+    for (const z of _mobPackPinned) {
+      if (_mobPackInflight.has(z)) break;
+      if (_mobPackDue(idx[z] || (idx[z] = { pinned: true }), now)) { _mobPackFetch(z); break; }
+    }
+    if (now - _mobPackEvictedAt > 60 * 60 * 1000) { _mobPackEvictedAt = now; _mobPackEvict(now); }
+  } catch (e) { console.warn('[mob-pack] tick failed:', e && e.message); }
+}
+let _mobPacksOn = false;
+function startMobPacks() {
+  if (_mobPacksOn) return;
+  _mobPacksOn = true;
+  const t = setInterval(_mobPackTick, MOB_PACK_TICK_MS);
+  if (t.unref) t.unref();
+}
+
+function fetchMobInfo(name, selfChar, zoneId) {
   const norm = _normMobNameAgent(name);
   if (!norm) return;
   const key = _mobInfoCacheKey(name, zoneId);
   if (_mobInfoInflight.has(key)) return;
   const cached = _mobInfoByName.get(key);
   if (cached && (Date.now() - cached.at) < MOB_INFO_TTL_MS) return;
+  // Kept on this machine (a zone pack above): no round trip, and it works offline.
+  const packed = _mobPackLookup(name, zoneId);
+  if (packed) { _mobInfoByName.set(key, { at: Date.now(), mob: packed }); return; }
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;          // local-only → no lookup
   _mobInfoInflight.add(key);
   // #141 — send the requesting character so the bot zone-scopes the catalog row
   // (id = zoneid*1000+n) to OUR zone; absent → bot falls back catalog-wide.
@@ -38151,6 +39447,17 @@ function fetchTargetBuffs(name, selfChar, targetId) {
 // local view never waits on the round trip.
 let _diStatusCache = { at: 0, clerics: [], healer_mana: [] };
 let _diStatusInflight = false;
+// Two or more raids at once (the guild lead, 2026-10-01; bot 3.1.184, DECISIONS §124): the bot names
+// them on the buff-queue and Extended Target payloads ({ key, leader, size, mine }), and only then.
+// Kept here so the Command Center can stay with this raid's healers; a payload without them clears it.
+let _raidSplitSeen = { at: 0, raids: null };
+function _noteRaidSplit(j) {
+  if (!j || typeof j !== 'object' || j.error) return;
+  _raidSplitSeen = { at: Date.now(), raids: (Array.isArray(j.raids) && j.raids.length > 1) ? j.raids : null };
+}
+function _raidSplitNow(nowMs) {
+  return (_raidSplitSeen.raids && (nowMs - _raidSplitSeen.at) < 60_000) ? _raidSplitSeen.raids : null;
+}
 const DI_STATUS_TTL_MS = 4000;
 function fetchDiStatus() {
   const opts = _uploadOpts;
@@ -38340,7 +39647,7 @@ function fetchRaidBuffQueue(bufferClass, bufferCharacter) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _buffQueueInflight.delete(key);
-        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); }
+        try { const j = JSON.parse(body); _buffQueueCache.set(key, { at: Date.now(), payload: j }); _noteRaidSplit(j); }
         catch { _buffQueueCache.set(key, { at: Date.now(), payload: { buff_queue: [], debuff_queue: [] } }); }
       });
     });
@@ -38425,7 +39732,7 @@ function fetchExtendedTarget(character) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _extTargetInflight.delete(key);
-        try { const j = JSON.parse(body); _extTargetCache.set(key, { at: Date.now(), payload: j }); }
+        try { const j = JSON.parse(body); _extTargetCache.set(key, { at: Date.now(), payload: j }); _noteRaidSplit(j); }
         catch { _extTargetCache.set(key, { at: Date.now(), payload: { targets: [] } }); }
       });
     });
@@ -39016,8 +40323,11 @@ function buildMobInfo() {
   for (const ch of Object.keys(_zealState)) { if (_zealState[ch] === st) { selfChar = ch; break; } }
   const myZoneId = (st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
   const mobKey = _mobInfoCacheKey(st.target_name, myZoneId);
-  const cached = _mobInfoByName.get(mobKey);
-  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) fetchMobInfo(st.target_name, selfChar, myZoneId);
+  let cached = _mobInfoByName.get(mobKey);
+  if (!cached || (Date.now() - cached.at) >= MOB_INFO_TTL_MS) {
+    fetchMobInfo(st.target_name, selfChar, myZoneId);
+    cached = _mobInfoByName.get(mobKey) || cached;   // a zone-pack hit lands at once, so show it this poll
+  }
   // Prefer authoritative Zeal buffs when the target is one of our own
   // characters (covers self + group members running Mimic — Mask of the
   // Stalker, Spirit of Wolf, etc., with real remaining time). Otherwise show
@@ -39150,6 +40460,10 @@ function buildMobInfo() {
     // A Shadow Knight mob's Harm Touch: ready, or used with the time until it is
     // back. Null for anything else (_npcHtFor).
     target_npc_ht:  _npcHtFor(selfChar, st, cached, _curIdForRelay),
+    // A player's known timers — discipline, Mend, Lay on Hands / Harm Touch,
+    // AAs — from your own character, their Mimic, or a disc you saw them start.
+    // Null for NPCs and when nothing is known (_targetPlayerTimers).
+    target_timers:  _targetPlayerTimers(st, cached, Date.now()),
   };
 }
 
@@ -39190,6 +40504,7 @@ const _liveStateLastSig = new Map();   // character → last-sent signature
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
 function _postLiveState(targetUrl, token, payload) {
+  if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
   let url;
   try { url = new URL(targetUrl); } catch { return; }
   const mod = url.protocol === 'https:' ? https : http;
@@ -39922,6 +41237,13 @@ function flushLiveStateToBot(opts) {
         const di = _diStateByChar.get(String(ch).toLowerCase());
         return di ? new Date(di.readyAt).toISOString() : null;
       })(),
+      // This character's own known timers (discipline, Mend, Lay on Hands /
+      // Harm Touch, AAs) — another raider's Target Info shows them while
+      // targeting this character (_liveCooldownsFor, _targetPlayerTimers).
+      cooldowns: (() => {
+        const l = _liveCooldownsFor(String(ch).toLowerCase(), now);
+        return l.length ? l : null;
+      })(),
       // Self mana — feeds the web /raid mana list + Twitch Queue. pct from
       // cur/max (labels 124/125) so it's exact when the pipe supplies them.
       self_mana_pct: (st.self_mana_cur != null && st.self_mana_max != null && st.self_mana_max > 0)
@@ -40076,6 +41398,9 @@ function flushLiveStateToBot(opts) {
     // iteration order must not decide whether we consider it changed.
     const tankKeys = (rec.observed_tanks || [])
       .map(o => `${o.mob}|${String(o.tank).toLowerCase()}`).sort();
+    // A timer STARTING (a disc, a Mend) is an event; the ready times are
+    // absolute, so they do not churn while it counts down.
+    const cdKeys = (rec.cooldowns || []).map(c => `${c.key}@${c.ready_at}`);
     const sig = JSON.stringify([
       rec.zone_id,
       buffs.map(b => b && b.name),
@@ -40090,6 +41415,7 @@ function flushLiveStateToBot(opts) {
       diUp,
       (rec.incoming_mob || '').toLowerCase(),
       tankKeys,
+      cdKeys,
     ]);
     // Send when the signature changed, OR the heartbeat floor elapsed —
     // UNCONDITIONALLY, not just while targeting something. A STABLE target
@@ -40856,6 +42182,8 @@ function _calloutVoterCharacter() {
 // e: { direction, timer? , trigger_id?, trigger_name?, firedAtMs?, source?, test? }
 function _recordCalloutFeedback(e) {
   if (!e) return null;
+  // Timing feedback switched off on this machine: a ✕ or an age-out is not recorded or sent.
+  if (_optinState.timingFeedback === false) return null;
   const dir = e.direction === 'expired' ? 'expired' : 'dismissed';
   const row = e.timer || null;
   // A loot-auction chip is a BID WINDOW, not a callout. Its ✕ means "I've bid"
@@ -40968,6 +42296,16 @@ function _builtinTimerRows(now) {
              remaining_ms: left, duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', pinned: true, group: 'tick' });
     }
   }
+  if (on.has('bellow')) {
+    // Each watched character's Boastful Bellow, while it is coming back.
+    for (const cl of mine) {
+      const c = (_meSkillCds.get(cl) || new Map()).get('bellow');
+      const left = c ? c.at + c.secs * 1000 - now : 0;
+      if (!(left > 0)) continue;
+      push({ id: 'bt|bellow|' + cl + '|' + c.at, name: 'Boastful Bellow', target: null, effect: 'Boastful Bellow',
+             remaining_ms: left, duration_sec: c.secs, bar_color: '#d29922', group: 'spell' });
+    }
+  }
   if (on.has('lull') || on.has('my_spells')) {
     for (const [tk, mp] of _buffLandingsByTarget) {
       for (const [sk, b] of mp) {
@@ -41063,6 +42401,81 @@ function _activeTimersSnapshot() {
 // (noteLootFromChat) is a separate, untouched consumer of the same chat lines.
 const _lootAuctions = new Map();   // sig → { items, openedAtMs, channel }
 let _lastLootSig     = null;
+
+// ── OpenDKP auctions, one timer each (the guild lead, 2026-10-02) ────────────
+// "add in loot auction timers on the control center as well as in the timers window for each
+// individual one. note that as people bid when it's low time left, it does extend it further out.
+// So the timers for those may end up changing." The bot's auction panel carries each live
+// auction's end (bot 3.1.186); this re-reads it every poll, so a late bid moves the timer's end
+// and the bar re-scales. Quiet on purpose — four auctions closing together must not mean four
+// spoken warnings. A dismissed one stays dismissed until it closes.
+const _dkpAuctions = new Map();          // auction_id → { id, item, ends_at_ms, first_ends_ms, started_ms, top_bid, extended }
+const _dkpAuctionsDismissed = new Set(); // auction_ids whose timer chip was ✕'d
+function _applyDkpAuctions(list, nowMs) {
+  const live = new Set();
+  for (const a of (Array.isArray(list) ? list : [])) {
+    const id = a && a.auction_id != null ? String(a.auction_id) : null;
+    const endMs = a && a.ends_at ? Date.parse(a.ends_at) : NaN;
+    if (!id || !Number.isFinite(endMs) || endMs <= nowMs) continue;
+    live.add(id);
+    const prev = _dkpAuctions.get(id);
+    const startedMs = (a.started_at && Date.parse(a.started_at)) || (prev && prev.started_ms) || nowMs;
+    const rec = { id, item: String(a.item_name || 'Auction'), ends_at_ms: endMs,
+      first_ends_ms: prev ? prev.first_ends_ms : endMs, started_ms: startedMs,
+      top_bid: a.top_bid != null ? a.top_bid : null };
+    rec.extended = rec.ends_at_ms > rec.first_ends_ms + 1000;
+    _dkpAuctions.set(id, rec);
+    const tid = 'auction|' + id;
+    if (_dkpAuctionsDismissed.has(id)) continue;
+    const t = _activeTimers.get(tid);
+    if (t && t.ends_at_ms === endMs) continue;
+    _activeTimers.set(tid, {
+      id: tid, name: rec.item + (rec.extended ? ' · extended' : ''), target: null, effect: rec.item,
+      started_at_ms: startedMs, ends_at_ms: endMs, duration_sec: Math.max(1, Math.round((endMs - startedMs) / 1000)),
+      color: 'gold', end_text: null, warn_ms: 0, warn_text: null, trigger_name: null, captures: null,
+      scope: 'loot', kind: 'loot', dismissible: true, test: false,
+    });
+  }
+  for (const id of [..._dkpAuctions.keys()]) {
+    if (live.has(id)) continue;
+    _dkpAuctions.delete(id); _dkpAuctionsDismissed.delete(id); _activeTimers.delete('auction|' + id);
+  }
+}
+// The Command Center's list: soonest to close first.
+function _dkpAuctionsSnapshot(nowMs) {
+  return [..._dkpAuctions.values()].filter(a => a.ends_at_ms > nowMs)
+    .sort((a, b) => a.ends_at_ms - b.ends_at_ms)
+    .map(a => ({ id: a.id, item: a.item, ends_at: new Date(a.ends_at_ms).toISOString(), ms_left: a.ends_at_ms - nowMs,
+      top_bid: a.top_bid, extended: a.extended }));
+}
+// Every 20 s, every 10 s while an auction is open. Nothing without a token, and nothing while the
+// guild has paused the fleet.
+function _pollDkpAuctions() {
+  const again = () => { const t = setTimeout(_pollDkpAuctions, _dkpAuctions.size ? 10_000 : 20_000); if (t.unref) t.unref(); };
+  const opts = _uploadOpts;
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (!opts || !opts.botUrl || !opts.token || down) return again();
+  try {
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/server-panel/auctions'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, timeout: 15_000,
+      headers: { 'Authorization': `Bearer ${opts.token}`, 'Accept': 'application/json', 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` } }, (res) => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          try { _applyDkpAuctions((JSON.parse(body) || {}).auctions, Date.now()); scheduleRender(); } catch { void 0; }
+        }
+        again();
+      });
+    });
+    req.on('error', again);
+    req.on('timeout', () => { req.destroy(); });
+    req.end();
+  } catch { again(); }
+}
+{ const t = setTimeout(_pollDkpAuctions, 15_000); if (t.unref) t.unref(); }
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
 // whole words only where intended).
@@ -41423,6 +42836,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
+  let lineMsg;  // the line without its timestamp — resolved once, only for a catalog_match trigger
   for (const t of all) {
     // An unticked personal trigger stays in the list (the dashboard keeps the
     // row so it can be ticked back on) and used to fire anyway — nothing on the
@@ -41472,9 +42886,13 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
         }
       } catch { /* bad end-early regex — already logged at compile time */ }
     }
-    if (!t._regex) continue;
-    let m;
-    try { m = t._regex.exec(line); } catch { continue; }
+    let m = null;
+    if (t._regex) { try { m = t._regex.exec(line); } catch { continue; } }
+    else if (t.catalog_match) {
+      // Matched by the spell catalog, on the message without its timestamp.
+      if (lineMsg === undefined) { const at = line.indexOf('] '); lineMsg = at >= 0 ? line.slice(at + 2).trim() : ''; }
+      m = _catalogTriggerMatch(t.catalog_match, lineMsg);
+    }
     if (!m) continue;
     // GINA numeric guards ({N>=50000}): the capture matched, but the trigger
     // only fires when the number clears the threshold. Cheap — most triggers
@@ -41496,6 +42914,7 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     // mob, our pet enrages at low HP, etc.) and the call would be wrong.
     // Don't apply to Zeal-condition triggers (no log-match captures there).
     const captures = _buildCaptureBag(m, line, {}, t._aliases);
+    _addMyTarget(t, captures, fileChar);
     if (_captureMatchesCharmPet(captures)) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.MATCHED,
                         stopped: true, reason: 'suppressed — capture is your charm pet' });
@@ -41947,13 +43366,15 @@ function _replayEvaluateLine(line, tsMs, ctx) {
   let firedAny = false;
   for (const t of all) {
     if (t.enabled === false) continue;   // rehearsal must match live
-    if (!t._regex) continue;   // gauge-condition triggers have no log line to replay
-    let m;
-    try { m = t._regex.exec(line); } catch { continue; }
+    // Gauge-condition triggers have no log line to replay; a catalog_match one does.
+    let m = null;
+    if (t._regex) { try { m = t._regex.exec(line); } catch { continue; } }
+    else if (t.catalog_match) { const at = line.indexOf('] '); m = _catalogTriggerMatch(t.catalog_match, at >= 0 ? line.slice(at + 2).trim() : ''); }
     if (!m) continue;
     // Same guard + bag as the live evaluator — rehearsal must match live.
     if (t._conditions && t._conditions.length && !_captureConditionsPass(t._conditions, m.groups)) continue;
     const captures = _buildCaptureBag(m, line, {}, t._aliases);
+    _addMyTarget(t, captures, ctx && ctx.character);
     // Suppression — mirror the live pipeline (evaluate AND enforce), journalled
     // as a replay row so a swallowed callout is visible in the checkpoint log.
     if (_captureMatchesCharmPet(captures)) {
@@ -42702,8 +44123,9 @@ async function main() {
   // Start the durable upload queue drain. Loads any pending entries from
   // disk first and kicks an immediate replay attempt — so anything left
   // over from a previous crashed session goes out as soon as the
-  // network's back.
-  if (!dryRun) startUploadQueueDrain({ botUrl, token });
+  // network's back. Not in local mode (no token): anything still queued from a signed-in session waits on
+  // disk for the next signed-in start, rather than going out unauthenticated and being dropped as a 401.
+  if (!dryRun && token) startUploadQueueDrain({ botUrl, token });
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
@@ -42750,8 +44172,12 @@ async function main() {
   // still learn about new releases promptly (without needing an encounter
   // upload to surface latest_agent_version).
   if (botUrl) {
-    pollLatestVersion({ botUrl });
-    setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
+    // Local mode skips it: a local Mimic gets agent updates inside Mimic's own releases (from GitHub),
+    // so it has no reason to contact the guild server at all.
+    if (token) {
+      pollLatestVersion({ botUrl });
+      setInterval(() => pollLatestVersion({ botUrl }), 10 * 60_000);
+    }
     // Officer-filed backfill request poll. Runs slightly more often than the
     // version probe since requests are actionable (officers expect agents to
     // notice within ~5 min). Initial run is delayed a few seconds so the
@@ -43174,6 +44600,7 @@ async function main() {
             if (b.character) {
               _pendingClickies.set(b.character.toLowerCase(),
                 { itemName, castMs, atMs: Date.now() });
+              try { _noteClickyUse(b.character, itemName, (parseEqTimestamp(line) || new Date()).getTime()); } catch (e) { void e; }
             }
             // A clicky logs no "You begin casting", so what it lands had nothing to match: SoW from
             // a Blood Orchid Katana onto a charmed pet stayed an untimed "SOW (?)" (the guild lead,
@@ -43378,6 +44805,8 @@ async function main() {
         // PvP assist spell evidence — cast starts + debuff landings on players.
         // The opt-in-log backfill runs the same hook, so both credit alike.
         if (!_sourceExcluded) { try { b.builder._pvpAssistLine(line); } catch (e) { void e; } }
+        // Threat: a failed cast hands back its hate; zoning clears yours and your pet's.
+        try { b.builder._threatLine(line); } catch (e) { void e; }
         // Other players' cast-starts → recipient-side heal attribution ring.
         if (!_sourceExcluded) noteCasterStart(line);
         // NPC cast-starts + landings → "what did that mob just cast", and the
@@ -43638,6 +45067,8 @@ async function main() {
         // Taunt, discipline activations, and enrage start/end. Raw line for
         // the same reason — misses and disc texts match no keep pattern.
         try { _meNoteRawLine(line, b.character); } catch { void 0; }
+        // XP events: each experience line with the bars around it (FB-37 option B; live tail only).
+        try { _xpNoteRawLine(line, b.character, Date.now()); } catch { void 0; }
         // Corpse DM: your own death, with where the corpse lies (live tail only, so a backfill of an old
         // log never DMs anyone).
         try { _corpseNoteLine(line, b.character); } catch { void 0; }
@@ -43714,6 +45145,7 @@ module.exports = {
   parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
+  _noteMobDeathFromState,
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,
   CH_CAST_MS, CH_INTERRUPT_SLACK_MS, CH_INTERRUPT_LINGER_MS,
@@ -43778,8 +45210,10 @@ module.exports = {
   // drive the shipped code.
   SUGGESTED_TRIGGERS, SUGGESTED_RETIRED_PATTERNS, PERSONAL_CARRY_FIELDS,
   _templateToPersonalRow, _compilePersonalTrigger, _migrateRetiredSuggestedPattern,
+  _catalogTriggerMatch, _normCatalogMatch, _addMyTarget, _buildCaptureBag, _expandTemplate, _meNoteRawLine,
+  _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
-  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget,
+  _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
