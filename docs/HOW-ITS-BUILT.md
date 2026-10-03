@@ -2460,6 +2460,12 @@ re-checks presence so a crash-and-relaunch defers instead of yanking Mimic away.
 Otherwise it only NAGS, hourly, via an OS `Notification` — chosen because it
 structurally cannot take focus or raise a window over the game. **Bootstrap
 caveat: this can only auto-install for people already on 2.3.0+.**
+**First run after any update (beta `0bd27df1`, 2026-10-02, FB-50):** a CLICKED "Restart to
+install" used to relaunch with the window shown and focused, and a member's game crashed
+when it landed over the raid. `createMainWindow` now records `lastRunVersion`; on the first
+run of a new version (or an existing config without the mark) the window starts hidden and
+shows only if `_checkEqRunning` says EverQuest is closed, else tray + silent notification.
+DECISIONS §133.
 
 ### Idle backoff + resource readout — 2026-08-04
 `_checkEqRunning` spawned `tasklist.exe` unconditionally every 10s (~8,640/day on

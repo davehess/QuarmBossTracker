@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
 | **The Oct 1–2 server patch notes** | **§130, §132.** Bot 3.1.190 + web 1.8.77: the corpse DM says when and where a PoP corpse moves. Bot 3.1.191 + web 1.8.78: Xanamech is off the board and the 72 h override; his website row still needs one delete. Agent 3.7.71 on beta `c82ae5b4` reads all 168 unread Rallos Zek lines: NPC deaths, no-killer deaths, forfeits (🏃), the "exults" kill. NPC deaths post to #pvp again, about 50 a day. Still open: the Oct 2 "Glory lost/gained" wording (none seen yet); whether an open-world raid-target kill starts the instance timer | the guild lead: (0) approve or run `delete from bot_boards where boss_id = 'xanamech_nezmirthafen';` (§132); (1) on the beta, run Opt-in Logs from Sep 28 to send the missed deaths; (2) say if NPC deaths should record without posting to #pvp; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
 | **Our own zone map (A website, then B Mimic overlay)** | **§131.** Queued, not started — "A then B, but not yet". First step when it starts: mirror pather routes (`grid`, `grid_entries`) into the weekly sync | the guild lead: say when to start; ask staff before anything shows live NPC positions |
 | **Fifteen more suggested triggers; four dead ones fixed** | **§129.** Bot 3.1.189 (catalog `cc`) + web 1.8.76 on `main`; agent 3.7.70 on beta `e2f06f69`. FD failed / broken, resist naming the mob ({mytarget}), immune slow/snare/stun, can't mez/charm, mez / slow / fear wore off, silenced, LoS, range, mana, invis fading. Snared/mezzed/feared now match by the spell's effect; interrupted has the real text. Every line from the server's own messages | the guild lead: (1) on the beta, tick a few in the Triggers tab and get resisted once — check the alert names the mob you were casting at; (2) on a monk, fail a feign and check "FD FAILED"; (3) say whether the buff-dropped triggers should change — see §129, unverified |
@@ -6168,3 +6169,51 @@ the agent's `logsync.pvp-unmatched.json` from their machine.
   missed deaths. Backfill rows record but do not repost to #pvp.
 - Tests: `test/pvp-glory.test.js` (each family, invented names) and `test/pvp-glory-bot.test.js`
   (line guilds kept, NPC/no-killer deaths recorded, forfeit not, the 🏃 post).
+
+### 133. Buff queue headers take the click; an update no longer opens over the game (2026-10-02, beta `16bf4795` + `0bd27df1`)
+
+- **Buff queue (FB-49).** The guild lead: *"i do not see my mouse over the buff queue and can't click
+  it"*, and FB-49 *"Buff queue is not clickable for opening these sections"*.
+  - Sections start collapsed, so a header is the first thing clicked. A header is a `<div>`, and the
+    preload's hover handshake arms the window only over `button, a, input, select, textarea,
+    [role=button], [data-wp-interact]`. On a locked overlay the click went to EQ.
+  - Why the cursor vanishes: the game draws its own cursor and blanks the Windows one over its window
+    (§13). Over a click-through overlay the game's cursor is drawn UNDER the overlay. The Windows
+    pointer shows only where the overlay takes the mouse.
+  - Fix: the header carries `data-wp-interact`. The rest of the panel stays click-through, as every
+    overlay's body does. Rule added to the CLAUDE.md parity checklist.
+- **Crash on update (FB-50).** A member, stable 2.7.6: *"crash game when starting it up while already
+  have game running"*. The guild lead: *"i believe they went to update and it crashed"*.
+  - Evidence: the old build's last upload was at 01:57:35 UTC. The game log (attached to the report)
+    stops mid-raid at 01:57:44. The same characters upload from the new version afterwards. No crash
+    dump was uploaded.
+  - Cause: only the unattended install-on-EQ-close path set `pendingSilentRelaunch`. A clicked "Restart
+    to install update" relaunched with the main window shown and focused. That was deliberate (*"they
+    asked for it and expect the window back"*), but a player who clicks it and goes back to the raid
+    has the window land over the game. Taking focus from a fullscreen DirectX 8 game is the classic
+    way to crash it. Most likely, not proven.
+  - Fix, in the NEW build because the old build ran the update and sets nothing:
+    - `createMainWindow` records `lastRunVersion`. A changed version, or an existing config without
+      the mark, is the first run after an update.
+    - On that run the window starts hidden. `_checkEqRunning` decides: EverQuest closed → the window
+      shows; EverQuest open → tray plus a silent notification.
+    - A brand-new install, autostart and the unattended path are unchanged.
+    - This protects the update that delivers it: 2.7.6 → the next stable starts quietly.
+  - Ruled out by a read of the startup path: nothing writes Zeal, DLL or UI files without a guard,
+    nothing sends input or messages to the game window, and nothing kills it. Not changed, possibly
+    related: the screen-setup prompt is a modal dialog with no parent, and a fullscreen game changing
+    the display mode can raise it over the game.
+  - `test/mimic-update-relaunch.test.js` runs both new blocks against fakes.
+- **A test with a fixed date.** `test/suggested-triggers-more.test.js` (§129) wrote its log lines with a
+  fixed "Fri Oct 02 21:10:01" stamp, and `{mytarget}` trusts a "You begin casting" line for 15 s only.
+  It passed the day it was written and failed from the next morning. It now stamps lines with the
+  current time.
+- **Feral Avatar / Savagery timers, asked, not changed.** The guild lead: *"we need the timer on these
+  feral avatar and savagery in the queue"* — the time left on targets.
+  - Today a target already carrying the buff shows ⏳ on the Shaman or Beastlord's ⚡ queue.
+    Auto-class follows the EQ window in front, so on a boxed monk the section is not there at all.
+  - One real gap found: a raider not running Mimic is timed from the catalog, 65 ticks, but Zeal
+    reported **102** ticks on a raider tonight (buff-duration AAs). So after about 6.5 minutes the
+    queue moves them back to "needs it", with no timer, for the last ~3.5 minutes they still carry
+    the buff.
+  - Waiting on the guild lead to say which view and character showed no timer before changing either.
