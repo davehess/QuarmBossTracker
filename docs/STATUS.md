@@ -103,6 +103,8 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Canvas: presets are the real overlays, tight margins, the HUD ring + its builder (alpha `5adafea8`, agent 3.7.74
+  beta for the Command Center, 2026-10-03).** Waiting on the guild lead's look in the alpha. §142.
 - **⏳ PoP overlay Quests mode (Mimic beta `b84e25b8`, 2026-10-03).** Slides / Quests toggle; every PoP guide step with
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta

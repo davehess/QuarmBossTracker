@@ -940,6 +940,13 @@ Tests: `test/coleader-feedback-batch.test.js`, `test/who-scroll-filter.test.js`,
   `test/zeal-bars-and-screens.test.js`. DECISIONS §80.
 
 ### Timers canvas — placed, sized timer panels (agent 3.7.42 · Mimic beta, 2026-09-29)
+- **Presets are the real overlays (alpha `5adafea8`, 2026-10-03, §142):** each Groups preset in `parts.js` carries
+  `embed: <overlay key>` (the HUD also `style`); choosing it adds an `overlay` panel (`dropEmbed`), "as pieces"
+  keeps the old stack. `.panel.ov` has no plate; each overlay page trims its padding under `body.wp-in-canvas`
+  (Command Center's on beta, agent 3.7.74). Fit to content: `embedWant` (a page's `window.wpFitSize`, else `#wrap`
+  / `.hud`). `me.html?wpstyle=hud|a` pins Ring or Box; the ⚙ builder docked calls `window.parent.wpCanvasWiden`.
+  Test: `test/canvas-real-presets.test.js`.
+
 `apps/mimic/canvas.html`: one transparent window per screen (`createCanvasWindow`, key `canvas`, flag
 `showCanvas`), click-through always — panels take the mouse by the hover handshake (`body[data-wp-overlay]`
 counts it as an overlay in the preload). Each panel is `triggers.html?part=timers|callouts&panel=<id>` in an
