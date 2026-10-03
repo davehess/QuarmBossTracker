@@ -104,6 +104,21 @@ export const STEP_MORE: Record<string, StepMore> = {
   flag_saryrn: { back: [at('torment_return'), at('torment_return', 1)], auto: FLAG_AUTO },
   flag_keeper: { back: [at('torment_return', 1)], auto: FLAG_AUTO },
 
+  // The say/hand-in fill (the guild lead, 2026-10-03: "all of the things to say or do for any of the pop
+  // quests or flags"). Nitram Anizok's trade is poinnovation/Nitram_Anizok.lua (check_turn_in 9295, 9426,
+  // 9434); the wings are solrotower/player.lua. The tokens are also in popGuide.ts's detail, which is what
+  // loads their item cards.
+  innovation_door_key: {
+    expect: 'A raid, and a while. Finding the three parts (about 2% each) is the slow part; once they are handed in Nitram walks to the beast and the fight is a raid fight. Everyone who hails him with the kill credit gets the flag, and he leaves after 10 minutes.',
+    turnIn: [
+      { to: at('innovation_door_key'), give: '[[Copper Node#9295]], [[Bundle of Super Conductive Wires#9426]] and [[Intact Power Cell#9434]], all three in one trade', get: 'Nitram walks to the beast and puts the power unit in; kill it, then hail him for the flag' },
+    ],
+    back: [at('innovation_door_key', 2)],
+  },
+  flag_solro_minis: {
+    expect: 'A raid, a wing at a time, in any order. Each wing is a boss fight and then a click on its flaming cauldron, which stays 30 minutes. Everyone clicks their own.',
+  },
+
   // Essences of Power (§95): ponightmare/Aid_Eino.lua, poknowledge/Councilwoman_Kerasha.lua.
   essences_escort: {
     expect: 'A group or two. The waves come at points along his walk, with a rest between each. He waits 30 minutes for the strand at the portal, then leaves, and only one person gets the Fist per run, so plan a run each.',

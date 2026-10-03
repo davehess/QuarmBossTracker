@@ -17,13 +17,22 @@
 // (eqemu_spawn2), written Y then X — the order /loc prints and Zeal's /map takes (checked against
 // PQDI, which labels its coordinates "(Y, X, Z)"). Items are written [[Name#itemId]] and get the
 // site's item card on hover.
+//
+// The guild lead, 2026-10-03: the Mimic PoP overlay should show "all of the things to say or do for
+// any of the pop quests or flags", so the steps that were only "hail X" or "kill X" were filled from the
+// quest scripts. Every phrase added then carries `src`, the eqemu_quest_scripts path it was read from
+// (test/pop-guide-steps.test.js holds each script's own keyword list). A step whose script is a click
+// and no words says so in its detail and has no `says`. ⚠ The scripts are upstream's
+// (SecretsOTheP/quests): Quarm may differ, so where a step says "the script", that is what it rests on.
 
 import { POP_FLAGS } from './popFlags';
 
 export type Who = 'solo' | 'group' | 'raid';
 // sit: the NPC only answers while you sit (the Seer's script checks IsSitting(); the guild lead,
 // 2026-09-28: "For Seer Mal Nae'Shi i had to sit down first"). The page puts a /sit chip first.
-export type Say = { to: string; text: string; sit?: boolean };
+// src: the quest script the phrase was read from (an eqemu_quest_scripts path, e.g.
+// potranquility/Miak_the_Searedsoul.lua).
+export type Say = { to: string; text: string; sit?: boolean; src?: string };
 export type Loc = { npc: string; zone: ZoneKey; y: number; x: number; note?: string };
 
 export type GuideItem = {
@@ -67,6 +76,9 @@ export const ZONE_NAMES = {
   hohonora: 'Halls of Honor',
   ponightmare: 'Plane of Nightmare',
   droga: 'Droga',
+  codecay: 'Crypt of Decay',
+  povalor: 'Plane of Valor',
+  solrotower: 'Tower of Solusek Ro',
 } as const;
 export type ZoneKey = keyof typeof ZONE_NAMES;
 
@@ -142,7 +154,35 @@ const L = {
   einoPok: { npc: 'Aid Eino', zone: 'poknowledge', y: -11, x: 1005, note: 'top of the library elevator' },
   einoTree: { npc: 'The big tree by the waterfall', zone: 'ponightmare', y: -510, x: 1687, note: 'upper plateau; say it right beside the tree' },
   kerasha: { npc: 'Councilwoman Kerasha', zone: 'poknowledge', y: 0, x: 1003, note: 'top of the library elevator' },
+  // The say/hand-in fill (2026-10-03). y/x are eqemu_spawn2 rows for placed NPCs, eqemu_doors pos_y/pos_x
+  // for the things you click, and, for an NPC the quest script spawns itself, the spot the script names
+  // (Tarkil Adan: codecay/#High_Priest_Ultor_Szanvon.lua; Loreseeker Maelin: poinnovation/#Chronographer_Muon.lua).
+  thelinOutside: { npc: 'Thelin Poxbourne', zone: 'ponightmare', y: 1104, x: -1519, note: 'outside the hedge maze' },
+  miak: { npc: 'Miak the Searedsoul', zone: 'potranquility', y: 255, x: -2255, note: 'next to the Plane of Fire portal' },
+  tarkil: { npc: 'Tarkil Adan', zone: 'codecay', y: 330, x: 309, note: 'appears where High Priest Ultor Szanvon dies' },
+  nitram: { npc: 'Nitram Anizok', zone: 'poinnovation', y: 1532, x: 974, note: 'in the junkyard' },
+  nitramBeast: { npc: 'Xanamech Nezmirthafen', zone: 'poinnovation', y: 1583, x: -711, note: 'waits here until Nitram wakes it' },
+  factoryDoor: { npc: 'The main factory door', zone: 'poinnovation', y: 84, x: 0, note: 'click it once Nitram has given you the flag' },
+  loreseeker: { npc: 'Loreseeker Maelin', zone: 'poinnovation', y: -837, x: 763, note: 'appears once Chronographer Muon sends you up' },
+  timeMachine: { npc: 'The time machine', zone: 'poinnovation', y: -858, x: 886, note: 'click it with the Quintessence in your bags' },
+  glassSwitchA: { npc: 'Glass-door switch', zone: 'povalor', y: 1802, x: 304, note: 'hold the globe on your cursor and click it' },
+  glassSwitchB: { npc: 'Glass-door switch (the other one)', zone: 'povalor', y: 1909, x: 375, note: 'either switch works' },
+  // The five Sol Ro wings, in the order of the server's sol_room digits: the boss, then the cauldron you click.
+  xuzl: { npc: 'Xuzl', zone: 'solrotower', y: -716, x: 1835 },
+  xuzlCauldron: { npc: 'Xuzl’s flaming cauldron', zone: 'solrotower', y: -315, x: 1836, note: 'click it after the kill' },
+  arlyxir: { npc: 'Arlyxir', zone: 'solrotower', y: 1684, x: 1726 },
+  arlyxirCauldron: { npc: 'Arlyxir’s flaming cauldron', zone: 'solrotower', y: 1944, x: 1571, note: 'click it after the kill' },
+  dresolik: { npc: 'The Protector of Dresolik', zone: 'solrotower', y: 1584, x: 606, note: 'appears when the last of the four Guardians of Dresolik dies' },
+  dresolikCauldron: { npc: 'Dresolik’s flaming cauldron', zone: 'solrotower', y: 1479, x: 216, note: 'click it after the Protector dies' },
+  rizlona: { npc: 'Rizlona', zone: 'solrotower', y: 2384, x: -1103, note: 'a second Rizlona stands up where she falls; kill that one too' },
+  rizlonaCauldron: { npc: 'Rizlona’s flaming cauldron', zone: 'solrotower', y: 2664, x: -944, note: 'click it after the second one dies' },
+  jiva: { npc: 'Jiva', zone: 'solrotower', y: -257, x: -2252 },
+  jivaCauldron: { npc: 'Jiva’s flaming cauldron', zone: 'solrotower', y: 59, x: -2094, note: 'click it after the kill' },
 } satisfies Record<string, Loc>;
+
+// Scripts quoted more than once below.
+const MAZE = 'ponightmare/encounters/Maze.lua';
+const MAELIN = 'poknowledge/Grand_Librarian_Maelin.lua';
 
 const PROJECTION = 'Then hail A Planar Projection before anyone leaves.';
 
@@ -271,22 +311,47 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Needs Mavuin’s “information” first. The Tribunal checks that you carry a Mark but does not take it; without one it says “You must prove yourself in one of our trials”. Keep the Mark.',
     says: [{ to: 'The Tribunal', text: 'mavuin sent me' }], where: [L.tribunalA] },
   { key: 'justice_mavuin_hail', section: 't1', who: 'solo', must: true, title: 'Go back and hail Mavuin: that is your Justice flag',
-    detail: 'The Bastion of Thunder shrine in the Plane of Storms checks for this flag, so do not skip it.', where: [L.mavuin] },
+    detail: 'The Bastion of Thunder shrine in the Plane of Storms checks for this flag, so do not skip it. Needs the Tribunal’s “mavuin sent me” first (your Mavuin flag at 2); this hail moves it to 3, which the Valor and Storms portals in Tranquility check, and so does Aerin`Dar’s projection. His reply points you to Karana and Mithaniel Marr.',
+    says: [{ to: 'Mavuin', text: 'Hail', src: 'pojustice/#Mavuin.lua' }], where: [L.mavuin] },
   { key: 'justice_seventh_hammer', section: 't1', who: 'raid', title: 'Optional: The Seventh Hammer (all six Marks)',
     detail: 'With all six Marks in your bags, tell a Tribunal “knowledge” for [[The Mark of Justice#31599]]; the Marks are checked, not taken. With only some it says there are more trials yet. Hold The Mark of Justice on your cursor and click a trial portal to reach the Hammer. Per person, and not needed for any flag.',
     says: [{ to: 'The Tribunal', text: 'knowledge' }], where: [L.tribunalA] },
   // Innovation
+  // The "key" is a flag, not an item (poinnovation/Nitram_Anizok.lua, poinnovation/player.lua door 7,
+  // poinnovation/#Xanamech_Nezmirthafen.lua; Xanamech's loot table holds no key). The Seer lists it as poi_door.
   { key: 'innovation_door_key', section: 't1', who: 'raid', title: 'Optional: the factory door key from Xanamech Nezmirthafen',
-    detail: 'One person in the raid needs it.' },
+    detail: 'One person in the raid needs it. The script gives no item: Xanamech Nezmirthafen is the beast Nitram Anizok builds, and killing it lets you hail Nitram for the flag that opens the main factory door. His talk is only story (“collecting materials” is where he names the parts); the trade is what starts it: give him a [[Copper Node#9295]], a [[Bundle of Super Conductive Wires#9426]] and an [[Intact Power Cell#9434]] (each drops at about 2% from Innovation’s clockwork), all three in one trade. He walks to the beast and puts the power unit in; kill it, then hail him while your group or raid still holds the kill credit. He leaves 10 minutes later. Then click the factory door.',
+    says: [
+      { to: 'Nitram Anizok', text: 'Hail', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok', text: 'advanced tinkering', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok', text: 'construction', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok', text: 'instinct for survival', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok', text: 'combination of batteries', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok', text: 'collecting materials', src: 'poinnovation/Nitram_Anizok.lua' },
+      { to: 'Nitram Anizok (after the beast dies)', text: 'Hail', src: 'poinnovation/Nitram_Anizok.lua' },
+    ],
+    where: [L.nitram, L.nitramBeast, L.factoryDoor] },
   { key: 'innovation_test', section: 't1', who: 'solo', must: true, title: 'Innovation, before the Behemoth: tell Giwin Mirakon you will test the machine',
     says: [{ to: 'Giwin Mirakon', text: 'I will test the machine' }], where: [L.giwin] },
   { key: 'flag_behemoth', section: 't1', who: 'raid', must: true, flag: 'behemoth_dead', title: 'Kill the Manaetic Behemoth, then hail Giwin Mirakon',
-    detail: 'He appears near the boss room after the kill. The Behemoth wakes when the 10th clockwork device dies.', link: popZone('innovation') },
+    detail: 'He appears near the boss room after the kill. The Behemoth wakes when the 10th clockwork device dies. He answers only the group or raid that has the kill credit, and the hail gives the real flag only if you told Giwin you would test the machine first; otherwise it is a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards.',
+    says: [{ to: 'Giwin Mirakon (appears after the kill)', text: 'Hail', src: 'poinnovation/#Giwin_Mirakon.lua' }],
+    link: popZone('innovation') },
   // Nightmare
   { key: 'nightmare_adroha', section: 't1', who: 'solo', must: true, title: 'Nightmare, before the maze: talk to Adroha Jezith',
     says: [{ to: 'Adroha Jezith', text: 'Hail' }, { to: 'Adroha Jezith', text: 'tortured by nightmares' }], where: [L.adroha] },
   { key: 'flag_hedge', section: 't1', who: 'group', must: true, flag: 'hedge_event', title: 'Thelin’s hedge maze (Plane of Nightmare), then hail Thelin Poxbourne',
-    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule.', link: popZone('nightmare') },
+    detail: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. Opens the Lair of Terris Thule. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the [[Dagger Blade Shard#9258]]: hand it to Thelin for [[Thelin’s Dagger#9259]]. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.',
+    says: [
+      { to: 'Thelin Poxbourne (outside the maze)', text: 'Hail', src: MAZE },
+      { to: 'Thelin Poxbourne (outside the maze)', text: 'dagger', src: MAZE },
+      { to: 'Thelin Poxbourne (outside the maze)', text: 'help', src: MAZE },
+      { to: 'Thelin Poxbourne (outside the maze)', text: 'ready', src: MAZE },
+      { to: 'Thelin (inside the dream)', text: 'Hail', src: MAZE },
+      { to: 'Thelin (inside the dream)', text: 'ready', src: MAZE },
+      { to: 'Thelin (after he and Terris have talked)', text: 'Hail', src: MAZE },
+    ],
+    where: [L.thelinOutside], link: popZone('nightmare') },
   // Essences of Power, part 1 (the guild lead, 2026-09-29: "consume this too and put it on the pop
   // guide", eqprogression.com/essences-of-power-quest-pop-elemental-gods). Waves, times and the
   // one-strand-per-run limit are read off ponightmare/Aid_Eino.lua and the Dreamkeeper's loot table.
@@ -300,14 +365,20 @@ export const GUIDE_ITEMS: GuideItem[] = [
   // Nightmare B
   { key: 'flag_tthule', section: 't2', who: 'raid', must: true, flag: 'tthule_dead', title: 'Kill Terris Thule (Lair of Terris Thule)',
     detail: PROJECTION, link: popZone('ponb') },
-  { key: 'nightmare_poxbourne', section: 't2', who: 'solo', must: true, title: 'Hail Elder Poxbourne in Tranquility', where: [L.poxbourne] },
+  { key: 'nightmare_poxbourne', section: 't2', who: 'solo', must: true, title: 'Hail Elder Poxbourne in Tranquility',
+    detail: 'He answers as Thelin, and only once your Thelin flag stands at 3: Terris Thule dead and her projection hailed. Before that Adroha says there is no response to be had from Thelin. This hail is the other half of the Torment portal check, with the second Elder Fuirstel visit. His script prints “You receive a character flag!” (no “have”).',
+    says: [{ to: 'Elder Poxbourne', text: 'Hail', src: 'potranquility/Elder_Poxbourne.lua' }], where: [L.poxbourne] },
   // Crypt of Decay
   { key: 'cod_fuirstel_before', section: 't2', who: 'solo', must: true, title: 'Crypt of Decay, first: hail Elder Fuirstel',
-    detail: 'Only answers once your Grummus flag is done.', where: [L.fuirstel] },
+    detail: 'Only answers once your Grummus flag is done, and only if you asked Adler about the ward before Grummus fell: the projection after Grummus moves your Fuirstel flag to 2 only from 1, and this hail moves it from 2 to 3. Before that he only groans. Do it before Bertoxxulous dies, because his projection moves the flag from 3 to 4.',
+    says: [{ to: 'Elder Fuirstel', text: 'Hail', src: 'potranquility/Elder_Fuirstel.lua' }], where: [L.fuirstel] },
   { key: 'flag_carprin', section: 't2', who: 'group', flag: 'carprin_cycle', check: true, title: 'The Carprin event, then hail Tarkil Adan',
-    detail: 'Five nameds. Tarkil puts the key to the lower Crypt on your keyring.', link: popZone('cod') },
+    detail: 'Five nameds. Tarkil puts the key to the lower Crypt on your keyring. (The upstream script sets your bertox_key flag instead, which the door to the lower Crypt checks, and adds no item.) He appears where High Priest Ultor Szanvon dies and answers only the group or raid with the kill credit, once each; he leaves after 10 minutes.',
+    says: [{ to: 'Tarkil Adan', text: 'Hail', src: 'codecay/Tarkil_Adan.lua' }], where: [L.tarkil], link: popZone('cod') },
   { key: 'flag_bert', section: 't2', who: 'raid', must: true, flag: 'bert_dead', title: 'Kill Bertoxxulous', detail: PROJECTION, link: popZone('codb') },
-  { key: 'cod_fuirstel_after', section: 't2', who: 'solo', must: true, title: 'Hail Elder Fuirstel again', where: [L.fuirstel] },
+  { key: 'cod_fuirstel_after', section: 't2', who: 'solo', must: true, title: 'Hail Elder Fuirstel again',
+    detail: 'Needs Bertoxxulous dead and his projection hailed (that moves your Fuirstel flag to 4); this hail moves it to 5. It is the other half of the Torment portal check, with Elder Poxbourne.',
+    says: [{ to: 'Elder Fuirstel', text: 'Hail', src: 'potranquility/Elder_Fuirstel.lua' }], where: [L.fuirstel] },
   // Storms
   { key: 'flag_askr', section: 't2', who: 'group', must: true, flag: 'askr_quest', title: 'Askr the Lost: one head, one bag, one meld (Plane of Storms)',
     detail: 'Everyone does their own. 1) Hand Askr ONE [[Storm Giant Head#28749]] (any camp’s; 60% from its giants). Then say “it was me”, “paying attention”, and “continue” twice for [[Askr’s Bag of Verity#17192]]. 2) Combine a [[Storm Volaas Beard#28750]] (south camp), a [[Storm Taarid Bone#28751]] (west) and a [[Storm Satuur Sash#28764]] (north) in the bag; give him [[Askr’s Sealed Bag of Verity#11487]]. 3) Say “bastion of thunder” for a second bag; combine two [[Esoteric Medallion#28765]]s from DIFFERENT camps in it (south, west or north; each camp’s named drops three) and give him the [[Esoteric Meld#11488]]. Leaving the zone resets his conversation, so answer him right after each hand-in.',
@@ -320,8 +391,10 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'Needs Askr’s flag AND your Justice flag (the last Mavuin hail). The “Talisman of Thunderous Foyer” is this click, a flag, not a keyring item. Without both flags the shrine says it finds no mystic symbol. You land in the lower halls.',
     where: [L.stormsShrine] },
   // Valor
+  // A click and no words (povalor/player.lua doors 8 and 9, the switches by the glass door 2).
   { key: 'valor_globe', section: 't2', who: 'group', title: 'Optional: [[A Crystalline Globe#25596]] for Aerin`Dar’s door',
-    detail: 'At least one person needs it. The patch doubled the globe-piece drops.' },
+    detail: 'At least one person needs it. The patch doubled the globe-piece drops. Nobody speaks to anything here: hold the globe on your cursor and click either of the two switches by the glass door, and the glass door opens.',
+    where: [L.glassSwitchA, L.glassSwitchB] },
   { key: 'flag_aerindar', section: 't2', who: 'raid', must: true, flag: 'aerindar_dead', title: 'Kill Aerin`Dar (Plane of Valor)',
     detail: PROJECTION, link: popZone('valor') },
   { key: 'valor_zone_hoh', section: 't2', who: 'solo', must: true, title: 'Zone into the Halls of Honor by the Valor underground tunnel' },
@@ -332,9 +405,19 @@ export const GUIDE_ITEMS: GuideItem[] = [
   { key: 'torment_sphere', section: 't2', who: 'raid', title: 'Optional: [[A Screaming Sphere#22954]] for Saryrn’s tower door',
     detail: 'One person needs it. An Unimaginable Horror now respawns in 30 minutes.' },
   { key: 'flag_keeper', section: 't2', who: 'raid', flag: 'keeper_dead', title: 'The Keeper of Sorrows, then hail Tylis Newleaf',
-    detail: 'A small raid; resets every 2 hours. Whoever asks for it must be flagged this far.', link: popZone('torment') },
+    detail: 'A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.',
+    says: [
+      { to: 'Tylis Newleaf (in Torment)', text: 'Hail', src: 'potorment/#Tylis_Newleaf.lua' },
+      { to: 'Tylis Newleaf (in Torment)', text: 'ready to return', src: 'potorment/#Tylis_Newleaf.lua' },
+    ],
+    link: popZone('torment') },
   { key: 'flag_saryrn', section: 't2', who: 'raid', must: true, flag: 'saryrn_dead', title: 'Kill Saryrn', detail: PROJECTION, link: popZone('torment') },
   { key: 'torment_return', section: 't2', who: 'solo', title: 'Hail Fahlia Shadyglade and Tylis Newleaf in the sick bay, then Maelin',
+    detail: 'Story only: neither hail gives a flag. Fahlia thanks you, and Tylis points you at the Grand Librarian in Knowledge for the cipher.',
+    says: [
+      { to: 'Fahlia Shadyglade', text: 'Hail', src: 'potranquility/Fahlia_Shadyglade.lua' },
+      { to: 'Tylis Newleaf', text: 'Hail', src: 'potranquility/Tylis_Newleaf.lua' },
+    ],
     where: [L.fahlia, L.tylis, L.maelin] },
 
   // ── Tier three ────────────────────────────────────────────────────────────
@@ -351,24 +434,78 @@ export const GUIDE_ITEMS: GuideItem[] = [
     says: [{ to: 'Karana', text: 'I will follow the path of the Fallen.' }, { to: 'Karana', text: 'Send me on my path.' }],
     where: [L.karana], link: popZone('bot') },
   // Halls of Honor
-  { key: 'hoh_trial_dragon', section: 't3', who: 'raid', must: true, title: 'Halls of Honor trial 1 (the dragon), then hail Trydan Faye', where: [L.trydan] },
-  { key: 'hoh_trial_villagers', section: 't3', who: 'raid', must: true, title: 'Trial 2 (save the villagers), then hail Rhaliq Trell', where: [L.rhaliq] },
+  // The three trial givers (hohonora/encounters/RyddaDar.lua, Villagers.lua, Crazed.lua). Each starts the
+  // trial on "ready"; after a win a second copy of the same NPC stands there and its hail is your credit
+  // (one digit of hohtrials), printed as an "ethereal mist" line rather than the usual flag message.
+  { key: 'hoh_trial_dragon', section: 't3', who: 'raid', must: true, title: 'Halls of Honor trial 1 (the dragon), then hail Trydan Faye',
+    detail: 'Only “ready” starts the trial; Hail and “trials” are his story. After the win he stands here again; hail him while you are in the group or raid that won. That is your credit for this trial, with a line about an ethereal mist instead of the usual flag message.',
+    says: [
+      { to: 'Trydan Faye (to start the trial)', text: 'Hail', src: 'hohonora/encounters/RyddaDar.lua' },
+      { to: 'Trydan Faye (to start the trial)', text: 'trials', src: 'hohonora/encounters/RyddaDar.lua' },
+      { to: 'Trydan Faye (to start the trial)', text: 'ready', src: 'hohonora/encounters/RyddaDar.lua' },
+      { to: 'Trydan Faye (after the win)', text: 'Hail', src: 'hohonora/encounters/RyddaDar.lua' },
+    ],
+    where: [L.trydan] },
+  { key: 'hoh_trial_villagers', section: 't3', who: 'raid', must: true, title: 'Trial 2 (save the villagers), then hail Rhaliq Trell',
+    detail: 'Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit (the same ethereal mist line).',
+    says: [
+      { to: 'Rhaliq Trell (to start the trial)', text: 'Hail', src: 'hohonora/encounters/Villagers.lua' },
+      { to: 'Rhaliq Trell (to start the trial)', text: 'ready', src: 'hohonora/encounters/Villagers.lua' },
+      { to: 'Rhaliq Trell (after the win)', text: 'Hail', src: 'hohonora/encounters/Villagers.lua' },
+    ],
+    where: [L.rhaliq] },
   { key: 'hoh_trial_villager', section: 't3', who: 'raid', must: true, title: 'Trial 3 (save one villager), then hail Alekson Garn',
-    detail: 'A failed trial can be retried after 10 minutes.', where: [L.alekson] },
+    detail: 'A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks.',
+    says: [
+      { to: 'Alekson Garn (to start the trial)', text: 'Hail', src: 'hohonora/encounters/Crazed.lua' },
+      { to: 'Alekson Garn (to start the trial)', text: 'ready', src: 'hohonora/encounters/Crazed.lua' },
+      { to: 'Alekson Garn (after the win)', text: 'Hail', src: 'hohonora/encounters/Crazed.lua' },
+    ],
+    where: [L.alekson] },
   { key: 'flag_marr', section: 't3', who: 'raid', must: true, flag: 'marr_dead', title: 'Kill Mithaniel Marr (Temple of Marr)', detail: PROJECTION, link: popZone('hoh') },
   // Tactics
   { key: 'tactics_maelin_before', section: 't3', who: 'solo', must: true, title: 'Before the Zeks: visit Grand Librarian Maelin',
+    detail: 'One visit, split into the next two steps so each can tick: Hail gives the cipher, and “lore” has him read Karana’s and Mithaniel’s notes. “information” has nothing for you until the Zek notes exist.',
     says: [{ to: 'Grand Librarian Maelin', text: 'Hail' }, { to: 'Grand Librarian Maelin', text: 'what lore' }, { to: 'Grand Librarian Maelin', text: 'what information' }],
     where: [L.maelin] },
+  // Maelin's four readings, each a different word to the same NPC (poknowledge/Grand_Librarian_Maelin.lua):
+  // Hail = the cipher (cipher 1), lore = the Karana + Mithaniel notes (zebuxoruk 1), information = the Zek
+  // notes (zeks 6) and, later, the power source (zebuxoruk 2). Order matters; the branches are exclusive.
+  { key: 'maelin_cipher', section: 't3', who: 'solo', must: true, flag: 'cipher_1', title: 'The cipher: take Saryrn’s and Mithaniel Marr’s halves to Grand Librarian Maelin',
+    detail: 'Hail him once you hold both flags: the Saryrn projection and the Mithaniel Marr projection each gave you half. He joins them, gives your cipher flag and clears the two halves. It is half of the Sol Ro tower gate; the other half is the Zek notes (two steps on). If you already have the cipher, Hail only asks whether you found any lore.',
+    says: [{ to: 'Grand Librarian Maelin', text: 'Hail', src: MAELIN }], where: [L.maelin] },
+  { key: 'maelin_lore', section: 't3', who: 'solo', must: true, title: 'Maelin reads Karana’s and Mithaniel’s notes',
+    detail: 'Needs both: Karana’s “path of the Fallen” (your Karana flag at 4) and the notes Mithaniel Marr’s projection gives you, silently, when you hail it after the Temple of Marr. Say “lore”. With only one of the two he says there must be another piece. With both he reads them, gives a flag and clears the two notes. His second reading needs this one.',
+    says: [{ to: 'Grand Librarian Maelin', text: 'lore', src: MAELIN }], where: [L.maelin] },
   { key: 'flag_vallon', section: 't3', who: 'raid', flag: 'vallon_dead', title: 'Kill Vallon Zek', detail: PROJECTION, link: popZone('tactics') },
   { key: 'flag_tallon', section: 't3', who: 'raid', flag: 'tallon_dead', title: 'Kill Tallon Zek', detail: PROJECTION, link: popZone('tactics') },
+  { key: 'zeks_maelin', section: 't3', who: 'solo', must: true, flag: 'zeks_6', title: 'Between the Zeks and Rallos: Maelin reads Vallon’s and Tallon’s notes',
+    detail: 'Needs the cipher and both Zek projections hailed (your Zeks flag at 5). Say “information”: he reads the notes and moves you to Zeks 6. Rallos Zek’s projection needs 6 before it gives the real flag, and the Sol Ro tower portal checks 6 together with the cipher. Without the cipher he only says the notes cannot be read. If you did Rallos first, his projection gave only a checklist flag; once this reading is done the Seer’s “unlock my memories” turns it into the real one.',
+    says: [{ to: 'Grand Librarian Maelin', text: 'information', src: MAELIN }], where: [L.maelin] },
   { key: 'flag_rallos', section: 't3', who: 'raid', must: true, flag: 'rallos_dead', title: 'Kill Rallos Zek', detail: PROJECTION, link: popZone('tactics') },
   { key: 'tactics_maelin_after', section: 't3', who: 'solo', must: true, title: 'After the Zeks: Maelin again, then the Seer',
+    detail: 'Say “information” once more: with your Zeks flag at 7 it gives the second reading (the next step). If Rallos Zek’s projection gave only a checklist flag, the Seer’s “unlock my memories” makes it the real one first, so go back and forth until neither has more.',
     says: [{ to: 'Grand Librarian Maelin', text: 'what information' }, { to: 'Seer Mal Nae`Shi', text: 'unlock my memories', sit: true }],
     where: [L.maelin, L.seer] },
+  { key: 'zebuxoruk_maelin', section: 't3', who: 'solo', must: true, flag: 'zebuxoruk_2', title: 'The power source: Maelin’s second reading (opens Air, Earth and Water)',
+    detail: 'Needs his first reading (“lore”, your Zebuxoruk flag at 1) and Rallos Zek’s projection hailed (your Zeks flag at 7). Say “information”: he tells you the time machine in Innovation needs the essence of the elements, and your Zebuxoruk flag becomes 2. That is what the Air, Earth and Water portals in Tranquility check, and the Plane of Time needs it too. If your Zeks flag is still at 5 or 6, “information” gives the Zek reading instead.',
+    says: [{ to: 'Grand Librarian Maelin', text: 'information', src: MAELIN }], where: [L.maelin] },
   // Solusek Ro
+  { key: 'pofire_miak', section: 't3', who: 'solo', must: true, title: 'Before the tower: ask Miak the Searedsoul about the portal’s destination',
+    detail: 'In Tranquility, at the Plane of Fire portal. Hail, “plane of fire” and “demise” are her story; “portal\'s destination” is the one that gives your first Fire flag. Do it before Solusek Ro: his projection moves you to the second Fire flag only from this one. If you skip it his projection gives a checklist flag, and the Seer’s “unlock my memories” turns that into the second flag as long as your Zeks flag is at 7, so it can be mended afterwards.',
+    says: [
+      { to: 'Miak the Searedsoul', text: 'Hail', src: 'potranquility/Miak_the_Searedsoul.lua' },
+      { to: 'Miak the Searedsoul', text: 'plane of fire', src: 'potranquility/Miak_the_Searedsoul.lua' },
+      { to: 'Miak the Searedsoul', text: 'demise', src: 'potranquility/Miak_the_Searedsoul.lua' },
+      { to: 'Miak the Searedsoul', text: "portal's destination", src: 'potranquility/Miak_the_Searedsoul.lua' },
+    ],
+    where: [L.miak] },
+  // The five wings are clicks and no words (solrotower/player.lua doors 12, 7, 10, 6, 11 and the Xuzl,
+  // Arlyxir, Protector of Dresolik, #Rizlona and Jiva scripts that spawn the cauldron). Each click sets one
+  // digit of the server's sol_room; 11111 is what the chamber portals and Solusek Ro's projection check.
   { key: 'flag_solro_minis', section: 't3', who: 'raid', flag: 'solro_minis', title: 'The five Tower of Solusek Ro minis',
-    detail: 'Jiva, Xuzl, Arlyxir, Rizlona and the Protector of Dresolik; click through the stone after each one. Solusek Ro’s chamber also needs every flag up to Rallos Zek.',
+    detail: 'Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too.',
+    where: [L.xuzl, L.xuzlCauldron, L.arlyxir, L.arlyxirCauldron, L.dresolik, L.dresolikCauldron, L.rizlona, L.rizlonaCauldron, L.jiva, L.jivaCauldron],
     link: popZone('solro') },
   { key: 'flag_solro', section: 't3', who: 'raid', must: true, flag: 'solro_dead', title: 'Kill Solusek Ro',
     detail: `${PROJECTION} Then drop into the lava pit in his chamber to reach the Plane of Fire.`, link: popZone('solro') },
@@ -402,9 +539,16 @@ export const GUIDE_ITEMS: GuideItem[] = [
     detail: 'A tradable four-slot pottery container; one per raid is enough.' },
   { key: 'time_quintessence', section: 'time', who: 'solo', must: true, title: 'Combine the four essences into the [[Quintessence of Elements#29165]]',
     detail: 'In the Odylic Vial: the Globe of Dancing Flame, Amorphous Cloud of Air, Sphere of Coalesced Water and Mound of Living Stone.' },
-  { key: 'time_muon', section: 'time', who: 'solo', must: true, title: 'Enter the Plane of Time from Innovation',
-    detail: 'Carry the Quintessence to Chronographer Muon, go up to the clocks, tell Loreseeker Maelin you have researched, then click the machine.',
-    says: [{ to: 'Chronographer Muon', text: 'yes' }, { to: 'Loreseeker Maelin', text: 'researched' }], where: [L.muon] },
+  // time_1 is the click on the machine (poinnovation/player.lua door 145), not either NPC: Muon only carries
+  // you up, and Loreseeker Maelin's "researched" is story that the click never checks.
+  { key: 'time_muon', section: 'time', who: 'solo', must: true, flag: 'time_1', title: 'Enter the Plane of Time from Innovation',
+    detail: 'Carry the Quintessence to Chronographer Muon, go up to the clocks, tell Loreseeker Maelin you have researched, then click the machine. Needs Maelin’s second reading (your Zebuxoruk flag at 2) and the Quintessence in your bags (Muon does not count the bank). Muon: Hail, then “yes” carries you up to the time-projection chamber, and Loreseeker Maelin appears there. Clicking the time machine is what sets your Plane of Time flag and carries you in. The portal back in Tranquility then also asks for level 65.',
+    says: [
+      { to: 'Chronographer Muon', text: 'Hail', src: 'poinnovation/#Chronographer_Muon.lua' },
+      { to: 'Chronographer Muon', text: 'yes', src: 'poinnovation/#Chronographer_Muon.lua' },
+      { to: 'Loreseeker Maelin', text: 'researched', src: 'poinnovation/Loreseeker_Maelin.lua' },
+    ],
+    where: [L.muon, L.loreseeker, L.timeMachine] },
   { key: 'time_timelockout', section: 'time', who: 'solo', title: 'Type #timelockout',
     detail: 'Shows your guild’s timeline, when it retires, and which encounters are open in each phase.' },
   { key: 'flag_quarm', section: 'time', who: 'raid', must: true, flag: 'quarm_dead', title: 'Kill Quarm', link: popZone('time') },
