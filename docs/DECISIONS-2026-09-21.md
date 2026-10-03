@@ -6327,3 +6327,60 @@ already have, put that into an officer only list so we can help direct who needs
 - **Phase 2 needs the guild lead:** a dozen raw log lines from one hand-in to a PoK trainer (ideally one that
   gave a duplicate). With those, the agent can record the moment of the turn-in, and the list can track
   "passed to X". Until then the list depends on members exporting inventory and spellbook.
+
+### 139. Mimic's Loot tab: who looted what, and who looted a roll (2026-10-03, bot 3.1.192 · agent 3.7.73 beta)
+
+The guild lead: *"the loot tab on mimic should have the 'who looted what' section on there for items, as
+well as the rolls for loot."*
+
+- **Who looted what · last 12 hours**, a new section on the Loot tab: time, looter, item, zone, newest
+  first, with a day line where the date changes. Each agent only sees its own "You have looted" lines, so
+  the list comes from the bot: server-panel key `night-loot` (bot 3.1.192, live), the guild's
+  `looted_items` for 12 hours plus the roll sessions, cached 60 s for the whole guild.
+- **Rolls:** a roll set someone other than the winner looted now says "📦 looted by <name>". The merge is
+  the one the Discord rolled-loot card and `/rolls` already use (`utils/rollLoot.js`), not a third copy.
+- Polls only while the Loot tab is open or a raid window is on (the bidding card's gate), every 30 s.
+- No `exclude_from_stats` filter on read, matching `/rolls` and the Discord card: an excluded character's
+  own agent never uploads its loot or rolls.
+- Open for the guild lead: the Rolls card still lists only the rolls this Mimic heard; the guild-wide
+  sessions are in the panel and could be listed. The Command Center's rolls row does not show "looted by".
+
+### 140. Traders and characters under 46 leave the character lists (2026-10-03, agent 3.7.73 beta · migration `20261003120000`)
+
+The guild lead: *"low level characters do not need to show up on the pop flag page. all of my traders and
+mule characters destroy my views anywhere we display all of our logs."*
+
+- **The rule (`web/lib/listableChars.ts`):** a character is left out when its guild rank is Trader, or its
+  level is KNOWN and under 46 (the lowest PoP zone-in level). A non-trader nobody has a level for stays
+  listed: hiding a raider because nobody /who'd them is the worse mistake. Level is the higher of /who
+  history and the highest scribed spell (`me_levels`).
+- **Where (beta):** [b.wolfpack.quest/pop?view=mine](https://b.wolfpack.quest/pop?view=mine) (My Characters,
+  your spells needed, the spellbook picker, sightings, and the spell-needs table), with "Show all (N
+  hidden)" (`?all=1`); [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide) (character picker);
+  [b.wolfpack.quest/me](https://b.wolfpack.quest/me) (they move into the existing collapsed "more" sections,
+  nothing removed); the Mimic dashboard's Watched characters and Replay log picker ("show N low-level").
+- **Not filtered, on purpose:** `/me/inventory`, `/quartermaster`, mule uploads (a mule's bags are the point
+  there), and the dashboard's Watched Logs diagnostic. `/me/ui` is left as it was; say if it should follow.
+- On today's data the rule hides 52 of 556 characters: 36 traders and 16 others under 46.
+- The dashboard knows levels but not ranks, so a trader with no known level still shows there.
+- **`me_levels` sped up** (migration `20261003120000`, applied): it matched names with `ilike any()`, a full
+  scan (7 s for 170 names); `lower(name) = any()` uses the existing indexes (53 ms), same rows. `/me` gets
+  the same speed-up.
+
+### 141. The PoP overlay gets a Quests mode (2026-10-03, Mimic beta `b84e25b8`)
+
+The guild lead: *"the pop overlay should include the quests and a mode for selecting them and all of the
+things to say or do for any of the pop quests or flags so we can reference them."*
+
+- A **Slides / Quests** toggle in the PoP overlay's title bar. Quests mode lists every step of the website's
+  PoP guide (78, grouped by the guide's levels and sections); pick one or walk them with ◀ ▶. Each shows who
+  to talk to and where, with copyable `/map Y X`, `/sit` and `/say …` chips, hand-ins ("give … → get …"), and
+  what to expect. Mode and choice are remembered. Slides mode is unchanged.
+- **One source, no second copy to drift:** the website's `web/lib/popGuide.ts` + `popGuideMore.ts`.
+  `npm run sync:pop-quests` writes `apps/mimic/pop-quests.js`; `test/pop-quests-sync.test.js` fails when it
+  is stale.
+- **Not every step has words yet:** 19 of 50 "talk to" places have none recorded; they say "hail them — no
+  words recorded" rather than guessing. A second pass is filling them from Quarm's own quest scripts (each
+  phrase cited to its script); the overlay picks them up with one re-sync.
+- Because `popGuideMore.ts` is still a beta file, this graduates to stable only with the guide's beta
+  layouts, or after that file moves to main on its own.
