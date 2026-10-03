@@ -20390,6 +20390,27 @@ function renderDiag(s) {
   let h = '';
   h += '<div class="grid">';
 
+  // Crash review — first on Diagnostics (the guild lead, 2026-10-03: "crash reporting
+  // should be on the diagnostics tab of mimic"; it sat on Info from 2026-08-13, and on
+  // Triggers before that). Reading dumps costs real work, so the list fills on demand via
+  // renderCrashReview()'s one-shot. The checkbox mirrors the tray's "Share crash reports
+  // with the guild" toggle — same cfg.crashReports flag, two places to reach it, so
+  // nobody has to know the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>🩺 Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke — including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '— never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
+
   // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
@@ -22756,26 +22777,6 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Crash review (moved here from Triggers, the guild lead 2026-08-13 — a crash is a
-  // machine/diagnostic concern, not a callout one). Reading dumps costs real
-  // work, so the list fills on demand via renderCrashReview()'s one-shot.
-  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
-  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
-  // the tray menu exists.
-  h += '<div id="wpCrashReview" class="card wide"><b>\\ud83e\\ude7a Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke \\u2014 including '
-    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
-    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
-    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
-    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
-    +    '<span>Automatically send crash reports to the guild</span>'
-    +  '</label>'
-    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
-    +  '\\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
-    +  'parser engine.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
   // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
   // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
   // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the
@@ -27450,9 +27451,11 @@ const COMMAND_HTML = `<!doctype html>
   .sec-toggle{cursor:pointer;user-select:none}
   .sec-toggle:hover{color:#e6edf3}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000;padding:3px 0;text-align:center}
-  /* Two or more raids at once: which one this board is for. */
-  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
-  .raids-note .n{color:#ffa657}
+  /* Two or more raids at once: every raid's leader and player count, yours marked. */
+  .raids-card .head{color:#ffa657}
+  .raids-card .row .cnt{color:#e6edf3;font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+  .raids-card .row .yours{color:#56d364;font-size:9px}
+  .raids-card .row.mine .nm{color:#56d364}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -27666,13 +27669,31 @@ const COMMAND_HTML = `<!doctype html>
     if (cur != null && max != null) return cur + ' / ' + max + ' · ' + pct + '%';
     return pct + '%';
   }
-  // Two or more raids at once (the bot names them only then): the cures and the healer mana
-  // below are this raid's, and this line says which raid that is.
+  // Two or more raids at once (the bot names them only then): one row per raid, its leader and
+  // how many players it has, yours marked — the cures and the healer mana below are yours
+  // (the guild lead, 2026-10-03: "raid leaders and player counts for when we have multiple
+  // raids going"). Yours first, then the biggest.
   function raidsNoteHtml(raids){
-    var mine = null;
-    for (var i = 0; i < raids.length; i++) if (raids[i] && raids[i].mine) mine = raids[i];
-    return '<div class="raids-note"><span class="n">⚔ ' + raids.length + ' raids at once</span>'
-         + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>';
+    var list = raids.filter(function(r){ return !!r; }).slice().sort(function(a, b){
+      if (!!a.mine !== !!b.mine) return a.mine ? -1 : 1;
+      return (Number(b.size) || 0) - (Number(a.size) || 0);
+    });
+    var total = 0;
+    for (var i = 0; i < list.length; i++) total += Number(list[i].size) || 0;
+    var h = '<div class="card raids-card"><div class="head">' + secToggle('raids', '⚔ ' + list.length + ' raids · ' + total + ' players', null) + '</div>';
+    if (!_isCollapsed('raids')) {
+      h += '<div class="list">';
+      for (var j = 0; j < list.length; j++) {
+        var r = list[j];
+        h += '<div class="row' + (r.mine ? ' mine' : '') + '">'
+           +   '<span class="nm">👑 ' + esc(r.leader || '?') + '</span>'
+           +   (r.mine ? '<span class="yours">yours</span>' : '')
+           +   '<b class="cnt">' + esc(r.size) + '</b>'
+           + '</div>';
+      }
+      h += '</div>';
+    }
+    return h + '</div>';
   }
 
   function render(s){

@@ -52,6 +52,47 @@ describe('the Command Center keeps to this raid', () => {
   });
 });
 
+// The guild lead, 2026-10-03: "command center could use raid overview information (raid leaders
+// and player counts) for when we have multiple raids going." One row per raid, yours first.
+describe('Command Center: a Raids card with each leader and player count', () => {
+  const cmd = read('apps/mimic/command.html');
+  const block = sliceBlock(cmd, 'function raidsNoteHtml(raids){', "return h + '</div>';\n  }");
+  const collapsed = {};
+  const stubs = "var esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;'); };"
+    + "var _isCollapsed = function(k){ return !!collapsed[k]; };"
+    + "var secToggle = function(k, label){ return '[' + label + ']'; };";
+  const { raidsNoteHtml } = new Function('collapsed', stubs + block + '\nreturn { raidsNoteHtml };')(collapsed);
+  const raids = [
+    { key: 'a', leader: 'Aldenmar', size: 9, mine: false },
+    { key: 'b', leader: 'Brackwyn', size: 33, mine: false },
+    { key: 'c', leader: 'Corvale', size: 8, mine: true },
+  ];
+
+  it('lists every raid with its leader and count, yours first then the biggest', () => {
+    const h = raidsNoteHtml(raids);
+    expect(h).toContain('[⚔ 3 raids · 50 players]');
+    const order = ['Corvale', 'Brackwyn', 'Aldenmar'].map((n) => h.indexOf('👑 ' + n));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(order[1]).toBeLessThan(order[2]);
+    expect(h).toMatch(/👑 Brackwyn<\/span><b class="cnt">33<\/b>/);
+    expect(h).toMatch(/class="row mine"><span class="nm">👑 Corvale<\/span><span class="yours">yours<\/span><b class="cnt">8<\/b>/);
+    expect(h.match(/yours<\/span>/g)).toHaveLength(1);
+  });
+
+  it('collapsed, it keeps the totals in the header and drops the rows', () => {
+    collapsed.raids = true;
+    const h = raidsNoteHtml(raids);
+    collapsed.raids = false;
+    expect(h).toContain('[⚔ 3 raids · 50 players]');
+    expect(h).not.toContain('👑');
+  });
+
+  it('a leader name is escaped', () => {
+    expect(raidsNoteHtml([{ leader: '<b>', size: 1, mine: true }, { leader: 'x', size: 2 }])).toContain('👑 &lt;b>');
+  });
+});
+
 describe('each surface says whose raid it shows, and only with two or more', () => {
   it('Extended Target', () => {
     const s = stripJs(read('apps/mimic/extarget.html'));
