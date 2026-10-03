@@ -12,6 +12,10 @@ data/historical_chat.jsonl
 
 # Dependencies
 node_modules/
+# A worktree that borrows another checkout's dependencies links them in as a symlink, which the
+# trailing-slash pattern above does not match (a symlink is not a directory to git). One got
+# committed to beta on 2026-10-03; this keeps it from happening again.
+node_modules
 
 # Raid tick exports
 raid-tick-*.txt
