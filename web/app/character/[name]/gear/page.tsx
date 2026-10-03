@@ -27,7 +27,7 @@ type AaRow = { aa_index: number; rank: number };
 // (verified: the guild lead's AAIndex 10 rank 4 ↔ Quarmy skill_id 47 / eqmacid 10 =
 // Innate Magic Protection). Quarmy's web payload keys on skill_id instead.
 // classes is a bitmask keyed 1 << classId (SHM=10 → 1024); aa_expansion
-// 3 = Luclin (live), 4 = PoP (locked until 2026-10-01).
+// 3 = Luclin, 4 = PoP (live since 2026-10-01).
 type AaCat = { eqmacid: number; name: string; max_level: number | null; classes: number | null; cost: number | null; aa_expansion: number | null };
 
 const CLASS_ID: Record<string, number> = {
@@ -451,17 +451,13 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
     return true;
   });
   const trainedIdx = new Set(validAas.map(a => a.aa_index));
-  // Live era = Luclin (aa_expansion <= 3). PoP AAs surface as a count only
-  // until the 2026-10-01 unlock.
+  // Live era = PoP (aa_expansion <= 4) since the 2026-10-01 unlock.
   const availableNow = classBit > 1
     ? aaCatalog.filter(a =>
-        (a.aa_expansion ?? 0) <= 3
+        (a.aa_expansion ?? 0) <= 4
         && ((a.classes ?? 0) & classBit) !== 0
         && !trainedIdx.has(a.eqmacid))
     : [];
-  const popCount = classBit > 1
-    ? aaCatalog.filter(a => a.aa_expansion === 4 && ((a.classes ?? 0) & classBit) !== 0).length
-    : 0;
   const trainedRanks = validAas.reduce((s, a) => s + a.rank, 0);
   const spentPoints = validAas.reduce((s, a) => {
     const cat = aaByMac.get(a.aa_index);
@@ -747,11 +743,6 @@ export default async function CharacterGearPage({ params }: { params: Promise<{ 
                     ))}
                 </div>
               </>
-            )}
-            {popCount > 0 && (
-              <p className="text-xs text-dim mt-3">
-                +{popCount} more {char?.class} AAs arrive with PoP (locked until Oct 1).
-              </p>
             )}
             {classBit <= 1 && validAas.length > 0 && (
               <p className="text-xs text-dim mt-3">
