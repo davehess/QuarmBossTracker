@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.79: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
+| **Stable Mimic 2.7.7; the site says PoP is open** | **§134.** Stable 2.7.7 (agent 3.7.71) carries everything since 2.7.6, incl. the buff queue and update fixes below; beta re-parked at 2.7.8. Web 1.8.80: no PoP locks or "not yet" copy left; PoP AAs and spells listed as available. The website previews on beta were NOT promoted | the guild lead: (1) accept the 2.7.7 update when EverQuest is closed; (2) pick the beta website previews (about, PoP guide, Essences queue, PvP fights, tradeskills, Zeal icons) when ready |
 | **Buff queue clicks; a game crash on update; Feral Avatar timers** | **§133.** Beta `16bf4795`: buff queue section headers take the click on a locked overlay (FB-49). Beta `0bd27df1`: the first run after an update stays in the tray while EverQuest is open (FB-50, the member's crash). Feral Avatar / Savagery: the ⏳ exists on the Shaman/Beastlord queue; one gap found (non-Mimic targets timed at 65 ticks, real ~102) | the guild lead: (1) on the next beta, click a buff queue header with overlays locked; (2) say which character / view showed no Feral Avatar timer, and whether the 65-vs-102-tick gap is it; (3) a stable cut carries the update fix to the fleet — your call |
 | **The Oct 1–2 server patch notes** | **§130, §132.** Bot 3.1.190 + web 1.8.77: the corpse DM says when and where a PoP corpse moves. Bot 3.1.191 + web 1.8.78: Xanamech is off the board and the 72 h override; his website row still needs one delete. Agent 3.7.71 on beta `c82ae5b4` reads all 168 unread Rallos Zek lines: NPC deaths, no-killer deaths, forfeits (🏃), the "exults" kill. NPC deaths post to #pvp again, about 50 a day. Still open: the Oct 2 "Glory lost/gained" wording (none seen yet); whether an open-world raid-target kill starts the instance timer | the guild lead: (0) approve or run `delete from bot_boards where boss_id = 'xanamech_nezmirthafen';` (§132); (1) on the beta, run Opt-in Logs from Sep 28 to send the missed deaths; (2) say if NPC deaths should record without posting to #pvp; (3) after the guild's first open-world raid-target kill, paste the Druzzil line; (4) want open-world spawn windows for those targets? |
 | **Our own zone map (A website, then B Mimic overlay)** | **§131.** Queued, not started — "A then B, but not yet". First step when it starts: mirror pather routes (`grid`, `grid_entries`) into the weekly sync | the guild lead: say when to start; ask staff before anything shows live NPC positions |
@@ -6219,7 +6219,7 @@ the agent's `logsync.pvp-unmatched.json` from their machine.
     the buff.
   - Waiting on the guild lead to say which view and character showed no timer before changing either.
 
-### 134. The website stops saying PoP is locked; stable Mimic 2.7.7 (2026-10-02, web 1.8.79 · Mimic 2.7.7 · agent 3.7.71)
+### 134. The website stops saying PoP is locked; stable Mimic 2.7.7 (2026-10-02, web 1.8.80 · Mimic 2.7.7 · agent 3.7.71)
 
 The guild lead: *"go through the site and remove all the locks from pop release, or mentions of things not
 being available yet. please roll out a fresh stable release"*.
@@ -6247,3 +6247,9 @@ being available yet. please roll out a fresh stable release"*.
     2.7.6 → 2.7.7 is the first update that starts quietly in the tray while EverQuest is open.
   - Repeats FB-46, FB-49 and FB-50 so the bot marks them implemented.
   - Beta re-parks at 2.7.8.
+- **The website deploy was skipped once, and why.** The sweep (web 1.8.79, `aab72c65`) and the stable
+  commit (`7dcba505`) went up in one push. Vercel builds only the push's last commit, and its Ignored
+  Build Step (`git diff --quiet HEAD^ HEAD -- .`) saw no `web/` change in that last commit, so it
+  skipped the build and the sweep never deployed. Fixed by web 1.8.80 on top. Rule added to
+  CLAUDE.md: a push whose last commit does not touch `web/` deploys nothing for the website, even if
+  an earlier commit in the same push did.

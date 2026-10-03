@@ -109,7 +109,7 @@ next touch one rather than assuming a missing row means a missing doc.
   weekly eqemu sync. No live NPC positions without staff approval. DECISIONS-2026-09-21 §131.
 - **✅ Stable Mimic 2.7.7 (agent 3.7.71, 2026-10-02).** Everything on beta since 2.7.6, promoted file by file;
   the beta website previews stayed on beta. Beta re-parked at 2.7.8. §134.
-- **✅ The website no longer says PoP is locked (web 1.8.79, 2026-10-02).** Guide locks, /pop "(Preview)", the
+- **✅ The website no longer says PoP is locked (web 1.8.80, 2026-10-02).** Guide locks, /pop "(Preview)", the
   spells page's "locked until Oct 1" and the gear page's PoP AA count are gone; PoP AAs and spells list as
   available. §134.
 - **✅ Buff queue headers take the click (beta `16bf4795`; stable 2.7.7, FB-49, 2026-10-02).** Collapsed section headers

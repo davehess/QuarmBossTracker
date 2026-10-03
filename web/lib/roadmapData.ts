@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'mimic-2-7-7-2026-10-02',
     title: 'Mimic 2.7.7',
-    version: 'Mimic 2.7.7 · Agent 3.7.71 · Web 1.8.79',
+    version: 'Mimic 2.7.7 · Agent 3.7.71 · Web 1.8.80',
     date: '2026-10-02',
     headline: 'Everything from the beta since 2.7.6 reaches every raider, and the website stops saying Planes of Power is locked.',
     features: [
