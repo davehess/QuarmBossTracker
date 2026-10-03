@@ -12,7 +12,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
-import { LIST_MIN_LEVEL, loadLevels, partitionListable } from '@/lib/listableChars';
+import { LIST_MIN_LEVEL, loadLevels, partitionTiers } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
@@ -29,15 +29,18 @@ export default async function PopGuidePage(
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
-  // Traders and characters under level 46 stay out of the character picker unless ?all=1 (the guild lead,
-  // 2026-10-03: "low level characters do not need to show up on the pop flag page"). A character picked
-  // on purpose, ?c=<name>, is kept whatever it is: a shared or bookmarked link must still open it.
+  // Traders, characters under level 46 and characters their owner hid stay out of the character picker
+  // unless ?all=1 (the guild lead, 2026-10-03: "low level characters do not need to show up on the pop
+  // flag page"). A character picked on purpose, ?c=<name>, is kept whatever it is: a shared or bookmarked
+  // link must still open it. Characters with no known level stay in the picker, in a "No known level"
+  // group at the bottom ("put any unknown characters into a minimized area").
   const mineAll = await ownedCharacters(user.id);
   const showAll = all === '1';
   const levels = await loadLevels(supabaseAdmin(), mineAll.map(ch => ch.name));
   const picked = c?.toLowerCase();
-  const lowKeys = new Set(partitionListable(mineAll, ch => ({ rank: ch.rank, level: levels.get(ch.name.toLowerCase()) }))
-    .hidden.map(ch => ch.name.toLowerCase()));
+  const tiers = partitionTiers(mineAll, ch => ({ rank: ch.rank, level: levels.get(ch.name.toLowerCase()), hidden: ch.hidden_from_lists }));
+  const lowKeys = new Set(tiers.hidden.map(ch => ch.name.toLowerCase()));
+  const noLevel = tiers.unknown.map(ch => ch.name);
   // Nobody listable at all (a new account of one low-level character): show them rather than an empty
   // picker that reads "no characters linked".
   const mine = showAll || lowKeys.size === mineAll.length
@@ -52,8 +55,8 @@ export default async function PopGuidePage(
   const hiddenNote = (showAll ? lowKeys.size > 0 : hiddenCount > 0) && (
     <p className="text-xs text-dim mt-2">
       {showAll
-        ? `Traders and characters under level ${LIST_MIN_LEVEL} are shown. `
-        : `Traders and characters under level ${LIST_MIN_LEVEL} are hidden from the picker (${hiddenCount}). `}
+        ? `Traders, hidden characters and characters under level ${LIST_MIN_LEVEL} are shown. `
+        : `Traders, hidden characters and characters under level ${LIST_MIN_LEVEL} are hidden from the picker (${hiddenCount}). `}
       <Link href={toggleHref} className="text-blue hover:underline">{showAll ? 'Hide them' : 'Show all'}</Link>
     </p>
   );
@@ -85,7 +88,7 @@ export default async function PopGuidePage(
           </p>
           {hiddenNote}
         </section>
-        <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} />
+        <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} noLevel={noLevel} />
       </div>
     );
   }
@@ -133,7 +136,7 @@ export default async function PopGuidePage(
         </p>
         {hiddenNote}
       </section>
-      <GuideChecklist chars={chars} initial={initial} cards={cards} />
+      <GuideChecklist chars={chars} initial={initial} cards={cards} noLevel={noLevel} />
     </div>
   );
 }

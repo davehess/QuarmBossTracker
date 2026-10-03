@@ -49,7 +49,7 @@ describe('/me', () => {
 
   it('the server action accepts the new column, and /me reads and passes it', () => {
     expect(actions).toMatch(/const allowed: FlagKey\[\] = \[[^\]]*'show_quests_publicly'/);
-    expect(me).toMatch(/show_inventory_publicly, show_quests_publicly'\)/);
+    expect(me).toMatch(/show_inventory_publicly, show_quests_publicly[,']/);
     expect(me.match(/showQuestsPublicly=\{!!c\.show_quests_publicly\}/g) || []).toHaveLength(2);
   });
 });

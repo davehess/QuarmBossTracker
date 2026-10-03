@@ -88,8 +88,8 @@ describe('the page', () => {
   const data = stripJs(read('web/app/pop/guide/routeData.ts'));
   it('no ?v= is production as it was; b and c are the two new layouts', () => {
     expect(page).toMatch(/if \(v === 'b' \|\| v === 'c'\) \{/);
-    expect(page).toMatch(/<GuideRoute chars=\{routeChars\} initial=\{first\} cards=\{rc\} outlines=\{outlines\} layout=\{v\} \/>/);
-    expect(page).toMatch(/<GuideChecklist chars=\{chars\} initial=\{initial\} cards=\{cards\} \/>/);
+    expect(page).toMatch(/<GuideRoute chars=\{routeChars\} initial=\{first\} cards=\{rc\} outlines=\{outlines\} layout=\{v\} noLevel=\{noLevel\} \/>/);
+    expect(page).toMatch(/<GuideChecklist chars=\{chars\} initial=\{initial\} cards=\{cards\} noLevel=\{noLevel\} \/>/);
   });
   it('reads only the viewer’s characters, skips a hidden inventory, and caches zone outlines for a day', () => {
     expect(data).toMatch(/\.in\('character_name', names\)/);

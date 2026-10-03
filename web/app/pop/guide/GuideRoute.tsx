@@ -27,7 +27,7 @@ import type { Evidence } from '@/lib/popGuideAuto';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
 import { setGuideTick } from './actions';
-import { ChainView, Place, WithItems } from './GuideChecklist';
+import { CharOptions, ChainView, Place, WithItems } from './GuideChecklist';
 import ZoneMap, { type ZoneOutline } from './ZoneMap';
 
 // How a step got its tick. mimic = Mimic saw it happen; database = our records already show it;
@@ -118,9 +118,9 @@ function MapPeek({ places, outlines, label, className, children }: {
   );
 }
 
-export default function GuideRoute({ chars, initial, cards, outlines, layout }: {
+export default function GuideRoute({ chars, initial, cards, outlines, layout, noLevel }: {
   chars: RouteChar[]; initial: string | null; cards: Record<number, ItemCard>;
-  outlines: Record<string, ZoneOutline>; layout: 'b' | 'c';
+  outlines: Record<string, ZoneOutline>; layout: 'b' | 'c'; noLevel?: string[];
 }) {
   const [charName, setCharName] = useState<string | null>(initial);
   const [manualBy, setManualBy] = useState<Record<string, Set<string>>>(
@@ -219,7 +219,7 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout }: 
           <span className="text-[11px] text-dim uppercase tracking-wide">Character</span>
           <select value={charName ?? ''} onChange={e => pick(e.target.value)}
                   className="bg-bg border border-border rounded px-2 py-1 text-text focus:outline focus:outline-2 focus:outline-blue">
-            {chars.map(c => <option key={c.name} value={c.name}>{c.name}{c.isMain ? '' : ' (alt)'}{c.cls ? ` · ${c.cls}` : ''}</option>)}
+            <CharOptions chars={chars} noLevel={noLevel} />
           </select>
         </label>
       ) : (

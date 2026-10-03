@@ -13,11 +13,16 @@
 // inventory versus quests"): "Quest page" opens /character/<name>/quests,
 // "Inventory page" opens the inventory and spellbook pages. They say "page"
 // so they don't read as the "Inventory: on / EXCLUDED" upload switch.
+//
+// "Hide from lists" (the guild lead, 2026-10-03: "make it so I can hide these characters from anything
+// but account inventory") is display only: the character leaves the character lists on the site and
+// shows only in account inventory. On /me a hidden character sits in a collapsed "Hidden by you"
+// section, and this same switch reads "Unhide" there, so it can always be undone.
 
 import { useTransition, useState } from 'react';
 import { setCharacterExclusion } from './actions';
 
-type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly';
+type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly' | 'hidden_from_lists';
 
 export default function ExclusionToggles({
   character,
@@ -27,6 +32,7 @@ export default function ExclusionToggles({
   tellDm,
   showInventoryPublicly,
   showQuestsPublicly,
+  hiddenFromLists,
 }: {
   character: string;
   excludeFromStats: boolean;
@@ -35,6 +41,7 @@ export default function ExclusionToggles({
   tellDm: boolean;
   showInventoryPublicly: boolean;
   showQuestsPublicly: boolean;
+  hiddenFromLists: boolean;
 }) {
   const [stats, setStats]         = useState(excludeFromStats);
   const [inventory, setInventory] = useState(excludeInventory);
@@ -42,6 +49,7 @@ export default function ExclusionToggles({
   const [dm, setDm]               = useState(tellDm);
   const [showQuests, setShowQuests] = useState(showQuestsPublicly);
   const [showInv, setShowInv]       = useState(showInventoryPublicly);
+  const [hiddenLists, setHiddenLists] = useState(hiddenFromLists);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
@@ -122,6 +130,15 @@ export default function ExclusionToggles({
           offLabel="Inventory page: private"
           variant="positive-when-on"
           onChange={(next) => flip('show_inventory_publicly', next, setShowInv, showInv)}
+        />
+        <Toggle
+          on={hiddenLists}
+          disabled={pending}
+          tooltip="Hide everywhere except account inventory: this character leaves the character lists (the PoP pages, the spellbook picker's main list, this page's cards) and shows only in your account inventory. Nothing is deleted and uploads keep working. Click again to unhide."
+          onLabel="Hidden from lists · Unhide"
+          offLabel="Hide from lists"
+          variant="warn-when-on"
+          onChange={(next) => flip('hidden_from_lists', next, setHiddenLists, hiddenLists)}
         />
       </div>
       {err && <div className="text-red-400">{err}</div>}
