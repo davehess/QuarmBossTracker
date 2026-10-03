@@ -202,6 +202,21 @@
   body.hud.wp-backdrop #hudsvg,body.hud.wp-backdrop #hudlanes{
     filter:drop-shadow(0 0 2px rgb(0 0 0 / var(--bg-alpha,0.92))) drop-shadow(0 0 7px rgb(8 10 14 / var(--bg-alpha,0.92)))}
   @media (prefers-reduced-motion: reduce){ .bar > i{transition:none} }
+
+  /* On the Timers canvas (Mimic 3.0 alpha; the guild lead, 2026-10-03: "the margins around the actual data
+     is too large … when I look at an overlay outside of the canvas or choose it as a preset within the canvas
+     they should be extremely close to being identical"): the panel owns ✥ and ✕ (the preload hides this
+     page's own, and sets body.wp-in-canvas), so the gutters kept for them and the frame round the card go —
+     the data sits at the panel's edge. The ring already fills its panel and needs none of it. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas.hud #wrap{padding:0}
+  body.wp-in-canvas .card{padding:0}
+  body.wp-in-canvas .title{padding-left:0;padding-right:0}
+  /* A page pinned to one look (?wpstyle=hud|a — the canvas's Ring and Box panels) has no Box | HUD switch:
+     the box shows no picker at all, the ring keeps only its ⚙ (the row is as wide as that button). */
+  body.pinstyle #picker button[data-v]{display:none}
+  body.pinstyle:not(.hud) #picker{display:none}
+  body.hud.pinstyle{--pk-w:26px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -295,6 +310,12 @@
   var doneBtn = document.getElementById('exitSetupBtn');
   if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
+  // Docked as a panel on the Timers canvas (Mimic 3.0 alpha): the canvas loads this page in a frame marked
+  // ?wpcanvas=1. There is no window to size or move there — setBounds does nothing — so the parts that
+  // would (the builder opening beside the ring, the numbers moving outside it) ask the canvas instead.
+  var IN_CANVAS = false;
+  try { IN_CANVAS = /[?&]wpcanvas=1(&|$)/.test(String(window.location.search || '')) && window.parent !== window; } catch (e) {}
+
   // ── the Box / HUD picker (remembered on this machine) ─────────────────────
   // The guild lead, 2026-09-24: "We can remove version C, default the HUD to
   // version, rename A into Box." A keeps its stored key ('a'), so a saved pick
@@ -310,6 +331,12 @@
     if (saved === 'b' || saved === 'c' || saved === 'h1' || saved === 'h2' || saved === 'h3') saved = 'hud';
     if (saved === 'a' || isHud(saved)) style = saved;
   } catch (e) {}
+  // ?wpstyle=hud|a pins the look (the guild lead, 2026-10-03: the canvas's "HUD (ring)" and "HUD (box)"
+  // presets are this one page twice): the pinned page ignores the saved pick and never writes it, so the
+  // HUD's own window and each panel keep their own. It has no Box | HUD switch either (CSS: body.pinstyle).
+  var _pinStyle = null;
+  try { var _q = new URLSearchParams(window.location.search).get('wpstyle'); if (_q === 'hud' || _q === 'a') _pinStyle = _q; } catch (e) {}
+  if (_pinStyle) { style = _pinStyle; _firstRun = false; document.body.classList.add('pinstyle'); }
   var picker = document.getElementById('picker');
   function paintPicker(){
     var bs = picker.querySelectorAll('button');
@@ -325,7 +352,7 @@
   function setBounds(b){ try { if (window.mimic && window.mimic.overlaySetBounds) window.mimic.overlaySetBounds(b); } catch (e) {} }
   picker.addEventListener('click', function(e){
     var b = e.target && e.target.closest ? e.target.closest('button[data-v]') : null;
-    if (!b) return;
+    if (!b || _pinStyle) return;
     var next = b.getAttribute('data-v');
     if (next === style) return;
     if (builderEl && !builderEl.hidden) closeBuilder(false);   // leaving the HUD: the card's bounds follow
@@ -355,6 +382,13 @@
   // ones closing it restores) change the same way.
   function reshapeForHits(was, now){
     if (!isHud(style) || was === now) return;
+    if (IN_CANVAS) {
+      // The panel is the window: the canvas fits it again (wpFitSize below says how wide the ring now is). With
+      // the builder open the panel is wider than the ring by the builder's width, which --ring-w leaves out.
+      try { window.parent.wpCanvasFit(window); } catch (e) {}
+      if (!builderEl.hidden) document.documentElement.style.setProperty('--ring-w', (document.documentElement.clientWidth - PANEL_W) + 'px');
+      return;
+    }
     var f = (400 + 2 * LANE_EXT) / 400, k = now === 'outside' ? f : 1 / f;
     if (builderEl && !builderEl.hidden) {
       var pre = null;
@@ -1430,7 +1464,28 @@
   // bounds from before are kept on this computer until the panel closes, so
   // quitting with it open does not leave the ring off-centre next time.
   var PANEL_W = 300, BUILD_KEY = 'wpHudPreBuild';   // matches --panel-w
+  // The same builder on the Timers canvas (the guild lead, 2026-10-03: "we need the ability to craft the
+  // circular HUD" there too). The canvas widens this page's panel (window.parent.wpCanvasWiden) toward the side
+  // with room and says which; the ring keeps the width it had, measured on this frame's own viewport, and
+  // nothing is written to BUILD_KEY — that is the HUD window's saved size, not a panel's. What the builder
+  // edits is the same per-character hudParts as the HUD's own window (localStorage is shared), so a ring built
+  // here is the one the window draws, and the other way round.
+  function canvasWiden(on){
+    try { return window.parent.wpCanvasWiden(window, PANEL_W, on); } catch (e) { return false; }
+  }
   function openBuilder(){
+    if (IN_CANVAS) {
+      var cw = document.documentElement.clientWidth, ch = document.documentElement.clientHeight;
+      var side = canvasWiden(true);
+      if (!side) return;
+      document.documentElement.style.setProperty('--ring-w', cw + 'px');
+      document.documentElement.style.setProperty('--ring-h', ch + 'px');
+      document.body.classList.add('building');
+      document.body.classList.toggle('build-left', side === 'left');
+      renderBuilder();
+      builderEl.hidden = false;
+      return;
+    }
     var x = window.screenX, y = window.screenY, w = window.outerWidth, hgt = window.outerHeight;
     var sl = screen.availLeft || 0;
     var toLeft = x + w + PANEL_W > sl + screen.availWidth && x - PANEL_W >= sl;
@@ -1446,7 +1501,8 @@
   }
   function closeBuilder(restore){
     var pre = null;
-    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
+    if (IN_CANVAS) canvasWiden(false);   // the panel gives the builder's width back (nothing is stored for it)
+    else try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
     builderEl.hidden = true;
     document.body.classList.remove('building', 'build-left');
     document.documentElement.style.removeProperty('--ring-w');
@@ -1457,12 +1513,25 @@
   // Quit with the panel open → the window comes back at the ring's size.
   (function(){
     var pre = null;
-    try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
+    // (A panel never reads it: that key is the HUD window's saved size.)
+    try { if (!IN_CANVAS) pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
     if (pre) closeBuilder(isHud(style));
   })();
   document.getElementById('build-btn').addEventListener('click', function(){
     if (builderEl.hidden) openBuilder(); else closeBuilder();
   });
+  // The canvas's "⚙ Build the ring" (a panel's settings) and its drag, which closes the builder first.
+  window.wpToggleBuilder = function(){ if (isHud(style)) { if (builderEl.hidden) openBuilder(); else closeBuilder(); } };
+  window.wpCloseBuilder = function(){ if (!builderEl.hidden) closeBuilder(); };
+  // What this page wants in the canvas — its "Fit to content" and the first fit of a preset just added: the
+  // ring is a square (wider only as far as the numbers outside it need, as its window was) at the height the
+  // panel already has; the canvas gave a new one the window's own size, half the screen's short side. The
+  // box is measured by the canvas like any other page (null here).
+  window.wpFitSize = function(){
+    if (!isHud(style)) return null;
+    var side = document.documentElement.clientHeight;
+    return side > 0 ? [Math.round(side * hudWidthFactor()), side] : null;
+  };
   document.getElementById('builder-close').addEventListener('click', function(){ closeBuilder(); });
   document.getElementById('builder-reset').addEventListener('click', function(){
     var was = hudParts.hitsSide;

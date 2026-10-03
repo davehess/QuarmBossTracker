@@ -214,6 +214,10 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#5fd0c9;border-color:#5fd0c9}
   body.setup #move-btn{top:30px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's gutters go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .head{padding-left:0;padding-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>

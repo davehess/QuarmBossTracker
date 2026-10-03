@@ -217,6 +217,12 @@
     -webkit-app-region:no-drag;font-weight:600}
   body.setup #setupbar{display:flex}
   #setupbar input[type=range]{flex:1;cursor:pointer}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the card's margin and padding and the 24px kept
+     clear of ✕ go, and the card sits at the panel's edge. */
+  body.wp-in-canvas #wrap{margin:0;padding:4px 6px}
+  body.wp-in-canvas.dirge-on #wrap{padding-bottom:24px}   /* the Dirge board's own room, as above */
+  body.wp-in-canvas .dsw{margin-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>

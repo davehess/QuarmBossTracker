@@ -152,6 +152,10 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the first card's gutters go. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas #list > .cm:first-child{padding-left:5px;padding-right:5px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>

@@ -224,6 +224,13 @@
   .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
   .mini .ht.ok{color:#56d364}
   .mini .ht.used{color:#f85149}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding, the tabs' gutter and the
+     18px kept above the Loot and abilities lists (clear of ✕) go (the abilities' is inline, hence !important). */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .tabs{margin-right:0}
+  body.wp-in-canvas .loot{padding-top:0}
+  body.wp-in-canvas .spec{padding-top:0 !important}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>

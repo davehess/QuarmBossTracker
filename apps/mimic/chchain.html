@@ -452,6 +452,11 @@
   @media (prefers-reduced-motion: reduce){
     .chmini .blk,.chmini .mt-bar i{transition:none}
   }
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the window's padding and the title's left gutter
+     (kept clear of ✥) go. The right one stays: the 🎯 📣 ⚙ 🔊 buttons still sit over it, as in the window. */
+  body.wp-in-canvas #wrap{padding:2px 3px}
+  body.wp-in-canvas .head{padding-left:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>

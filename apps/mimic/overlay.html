@@ -214,6 +214,11 @@
   /* The tab strip is hidden in mini, so the bar says which tab this is:
      red on Tank, where the number is damage TAKEN. */
   li.mrow.tk .mbar i{background:#f85149}
+  /* On the Timers canvas (the guild lead, 2026-10-03: "the margins around the actual data is too large"): the
+     panel owns ✥ and ✕ — the preload hides this page's — so the margin, the padding and the gutter kept clear
+     of them go, and the card sits at the panel's edge. */
+  body.wp-in-canvas .hud{margin:0;padding:4px 6px}
+  body.wp-in-canvas .tabs{margin-right:0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>

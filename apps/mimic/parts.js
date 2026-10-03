@@ -906,36 +906,44 @@
   }
   // A second column: the same rows moved dx to the right.
   function beside(rows, dx) { return rows.map(function (r) { return [r[0], r[1], r[2] + dx, r[3], r[4], r[5]]; }); }
+  // `embed` names the overlay (its key in main's canvas catalog) a preset IS: choosing it puts that overlay's own
+  // page on the canvas instead of laying out `parts` (the guild lead, 2026-10-03: "when I look at an overlay
+  // outside of the canvas or choose it as a preset within the canvas they should be extremely close to being
+  // identical" — the stacked pieces never were). `style` is the look of a page that has two (the HUD: 'hud' the
+  // ring, 'a' the box). `parts` stays: the chooser's "as pieces" lays it out, and a preset with no `embed`
+  // (no overlay of its own) is only ever pieces.
   var PRESETS = [
-    { id: 'hud-box', name: 'HUD (box)', parts: stack([['me.name', 'readout'], ['me.hp', 'bar'], ['me.mana', 'bar'], ['me.end', 'bar'], ['me.xp', 'bar'], ['me.aa', 'bar'],
-      ['me.cast', 'bar'], ['target.name', 'readout'], ['target.hp', 'bar'], ['pet.hp', 'bar'], ['group.members', 'rows', 110], ['me.gems', 'rows', 150]], 240) },
-    { id: 'hud-ring', name: 'HUD (rings)', parts: [['me.hp', 'ring', 0, 0, 96, 96], ['me.mana', 'ring', 100, 0, 96, 96], ['target.hp', 'ring', 200, 0, 96, 96],
+    // The ring first: it is the HUD (the guild lead, 2026-10-03: "we also should have the default HUD circle
+    // view in canvas"); the six dials are what "as pieces" gives.
+    { id: 'hud-ring', name: 'HUD (ring)', embed: 'me', style: 'hud', parts: [['me.hp', 'ring', 0, 0, 96, 96], ['me.mana', 'ring', 100, 0, 96, 96], ['target.hp', 'ring', 200, 0, 96, 96],
       ['tick.server', 'ring', 0, 100, 96, 96], ['tick.swing', 'ring', 100, 100, 96, 96], ['me.cast', 'ring', 200, 100, 96, 96],
       ['target.tot', 'readout', 0, 200, 296, 22], ['target.slow', 'readout', 0, 224, 296, 22], ['me.cooldowns', 'chips', 0, 248, 296, 48]] },
-    { id: 'tank', name: 'Tank', parts: stack([['tank.mt', 'bar'], ['tank.heals', 'rows', 80], ['tank.da', 'bar'], ['tank.target', 'bar'], ['tank.enrage', 'readout'],
+    { id: 'hud-box', name: 'HUD (box)', embed: 'me', style: 'a', parts: stack([['me.name', 'readout'], ['me.hp', 'bar'], ['me.mana', 'bar'], ['me.end', 'bar'], ['me.xp', 'bar'], ['me.aa', 'bar'],
+      ['me.cast', 'bar'], ['target.name', 'readout'], ['target.hp', 'bar'], ['pet.hp', 'bar'], ['group.members', 'rows', 110], ['me.gems', 'rows', 150]], 240) },
+    { id: 'tank', name: 'Tank', embed: 'tank', parts: stack([['tank.mt', 'bar'], ['tank.heals', 'rows', 80], ['tank.da', 'bar'], ['tank.target', 'bar'], ['tank.enrage', 'readout'],
       ['tank.dt', 'bar'], ['tank.rampage', 'bar'], ['heal.chdue', 'bar'], ['tank.ds', 'readout'], ['tank.mtbuffs', 'rows', 130], ['tank.offtanks', 'rows', 70]], 260) },
-    { id: 'command', name: 'Command Center', parts: stack([['tank.target', 'bar'], ['tank.enrage', 'readout'], ['tank.dt', 'bar'], ['tank.mt', 'bar'], ['tank.rampage', 'bar'],
+    { id: 'command', name: 'Command Center', embed: 'command', parts: stack([['tank.target', 'bar'], ['tank.enrage', 'readout'], ['tank.dt', 'bar'], ['tank.mt', 'bar'], ['tank.rampage', 'bar'],
       ['raid.defensives', 'rows', 70], ['me.cd_disc', 'bar'], ['heal.mana', 'rows', 110], ['heal.di', 'chips'], ['raid.rolls', 'rows', 80], ['raid.cures', 'rows', 70], ['raid.rez', 'rows', 70]], 260) },
     // Target Info as the overlay has it: the Stats tab down the left, its Loot, Spells and F/Q/V
     // tabs down the right.
-    { id: 'target', name: 'Target Info', parts: stack([['target.name', 'readout'], ['target.level', 'readout'], ['target.pqdi', 'readout'], ['target.hpmax', 'readout'],
+    { id: 'target', name: 'Target Info', embed: 'mobinfo', parts: stack([['target.name', 'readout'], ['target.level', 'readout'], ['target.pqdi', 'readout'], ['target.hpmax', 'readout'],
       ['target.dmg', 'readout'], ['target.hp', 'bar'], ['target.statgrid', 'columns', 58], ['target.specials', 'chips', 92], ['target.sight', 'chips', 24], ['target.flags', 'chips'],
       ['target.ht', 'readout'], ['target.slow', 'readout'], ['target.mana', 'bar'], ['target.lastcast', 'readout'], ['target.tot', 'readout'],
       ['target.casting', 'rows', 60], ['target.debuffs', 'rows', 100], ['target.buffs', 'rows', 70]], 260)
       .concat(beside(stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170], ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280), 268)) },
     { id: 'target-tabs', name: 'Target: drops, spells, F/Q/V', parts: stack([['target.loot', 'rows', 170], ['target.spells', 'rows', 170],
       ['target.factions', 'rows', 90], ['target.quest', 'rows', 170], ['target.vendor', 'rows', 90]], 280) },
-    { id: 'charm', name: 'Charm', parts: stack([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
-    { id: 'pets', name: 'Pets', parts: stack([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
-    { id: 'dps', name: 'DPS HUD', parts: stack([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },
-    { id: 'threat', name: 'Threat meter', parts: stack([['fight.name', 'readout'], ['fight.threat', 'rows', 200]], 280) },
+    { id: 'charm', name: 'Charm', embed: 'charm', parts: stack([['charm.pet', 'bar'], ['charm.uptime', 'readout'], ['charm.breaks', 'bar'], ['charm.servertick', 'bar'], ['charm.mobtick', 'bar'], ['charm.buffs', 'rows', 90]], 240) },
+    { id: 'pets', name: 'Pets', embed: 'pets', parts: stack([['pet.hp', 'bar'], ['pet.target', 'readout'], ['pet.combat', 'readout'], ['pet.buffs', 'rows', 100]], 240) },
+    { id: 'dps', name: 'DPS HUD', embed: 'hud', parts: stack([['fight.name', 'readout'], ['fight.dps', 'rows', 200], ['fight.mine', 'readout']], 280) },
+    { id: 'threat', name: 'Threat meter', embed: 'threat', parts: stack([['fight.name', 'readout'], ['fight.threat', 'rows', 200]], 280) },
     { id: 'group', name: 'Group', parts: stack([['group.m1', 'bar'], ['group.m2', 'bar'], ['group.m3', 'bar'], ['group.m4', 'bar'], ['group.m5', 'bar'], ['pet.hp', 'bar']], 220) },
-    { id: 'tick', name: 'Tick', parts: stack([['tick.server', 'bar'], ['charm.mobtick', 'bar'], ['tick.zeal', 'readout'], ['tick.clock', 'readout']], 220) },
-    { id: 'exttarget', name: 'Extended Target', parts: stack([['raid.online', 'readout'], ['raid.offtanked', 'readout'], ['raid.targets', 'rows', 240]], 280) },
-    { id: 'buffq', name: 'Buff queue', parts: stack([['raid.debuffq', 'rows', 120], ['raid.buffq', 'rows', 140], ['raid.burst', 'rows', 70]], 280) },
-    { id: 'who', name: '/who', parts: stack([['zone.target', 'readout'], ['zone.count', 'readout'], ['zone.who', 'rows', 220], ['zone.gone', 'rows', 90]], 280) },
-    { id: 'melody', name: 'Melody', parts: stack([['cast.now', 'readout'], ['cast.melody', 'rows', 110], ['cast.accelerating_chorus', 'bar'], ['cast.amplification', 'bar'], ['cast.counts', 'rows', 90]], 260) },
-    { id: 'chchain', name: 'CH chain', parts: stack([['heal.chnext', 'readout'], ['heal.chdue', 'bar'], ['heal.chain', 'rows', 130], ['heal.di', 'chips']], 260) },
+    { id: 'tick', name: 'Tick', embed: 'zeal', parts: stack([['tick.server', 'bar'], ['charm.mobtick', 'bar'], ['tick.zeal', 'readout'], ['tick.clock', 'readout']], 220) },
+    { id: 'exttarget', name: 'Extended Target', embed: 'exttarget', parts: stack([['raid.online', 'readout'], ['raid.offtanked', 'readout'], ['raid.targets', 'rows', 240]], 280) },
+    { id: 'buffq', name: 'Buff queue', embed: 'buffQueue', parts: stack([['raid.debuffq', 'rows', 120], ['raid.buffq', 'rows', 140], ['raid.burst', 'rows', 70]], 280) },
+    { id: 'who', name: '/who', embed: 'who', parts: stack([['zone.target', 'readout'], ['zone.count', 'readout'], ['zone.who', 'rows', 220], ['zone.gone', 'rows', 90]], 280) },
+    { id: 'melody', name: 'Melody', embed: 'melody', parts: stack([['cast.now', 'readout'], ['cast.melody', 'rows', 110], ['cast.accelerating_chorus', 'bar'], ['cast.amplification', 'bar'], ['cast.counts', 'rows', 90]], 260) },
+    { id: 'chchain', name: 'CH chain', embed: 'chchain', parts: stack([['heal.chnext', 'readout'], ['heal.chdue', 'bar'], ['heal.chain', 'rows', 130], ['heal.di', 'chips']], 260) },
     { id: 'timers', name: 'Timers', parts: stack([['tick.server', 'bar'], ['timers.all', 'rows', 200]], 280) },
   ];
 
