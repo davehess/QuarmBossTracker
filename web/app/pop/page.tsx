@@ -868,7 +868,9 @@ export default async function PopFlagsPage(
               )}
             </p>
           </div>
-          <div className="shrink-0"><SpellbookSubmit characters={myChars.map(c => c.name)} /></div>
+          {/* min-w-0, not shrink-0: a no-shrink box sized itself to the whole picker row and ran off a phone
+              screen, so the page scrolled sideways (the guild lead, 2026-10-03). Now the row wraps. */}
+          <div className="min-w-0 max-w-full"><SpellbookSubmit characters={myChars.map(c => c.name)} /></div>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">

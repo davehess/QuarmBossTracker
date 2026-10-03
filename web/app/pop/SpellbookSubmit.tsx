@@ -20,12 +20,12 @@ export default function SpellbookSubmit({ characters }: { characters: string[] }
     );
   }
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-2 text-xs min-w-0">
       <span className="text-dim">Submit a spellbook for</span>
       <select
         value={who}
         onChange={e => setWho(e.target.value)}
-        className="bg-bg border border-border rounded px-2 py-1 text-text"
+        className="bg-bg border border-border rounded px-2 py-1 text-text max-w-full"
       >
         {characters.map(c => <option key={c} value={c}>{c}</option>)}
       </select>
