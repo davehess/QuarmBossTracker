@@ -16567,6 +16567,11 @@ async function _handleAgentWhoLookup(req, res) {
 // exclude_inventory is returned but not yet acted on (no inventory upload
 // path exists yet — slated for the Mimic timeline); surfacing it now lets the
 // agent display the setting and refuse to send when the path lands.
+//
+// hidden_from_lists is DISPLAY ONLY (the guild lead, 2026-10-03: "make it so I can hide these
+// characters from anything but account inventory"). The agent hands it to its dashboard so a hidden
+// character drops out of the per-character pickers; it gates no upload and no collection — that is
+// exactly what exclude_from_stats / exclude_inventory are for.
 // Assemble per-character data-handling prefs. Shared by the standalone GET
 // /character-prefs and the multiplexed GET /poll (#106).
 async function _characterPrefsFor(characters) {
@@ -16578,7 +16583,7 @@ async function _characterPrefsFor(characters) {
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
   const rows = await supabase.select(
     'characters',
-    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay&guild_id=eq.wolfpack`,
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay,hidden_from_lists&guild_id=eq.wolfpack`,
   ).catch(() => []);
   const prefs = {};
   for (const r of (Array.isArray(rows) ? rows : [])) {
@@ -16587,6 +16592,7 @@ async function _characterPrefsFor(characters) {
       exclude_from_stats: !!r.exclude_from_stats,
       exclude_inventory:  !!r.exclude_inventory,
       tell_relay:         !!r.tell_relay,
+      hidden_from_lists:  !!r.hidden_from_lists,
     };
   }
   return { prefs };
