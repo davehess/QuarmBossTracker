@@ -109,6 +109,12 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ Members tick their own PoP flags (web 1.8.86, live, 2026-10-03).** On
+  [wolfpack.quest/pop?view=matrix](https://wolfpack.quest/pop?view=matrix) and
+  [?view=mine](https://wolfpack.quest/pop?view=mine) a gate on your own character is a toggle: gold ☑ = your word,
+  counted everywhere; Mimic / /who proof outranks it. Same store as the /pop/guide ticks. Open: the guide's
+  "Win a trial" step carries the Justice flag although Justice also needs the Mavuin hail. §145.
+- **✅ Stable Mimic 2.7.8 (agent 3.7.75) + web 1.8.85 + the #raid-chat post (bot 3.1.194), 2026-10-03.** §144.
 - **⏳ Hide from lists + folded no-known-level characters (agent 3.7.75 beta, bot 3.1.193 + web 1.8.83–1.8.84 live,
   2026-10-03).** Owner's "Hide from lists" on [b.wolfpack.quest/me](https://b.wolfpack.quest/me) (everywhere except
   account inventory), no-known-level characters folded on `/pop`, `/pop/guide`, `/me` and in Mimic's pickers, the

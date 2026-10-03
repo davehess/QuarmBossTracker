@@ -54,8 +54,10 @@ describe('the page', () => {
   it('adds the flags /who proves to each character, marked as seen (2026-10-01)', () => {
     expect(body).toMatch(/sb\.rpc\('pop_who_sightings', \{ p_guild_id: 'wolfpack', p_names: \[\.\.\.nameOf\.keys\(\)\], p_zones: WHO_ZONE_NAMES \}\)/);
     expect(body).toMatch(/for \(const \[f, proof\] of flagsFromSightings\(rows\)\) \{\s*if \(c\.flags\.has\(f\)\) continue;\s*c\.flags\.add\(f\);\s*c\.seen\.set\(f, proof\);/);
-    // A gate only /who proves is a blue ✓, in the matrix and in My Characters alike.
-    expect(body.match(/<AccessMark z=\{z\} c=\{/g)?.length).toBe(2);
+    // A gate only /who proves is a blue ✓, in the matrix and in My Characters alike: both tables render a
+    // cell through GateCell (2026-10-03, which makes it the owner's button), and GateCell's other branch is AccessMark.
+    expect(body.match(/<GateCell z=\{z\} c=\{/g)?.length).toBe(2);
+    expect(body.match(/<AccessMark z=\{z\} c=\{/g)?.length).toBe(1);
   });
   it('keeps the link\'s query through sign-in (a signed-out ?v=b&demo=1 used to land on bare /pop)', () => {
     expect(body).toMatch(/redirect\(`\/auth\/signin\?next=\$\{encodeURIComponent\('\/pop\?' \+ new URLSearchParams\(await searchParams/);

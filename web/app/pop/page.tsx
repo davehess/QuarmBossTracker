@@ -15,6 +15,10 @@
 // rows are grants we saw but couldn't name (the catalog's TODO list).
 // /who adds the rest (2026-10-01): a character any raider's /who showed inside a gated plane holds its
 // gate and the gates on the way in (pop_who_sightings + web/lib/popWho.ts), shown as a blue ✓.
+// A member's own word counts too (the guild lead, 2026-10-03: "check off their own flags for their own
+// characters outside of using mimic"): pop_guide_ticks, the table the /pop/guide checklist writes, read by
+// web/lib/popSelfFlags.ts and shown as a gold ☑. Mimic's flag and /who both outrank it. On the matrix and
+// My Characters the viewer's own cells are buttons (SelfFlagCells.tsx); everyone else's are plain marks.
 //
 // Views: default = chart + planner · ?zone=<key> = who's in/missing ·
 // ?view=matrix = roster × zone table · ?view=mine = the signed-in member's
@@ -44,11 +48,14 @@ import {
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
 import { WHO_ZONE_NAMES, flagsFromSightings, seenText, type Sighting, type WhoProof } from '@/lib/popWho';
+import { SELF_TICK_KEYS, SELF_TICK_TITLE, gateState, proofFor, selfFlagsFromTicks } from '@/lib/popSelfFlags';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadHiddenNames, loadLevels, loadTraderNames, partitionTiers } from '@/lib/listableChars';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
 import SpellbookSubmit from './SpellbookSubmit';
+import GateMark from './GateMark';
+import { OwnedFlagCount, OwnedGateCell, SelfFlagsProvider } from './SelfFlagCells';
 import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
 import { demoEssenceQueue } from '@/lib/essencesQueue';
@@ -57,8 +64,9 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags — Wolf Pack' };
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
-// flags = recorded + seen; seen = the flags only /who proves (a character standing in a gated plane).
-type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean; seen: Map<string, WhoProof> };
+// flags = recorded + seen + self; seen = the flags only /who proves (a character standing in a gated plane);
+// self = the flags only the owner's own tick holds (Mimic and /who both outrank it, so a flag they prove is never here).
+type CharFlags = { name: string; flags: Set<string>; unmapped: number; main: boolean; seen: Map<string, WhoProof>; self: Set<string> };
 
 // One row per (character, PoP spell they haven't scribed) — main OR alt, as
 // of pop_spell_needs v4 (2026-08-26). Ordered by character level descending
@@ -209,6 +217,23 @@ export default async function PopFlagsPage(
     }
     return out;
   }
+  // The flags members ticked for their own characters (the guild lead, 2026-10-03). The same table the
+  // /pop/guide checklist writes, read by the keys that stand for a flag; paged by its primary key because
+  // the API returns at most 1,000 rows a request.
+  async function selfTickRows(): Promise<{ character_name: string; item_key: string }[]> {
+    const out: { character_name: string; item_key: string }[] = [];
+    for (let from = 0; from < 20_000; from += 1000) {
+      const { data } = await sb.from('pop_guide_ticks')
+        .select('character_name, item_key')
+        .eq('guild_id', 'wolfpack').in('item_key', SELF_TICK_KEYS)
+        .order('character_name', { ascending: true }).order('item_key', { ascending: true })
+        .range(from, from + 999);
+      const rows = (data ?? []) as { character_name: string; item_key: string }[];
+      out.push(...rows);
+      if (rows.length < 1000) break;
+    }
+    return out;
+  }
   // Justice trial marks each character holds (the guild lead, 2026-10-01: "For Justice capture the Marks
   // they have based on the one that they did"). A mark looted in the Plane of Justice counts for anyone;
   // a mark in an uploaded inventory counts unless that character opted out of inventory (exclude_inventory).
@@ -259,7 +284,7 @@ export default async function PopFlagsPage(
     return out;
   }
 
-  const [flagRows, { count: unmappedCount }, { data: rosterRaw }, { count: rosterCount }, marks] = await Promise.all([
+  const [flagRows, { count: unmappedCount }, { data: rosterRaw }, { count: rosterCount }, marks, tickRows] = await Promise.all([
     mappedFlagRows(),
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
@@ -271,6 +296,7 @@ export default async function PopFlagsPage(
       .select('name', { count: 'exact', head: true })
       .eq('guild_id', 'wolfpack'),
     marksByChar(),
+    selfTickRows(),
   ]);
   const marksOf = (name: string): string[] => {
     const s = marks.get(name.toLowerCase());
@@ -296,7 +322,7 @@ export default async function PopFlagsPage(
   for (const r of flagRows) {
     const k = r.character.toLowerCase();
     let c = byChar.get(k);
-    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true, seen: new Map() }; byChar.set(k, c); }
+    if (!c) { c = { name: r.character, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
     c.flags.add(r.flag_key);
   }
   // /who, for the roster and the viewer's own characters (the guild lead, 2026-10-01: "from /who in the
@@ -314,20 +340,37 @@ export default async function PopFlagsPage(
   }
   for (const [k, rows] of sightBy) {
     let c = byChar.get(k);
-    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map() }; byChar.set(k, c); }
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
     for (const [f, proof] of flagsFromSightings(rows)) {
       if (c.flags.has(f)) continue;
       c.flags.add(f);
       c.seen.set(f, proof);
     }
   }
+  // The owners' own word, last, so Mimic's record and /who's sighting both outrank it: a flag already held
+  // is never marked as a tick (the guild lead, 2026-10-03). Only the roster and the viewer's characters are
+  // looked at, like /who above.
+  for (const [k, flags] of selfFlagsFromTicks(tickRows)) {
+    if (!nameOf.has(k)) continue;
+    let c = byChar.get(k);
+    if (!c) { c = { name: nameOf.get(k) ?? k, flags: new Set(), unmapped: 0, main: true, seen: new Map(), self: new Set() }; byChar.set(k, c); }
+    for (const f of flags) {
+      if (c.flags.has(f)) continue;
+      c.flags.add(f);
+      c.self.add(f);
+    }
+  }
   const seenCount = [...byChar.values()].filter(c => c.seen.size > 0).length;
+  const selfCount = [...byChar.values()].filter(c => c.self.size > 0).length;
+  // The characters the viewer owns, hidden and low-level ones included: their cells are the buttons.
+  const ownedKeys = new Set(myCharsAll.map(c => c.name.toLowerCase()));
   // The guild-wide surfaces count the raid roster only (popRoster): raiders are the mains, raid alts the
   // alts. Their flags come from byChar; someone with none yet can still enter the open tier.
   const chars: CharFlags[] = members
     .map(m => {
       const c = byChar.get(m.name.toLowerCase());
-      return { name: m.name, flags: c?.flags ?? new Set<string>(), unmapped: 0, main: m.main, seen: c?.seen ?? new Map<string, WhoProof>() };
+      return { name: m.name, flags: c?.flags ?? new Set<string>(), unmapped: 0, main: m.main,
+               seen: c?.seen ?? new Map<string, WhoProof>(), self: c?.self ?? new Set<string>() };
     })
     .sort((a, b) => b.flags.size - a.flags.size || a.name.localeCompare(b.name));
   const totalUnmapped = unmappedCount ?? 0;
@@ -341,6 +384,13 @@ export default async function PopFlagsPage(
   // Counts.
   const flagCount = new Map<string, number>();
   for (const c of scopedChars) for (const f of c.flags) flagCount.set(f, (flagCount.get(f) ?? 0) + 1);
+  // How many of those holders are the owner's own word: a ticked flag, not one Mimic or /who saw.
+  const selfFlagCount = new Map<string, number>();
+  for (const c of scopedChars) for (const f of c.self) selfFlagCount.set(f, (selfFlagCount.get(f) ?? 0) + 1);
+  const selfNote = (f: string) => {
+    const s = selfFlagCount.get(f) ?? 0;
+    return s > 0 ? ` (${s} ticked by their owners)` : '';
+  };
   // Justice marks held across the scoped roster, one count per trial.
   const markCount = new Map<string, number>();
   for (const c of scopedChars) for (const t of marksOf(c.name)) markCount.set(t, (markCount.get(t) ?? 0) + 1);
@@ -441,17 +491,46 @@ export default async function PopFlagsPage(
     const byZone = [...new Map(proofs.map(p => [p.zone, p])).values()];
     return byZone.map(p => `${seenText(p.zone)} First seen ${new Date(p.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`).join(' ');
   }
-  function AccessMark({ z, c }: { z: PopNode; c: { flags: Set<string>; seen: Map<string, WhoProof> } }) {
-    if (!zoneAccess(z, c.flags)) return <span className="text-dim">—</span>;
-    const seen = seenFor(z, c);
-    return seen.length ? <span className="text-blue" title={seenTitle(seen)}>✓</span> : <span className="text-green">✓</span>;
+  // A flag a member only ticked (web/lib/popSelfFlags.ts) is their own word, shown as a gold ☑ that says
+  // so. A gate is only as proven as its weakest flag, so one ticked flag makes the whole cell ☑.
+  const selfOf = (z: PopNode, c: { self: Set<string> }) => z.requires.filter(f => c.self.has(f));
+  function selfTitle(z: PopNode, c: { self: Set<string> }) {
+    return `${SELF_TICK_TITLE}: ${selfOf(z, c).map(f => POP_FLAGS[f]?.label ?? f).join(', ')}.`;
   }
+  type MarkSource = { flags: Set<string>; seen: Map<string, WhoProof>; self: Set<string> };
+  function AccessMark({ z, c }: { z: PopNode; c: MarkSource }) {
+    const g = gateState(z.requires, proofFor(z.requires, c), c.self);
+    if (g.mark === 'none') return <span className="text-dim">—</span>;
+    const seen = seenFor(z, c);
+    const title = [g.mark === 'self' ? selfTitle(z, c) : '', seen.length ? seenTitle(seen) : ''].filter(Boolean).join(' ');
+    return <GateMark kind={g.mark} title={title || undefined} />;
+  }
+  // One gate cell, as the owner's button when the viewer owns the character and as AccessMark for everyone
+  // else's. The button decides for itself whether anything is left to tick (SelfFlagCells.tsx).
+  function GateCell({ z, c, owned }: { z: PopNode; c: MarkSource & { name: string }; owned: boolean }) {
+    if (!owned) return <AccessMark z={z} c={c} />;
+    const seen = seenFor(z, c);
+    return (
+      <OwnedGateCell character={c.name} zone={z.name}
+                     requires={z.requires.map(f => ({ key: f, label: POP_FLAGS[f]?.label ?? f }))}
+                     proof={proofFor(z.requires, c)} whoTitle={seen.length ? seenTitle(seen) : ''} />
+    );
+  }
+  // What a row's Flags number starts from: every flag Mimic or /who holds. The viewer's ticks are added live.
+  const provenOf = (c: MarkSource) => [...c.flags].filter(f => !c.self.has(f));
+  // The viewer's own ticks for the rows of a table, to seed its SelfFlagsProvider.
+  const ownTicks = (rows: { name: string; self: Set<string> }[]) =>
+    Object.fromEntries(rows.filter(r => ownedKeys.has(r.name.toLowerCase())).map(r => [r.name.toLowerCase(), [...r.self]]));
   function seenTag(c: CharFlags) {
     if (!selected) return null;
     const seen = seenFor(selected, c);
     if (!seen.length) return null;
     const zones = [...new Set(seen.map(p => POP_ZONE_BY_KEY[p.zone]?.short ?? p.zone))];
     return <span className="text-[11px] text-blue" title={seenTitle(seen)}> · seen in {zones.join(', ')} on /who</span>;
+  }
+  function selfTag(c: CharFlags) {
+    if (!selected || selfOf(selected, c).length === 0) return null;
+    return <span className="text-[11px] text-gold" title={selfTitle(selected, c)}> · ☑ ticked by its owner</span>;
   }
 
   // ── Card renderer (server-side JSX helper) ────────────────────────────────
@@ -475,7 +554,7 @@ export default async function PopFlagsPage(
           <div className="flex flex-wrap gap-1">
             {z.requires.map(f => (
               <span key={f} className="text-[10px] px-1.5 py-0.5 rounded bg-black/30 border border-border text-dim"
-                    title={`${POP_FLAGS[f]?.label ?? f} — ${flagCount.get(f) ?? 0} have it`}>
+                    title={`${POP_FLAGS[f]?.label ?? f} — ${flagCount.get(f) ?? 0} have it${selfNote(f)}`}>
                 ⤓ {POP_FLAGS[f]?.label ?? f} <b className="text-text">{flagCount.get(f) ?? 0}</b>
               </span>
             ))}
@@ -488,7 +567,12 @@ export default async function PopFlagsPage(
             return (
               <li key={f} className="text-xs flex items-center justify-between gap-2">
                 <span className="text-dim">{KIND_ICONS[def?.kind ?? 'event']} {def?.label ?? f}{def && !def.verified && ' *'}</span>
-                <span className={n > 0 ? 'text-green text-[11px]' : 'text-dim text-[11px]'}>👤 {n}</span>
+                <span className="text-[11px]">
+                  <span className={n > 0 ? 'text-green' : 'text-dim'}>👤 {n}</span>
+                  {(selfFlagCount.get(f) ?? 0) > 0 && (
+                    <span className="text-gold" title={`${selfFlagCount.get(f)} of them ticked by their owners on the site, not seen by Mimic or /who`}> ☑{selfFlagCount.get(f)}</span>
+                  )}
+                </span>
               </li>
             );
           })}
@@ -517,46 +601,48 @@ export default async function PopFlagsPage(
 
   // The My Characters table, once for the listed characters and once inside the "no known level" fold.
   function MineTable({ rows }: { rows: typeof myCharsAll }) {
+    const flagsOf = (c: (typeof rows)[number]): CharFlags => byChar.get(c.name.toLowerCase())
+      ?? { name: c.name, flags: new Set<string>(), unmapped: 0, main: !c.main_name, seen: new Map<string, WhoProof>(), self: new Set<string>() };
+    // Every row here is the viewer's own character, so every gate cell is theirs to tick (SelfFlagCells.tsx).
     return (
-      <div className="overflow-x-auto">
-        <table className="text-sm min-w-full">
-          <thead>
-            <tr className="text-dim text-xs text-left">
-              <th className="py-1 pr-3">Character</th>
-              <th className="py-1 pr-3">Class</th>
-              {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
-              <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
-              <th className="py-1 pl-2 text-right">Flags</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/50">
-            {rows.map(c => {
-              const f = byChar.get(c.name.toLowerCase())
-                ?? { name: c.name, flags: new Set<string>(), unmapped: 0, seen: new Map<string, WhoProof>() };
-              return (
-                <tr key={c.name}>
-                  <td className="py-1.5 pr-3">
-                    <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
-                    {!c.main_name && <span className="ml-1 text-[10px] text-gold" title="main">★</span>}
-                  </td>
-                  <td className="py-1.5 pr-3 text-dim">{c.class ?? '—'}</td>
-                  {gatedZones.map(z => (
-                    <td key={z.key} className="py-1.5 px-2 text-center"
-                        title={zoneAccess(z, f.flags) ? undefined
-                          : `missing ${missingFor(z, f.flags).map(fk => POP_FLAGS[fk]?.label ?? fk).join(', ')}`}>
-                      <AccessMark z={z} c={f} />
+      <SelfFlagsProvider initial={ownTicks(rows.map(flagsOf))}>
+        <div className="overflow-x-auto">
+          <table className="text-sm min-w-full">
+            <thead>
+              <tr className="text-dim text-xs text-left">
+                <th className="py-1 pr-3">Character</th>
+                <th className="py-1 pr-3">Class</th>
+                {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
+                <th className="py-1 px-2" title="Justice trial marks held">Marks</th>
+                <th className="py-1 pl-2 text-right">Flags</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/50">
+              {rows.map(c => {
+                const f = flagsOf(c);
+                return (
+                  <tr key={c.name}>
+                    <td className="py-1.5 pr-3">
+                      <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
+                      {!c.main_name && <span className="ml-1 text-[10px] text-gold" title="main">★</span>}
                     </td>
-                  ))}
-                  <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
-                    {[...marksOf(c.name), ...(hasMarkOfJustice(c.name) ? ['Mark of Justice'] : [])].join(', ') || <span className="text-dim">—</span>}
-                  </td>
-                  <td className="py-1.5 pl-2 text-right text-dim text-xs">{f.flags.size}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    <td className="py-1.5 pr-3 text-dim">{c.class ?? '—'}</td>
+                    {gatedZones.map(z => (
+                      <td key={z.key} className="py-1.5 px-2 text-center">
+                        <GateCell z={z} c={f} owned />
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-xs text-gold whitespace-nowrap">
+                      {[...marksOf(c.name), ...(hasMarkOfJustice(c.name) ? ['Mark of Justice'] : [])].join(', ') || <span className="text-dim">—</span>}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right text-dim text-xs"><OwnedFlagCount character={c.name} proven={provenOf(f)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </SelfFlagsProvider>
     );
   }
 
@@ -624,6 +710,15 @@ export default async function PopFlagsPage(
     </details>
   );
 
+  // The marks the matrix and My Characters use, next to the tables that show them.
+  const gateLegend = (
+    <p className="text-[11px] text-dim mt-3 leading-5">
+      <span className="text-green">✓</span> Mimic saw it · <span className="text-blue">✓</span> seen on /who ·{' '}
+      <span className="text-gold">☑</span> {SELF_TICK_TITLE.toLowerCase()}, their own word · — not yet.{' '}
+      On your own characters a cell is a button: tap it to tick or untick.
+    </p>
+  );
+
   return (
     <div className="space-y-6">
       <section className="bg-panel border border-border rounded-lg p-6">
@@ -637,6 +732,9 @@ export default async function PopFlagsPage(
           meditation&quot;) records everything a character holds. <b className="text-text">/who</b> fills in the rest,
           Mimic or not: anyone a raider&apos;s /who shows inside a flagged plane holds that plane&apos;s gate, and the
           gates of the planes they came through (a <span className="text-blue">blue ✓</span>; hover it for where).
+          Anyone can also tick their <b className="text-text">own</b> characters&apos; gates on the Matrix or My
+          Characters views, or on <Link href="/pop/guide" className="underline">their checklist</Link>: that is their
+          own word, a <span className="text-gold">gold ☑</span>, and Mimic or /who outranks it.
           The gates are Quarm&apos;s own, read from the server&apos;s portal script; there is no level bypass. Zones
           marked <b className="text-text">*</b> are not yet confirmed that way.
         </p>
@@ -654,6 +752,11 @@ export default async function PopFlagsPage(
           {seenCount > 0 && (
             <span title="Characters a raider's /who showed inside a plane behind a gate: their flags for it count, Mimic or not.">
               👁 <b className="text-text">{seenCount}</b> placed by /who
+            </span>
+          )}
+          {selfCount > 0 && (
+            <span title="Characters whose owner ticked a flag on the site that Mimic and /who have not shown: it counts everywhere, marked ☑.">
+              ☑ <b className="text-text">{selfCount}</b> with ticked flags
             </span>
           )}
           {totalUnmapped > 0 && <span className="text-orange">⚠ {totalUnmapped} unmapped grants (catalog TODO)</span>}
@@ -697,7 +800,7 @@ export default async function PopFlagsPage(
               <div className="text-xs text-green mb-1">✓ Can enter ({(eligibleChars.get(selected.key) ?? []).length})</div>
               <ul className="space-y-0.5">
                 {(eligibleChars.get(selected.key) ?? []).map(c => (
-                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}{seenTag(c)}</li>
+                  <li key={c.name}><Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>{markTag(c.name)}{seenTag(c)}{selfTag(c)}</li>
                 ))}
               </ul>
             </div>
@@ -721,31 +824,42 @@ export default async function PopFlagsPage(
           {scopedChars.length === 0 ? (
             <p className="text-sm text-dim">No flags recorded yet — the matrix fills in as grants land.</p>
           ) : (
-            <table className="text-sm min-w-full">
-              <thead>
-                <tr className="text-dim text-xs text-left">
-                  <th className="py-1 pr-3">Character</th>
-                  {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
-                  <th className="py-1 pl-2 text-right">Flags</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {scopedChars.map(c => (
-                  <tr key={c.name}>
-                    <td className="py-1.5 pr-3">
-                      <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
-                    </td>
-                    {gatedZones.map(z => (
-                      <td key={z.key} className="py-1.5 px-2 text-center">
-                        <AccessMark z={z} c={c} />
-                      </td>
-                    ))}
-                    <td className="py-1.5 pl-2 text-right text-dim text-xs">{c.flags.size}</td>
+            // The viewer's own rows are buttons: tick a gate you hold that Mimic never saw (the guild lead,
+            // 2026-10-03). Everyone else's cells stay plain marks. Still the one horizontal scroller (this
+            // section), so the header row cannot widen the page on a phone.
+            <SelfFlagsProvider initial={ownTicks(scopedChars)}>
+              <table className="text-sm min-w-full">
+                <thead>
+                  <tr className="text-dim text-xs text-left">
+                    <th className="py-1 pr-3">Character</th>
+                    {gatedZones.map(z => <th key={z.key} className="py-1 px-2 text-center" title={z.name}>{z.short}</th>)}
+                    <th className="py-1 pl-2 text-right">Flags</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {scopedChars.map(c => {
+                    const owned = ownedKeys.has(c.name.toLowerCase());
+                    return (
+                      <tr key={c.name}>
+                        <td className="py-1.5 pr-3">
+                          <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-text hover:underline">{c.name}</Link>
+                        </td>
+                        {gatedZones.map(z => (
+                          <td key={z.key} className="py-1.5 px-2 text-center">
+                            <GateCell z={z} c={c} owned={owned} />
+                          </td>
+                        ))}
+                        <td className="py-1.5 pl-2 text-right text-dim text-xs">
+                          {owned ? <OwnedFlagCount character={c.name} proven={provenOf(c)} /> : c.flags.size}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </SelfFlagsProvider>
           )}
+          {scopedChars.length > 0 && gateLegend}
         </section>
       ) : view === 'mine' ? (
         // ── My Characters — every character on the viewer's account, main
@@ -757,7 +871,9 @@ export default async function PopFlagsPage(
             <h3 className="text-base text-orange mb-1">🧍 My Characters</h3>
             <p className="text-xs text-dim">
               Every character linked to your account — alts included. Zone columns mirror the
-              Matrix view; hover a ✗ for exactly what&apos;s missing.
+              Matrix view. A cell is yours to tick: tap a — to say you hold that gate (Mimic hasn&apos;t seen
+              it; hover for what&apos;s missing), tap a ☑ to take it back. Gates Mimic or /who proved
+              can&apos;t be unticked. Every other flag is on your <Link href="/pop/guide" className="underline">checklist</Link>.
             </p>
           </div>
 
@@ -783,6 +899,7 @@ export default async function PopFlagsPage(
                 ? <MineTable rows={myCharsSorted} />
                 : <p className="text-sm text-dim">None of your characters has a known level of {LIST_MIN_LEVEL} or more yet.</p>}
               {myUnknown.length > 0 && noLevelFold(myUnknown.length, <MineTable rows={myUnknownSorted} />)}
+              {gateLegend}
             </>
           )}
 
@@ -878,7 +995,8 @@ export default async function PopFlagsPage(
             <p className="text-[10px] text-dim text-center">
               Chart topology after Samanna&apos;s classic planar progression chart · ⤓ gate flag with holder count ·
               👤 characters holding the flag · &quot;N in&quot; = can enter today · counts include characters /who
-              showed inside a gated plane
+              showed inside a gated plane · <span className="text-gold">☑ N</span> of the holders are an owner&apos;s
+              own tick on the site
             </p>
           </section>
 
@@ -890,6 +1008,7 @@ export default async function PopFlagsPage(
               today · <b className="text-text">gain</b> = attendees still missing the flag · <b className="text-text">unlocks</b> =
               people this kill pushes through a later gate (they have every OTHER flag for it). Every number is
               <b className="text-text"> mains</b>, with <b className="text-text">alts</b> in parentheses; ranked by mains.
+              Flags an owner ticked on the site (<span className="text-gold">☑</span>) count here like any other.
             </p>
             {chars.length === 0 ? (
               <p className="text-sm text-dim">
