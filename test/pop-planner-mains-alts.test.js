@@ -49,7 +49,13 @@ describe('the page', () => {
   it('builds its roster from the raid ranks and /who levels, then attaches each one\'s flags', () => {
     expect(body).toMatch(/\.in\('rank', \[\.\.\.RAIDER_RANKS, \.\.\.RAID_ALT_RANKS\]\)/);
     expect(body).toMatch(/sb\.from\('who_directory'\)\.select\('character_key, level'\)/);
-    expect(body).toMatch(/const chars: CharFlags\[\] = members\s*\.map\(m => \(\{ name: m\.name, flags: byChar\.get\(m\.name\.toLowerCase\(\)\)\?\.flags \?\? new Set<string>\(\)/);
+    expect(body).toMatch(/const chars: CharFlags\[\] = members\s*\.map\(m => \{\s*const c = byChar\.get\(m\.name\.toLowerCase\(\)\);\s*return \{ name: m\.name, flags: c\?\.flags \?\? new Set<string>\(\)/);
+  });
+  it('adds the flags /who proves to each character, marked as seen (2026-10-01)', () => {
+    expect(body).toMatch(/sb\.rpc\('pop_who_sightings', \{ p_guild_id: 'wolfpack', p_names: \[\.\.\.nameOf\.keys\(\)\], p_zones: WHO_ZONE_NAMES \}\)/);
+    expect(body).toMatch(/for \(const \[f, proof\] of flagsFromSightings\(rows\)\) \{\s*if \(c\.flags\.has\(f\)\) continue;\s*c\.flags\.add\(f\);\s*c\.seen\.set\(f, proof\);/);
+    // A gate only /who proves is a blue ✓, in the matrix and in My Characters alike.
+    expect(body.match(/<AccessMark z=\{z\} c=\{/g)?.length).toBe(2);
   });
   it('keeps the link\'s query through sign-in (a signed-out ?v=b&demo=1 used to land on bare /pop)', () => {
     expect(body).toMatch(/redirect\(`\/auth\/signin\?next=\$\{encodeURIComponent\('\/pop\?' \+ new URLSearchParams\(await searchParams/);

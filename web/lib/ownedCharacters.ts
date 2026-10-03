@@ -5,7 +5,12 @@
 
 import { supabaseAdmin } from '@/lib/supabase';
 
-export type OwnedChar = { name: string; main_name: string | null; class: string | null; active: boolean };
+// `rank` and `hidden_from_lists` are here for lists that tuck characters away (web/lib/listableChars.ts);
+// nothing else reads them. This function itself never filters on either: account inventory shows all.
+export type OwnedChar = {
+  name: string; main_name: string | null; class: string | null; active: boolean; rank: string | null;
+  hidden_from_lists: boolean | null;
+};
 
 export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   const admin = supabaseAdmin();
@@ -27,7 +32,7 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
 
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, active, discord_id')
+    .select('name, main_name, class, active, rank, hidden_from_lists, discord_id')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (OwnedChar & { discord_id: string | null })[];
 
@@ -36,6 +41,6 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   if (roots.size === 0) return [];
   return all
     .filter(c => roots.has((c.main_name || c.name).toLowerCase()))
-    .map(({ name, main_name, class: cls, active }) => ({ name, main_name, class: cls, active }))
+    .map(({ name, main_name, class: cls, active, rank, hidden_from_lists }) => ({ name, main_name, class: cls, active, rank, hidden_from_lists }))
     .sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.name.localeCompare(b.name));
 }

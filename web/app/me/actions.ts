@@ -10,7 +10,9 @@ import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 
-type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly';
+// hidden_from_lists is the owner's "hide everywhere except account inventory" (the guild lead, 2026-10-03):
+// display only, it stops nothing being collected.
+type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly' | 'hidden_from_lists';
 
 export async function setCharacterExclusion(
   characterName: string,
@@ -63,7 +65,7 @@ export async function setCharacterExclusion(
   }
 
   // Whitelist the column so a hostile caller can't drift the flag name.
-  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm', 'show_inventory_publicly', 'show_quests_publicly'];
+  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm', 'show_inventory_publicly', 'show_quests_publicly', 'hidden_from_lists'];
   if (!allowed.includes(flag)) return { ok: false, error: 'invalid flag' };
 
   const { error } = await admin
@@ -74,6 +76,8 @@ export async function setCharacterExclusion(
   if (error) return { ok: false, error: error.message };
 
   revalidatePath('/me');
+  // The lists that fold or drop a hidden character live on the PoP pages.
+  if (flag === 'hidden_from_lists') { revalidatePath('/pop'); revalidatePath('/pop/guide'); }
   return { ok: true };
 }
 

@@ -19,8 +19,24 @@ export type GuideChar = { name: string; cls: string | null; isMain: boolean; man
 const WHO_ICON: Record<Who, string> = { solo: '🧍', group: '👥', raid: '⚔' };
 const WHOS: Who[] = ['solo', 'group', 'raid'];
 
+// The character <option>s, with the characters nobody has a level for in a group at the bottom (the
+// guild lead, 2026-10-03: "put any unknown characters into a minimized area"). Shared by both layouts.
+export function CharOptions({ chars, noLevel }: { chars: Pick<GuideChar, 'name' | 'cls' | 'isMain'>[]; noLevel?: string[] }) {
+  const unknown = new Set(noLevel ?? []);
+  const opt = (c: Pick<GuideChar, 'name' | 'cls' | 'isMain'>) => (
+    <option key={c.name} value={c.name}>{c.name}{c.isMain ? '' : ' (alt)'}{c.cls ? ` · ${c.cls}` : ''}</option>
+  );
+  const folded = chars.filter(c => unknown.has(c.name));
+  return (
+    <>
+      {chars.filter(c => !unknown.has(c.name)).map(opt)}
+      {folded.length > 0 && <optgroup label="No known level">{folded.map(opt)}</optgroup>}
+    </>
+  );
+}
+
 export default function GuideChecklist(
-  { chars, initial, cards }: { chars: GuideChar[]; initial: string | null; cards: Record<number, ItemCard> },
+  { chars, initial, cards, noLevel }: { chars: GuideChar[]; initial: string | null; cards: Record<number, ItemCard>; noLevel?: string[] },
 ) {
   const [charName, setCharName] = useState<string | null>(initial);
   const [manualBy, setManualBy] = useState<Record<string, Set<string>>>(
@@ -79,9 +95,7 @@ export default function GuideChecklist(
               <span className="text-dim">Character</span>
               <select value={charName ?? ''} onChange={e => pick(e.target.value)}
                       className="bg-bg border border-border rounded px-2 py-1 text-text focus:outline focus:outline-2 focus:outline-blue">
-                {chars.map(c => (
-                  <option key={c.name} value={c.name}>{c.name}{c.isMain ? '' : ' (alt)'}{c.cls ? ` · ${c.cls}` : ''}</option>
-                ))}
+                <CharOptions chars={chars} noLevel={noLevel} />
               </select>
             </label>
           ) : (
@@ -146,7 +160,7 @@ export default function GuideChecklist(
   );
 }
 
-function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCard> }) {
+export function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCard> }) {
   return (
     <>
       {splitItems(text).map((p, n) => ('item' in p
@@ -164,7 +178,7 @@ function WithItems({ text, cards }: { text: string; cards: Record<number, ItemCa
   );
 }
 
-function Place({ at }: { at: Loc }) {
+export function Place({ at }: { at: Loc }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 min-w-0">
       <span className="text-text">{at.npc}</span>
@@ -178,7 +192,7 @@ function Place({ at }: { at: Loc }) {
 // the full quest chain with minimize sections … Highlight stages where you will have
 // input/output"). The first item stays in view; the hand-ins (item in → item out, gold) and
 // the story fold away.
-function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
+export function ChainView({ chain, cards }: { chain: Chain; cards: Record<number, ItemCard> }) {
   return (
     <div className="mt-2 space-y-1.5 text-[11px]">
       <div className="rounded border border-gold/60 bg-gold/10 px-2 py-1.5">

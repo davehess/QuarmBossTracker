@@ -36,6 +36,7 @@ import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
 import { selectAll } from '@/lib/selectAll';
+import { LIST_MIN_LEVEL, frontTierOf, tierOf } from '@/lib/listableChars';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 import { dayKey, RAID_TZ } from '@/lib/format';
 import { zonedDayRangeUtc } from '@/lib/raidReview';
@@ -66,6 +67,7 @@ type CharRow = {
   tell_dm:            boolean | null;
   show_inventory_publicly: boolean | null;
   show_quests_publicly:    boolean | null;
+  hidden_from_lists:       boolean | null;
 };
 
 type SkillBucket = { hits: number; dmg: number };
@@ -180,7 +182,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   // household.
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly, show_quests_publicly')
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly, show_quests_publicly, hidden_from_lists')
     .eq('guild_id', 'wolfpack');
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
@@ -791,7 +793,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   // Live state + best-known level per owned character.
   const [liveState, levelByName] = await Promise.all([
     loadLiveState(chars.map(c => c.name)),
-    loadCharLevels(chars.map(c => c.name)),
+    loadCharLevels(allChars.map(c => c.name)),
   ]);
 
   // Default card order: highest level first (the member's mains/raiders float
@@ -848,8 +850,32 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   const anyRecent = allChars.some(c => now - lastTouched(c.name) <= RECENT_MS);
   // Nobody touched lately → show everything rather than an empty section.
   const isRecent = (name: string) => !anyRecent || now - lastTouched(name) <= RECENT_MS;
-  const recentSeenRows = seenRows.filter(r => isRecent(r.name));
-  const olderRows = [...seenRows.filter(r => !isRecent(r.name)), ...neverRows];
+  // Where each character sits, by tier (web/lib/listableChars.ts). Moved, not removed:
+  //   owner   — hidden by its owner: its own collapsed "Hidden by you" section, where it can be unhidden
+  //             (the guild lead, 2026-10-03: "make it so I can hide these characters from anything but
+  //             account inventory");
+  //   unknown — no known level: a collapsed "no known level" section ("put any unknown characters into a
+  //             minimized area");
+  //   more    — Traders and characters under level 46, whatever their last upload ("all of my traders and
+  //             mule characters destroy my views anywhere we display all of our logs"), and anything not
+  //             touched in 3 months: the collapsed "more" section;
+  //   front   — the rest.
+  // The best tier with anyone in it is the front tier, as `anyRecent` does for recency, so the front is
+  // never empty (a new account whose characters are all unknown still shows them).
+  const tierByName = new Map(allChars.map(c => [c.name, tierOf({
+    rank: c.rank, level: levelByName.get(c.name.toLowerCase()), hidden: c.hidden_from_lists,
+  })] as const));
+  const frontTier = frontTierOf(tierByName.values());
+  const placeByName = new Map(allChars.map(c => {
+    const t = tierByName.get(c.name);
+    const place: MeCard['place'] = c.hidden_from_lists ? 'owner'
+      : t === frontTier ? (isRecent(c.name) ? 'front' : 'more')
+      : t === 'unknown' ? 'unknown' : 'more';
+    return [c.name, place] as const;
+  }));
+  const isFront = (name: string) => placeByName.get(name) === 'front';
+  const recentSeenRows = seenRows.filter(r => isFront(r.name));
+  const olderRows = [...seenRows.filter(r => !isFront(r.name)), ...neverRows];
   const mostRecentSeen = seenRows[0]?.lastSeen ?? null;
 
   // Page-level aggregates
@@ -985,6 +1011,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
               tellDm={c.tell_dm !== false}
               showInventoryPublicly={!!c.show_inventory_publicly}
               showQuestsPublicly={!!c.show_quests_publicly}
+              hiddenFromLists={!!c.hidden_from_lists}
             />
             <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
             <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
@@ -1137,7 +1164,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
       </div>
     );
 
-    return { name: c.name, level, header, summary: buffsZonePanel, details, recent: isRecent(c.name) } as MeCard;
+    return { name: c.name, level, header, summary: buffsZonePanel, details, place: placeByName.get(c.name) ?? 'front' } as MeCard;
   });
 
   return (
@@ -1176,7 +1203,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
           {olderRows.length > 0 && (
             <details className="mt-2 text-xs">
               <summary className="cursor-pointer select-none text-dim hover:text-text">
-                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months or never uploaded
+                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months, never uploaded, a trader, under level {LIST_MIN_LEVEL}, no known level or hidden by you
               </summary>
               <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
                 {olderRows.map(r => <SyncCard key={r.name} {...r} />)}
@@ -1321,6 +1348,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
                   tellDm={c.tell_dm !== false}
                   showInventoryPublicly={!!c.show_inventory_publicly}
                   showQuestsPublicly={!!c.show_quests_publicly}
+                  hiddenFromLists={!!c.hidden_from_lists}
                 />
               </li>
             ))}
