@@ -3364,6 +3364,27 @@ function renderDiag(s) {
   let h = '';
   h += '<div class="grid">';
 
+  // Crash review — first on Diagnostics (the guild lead, 2026-10-03: "crash reporting
+  // should be on the diagnostics tab of mimic"; it sat on Info from 2026-08-13, and on
+  // Triggers before that). Reading dumps costs real work, so the list fills on demand via
+  // renderCrashReview()'s one-shot. The checkbox mirrors the tray's "Share crash reports
+  // with the guild" toggle — same cfg.crashReports flag, two places to reach it, so
+  // nobody has to know the tray menu exists.
+  h += '<div id="wpCrashReview" class="card wide"><b>🩺 Crash review</b>'
+    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
+    +  'files Zeal left on this machine and tells you what actually broke — including '
+    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
+    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
+    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
+    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
+    +    '<span>Automatically send crash reports to the guild</span>'
+    +  '</label>'
+    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
+    +  '— never the dump itself. Same setting as the tray menu; changing it restarts the '
+    +  'parser engine.</div>'
+    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
+    +  '<div id="wpCrashOut"></div></div>';
+
   // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
@@ -5730,26 +5751,6 @@ function renderInfo(s) {
   // the session that's already running.
   const lifetimeMin = Math.max(s.lifetime?.totalMinutes||0, sessionMin);
   let h = '';
-  // Crash review (moved here from Triggers, the guild lead 2026-08-13 — a crash is a
-  // machine/diagnostic concern, not a callout one). Reading dumps costs real
-  // work, so the list fills on demand via renderCrashReview()'s one-shot.
-  // The checkbox mirrors the tray's "Share crash reports with the guild" toggle
-  // — same cfg.crashReports flag, two places to reach it, so nobody has to know
-  // the tray menu exists.
-  h += '<div id="wpCrashReview" class="card wide"><b>\ud83e\ude7a Crash review</b>'
-    +  '<div class="dim" style="margin:6px 0">Had EverQuest close on you? This reads the crash '
-    +  'files Zeal left on this machine and tells you what actually broke \u2014 including '
-    +  'whether Mimic or Zeal had anything to do with it. The crash dumps never leave your PC.</div>'
-    +  '<label style="display:flex;gap:6px;align-items:center;margin:8px 0;cursor:pointer">'
-    +    '<input type="checkbox" id="wpCrashShare" onchange="wpToggleCrashShare(this.checked)"'
-    +      (s.crashReportsEnabled ? ' checked' : '') + '>'
-    +    '<span>Automatically send crash reports to the guild</span>'
-    +  '</label>'
-    +  '<div class="dim" style="font-size:11px;margin-bottom:8px">Sends only what the crash says '
-    +  '\u2014 never the dump itself. Same setting as the tray menu; changing it restarts the '
-    +  'parser engine.</div>'
-    +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
-    +  '<div id="wpCrashOut"></div></div>';
   // NOTE: Watched Logs (#wpWatchedLogs) moved to the Dashboard's ⚙ Engine card,
   // and the officer DKP tick / loot capture cards (#wpDkpTick / #wpDkpLoot)
   // moved to the 🛡 Admin tab (#109). Their render fns are unchanged — only the

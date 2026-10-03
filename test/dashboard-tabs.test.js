@@ -124,7 +124,7 @@ describe('placeholders have exactly one owner, filled after it', () => {
     wpMechanics:      'renderDiag',
     wpZealExplorer:   'renderDiag',
     wpRecentFires:    'renderTriggers',
-    wpCrashReview:    'renderInfo',     // The guild lead put the crash card on Info on purpose
+    wpCrashReview:    'renderDiag',     // The guild lead, 2026-10-03: crash reporting on Diagnostics
     wpBackupsCard:    'renderInfo',
     wpMeCard:         'renderDash',
     wpEngine:         'renderDash',
@@ -208,10 +208,20 @@ describe('the split actually moved the cards', () => {
     expect(bodyOf('renderInfo')).not.toContain('<h2>🩺 Raw Zeal Capture');
   });
 
-  it('Info keeps the parser facts and the crash card', () => {
+  it('Info keeps the parser facts', () => {
     const info = bodyOf('renderInfo');
-    for (const h of ['Parser Info', 'Client versions', 'Log archiving', 'Zeal tag capture', 'Crash review']) {
+    for (const h of ['Parser Info', 'Client versions', 'Log archiving', 'Zeal tag capture']) {
       expect(info, `Info should still carry "${h}"`).toContain(h);
+    }
+  });
+
+  // The guild lead, 2026-10-03: "crash reporting should be on the diagnostics tab of mimic".
+  // The card, its share checkbox and its button moved together; markup, not the phrase, because
+  // renderInfo's comment still says where the card went.
+  it('Diagnostics owns crash review, Info no longer does', () => {
+    for (const m of ['id="wpCrashReview"', 'id="wpCrashShare"', 'id="wpCrashBtn"', 'id="wpCrashOut"']) {
+      expect(bodyOf('renderDiag')).toContain(m);
+      expect(bodyOf('renderInfo')).not.toContain(m);
     }
   });
 
