@@ -6570,3 +6570,17 @@ this"*.
   door step from a kill — left where it is. (2) Relv in Storms also takes "continue" twice; it has no guide step.
   (3) Gram Dunnar's charm has no quest script in our mirror, so it keeps its old says. (4) The win conditions of
   the second and third Halls of Honor trials are a note only.
+
+### 148. Options carry a few-word "what makes it different"; Discord setup belongs on the website (2026-10-04)
+
+The guild lead, answering the onboarding A/B/C (`docs/DESIGN-onboarding-overhaul.md`, 2026-10-03 refresh):
+*"when you ask me a/b/c I need you to give me a few word view of the suggestion, what makes it different or
+special.. I feel like the discord setup is probably frustrating for people. setting up the threads should
+just be a spot in the website, wolfpack.quest and then permissions reviews, scheduled tasks, etc"*.
+
+- **Rule, standing:** every option offered for a pick leads with its letter, a short name and a few-word
+  line on what makes it different, before any mock or cost. Landed in CLAUDE.md under the reply-shape rule.
+- **Direction:** the bot's Discord setup — which channel or thread each card goes to, checking the bot's
+  permissions, the scheduled jobs — should be a place on wolfpack.quest, not env vars and Discord commands.
+  Same line as "Discord is a projection" (2026-08-16) and the self-host wizard epic. Being mapped; options
+  follow in the same shape.

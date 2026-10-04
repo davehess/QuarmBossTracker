@@ -152,6 +152,13 @@ Management API exposes neither. Do not quote an egress figure until someone does
 
 - **2026-09-29 — overlay sets are local first, with a database copy (planned)** (`DECISIONS-2026-09-21.md` §83; 3.0 plan R20): each raider's overlay sets live in a file on their own machine and work with no server; a copy per Discord account goes to a database table for moving between computers and for sharing. Small JSON per set (a few kB), kept until deleted. For the wizard: a guild with no database still gets working overlays, only no backup or sharing.
 
+- **2026-10-04 — Discord setup moves onto the website (direction; options pending)** (`DECISIONS-2026-09-21.md`
+  §148): the guild lead wants the bot's Discord setup — which channel or thread each card goes to, checking the
+  bot's permissions, the scheduled jobs — to be an officer page on wolfpack.quest instead of env vars and
+  Discord commands. For the wizard this is the same screen: a new guild picks its channels and sees the
+  permission check there, rather than editing Railway variables. Whatever lands must keep working when the
+  web is down: the bot reads the stored choice, and the env var stays as an override.
+
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
 

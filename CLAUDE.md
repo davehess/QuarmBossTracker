@@ -29,6 +29,12 @@ at the end, marked with steps."* Every end-of-task reply to the guild lead:
 3. **To-do** — numbered steps, each one an action with who does it. Omit the
    section only when nothing is left.
 
+**Every option offered for a pick carries a few-word "what makes it different" line** (the guild lead,
+2026-10-04: *"when you ask me a/b/c I need you to give me a few word view of the suggestion, what makes it
+different or special"*). Lead each option with its letter, a short name and that line, e.g. **A — Doorway:
+Discord just points at the website**, before any mock or cost table. The costs and detail come after;
+the pick should be makeable from the one-liners alone.
+
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The
