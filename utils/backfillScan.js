@@ -503,8 +503,10 @@ function renderScanEmbeds(scan) {
 // ── Fetch ────────────────────────────────────────────────────────────────────
 
 /**
- * Everything a scan needs for one time window. Bounded, best-effort; a failed
- * sub-select degrades the scan (fewer signals) rather than throwing.
+ * Everything a scan needs for one time window — every encounter in it, every
+ * contribution and rollup of those, paged past PostgREST's 1,000-row cap.
+ * Best-effort; a failed sub-select degrades the scan (fewer signals) rather
+ * than throwing.
  *
  * NOTE ON RETENTION: `contributions.raw_parse` is nulled by the midnight
  * compaction after 7 days, so `defenders` / `deaths` only exist for recent
@@ -522,30 +524,46 @@ async function collectScanData({ fromMs, toMs }) {
   const toIso   = new Date(toMs).toISOString();
   const enc = (encodeURIComponent);
 
-  const encounters = await supabase.select('encounters',
+  // Every encounter in the window, paged. A raid day holds 1,000+ (1,210 on
+  // 2026-09-27), and `limit=200` kept the first 200 of them, so the scan judged
+  // a night from its opening minutes. (started_at, id): parallel pulls tie.
+  const encounters = await supabase.selectAllPaged('encounters',
     'select=id,npc_id,started_at,ended_at,duration_sec,total_damage,classification,' +
     'eqemu_npc_types(name,hp,special_abilities),encounter_players(character_name,total_damage,duration_sec)' +
     `&guild_id=eq.${enc(guildId)}` +
-    `&started_at=gte.${enc(fromIso)}&started_at=lt.${enc(toIso)}` +
-    '&order=started_at.asc&limit=200') || [];
+    `&started_at=gte.${enc(fromIso)}&started_at=lt.${enc(toIso)}`, 'started_at,id') || [];
 
   const ids = encounters.map(e => e.id).filter(Boolean);
   // UUIDs and names only — strict whitelist keeps the PostgREST in-list
   // quote-free and injection structurally impossible (same rule raidReview uses).
   const inList = arr => `(${arr.map(v => String(v).replace(/[^A-Za-z0-9_-]/g, '')).join(',')})`;
+  // Rows of `table` for the window's encounters, 100 ids per request (a UUID is
+  // 37 characters of URL — 1,200 of them in one in-list would be refused), each
+  // request paged. `order` is a unique key. null when any request failed.
+  const byEncounterIds = async (table, select, order) => {
+    const out = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const rows = await supabase.selectAllPaged(table,
+        `select=${select}&encounter_id=in.${inList(ids.slice(i, i + 100))}`, order);
+      if (!rows) return null;
+      out.push(...rows);
+    }
+    return out;
+  };
 
   const activeSince = new Date(Date.now() - ACTIVE_UPLOADER_DAYS * 86_400_000).toISOString();
   const [contribs, rollups, characters, activeRows, openRequests, npcRows] = await Promise.all([
-    ids.length ? supabase.select('contributions',
-      'select=id,encounter_id,contributor_character,total_damage,player_count,duration_sec,agent_version,' +
-      'defenders:raw_parse->defenders,deaths:raw_parse->deaths,players:raw_parse->players' +
-      `&encounter_id=in.${inList(ids)}&limit=4000`) : [],
-    ids.length ? supabase.select('encounter_combat_rollup',
-      `select=encounter_id,character_name,by_skill&encounter_id=in.${inList(ids)}&limit=8000`) : [],
-    supabase.select('characters',
-      `select=name,class,exclude_from_stats&guild_id=eq.${enc(guildId)}&limit=3000`),
-    supabase.select('contributions',
-      `select=contributor_character&created_at=gte.${enc(activeSince)}&limit=5000`),
+    byEncounterIds('contributions',
+      'id,encounter_id,contributor_character,total_damage,player_count,duration_sec,agent_version,' +
+      'defenders:raw_parse->defenders,deaths:raw_parse->deaths,players:raw_parse->players', 'id'),
+    byEncounterIds('encounter_combat_rollup', 'encounter_id,character_name,by_skill', 'id'),
+    // Whole roster: _excludedSet is built from it, and a truncated one would
+    // let an excluded character through.
+    supabase.selectAllPaged('characters',
+      `select=name,class,exclude_from_stats&guild_id=eq.${enc(guildId)}`, 'name'),
+    // The distinct set, in SQL: this used to select every contribution row of the
+    // last 14 days (21k rows for 88 names) and PostgREST returned the first 1,000.
+    supabase.rpc('recent_contributor_characters', { p_since: activeSince }),
     supabase.select('agent_backfill_requests',
       `select=id,character,scope,status,requested_at&guild_id=eq.${enc(guildId)}` +
       '&status=in.(pending,acked,running)&limit=1000'),

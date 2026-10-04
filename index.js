@@ -6395,26 +6395,22 @@ async function _recomputeCommonMacros() {
   if (!supabase.isEnabled()) return;
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // Page through the whole index (PostgREST caps a single response at 1000).
-  const all = [];
-  for (let from = 0; ; from += 1000) {
-    const rows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines&offset=${from}&limit=1000`);
-    if (!Array.isArray(rows) || rows.length === 0) break;
-    all.push(...rows);
-    if (rows.length < 1000) break;
-  }
+  // Ordered by the key — with guild_id pinned, (character, page, button) is
+  // unique. The walk used to carry no order, so a page boundary could skip one
+  // macro and repeat another and the tally of carriers shifted run to run.
+  const all = await supabase.selectAllPaged('ui_socials_index',
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines`, 'character,page,button');
+  // A failed page is not an empty index: rewriting common_macros from nothing,
+  // or from half the rows, would wipe or shrink it. Keep what is there.
+  if (!all) { console.warn('[common-macros] index read failed — keeping the existing common_macros'); return; }
   // Class per carrying character — powers the /me/ui "what do other druids
   // run" filter. Best-effort: characters without a known class just don't
   // contribute to the tally (the macro still counts toward char_count).
   const classByChar = new Map();
   try {
-    for (let from = 0; ; from += 1000) {
-      const rows = await supabase.select('characters',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class&offset=${from}&limit=1000`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
-      for (const r of rows) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
-      if (rows.length < 1000) break;
-    }
+    const chars = await supabase.selectAllPaged('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class`, 'name');
+    for (const r of (chars || [])) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
   } catch { /* class column is enrichment only */ }
   const bySig = new Map();   // sig → { chars:Set, names:Map, lines }
   for (const r of all) {
@@ -6461,9 +6457,14 @@ async function _backfillSocialsIndex() {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   try {
     const indexed = new Set();
-    const idxRows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character&limit=1000`);
-    for (const r of (idxRows || [])) indexed.add(String(r.character).toLowerCase());
+    // The "already indexed" set, whole: the index holds 1,165 rows (one per
+    // macro), and `limit=1000` saw only the first 1,000 — so characters past it
+    // looked unindexed and were decrypted and re-indexed after EVERY boot.
+    const idxRows = await supabase.selectAllPaged('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=character`, 'character,page,button');
+    // A failed read is not "nothing indexed" — that would redo every character.
+    if (!idxRows) { console.warn('[ui-socials-index] backfill skipped: index read failed'); return; }
+    for (const r of idxRows) indexed.add(String(r.character).toLowerCase());
     // Newest snapshots first; first hit per character wins.
     const snaps = await supabase.select('ui_snapshots',
       `select=id,character_name,owner_discord_id,created_at&order=created_at.desc&limit=500`);
@@ -8971,8 +8972,10 @@ async function _factionValueMap() {
       const [names, entries, npcs] = await Promise.all([
         supabase.selectAllPaged('eqemu_faction_list_full',
           'id=gt.0&select=id,name', 'id', undefined),
+        // ⚠ Ordered on the whole primary key. npc_faction_id alone is not unique
+        // (many factions per npc_faction), and a replay on it lost 4 of 5,354 rows.
         supabase.selectAllPaged('eqemu_npc_faction_entries',
-          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id', undefined),
+          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id,faction_id', undefined),
         // ⚠ Narrow select on purpose: this is an 18k-row table and egress is
         // the metered thing on our plan, so the default all-columns paged read
         // would pull the whole NPC catalog to learn two fields.
@@ -10273,8 +10276,6 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // Switched to the REST helper's actual signature.
       const supabase = require('./utils/supabase');
       const entries = [];
-      let from = 0;
-      const PAGE = 1000;
       // effect_id_1..3 / raw are transient — used ONLY here to detect SPA 59
       // (damage shield) and its per-hit magnitude, then dropped. Only entries
       // that ARE a damage shield carry the derived `ds` field onward, so the
@@ -10474,26 +10475,27 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // unflagged catalog as "bot too old" and leaves its mechanic index idle.
       const npcCastable = new Set();
       try {
-        let nfrom = 0;
-        while (true) {
-          const nrows = await supabase.select('eqemu_npc_spells_entries',
-            `select=spellid&order=spellid.asc&offset=${nfrom}&limit=${PAGE}`);
-          if (!Array.isArray(nrows) || nrows.length === 0) break;
+        // All or nothing: selectAllPaged returns null when any page fails, so a
+        // failed read leaves the flag unset (served as "bot too old" for an hour)
+        // rather than half-set (some NPC spells silently unflagged). Ordered on
+        // the whole key — spellid alone has ties.
+        const nrows = await supabase.selectAllPaged('eqemu_npc_spells_entries',
+          'select=spellid', 'npc_spells_id,spellid,minlevel');
+        if (Array.isArray(nrows)) {
           for (const nr of nrows) if (nr && nr.spellid != null) npcCastable.add(Number(nr.spellid));
-          if (nrows.length < PAGE) break;
-          nfrom += PAGE;
+        } else {
+          console.warn('[spell-catalog] NPC-castable flag unavailable: read failed');
         }
       } catch (err) {
         npcCastable.clear();
         console.warn('[spell-catalog] NPC-castable flag unavailable:', err && err.message);
       }
-      while (true) {
-        // PostgREST paging via Range header is wrapped by Supabase's REST API
-        // as offset/limit query params. We pass them as `&offset=X&limit=Y`
-        // which the supabase utility forwards verbatim.
-        const data = await supabase.select('eqemu_spells',
-          `${SELECT}&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
+      {
+        // One paged read of the whole spell table. A failed page throws to the
+        // catch below: this used to `break` on it and cache whatever had loaded
+        // — nothing at all, if it was the first page — for an hour.
+        const data = await supabase.selectAllPaged('eqemu_spells', SELECT, 'id');
+        if (!Array.isArray(data)) throw new Error('eqemu_spells read failed');
         for (const r of data) {
           const _hm = _healMagnitude(r);
           // Live bot-side name→amount map so a relayed heal cast that arrives
@@ -10563,8 +10565,6 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             npc:        npcCastable.has(Number(r.id)) ? 1 : undefined,
           });
         }
-        if (data.length < PAGE) break;
-        from += PAGE;
       }
       const body = JSON.stringify({
         version: 8,   // v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
@@ -10606,8 +10606,9 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
 // item catalog is huge but virtually static.
 //
 // Defensively handles the case where the migration adding casttime /
-// clickeffect / clicktype columns hasn't applied yet — returns an empty
-// catalog instead of 500ing so the agent can still operate.
+// clickeffect / clicktype columns hasn't applied yet — a failed read is never
+// cached; the agent gets a 503 and keeps its own disk cache, which is how it
+// already treats any non-200 here.
 let _itemClickyCache    = null;
 const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
 async function _handleAgentItemClickies(req, res, isPublic) {
@@ -10618,40 +10619,49 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let failed = false;
     try {
       const supabase = require('./utils/supabase');
-      let from = 0;
-      const PAGE = 1000;
-      while (true) {
-        const data = await supabase.select('eqemu_items',
-          `select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
-        for (const r of data) {
-          entries.push({
-            id: r.id, name: r.name,
-            casttime: r.casttime, clickeffect: r.clickeffect,
-            clicktype: r.clicktype, clicklevel: r.clicklevel,
-            // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
-            maxcharges: r.maxcharges != null ? r.maxcharges : null,
-          });
-        }
-        if (data.length < PAGE) break;
-        from += PAGE;
+      // ⚠ Paged, and filtered to items that really have a click. `clickeffect` is
+      // NOT NULL on every item (-1 = no click: 23,092 rows · 0: 2,269 · >0: 1,611),
+      // so the old `not.is.null` matched all 26,972 items and the 1,000-row cap
+      // handed agents the 1,000 LOWEST ids — 57 of the 1,611 real clickies.
+      // Paging alone would have shipped every item in the game.
+      const data = await supabase.selectAllPaged('eqemu_items',
+        'select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=gt.0', 'id');
+      if (!Array.isArray(data)) throw new Error('eqemu_items read failed');
+      for (const r of data) {
+        entries.push({
+          id: r.id, name: r.name,
+          casttime: r.casttime, clickeffect: r.clickeffect,
+          clicktype: r.clicktype, clicklevel: r.clicklevel,
+          // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
+          maxcharges: r.maxcharges != null ? r.maxcharges : null,
+        });
       }
     } catch (err) {
-      // Column missing (migration not applied yet) or other transient
-      // failure — keep the bot alive and return an empty catalog so the
-      // agent gracefully falls back to spell-based cast times.
-      console.warn('[item-clickies] fetch failed (returning empty):', err && err.message);
+      // Column missing (migration not applied yet) or other transient failure.
+      // Nothing from a failed read is cached: the last good catalog keeps serving
+      // (retry in 5 min), and with none the agent gets a 503 and keeps ITS disk
+      // cache — this used to cache an empty or partial catalog for 6 h.
+      failed = true;
+      console.warn('[item-clickies] fetch failed (keeping the last good catalog):', err && err.message);
     }
-    const body = JSON.stringify({
-      version: 1,
-      fetched_at: new Date().toISOString(),
-      count: entries.length,
-      entries,
-    });
-    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
-    _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemClickyCache) {
+      _itemClickyCache.fetchedAt = Date.now() - _ITEM_CLICKY_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
   }
   const ifNoneMatch = req.headers['if-none-match'];
   if (ifNoneMatch && ifNoneMatch === _itemClickyCache.etag) {
@@ -10691,35 +10701,41 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
   const fresh = _itemCatalogCache && (Date.now() - _itemCatalogCache.fetchedAt) < _ITEM_CATALOG_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let failed = false;
     try {
       const supabase = require('./utils/supabase');
-      let from = 0;
-      // Never above 1000: PostgREST answers at most 1000 rows, so a bigger page came back
-      // "short" and ended the loop. It was 2000 until 2026-10-01, and agents got 1,000 of 11,104 items.
-      const PAGE = 1000;
-      while (true) {
-        const data = await supabase.select('item_catalog_droppable',
-          `select=item_id,item_name,era&order=item_id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
-        // Array-of-arrays, not objects: at 11k rows the key names would be
-        // most of the payload.
-        for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
-        if (data.length < PAGE) break;
-        from += PAGE;
-      }
+      // Paged by the shared reader, which keeps every page at the 1000 cap (it was
+      // 2000 until 2026-10-01, and agents got 1,000 of 11,104 items) and gives up
+      // on a failed page instead of handing back the pages before it.
+      const data = await supabase.selectAllPaged('item_catalog_droppable',
+        'select=item_id,item_name,era', 'item_id');
+      if (!Array.isArray(data)) throw new Error('item_catalog_droppable read failed');
+      // Array-of-arrays, not objects: at 11k rows the key names would be
+      // most of the payload.
+      for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
     } catch (err) {
-      // Keep the bot alive and serve what we have. An empty catalog makes the
-      // picker fall back to asking the server, which is how it worked before.
-      console.warn('[item-catalog] fetch failed (serving', entries.length, 'rows):', err && err.message);
+      // Nothing from a failed read is cached (it used to cache the partial
+      // catalog for 12 h). The last good one keeps serving, retrying in 5 min;
+      // with none the agent gets a 503 and keeps its disk cache — or, with no
+      // cache either, the picker asks the server, as it did before the catalog.
+      failed = true;
+      console.warn('[item-catalog] fetch failed (keeping the last good catalog):', err && err.message);
     }
-    const body = JSON.stringify({
-      version: 1,
-      fetched_at: new Date().toISOString(),
-      count: entries.length,
-      entries,
-    });
-    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
-    _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemCatalogCache) {
+      _itemCatalogCache.fetchedAt = Date.now() - _ITEM_CATALOG_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
   }
   const ifNoneMatch = req.headers['if-none-match'];
   if (ifNoneMatch && ifNoneMatch === _itemCatalogCache.etag) {
@@ -14540,12 +14556,13 @@ async function _spellFxMap() {
   const supabase = require('./utils/supabase');
   try {
     const m = new Map();
-    let from = 0;
-    const PAGE = 1000;
-    while (true) {
-      const rows = await supabase.select('eqemu_spells',
-        `select=name,raw,buffduration,good_effect&order=id.asc&offset=${from}&limit=${PAGE}`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
+    {
+      // One paged read. A failed page throws to the catch below and keeps the
+      // previous map: this used to `break` on it and cache the spells loaded so
+      // far — the focus-haste limit checks and the cure detection read this map.
+      const rows = await supabase.selectAllPaged('eqemu_spells',
+        'select=name,raw,buffduration,good_effect', 'id');
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells read failed');
       for (const sp of rows) {
         if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         const fx = m.get(sp.name.toLowerCase()) || { res: {} };
@@ -14589,8 +14606,6 @@ async function _spellFxMap() {
         if (fx.cureBlindMaybe && fx.good === 1) fx.cureBlind = true;
         m.set(sp.name.toLowerCase(), fx);
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
     }
     _spellFxByName = m;
     _spellFxAt = Date.now();
@@ -15462,15 +15477,31 @@ function _focusHastePctFor(caster, spell, baseCastSecs) {
   }
   return best;
 }
+let _focusHasteInflight = false;
 function _refreshFocusHaste() {
   _focusHasteAt = _focusHasteAt || Date.now();   // guard tight error loops
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
-  (async () => {
+  // The read is several requests now, and every cast event asks while the cache
+  // is stale — one refresh at a time.
+  if (_focusHasteInflight) return;
+  _focusHasteInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — it must not read as "nobody wears a focus".
+  const backoff = () => {
+    _focusHasteByChar = _focusHasteByChar || new Map();
+    _focusHasteAt = Date.now() - _FOCUS_HASTE_TTL_MS + 60_000;
+  };
+  return (async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-    const gear = await supabase.select('character_gear',
-      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id&limit=10000`);
-    if (!Array.isArray(gear) || gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
+    // ⚠ Paged: 3,327 equipped rows (223 characters) against PostgREST's silent
+    // 1,000-row cap. The old `limit=10000` read ~30% of them, in no order, so
+    // most raiders' spell-haste foci were unknown and their cast bars ran long.
+    // guild_id and loc are pinned, so (character, slot) is unique.
+    const gear = await supabase.selectAllPaged('character_gear',
+      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id`, 'character,slot');
+    if (!Array.isArray(gear)) { backoff(); return; }
+    if (gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
     const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
     // item → worn-effect spell id (chunked in() lists keep the URLs sane)
     const wornByItem = new Map();
@@ -15478,7 +15509,10 @@ function _refreshFocusHaste() {
       const chunk = itemIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_items',
         `id=in.(${chunk.join(',')})&select=id,worneffect`);
-      for (const r of rows || []) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+      // A failed chunk throws to the catch below: a map built without it would
+      // be cached as the whole truth.
+      if (!Array.isArray(rows)) throw new Error('eqemu_items chunk read failed');
+      for (const r of rows) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
     }
     const spellIds = [...new Set(wornByItem.values())];
     const fociBySpell = new Map();   // spell id → focus decode (or null)
@@ -15486,7 +15520,8 @@ function _refreshFocusHaste() {
       const chunk = spellIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_spells',
         `id=in.(${chunk.join(',')})&select=id,raw`);
-      for (const sp of rows || []) {
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells chunk read failed');
+      for (const sp of rows) {
         if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
         for (let j = 0; j < sp.raw.eff.length; j++) {
@@ -15512,7 +15547,8 @@ function _refreshFocusHaste() {
     _focusHasteByChar = m;
     _focusHasteAt = Date.now();
     console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
-  })().catch(e => console.warn('[focus-haste] refresh failed:', e && e.message));
+  })().catch(e => { console.warn('[focus-haste] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _focusHasteInflight = false; });
 }
 
 // Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
@@ -15529,13 +15565,29 @@ function _catalogCastSecs(name) {
   }
   return _catalogCastSecsByName.get(String(name).toLowerCase()) || 0;
 }
+let _catalogCastSecsInflight = false;
 function _refreshCatalogCastSecs() {
   const supabase = require('./utils/supabase');
+  // Four paged requests now, and every cast asks while the cache is stale —
+  // one refresh at a time.
+  if (_catalogCastSecsInflight) return;
+  _catalogCastSecsInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — an empty map cached for an hour reads as "no
+  // spell has a cast time".
+  const backoff = () => {
+    _catalogCastSecsByName = _catalogCastSecsByName || new Map();
+    _catalogCastSecsAt = Date.now() - _CATALOG_CAST_TTL_MS + 60_000;
+  };
   // fire-and-forget refresh; subsequent callers use whatever's loaded
-  supabase.select('eqemu_spells', 'select=name,cast_time&order=id.asc&limit=10000')
+  // ⚠ Paged: eqemu_spells holds 3,933 rows and PostgREST caps a response at
+  // 1,000, so `limit=10000` kept only the lowest 1,000 ids — 812 of the 2,331
+  // spells that have a cast time. Every higher-id spell fell back to the 4s stub.
+  const p = supabase.selectAllPaged('eqemu_spells', 'select=name,cast_time', 'id')
     .then(rows => {
+      if (!Array.isArray(rows)) { backoff(); return; }
       const m = new Map();
-      for (const r of rows || []) {
+      for (const r of rows) {
         if (!r || !r.name) continue;
         const ms = Number(r.cast_time) || 0;
         if (ms > 0) m.set(String(r.name).toLowerCase(), Math.round(ms / 100) / 10);
@@ -15543,9 +15595,11 @@ function _refreshCatalogCastSecs() {
       _catalogCastSecsByName = m;
       _catalogCastSecsAt = Date.now();
     })
-    .catch(e => console.warn('[catalog cast secs] refresh failed:', e && e.message));
+    .catch(e => { console.warn('[catalog cast secs] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _catalogCastSecsInflight = false; });
   // Mark touched so we don't refire on a tight error loop.
   _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
+  return p;
 }
 
 // ── Target Info's F/Q/V tab: quest and vendor for one NPC ─────────────────────
@@ -20007,9 +20061,13 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
   if (!supabase.isEnabled()) return { version: '0', triggers: [], note: 'supabase disabled' };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
-  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true&order=category.asc,name.asc`;
+  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true`;
   if (category) q += `&category=eq.${encodeURIComponent(category)}`;
-  const rows = await supabase.select('guild_triggers', q);
+  // Paged, in the order the agents have always been served (category, name) with
+  // id to break ties. It was one unpaged read: 484 enabled rows today, but a
+  // single import added 381 of them, so the 1,000-row cap was one import away
+  // from silently dropping triggers off the end of every agent's set.
+  const rows = await supabase.selectAllPaged('guild_triggers', q, 'category,name,id');
 
   // Server-side class targeting filter — applies_to_classes is text[]; we
   // include triggers where the column is null/empty OR overlaps the
@@ -22575,6 +22633,10 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
     let breaker = null;
     try { breaker = require('./utils/supabase').breakerState(); } catch { /* */ }
+    // Reads that came back with exactly PostgREST's 1,000-row cap and no limit of
+    // their own: almost certainly truncated. Non-zero here means a read needs paging.
+    let rowCap = null;
+    try { rowCap = require('./utils/supabase').capStats(); } catch { /* */ }
     const budgets = {};
     for (const [kind, book] of _budgetBuckets) {
       const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
@@ -22586,7 +22648,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, budgets,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets,
     }));
   }
 
