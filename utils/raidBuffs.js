@@ -17,7 +17,14 @@ const CATEGORY_LABELS = {
 const KEYWORDS = {
   // MUST cover everything analyzeHpSlots recognizes (drift = Khura's in
   // 'Other'); potg/potc here so resists' 'protection of' can't steal them.
-  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroism','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','spiritual purity','talisman of kragg','talisman of tnarg','protection of the glades','protection of the cabbage','talisman of wunshi'],
+  // The group Symbol line (Naltron/Marzin/Kazad "Mark") and Focus of the
+  // Seventh are listed because the name has no stem the single-target spells
+  // share ('symbol of' / 'focus of spirit') — they categorized as null, so a
+  // raider carrying one read as missing HP (the guild lead, 2026-10-04: group
+  // the buffs on /buffs). Kazad`s Mark carries a backtick in the catalog; the
+  // apostrophe spelling is kept as a harmless alias.
+  hp: ['aegolism','symbol of','temperance','hand of conviction','blessing of','brell','riotous health','inner fire','courage','daring','bravery','valor','resolution','heroism','heroic bond','virtue','health','center','fortitude','khura','focus of spirit','arch shielding','spiritual purity','talisman of kragg','talisman of tnarg','protection of the glades','protection of the cabbage','talisman of wunshi',
+       "marzin's mark","naltron's mark",'kazad`s mark',"kazad's mark",'focus of the seventh'],
   // HoT (long-duration heal-over-time) is its own EQ buff slot — healers
   // want to know if it's open. Elixir family = Celestial/Ethereal/Supernal
   // (cleric + bard song HoTs).
@@ -28,12 +35,27 @@ const KEYWORDS = {
   regen: ['regrowth','regenerat','chloroplast','replenish','pack regen','elixir',
           "nature's recovery", 'natures recovery'],
   mana: ['brilliance','iridescence','gift of brilliance'],
-  manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice'],
-  haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur','beta vog'],
-  runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew'],
-  attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral'],
+  // 'boon of the clear mind' is the Enchanter's group mana regen (SPA 15) with
+  // no shared stem. 'spiritual dominion' is the Beastlord's group mana + HP
+  // regen (SPA 15 + SPA 0, the same shape as Spiritual Purity), NOT an attack
+  // buff — checked against eqemu_spells 2026-10-04.
+  manaRegen: ['clarity','koadic','endless intellect','breeze','clairvoyance','gift of insight','gift of pure thought','auspice','boon of the clear mind','spiritual dominion'],
+  // 'vallon's quickening' (Enchanter group haste, SPA 11) shares no stem with
+  // 'quickness'. 'speed of the brood' needs no entry — 'speed of' covers it.
+  haste: ['haste','celerity','quickness','swift','speed of','augmentation','alacrity','aanya','battle cry','warsong','verses of victory','visions of grandeur','beta vog',"vallon's quickening"],
+  // Spirit of Bih`Li carries a backtick in the catalog, so the old 'spirit of
+  // bihli' spelling (SECONDARY_CATEGORY, UPGRADE_CHAINS) never matched it.
+  // 'flight of eagle' already covers Flight of Eagles; Spirit of Eagle is the
+  // single-target sibling (SPA 3).
+  runSpeed: ['spirit of wolf','spirit of the wolf','flight of eagle','pack spirit','selo','journeyman','run speed','spirit of the shrew','spirit of bih`li','spirit of eagle'],
+  // Spirit of the Predator (Ranger group ATK, SPA 2). Spiritual Vigor is the
+  // Beastlord group sibling of Spiritual Strength/Brawn (ATK +40 and max HP
+  // +225) — attack is its first effect; its HP half is not mapped to a slot.
+  // Talisman of the Brute is SPA 7 (STA), not attack, so it stays unlisted.
+  attack: ['strength','avatar','ferocity','champion','primal','war march','savage','brutal','might of','tumultuous','aggression','bull','call of the predator','feral avatar','ancient: feral','spirit of the predator','spiritual vigor'],
   // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
-  // Inferno Shield. Cleric Boon of Immolation / Barrier of Combustion.
+  // Inferno Shield. Boon of Immolation (Magician L53, group) / Barrier of
+  // Combustion.
   // Fiery Might is HP+DS combo (SPA 0 + 59 in catalog). All have SPA 59
   // in eqemu_spells.raw.eff — the catalog-derived layer (next commit) is
   // the real fix; this keyword list is the safety net.
@@ -41,6 +63,8 @@ const KEYWORDS = {
        'damage shield','legacy of','shield of barbs',
        'cadeau of flame','shield of flame','inferno shield','fiery might',
        'barrier of combustion','boon of immolation',
+       // Magician group DS (SPA 59): Aegis of Ro L60, Maelstrom of Ro L63.
+       'aegis of ro','maelstrom of ro',
        'aura of vinitras','aura of the defender'],
   // Survival / absorption slots: Divine Aura (cleric self-invuln), Kazumi's
   // Note of Preservation (bard absorption song), Bestowal of Divinity (group
@@ -63,11 +87,14 @@ const KEYWORDS = {
 
 // Buffs crediting a SECOND category beyond their primary: VoG/Bihli carry
 // ATK; POTG/POTC carry mana regen (why a caster with POTG doesn't need the
-// cleric's group Aego AND shouldn't be flagged missing mana regen).
+// cleric's Aego AND shouldn't be flagged missing mana regen).
 const SECONDARY_CATEGORY = [
   ['visions of grandeur', 'attack'],
   ['beta vog', 'attack'],   // Quarm PoP-beta VoG — same +ATK rider
   ['spirit of bihli', 'attack'],
+  // The catalog spells it "Spirit of Bih`Li" (backtick), so the line above
+  // never matched; without this a Bih`Li holder read as missing Attack.
+  ['spirit of bih`li', 'attack'],
   ['protection of the glades', 'manaRegen'],
   ['protection of the cabbage', 'manaRegen'],
 ];
@@ -162,21 +189,30 @@ const HP_SLOT_KEYWORDS = {
   // Slot A — Cleric "Type One" HP+AC line (per user spec):
   //   Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor L34 →
   //   Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55 →
-  //   Aegolism L60 (group; fills A+B via AEGOLISM_KEYWORDS) →
-  //   Blessing of Aegolism L60 (group, higher).
-  // Plus druid POTG/POTC (group) and shaman Wunshi/Temperance (group).
+  //   Aegolism L60 (SINGLE-target, targettype 5; fills A+B via
+  //   AEGOLISM_KEYWORDS) → Blessing of Aegolism L60 (group, targettype 41).
+  // Plus druid POTG (group, 41) / POTC (single, 5) and shaman Wunshi (not in
+  // the eqemu_spells mirror, targettype unchecked) / Temperance (single, 5).
+  // Checked against eqemu_spells 2026-10-04: the group/single split matters
+  // to the buff-groups view, which only calls a spell "group-castable" when
+  // its targettype is 41 or 3.
   A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
       'temperance', 'courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
       'heroism', 'heroic bond', 'fortitude'],
   // Slot B — Cleric "Symbol of" line: Transal (L14) → Ryltan (L24) →
   // Pinzarn (L34) → Naltron (L44) → Marzin (L54). All match "symbol of".
-  B: ['symbol of'],
-  // Slot C — Shaman HP single-target line ascending: Inner Fire (L1) →
-  // Talisman of Tnarg (L49) → Talisman of Kragg (L55) → Focus of Spirit
-  // (L57 group) → Khura's Focusing (L60). Plus Cleric Brell's line + Wizard
-  // Arch Shielding. All same slot; higher overwrites lower.
+  // The GROUP versions are named "<Name>'s Mark" (Naltron's Mark L58, Marzin's
+  // Mark L60, Kazad`s Mark L63 — backtick in the catalog) and share no stem
+  // with it, so they are listed by name.
+  B: ['symbol of', "marzin's mark", "naltron's mark", 'kazad`s mark', "kazad's mark"],
+  // Slot C — Shaman HP line ascending: Inner Fire (L1) → Talisman of Tnarg
+  // (L49) → Talisman of Kragg (L55) → Focus of Spirit (L57) → Khura's
+  // Focusing (L60, group) → Focus of the Seventh (L65, group). Everything up
+  // to Focus of Spirit is single-target (targettype 5); Khura's Focusing is
+  // targettype 41 (group). Plus the Paladin's Brell's line + Wizard Arch
+  // Shielding. All same slot; higher overwrites lower.
   C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
-      'brell', 'arch shielding', 'spiritual purity'],
+      'brell', 'arch shielding', 'spiritual purity', 'focus of the seventh'],
 };
 // 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot) and
 // matches Quarm's PoP-beta reward "Beta Virtue" too. Beta buffs OUTRANK the
@@ -191,6 +227,111 @@ function analyzeHpSlots(buffNames) {
     if (!n) continue;
     if (AEGOLISM_KEYWORDS.some(k => n.includes(k))) { out.A = out.A || raw; out.B = out.B || raw; continue; }
     for (const s of HP_SLOTS) if (!out[s] && HP_SLOT_KEYWORDS[s].some(k => n.includes(k))) out[s] = raw;
+  }
+  return out;
+}
+
+// Categories a raider already holds → the buff names filling each, with the
+// SECONDARY credits (VoG/Bih`Li → attack, POTG/POTC → mana regen) folded in.
+// This is the byCategory build the raid-buff-queue handler used inline; both
+// it and missingLines() call it so "missing" can't drift between the queue
+// and the group view.
+function buffCategoriesPresent(buffNames) {
+  const byCategory = {};
+  for (const name of (buffNames || [])) {
+    if (!name) continue;
+    const cat = categorizeBuff(name);
+    if (cat) (byCategory[cat] = byCategory[cat] || []).push(name);
+    for (const sec of secondaryCategoriesFor(name)) {
+      if (sec !== cat && !(byCategory[sec] = byCategory[sec] || []).includes(name)) byCategory[sec].push(name);
+    }
+  }
+  return byCategory;
+}
+
+// ── Buff groups (the guild lead, 2026-10-04: "we should be grouping people for
+// buffs on /buffs — treat that like the buff queue as well") ─────────────────
+// The GROUP version of each buff line, per caster class, best first. A group
+// buff lands on the CASTER'S OWN group, so the call-out is "4 of 6 in G3 miss
+// Haste — the enchanter in G3 can group-cast it". `lvl` is the class level
+// (PQDI, 2026-10-04) and gates which spell a member is named for; an entry
+// without one is always eligible. Every id/name/targettype was read back from
+// eqemu_spells the same day: targettype 41 (group) except Kazad`s Mark, which
+// is 3 (group v1) — the only two group types. Single-target siblings (Aegolism,
+// Temperance, POTC, Focus of Spirit, Spirit of Eagle) are deliberately absent.
+const GROUP_SPELLS = {
+  'hp:A': [
+    { cls: 'cleric', spell: 'Hand of Virtue',            id: 3479, lvl: 65 },
+    { cls: 'cleric', spell: 'Ancient: Gift of Aegolism', id: 2122, lvl: 60 },
+    { cls: 'cleric', spell: 'Blessing of Aegolism',      id: 2510, lvl: 60 },
+  ],
+  'hp:B': [
+    { cls: 'cleric', spell: 'Kazad`s Mark',  id: 3047, lvl: 63 },
+    { cls: 'cleric', spell: "Marzin's Mark", id: 2893, lvl: 60 },
+    { cls: 'cleric', spell: "Naltron's Mark", id: 1774, lvl: 58 },
+  ],
+  'hp:C': [
+    { cls: 'shaman',  spell: 'Focus of the Seventh',        id: 3397, lvl: 65 },
+    { cls: 'shaman',  spell: "Khura's Focusing",            id: 2530, lvl: 60 },
+    { cls: 'paladin', spell: "Brell's Mountainous Barrier", id: 2590, lvl: 60 },
+  ],
+  haste: [
+    { cls: 'enchanter', spell: "Vallon's Quickening", id: 3178, lvl: 65 },
+    { cls: 'enchanter', spell: 'Speed of the Brood',  id: 2895, lvl: 60 },
+  ],
+  manaRegen: [
+    { cls: 'enchanter', spell: "Koadic's Endless Intellect", id: 2570, lvl: 60 },
+    { cls: 'enchanter', spell: 'Gift of Pure Thought',       id: 1695, lvl: 59 },
+    { cls: 'enchanter', spell: 'Boon of the Clear Mind',     id: 1694, lvl: 52 },
+    { cls: 'beastlord', spell: 'Spiritual Dominion',         id: 3460, lvl: 64 },
+  ],
+  runSpeed: [
+    { cls: 'druid',  spell: 'Flight of Eagles', id: 3185, lvl: 62 },
+    { cls: 'druid',  spell: 'Pack Spirit',      id: 169,  lvl: 39 },
+    { cls: 'shaman', spell: 'Spirit of Bih`Li', id: 2524, lvl: 39 },
+  ],
+  attack: [
+    { cls: 'ranger',    spell: 'Spirit of the Predator', id: 3417, lvl: 64 },
+    { cls: 'ranger',    spell: 'Call of the Predator',   id: 1464, lvl: 60 },
+    { cls: 'beastlord', spell: 'Spiritual Vigor',        id: 3456, lvl: 62 },
+  ],
+  ds: [
+    { cls: 'druid',    spell: 'Legacy of Thorn',    id: 1561, lvl: 59 },
+    { cls: 'druid',    spell: 'Legacy of Spike',    id: 1727, lvl: 51 },
+    { cls: 'magician', spell: 'Maelstrom of Ro',    id: 3486, lvl: 63 },
+    { cls: 'magician', spell: 'Aegis of Ro',        id: 1669, lvl: 60 },
+    { cls: 'magician', spell: 'Boon of Immolation', id: 1668, lvl: 53 },
+  ],
+  resists: [
+    { cls: 'druid',     spell: 'Circle of Seasons',  id: 2519, lvl: 58 },
+    { cls: 'enchanter', spell: 'Group Resist Magic', id: 72,   lvl: 49 },
+  ],
+};
+// Display order of the lines when counts tie.
+const GROUP_LINE_KEYS = Object.keys(GROUP_SPELLS);
+
+// 'hp:B' → 'HP B' (the label the buff queue's `missing` uses for an HP slot);
+// a category key → its CATEGORY_LABELS entry.
+function lineLabel(key) {
+  const k = String(key || '');
+  if (k.startsWith('hp:')) return 'HP ' + k.slice(3);
+  return CATEGORY_LABELS[k] || k;
+}
+
+// The buff LINES one raider is missing, as GROUP_SPELLS keys. Same rule as the
+// queue: an HP slot is a gap for anyone, every other line only when their role
+// expects it (ROLE_TARGETS — a cleric is not missing haste they don't need).
+// The queue narrows this to what the BUFFER'S class provides; the group view
+// shows every line, so that filter is not applied here.
+function missingLines(buffNames, role) {
+  const names = (buffNames || []).filter(Boolean);
+  const slots = analyzeHpSlots(names);
+  const byCat = buffCategoriesPresent(names);
+  const expected = ROLE_TARGETS[role] || [];
+  const out = [];
+  for (const key of GROUP_LINE_KEYS) {
+    if (key.startsWith('hp:')) { if (!slots[key.slice(3)]) out.push(key); }
+    else if (expected.includes(key) && !(byCat[key] || []).length) out.push(key);
   }
   return out;
 }
@@ -294,4 +435,5 @@ module.exports = {
   analyzeHpSlots, HP_SLOTS, classHpSlots, isCurseBuff, isCorpse,
   RESIST_TYPES, RESIST_LABELS, resistTypesFor, isSongBuff,
   UPGRADE_CHAINS, chainPosition,
+  GROUP_SPELLS, GROUP_LINE_KEYS, lineLabel, buffCategoriesPresent, missingLines,
 };

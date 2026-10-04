@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.195': [
+    '**The buff queue knows the group versions of raid buffs.** Marzin\'s Mark, Focus of the Seventh, Vallon\'s Quickening, Spirit of Bih`Li and a few more no longer read as missing, and the queue now groups people by raid group with who in each group can group-cast what. The by-group view is in the beta Mimic.',
+  ],
   '3.1.192': [
     '**Mimic\'s Loot tab can show who looted what.** The last 12 hours of loot from everyone running Mimic, newest first, and a roll that someone other than the winner looted says who did. Needs the beta Mimic for now.',
   ],
