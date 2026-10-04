@@ -512,6 +512,23 @@
   // time with a "Show more" button. idx in the rendered rows maps 1:1 to the
   // full _uiStudioChars list (slice preserves order), so the existing
   // capture/restore handlers keep working unchanged.
+  // What a backed-up file holds, for the 📄 Files list. Names follow EQ's and Zeal's own
+  // conventions (Zeal: <Name>_bandolier.ini, _spellsets.ini, _protected.ini; its page-10
+  // key binds share <Name>_pq.proj.ini with EQ's hotkeys and socials). Unknown → no label.
+  function _uiFileWhat(name, character) {
+    const n = String(name).toLowerCase();
+    const c = String(character || '').toLowerCase();
+    if (n === 'eqclient.ini') return 'game settings (every character)';
+    if (n === 'zeal.ini') return 'Zeal settings (every character)';
+    if (/^ui_/.test(n)) return 'window layout';
+    if (n === c + '_pq.proj.ini') return 'hotbuttons, socials (macros), key binds';
+    if (/^(sock|socials)_/.test(n)) return 'socials';
+    if (n.includes('bandolier')) return 'bandolier sets';
+    if (n.includes('spellsets')) return 'spell sets';
+    if (n.includes('_protected')) return 'Zeal protected items';
+    return '';
+  }
+
   function _paintUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
@@ -601,12 +618,47 @@
                   '<td style="padding:3px 4px;color:#c9d1d9">' + new Date(s.created_at).toLocaleString() + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + (s.source_width && s.source_height ? s.source_width + '×' + s.source_height : '—') + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
-                  '<td style="padding:3px 4px;text-align:right">' +
+                  '<td style="padding:3px 4px;text-align:right;white-space:nowrap">' +
+                    '<button type="button" class="ui-files" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0 4px 0 0;padding:3px 9px;font-size:10px;background:#21262d;border:1px solid #2a3140;color:#c9d1d9">📄 Files</button>' +
                     '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
                   '</td>' +
-                '</tr>'
+                '</tr>' +
+                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="4" style="padding:4px 6px 8px"></td></tr>'
               ).join('') +
             '</table>';
+            // 📄 Files: what is inside a backup (the guild lead, 2026-10-04: "What 19 files were
+            // backed up? My macros/socials/bandoliers?"). The server stores the bundle encrypted
+            // and keeps no file list, so this downloads the backup (the same call UI Studio's
+            // cloud restore makes) and lists the names; nothing is written to disk.
+            slot.querySelectorAll('.ui-files').forEach(b => {
+              b.addEventListener('click', async (ev) => {
+                const sid = ev.target.dataset.id;
+                const ch  = chars[parseInt(ev.target.dataset.charidx, 10)];
+                const row = slot.querySelector('[data-files-for="' + sid + '"]');
+                if (!row) return;
+                if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+                const cell = row.firstChild;
+                row.style.display = '';
+                cell.innerHTML = '<span style="color:#8b949e;font-size:11px">Loading…</span>';
+                const e = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                try {
+                  const r3 = await window.mimic.uiStudioGetSnapshot({ character: ch.character, id: sid });
+                  if (!r3 || !r3.ok || !r3.files) {
+                    cell.innerHTML = '<span style="color:#f87171;font-size:11px">✕ ' + e(r3 && r3.error ? r3.error : 'could not load this backup') + '</span>';
+                    return;
+                  }
+                  const names = Object.keys(r3.files).sort((a, z) => a.localeCompare(z, undefined, { sensitivity: 'base' }));
+                  cell.innerHTML = '<div style="font-size:11px;line-height:1.6">' + names.map(n => {
+                    const kb = Math.max(1, Math.round(String(r3.files[n] || '').length / 1024));
+                    const what = _uiFileWhat(n, ch.character);
+                    return '<div><code style="color:#c9d1d9">' + e(n) + '</code> <span style="color:#6b7280">' + kb + ' KB</span>' +
+                      (what ? ' <span style="color:#8b949e">— ' + e(what) + '</span>' : '') + '</div>';
+                  }).join('') + '</div>';
+                } catch (err) {
+                  cell.innerHTML = '<span style="color:#f87171;font-size:11px">✕ ' + e(err && err.message ? err.message : String(err)) + '</span>';
+                }
+              });
+            });
             slot.querySelectorAll('.ui-restore').forEach(b => {
               b.addEventListener('click', async (ev) => {
                 const sid     = ev.target.dataset.id;
