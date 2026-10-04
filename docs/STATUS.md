@@ -109,9 +109,9 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
-- **⏳ /fun crash card: /quit override + real raid nights (web beta preview, 2026-10-04).** The member or an officer
-  can mark an LD "It was a /quit"; raids-since counts `raid_nights` only. https://b.wolfpack.quest/fun — awaiting
-  "graduate". §154.
+- **✅ /fun crash card: raid crashes only, /quit override (web 1.8.93, live 2026-10-04).** Only LDs during an OpenDKP
+  raid count; raids-since counts OpenDKP raids he has a tick in; the member or an officer can mark an LD "It was a
+  /quit". https://wolfpack.quest/fun. Follow-up: `raid_nights` counts group nights as raids (bot). §154.
 - **⏳ Meter history fixed (agent 3.7.78, Mimic beta, 2026-10-04).** History was threat, not damage (a tank showed
   1,961 for 100 dealt); pets now fold into owners (no double count), charm breaks keep the pet, 100 fights kept 7 days
   across restarts. Tank history + Target Info history await picks (`docs/DESIGN-history-and-quest-nav.md`). §153.
