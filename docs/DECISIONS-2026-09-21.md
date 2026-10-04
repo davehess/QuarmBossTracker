@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **/fun crash card** (§154) | On beta: "It was a /quit" override for the member or an officer; raids-since counts real raid nights only; card stays up top at 0 | the guild lead: try https://b.wolfpack.quest/fun, say "graduate"; say whether a crash outside a raid should still reset the count |
+| **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
 | **Zeal crashes on the fork** (§151) | 3 new teardown crashes, all on the fork's test build; crash list now tags official vs test (agent 3.7.77 beta) | the guild lead: A/B on official Zeal (or `/tag persist off`); a local session reads the three dumps |
 | **Buffs by raid group** (§149) | Bot 3.1.195 live (`groups[]`, group-buff keyword fixes); /buffs previews + buff queue By group on beta | the guild lead: pick https://b.wolfpack.quest/buffs?v=b (**group cards**) or ?v=c (**buff lines**); try By group in the Mimic beta buff queue at the next raid |
@@ -6805,9 +6805,21 @@ real raid"*. The card showed "1 raid since", counting a Saturday group night.
 - **On today's data:**
   - Unmarked, the card reads 0. The Oct 3 LD stands, and no raid night since.
   - Once the Oct 3 LD is marked a /quit, it reads 3 (Sep 24, Sep 27, Oct 1) since the Sep 14 LD.
-- **Open, for the guild lead:**
-  - Graduate to the live /fun.
-  - Whether a crash outside a raid night should still reset the count. Today it does, unless it is
-    marked a /quit.
-- Files: `web/lib/funLd.ts` (rules), `web/lib/funLdAuth.ts` (gate), `web/app/fun/actions.ts`,
-  `QuitButton.tsx`. Test: `test/fun-ld-quit.test.js`.
+- Files: `web/lib/funLd.ts` (rules), `web/lib/funLdAuth.ts` (gate), `web/lib/funLdRaids.ts`,
+  `web/app/fun/actions.ts`, `QuitButton.tsx`. Test: `test/fun-ld-quit.test.js`.
+- **Ruling, same day:** *"Saturday wasn't a raid, so it doesn't count. it should only happen during actual
+  raids and ours doesn't happen next until Oct 14th. promote it"*. Live in **web 1.8.93**.
+  - **A raid is an OpenDKP raid the officers logged** (`opendkp_raids`, date = the UTC date of its
+    noon-UTC `ts`). It is not a `raid_nights` row.
+  - **He attended it** when his name is in one of its `opendkp_ticks`.
+  - **An LD counts only during a raid:** its night (the Eastern date of ts − 5 h) is a raid date, and it
+    happened 19:00–05:00 ET.
+  - On today's data, 2 of 15 LDs count, both Fri Jan 16 2026 around 20:15 ET. Raids since: 63 (stays
+    there until the next raid). Lifetime: 2.
+  - Next guild raid: **2026-10-14** (the guild lead).
+- **Found on the way, not fixed (§155 follow-up):** `raid_nights` is not a record of real raids.
+  - `linkEncounterToRaidNight` opens a row for any encounter on Sun/Wed/Thu after 20:30 ET.
+  - Since mid-August it holds every Wednesday and Oct 1, with no raid, and misses the off-schedule raids
+    (Sat 8/22, Tue 9/1).
+  - Anything that reads `raid_nights` or `encounters.raid_night_id` as "a raid" inherits that. Until
+    Oct 14, any group night on Sun/Wed/Thu adds a false one.
