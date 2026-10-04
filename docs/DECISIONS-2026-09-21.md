@@ -116,7 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
-| **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `opendkp_loot_recent` repeats 13 auctions; `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
+| **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
 | **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
 | **Zeal crashes on the fork** (§151) | 3 new teardown crashes, all on the fork's test build; crash list now tags official vs test (agent 3.7.77 beta) | the guild lead: A/B on official Zeal (or `/tag persist off`); a local session reads the three dumps |
@@ -6882,7 +6882,13 @@ And a page that orders on a non-unique key drops and repeats rows at page bounda
   - ~~`/encounter tonight` reads `e.id` from a view that has no `id`.~~ **Fixed in bot 3.1.201** (2026-10-04):
     it threw on any day with a fight, so the command always answered with its error. It now reads
     `encounter_id`; `test/cap-safe-reads.test.js` §5 runs the command.
-  - `opendkp_loot_recent` repeats 13 auctions, because one OpenDKP id matches two characters.
+  - ~~`opendkp_loot_recent` repeats 13 auctions, because one OpenDKP id matches two characters.~~ **Fixed
+    2026-10-04** (migration `20261004220000_opendkp_loot_recent_one_character`, applied and recorded). It was
+    26 auctions: one OpenDKP id sits on two `characters` rows, a rename leftover the sync never cleared
+    (`utils/openDkpSync.js` dedups by name only; left alone). The view now takes one character per id: not
+    deleted, then most recent `updated_at`. 9,251 → 9,225 rows, one per auction. That also stops
+    `leaderboard_loot_spend()` double-counting those auctions' DKP. The file also commits the two name fallbacks
+    that were applied through the MCP in May and never written down.
   - `guild_held_spell_needs` takes ~31 s, so /admin/spells likely shows its error.
   - The threat rollup has not run since 2026-08-19. It is the unapplied `snapshot_at` index above.
   - Beta's /db/item preview (`?v=b` / `?v=c`) reads `item_recipes` in one call. One item is in 1,450
