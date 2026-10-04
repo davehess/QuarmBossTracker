@@ -6938,3 +6938,29 @@ Quarm added three player commands (patch notes Oct 2–4): `#blockbuff <id>` (al
   group/AE/single targets. Levels from PQDI, since `spell_class_levels` has no bard rows. Starter sets:
   "Pulling: bard twist (L47+)" (20 ids), "every rank" (40), "No bard run speed" (717, 2605, 1750, 1330), and
   a `#blockbuffif` damage-shield pair.
+
+### 158. The bot mirrors Quarm's patch-notes channel into Supabase (2026-10-04, bot 3.1.199)
+
+The guild lead: *"1175117242682331146 is the Quarm patch notes channel id in our discord. pull everything from
+there"*.
+
+- **What:** every message in that channel goes into `quarm_patch_notes`, one row per Discord message.
+  - The channel is `QUARM_PATCH_NOTES_CHANNEL_ID`, defaulting to the id above.
+  - Each row keeps the content, embeds flattened, attachments, author, posted and edited times.
+  - Signed-in members can read it; only the service role writes.
+- **How:**
+  - A sweep a minute after boot and every 6 h. It pages backward 100 at a time.
+  - The first run takes the whole history, capped at 20,000 per run with a resume point.
+  - Later runs stop at already-stored territory.
+  - New posts are caught by the existing messageCreate handler, before its bot-author early-out
+    (crossposts are bot posts). Edits are caught by a new messageUpdate listener.
+  - Status lives in bot_kv `quarm_patch_notes_sync`.
+- **⚠ The Message Content intent:** without it, Discord returns blank content, embeds and attachments. Those
+  rows are stored flagged `content_missing` and counted in the status. Turning the intent on (portal toggle,
+  then `MESSAGE_CONTENT_INTENT=1`) makes the next sweep re-walk and rewrite them.
+- **Not done, deliberately:** `Partials.Message` on the client would catch edits to posts from before the last
+  restart, but it changes every message handler's inputs. The sweep plus the live listener cover the
+  common case.
+- **Migration:** `20261004160000_quarm_patch_notes.sql`. The MCP `apply_migration` call timed out three times,
+  so it went in as four separate `execute_sql` statements. The version was then recorded in
+  `supabase_migrations.schema_migrations` by hand. Same SQL, same version as the committed file.
