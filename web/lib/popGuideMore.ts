@@ -27,7 +27,11 @@ export const GUIDE_LEVELS: GuideLevel[] = [
 ];
 
 export type TurnIn = { to: Loc; give: string; get?: string; note?: string };
-export type StepMore = { expect?: string; turnIn?: TurnIn[]; back?: Loc[]; auto?: string };
+// brief: the step in one or two plain sentences, 120 characters at most (the guild lead, 2026-10-04: "The
+// What to do is wordy"). The Mimic PoP overlay shows it in place of `detail` and folds the full detail and
+// `expect` under "More"; nothing in `detail` or `expect` was removed for it. It never repeats a phrase or a
+// place that the step's seq or where already lists.
+export type StepMore = { expect?: string; turnIn?: TurnIn[]; back?: Loc[]; auto?: string; brief?: string };
 
 // A place a step already names, so this file never re-types coordinates (popGuide.ts owns them).
 // A missing one reads as a hole the test catches (test/pop-guide-more.test.js), never a crash.
@@ -136,6 +140,37 @@ export const STEP_MORE: Record<string, StepMore> = {
     auto: 'Ticks itself when your last inventory upload holds any of the five rewards.',
   },
 };
+
+// The short version of every step whose detail runs past 300 characters, plus the Justice trial step
+// (the guild lead, 2026-10-04). Kept in one block, not threaded through the entries above, so a reviewer
+// reads the wording in one pass. Merged into STEP_MORE below; test/pop-guide-more.test.js holds each to
+// 120 characters and to a step that is still long enough to need one.
+const BRIEFS: Record<string, string> = {
+  start_flag_fixers: 'Sit down before you talk to the Seer. Go back and forth between her and Maelin until neither has anything new.',
+  flag_trial_justice: 'Win any ONE of the six trials. Its boss drops 6 of its Mark, one each. Retry 1 min after a loss, 10 after a win.',
+  justice_mavuin_hail: 'Hail Mavuin: this is your Justice flag. Needs the Tribunal’s “mavuin sent me” first.',
+  justice_seventh_hammer: 'Optional. Needs all six Marks in your bags at once. The Tribunal checks them but does not take them.',
+  innovation_door_key: 'Optional. Hand Nitram three clockwork parts, kill the beast he builds, then hail him for the factory door flag.',
+  flag_behemoth: 'Kill the Behemoth, then hail Giwin with the kill credit. Promise him a machine test first or it is a checklist flag.',
+  flag_hedge: 'Up to 24 players, 4 groups per dream. Hail Thelin at the end: that hail is the flag.',
+  essences_escort: 'Optional. Night in game only. Keep Aid Eino alive through four waves and the Dreamkeeper, then hand him the strand.',
+  nightmare_poxbourne: 'Hail Elder Poxbourne once Terris Thule is dead and her projection is hailed. It is half of the Torment portal check.',
+  cod_fuirstel_before: 'Hail Elder Fuirstel before Bertoxxulous dies. Needs Grummus done, and Adler asked about the ward before Grummus fell.',
+  flag_carprin: 'Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.',
+  flag_askr: 'Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.',
+  flag_keeper: 'A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.',
+  bot_symbol: 'Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.',
+  hoh_trial_villager: 'Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.',
+  maelin_cipher: 'Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.',
+  maelin_lore: 'Needs Karana’s path flag and Mithaniel’s notes. Maelin reads both and gives you a flag.',
+  zeks_maelin: 'Needs the cipher and both Zek projections hailed. Maelin reads the notes and moves you to Zeks 6.',
+  zebuxoruk_maelin: 'Needs his first reading and Rallos Zek’s projection hailed. This second reading opens Air, Earth and Water.',
+  pofire_miak: 'Ask Miak about the portal’s destination before you kill Solusek Ro. That gives your first Fire flag.',
+  flag_solro_minis: 'Five wings, any order. Kill each boss, then click its flaming cauldron within 30 minutes. Everyone clicks their own.',
+  essences_power: 'Optional. Keep the Fist, combine the four gods’ essences in the bowl, then trade the result for a reward.',
+  time_muon: 'Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.',
+};
+for (const [key, brief] of Object.entries(BRIEFS)) STEP_MORE[key] = { ...STEP_MORE[key], brief };
 
 // Every place a step sends you: where[] + the chain's start + turn-ins + who you go back to.
 export function stepPlaces(item: { where?: Loc[]; chain?: { first: { at: Loc } } }, more?: StepMore): Loc[] {

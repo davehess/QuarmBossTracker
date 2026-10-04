@@ -6703,3 +6703,37 @@ or from the main version, please look into them"*. Read from `crash_reports` (63
     both changes at once with the driver.
   - A local session reads the three dumps (STATUS, ⚠ Needs a local session).
   - Fork change only after one of those points at the fork's code.
+
+### 152. PoP overlay round: Justice trials as folds, one-line "What to do", text size, fixed height, the mouse (2026-10-04, web data on main · Mimic beta)
+
+The guild lead, from overlay screenshots: *"The Justice Trials each could use their own subsection … The What to
+do is wordy. … Needs a text size slider, and it jumps around when resizing, and also doesn't like to always show
+the mouse over it."*
+
+- **Data** (`web/lib/popGuide.ts`, `popGuideMore.ts` → `scripts/sync-pop-quests.js` → `apps/mimic/pop-quests.js`, in
+  one commit as the sync test requires):
+  - **Justice trials:** the step gains six `parts`, each verified against `The_Tribunal.lua`, the trial
+    encounter scripts, `eqemu_spawn2` and the bosses' 100% Mark drops. Each part carries its Tribunal's
+    `/map`, the three says, the boss and the Mark.
+    - "Stoning" and "Hanging" are the right words to say, though the Marks are Stone and Suffocation.
+    - Each Tribunal answers only its own trial.
+  - **Briefs:** 23 steps get a `brief` of 120 characters or fewer: every step whose detail runs over 300
+    characters, Justice included. Detail and Expect are untouched.
+  - The website does not draw `parts` or `brief` yet.
+- **Overlay** (`apps/mimic/popraid.html`, beta):
+  - The six trials fold under IN ORDER.
+  - WHAT TO DO shows the brief, with the full text under "More".
+  - An **Aa** slider (80–160%) zooms the text only (`wp:pop:fs`).
+- **The jumping:** the window refitted to every step's height on each ◀ ▶, and a tall step ran off screen
+  with no scroll.
+  - Fixed height is now the default, 480 px (`wp:pop:height`): the content scrolls, a grip sets the
+    height, and double-clicking the grip fits it.
+  - The who.html pattern.
+- **The mouse:** EQ hides the Windows cursor over its own window, so a click-through overlay shows no
+  pointer over its text.
+  - In fixed mode the card now takes the mouse, so the pointer shows over the text and the wheel scrolls
+    it. The trade-off: clicks over the card no longer reach EQ.
+  - Every clickable summary, row and link gained `data-wp-interact`. Without it, the preload's mousemove
+    disarmed the window after a hop from a button, so a click fell through to EQ.
+- **Waiting on the guild lead:** the catalog navigation (era → plane → step) is an option pick in
+  `docs/DESIGN-history-and-quest-nav.md`. It needs one plane tag per step, because the data has none.

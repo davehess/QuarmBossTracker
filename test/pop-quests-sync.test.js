@@ -17,7 +17,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT } from './_source-slice.js';
 import { GUIDE_ITEMS, GUIDE_SECTIONS, ZONE_NAMES } from '../web/lib/popGuide.ts';
-import { GUIDE_LEVELS } from '../web/lib/popGuideMore.ts';
+import { GUIDE_LEVELS, STEP_MORE } from '../web/lib/popGuideMore.ts';
 
 const sync = createRequire(import.meta.url)(path.join(ROOT, 'scripts', 'sync-pop-quests.js'));
 // (CRLF-tolerant: a Windows checkout with autocrlf must not read as drift.)
@@ -91,6 +91,58 @@ describe('pop-quests.js is the generated copy of the web guide', () => {
     expect(byKey.get('storms_zone_bot').seq.at(-1)).toMatchObject({ kind: 'zone', src: 'postorms/player.lua' });
     expect(askr[0].items).toEqual(['Storm Giant Head']);
     expect(byKey.get('start_flag_fixers').seq.find(a => a.until)).toMatchObject({ text: 'unlock my memories', sit: true });
+  });
+
+  // The guild lead, 2026-10-04: "The Justice Trials each could use their own subsection … The What to do is
+  // wordy." A step's `parts` ride through act for act (every phrase and place unchanged), and its `brief`
+  // rides next to the full detail, which is never dropped.
+  it('carries every step’s parts (the Justice trials) act for act, with their own places, and only where the web has them', () => {
+    const byKey = new Map(quests(load()).map(q => [q.key, q]));
+    const bare = (t) => t.replace(/\[\[([^\]#]+)#\d+\]\]/g, '$1');
+    const fields = ['kind', 'to', 'text', 'sit', 'times', 'until', 'src'];
+    let parts = 0;
+    let acts = 0;
+    for (const i of GUIDE_ITEMS) {
+      const q = byKey.get(i.key);
+      if (!i.parts) { expect(q.parts, i.key).toBeUndefined(); continue; }
+      expect(q.parts.map(p => [p.key, p.title]), i.key).toEqual(i.parts.map(p => [p.key, p.title]));
+      i.parts.forEach((p, n) => {
+        const got = q.parts[n];
+        expect((got.where || []).map(l => [l.npc, l.zone, l.y, l.x, l.note]), `${i.key}/${p.key}`)
+          .toEqual((p.where || []).map(l => [l.npc, ZONE_NAMES[l.zone], l.y, l.x, l.note]));
+        expect(got.seq.length, `${i.key}/${p.key}`).toBe(p.seq.length);
+        p.seq.forEach((a, k) => {
+          for (const f of fields) expect(got.seq[k][f], `${i.key}/${p.key}[${k}].${f}`).toEqual(a[f]);
+          expect(got.seq[k].items, `${i.key}/${p.key}[${k}].items`).toEqual(a.items?.map(bare));
+          acts++;
+        });
+        parts++;
+      });
+    }
+    expect(parts).toBe(6);
+    expect(acts).toBe(30);
+    // The model case reads in full: six trials, each saying ITS word at ITS Tribunal.
+    const six = byKey.get('flag_trial_justice').parts;
+    expect(six.map(p => p.seq[2].text)).toEqual(['Lashing', 'Execution', 'Stoning', 'Torture', 'Hanging', 'Flame'].map(w => `ready to begin the Trial of ${w}`));
+    expect(six[2]).toMatchObject({ title: 'Trial of Stoning → Mark of Stone', where: [{ zone: 'Plane of Justice', y: 714, x: 418 }] });
+    expect(six[2].seq[4].items).toEqual(['Mark of Stone']);
+  });
+
+  it('carries each brief next to the full detail and expect, which it never replaces (120 characters at most)', () => {
+    const byKey = new Map(quests(load()).map(q => [q.key, q]));
+    const bare = (t) => t.replace(/\[\[([^\]#]+)#\d+\]\]/g, '$1');
+    let n = 0;
+    for (const i of GUIDE_ITEMS) {
+      const q = byKey.get(i.key);
+      const brief = STEP_MORE[i.key]?.brief;
+      expect(q.brief, i.key).toBe(brief);
+      if (!brief) continue;
+      n++;
+      expect(brief.length, `${i.key}: ${brief.length} characters`).toBeLessThanOrEqual(120);
+      expect(q.detail, `${i.key}: detail must stay whole beside the brief`).toBe(bare(i.detail));
+      expect(q.expect, i.key).toBe(STEP_MORE[i.key].expect ? bare(STEP_MORE[i.key].expect) : undefined);
+    }
+    expect(n).toBe(23);
   });
 
   it('turns [[Item#id]] tokens into the bare item name, everywhere', () => {
