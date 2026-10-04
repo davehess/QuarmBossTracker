@@ -6998,3 +6998,28 @@ there"*.
   - **Verified after the deploy** (first run 20:34 UTC): 4,265 messages read, 1,350 rows left, `feed_only`
     set. The 1,350 are the 1,348 Quarm posts plus two of Discord's own "Community Updates" notices from 2024.
     Those are webhook posts too, so the filter keeps them; harmless, left in.
+
+### 159. The HUD's DS badge adds the shield from worn gear, only on top of a shield spell (2026-10-04, bot 3.1.202 · agent 3.7.80 beta)
+
+The guild lead, with screenshots (badge "DS 10", shield hits "for 18 points", a Talisman of Vah Kerrath
+with "Increase Damage Shield by 8"): *"Missing my additional DS from my neck slot. It only gets added when
+you have other damage shield."*
+
+- **The rule, confirmed upstream:** EQMacEmu `zone/attack.cpp` `Mob::DamageShield` returns early when the
+  spell shield is 0 and adds the item part only inside that branch; item shields come from the worn-effect
+  spell (`zone/bonuses.cpp`), never from the flat `eqemu_items.damageshield` column. So: spell shield +
+  gear shield while a spell shield is up, nothing from gear otherwise. Quarm's own rules (a cap, say) are
+  unknown; none is modelled.
+- **Data:** view `item_worn_damage_shield` (migration `20261004223000`, applied and recorded) reads SPA 59
+  from every slot of the worn-effect spell's `raw` (the Talisman's sits in slot 5, past the indexed
+  columns). Two items today: Talisman of Vah Kerrath 8, Shroud of Eternity 5.
+- **Bot:** `/api/agent/item-clickies` v2 adds `worn_ds: [{id, name, ds}]`, its own list so nothing that
+  reads the clicky `entries` sees non-clickies. A failed read serves the catalog with an empty list.
+- **Agent (beta):** `_wornItemDs(character)` sums `worn_ds` over worn slots of the newer of
+  `/output inventory` and the Quarmy export; `_serializeMeState` adds it to `combat.ds.per_hit` only when
+  `_knownDsPerHitFor` found a shield spell, and reports it as `combat.ds.from_items`. The last-hit fallback
+  is unchanged (it already includes gear). A disk cache from before `worn_ds` drops its ETag so the next
+  fetch is a full one.
+- **Left alone:** `_knownDsPerHitFor` itself (the anonymous-hit settle already allows 30 points of unseen
+  shield, `DS_UNLISTED_SLACK`), and the Tank window's shield sources for another tank (their gear is not
+  known to this client).
