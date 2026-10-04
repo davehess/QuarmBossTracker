@@ -13,7 +13,8 @@ import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { loadNameMap } from '@/lib/roster';
 import { viewerMayMarkQuit } from '@/lib/funLdAuth';
-import { attendedNights, ldView, parseLds, raidStreaks, type LdRow } from '@/lib/funLd';
+import { countEvents, ldView, parseLds, raidStreaks, type LdRow } from '@/lib/funLd';
+import { loadRaidDatesAndAttendance } from '@/lib/funLdRaids';
 import QuitButton from './QuitButton';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -104,50 +105,26 @@ SECTIONS.push(async (sb, counters, ctx) => {
   //  - an LD marked "It was a /quit" is not a crash: it is left out of the last
   //    LD, the streaks and the lifetime count, and the card says how many were
   //    forgiven;
-  //  - a "raid" is a night in raid_nights, so a Saturday group night no longer
-  //    counts as a raid he survived.
+  //  - only an LD DURING A REAL RAID counts ("Saturday wasn't a raid, so it
+  //    doesn't count"), and a real raid is one the officers logged in OpenDKP,
+  //    not a raid_nights row (the bot opens those for any Sun/Wed/Thu evening
+  //    encounter). He attended it when his name is in one of its ticks.
   try {
-    const { data: ldRows } = await sb
-      .from('fun_events')
-      .select('id, event_ts, target, detail')
-      .eq('event_type', 'peopleslayer_ld')
-      .order('event_ts', { ascending: true });
-    const { counted: lds, forgivenEvents, mark, undo } = ldView(parseLds((ldRows ?? []) as LdRow[]));
+    const [{ data: ldRows }, { raidDates, attended }] = await Promise.all([
+      sb
+        .from('fun_events')
+        .select('id, event_ts, target, detail')
+        .eq('event_type', 'peopleslayer_ld')
+        .order('event_ts', { ascending: true }),
+      loadRaidDatesAndAttendance(sb, 'Peopleslayer'),
+    ]);
+    const { counted: lds, forgivenEvents, mark, undo } = ldView(parseLds((ldRows ?? []) as LdRow[]), raidDates);
     const canMark = (mark || undo) ? await ctx.canMarkQuit : false;
 
-    // "Raids since" = raid nights he took part in after his most recent counted
-    // LD. Previous-best streak: the most raid nights between two consecutive
-    // counted LDs, the record to beat. One pull of his encounter times covers
-    // both (selectAll — a plain select stops silently at 1000 rows, and he has
-    // more encounters than that).
-    let raidsSince = 0;
-    let prevRecordRaids = 0;
-    if (lds.length > 0) {
-      type EpRow = { encounters: { started_at: string } | { started_at: string }[] | null };
-      const [ep, nights] = await Promise.all([
-        selectAll<EpRow>((from, to) => sb
-          .from('encounter_players')
-          .select('encounter_id, encounters!inner(started_at)')
-          .ilike('character_name', 'Peopleslayer')
-          .gte('encounters.started_at', new Date(lds[0].ts).toISOString())
-          .order('encounter_id')
-          .range(from, to)),
-        selectAll<{ date: string }>((from, to) => sb
-          .from('raid_nights')
-          .select('date')
-          .eq('guild_id', 'wolfpack')
-          .order('date')
-          .range(from, to)),
-      ]);
-      const starts: number[] = [];
-      for (const r of ep) {
-        const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
-        if (enc?.started_at) starts.push(new Date(enc.started_at).getTime());
-      }
-      const streaks = raidStreaks(lds.map(l => l.ts), attendedNights(starts, nights.map(n => n.date)));
-      raidsSince = streaks.since;
-      prevRecordRaids = streaks.best;
-    }
+    // "Raids since" = raids he was ticked on after his most recent counted LD.
+    // Previous-best streak: the most raids between two consecutive counted LDs,
+    // the record to beat.
+    const { since: raidsSince, best: prevRecordRaids } = raidStreaks(lds.map(l => l.ts), attended);
 
     // The "it was a /quit" links sit beside the Last LD line, for the
     // character's player and officers only (the server action checks again).
@@ -163,6 +140,12 @@ SECTIONS.push(async (sb, counters, ctx) => {
         <QuitButton ts={new Date(undo.ts).toISOString()} undo />
       </>
     );
+    const raidsOnlyLine = (
+      <>
+        <br />
+        <span className="text-dim/70">LDs during raids only</span>
+      </>
+    );
 
     if (lds.length === 0) {
       counters.push({
@@ -171,8 +154,9 @@ SECTIONS.push(async (sb, counters, ctx) => {
         value: '—',
         sub: (
           <>
-            no LDs on record yet — first one resets the counter and lights the card up.
+            no LDs during a raid on record yet — first one resets the counter and lights the card up.
             {undoLink}
+            {raidsOnlyLine}
             {forgivenLine}
           </>
         ),
@@ -180,7 +164,8 @@ SECTIONS.push(async (sb, counters, ctx) => {
     } else {
       const lastLd  = lds[lds.length - 1];
       const lastDt  = new Date(lastLd.ts);
-      const lastLbl = lastDt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      // Raid time (Eastern), not the server's UTC: a Friday 8:18 pm raid LD must not read "Sat".
+      const lastLbl = lastDt.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       const zoneLbl = lastLd.zone || '—';
       const showPrev = prevRecordRaids > raidsSince;
       counters.push({
@@ -207,8 +192,9 @@ SECTIONS.push(async (sb, counters, ctx) => {
             )}
             {' · '}
             <span className="line-through text-dim/60" title="The card used to count his lifetime LDs — flipped now per his suggestion to count raids without an LD.">
-              {lds.length.toLocaleString()} lifetime LDs
+              {countEvents(lds).toLocaleString()} lifetime LDs
             </span>
+            {raidsOnlyLine}
             {forgivenLine}
           </>
         ),
