@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **3D spectator map on wolfpack.quest** (§160) | Asked 2026-10-04 evening. Options A (point-cloud 3D from our spawn/door points) / B (real zone geometry from the EQ client files: rights + local extraction) / C (flat live board); a look-preview of A and C as a private artifact. No code in the repo | the guild lead: pick a look, and say whether to ask server staff about showing targets raid-wide (§131 / `DESIGN-zone-radar.md` gate). Raider dots alone also need a `PRIVACY.md` line before they show on the site |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: /admin/encounters curated-only? (`/encounter tonight`, the doubled OpenDKP auctions and the 29 s spell-needs call were fixed 2026-10-04) |
@@ -7023,3 +7024,39 @@ you have other damage shield."*
 - **Left alone:** `_knownDsPerHitFor` itself (the anonymous-hit settle already allows 30 points of unseen
   shield, `DS_UNLISTED_SLACK`), and the Tank window's shield sources for another tank (their gear is not
   known to this client).
+
+### 160. A 3D "spectator mode" map on wolfpack.quest: options, not yet picked (2026-10-04)
+
+The guild lead: *"3d map like this design on https://foreverchanges.pro/map with our location data and target
+location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DESIGN-zone-radar.md` (options
+1-3, unpicked); this ask is that doc's Option 2 (one shared raid picture on the website) with a 3D look.
+
+- **The reference is a World of Warcraft map** (WoW Classic "Forever" fan site). Its 3D terrain is built from
+  Blizzard's client files (height tiles, ~20 KB each; 8 MB for one zone view) in a hand-written three.js
+  engine: tiled terrain with LOD, draped map imagery, fog, DOM labels, "Top down" and "N" buttons, shareable
+  view in the URL. Its terms forbid republishing its compiled data. So: copy the controls and feel, never its
+  data or code.
+- **We have no EverQuest terrain.** No meshes, and Brewall's map lines carry no licence (`DESIGN-zone-radar.md`).
+  What we can draw from freely: `eqemu_spawn2` (43,655 points with x/y/z in 182 zones), doors (8,207), ground
+  spawns (514) and objects (322).
+- **Positions we have:** `raid_roster.loc_x/y/z` + heading, every 3 s per raid group, latest only, kept 1 h;
+  `character_live_state.loc_*` every 45 s, no heading. Nothing on the website reads them yet, and nothing
+  serves them to it. `/raid` refreshes every 15 s.
+- **Targets:** Zeal 1.4.8 sends `target_loc`, only within 250 units ("server policy"). Mimic does not read it
+  yet, and the fleet reports Zeal 1.4.7 (5 of 5 that report a version).
+- **Options** (build / maintenance / runtime / change):
+  - **A, point-cloud 3D:** the zone drawn from our own points, orbit/tilt/zoom like the reference; looks like
+    a constellation, not terrain. ~6-9 days for the page plus the live layer / low / three.js ~150 KB lazy +
+    one small points file per zone / easy.
+  - **B, real zone geometry:** meshes extracted from the EverQuest client files by a local session, then the
+    same engine. The look of the reference. Needs a rights call (Daybreak's art on our site) and a per-zone
+    extraction step; several MB per zone. ~15-25 days / high / heavy / hard.
+  - **C, flat live board:** top-down 2D with height as colour, no 3D engine. Fastest to read mid-raid, best on
+    phones. ~4-6 days / low / tiny / easy.
+  - Common to all: a member-gated positions endpoint (2 s poll), agent adoption of `target_loc`, and the
+    one-hour in-game axis and heading check.
+- **Gates already on record:** §131 and `DESIGN-zone-radar.md` say to ask server staff before anything shows
+  mobs' positions raid-wide. Raiders' own positions on the website are a new surface: `PRIVACY.md` says
+  signed-in members see zone and HP only, so it needs a line there first.
+- **Preview:** a private artifact (not in the repo) shows A and C over real Vex Thal spawn points with a
+  made-up sample raid, so the look can be picked before any build.
