@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **3D spectator map on wolfpack.quest** (§160) | Asked 2026-10-04 evening. Options A (point-cloud 3D from our spawn/door points) / B (real zone geometry from the EQ client files: rights + local extraction) / C (flat live board); a look-preview of A and C as a private artifact. No code in the repo | the guild lead: pick a look, and say whether to ask server staff about showing targets raid-wide (§131 / `DESIGN-zone-radar.md` gate). Raider dots alone also need a `PRIVACY.md` line before they show on the site |
+| **Spectator map on wolfpack.quest** (§160) | **Picked C** (flat live board), 2026-10-04. A real zone map under the dots is required ("or it's useless"). No staff ask: it shows only what Zeal already gives a player. No code yet | a session: settle the map-line source (licence), then build C as a new [beta] page (positions feed, `PRIVACY.md` line, agent reads Zeal 1.4.8 `target_loc`). After 00:30 ET for anything on `main` |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: /admin/encounters curated-only? (`/encounter tonight`, the doubled OpenDKP auctions and the 29 s spell-needs call were fixed 2026-10-04) |
@@ -7060,3 +7060,15 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   signed-in members see zone and HP only, so it needs a line there first.
 - **Preview:** a private artifact (not in the repo) shows A and C over real Vex Thal spawn points with a
   made-up sample raid, so the look can be picked before any build.
+- **Picked (the guild lead, same evening):** *"I need to have the map displayed underneath or it's useless
+  though. we can start with C. I'm not asking the server for permissions beyond what has already been cleared
+  for zeal"*.
+  - **C first**, the flat live board.
+  - **A real zone map under the dots is a requirement.** The spawn-point cloud and `zone_outline()` alone are
+    not enough. So the map-line source (whose lines, under what licence) is the first thing to settle; Brewall's,
+    the ones Zeal draws, state no licence.
+  - **No ask to server staff.** The page shows only what Zeal already exposes to a player: raid members'
+    positions (pipe types 5 and 6) and a target's position within Zeal's 250 units. Nothing beyond that is
+    built: no positions for mobs nobody targets, no pather predictions. This supersedes the "ask staff" gate in
+    §131 and `DESIGN-zone-radar.md` for that scope.
+  - Still needed before raider dots show on the site: a `PRIVACY.md` line (positions shown to signed-in members).
