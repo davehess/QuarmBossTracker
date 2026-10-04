@@ -39,6 +39,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
 import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics';
+import { fetchFamilyInventory, fetchDiscoveredQuests, fetchItemsByIds } from '@/lib/capSafeReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -122,12 +123,12 @@ async function load(decoded: string) {
   // keeps the match case-insensitive like the old JS filter.
   const familyList = ((familyRows ?? []) as { name: string }[]).map(r => r.name);
   if (familyList.length === 0) familyList.push(char.name);
-  const invRes = await sb
-    .from('character_inventory')
-    .select('character_name, slot_label, item_id, item_name, quantity')
-    .eq('guild_id', 'wolfpack')
-    .or(familyList.map(n => `character_name.ilike.${n}`).join(','))
-    .limit(10000);
+  // ⚠ Paged. The family's inventory runs to 8,302 rows (10 families are over
+  // 1,000) and the old `.limit(10000)` returned 1,000 in heap order — so the
+  // viewed character's OWN rows could be among the missing, and "nothing held"
+  // would show for items they carry. The family stays whole because the page
+  // shows when ANOTHER family member holds a quest item.
+  const invRows = await fetchFamilyInventory(sb, familyList);
 
   const quests = (questsRes.data ?? []) as Quest[];
   const questItems = (itemsRes.data ?? []) as QuestItem[];
@@ -155,7 +156,7 @@ async function load(decoded: string) {
   // resolve the in/out item names via eqemu_items in one batched call so the
   // page can render "Captain Bvellos: Storm Giant Toes → +Kromzek faction".
   const ownInventoryIds = Array.from(new Set(
-    (invRes.data ?? []).filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
+    invRows.filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
   ));
   type Money = { plat?: number; gold?: number; silver?: number; copper?: number };
   type TurninCore = {
@@ -174,8 +175,11 @@ async function load(decoded: string) {
   };
   let discovered: Discovered[] = [];
   if (ownInventoryIds.length > 0) {
-    const { data: dRows } = await sb.rpc('discover_quests_for_item', { p_item_ids: ownInventoryIds });
-    discovered = (dRows ?? []) as Discovered[];
+    // discover_quests_for_item used to end in `LIMIT 500` (4 of the top-25
+    // inventories hit it, and 'piece' sorts before 'completed', so completed
+    // turn-ins were what got cut). It is unlimited now, with a total order, and
+    // drained in pages in case it ever passes the 1,000-row response cap.
+    discovered = await fetchDiscoveredQuests<Discovered>(sb, ownInventoryIds);
   }
 
   // Per-character turn-in prefs (the guild lead, 2026-06-24): 'active' = pinned into
@@ -211,8 +215,12 @@ async function load(decoded: string) {
   type ItemMeta = { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null; slots: number | null; damage: number | null; clickeffect: number | null; clicktype: number | null };
   const itemMetaById = new Map<number, ItemMeta>();
   if (discoveryItemIds.length > 0) {
-    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop, classes, races, price, slots, damage, clickeffect, clicktype').in('id', discoveryItemIds);
-    for (const r of ((irows ?? []) as ({ id: number } & ItemMeta)[])) {
+    // ⚠ Chunked: the heaviest inventories reach 1,045–1,335 distinct ids once
+    // the turn-ins' inputs and outputs are counted, and one `.in()` of that
+    // size returns 1,000 rows at most — the rest lost their name and NO DROP
+    // flag on the page.
+    const irows = await fetchItemsByIds<{ id: number } & ItemMeta>(sb, 'id, name, nodrop, classes, races, price, slots, damage, clickeffect, clicktype', discoveryItemIds);
+    for (const r of irows) {
       itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop, classes: r.classes, races: r.races, price: r.price, slots: r.slots, damage: r.damage, clickeffect: r.clickeffect, clicktype: r.clicktype });
     }
   }
@@ -241,7 +249,7 @@ async function load(decoded: string) {
     char,
     quests,
     questItems,
-    inventory: (invRes.data ?? []) as InventoryRow[],
+    inventory: invRows as InventoryRow[],
     keys: (keysRes.data ?? []) as { item_id: number | null; key_name: string }[],
     familyNames,
     itemInfo,

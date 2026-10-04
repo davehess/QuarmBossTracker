@@ -102,12 +102,15 @@ export async function deleteWhoCharacter(
   // Case-insensitive name match — observations are stored under whatever
   // case EQ used. Filter by guild as well so a stray cross-guild row can't
   // be reached by accident.
-  const { data: obsRows, error: obsErr } = await admin
+  // `count: 'exact'` for the reported number: the old `.select('id')` returned
+  // the deleted rows, which PostgREST caps at 1,000, so scrubbing a character
+  // with 3,000 observations reported "deleted 1,000" (the delete itself is
+  // complete). It also stops shipping those ids back just to count them.
+  const { count: obsCount, error: obsErr } = await admin
     .from('who_observations')
-    .delete()
+    .delete({ count: 'exact' })
     .ilike('character', name)
-    .eq('guild_id', 'wolfpack')
-    .select('id');
+    .eq('guild_id', 'wolfpack');
   if (obsErr) return { ok: false, error: obsErr.message };
   await admin
     .from('who_overrides')
@@ -115,5 +118,5 @@ export async function deleteWhoCharacter(
     .ilike('character', name)
     .eq('guild_id', 'wolfpack');
   revalidatePath('/who');
-  return { ok: true, deleted: (obsRows ?? []).length };
+  return { ok: true, deleted: obsCount ?? 0 };
 }

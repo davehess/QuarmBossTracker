@@ -36,6 +36,10 @@ import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
 import { selectAll } from '@/lib/selectAll';
+import {
+  fetchLiveStateRows, fetchFloorAndCoverage, fetchCharAggs, fetchScrapView, EMPTY_AGG,
+  type CharAgg, type ScrapView,
+} from '@/lib/capSafeReads';
 import { LIST_MIN_LEVEL, frontTierOf, tierOf } from '@/lib/listableChars';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
 import { dayKey, RAID_TZ } from '@/lib/format';
@@ -69,8 +73,6 @@ type CharRow = {
   show_quests_publicly:    boolean | null;
   hidden_from_lists:       boolean | null;
 };
-
-type SkillBucket = { hits: number; dmg: number };
 
 type CharStats = {
   encounterCount: number;
@@ -128,16 +130,13 @@ type LiveState = {
 async function loadLiveState(charNames: string[]): Promise<Map<string, LiveState>> {
   const out = new Map<string, LiveState>();
   if (charNames.length === 0) return out;
-  const admin = supabaseAdmin();
-  // The table holds one row per active character (small) — fetch the guild's
-  // rows and match case-insensitively, since the PK stores the name as the
-  // agent reported it.
-  const { data } = await admin
-    .from('character_live_state')
-    .select('character, zone_name, buff_count, buffs, self_hp_pct, updated_at')
-    .eq('guild_id', 'wolfpack');
+  // The table holds a row for EVERY character any agent has reported (1,500+),
+  // so fetching "the guild's rows" returned the first 1,000 in heap order and
+  // none of the recently-updated ones were in them. Ask for this member's
+  // names (ilike-equality: the PK stores the name as the agent reported it).
+  const data = await fetchLiveStateRows(supabaseAdmin(), charNames);
   const wanted = new Set(charNames.map(n => n.toLowerCase()));
-  for (const r of (data ?? []) as any[]) {
+  for (const r of data as any[]) {
     const key = String(r.character || '').toLowerCase();
     if (!wanted.has(key)) continue;
     out.set(key, {
@@ -216,28 +215,15 @@ type CoverageRow = { encounters_total: number | null; encounters_with_detail: nu
 // member_since effectively never moves), it's cached server-side for 30 min so
 // page loads normally skip the aggregation entirely. Cached as entry ARRAYS
 // (unstable_cache JSON-serializes — Maps don't survive); Maps rebuilt outside.
+//
+// ⚠ The map must be COMPLETE: the views hold 1,570 and 3,237 rows, and a
+// `.limit(5000)` returned 1,000 of each, so 36% / 69% of characters were
+// missing for 30 minutes at a time. Paging them is no answer (every page
+// re-runs the whole-guild aggregation), so each comes back as ONE jsonb value
+// (me_floor_json / me_coverage_json) — see fetchFloorAndCoverage. It throws on
+// an RPC error, and unstable_cache does not store a throw.
 const _loadFloorAndCoverageCached = unstable_cache(
-  async (): Promise<{
-    floors: [string, FloorRow][];
-    coverage: [string, CoverageRow][];
-  }> => {
-    const admin = supabaseAdmin();
-    const floors: [string, FloorRow][] = [];
-    const coverage: [string, CoverageRow][] = [];
-    const [{ data: floorRows }, { data: covRows }] = await Promise.all([
-      admin.from('character_data_floor').select('character_name, member_since, floor_source').limit(5000),
-      admin.from('character_rollup_coverage').select('character_name, encounters_total, encounters_with_detail, encounters_resubmittable').limit(5000),
-    ]);
-    for (const r of (floorRows ?? []) as (FloorRow & { character_name: string | null })[]) {
-      if (r.character_name) floors.push([r.character_name.toLowerCase(), { member_since: r.member_since, floor_source: r.floor_source }]);
-    }
-    for (const r of (covRows ?? []) as (CoverageRow & { character_name: string | null })[]) {
-      if (r.character_name) coverage.push([r.character_name.toLowerCase(), {
-        encounters_total: r.encounters_total, encounters_with_detail: r.encounters_with_detail, encounters_resubmittable: r.encounters_resubmittable,
-      }]);
-    }
-    return { floors, coverage };
-  },
+  async () => fetchFloorAndCoverage(supabaseAdmin()),
   ['me-floor-coverage'],
   { revalidate: 1800 },
 );
@@ -245,8 +231,12 @@ async function loadFloorAndCoverage(): Promise<{
   floors: Map<string, FloorRow>;
   coverage: Map<string, CoverageRow>;
 }> {
-  const { floors, coverage } = await _loadFloorAndCoverageCached();
-  return { floors: new Map(floors), coverage: new Map(coverage) };
+  try {
+    const { floors, coverage } = await _loadFloorAndCoverageCached();
+    return { floors: new Map(floors), coverage: new Map(coverage) };
+  } catch {
+    return { floors: new Map(), coverage: new Map() };   // the cards render without the data-floor line
+  }
 }
 
 // Everything /me needs per character that can be asked for ONCE per account.
@@ -264,10 +254,11 @@ type FamilyPrefetch = {
   loot:     Map<string, LootRow[]>;
   wishlist: Map<string, number>;
   pvp:      Map<string, { kills: number; deaths: number; assists: number }>;
+  stats:    Map<string, CharAgg>;                                     // parse / upload / rollup aggregates, by lower-cased name
 };
 
 async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
-  const fam: FamilyPrefetch = { active: new Set(), chat: new Map(), loot: new Map(), wishlist: new Map(), pvp: new Map() };
+  const fam: FamilyPrefetch = { active: new Set(), chat: new Map(), loot: new Map(), wishlist: new Map(), pvp: new Map(), stats: new Map() };
   if (names.length === 0) return fam;
   const admin = supabaseAdmin();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -277,7 +268,7 @@ async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
     cur[field] += 1;
     fam.pvp.set(key, cur);
   };
-  const [activeRes, chatRes, lootRows, wishRes, killRes, deathRes, assistRes] = await Promise.all([
+  const [activeRes, chatRes, lootRows, wishRes, killRes, deathRes, assistRes, stats] = await Promise.all([
     admin.rpc('me_active_names', { p_names: names }),
     admin.rpc('me_chat_counts', { p_names: names, p_since: since30 }),
     // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
@@ -297,7 +288,13 @@ async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
     admin.from('pvp_kills').select('killer').ilikeAnyOf('killer', names).limit(1000),
     admin.from('pvp_kills').select('victim').ilikeAnyOf('victim', names).limit(1000),
     admin.from('pvp_assists').select('assister').ilikeAnyOf('assister', names).limit(1000),
+    // Parse / upload / rollup aggregates for the whole family, summed in SQL:
+    // the per-character reads these replace (.limit(5000) / .limit(500) /
+    // .limit(5000)) were capped at 1,000 rows, and the heaviest raider has
+    // 3,807 / 4,036 / 3,914.
+    fetchCharAggs(admin, names),
   ]);
+  fam.stats = stats;
   for (const r of (activeRes.data ?? []) as { name: string }[]) fam.active.add(lower(r.name));
   for (const r of (chatRes.data ?? []) as { speaker: string; total: number; recent: number }[]) {
     fam.chat.set(lower(r.speaker), { total: Number(r.total) || 0, recent: Number(r.recent) || 0 });
@@ -352,121 +349,44 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     };
   }
 
-  const [
-    { data: parseRows },
-    { data: contribRows },
-    { data: rollupRows },
-  ] = await Promise.all([
-    admin
-      .from('encounter_players')
-      .select('encounter_id, total_damage, dps')
-      .eq('character_name', name)
-      .limit(5000),
-    admin
-      .from('contributions')
-      .select('encounter_id, created_at, source, agent_version, has_ability_detail')
-      .eq('contributor_character', name)
-      .order('created_at', { ascending: false })
-      .limit(500),
-    // Per-encounter verb rollups. Sum locally — typical char has at most ~hundreds
-    // of rows, fine to aggregate in JS. by_skill is the jsonb bag per the
-    // migration; total_hits / total_damage / self_attack_count are scalar.
-    admin
-      .from('encounter_combat_rollup')
-      .select('total_hits, total_damage, self_attack_count, by_skill')
-      .eq('character_name', name)
-      .limit(5000),
-    // NOTE: character_data_floor + character_rollup_coverage are no longer
-    // queried here — they're whole-guild-aggregating views (see
-    // loadFloorAndCoverage) prefetched once for the family and passed in.
-  ]);
+  // The parse / upload / rollup numbers were summed HERE from three per-character
+  // reads (encounter_players .limit(5000), contributions .limit(500),
+  // encounter_combat_rollup .limit(5000)) — each silently capped at 1,000 rows
+  // (500 for uploads), so a heavy raider's encounter count, totals, top fight,
+  // upload count and top skills described only a slice of their history. They
+  // now come from me_char_stats, summed in SQL for the whole family at once
+  // (see loadFamilyPrefetch). NOTE: character_data_floor +
+  // character_rollup_coverage are likewise not queried here — they're
+  // whole-guild-aggregating views (see loadFloorAndCoverage).
+  const agg = fam.stats.get(nameLower) ?? { name, ...EMPTY_AGG };
 
-  const parses = (parseRows ?? []) as { encounter_id: string; total_damage: number | null; dps: number | null }[];
-  const totalDamage = parses.reduce((s, r) => s + (r.total_damage || 0), 0);
-  let topDmg = 0, topId: string | null = null;
-  for (const p of parses) {
-    if ((p.total_damage || 0) > topDmg) { topDmg = p.total_damage || 0; topId = p.encounter_id; }
-  }
-
-  // Recent encounters — join encounter_players to encounters for npc_id +
-  // started_at. PostgREST doesn't traverse without a declared FK, so a
-  // second targeted lookup.
+  // Recent encounters (the 10 newest, picked in SQL) — only the boss names
+  // still need a lookup; PostgREST doesn't traverse without a declared FK.
   let recentEncounters: CharStats['recentEncounters'] = [];
-  if (parses.length > 0) {
-    // Limit to most recent 30 contributions to keep the join cheap.
-    const lastIds = Array.from(new Set(parses.map(p => p.encounter_id))).slice(0, 60);
-    const { data: encRows } = await admin
-      .from('encounters')
-      .select('id, started_at, npc_id')
-      .in('id', lastIds)
-      .order('started_at', { ascending: false })
-      .limit(10);
-    const npcIds = (encRows ?? []).map((e: any) => e.npc_id).filter((x: any) => x != null);
+  if (agg.recent.length > 0) {
+    const npcIds = agg.recent.map(e => e.npc_id).filter((x): x is number => x != null);
     const { data: npcRows } = npcIds.length
       ? await admin.from('eqemu_npc_types').select('id, name').in('id', npcIds)
       : { data: [] };
     const npcName = new Map<number, string>(((npcRows ?? []) as { id: number; name: string }[]).map(n => [n.id, n.name.replace(/_/g,' ').replace(/^#/,'')]));
-    const dmgByEnc = new Map<string, { dmg: number; dps: number }>();
-    for (const p of parses) {
-      const existing = dmgByEnc.get(p.encounter_id);
-      if (!existing || (p.total_damage || 0) > existing.dmg) {
-        dmgByEnc.set(p.encounter_id, { dmg: p.total_damage || 0, dps: p.dps || 0 });
-      }
-    }
-    recentEncounters = ((encRows ?? []) as { id: string; started_at: string; npc_id: number | null }[]).map(e => ({
+    recentEncounters = agg.recent.map(e => ({
       id: e.id,
       npc_name: e.npc_id != null ? (npcName.get(e.npc_id) ?? null) : null,
-      started_at: e.started_at,
-      damage: dmgByEnc.get(e.id)?.dmg ?? 0,
-      dps:    dmgByEnc.get(e.id)?.dps ?? 0,
+      started_at: e.started_at as string,
+      damage: e.damage,
+      dps:    e.dps,
     }));
   }
 
-  const contribs = (contribRows ?? []) as { encounter_id: string; created_at: string; source: string | null; agent_version: string | null; has_ability_detail: boolean | null }[];
-
-  // ── Aggregate the per-ability rollups ──────────────────────────────────────
-  // Each row: { total_hits, total_damage, self_attack_count, by_skill: jsonb }.
-  // by_skill is { <skill>: {hits, dmg} } already in the agent's bucket shape.
-  // We sum across the character's encounters; topSkills is the top 5 by dmg.
-  const rollups = (rollupRows ?? []) as {
-    total_hits: number | null;
-    total_damage: number | null;
-    self_attack_count: number | null;
-    by_skill: Record<string, SkillBucket> | null;
-  }[];
-  let rollupHits = 0, rollupDamage = 0, selfAttackCount = 0;
-  const skillTotals = new Map<string, SkillBucket>();
-  for (const r of rollups) {
-    rollupHits      += r.total_hits        || 0;
-    rollupDamage    += r.total_damage      || 0;
-    selfAttackCount += r.self_attack_count || 0;
-    if (r.by_skill && typeof r.by_skill === 'object') {
-      for (const [skill, b] of Object.entries(r.by_skill)) {
-        const existing = skillTotals.get(skill) ?? { hits: 0, dmg: 0 };
-        existing.hits += Number(b?.hits) || 0;
-        existing.dmg  += Number(b?.dmg)  || 0;
-        skillTotals.set(skill, existing);
-      }
-    }
-  }
-  const topSkills = Array.from(skillTotals.entries())
-    .map(([skill, b]) => ({ skill, hits: b.hits, dmg: b.dmg }))
-    .sort((a, b) => b.dmg - a.dmg)
-    .slice(0, 5);
-
-  // Most recent agent version this character uploaded under. Pre-2.5.39
-  // contributions have null agent_version, so we look for the latest non-null.
-  const latestAgentVersion = contribs.find(c => c.agent_version)?.agent_version ?? null;
-
   return {
-    encounterCount: new Set(parses.map(p => p.encounter_id)).size,
-    totalDamage,
-    topDmg,
-    topEncounterId: topId,
+    encounterCount: agg.encounter_count,
+    totalDamage: agg.total_damage,
+    topDmg: agg.top_damage,
+    topEncounterId: agg.top_encounter_id,
     recentEncounters,
-    uploadCount: contribs.length,
-    lastUpload: contribs[0]?.created_at ?? null,
-    latestAgentVersion,
+    uploadCount: agg.upload_count,
+    lastUpload: agg.last_upload,
+    latestAgentVersion: agg.latest_agent_version,
     chat30:  chat.recent,
     chatAll: chat.total,
     pvpKills: pvp.kills,
@@ -475,10 +395,10 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     lootCount: lootRows.length,
     dkpSpent,
     wishlistCount,
-    rollupHits,
-    rollupDamage,
-    selfAttackCount,
-    topSkills,
+    rollupHits: agg.rollup_hits,
+    rollupDamage: agg.rollup_damage,
+    selfAttackCount: agg.self_attack_count,
+    topSkills: agg.top_skills,
     encountersWithDetail:    coverage?.encounters_with_detail   ?? 0,
     encountersResubmittable: coverage?.encounters_resubmittable ?? 0,
     memberSince: floor?.member_since ?? null,
@@ -555,16 +475,14 @@ async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, Hear
 }
 
 // ── "The Scrap" — friendly damage competition (last 30 days) ────────────────
-// Server-side leaderboard via the scrap_damage_leaderboard RPC (cap-immune).
-// We surface the viewer's best-ranked character, the rival directly above
-// them, and the current Top Dog — a personal nudge rather than another table.
-type ScrapRow = { character_name: string; total_damage: number; best_dps: number; encounters: number };
-type ScrapView = {
-  contenders: number;
-  top:   ScrapRow & { rank: number };
-  me:    (ScrapRow & { rank: number }) | null;
-  rival: (ScrapRow & { rank: number }) | null;
-};
+// Ranked in SQL by scrap_leaderboard_view (the ScrapView type is in
+// lib/capSafeReads). We surface the viewer's best-ranked character, the rival
+// directly above them, and the current Top Dog — a personal nudge rather than
+// another table.
+// ⚠ NOT "cap-immune": scrap_damage_leaderboard is a set-returning function, so
+// PostgREST capped it at 1,000 rows. 1,106 characters were on the board over 30
+// days, so contenders read 1,000 and the 106 lowest ranks got no card. The view
+// function ranks over all of them and returns one jsonb value.
 // ── Raid attendance heatmap (the guild lead, 2026-09-03) ──────────────────────────────
 // "add in raid attendance on a person's /me … with mouse over on dates and
 // raid names and links to the raids". One cell per OFFICIAL raid night (bonus
@@ -651,16 +569,8 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
 
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
   try {
-    const sb = supabaseAdmin();
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await sb.rpc('scrap_damage_leaderboard', { p_since: since });
-    const rows = (data ?? []) as ScrapRow[];
-    if (rows.length === 0) return null;
-    const ranked = rows.map((r, i) => ({ ...r, rank: i + 1 }));
-    const mine = new Set(myNames.map(n => n.toLowerCase()));
-    const me = ranked.find(r => mine.has(r.character_name.toLowerCase())) || null;
-    const rival = me && me.rank > 1 ? ranked[me.rank - 2] : null;
-    return { contenders: ranked.length, top: ranked[0], me, rival };
+    return await fetchScrapView(supabaseAdmin(), myNames, since);
   } catch { return null; }
 }
 
