@@ -17271,6 +17271,24 @@ button.wp-key:hover { border-color:var(--blue); }
    the user the banner is naming THIS row. */
 button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-out infinite; box-shadow:0 0 0 0 rgba(86,211,100,0.7); }
 .subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
+/* 🔇 Buff blocks tab (the #blockbuff picker). */
+.wp-bb-set { border:1px solid var(--border); border-radius:6px; padding:10px; margin:0 0 10px; background:var(--bg); }
+.wp-bb-hd { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; margin:0 0 6px; font-size:13px; }
+.wp-bb-chips { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 8px; }
+.wp-bb-chip { border:1px solid var(--border); border-radius:12px; padding:1px 8px; font-size:11px; background:#0b0f15; white-space:nowrap; }
+.wp-bb-if { color:var(--orange); }
+.wp-bb-x { background:none; border:none; color:var(--dim); cursor:pointer; padding:0 2px; font:inherit; }
+.wp-bb-x:hover { color:var(--red); }
+.wp-bb-btns { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 6px; }
+.wp-bb-warn { border:1px solid var(--gold); color:var(--gold); background:#2a2210; border-radius:5px; padding:4px 10px; font-size:11px; margin:0 0 8px; }
+.wp-bb-note { font-size:11px; color:var(--dim); margin:0 0 6px; line-height:1.45; }
+.wp-bb-note.ok { color:var(--green); }
+.wp-bb-note.err { color:var(--red); }
+.wp-bb-row { display:flex; gap:8px; align-items:center; padding:2px 0; font-size:12px; }
+.wp-bb-row.done code { color:var(--dim); text-decoration:line-through; }
+.wp-bb-res { display:flex; gap:8px; align-items:center; justify-content:space-between; padding:2px 0; font-size:12px; }
+.wp-bb-ed { display:grid; gap:8px; margin:8px 0 0; font-size:12px; }
+.wp-bb-ed input[type=text] { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 6px; font:inherit; font-size:12px; }
 .spell-link { color:inherit; text-decoration:none; border-bottom:1px dotted var(--blue); }
 .spell-link:hover { color:var(--blue); border-bottom-color:transparent; }
 .tag { background:#1f6feb22; color:var(--blue); padding:2px 6px; border-radius:4px; font-size:11px; }
@@ -17409,6 +17427,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
   <button data-tab="buffs">✨ Buffs</button>
+  <button data-tab="buffblocks">🔇 Buff blocks</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
@@ -17452,6 +17471,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
 <div id="buffs" class="section"></div>
+<div id="buffblocks" class="section"></div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active. -->
@@ -26606,6 +26626,429 @@ async function dismissTopDamage(key) {
   setInterval(runTicks, 1000);
 })();
 
+// ── 🔇 Buff blocks: the #blockbuff picker (the guild lead, 2026-10-04) ───────
+// Quarm's #blockbuff / #blockbuffif / #allowbuff commands keep other players'
+// buffs off you. This tab is the picker: a set list per character, bard-song
+// starters, and two ways to use a set. Copy its lines (EQ's chat box takes one
+// line per paste), or have Mimic write them into social macros in the
+// character's ini: right away when the character is logged out, queued until
+// log-out when logged in (EQ rewrites the ini from memory on camp).
+// ⚠ Mimic never types into the game. Copying and the ini are the only paths.
+// Owns #wpBbBody inside #buffblocks and polls /api/buffblocks only while the tab
+// is showing. Anything that moves on its own (logged-in state, queued writes,
+// "5m ago", the socials line, search results, the copy stepper) lives in its own
+// wpBb* placeholder with its own fill fn, so the sets markup stays byte-stable
+// and a poll never repaints a form the player is typing in.
+(function(){
+  var sec = document.getElementById("buffblocks");
+  if (!sec) return;
+  var data = null;          // the last /api/buffblocks answer
+  var character = "";       // the picked character ("" = whichever the agent lists first)
+  var ui = { lines: {}, msg: {}, q: {}, cond: {} };
+  var catName = {};         // spell id -> name, the bard catalog
+  var idName = null;        // spell id -> name, the agent's whole spell catalog (loaded on first search)
+  var idNameLoading = false;
+  var reqId = 0, applied = 0;
+
+  var card = document.createElement("div");
+  card.id = "wpBuffBlocks";
+  card.className = "card wide";
+  card.innerHTML = '<h2>🔇 Buff blocks <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· block buffs other players cast on you</span></h2>'
+    + '<div id="wpBbBody"><div class="dim" style="padding:6px">loading…</div></div>';
+  sec.appendChild(card);
+
+  function setOf(id){ var ss = (data && data.sets) || []; for (var i = 0; i < ss.length; i++) if (ss[i].id === id) return ss[i]; return null; }
+  function nameOf(id){ return (data && data.names && data.names[id]) || catName[id] || (idName && idName[id]) || ""; }
+  function plain(s){ return { id: s.id, name: s.name, short: s.short, entries: s.entries }; }
+  function allPlain(){ return ((data && data.sets) || []).map(plain); }
+  function newId(){ return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+  function setMsg(id, cls, text){ ui.msg[id] = { cls: cls, text: text, at: Date.now() }; }
+  function ranges(b){
+    var out = [], i = 0;
+    while (i < b.length) { var j = i; while (j + 1 < b.length && b[j + 1] === b[j] + 1) j++; out.push(j > i ? b[i] + "–" + b[j] : String(b[i])); i = j + 1; }
+    return out.join(", ");
+  }
+  function describeSlots(slots){
+    var pages = {};
+    for (var i = 0; i < slots.length; i++) { var s = slots[i]; (pages[s.page] = pages[s.page] || { block: [], allow: [] })[s.kind].push(s.button); }
+    return Object.keys(pages).map(Number).sort(function(a, b){ return a - b; }).map(function(p){
+      var bits = [];
+      if (pages[p].block.length) bits.push(ranges(pages[p].block.sort(function(a, b){ return a - b; })) + " (block)");
+      if (pages[p].allow.length) bits.push(ranges(pages[p].allow.sort(function(a, b){ return a - b; })) + " (allow)");
+      return "Page " + p + " buttons " + bits.join(", ");
+    }).join("; ");
+  }
+
+  // ── talking to the agent ──
+  // Every answer carries the full view; a response older than one already shown
+  // is dropped, so a slow poll cannot put an old state back after a save.
+  function take(id, v){
+    if (id < applied) return;
+    applied = id; data = v; character = v.character || character;
+    catName = {};
+    (v.catalog || []).forEach(function(c){ catName[c.id] = c.name; });
+    render();
+  }
+  function api(path, body){
+    var id = ++reqId;
+    var opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" };
+    return fetch(path, opt).then(function(r){ return r.json(); }).then(function(j){
+      if (j && j.view) take(id, j.view); else if (j && j.sets) take(id, j);
+      return j;
+    });
+  }
+  function poll(){
+    if (!sec.classList.contains("active") || document.hidden) return;
+    api("/api/buffblocks?character=" + encodeURIComponent(character)).catch(function(){});
+  }
+  function saveSets(sets){ return api("/api/buffblocks/sets", { character: character, sets: sets }).catch(function(){}); }
+  function editSet(id, fn){
+    var sets = allPlain();
+    for (var i = 0; i < sets.length; i++) if (sets[i].id === id) {
+      var c = { id: sets[i].id, name: sets[i].name, short: sets[i].short, entries: sets[i].entries.slice() };
+      fn(c); sets[i] = c; break;
+    }
+    return saveSets(sets);
+  }
+  function loadNames(){
+    if (idName || idNameLoading) return;
+    idNameLoading = true;
+    fetch("/api/spell-names.json").then(function(r){ return r.ok ? r.json() : {}; }).then(function(m){
+      idName = m || {}; idNameLoading = false;
+      ((data && data.sets) || []).forEach(function(s){ fillRes(s.id); });
+    }).catch(function(){ idNameLoading = false; });
+  }
+
+  // ── the sets markup (byte-stable between polls: nothing time-based in here) ──
+  function chipHtml(e, setId, idx, removable){
+    var s = '<span class="wp-bb-chip">' + esc(nameOf(e.spell) || ("Spell " + e.spell)) + ' <span class="dim">#' + e.spell + '</span>';
+    if (e.if) s += ' <span class="wp-bb-if">only while ' + esc(nameOf(e.if) || ("spell " + e.if)) + ' <span class="dim">#' + e.if + '</span></span>';
+    if (removable) s += ' <button type="button" class="wp-bb-x" data-bb="rmchip" data-set="' + esc(setId) + '" data-i="' + idx + '" title="Take this out of the set">✕</button>';
+    return s + '</span>';
+  }
+  function famBoxes(s){
+    var plainIds = {};
+    s.entries.forEach(function(e){ if (!e.if) plainIds[e.spell] = 1; });
+    return (data.families || []).map(function(f){
+      var total = 0, have = 0;
+      (data.catalog || []).forEach(function(c){ if (c.family === f.key) { total++; if (plainIds[c.id]) have++; } });
+      var state = have === 0 ? "none" : have === total ? "all" : "some";
+      return '<label style="white-space:nowrap"><input type="checkbox" data-bb="fam" data-set="' + esc(s.id) + '" data-fam="' + esc(f.key) + '" data-state="' + state + '"' + (state === "all" ? " checked" : "") + '> '
+        + esc(f.label) + ' <span class="dim">(' + total + ')</span></label>';
+    }).join(" ");
+  }
+  function setHtml(s){
+    var id = esc(s.id), off = s.entries.length ? "" : " disabled";
+    var pill = s.on === true ? '<span class="wp-st on">ON</span>' : s.on === false ? '<span class="wp-st">off</span>' : '<span class="wp-st" title="Say you ran its lines to track this">not marked</span>';
+    var h = '<div class="wp-bb-set"><div class="wp-bb-hd"><b>' + esc(s.name) + '</b> ' + pill + ' <span class="dim" id="wpBbAgo_' + id + '"></span></div>';
+    if (s.entries.length > data.cap) h += '<div class="wp-bb-warn">This set alone is ' + s.entries.length + ' blocks, over the ' + data.cap + ' a character may be able to hold. Trim it.</div>';
+    h += '<div class="wp-bb-chips">' + (s.entries.length ? s.entries.map(function(e){ return chipHtml(e, s.id, 0, false); }).join("") : '<span class="dim">Empty. Open the editor to add spells.</span>') + '</div>';
+    h += '<div class="wp-bb-btns">'
+      + '<button type="button" class="wp-btn" data-bb="lines" data-kind="block" data-set="' + id + '"' + off + ' title="The #blockbuff lines to paste in game, one at a time">📋 Block lines</button>'
+      + '<button type="button" class="wp-btn" data-bb="lines" data-kind="allow" data-set="' + id + '"' + off + ' title="The #allowbuff lines that undo this set">📋 Allow lines</button>'
+      + '<button type="button" class="wp-btn pri" data-bb="socials" data-set="' + id + '"' + off + ' title="Write these lines into social macros in your ini, to drag onto a hotbar">🎛 Make socials</button>'
+      + '<button type="button" class="wp-btn ghost" data-bb="delset" data-set="' + id + '">🗑 Delete</button></div>';
+    h += '<div id="wpBbSoc_' + id + '"></div><div id="wpBbLines_' + id + '"></div>';
+    h += '<details ' + wpKeep('bb|edit|' + String(data.character || "").toLowerCase() + '|' + s.id) + '><summary class="dim" style="cursor:pointer;font-size:12px">✏ Edit this set</summary><div class="wp-bb-ed">'
+      + '<label>Name <input type="text" data-bb="rename" data-set="' + id + '" maxlength="40" value="' + esc(s.name) + '"></label>'
+      + '<label>Hotkey label <input type="text" data-bb="short" data-set="' + id + '" maxlength="7" size="9" value="' + esc(s.short) + '"> <span class="dim">socials read &quot;Blk ' + esc(s.short) + ' 1/4&quot;</span></label>'
+      + '<div><span class="wp-lbl">Bard song families</span><br>' + famBoxes(s) + '</div>'
+      + '<div><span class="wp-lbl">Add a spell</span><br><input type="text" id="wpBbQ_' + id + '" data-bb="q" data-set="' + id + '" size="24" placeholder="name or spell id"> '
+      + '<input type="text" id="wpBbC_' + id + '" data-bb="cond" data-set="' + id + '" size="24" placeholder="only while… (optional)"></div>'
+      + '<div id="wpBbRes_' + id + '"></div>'
+      + '<div class="wp-bb-chips">' + s.entries.map(function(e, i){ return chipHtml(e, s.id, i, true); }).join("") + '</div>'
+      + '</div></details></div>';
+    return h;
+  }
+  function mainHtml(){
+    if (!data) return '<div class="dim" style="padding:6px">loading…</div>';
+    var h = '<div class="wp-bb-note">Block buffs other players cast on you. In game, type <code>#blockbuff</code> to see what the server has on you. Mimic never types into the game for you: copy the lines and paste them, or let Mimic write them into social macros (hotkeys) that you drag onto a hotbar once.</div>'
+      + '<div class="wp-bb-note">Test before you rely on it: if a mob is angry at someone, a helpful spell cast on them can put the caster on the hate list of that mob before the block applies. A blocked song may still pull the bard in, so try it with a bard on an engaged monk first.</div>';
+    if (!data.character) return h + '<div class="dim" style="padding:6px">No characters yet. Open EverQuest with Mimic running so it can see your log files, then come back here.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:0 0 8px"><label class="dim" style="font-size:11px">Character <select data-bb="char">'
+      + (data.characters || []).map(function(c){ return '<option value="' + esc(c.character) + '"' + (c.character === data.character ? " selected" : "") + '>' + esc(c.character) + '</option>'; }).join("")
+      + '</select></label><span id="wpBbLive" style="font-size:11px"></span></div>';
+    if (data.onCount > data.cap) h += '<div class="wp-bb-warn">The sets marked ON add up to ' + data.onCount + ' blocks. EverQuest allows about ' + data.cap + ' in a list like this and Quarm has not said what its limit is, so some may be refused. Trim a set or turn one off.</div>';
+    h += '<div id="wpBbPending"></div>';
+    h += '<div class="wp-lbl" style="margin:6px 0 4px">Add a starter set</div><div class="wp-bb-btns">'
+      + (data.starters || []).map(function(st){ return '<button type="button" class="wp-btn" data-bb="starter" data-key="' + esc(st.key) + '" title="' + esc(st.note || "") + '">＋ ' + esc(st.name) + '</button>'; }).join("")
+      + '<button type="button" class="wp-btn ghost" data-bb="newset">＋ Empty set</button></div>';
+    h += '<details ' + wpKeep('bb|startnotes') + '><summary class="dim" style="cursor:pointer;font-size:11px;margin-bottom:6px">What are the starter sets?</summary>'
+      + (data.starters || []).map(function(st){ return '<div class="wp-bb-note"><b>' + esc(st.name) + '</b> (' + st.entries.length + ' blocks): ' + esc(st.note || "") + '</div>'; }).join("")
+      + '</details>';
+    var ss = data.sets || [];
+    h += ss.length ? ss.map(setHtml).join("") : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
+    return h;
+  }
+
+  // ── the placeholders: everything that moves without a click ──
+  function fillLive(){
+    var el = document.getElementById("wpBbLive");
+    if (!el || !data) return;
+    var h;
+    if (!data.watched) h = '<span class="dim">Mimic is not watching this character right now, so Make socials is off. The copy buttons still work.</span>';
+    else if (data.loggedIn) h = '<span style="color:var(--green)">●</span> ' + esc(data.character) + ' looks logged in: Make socials waits and writes when you log out.';
+    else h = '<span class="dim">○</span> ' + esc(data.character) + ' looks logged out: Make socials writes right away.';
+    morphInto(el, h);
+  }
+  function fillPending(){
+    var el = document.getElementById("wpBbPending");
+    if (!el || !data) return;
+    var ps = data.pending || [];
+    if (!ps.length) { morphInto(el, ""); return; }
+    var h = '<div class="wp-bb-note"><b>Waiting for you to log out</b>. Written the moment ' + esc(data.character) + ' logs out:<ul style="margin:4px 0 0 18px;padding:0">';
+    ps.forEach(function(p){
+      var s = setOf(p.setId);
+      h += '<li>' + esc(s ? s.name : "a set") + ' · queued ' + fmtAgo(p.queuedAt)
+        + (p.error ? ' · <span style="color:var(--red)">last try failed: ' + esc(p.error) + '</span>' : '') + '</li>';
+    });
+    morphInto(el, h + '</ul></div>');
+  }
+  function fillTimes(){
+    ((data && data.sets) || []).forEach(function(s){
+      var el = document.getElementById("wpBbAgo_" + s.id);
+      if (!el) return;
+      var t = s.changedAt ? ("marked " + fmtAgo(s.changedAt)) : "";
+      if (el.textContent !== t) el.textContent = t;
+    });
+  }
+  function fillSoc(s){
+    var el = document.getElementById("wpBbSoc_" + s.id);
+    if (!el) return;
+    var h = "", m = ui.msg[s.id];
+    if (m && Date.now() - m.at < 15000) h += '<div class="wp-bb-note ' + m.cls + '">' + esc(m.text) + '</div>';
+    var pend = null;
+    ((data && data.pending) || []).forEach(function(p){ if (p.setId === s.id) pend = p; });
+    if (pend) {
+      h += '<div class="wp-bb-note">⏳ Waiting for you to log out; written then.'
+        + (pend.error ? ' <span style="color:var(--red)">Last try failed: ' + esc(pend.error) + '</span>' : '') + '</div>';
+    } else if (s.socials && s.socials.slots && s.socials.slots.length) {
+      h += '<div class="wp-bb-note">🎛 Written ' + (s.socials.at ? fmtAgo(s.socials.at) + ' ' : '') + 'to ' + esc(describeSlots(s.socials.slots))
+        + '. Drag them onto a hotbar from the in-game Socials window.'
+        + (s.stale ? ' <span style="color:var(--gold)">⚠ The set changed since. Press Make socials again.</span>' : '') + '</div>';
+    }
+    morphInto(el, h);
+  }
+  function fillLines(s){
+    var el = document.getElementById("wpBbLines_" + s.id);
+    if (!el) return;
+    var st = ui.lines[s.id];
+    if (!st) { morphInto(el, ""); return; }
+    var lines = (s.lines && s.lines[st.kind]) || [], sid = esc(s.id);
+    var h = '<div class="wp-bb-set" style="margin:0 0 8px"><div class="wp-bb-note">The EverQuest chat box takes one line per paste. Click 📋 on a line, paste it in game and press Enter, or use Copy next to step through them.</div>';
+    lines.forEach(function(ln, i){
+      h += '<div class="wp-bb-row' + (i < st.next ? " done" : "") + '"><button type="button" class="wp-btn" data-bb="copyrow" data-set="' + sid + '" data-i="' + i + '" title="Copy this line">' + (i < st.next ? "✓" : "📋") + '</button><code>' + esc(ln) + '</code></div>';
+    });
+    h += '<div class="wp-bb-btns" style="margin-top:6px"><button type="button" class="wp-btn pri" data-bb="copynext" data-set="' + sid + '">'
+      + (st.next < lines.length ? "Copy next (" + (st.next + 1) + "/" + lines.length + ")" : "All copied ✓ (copy again)") + '</button>'
+      + '<button type="button" class="wp-btn" data-bb="ran" data-kind="' + esc(st.kind) + '" data-set="' + sid + '">✓ I ran these: mark ' + (st.kind === "block" ? "ON" : "OFF") + '</button>'
+      + '<button type="button" class="wp-btn ghost" data-bb="closelines" data-set="' + sid + '">Close</button></div></div>';
+    morphInto(el, h);
+  }
+  function resolveSpell(text){
+    var lo = String(text).toLowerCase().trim();
+    if (/^[0-9]+$/.test(lo)) { var n = Number(lo); return n > 0 && n < 65536 ? n : 0; }
+    var hit = 0, pools = [catName, (data && data.names) || {}, idName || {}];
+    pools.forEach(function(p){ Object.keys(p).forEach(function(k){ if (!hit && String(p[k]).toLowerCase() === lo) hit = Number(k); }); });
+    return hit;
+  }
+  function searchSpells(q){
+    var lo = q.toLowerCase(), out = [], seen = {};
+    if (/^[0-9]+$/.test(lo)) { var n = Number(lo); return n > 0 && n < 65536 ? [{ id: n, name: nameOf(n) }] : []; }
+    var pools = [catName, idName || {}];
+    [true, false].forEach(function(prefixOnly){
+      pools.forEach(function(p){
+        var ks = Object.keys(p);
+        for (var i = 0; i < ks.length && out.length < 8; i++) {
+          var nm = String(p[ks[i]]), at = nm.toLowerCase().indexOf(lo);
+          if (seen[ks[i]] || at < 0 || (prefixOnly && at !== 0)) continue;
+          seen[ks[i]] = 1; out.push({ id: Number(ks[i]), name: nm });
+        }
+      });
+    });
+    return out;
+  }
+  function fillRes(id){
+    var el = document.getElementById("wpBbRes_" + id);
+    if (!el) return;
+    var qi = document.getElementById("wpBbQ_" + id), ci = document.getElementById("wpBbC_" + id);
+    if (qi && qi.value !== (ui.q[id] || "")) qi.value = ui.q[id] || "";
+    if (ci && ci.value !== (ui.cond[id] || "")) ci.value = ui.cond[id] || "";
+    var q = (ui.q[id] || "").trim(), c = (ui.cond[id] || "").trim();
+    if (!q) { morphInto(el, ""); return; }
+    var cond = c ? resolveSpell(c) : 0;
+    if (c && !cond) { morphInto(el, '<div class="wp-bb-note err">No spell found for "only while ' + esc(c) + '". Type its exact name or its spell id.</div>'); return; }
+    var res = searchSpells(q);
+    if (!res.length) { morphInto(el, '<div class="wp-bb-note">' + (idName ? "Nothing matches that." : "Loading the spell list…") + '</div>'); return; }
+    morphInto(el, res.map(function(r){
+      return '<div class="wp-bb-res"><span>' + esc(r.name || "Spell") + ' <span class="dim">#' + r.id + '</span>' + (cond ? ' <span class="wp-bb-if">only while ' + esc(nameOf(cond) || ("spell " + cond)) + '</span>' : '') + '</span>'
+        + '<button type="button" class="wp-btn" data-bb="addres" data-set="' + esc(id) + '" data-spell="' + r.id + '" data-cond="' + (cond || "") + '">Add</button></div>';
+    }).join(""));
+  }
+  function fillAll(){
+    fillLive(); fillPending(); fillTimes();
+    ((data && data.sets) || []).forEach(function(s){ fillSoc(s); fillLines(s); fillRes(s.id); });
+    var some = sec.querySelectorAll('input[data-state="some"]');
+    for (var i = 0; i < some.length; i++) some[i].indeterminate = true;
+  }
+  function render(){
+    var body = document.getElementById("wpBbBody");
+    if (!body) return;
+    var ae = document.activeElement, keepId = "", keepPos = 0;
+    if (ae && ae.id && ae.tagName === "INPUT" && body.contains(ae)) { keepId = ae.id; keepPos = ae.selectionStart || 0; }
+    morphInto(body, mainHtml());
+    fillAll();
+    if (keepId) {
+      var again = document.getElementById(keepId);
+      if (again && again !== document.activeElement) { again.focus(); try { again.setSelectionRange(keepPos, keepPos); } catch (e) { void e; } }
+    }
+  }
+
+  // ── copying: the clipboard is the only way a line reaches the game ──
+  function legacyCopy(text){
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) { return false; }
+  }
+  function copyText(text){
+    return new Promise(function(resolve){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function(){ resolve(true); }, function(){ resolve(legacyCopy(text)); });
+          return;
+        }
+      } catch (e) { void e; }
+      resolve(legacyCopy(text));
+    });
+  }
+  function copyLine(id, i){
+    var s = setOf(id), st = ui.lines[id];
+    if (!s || !st) return;
+    var lines = (s.lines && s.lines[st.kind]) || [];
+    if (i < 0 || i >= lines.length) return;
+    copyText(lines[i]).then(function(ok){
+      if (!ok) { setMsg(id, "err", "Could not reach the clipboard. Select the line and copy it by hand."); fillSoc(s); return; }
+      st.next = i + 1; fillLines(s);
+    });
+  }
+
+  // ── clicks ──
+  function toggleFam(id, fam, on){
+    var ids = [];
+    (data.catalog || []).forEach(function(c){ if (c.family === fam) ids.push(c.id); });
+    editSet(id, function(s){
+      if (on) {
+        var have = {};
+        s.entries.forEach(function(e){ if (!e.if) have[e.spell] = 1; });
+        ids.forEach(function(x){ if (!have[x]) s.entries.push({ spell: x }); });
+      } else {
+        s.entries = s.entries.filter(function(e){ return e.if || ids.indexOf(e.spell) < 0; });
+      }
+    });
+  }
+  function addStarter(key){
+    var st = null;
+    (data.starters || []).forEach(function(x){ if (x.key === key) st = x; });
+    if (!st) return;
+    var sets = allPlain();
+    sets.push({ id: newId(), name: st.name, short: st.short, entries: st.entries.slice() });
+    saveSets(sets);
+  }
+  function addEmpty(){
+    var id = newId(), sets = allPlain();
+    sets.push({ id: id, name: "New set", short: "", entries: [] });
+    // open its editor: wpKeep reads this store, and the new id is known here
+    _wpOpenDetails['bb|edit|' + String(data.character || "").toLowerCase() + '|' + id] = true;
+    saveSets(sets);
+  }
+  sec.addEventListener("click", function(ev){
+    var t = ev.target && ev.target.closest ? ev.target.closest("[data-bb]") : null;
+    if (!t || !sec.contains(t) || t.tagName === "INPUT" || t.tagName === "SELECT" || t.disabled) return;
+    var a = t.getAttribute("data-bb"), id = t.getAttribute("data-set") || "", s = setOf(id);
+    if (a === "starter") return addStarter(t.getAttribute("data-key"));
+    if (a === "newset") return addEmpty();
+    if (a === "delset") {
+      if (!s || !confirm('Delete "' + s.name + '"? Socials Mimic already wrote stay in your ini.')) return;
+      delete ui.lines[id];
+      saveSets(allPlain().filter(function(x){ return x.id !== id; }));
+      return;
+    }
+    if (a === "rmchip") { var i = Number(t.getAttribute("data-i")); editSet(id, function(x){ x.entries.splice(i, 1); }); return; }
+    if (a === "addres") {
+      var sp = Number(t.getAttribute("data-spell")), cd = Number(t.getAttribute("data-cond")) || 0;
+      ui.q[id] = ""; ui.cond[id] = "";
+      editSet(id, function(x){
+        for (var k = 0; k < x.entries.length; k++) if (x.entries[k].spell === sp && (x.entries[k].if || 0) === cd) return;
+        x.entries.push(cd ? { spell: sp, if: cd } : { spell: sp });
+      });
+      return;
+    }
+    if (!s) return;
+    if (a === "lines") {
+      var kind = t.getAttribute("data-kind");
+      if (ui.lines[id] && ui.lines[id].kind === kind) delete ui.lines[id]; else ui.lines[id] = { kind: kind, next: 0 };
+      fillLines(s);
+      return;
+    }
+    if (a === "closelines") { delete ui.lines[id]; fillLines(s); return; }
+    if (a === "copyrow") { copyLine(id, Number(t.getAttribute("data-i"))); return; }
+    if (a === "copynext") {
+      var st = ui.lines[id];
+      if (st) copyLine(id, st.next >= ((s.lines && s.lines[st.kind]) || []).length ? 0 : st.next);
+      return;
+    }
+    if (a === "ran") {
+      var on = t.getAttribute("data-kind") === "block";
+      delete ui.lines[id];
+      api("/api/buffblocks/state", { character: character, setId: id, on: on }).then(function(j){
+        setMsg(id, j && j.ok ? "ok" : "err", j && j.ok ? ("Marked " + (on ? "ON" : "off") + ".") : ((j && j.error) || "Could not record that."));
+        var again = setOf(id); if (again) fillSoc(again);
+      }).catch(function(){});
+      return;
+    }
+    if (a === "socials") {
+      setMsg(id, "ok", "Working…"); fillSoc(s);
+      api("/api/buffblocks/socials", { character: character, setId: id, kind: "both" }).then(function(j){
+        if (j && j.applied) setMsg(id, "ok", "Written to " + describeSlots(j.slots || []) + ". Drag them onto a hotbar." + (j.changed ? "" : " (Nothing needed changing.)"));
+        else if (j && j.queued) setMsg(id, "ok", "Waiting for you to log out; written then.");
+        else setMsg(id, "err", (j && j.error) || "Could not write the socials.");
+        var again = setOf(id); if (again) fillSoc(again);
+      }).catch(function(){ setMsg(id, "err", "The agent did not answer."); fillSoc(s); });
+    }
+  });
+  sec.addEventListener("change", function(ev){
+    var t = ev.target;
+    if (!t || !t.getAttribute) return;
+    var a = t.getAttribute("data-bb"), id = t.getAttribute("data-set") || "";
+    if (!a) return;
+    if (a === "char") { character = t.value; poll(); return; }
+    if (a === "fam") { toggleFam(id, t.getAttribute("data-fam"), t.checked); return; }
+    if (a === "rename") {
+      var v = t.value.trim();
+      if (v) editSet(id, function(x){ x.name = v; }); else t.value = (setOf(id) || {}).name || "";
+      return;
+    }
+    if (a === "short") editSet(id, function(x){ x.short = t.value; });
+  });
+  sec.addEventListener("input", function(ev){
+    var t = ev.target, a = t && t.getAttribute && t.getAttribute("data-bb");
+    if (a !== "q" && a !== "cond") return;
+    var id = t.getAttribute("data-set");
+    ui[a][id] = t.value;
+    loadNames();
+    fillRes(id);
+  });
+
+  var navBtn = document.querySelector('.nav button[data-tab="buffblocks"]');
+  if (navBtn) navBtn.addEventListener("click", function(){ setTimeout(poll, 0); });
+  setInterval(poll, 5000);
+})();
+
 // ── Read-only uploader banner ──────────────────────────────────────────────
 // When another Parser/Mimic on this machine owns the upload lock, this
 // instance is read-only (it still tails + shows local stats, but does not
@@ -29319,6 +29762,35 @@ function startWebDashboard(port) {
           'Cache-Control': 'max-age=86400',
         });
         return res.end(JSON.stringify(names));
+      }
+      // ── Buff blocks tab routes (the picker itself is defined further down) ────
+      // GET  /api/buffblocks?character=   → catalog, starter sets, the character's sets + lines, queued writes
+      // POST /api/buffblocks/sets         → { character, sets }  save the sets (names + entries only)
+      // POST /api/buffblocks/state        → { character, setId, on }  the player says they turned a set on/off
+      // POST /api/buffblocks/socials      → { character, setId, kind? }  write the set into social macros, or queue it
+      // Local-only like its neighbours (127.0.0.1, no CORS headers). The POSTs also
+      // demand a JSON content type, which a cross-site form cannot send: they write
+      // to the character's ini. Each POST answers { ok, ...result, view } so the
+      // tab repaints from one round trip.
+      if (req.method === 'GET' && req.url && (req.url === '/api/buffblocks' || req.url.indexOf('/api/buffblocks?') === 0)) {
+        let bbChar = '';
+        try { bbChar = new URL(req.url, 'http://x').searchParams.get('character') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_bbView(bbChar, Date.now())));
+      }
+      if (req.method === 'POST' && (req.url === '/api/buffblocks/sets' || req.url === '/api/buffblocks/state' || req.url === '/api/buffblocks/socials')) {
+        if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) { res.writeHead(415); return res.end('{"error":"json only"}'); }
+        let bbBody; try { bbBody = JSON.parse(await _readBody(req, 64 * 1024) || '{}'); }
+        catch { res.writeHead(400); return res.end('{"error":"bad json"}'); }
+        const bbNow = Date.now();
+        const bbChar = String((bbBody && bbBody.character) || '');
+        const bbSet = String((bbBody && bbBody.setId) || '');
+        let bbOut;
+        if (req.url === '/api/buffblocks/sets') bbOut = _bbSaveSets(bbChar, bbBody && bbBody.sets);
+        else if (req.url === '/api/buffblocks/state') bbOut = _bbSetState(bbChar, bbSet, !!(bbBody && bbBody.on), bbNow);
+        else bbOut = _bbMakeSocials(bbChar, bbSet, bbBody && bbBody.kind, bbNow);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ...bbOut, view: _bbView(bbChar, bbNow) }));
       }
       // ── #108 Loot bidding — local login gate + bid-character family ────────
       // GET  /api/loot/config    → { authed, opendkp_username, expires_at, family }
@@ -37507,6 +37979,36 @@ function _postUiEditResult(opts, id, ok, error) {
     req.end(body);
   } catch { /* result POST is best-effort — the row stays pending and retries */ }
 }
+// The logged-out gate, shared by the web-staged edits below and the buff-blocks
+// social writer: true while the character looks logged in (a Zeal sample in the
+// last 2 min, or the log file touched in the last 90 s). Writing then would be
+// clobbered when EQ rewrites the ini from memory on camp.
+function _charLooksLoggedIn(w, now) {
+  const charLower = String(w.character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState || {})) {
+    if (ch.toLowerCase() !== charLower) continue;
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (now - ts < 120_000) return true;
+  }
+  try { const st = fs.statSync(w.logPath); if (now - st.mtimeMs < 90_000) return true; } catch { /* no log = fine */ }
+  return false;
+}
+// The character's ini next to its log (one dir up from a logs/ folder). `fp` is
+// null when the file is not there; `fname` is what was looked for.
+function _charIniPath(w, targetFile) {
+  let dir = path.dirname(w.logPath);
+  if (/^logs$/i.test(path.basename(dir))) dir = path.dirname(dir);
+  const fname = (targetFile && /^[\w.-]+\.ini$/i.test(String(targetFile)))
+    ? String(targetFile)
+    : `${w.character}_pq.proj.ini`;
+  let fp = path.join(dir, fname);
+  if (!fs.existsSync(fp)) {
+    const found = fs.readdirSync(dir).find(f => f.toLowerCase() === fname.toLowerCase());
+    if (!found) return { fname, fp: null };
+    fp = path.join(dir, found);
+  }
+  return { fname, fp };
+}
 function _maybeApplyWebEdit(row, watched, opts) {
   try {
     const charLower = String(row.character || '').toLowerCase();
@@ -37514,23 +38016,9 @@ function _maybeApplyWebEdit(row, watched, opts) {
     if (!w) return;
     const now = Date.now();
     // Logged-in gates — silently skip (row stays pending, retried next poll).
-    for (const ch of Object.keys(_zealState || {})) {
-      if (ch.toLowerCase() !== charLower) continue;
-      const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
-      if (now - ts < 120_000) return;
-    }
-    try { const st = fs.statSync(w.logPath); if (now - st.mtimeMs < 90_000) return; } catch { /* no log = fine */ }
-    let dir = path.dirname(w.logPath);
-    if (/^logs$/i.test(path.basename(dir))) dir = path.dirname(dir);
-    const fname = (row.target_file && /^[\w.-]+\.ini$/i.test(String(row.target_file)))
-      ? String(row.target_file)
-      : `${w.character}_pq.proj.ini`;
-    let fp = path.join(dir, fname);
-    if (!fs.existsSync(fp)) {
-      const found = fs.readdirSync(dir).find(f => f.toLowerCase() === fname.toLowerCase());
-      if (!found) { _postUiEditResult(opts, row.id, false, 'ini not found: ' + fname); return; }
-      fp = path.join(dir, found);
-    }
+    if (_charLooksLoggedIn(w, now)) return;
+    const { fname, fp } = _charIniPath(w, row.target_file);
+    if (!fp) { _postUiEditResult(opts, row.id, false, 'ini not found: ' + fname); return; }
     const safe = (Array.isArray(row.edits) ? row.edits : []).filter(e =>
       e && /^(Socials|HotButtons)$/.test(String(e.section)) && /^Page\d+Button\d+/.test(String(e.key)));
     if (!safe.length) { _postUiEditResult(opts, row.id, false, 'no valid edits in row'); return; }
@@ -37578,6 +38066,554 @@ function pollUiPendingEdits({ botUrl, token }) {
     req.end();
   } catch { /* */ }
 }
+
+// ── Buff blocks (#blockbuff picker) ─────────────────────────────────────────
+// Project Quarm added player commands (patch notes 2026-10-02..04) that stop
+// OTHER players' buffs landing on you:
+//   #blockbuff <spell id>                 block that buff on you
+//   #blockbuffif <spell id> <active id>   block it only while <active id> is on you
+//   #allowbuff <spell id> [<active id>]   remove a block
+//   #blockbuff                            list your blocks
+// The server stores the blocks on the character. This section is the PICKER: it
+// keeps a player's named sets (a bard-song starter catalog, a "pulling" set a monk
+// switches on to pull and off in camp), builds the command text, and can write
+// those lines into EQ social macros ("hotkeys") in the character's ini.
+//   The guild lead, 2026-10-04: "mimic builds the copy for the player or makes a
+//   hotkey if desired if the user is currently logged in on next log out update
+//   the social".
+// ⚠ Mimic NEVER types into, or otherwise drives, the game client — Quarm rule 3
+// forbids software interacting with the client. Copy text, and ini edits made
+// while the character is LOGGED OUT, are the only delivery paths. Do not add a
+// third.
+// ⚠ No log-line parser for what the server prints back: that text is not public
+// and was never captured. State kept here is only what the player's sets are and
+// whether the player last said they turned a set on or off.
+const BUFFBLOCKS_FILE = path.join(__dirname, 'logsync.buffblocks.json');
+const BUFFBLOCK_CAP = 20;          // EQEmu's analogue; the live server's cap is unpublished, so warn, never block
+const BB_NAME_MAX = 15;            // EQ social names are short; UI Studio sets no cap and its own presets stop at 9
+const BB_SHORT_MAX = 7;            // "Blk " + short + " 1/4" must fit BB_NAME_MAX
+const BB_MAX_SETS = 40;
+const BB_MAX_ENTRIES = 100;
+const BB_LINES_PER_SOCIAL = 5;     // EQ socials hold five command lines
+const BUFFBLOCK_FAMILIES = [
+  { key: 'travel', label: 'Run speed / travel' },
+  { key: 'haste',  label: 'Haste / melee' },
+  { key: 'regen',  label: 'Regen' },
+  { key: 'resist', label: 'Resist' },
+  { key: 'ac',     label: 'AC / absorb' },
+  { key: 'stats',  label: 'Stats' },
+];
+// Bard songs: [spell id, name, bard level, family]. Level 0 = not a bard song
+// (1330 is the 5-minute Selo's Song of Travel that bard breastplate clicks cast).
+const BUFFBLOCK_CATALOG = [
+  [717, "Selo's Accelerando", 5, 'travel'],
+  [2605, "Selo's Accelerating Chorus", 49, 'travel'],
+  [1750, "Selo's Song of Travel", 51, 'travel'],
+  [1330, "Selo's Song of Travel (5 min click)", 0, 'travel'],
+  [718, "Agilmente's Aria of Eagles", 31, 'travel'],
+  [719, "Shauri's Sonorous Clouding", 19, 'travel'],
+  [735, "Lyssa's Veracious Concord", 24, 'travel'],
+  [729, "Tarew's Aquatic Ayre", 16, 'travel'],
+  [2602, "Song of Sustenance", 15, 'travel'],
+  [721, "Lyssa's Solidarity of Vision", 34, 'travel'],
+  [701, "Anthem de Arms", 10, 'haste'],
+  [740, "Vilia's Verses of Celerity", 36, 'haste'],
+  [702, "McVaxius' Berserker Crescendo", 42, 'haste'],
+  [747, "Verses of Victory", 50, 'haste'],
+  [1757, "Vilia's Chorus of Celerity", 54, 'haste'],
+  [1760, "McVaxius' Rousing Rondo", 57, 'haste'],
+  [3374, "Warsong of Zek", 62, 'haste'],
+  [1449, "Melody of Ervaj", 50, 'haste'],
+  [1452, "Composition of Ervaj", 60, 'haste'],
+  [2606, "Battlecry of the Vah Shir", 52, 'haste'],
+  [2610, "Warsong of the Vah Shir", 60, 'haste'],
+  [2604, "Katta's Song of Sword Dancing", 39, 'haste'],
+  [3362, "Rizlona's Call of Flame", 64, 'haste'],
+  [7, "Hymn of Restoration", 6, 'regen'],
+  [722, "Jaxan's Jig o' Vigor", 3, 'regen'],
+  [1448, "Cantata of Soothing", 34, 'regen'],
+  [1759, "Cantata of Replenishment", 55, 'regen'],
+  [2609, "Chorus of Replenishment", 58, 'regen'],
+  [1196, "Ancient: Lcea's Lament", 60, 'regen'],
+  [3651, "Wind of Marr", 62, 'regen'],
+  [3372, "Chorus of Marr", 64, 'regen'],
+  [710, "Elemental Rhythms", 9, 'resist'],
+  [711, "Purifying Rhythms", 13, 'resist'],
+  [2607, "Elemental Chorus", 54, 'resist'],
+  [2608, "Purifying Chorus", 56, 'resist'],
+  [712, "Psalm of Warmth", 25, 'resist'],
+  [715, "Psalm of Vitality", 29, 'resist'],
+  [713, "Psalm of Cooling", 33, 'resist'],
+  [716, "Psalm of Purity", 37, 'resist'],
+  [714, "Psalm of Mystic Shielding", 41, 'resist'],
+  [3368, "Psalm of Veeshan", 63, 'resist'],
+  [700, "Chant of Battle", 1, 'ac'],
+  [709, "Guardian Rhythms", 17, 'ac'],
+  [748, "Niv's Melody of Preservation", 47, 'ac'],
+  [1450, "Shield of Songs", 49, 'ac'],
+  [1752, "Nillipus' March of the Wee", 52, 'ac'],
+  [1763, "Niv's Harmonic", 58, 'ac'],
+  [1749, "Kazumi's Note of Preservation", 60, 'ac'],
+  [745, "Cassindra's Elegy", 44, 'stats'],
+  [1765, "Solon's Charismatic Concord", 59, 'stats'],
+].map(r => ({ id: r[0], name: r[1], lvl: r[2], family: r[3] }));
+// Names for the druid-DS starter (not bard songs, so not in the catalog above).
+const BUFFBLOCK_EXTRA_NAMES = { 3486: 'Maelstrom of Ro', 3295: 'Legacy of Bracken', 3198: 'Flameshield of Ro', 3448: 'Shield of Bracken' };
+// Starter sets: one click on the dashboard adds a COPY the player then edits.
+// `spells` = plain blocks, `ifs` = [spell, only-while] pairs, `families` = every
+// catalog song of those families (so "every rank" cannot drift from the catalog).
+const BUFFBLOCK_STARTERS = [
+  { key: 'pull-twist', name: 'Pulling — bard twist (L47+)', short: 'Twist',
+    note: 'The songs a level 47+ bard twists while pulling: haste, regen, resist and AC.',
+    spells: [3374, 1757, 747, 1449, 1452, 2610, 2606, 1760, 3651, 3372, 1759, 2609, 1196, 3368, 2607, 2608, 1763, 1752, 1450, 3362] },
+  { key: 'pull-all', name: 'Pulling — every rank', short: 'PullAll',
+    note: 'Every bard haste, regen, resist, AC and stat song. Over the 20-block limit on its own, so trim it.',
+    families: ['haste', 'regen', 'resist', 'ac', 'stats'] },
+  { key: 'no-run', name: 'No bard run speed', short: 'NoRun',
+    note: "Keeps a bard's Selo's from speeding you up, including the 5-minute breastplate click.",
+    spells: [717, 2605, 1750, 1330] },
+  { key: 'druid-ds', name: 'Keep my druid DS', short: 'DruidDS',
+    note: 'A #blockbuffif example: block the Ro damage shields only while your Bracken ones are on.',
+    ifs: [[3486, 3295], [3198, 3448]] },
+];
+function _bbStarterEntries(st) {
+  const out = [];
+  for (const id of (st.spells || [])) out.push({ spell: id });
+  for (const fam of (st.families || [])) for (const c of BUFFBLOCK_CATALOG) if (c.family === fam) out.push({ spell: c.id });
+  for (const p of (st.ifs || [])) out.push({ spell: p[0], if: p[1] });
+  return out;
+}
+
+// ── builders: pure, no I/O ──
+function _bbCleanShort(s) {
+  return String(s == null ? '' : s).replace(/[^A-Za-z0-9 .'-]/g, '').replace(/\s+/g, ' ').trim().slice(0, BB_SHORT_MAX).trim();
+}
+// A set's hotkey label when the player did not pick one: whole words of its name
+// while they fit (the label has to leave room for "Blk " and " 1/4").
+function _bbDeriveShort(name) {
+  const words = String(name == null ? '' : name).replace(/[^A-Za-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  let out = '';
+  for (const w of words) {
+    const next = out ? out + ' ' + w : w;
+    if (next.length > BB_SHORT_MAX) break;
+    out = next;
+  }
+  return out || (words[0] || 'Set').slice(0, BB_SHORT_MAX);
+}
+function _bbKind(k) { return k === 'block' || k === 'allow' ? k : 'both'; }
+function _bbLine(kind, e) {
+  if (kind === 'allow') return '#allowbuff ' + e.spell + (e.if ? ' ' + e.if : '');
+  return (e.if ? '#blockbuffif ' : '#blockbuff ') + e.spell + (e.if ? ' ' + e.if : '');
+}
+function _bbLines(entries, kind) { return (entries || []).map(e => _bbLine(kind, e)); }
+function _bbChunks(lines, size) {
+  const n = size || BB_LINES_PER_SOCIAL;
+  const out = [];
+  for (let i = 0; i < lines.length; i += n) out.push(lines.slice(i, i + n));
+  return out;
+}
+// "Blk Twist 1/4" / "Alw Twist 1/4"; no " n/m" when one social holds the lot.
+function _bbSocialName(kind, short, i, n) {
+  const pre = kind === 'allow' ? 'Alw ' : 'Blk ';
+  const suf = n > 1 ? ' ' + (i + 1) + '/' + n : '';
+  const room = Math.max(1, BB_NAME_MAX - pre.length - suf.length);
+  return pre + String(short || 'Set').slice(0, room).trimEnd() + suf;
+}
+// The ini key edits for ONE social. Unused lines are null, which deletes a stale
+// line left from a longer earlier version. Color is only written when the slot
+// has none yet, so a colour the player picked in game survives a rewrite.
+function _bbSocialEdits(page, button, name, lines, withColor) {
+  const base = 'Page' + page + 'Button' + button;
+  const out = [{ section: 'Socials', key: base + 'Name', value: name }];
+  if (withColor) out.push({ section: 'Socials', key: base + 'Color', value: '0' });
+  for (let i = 0; i < BB_LINES_PER_SOCIAL; i++) {
+    out.push({ section: 'Socials', key: base + 'Line' + (i + 1), value: i < lines.length ? lines[i] : null });
+  }
+  return out;
+}
+function _bbClearEdits(page, button) {
+  const base = 'Page' + page + 'Button' + button;
+  const out = [{ section: 'Socials', key: base + 'Name', value: null }, { section: 'Socials', key: base + 'Color', value: null }];
+  for (let i = 0; i < BB_LINES_PER_SOCIAL; i++) out.push({ section: 'Socials', key: base + 'Line' + (i + 1), value: null });
+  return out;
+}
+// 'P|B' → { name, color, lines } for every slot with ANY social key. Presence
+// alone marks a slot taken, the same rule as UI Studio's _emptySlots. `lines` is
+// in Line1..LineN order whatever order the keys sit in the file (the ini writer
+// appends new keys in reverse, and EQ reads them by name).
+function _bbParseSocials(iniText) {
+  const out = new Map();
+  let sec = null;
+  for (const L of String(iniText == null ? '' : iniText).split(/\r?\n/)) {
+    const ms = L.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (ms) { sec = ms[1]; continue; }
+    if (sec !== 'Socials') continue;
+    const mk = L.match(/^\s*Page(\d+)Button(\d+)(Name|Color|Line(\d+))\s*=\s*(.*?)\s*$/i);
+    if (!mk) continue;
+    const k = Number(mk[1]) + '|' + Number(mk[2]);
+    let cell = out.get(k);
+    if (!cell) { cell = { name: null, color: null, lines: [], _n: {} }; out.set(k, cell); }
+    const f = mk[3].toLowerCase();
+    if (f === 'name') cell.name = mk[5];
+    else if (f === 'color') cell.color = mk[5];
+    else cell._n[Number(mk[4])] = mk[5];
+  }
+  for (const cell of out.values()) {
+    cell.lines = Object.keys(cell._n).map(Number).sort((x, y) => x - y).map(n => cell._n[n]);
+    delete cell._n;
+  }
+  return out;
+}
+// `need` free slots, kept together on one page when any page has room (a set's
+// socials then sit side by side on one hotbar page), else spread in page order.
+function _bbPickFree(taken, need) {
+  const pages = [];
+  for (let p = 1; p <= 10; p++) {
+    const free = [];
+    for (let b = 1; b <= 12; b++) if (!taken.has(p + '|' + b)) free.push({ page: p, button: b });
+    pages.push(free);
+  }
+  const fit = pages.find(f => f.length >= need);
+  if (fit) return fit.slice(0, need);
+  const all = [].concat(...pages);
+  return all.length >= need ? all.slice(0, need) : null;
+}
+// Work out the ini edits that write `set` (block / allow / both) into the
+// character's [Socials]. `reserved` = 'P|B' keys other sets of this character
+// own. A slot the set already owns is reused only while it still holds what Mimic
+// wrote (blank, or the same Name); anything else there is the player's own social
+// and is never touched.
+function _bbPlanSocials(iniText, set, kind, reserved) {
+  const socials = _bbParseSocials(iniText);
+  const kinds = kind === 'block' ? ['block'] : kind === 'allow' ? ['allow'] : ['block', 'allow'];
+  const short = set.short || _bbDeriveShort(set.name);
+  const owned = (set.socials && Array.isArray(set.socials.slots)) ? set.socials.slots : [];
+  const keyOf = (p, b) => p + '|' + b;
+  const taken = new Set(reserved || []);
+  for (const k of socials.keys()) taken.add(k);
+  const slots = owned.filter(o => !kinds.includes(o.kind));   // kinds not rewritten ride along untouched
+  for (const o of slots) taken.add(keyOf(o.page, o.button));
+  const jobs = [];
+  const retire = [];
+  const claimed = new Set();
+  for (const k of kinds) {
+    const mine = owned.filter(o => {
+      if (o.kind !== k) return false;
+      const key = keyOf(o.page, o.button);
+      if (claimed.has(key) || (reserved || []).includes(key)) return false;
+      const cell = socials.get(key);
+      if (cell && cell.name !== o.name) return false;          // the player's own social now
+      claimed.add(key);
+      return true;
+    });
+    const chunks = _bbChunks(_bbLines(set.entries, k));
+    chunks.forEach((c, i) => jobs.push({ kind: k, name: _bbSocialName(k, short, i, chunks.length), lines: c, slot: mine[i] || null }));
+    for (let i = chunks.length; i < mine.length; i++) retire.push(mine[i]);
+  }
+  for (const j of jobs) if (j.slot) taken.add(keyOf(j.slot.page, j.slot.button));
+  const fresh = jobs.filter(j => !j.slot);
+  if (fresh.length) {
+    const picked = _bbPickFree(taken, fresh.length);
+    if (!picked) return { error: 'No free social slots left (this set needs ' + fresh.length + ' more). Free some in EQ and try again.' };
+    fresh.forEach((j, i) => { j.slot = picked[i]; });
+  }
+  const edits = [];
+  for (const j of jobs) {
+    const cell = socials.get(keyOf(j.slot.page, j.slot.button));
+    edits.push(..._bbSocialEdits(j.slot.page, j.slot.button, j.name, j.lines, !cell || cell.color == null));
+    slots.push({ kind: j.kind, page: j.slot.page, button: j.slot.button, name: j.name });
+  }
+  for (const o of retire) edits.push(..._bbClearEdits(o.page, o.button));
+  return { edits, slots };
+}
+
+// ── the store: logsync.buffblocks.json ──
+// { v: 1, characters: { <lowercase name>: { name, sets: [set], pending: [write] } } }
+//   set     = { id, name, short, entries: [{ spell, if? }], on: true|false|null,
+//               changedAt: ms|null, socials?: { at, sig, slots: [{ kind, page, button, name }] } }
+//   pending = { setId, kind: 'both'|'block'|'allow', queuedAt, error?, errorAt? }
+// `on` / `changedAt` / `socials` are written only by this agent: a client save
+// carries names and entries, never the state or which socials Mimic owns.
+let _bbStore = null;
+function _bbNewId() { return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function _bbCleanEntries(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const e of (Array.isArray(raw) ? raw : [])) {
+    const spell = Number(e && e.spell);
+    const hasCond = !!e && e.if != null && e.if !== '';
+    const cond = hasCond ? Number(e.if) : 0;
+    if (!Number.isInteger(spell) || spell < 1 || spell > 65535) continue;
+    // A bad condition drops the entry; it must never turn into an unconditional block
+    // (a NaN is falsy, so test hasCond, not cond).
+    if (hasCond && (!Number.isInteger(cond) || cond < 1 || cond > 65535 || cond === spell)) continue;
+    const key = spell + ':' + cond;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cond ? { spell, if: cond } : { spell });
+    if (out.length >= BB_MAX_ENTRIES) break;
+  }
+  return out;
+}
+function _bbCleanSocials(raw) {
+  if (!raw || !Array.isArray(raw.slots)) return null;
+  const slots = [];
+  for (const s of raw.slots) {
+    if (!s || (s.kind !== 'block' && s.kind !== 'allow')) continue;
+    const page = Number(s.page);
+    const button = Number(s.button);
+    if (!Number.isInteger(page) || page < 1 || page > 10 || !Number.isInteger(button) || button < 1 || button > 12) continue;
+    slots.push({ kind: s.kind, page, button, name: String(s.name == null ? '' : s.name).slice(0, BB_NAME_MAX) });
+  }
+  if (!slots.length) return null;
+  return { at: Number.isFinite(raw.at) ? raw.at : null, sig: String(raw.sig == null ? '' : raw.sig), slots };
+}
+// `trusted` = the stored set this one replaces (or a record read from disk); a
+// brand-new set has none, so it starts with no state and no socials.
+function _bbCleanSet(raw, trusted) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const name = [...String(r.name == null ? '' : r.name)].filter(c => c.charCodeAt(0) >= 32).join('').trim().slice(0, 40) || 'Untitled set';
+  let id = String(r.id == null ? '' : r.id);
+  if (!/^[\w-]{1,40}$/.test(id)) id = _bbNewId();
+  const t = trusted || {};
+  const set = {
+    id,
+    name,
+    short: _bbCleanShort(r.short) || _bbDeriveShort(name),
+    entries: _bbCleanEntries(r.entries),
+    on: t.on === true ? true : t.on === false ? false : null,
+    changedAt: Number.isFinite(t.changedAt) ? t.changedAt : null,
+  };
+  const socials = _bbCleanSocials(t.socials);
+  if (socials) set.socials = socials;
+  return set;
+}
+// Two sets must not share a hotkey label, or "Blk Twist 1/4" would name two socials.
+function _bbUniqueShorts(sets) {
+  const seen = new Set();
+  for (const s of sets) {
+    let cand = s.short;
+    for (let n = 2; seen.has(cand.toLowerCase()) && n < 100; n++) cand = s.short.slice(0, BB_SHORT_MAX - String(n).length) + n;
+    s.short = cand;
+    seen.add(cand.toLowerCase());
+  }
+}
+function _bbLoad() {
+  if (_bbStore) return _bbStore;
+  const store = { v: 1, characters: {} };
+  try {
+    const raw = JSON.parse(fs.readFileSync(BUFFBLOCKS_FILE, 'utf8'));
+    for (const [k, rc] of Object.entries((raw && raw.characters) || {})) {
+      const key = String(k).toLowerCase();
+      if (!/^[a-z]{2,20}$/.test(key) || !rc || typeof rc !== 'object') continue;
+      const sets = [];
+      const ids = new Set();
+      for (const rs of (Array.isArray(rc.sets) ? rc.sets : []).slice(0, BB_MAX_SETS)) {
+        const s = _bbCleanSet(rs, rs);
+        if (ids.has(s.id)) continue;
+        ids.add(s.id);
+        sets.push(s);
+      }
+      const pending = [];
+      for (const p of (Array.isArray(rc.pending) ? rc.pending : [])) {
+        if (!p || !ids.has(p.setId) || pending.some(x => x.setId === p.setId)) continue;
+        const item = { setId: p.setId, kind: _bbKind(p.kind), queuedAt: Number.isFinite(p.queuedAt) ? p.queuedAt : 0 };
+        if (typeof p.error === 'string' && p.error) { item.error = p.error.slice(0, 200); item.errorAt = Number.isFinite(p.errorAt) ? p.errorAt : 0; }
+        pending.push(item);
+      }
+      store.characters[key] = { name: String(rc.name || k).slice(0, 20), sets, pending };
+    }
+  } catch { /* first run, or unreadable: start empty */ }
+  _bbStore = store;
+  return store;
+}
+function _bbSave() {
+  try {
+    fs.writeFileSync(BUFFBLOCKS_FILE + '.tmp', JSON.stringify(_bbStore));
+    fs.renameSync(BUFFBLOCKS_FILE + '.tmp', BUFFBLOCKS_FILE);
+  } catch { /* non-fatal: the in-memory copy still serves this session */ }
+}
+function _bbWatched() { return (stats.watchedLogs || []).filter(w => w && w.character && w.logPath); }
+function _bbFindWatched(character) {
+  const lc = String(character || '').toLowerCase();
+  return _bbWatched().find(w => w.character.toLowerCase() === lc) || null;
+}
+function _bbRec(character, create) {
+  const store = _bbLoad();
+  const key = String(character || '').toLowerCase();
+  if (!/^[a-z]{2,20}$/.test(key)) return null;
+  let rec = store.characters[key];
+  if (!rec && create) {
+    const w = _bbFindWatched(key);
+    rec = store.characters[key] = { name: w ? w.character : key, sets: [], pending: [] };
+  }
+  return rec || null;
+}
+function _bbSig(set) { return JSON.stringify([set.short, set.entries]); }
+function _bbReserved(rec, exceptId) {
+  const keys = [];
+  for (const s of rec.sets) {
+    if (s.id === exceptId || !s.socials) continue;
+    for (const o of s.socials.slots) keys.push(o.page + '|' + o.button);
+  }
+  return keys;
+}
+// Distinct blocks across the sets switched ON (what the server would hold at once).
+function _bbOnCount(rec) {
+  const seen = new Set();
+  for (const s of rec.sets) if (s.on === true) for (const e of s.entries) seen.add(e.spell + ':' + (e.if || 0));
+  return seen.size;
+}
+
+// ── actions ──
+function _bbSaveSets(character, rawSets) {
+  if (!Array.isArray(rawSets)) return { ok: false, error: 'sets must be a list' };
+  let rec = _bbRec(character, false);
+  if (!rec) {
+    if (!_bbFindWatched(character)) return { ok: false, error: 'unknown character' };
+    rec = _bbRec(character, true);
+    if (!rec) return { ok: false, error: 'bad character name' };
+  }
+  const prevById = new Map(rec.sets.map(s => [s.id, s]));
+  const ids = new Set();
+  const next = [];
+  for (const raw of rawSets.slice(0, BB_MAX_SETS)) {
+    const rid = String(raw && raw.id != null ? raw.id : '');
+    const s = _bbCleanSet(raw, ids.has(rid) ? null : prevById.get(rid));
+    if (ids.has(s.id)) s.id = _bbNewId();
+    ids.add(s.id);
+    next.push(s);
+  }
+  _bbUniqueShorts(next);
+  rec.sets = next;
+  rec.pending = rec.pending.filter(p => ids.has(p.setId));
+  _bbSave();
+  return { ok: true };
+}
+function _bbSetState(character, setId, on, now) {
+  const rec = _bbRec(character, false);
+  const set = rec && rec.sets.find(s => s.id === setId);
+  if (!set) return { ok: false, error: 'unknown set' };
+  set.on = !!on;
+  set.changedAt = now;
+  _bbSave();
+  return { ok: true };
+}
+// Plan + write one set's socials into the ini NOW (the caller has already passed
+// the logged-out gate). Updates set.socials; the caller saves the store.
+function _bbApplyNow(w, rec, set, kind, now) {
+  const ip = _charIniPath(w, null);
+  if (!ip.fp) return { error: 'ini not found: ' + ip.fname };
+  const plan = _bbPlanSocials(fs.readFileSync(ip.fp, 'utf8'), set, kind, _bbReserved(rec, set.id));
+  if (plan.error) return { error: plan.error };
+  let changed = false;
+  if (plan.edits.length) changed = _applyIniKeyEditsToFile(ip.fp, plan.edits).changed;
+  if (plan.slots.length) set.socials = { at: now, sig: _bbSig(set), slots: plan.slots };
+  else delete set.socials;
+  return { slots: plan.slots, changed, file: path.basename(ip.fp) };
+}
+// "Make socials": write now when the character is logged out, otherwise queue
+// (one queued write per set; a newer request replaces the older one).
+function _bbMakeSocials(character, setId, kind, now) {
+  const rec = _bbRec(character, false);
+  const set = rec && rec.sets.find(s => s.id === setId);
+  if (!set) return { ok: false, error: 'unknown set' };
+  const w = _bbFindWatched(character);
+  if (!w) return { ok: false, error: 'Mimic is not watching this character, so it cannot find the ini. Use the copy buttons instead.' };
+  const k = _bbKind(kind);
+  if (_charLooksLoggedIn(w, now)) {
+    rec.pending = rec.pending.filter(p => p.setId !== set.id);
+    rec.pending.push({ setId: set.id, kind: k, queuedAt: now });
+    _bbSave();
+    return { ok: true, queued: true, slots: [] };
+  }
+  const r = _bbApplyNow(w, rec, set, k, now);
+  if (r.error) return { ok: false, error: r.error };
+  rec.pending = rec.pending.filter(p => p.setId !== set.id);
+  _bbSave();
+  return { ok: true, applied: true, changed: r.changed, slots: r.slots, file: r.file };
+}
+// The 30 s timer: write every queued set whose character has logged out since.
+// A write that cannot be done (no free slot, ini missing) stays queued with its
+// reason so the dashboard can say why; it is retried on later ticks.
+function _bbApplyPending(now) {
+  const store = _bbLoad();
+  const done = [];
+  let dirty = false;
+  for (const [lc, rec] of Object.entries(store.characters)) {
+    if (!rec.pending.length) continue;
+    const w = _bbFindWatched(lc);
+    if (!w || _charLooksLoggedIn(w, now)) continue;
+    for (const p of rec.pending.slice()) {
+      const set = rec.sets.find(s => s.id === p.setId);
+      if (!set) { rec.pending = rec.pending.filter(x => x !== p); dirty = true; continue; }
+      let r;
+      try { r = _bbApplyNow(w, rec, set, p.kind, now); } catch (err) { r = { error: (err && err.message) || 'write failed' }; }
+      if (r.error) {
+        if (p.error !== r.error) { p.error = r.error; p.errorAt = now; dirty = true; console.warn(`[buff-blocks] ${rec.name}: ${r.error}`); }
+        continue;
+      }
+      rec.pending = rec.pending.filter(x => x !== p);
+      dirty = true;
+      done.push({ character: rec.name, setId: set.id, slots: r.slots });
+      console.log(`[buff-blocks] wrote ${r.slots.length} social(s) for ${rec.name} (${set.name}) after log-out`);
+    }
+  }
+  if (dirty) _bbSave();
+  return done;
+}
+// GET /api/buffblocks payload. Command text comes from the same builders the
+// socials use, so what a player copies and what a hotkey holds cannot differ.
+function _bbView(character, now) {
+  const store = _bbLoad();
+  const chars = [];
+  const seen = new Set();
+  for (const w of _bbWatched()) {
+    const lc = w.character.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    const rc = store.characters[lc];
+    chars.push({ character: w.character, watched: true, loggedIn: _charLooksLoggedIn(w, now), sets: rc ? rc.sets.length : 0, pending: rc ? rc.pending.length : 0 });
+  }
+  for (const [lc, rc] of Object.entries(store.characters)) {
+    if (!seen.has(lc)) chars.push({ character: rc.name, watched: false, loggedIn: false, sets: rc.sets.length, pending: rc.pending.length });
+  }
+  const want = String(character || '').toLowerCase();
+  const pick = chars.find(c => c.character.toLowerCase() === want) || chars[0] || null;
+  const rec = pick ? store.characters[pick.character.toLowerCase()] : null;
+  const sets = rec ? rec.sets : [];
+  const names = {};
+  const known = new Map(BUFFBLOCK_CATALOG.map(c => [c.id, c.name]));
+  for (const [id, nm] of Object.entries(BUFFBLOCK_EXTRA_NAMES)) known.set(Number(id), nm);
+  for (const s of sets) for (const e of s.entries) {
+    for (const id of [e.spell, e.if]) {
+      if (!id || names[id]) continue;
+      const nm = known.get(id) || _spellNameById(id);
+      if (nm) names[id] = nm;
+    }
+  }
+  return {
+    cap: BUFFBLOCK_CAP,
+    families: BUFFBLOCK_FAMILIES,
+    catalog: BUFFBLOCK_CATALOG,
+    starters: BUFFBLOCK_STARTERS.map(st => ({ key: st.key, name: st.name, short: st.short, note: st.note, entries: _bbStarterEntries(st) })),
+    characters: chars,
+    character: pick ? pick.character : null,
+    watched: pick ? pick.watched : false,
+    loggedIn: pick ? pick.loggedIn : false,
+    sets: sets.map(s => ({
+      id: s.id, name: s.name, short: s.short, entries: s.entries, on: s.on, changedAt: s.changedAt,
+      socials: s.socials || null,
+      stale: !!(s.socials && s.socials.sig !== _bbSig(s)),
+      lines: { block: _bbLines(s.entries, 'block'), allow: _bbLines(s.entries, 'allow') },
+    })),
+    pending: rec ? rec.pending : [],
+    onCount: rec ? _bbOnCount(rec) : 0,
+    names,
+    now,
+  };
+}
+// ── end buff blocks ──
 
 // Apply a guild-triggers response ({ version, triggers }). Shared by the
 // standalone pollGuildTriggers loop and the #106 multiplexed poll's `triggers`
@@ -44617,6 +45653,11 @@ async function main() {
   // (2026-08-20, the invisible Ancient scrolls). Same prefs gate + cadence.
   setTimeout(scanInventoryUploads, 40_000);
   setInterval(scanInventoryUploads, 10 * 60_000);
+
+  // Buff-blocks socials queued while a character was logged in are written once
+  // it has logged out. Local file work only (no bot, no network), and a no-op
+  // until something is queued, so it runs in local mode too.
+  setInterval(() => { try { _bbApplyPending(Date.now()); } catch { /* next tick */ } }, 30_000);
 
   // Version polling — reach out to the bot every 10 min so idle agents
   // still learn about new releases promptly (without needing an encounter
