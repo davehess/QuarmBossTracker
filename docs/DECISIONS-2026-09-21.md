@@ -6983,3 +6983,6 @@ there"*.
     non-interactive session cannot give one (both `execute_sql` and `apply_migration` timed out on it).
     A migration file would not help either: the GitHub integration does not apply files pushed to `main`.
   - Every stored row is still blank: the intent is off. The open-items row has the two steps.
+  - **Verified after the deploy** (first run 20:34 UTC): 4,265 messages read, 1,350 rows left, `feed_only`
+    set. The 1,350 are the 1,348 Quarm posts plus two of Discord's own "Community Updates" notices from 2024.
+    Those are webhook posts too, so the filter keeps them; harmless, left in.
