@@ -308,6 +308,7 @@ const _SUNO_USERS = String(process.env.SUNO_MOVER_USERS || 'workoutbro').toLower
 const _SUNO_RX = /https?:\/\/(?:www\.)?(?:app\.)?suno\.(?:com|ai)\/\S+/i;
 client.on(Events.MessageCreate, async (msg) => {
   try {
+    if (msg.channelId === _QUARM_NOTES_CHANNEL_ID) _quarmNoteLive(msg);   // patch-notes mirror; crossposts are bot posts, so this goes before the early-outs
     if (!msg.guildId || msg.author?.bot) return;
     if (msg.channelId === _SLOP_CHANNEL_ID) return;
     if (!_SUNO_USERS.includes(String(msg.author?.username || '').toLowerCase())) return;
@@ -486,6 +487,9 @@ client.once(Events.ClientReady, async (readyClient) => {
   // Reports closed by commits ("Fixes FB-12"): every 10 minutes, two unauthenticated GitHub calls.
   setTimeout(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 90_000);
   setInterval(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 10 * 60_000);
+  // Quarm patch notes mirror (it never throws): a minute after boot, then every 6 hours.
+  setTimeout(() => _syncQuarmPatchNotes(), 60_000);
+  setInterval(() => _syncQuarmPatchNotes(), 6 * 60 * 60_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -19587,6 +19591,152 @@ async function relayWebFeedback(readyClient) {
     }
   }
 }
+
+// ── Quarm patch notes mirror (the guild lead, 2026-10-04: "1175117242682331146 is the Quarm patch notes
+// channel id in our discord. pull everything from there") ──────────────────────────────────────────────
+// Every message in that channel lands in `quarm_patch_notes`, so a session can read Project Quarm's patch
+// history and quote a change word for word. The channel is normally a FOLLOWED announcement channel, so a
+// post is a webhook crosspost: its text can sit in `content`, in `embeds` or in `attachments`, and all three
+// are kept. Deleted posts stay stored.
+//
+// ⚠ Without the Message Content intent (portal toggle + MESSAGE_CONTENT_INTENT=1) Discord returns empty
+// content, embeds and attachments for any message that does not mention the bot, over the gateway and over
+// REST alike. Such a message is still stored, flagged `content_missing`, and the sweep counts them into its
+// bot_kv status and logs it loudly. Once the intent is on, the first sweep re-walks the whole channel and
+// rewrites those rows.
+//
+// The sweep pages BACKWARD from the newest message, 100 at a time. A FULL walk (the first one, one resuming
+// after a cap or an error, one after the intent turned on) goes to the start of the channel. Otherwise it
+// stops at the first page whose oldest message is already stored: the sweep before it had stored everything
+// older. A re-sweep only sees edits that fall inside the pages it fetches (the newest ~100 when nothing is
+// new). An edit to an older post comes from the messageUpdate listener below, not from the sweep.
+// Status and the resume point live in bot_kv (state.json does not survive a Railway deploy).
+const _QUARM_NOTES_CHANNEL_ID = process.env.QUARM_PATCH_NOTES_CHANNEL_ID || '1175117242682331146';
+const _QUARM_NOTES_KV_KEY = 'quarm_patch_notes_sync';
+const _QUARM_NOTES_CAP = 20_000;     // messages read per run; a bigger channel resumes on the next run
+let _quarmSyncRunning = false;
+
+// Pure: a Discord message → one quarm_patch_notes row (fetched_at is stamped by the writer).
+function _quarmNoteRow(msg) {
+  const embeds = (msg.embeds || []).map(e => ({
+    title: e.title || null,
+    description: e.description || null,
+    url: e.url || null,
+    fields: (e.fields || []).map(f => ({ name: f.name, value: f.value })),
+    footer: e.footer?.text || null,
+    author: e.author?.name || null,
+  }));
+  const attachments = [...(msg.attachments?.values?.() || [])]
+    .map(a => ({ name: a.name || null, url: a.url, contentType: a.contentType || null }));
+  const content = msg.content || '';
+  return {
+    message_id: msg.id,
+    channel_id: msg.channelId,
+    posted_at: msg.createdAt.toISOString(),
+    edited_at: msg.editedAt ? msg.editedAt.toISOString() : null,
+    author: msg.member?.displayName || msg.author?.globalName || msg.author?.username || null,   // a webhook post: the webhook's name
+    content,
+    embeds,
+    attachments,
+    content_missing: !content && !embeds.length && !attachments.length,
+  };
+}
+
+async function _syncQuarmPatchNotes() {
+  if (_quarmSyncRunning) return;
+  _quarmSyncRunning = true;
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const kv = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_QUARM_NOTES_KV_KEY}&select=value&limit=1`);
+    // A failed read says nothing about whether the history is complete: skip, do not guess.
+    if (!Array.isArray(kv)) { console.warn('[quarm-notes] sync state unreadable — skipping this pass'); return; }
+    const prev = (kv[0] && kv[0].value) || {};
+    const intentOn = process.env.MESSAGE_CONTENT_INTENT === '1';
+    const full = !prev.complete || !!prev.resume_before || (intentOn && !prev.message_content_intent);
+    const st = {
+      last_run: new Date().toISOString(), stored: 0, new: 0, fetched: 0, content_missing: 0,
+      complete: !!prev.complete, resume_before: prev.resume_before || null,
+      message_content_intent: !!prev.message_content_intent,
+    };
+    let before = full ? (prev.resume_before || undefined) : undefined;
+    let finished = false;
+    try {
+      const channel = await client.channels.fetch(_QUARM_NOTES_CHANNEL_ID)
+        .catch(err => { throw new Error(`channel unreachable: ${err?.message}`); });
+      if (!channel || !channel.messages) throw new Error('channel unreachable: not a text channel');
+      for (;;) {
+        const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}), cache: false });
+        const msgs = page ? [...page.values()] : [];
+        if (!msgs.length) { finished = true; break; }
+        st.fetched += msgs.length;
+        const rows = msgs.map(_quarmNoteRow);
+        st.content_missing += rows.filter(r => r.content_missing).length;
+        const have = await supabase.select('quarm_patch_notes',
+          `message_id=in.(${rows.map(r => r.message_id).join(',')})&select=message_id,edited_at,content_missing&limit=${rows.length}`);
+        if (!Array.isArray(have)) throw new Error('stored-notes lookup failed');
+        const byId = new Map(have.map(h => [h.message_id, h]));
+        const instant = (iso) => (iso ? Date.parse(iso) : null);
+        // Write what is new, what was edited, and what was stored blank before the intent was on.
+        const todo = rows.filter(r => {
+          const h = byId.get(r.message_id);
+          return !h || instant(h.edited_at) !== instant(r.edited_at) || (h.content_missing && !r.content_missing);
+        });
+        st.new += rows.filter(r => !byId.has(r.message_id)).length;
+        if (todo.length) {
+          const at = new Date().toISOString();
+          const res = await supabase.upsert('quarm_patch_notes', todo.map(r => ({ ...r, fetched_at: at })), 'message_id');
+          if (!Array.isArray(res)) throw new Error('upsert failed');
+          st.stored += todo.length;
+        }
+        before = msgs.reduce((a, m) => (BigInt(m.id) < BigInt(a) ? m.id : a), msgs[0].id);   // the oldest id on the page
+        if (msgs.length < 100) { finished = true; break; }          // the start of the channel
+        if (!full && byId.has(before)) { finished = true; break; }  // back in stored territory
+        if (st.fetched >= _QUARM_NOTES_CAP) {
+          st.capped = true;
+          console.warn(`[quarm-notes] hit the ${_QUARM_NOTES_CAP}-message cap — the next run resumes from ${before}`);
+          break;
+        }
+      }
+    } catch (err) {
+      st.error = String(err?.message || err).slice(0, 300);
+      console.warn('[quarm-notes] sync failed:', st.error);
+    }
+    if (finished) {
+      st.complete = true; st.resume_before = null; st.message_content_intent = intentOn;
+    } else if (full) {
+      st.resume_before = before || null;    // pick the full walk up where it stopped
+    }
+    if (st.fetched && st.content_missing === st.fetched) {
+      console.warn(`[quarm-notes] all ${st.fetched} message(s) read had no content, embeds or attachments — the Message Content intent is off (portal toggle + MESSAGE_CONTENT_INTENT=1)`);
+    } else if (st.content_missing) {
+      console.warn(`[quarm-notes] ${st.content_missing} of ${st.fetched} message(s) read had no content, embeds or attachments`);
+    }
+    console.log(`[quarm-notes] ${st.fetched} read, ${st.new} new, ${st.stored} written, ${st.content_missing} without content${st.capped ? ', cap hit' : ''}${st.error ? ', ERROR' : ''}`);
+    const saved = await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _QUARM_NOTES_KV_KEY, value: st, updated_at: new Date().toISOString() }], 'guild_id,key');
+    if (!Array.isArray(saved)) console.warn('[quarm-notes] status save failed');
+  } catch (err) {
+    console.warn('[quarm-notes] sweep crashed:', err?.message);
+  } finally {
+    _quarmSyncRunning = false;
+  }
+}
+
+// One post, as it arrives or is edited. A partial (an edit that carries only what changed) is fetched whole first.
+async function _quarmNoteLive(msg) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    const whole = msg.partial ? await msg.fetch() : msg;
+    const res = await supabase.upsert('quarm_patch_notes',
+      [{ ..._quarmNoteRow(whole), fetched_at: new Date().toISOString() }], 'message_id');
+    if (!Array.isArray(res)) console.warn('[quarm-notes] live upsert failed for', msg.id);
+  } catch (err) { console.warn('[quarm-notes] live upsert failed:', err?.message); }
+}
+client.on(Events.MessageUpdate, (_before, msg) => { if (msg.channelId === _QUARM_NOTES_CHANNEL_ID) _quarmNoteLive(msg); });
 
 // POST /api/agent/tells
 //

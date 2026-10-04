@@ -103,6 +103,9 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Quarm patch notes mirrored into Supabase (bot 3.1.199, 2026-10-04).** The guild lead: "pull everything from" the
+  Quarm patch-notes channel. Table `quarm_patch_notes`, full-history sweep plus live new and edited posts, status in
+  bot_kv `quarm_patch_notes_sync`. If the rows come back `content_missing`, the Message Content intent is off. §158.
 - **✅ Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, live 2026-10-04).** The guild lead
   asked for a sweep for silent 500/100 caps. Three audits plus eight fix branches covered the buff queue,
   Extended Target, the raid review, DKP mirror, bids, loot, catalogs, /guide, /parses, /leaderboards, /me,
