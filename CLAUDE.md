@@ -289,7 +289,13 @@ never carries its link) holds:
 - the **Waiting on you** list;
 - **private decisions**: security findings, anything naming a way in, where
   credentials live, member-specific details;
-- each private audit report, in a tab of its own.
+- each private audit report, in a tab of its own;
+- the **Branch inventory** tab (the guild lead, 2026-10-04): every branch and channel, what it carries beyond
+  `main`, what it waits on, the previews awaiting a pick, the release heads, and the merged branches safe to
+  delete. **Not a decision log** — an inventory, rewritten in place. `/recall` reads it for any branch or
+  release question, so answer those from it instead of walking the DECISIONS files. A session that
+  creates, merges or retires a branch, opens or graduates a preview, or cuts a release updates that tab
+  before it finishes.
 
 Everything else still goes in the public DECISIONS file. A private call gets a
 one-line public pointer only when other sessions need to know that it exists.
