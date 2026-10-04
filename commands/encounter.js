@@ -53,7 +53,7 @@ async function _tonight(interaction) {
     const pct = Math.round((e.completeness_score || 0) * 100);
     return (
       `${_fmtTimestamp(e.started_at)} **${e.boss_name || `NPC ${e.npc_id}`}** ` +
-      `· \`${e.id.slice(0, 8)}\` ` +
+      `· \`${e.encounter_id.slice(0, 8)}\` ` +
       `· ${_fmtDuration(e.duration_sec)} ` +
       `· ${e.contributor_count || 0}👥 ` +
       `· ${pct}% complete \`${_fmtBar(e.completeness_score)}\``

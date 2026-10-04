@@ -454,6 +454,20 @@ describe('5 · /encounter mine reads tonight, not the first 1,000 fights of all 
     expect(reads.every(c => /encounter_id=in\.\(/.test(c.query) && c.query.length < 6000 && c.rows < SERVER_MAX_ROWS)).toBe(true);
   });
 
+  it('/encounter tonight lists each fight by its encounter_id (the view has no id column)', async () => {
+    const t0 = dayStart().getTime();
+    const night = ['a1b2c3d4-0000-4000-8000-000000000001', 'e5f6a7b8-0000-4000-8000-000000000002'].map((id, i) => (
+      { encounter_id: id, guild_id: GUILD, npc_id: 1, boss_name: `Boss ${i}`, started_at: new Date(t0 + (i + 1) * 1000).toISOString(), duration_sec: 30, contributor_count: 3, completeness_score: 0.9 }));
+    fake = installFakePostgrest({ tables: { encounter_completeness: night } });
+    const replies = [];
+    const ix = { ...interaction(replies), options: { getString: () => null, getSubcommand: () => 'tonight' } };
+    await nodeRequire('../commands/encounter.js').execute(ix);
+    const embed = replies.at(-1).embeds[0].data;
+    expect(embed.title).toBe("📅 Tonight's encounters (2)");
+    expect(embed.description).toContain('`a1b2c3d4`');
+    expect(embed.description).toContain('`e5f6a7b8`');
+  });
+
   it('says so when a read fails, instead of reporting a night I was absent', async () => {
     const f = fixture();
     fake = installFakePostgrest({ tables: { encounter_completeness: f.tonight, encounter_players: f.players, loot_drops: [] } });
