@@ -53,6 +53,8 @@
 // bosses). So trash kills exist ONLY in the upload stream. We tally them here,
 // dedup'd across uploaders, and persist to `bot_kv` (durable across restarts,
 // and readable by the web review) on the same throttled cadence as the card.
+// (Since 2026-08-19 `encounters` also holds every auto-registered named mob; the review's reads
+// filter it back to the curated bosses, see collectNightData, so the paragraph above still holds.)
 //
 // Env:
 //   RAID_REVIEW=0             disable the automatic post (the /raidreview
@@ -751,7 +753,8 @@ function _computePace(rows, startMs, nowMs, killsSoFar) {
  *
  * data = { window, encounters, deathContribs, characters, loot, ticks,
  *          funEvents, history, uploaders, trash?, paceHistory?,
- *          intentionalRules? }
+ *          intentionalRules?, funCounts?, historyStats? }
+ * (`funCounts` / `historyStats` are `funEvents` / `history` already reduced in SQL.)
  * Returns null when the night has nothing worth posting.
  *
  * `opts.requireKills = false` is the LIVE path: a raid that has pulled but not
@@ -877,6 +880,9 @@ function summarizeNight(data, opts = {}) {
 
   // ── "Slower than our own history" — median duration for the same npc over
   // the trailing window, from OUR kills. Never an invented target time.
+  // Two inputs, one shape: raw `history` rows (durations) are reduced to { n, med } here, and
+  // `historyStats` arrives already reduced — collectNightData asks the database for the per-boss
+  // median (raid_review_history_medians) because the raw rows no longer fit in one response.
   const histBy = new Map();
   for (const h of (data?.history || [])) {
     if (!h?.npc_id || !(h.duration_sec > 0)) continue;
@@ -884,12 +890,19 @@ function summarizeNight(data, opts = {}) {
     arr.push(h.duration_sec);
     histBy.set(h.npc_id, arr);
   }
+  const histStat = new Map();
+  for (const [npc, arr] of histBy) {
+    const s = [...arr].sort((a, b) => a - b);
+    histStat.set(npc, { n: s.length, med: s[Math.floor(s.length / 2)] });
+  }
+  for (const h of (data?.historyStats || [])) {
+    if (h?.npc_id) histStat.set(h.npc_id, { n: Number(h.n) || 0, med: Number(h.median_sec) });
+  }
   const slowFights = [], fastFights = [];
   for (const e of kills) {
-    const arr = histBy.get(e.npc_id);
-    if (!arr || arr.length < 4) continue;                      // need a real baseline
-    const s = [...arr].sort((a, b) => a - b);
-    const med = s[Math.floor(s.length / 2)];
+    const stat = histStat.get(e.npc_id);
+    if (!stat || stat.n < 4) continue;                         // need a real baseline
+    const med = stat.med;
     const d = e.duration_sec || 0;
     if (!(med > 0) || !(d > 0)) continue;
     // Both a RELATIVE and an ABSOLUTE floor in each direction: 25% off the
@@ -943,10 +956,16 @@ function summarizeNight(data, opts = {}) {
   const dkpAwarded = ticks.reduce((s, t) => s + t.value, 0);
 
   // ── One fun line, capped. Drops out on a quiet night.
+  // Raw `funEvents` rows count one each; `funCounts` arrives already counted per type
+  // (raid_review_fun_counts) because a busy night's rows no longer fit in one response.
   const funBy = new Map();
   for (const f of (data?.funEvents || [])) {
     if (!f?.event_type) continue;
     funBy.set(f.event_type, (funBy.get(f.event_type) || 0) + 1);
+  }
+  for (const f of (data?.funCounts || [])) {
+    if (!f?.event_type) continue;
+    funBy.set(f.event_type, (funBy.get(f.event_type) || 0) + (Number(f.n) || 0));
   }
   const fun = [...funBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2)
     .map(([type, n]) => ({ type, n }));
@@ -1272,6 +1291,14 @@ function _cached(win, live, name, ttlMs, fn) {
 /** Test seam — drops the live read cache and the trash tally. */
 function _clearLiveCaches() { _readCache = null; _trash.clear(); }
 
+/** npc_ids of the curated (tracked) bosses — bosses_local rows with auto_registered = false, the
+ *  same set the website's review filters to. Null when the read failed (not the same as "none"). */
+async function _curatedNpcIds(supabase) {
+  const rows = await supabase.selectAllPaged('bosses_local', 'select=npc_id&auto_registered=eq.false', 'npc_id');
+  if (!Array.isArray(rows)) return null;
+  return rows.map(r => r.npc_id).filter(n => Number.isFinite(n));
+}
+
 /**
  * Every read the review needs, bounded to one night. Best-effort throughout:
  * utils/supabase already returns null on failure/timeout/breaker-open, so a
@@ -1280,7 +1307,7 @@ function _clearLiveCaches() { _readCache = null; _trash.clear(); }
  * `opts.live` turns on the slice cache above and adds the pace baseline.
  */
 async function collectNightData(win, opts = {}) {
-  const supabase = require('./supabase');
+  const supabase = _supa();
   if (!supabase.isEnabled()) return null;
   const live = !!opts.live;
 
@@ -1288,12 +1315,24 @@ async function collectNightData(win, opts = {}) {
   const fromIso = new Date(win.fromMs).toISOString();
   const toIso   = new Date(win.toMs).toISOString();
 
-  const encounters = await supabase.select('encounters',
+  // The review is about the guild's tracked bosses, so every `encounters` read below is filtered to
+  // them by npc_id on the way in. `encounters` also holds every other named mob the guild killed
+  // since auto-registration (2026-08-19) — 500-1,300 rows a night against a few dozen bosses — and
+  // PostgREST cuts a response at 1,000 rows however high `limit=` is set. The old read took the
+  // night's first 400 rows by start time, so on 2026-09-27 all 20 bosses ranked 673-742 and the card
+  // saw only daytime trash. Same curated set the website's review filters to (web/lib/bossFilter.ts).
+  const curated = await _cached(win, live, 'curated', _COLD_TTL_MS, () => _curatedNpcIds(supabase));
+  // A failed read must not be remembered for six hours.
+  if (live && !curated) _cacheFor(win).slices.delete('curated');
+  const curatedIn = (curated || []).join(',');
+
+  // Paged on the primary key (a unique order column), then put back in pull order for the card.
+  const encounters = curatedIn ? (await supabase.selectAllPaged('encounters',
     'select=id,started_at,ended_at,duration_sec,total_damage,total_dps,zone_short,npc_id,classification,' +
     'eqemu_npc_types(name,zone_short),encounter_players(character_name,total_damage,dps,rank)' +
-    `&guild_id=eq.${encodeURIComponent(guildId)}` +
-    `&started_at=gte.${encodeURIComponent(fromIso)}&started_at=lt.${encodeURIComponent(toIso)}` +
-    '&order=started_at.asc&limit=400') || [];
+    `&guild_id=eq.${encodeURIComponent(guildId)}&npc_id=in.(${curatedIn})` +
+    `&started_at=gte.${encodeURIComponent(fromIso)}&started_at=lt.${encodeURIComponent(toIso)}`,
+    'id') || []).sort((a, b) => _ms(a.started_at) - _ms(b.started_at)) : [];
 
   const ids = encounters.map(e => e.id).filter(Boolean);
   const npcIds = [...new Set(encounters.map(e => e.npc_id).filter(n => Number.isFinite(n)))];
@@ -1305,12 +1344,12 @@ async function collectNightData(win, opts = {}) {
   // whitelist keeps them quote-free (a quoted list would need its separating
   // commas percent-encoded) and makes injection structurally impossible.
   const inList = arr => `(${arr.map(v => String(v).replace(/[^A-Za-z0-9_-]/g, '')).join(',')})`;
-  const [deathContribs, characters, zones, loot, raids, funEvents, history, paceHistory, trash,
+  const [deathContribs, characters, zones, loot, raids, funCounts, historyStats, paceHistory, trash,
          intentionalRules] = await Promise.all([
-    ids.length ? supabase.select('contributions',
-      `select=encounter_id,contributor_character,deaths:raw_parse->deaths&encounter_id=in.${inList(ids)}&limit=4000`) : [],
-    _cached(win, live, 'characters', _COLD_TTL_MS, () => supabase.select('characters',
-      `select=name,class,exclude_from_stats&guild_id=eq.${encodeURIComponent(guildId)}&limit=3000`)),
+    ids.length ? supabase.selectAllPaged('contributions',
+      `select=encounter_id,contributor_character,deaths:raw_parse->deaths&encounter_id=in.${inList(ids)}`, 'id') : [],
+    _cached(win, live, 'characters', _COLD_TTL_MS, () => supabase.selectAllPaged('characters',
+      `select=name,class,exclude_from_stats&guild_id=eq.${encodeURIComponent(guildId)}`, 'name')),
     _cached(win, live, `zones:${shorts.join(',')}`, _COLD_TTL_MS, () => (shorts.length ? supabase.select('eqemu_zone',
       `select=short_name,long_name&short_name=in.${inList(shorts)}`) : [])),
     _cached(win, live, 'loot', _WARM_TTL_MS, () => supabase.select('opendkp_loot_recent',
@@ -1320,20 +1359,21 @@ async function collectNightData(win, opts = {}) {
       // opendkp_loot_recent view keys `raid_date` off that same ts::date — so
       // both join on the night's ET dateKey without a timezone dance.
       `select=raid_id,name&ts=gte.${win.dateKey}T00%3A00%3A00Z&ts=lt.${win.dateKey}T23%3A59%3A59Z&limit=10`)),
-    _cached(win, live, 'fun', _WARM_TTL_MS, () => supabase.select('fun_events',
-      `select=event_type&guild_id=eq.${encodeURIComponent(guildId)}` +
-      `&event_ts=gte.${encodeURIComponent(fromIso)}&event_ts=lt.${encodeURIComponent(toIso)}&limit=3000`)),
-    _cached(win, live, `history:${npcIds.join(',')}`, _COLD_TTL_MS, () => (npcIds.length ? supabase.select('encounters',
-      `select=npc_id,duration_sec&guild_id=eq.${encodeURIComponent(guildId)}` +
-      `&npc_id=in.(${npcIds.join(',')})&ended_at=not.is.null` +
-      `&started_at=gte.${encodeURIComponent(new Date(win.fromMs - 90 * 86_400_000).toISOString())}` +
-      `&started_at=lt.${encodeURIComponent(fromIso)}&limit=3000`) : [])),
+    // The campfire line is a count per event type: counted in SQL, not by pulling the night's rows
+    // (1,416 on 2026-09-17 against the 1,000-row response cap).
+    _cached(win, live, 'fun', _WARM_TTL_MS, () => supabase.rpc('raid_review_fun_counts',
+      { p_guild_id: guildId, p_from: fromIso, p_to: toIso })),
+    // Our own median per boss over the 90 days before tonight, reduced in SQL for the same reason.
+    _cached(win, live, `history:${npcIds.join(',')}`, _COLD_TTL_MS, () => (npcIds.length ? supabase.rpc('raid_review_history_medians',
+      { p_guild_id: guildId, p_npc_ids: npcIds,
+        p_since: new Date(win.fromMs - 90 * 86_400_000).toISOString(), p_until: fromIso }) : [])),
     // Pace baseline — LIVE ONLY, and cold-cached, so the final review's query
-    // set is unchanged and the live card pays for it once a night.
-    live ? _cached(win, live, 'pace', _COLD_TTL_MS, () => supabase.select('encounters',
-      `select=started_at&guild_id=eq.${encodeURIComponent(guildId)}&ended_at=not.is.null` +
+    // set is unchanged and the live card pays for it once a night. Tracked bosses only, to match
+    // the kills it is compared against; ~250 rows in 45 days, paged on the primary key regardless.
+    live && curatedIn ? _cached(win, live, 'pace', _COLD_TTL_MS, () => supabase.selectAllPaged('encounters',
+      `select=id,started_at&guild_id=eq.${encodeURIComponent(guildId)}&ended_at=not.is.null&npc_id=in.(${curatedIn})` +
       `&started_at=gte.${encodeURIComponent(new Date(win.fromMs - 45 * 86_400_000).toISOString())}` +
-      `&started_at=lt.${encodeURIComponent(fromIso)}&order=started_at.asc&limit=1500`)) : null,
+      `&started_at=lt.${encodeURIComponent(fromIso)}`, 'id')) : null,
     // Trash: in-memory when the raid is live, otherwise merged back from bot_kv
     // (the morning-after review runs in a process that may have restarted).
     // Stash the span so saveTrash (which persists the value the WEB page reads
@@ -1364,8 +1404,8 @@ async function collectNightData(win, opts = {}) {
     zones: zones || [],
     loot: loot || [],
     ticks,
-    funEvents: funEvents || [],
-    history: history || [],
+    funCounts: funCounts || [],
+    historyStats: historyStats || [],
     paceHistory: paceHistory || [],
     trash: trash || null,
     intentionalRules: intentionalRules || [],

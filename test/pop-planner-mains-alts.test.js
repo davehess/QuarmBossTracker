@@ -90,8 +90,11 @@ describe('reading pop_flags past the 1,000-row cap', () => {
   it('reads the real flags a page at a time, and only the real ones', () => {
     // Witnessed hails are stored as 'hail' rows since §119; they are evidence, not flags.
     expect(reader).toMatch(/\.not\('flag_key', 'in', '\(unmapped,hail\)'\)/);
-    expect(reader).toMatch(/\.range\(from, from \+ 999\)/);
-    expect(reader).toMatch(/if \(rows\.length < 1000\) break;/);
+    // The walk is selectAll's (web/lib/selectAll.ts): ordered on a unique key, short-page stop, and a
+    // failed page throws instead of ending the read with the flags so far.
+    expect(reader).toMatch(/selectAll<FlagRow>\(\(from, to\) => sb\.from\('pop_flags'\)/);
+    expect(reader).toMatch(/\.order\('earned_at', \{ ascending: true \}\)\.order\('id', \{ ascending: true \}\)\s*\.range\(from, to\)/);
+    expect(reader).not.toMatch(/for \(let from = 0/);
     expect(body).not.toMatch(/\.limit\(20000\)/);
   });
   it('counts the unmapped rows instead of downloading them', () => {

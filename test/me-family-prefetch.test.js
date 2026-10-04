@@ -43,11 +43,20 @@ describe('the page fetches per family', () => {
     expect(me).toMatch(/\.ilikeAnyOf\('assister', names\)/);
   });
 
-  it('skips the per-character fan-out for a name with nothing to fetch', () => {
+  it('skips the per-character work for a name with nothing to fetch', () => {
     const skip = me.indexOf("if (!fam.active.has(nameLower)) {");
-    const fanout = me.indexOf(".from('encounter_players')\n      .select('encounter_id, total_damage, dps')");
+    const lookup = me.indexOf('fam.stats.get(nameLower)');
     expect(skip).toBeGreaterThan(-1);
-    expect(fanout).toBeGreaterThan(skip);           // the queries sit BELOW the early return
+    expect(lookup).toBeGreaterThan(skip);           // the aggregate lookup + boss-name query sit BELOW the early return
+  });
+
+  it('takes parse / upload / rollup stats from ONE family-wide RPC, not three reads per character', () => {
+    // 2026-10-04: the three per-character reads (limit 5000 / 500 / 5000) were
+    // capped at 1,000 rows each; me_char_stats sums them in SQL (cap-safe-me.test.js).
+    expect((me.match(/fetchCharAggs\(admin, names\)/g) || []).length).toBe(1);
+    expect(me).not.toMatch(/\.from\('encounter_players'\)/);
+    expect(me).not.toMatch(/\.from\('contributions'\)/);
+    expect(me).not.toMatch(/\.from\('encounter_combat_rollup'\)/);
   });
 
   it('runs the prefetch alongside the other family-wide loads, once', () => {

@@ -160,17 +160,19 @@ const { _nightLootPanelBody } = evalBlock(
   ['_nightLootPanelBody'],
 );
 
+// The panel reads both tables page by page (a night's rows pass PostgREST's silent 1,000-row cap), so the
+// fake answers through the REAL paginator: selectAllPaged(table, query, orderCol, select). Its page walk
+// is exercised on fixtures past the cap in test/pgrst-cap-bot-reads.test.js.
+const { selectAllPaged: realSelectAllPaged } = require_('./utils/supabase');
 function fakeSupabase({ rolls = [], looted = [] } = {}) {
   const calls = [];
-  return {
-    calls,
-    select: async (table, q) => {
-      calls.push({ table, q });
-      if (table === 'roll_sets') return rolls;
-      if (table === 'looted_items') return looted;
-      throw new Error('unexpected table ' + table);
-    },
+  const select = async (table, q) => {
+    calls.push({ table, q });
+    if (table === 'roll_sets') return rolls;
+    if (table === 'looted_items') return looted;
+    throw new Error('unexpected table ' + table);
   };
+  return { calls, select, selectAllPaged: (table, q, orderCol) => realSelectAllPaged(table, q, orderCol, select) };
 }
 
 describe('_nightLootPanelBody', () => {
@@ -200,7 +202,8 @@ describe('_nightLootPanelBody', () => {
 
   it('treats a failed read (supabase answers null) as an error, not as an empty night', async () => {
     for (const bad of ['roll_sets', 'looted_items']) {
-      const sb = { select: async (table) => (table === bad ? null : []) };
+      const select = async (table) => (table === bad ? null : []);
+      const sb = { select, selectAllPaged: (table, q, orderCol) => realSelectAllPaged(table, q, orderCol, select) };
       await expect(_nightLootPanelBody(sb, 'wolfpack', NOW)).rejects.toThrow(/night-loot/);
     }
   });

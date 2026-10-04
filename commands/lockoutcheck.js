@@ -33,9 +33,11 @@ async function buildBriefingEmbed(client) {
   // PostgREST's cap (test/db-read-discipline.test.js ratchets on this), and a
   // truncated briefing would quietly omit blocked raiders, which is the exact
   // failure this feature exists to prevent.
+  // Ordered on (character, boss_key), the key once guild_id is pinned: `character`
+  // alone has one row per boss, and ties let a page boundary drop a lockout.
   const rows = await supabase.selectAllPaged('character_lockouts',
     `guild_id=eq.${encodeURIComponent(guildId)}&expires_at=gt.${encodeURIComponent(nowIso)}` +
-    `&select=character,boss_key,expires_at,ours`, 'character').catch(() => null);
+    `&select=character,boss_key,expires_at,ours`, 'character,boss_key').catch(() => null);
   const lockouts = Array.isArray(rows) ? rows : [];
 
   // main vs alt — a MAIN locked to tonight's target is the surprising case.

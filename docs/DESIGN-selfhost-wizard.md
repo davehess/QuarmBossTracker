@@ -482,6 +482,12 @@ and the same never-refetch guarantee.
   lowers that ceiling. Anything that can match more must page
   (`web/lib/supabase-paged.ts`). A self-hoster changing `max-rows` changes
   behaviour everywhere, which is itself a reason to page rather than configure.
+- **2026-10-04 — every read is cap-safe, whatever `max-rows` is** (`DECISIONS-2026-09-21.md` §155).
+  The cap also cuts one-call `.range(0, N)`, set-returning RPCs and views. So reads page over a unique
+  ORDER BY, sum in SQL, or return one jsonb value. Nine migrations added the RPCs behind that; all are
+  `security invoker`, `service_role` only. The pages page in steps of 1,000 (`PGRST_MAX_ROWS`), so a box
+  with a LOWER `max-rows` would cut every page short. Set it to 1,000 or above. A higher value only
+  costs a few extra requests.
 - **2026-09-23 — remote operator access to the on-prem box goes over Tailscale,
   not open ports** (`docs/DECISIONS-2026-09-21.md` §9). Our cloud sessions join the
   tailnet with a tagged, ephemeral key and reach exactly two ports: the Supabase

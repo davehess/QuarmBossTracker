@@ -440,7 +440,8 @@ describe('handler wiring', () => {
 
   it('the select carries loc + observed_tanks, and the roster loc ride-along exists', () => {
     expect(src).toMatch(/incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at/);
-    expect(src).toMatch(/supabase\.select\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
+    // paged: one row per (uploader, name) is ~1,000 at peak, PostgREST's silent cap
+    expect(src).toMatch(/supabase\.selectAllPaged\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
   });
 
   it('a pos-split row recomputes HP from its own raiders', () => {

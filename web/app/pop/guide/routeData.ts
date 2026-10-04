@@ -4,6 +4,7 @@
 
 import { unstable_cache } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
+import { selectAll } from '@/lib/selectAll';
 import { GUIDE_ITEMS } from '@/lib/popGuide';
 import { STEP_MORE, stepPlaces } from '@/lib/popGuideMore';
 import { AUTO_ITEM_IDS, guideEvidence } from '@/lib/popGuideAuto';
@@ -13,6 +14,7 @@ import type { RouteChar } from './GuideRoute';
 import type { ZoneOutline } from './ZoneMap';
 
 type Owned = { name: string; class: string | null; main_name: string | null };
+type SightRow = Sighting & { character_key: string };
 
 // A zone's outline never changes between syncs: one read per zone per day.
 const zoneOutline = unstable_cache(
@@ -43,7 +45,11 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     names.length ? admin.from('who_directory').select('character_key, level, last_seen').in('character_key', lower) : none,
     names.length ? admin.from('character_live_state').select('character, updated_at').in('character', names) : none,
     // Where /who has shown each of them inside a gated plane (popWho.ts says what that proves).
-    names.length ? admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_NAMES }) : none,
+    // Paged (selectAll): the API stops at 1,000 rows a request and this grows with every /who of a gated plane.
+    names.length
+      ? selectAll<SightRow>((from, to) =>
+        admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_NAMES }).range(from, to))
+      : Promise.resolve([] as SightRow[]),
     // …and what they looted inside one (the same proof of presence; popWho.ts flagsFromLoot).
     names.length ? loadLootSightings(admin) : Promise.resolve([] as LootRow[]),
     ...zones.map(z => zoneOutline(z)),
@@ -58,7 +64,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     const meta = rows<{ name: string; exclude_inventory: boolean | null; spellbook_checksum: string | null }>(chars)
       .find(r => r.name.toLowerCase() === lc);
     const w = rows<{ character_key: string; level: number | null; last_seen: string | null }>(who).find(r => r.character_key === lc);
-    const seen = rows<Sighting & { character_key: string }>(sights).filter(r => r.character_key === lc);
+    const seen = (sights as SightRow[]).filter(r => r.character_key === lc);
     const looted = (lootSights as LootRow[]).filter(r => r.character_key === lc);
     const auto = guideEvidence({
       flags: rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc),

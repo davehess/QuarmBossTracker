@@ -20,8 +20,19 @@
 // ORDERING IS NOT OPTIONAL. Range pagination over an unordered query can repeat
 // or skip rows between pages — Postgres makes no stability guarantee without an
 // ORDER BY. Every caller MUST apply a `.order()` on a unique (or
-// tie-broken-unique) column inside `build`. `assertOrdered` below is a
-// development-time nudge, not a guarantee.
+// tie-broken-unique) column inside `build`. A non-unique key is the same bug as
+// no key: each page is its own `ORDER BY … LIMIT … OFFSET …` and rows that tie
+// can fall either side of the boundary, so some are never returned and others
+// come twice. Measured 2026-10-04 on character_inventory, ordered (character_name,
+// item_name, item_id): 49,418 rows, 49,406 distinct came back — 12 never did.
+// Ending the order on the primary key fixes it (49,418 of 49,418). The same holds
+// for a set-returning RPC read through `.rpc().range()`: its ORDER BY must end on
+// a unique key too.
+//
+// A FAILED PAGE THROWS (2026-10-04). It used to `break` and return the rows it
+// had, which is a silent partial set: with the API's 8 s statement_timeout a
+// slow page is a real path, and the caller drew a short list as if it were the
+// whole one. A caller that can live without the data catches the throw.
 
 /** PostgREST's silent per-response ceiling. Pages are sized to match it. */
 export const PGRST_MAX_ROWS = 1000;
@@ -33,7 +44,8 @@ export type SelectAllOpts = {
    *  gets truncated to it, and the short-page stop would then end the loop
    *  early and silently re-introduce the bug. */
   page?: number;
-  /** Runaway stop. Exceeding it returns what we have (see `onTruncate`). */
+  /** Runaway stop. Exceeding it returns what we have, logs a warning, and calls
+   *  `onTruncate`. */
   hardCap?: number;
   /** Called when hardCap is hit, so a caller can surface "showing N of M"
    *  instead of pretending the set is complete. */
@@ -44,7 +56,8 @@ export type SelectAllOpts = {
  * Drain a PostgREST query across as many pages as it takes.
  *
  * @param build receives an inclusive `[from, to]` row range and must return the
- *              built query — WITH a stable `.order()` applied.
+ *              built query — WITH a stable, UNIQUE `.order()` applied.
+ * @throws if any page comes back with an error or no data (see the header).
  *
  * ```ts
  * const rows = await selectAll<InvRow>((from, to) => admin
@@ -69,17 +82,21 @@ export async function selectAll<T>(
   const out: T[] = [];
   for (let from = 0; from < hardCap; from += page) {
     const { data, error } = await build(from, from + page - 1);
-    // A failed page ends the drain. Returning the partial set matches how the
-    // call sites already treat `data ?? []` and keeps one bad request from
-    // blanking a page — but it does mean callers must not read "fewer rows"
-    // as "fewer records exist".
-    if (error) break;
-    if (!data) break;
+    // A failed page is an error, not "the end": returning what we have would hand
+    // the caller a short list that reads as the whole one.
+    if (error || !data) {
+      const why = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error ?? 'no data');
+      throw new Error(`selectAll: rows ${from}-${from + page - 1} failed after ${out.length} loaded: ${why}`, { cause: error });
+    }
     out.push(...data);
     // Short page ⇒ drained. This also covers the empty page (0 < page), so
     // there is deliberately no separate length===0 branch to drift out of sync.
     if (data.length < page) break;
-    if (out.length >= hardCap) { opts.onTruncate?.(out.length); break; }
+    if (out.length >= hardCap) {
+      console.warn(`selectAll: stopped at the ${hardCap}-row hardCap with ${out.length} rows loaded; the set may be longer`);
+      opts.onTruncate?.(out.length);
+      break;
+    }
   }
   return out;
 }

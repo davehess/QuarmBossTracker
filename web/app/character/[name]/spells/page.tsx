@@ -25,7 +25,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
-import { groupSources, vendorSpots, type SourceRow, type ItemSources, type VendorSpots } from '@/lib/spellSources';
+import { groupSources, vendorSpots, type ItemSources, type VendorSpots } from '@/lib/spellSources';
+import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 
@@ -122,9 +123,13 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   let sourcesByItem: Record<number, ItemSources> = {};
   const scrollIds = [...new Set(missing.map(m => m.scroll_item_id).filter((n): n is number => typeof n === 'number'))];
   if (scrollIds.length) {
-    const { data: srcRows } = await sb.rpc('spell_scroll_sources', { p_item_ids: scrollIds });
-    if (Array.isArray(srcRows)) {
-      sourcesByItem = Object.fromEntries(groupSources(srcRows as SourceRow[]).entries());
+    // spell_scroll_sources is a set-returning function with no ORDER BY, and one
+    // spellbook is up to 4,632 rows — 40 of 117 spellbook characters are over
+    // PostgREST's 1,000-row response cap. The _json variant returns the same
+    // rows as ONE jsonb array, which the cap does not touch.
+    const srcRows = await fetchScrollSources(sb, scrollIds);
+    if (srcRows.length) {
+      sourcesByItem = Object.fromEntries(groupSources(srcRows).entries());
     }
   }
 

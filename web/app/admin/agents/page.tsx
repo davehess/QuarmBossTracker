@@ -15,6 +15,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,32 +73,40 @@ type MemberRow = { discord_id: string; nickname: string | null; global_name: str
 
 async function loadData() {
   const admin = supabaseAdmin();
-  const [{ data: stats }, { data: backfills }, { data: roster }, { data: members }] = await Promise.all([
-    admin
+  // selectAll over a unique order, not `.order(last_uploaded_at).limit(2000)`: a limit above
+  // PostgREST's 1,000-row response cap is an upper bound on top of it, so 1,721 stat rows read as
+  // the newest 1,000 and 245 of 435 characters were simply absent (2026-10-04 audit). The primary
+  // key (guild_id, character, endpoint) is the only order that cannot repeat or skip a row
+  // between pages — last_uploaded_at moves while the pages are being read. summarize() below does
+  // not need newest-first input: it keeps each character's newest row itself.
+  const [stats, { data: backfills }, roster, members] = await Promise.all([
+    selectAll<StatRow>((from, to) => admin
       .from('agent_upload_stats')
       .select('character, endpoint, upload_count, error_count, first_uploaded_at, last_uploaded_at, agent_version, last_ok, last_status_code, last_error, last_agent_state, uploaded_by_discord_id, zeal_version, spawn_id_seen_at')
-      .order('last_uploaded_at', { ascending: false })
-      .limit(2000),
+      .order('guild_id').order('character').order('endpoint')
+      .range(from, to)),
     admin
       .from('agent_backfill_requests')
       .select('id, character, requested_at, requested_by_name, reason, scope, status, acked_at, dismissed_at, dismissed_reason, completed_at, error_message')
       .order('requested_at', { ascending: false })
       .limit(200),
-    admin
+    selectAll<RosterRow>((from, to) => admin
       .from('characters')
       .select('name, main_name, discord_id')
       .eq('guild_id', 'wolfpack')
-      .limit(5000),
-    admin
+      .order('name')
+      .range(from, to)),
+    selectAll<MemberRow>((from, to) => admin
       .from('wolfpack_members')
       .select('discord_id, nickname, global_name')
-      .limit(5000),
+      .order('discord_id')
+      .range(from, to)),
   ]);
   return {
-    stats:     (stats ?? []) as StatRow[],
+    stats,
     backfills: (backfills ?? []) as BackfillRow[],
-    roster:    (roster ?? []) as RosterRow[],
-    members:   (members ?? []) as MemberRow[],
+    roster,
+    members,
   };
 }
 

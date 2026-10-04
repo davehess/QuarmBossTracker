@@ -98,9 +98,14 @@ export default async function PopGuidePage(
     names.length === 0 ? Promise.resolve({ data: [] }) :
       admin.from('pop_guide_ticks').select('character_name, item_key')
         .eq('guild_id', 'wolfpack').in('character_name', names),
-    // pop_flags.character is free text, so match names case-blind (same as /pop).
+    // pop_flags.character is free text, so match names case-blind (same as /pop). The real flags only:
+    // 'unmapped' and 'hail' rows are not flags and there are thousands of them (about 16,000 unmapped
+    // across the roster's households on 2026-10-04; three households hold over 1,000 rows each, max 2,291,
+    // none of them real). Real flags are the newest rows, so a bare .limit(1000) read the oldest 1,000 and
+    // would drop every real flag those households earn. A household holds at most 26 real ones.
     names.length === 0 ? Promise.resolve({ data: [] }) :
       admin.from('pop_flags').select('character, flag_key')
+        .not('flag_key', 'in', '(unmapped,hail)')
         .or(names.map(n => `character.ilike.${n}`).join(',')).limit(1000),
     admin.rpc('item_card_info', { p_item_ids: guideItemIds() }),
   ]);

@@ -270,9 +270,15 @@ describe('reading the rows: a page of 1,000 at a time', () => {
     expect(full.calls).toHaveLength(2);
   });
 
-  it('a null page (an error) ends the read with what it has', async () => {
-    const sb = { rpc: () => ({ range: () => Promise.resolve({ data: null }) }) };
-    expect(await loadLootSightings(sb)).toEqual([]);
+  it('a page that fails throws; it does not end the read with what it has', async () => {
+    // It used to return the rows so far, so one slow page drew a half-looted guild as the whole one.
+    const sb = { rpc: () => ({ range: () => Promise.resolve({ data: null, error: { message: 'statement timeout' } }) }) };
+    await expect(loadLootSightings(sb)).rejects.toThrow(/failed after 0 loaded: statement timeout/);
+    let n = 0;
+    const second = { rpc: () => ({ range: (from) => Promise.resolve(++n === 1
+      ? { data: Array.from({ length: 1000 }, (_, i) => ({ character_key: `c${from + i}`, zone: 'postorms' })), error: null }
+      : { data: null, error: { message: 'boom' } }) }) };
+    await expect(loadLootSightings(second)).rejects.toThrow(/rows 1000-1999 failed after 1000 loaded: boom/);
   });
 });
 

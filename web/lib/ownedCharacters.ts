@@ -4,6 +4,7 @@
 // only ever called for the signed-in user's own userId.
 
 import { supabaseAdmin } from '@/lib/supabase';
+import { loadRoster } from '@/lib/roster';
 
 // `rank` and `hidden_from_lists` are here for lists that tuck characters away (web/lib/listableChars.ts);
 // nothing else reads them. This function itself never filters on either: account inventory shows all.
@@ -30,11 +31,9 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   household.add(pack.discord_id);
   household.add(root);
 
-  const { data: allChars } = await admin
-    .from('characters')
-    .select('name, main_name, class, active, rank, hidden_from_lists, discord_id')
-    .eq('guild_id', 'wolfpack');
-  const all = (allChars ?? []) as (OwnedChar & { discord_id: string | null })[];
+  // The shared per-request roster read (web/lib/roster.ts), so a page that also
+  // asks for the roster does not read `characters` twice.
+  const all = (await loadRoster()) as (OwnedChar & { discord_id: string | null })[];
 
   const anchored = all.filter(c => c.discord_id && household.has(c.discord_id));
   const roots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));

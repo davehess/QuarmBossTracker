@@ -23,6 +23,8 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
+import { selectAll } from '@/lib/selectAll';
+import { charsSeenByUploader, countsByDiscord, readChatCounts, readContribCounts, readWhoActivity } from '@/lib/memberActivity';
 
 export const dynamic = 'force-dynamic';
 
@@ -95,41 +97,35 @@ async function loadMembers(): Promise<MemberRow[]> {
   const admin = supabaseAdmin();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
+  // ⚠ The 30-day chat / parse / /who figures are aggregated in Postgres. PostgREST returns at most
+  // 1,000 rows per response, silently, so counting a plain read here saw 1,000 of 36k chat lines,
+  // 33k parses and 85k /who rows (production, 2026-10-04).
   const [
     { data: membersRaw },
-    { data: chars },
-    { data: chats },
-    { data: contribs },
-    { data: whos },
+    chars,
+    chat,
+    contrib,
   ] = await Promise.all([
     admin
       .from('wolfpack_members')
       .select('discord_id, nickname, global_name, joined_at, refreshed_at, role_names, merged_into_discord_id')
       .eq('is_member', true)
       .order('joined_at', { ascending: false, nullsFirst: false }),
-    admin
+    // The roster is 556 characters; paged so it cannot be cut at 1,000. Unique per guild: name.
+    selectAll<{ name: string; class: string | null; discord_id: string | null; main_name: string | null; active: boolean }>((from, to) => admin
       .from('characters')
       .select('name, class, discord_id, main_name, active')
-      .eq('guild_id', 'wolfpack'),
-    admin
-      .from('chat_messages')
-      .select('speaker, ts')
-      .gte('ts', since30)
-      .limit(50000),
-    admin
-      .from('contributions')
-      .select('contributor_character, contributor_discord_id, created_at')
-      .gte('created_at', since30)
-      .limit(50000),
-    admin
-      .from('who_observations')
-      .select('character, uploaded_by, observed_at')
-      .gte('observed_at', since30)
-      .limit(50000),
+      .eq('guild_id', 'wolfpack')
+      .order('name').range(from, to)),
+    readChatCounts(admin, since30),
+    readContribCounts(admin, since30),
   ]);
 
   const members = (membersRaw ?? []) as Member[];
-  const allChars = (chars ?? []) as { name: string; class: string | null; discord_id: string | null; main_name: string | null; active: boolean }[];
+  const allChars = chars;
+  // The /who cross-reference below only ever looks up the name tokens of members' Discord names.
+  const uploaderTokens = [...new Set(members.flatMap(m => [...tokenize(m.nickname), ...tokenize(m.global_name)]))];
+  const who = await readWhoActivity(admin, 'wolfpack', since30, uploaderTokens);
 
   // discord_id → [character info] (linked + active)
   const charsByDiscord = new Map<string, CharInfo[]>();
@@ -161,31 +157,10 @@ async function loadMembers(): Promise<MemberRow[]> {
   for (const c of allChars) {
     if (c.discord_id) charToDiscord.set(c.name.toLowerCase(), c.discord_id);
   }
-  const chatCount = new Map<string, number>();
-  for (const m of (chats ?? []) as { speaker: string }[]) {
-    const d = charToDiscord.get((m.speaker || '').toLowerCase());
-    if (d) chatCount.set(d, (chatCount.get(d) ?? 0) + 1);
-  }
-  const parseCount = new Map<string, number>();
-  for (const c of (contribs ?? []) as { contributor_character: string | null; contributor_discord_id: string | null }[]) {
-    const d = c.contributor_discord_id || charToDiscord.get((c.contributor_character || '').toLowerCase());
-    if (d) parseCount.set(d, (parseCount.get(d) ?? 0) + 1);
-  }
-  const whoCount = new Map<string, number>();
+  const { chatCount, parseCount, whoCount } = countsByDiscord(chat, contrib, who.targets, charToDiscord);
   // uploaderToCharsSeen — for "Bob saw Foo in /who" cross-reference.
-  // uploader (character name, lowercase) → set of character names they observed.
-  const uploaderToCharsSeen = new Map<string, Set<string>>();
-  for (const w of (whos ?? []) as { character: string; uploaded_by: string | null }[]) {
-    const target = (w.character || '').toLowerCase();
-    const d = charToDiscord.get(target);
-    if (d) whoCount.set(d, (whoCount.get(d) ?? 0) + 1);
-    if (w.uploaded_by) {
-      const ub = w.uploaded_by.toLowerCase();
-      let s = uploaderToCharsSeen.get(ub);
-      if (!s) { s = new Set(); uploaderToCharsSeen.set(ub, s); }
-      s.add(w.character);
-    }
-  }
+  // uploader (character name, lowercase) → set of roster character names (lowercase) they observed.
+  const uploaderToCharsSeen = charsSeenByUploader(who.seen);
 
   // Build suggestions for unlinked members
   function suggestionsFor(m: Member): Suggestion[] {

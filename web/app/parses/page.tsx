@@ -20,6 +20,7 @@ import { curatedNpcIds } from '@/lib/bossFilter';
 import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
+import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -104,10 +105,10 @@ async function loadAll(w: ResolvedWindow): Promise<{
     if (encErr) return { ...empty, error: encErr.message };
 
     // Everything off-card in the window, rolled up server-side per raid-day +
-    // zone (the RPC buckets days in ET to match dayKey).
-    const { data: offcardRows } = await sb
-      .rpc('parses_offcard_rollup', { p_since: w.sinceIso ?? '1970-01-01T00:00:00Z' });
-    const offcard = ((offcardRows ?? []) as OffcardRow[]);
+    // zone (the RPC buckets days in ET to match dayKey). PAGED: a set-returning
+    // RPC is capped at 1,000 rows like a select, and the rollup is 730 rows at
+    // 60 days, 1,185 lifetime.
+    const offcard: OffcardRow[] = await loadOffcardRollup(sb, w.sinceIso);
 
     // Guild roster names (lowercased) — presence = Pack member. Used to detect
     // "foreign" raids: an upload where almost no named player is on our roster
@@ -130,14 +131,15 @@ async function loadAll(w: ResolvedWindow): Promise<{
     // Loot + attendance context follow the page window (was a hardcoded 60d).
     // The loot view is a "recent" sync window — long lookbacks under-count.
     const since = (w.sinceIso ?? '1970-01-01').slice(0, 10);
-    let lootQuery = sb
-      .from('opendkp_loot_recent')
-      .select('raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes')
-      .order('dkp', { ascending: false });
-    if (w.sinceIso) lootQuery = lootQuery.gte('raid_date', since);
-    const { data: lootRows } = await lootQuery;
+    // PAGED: opendkp_loot_recent is 933 rows at 90 days and 9,251 lifetime. The
+    // night's loot block sorts itself by DKP, so the read order is free.
+    const lootRows = await loadLootRecent<LootDbRow>(
+      sb,
+      'raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes',
+      w.sinceIso ? since : null,
+    );
     const loot = new Map<string, LootDbRow[]>();
-    for (const r of (lootRows ?? []) as LootDbRow[]) {
+    for (const r of lootRows) {
       // raid_date is YYYY-MM-DD from the view
       const k = r.raid_date;
       if (!loot.has(k)) loot.set(k, []);
@@ -154,16 +156,12 @@ async function loadAll(w: ResolvedWindow): Promise<{
       .range(0, 19999);
     if (w.sinceIso) raidQuery = raidQuery.gte('ts', since);
     const { data: raidRows } = await raidQuery;
-    // opendkp_ticks has no per-window filter, so it must carry an explicit
-    // range — PostgREST's default 1000-row cap was silently dropping ~28% of
-    // attendance ticks (table is 1396 rows and growing). Bound to the raids
-    // we actually loaded AND add a generous range so future growth is safe.
-    const raidIdSet = new Set((raidRows ?? []).map((r: any) => r.raid_id));
-    const { data: tickRowsRaw } = await sb
-      .from('opendkp_ticks')
-      .select('raid_id, attendees')
-      .range(0, 99999);
-    const tickRows = (tickRowsRaw ?? []).filter((t: any) => raidIdSet.has(t.raid_id));
+    // opendkp_ticks has no per-window column, so the window is the set of raids
+    // loaded above: ticks of exactly those raids, PAGED. A `.range(0, 99999)` does
+    // NOT lift PostgREST's 1,000-row cap (it is silent), and this table is 1,578
+    // rows with none of the last 30 days in the first 1,000 — every recent night
+    // showed no attendance while this comment said it was fixed.
+    const tickRows = await loadTicksForRaids(sb, (raidRows ?? []).map((r: any) => r.raid_id));
 
     const attendance = new Map<string, AttendanceRollup>();
     if (raidRows && tickRows) {

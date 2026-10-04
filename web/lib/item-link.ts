@@ -43,6 +43,18 @@ export async function loadItemCatalog(sb: SupabaseClient): Promise<ItemCatalog> 
     );
   }
   const pages = await Promise.all(reqs);
+  // A page that failed must not be cached for an hour as if the catalog ended there: the old loop read
+  // `p?.data || []` and carried on, so one timed-out page left every item on it unlinked until the TTL
+  // ran out. Throw, and nothing is cached; the caller decides how to live without links.
+  pages.forEach((p, i) => {
+    if (!p || p.error || !Array.isArray(p.data)) {
+      const why = p?.error && typeof p.error === 'object' && 'message' in p.error ? String(p.error.message) : 'no data';
+      throw new Error(`loadItemCatalog: page ${i} (rows ${i * PAGE}-${(i + 1) * PAGE - 1}) failed: ${why}`, { cause: p?.error });
+    }
+  });
+  // The last page full means the catalog is longer than the ceiling and its tail is not linkable.
+  const lastPage = pages[MAX_PAGES - 1].data as unknown[];
+  if (lastPage.length === PAGE) console.warn(`loadItemCatalog: eqemu_items has more than ${MAX_PAGES * PAGE} rows; raise MAX_PAGES`);
   for (const p of pages) {
     const data = (p?.data || []) as { name: string | null; id: number | null }[];
     for (const row of data) {

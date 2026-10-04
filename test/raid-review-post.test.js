@@ -601,6 +601,56 @@ describe('composition', () => {
     expect(thinHist.slowFights).toHaveLength(0);
   });
 
+  it('a median the database already reduced (historyStats) judges a fight exactly as the raw rows do', () => {
+    // collectNightData asks raid_review_history_medians for { npc_id, n, median_sec } because the raw
+    // rows no longer fit in one response. Same comparison, same floors, same "no claim under 4 samples".
+    const slowRows = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })],
+      history: Array.from({ length: 8 }, () => ({ npc_id: 162037, duration_sec: 200 })),
+    }));
+    const slowStats = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    }));
+    expect(slowStats.slowFights).toEqual(slowRows.slowFights);
+    expect(slowStats.slowFights[0]).toMatchObject({ median_sec: 200, pct: 100 });
+    const fastStats = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 100 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    }));
+    expect(fastStats.fastFights[0]).toMatchObject({ median_sec: 200, pct: 50 });
+    // Under four samples → no claim; and the minute-of-real-time floor still applies
+    // (255 s against 200 s is over 25% but not a minute over).
+    expect(raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })], historyStats: [{ npc_id: 162037, n: 3, median_sec: 200 }],
+    })).slowFights).toHaveLength(0);
+    expect(raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 255 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    })).slowFights).toHaveLength(0);
+  });
+
+  it('the median of an even sample is the UPPER middle, in the rows path and the stats path alike', () => {
+    // [100,200,300,400] → sorted[2] = 300, never 250. The SQL (row_number = n/2) is built to match.
+    const rows = [100, 200, 300, 400].map(d => ({ npc_id: 162037, duration_sec: d }));
+    const a = raidReview.summarizeNight(nightData({ encounters: [enc({ duration_sec: 600 })], history: rows }));
+    const b = raidReview.summarizeNight(nightData({ encounters: [enc({ duration_sec: 600 })],
+      historyStats: [{ npc_id: 162037, n: 4, median_sec: 300 }] }));
+    expect(a.slowFights[0].median_sec).toBe(300);
+    expect(b.slowFights).toEqual(a.slowFights);
+  });
+
+  it('the campfire line counts the same from per-type counts (funCounts) as from raw rows', () => {
+    const rows = [...Array(5).fill('drunkard'), ...Array(3).fill('dragon_punch'), 'summon_food']
+      .map(event_type => ({ event_type }));
+    const fromRows = raidReview.summarizeNight(nightData({ funEvents: rows })).fun;
+    const fromCounts = raidReview.summarizeNight(nightData({ funCounts: [
+      { event_type: 'drunkard', n: 5 }, { event_type: 'dragon_punch', n: 3 }, { event_type: 'summon_food', n: 1 },
+    ] })).fun;
+    expect(fromCounts).toEqual(fromRows);
+    expect(fromCounts).toEqual([{ type: 'drunkard', n: 5 }, { type: 'dragon_punch', n: 3 }]);
+    // A bigint count that arrives as a string, or a row with no type, is read safely.
+    expect(raidReview.summarizeNight(nightData({ funCounts: [{ event_type: 'drunkard', n: '7' }, { n: 2 }] })).fun)
+      .toEqual([{ type: 'drunkard', n: 7 }]);
+  });
+
   it('engaged-but-not-confirmed fights are wipes, not kills', () => {
     const wipe = enc({ id: 'e2', ended_at: null });
     const sum = raidReview.summarizeNight(nightData({ encounters: [enc(), wipe] }));

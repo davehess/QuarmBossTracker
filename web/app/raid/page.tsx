@@ -27,6 +27,7 @@ import {
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
 import { groupRaids } from '@/lib/raidGroups';
+import { loadActiveBuffCasts } from '@/lib/fullReads';
 import RaidView, { type RaidRow, type RaidTab } from './RaidView';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -171,12 +172,11 @@ export default async function RaidHubPage() {
       .eq('guild_id', 'wolfpack')
       .eq('aa_index', MGB_AA_INDEX)
       .gte('rank', 1),
-    admin.from('buff_casts')
-      .select('target, spell_name, dur_ticks, cast_at')
-      .eq('guild_id', 'wolfpack')
-      .gte('cast_at', buffCastsSince)
-      .order('cast_at', { ascending: false })
-      .limit(3000),
+    // One row per (target, spell): the newest cast that has not run its duration
+    // out, picked IN SQL. Three hours of buff_casts peaks at 14,900 rows and the
+    // old `.limit(3000)` kept the newest 1,000 (PostgREST's silent cap), which hid
+    // 64 of the 230 active pairs and 11 of 92 raiders at the 2026-09-27 peak.
+    loadActiveBuffCasts(admin, buffCastsSince).then(data => ({ data })),
     // Auto-Raid-Invite registry — set by officers via the Discord /ari
     // command, mirrored by the bot to ari_state. The raid-leader banner
     // shows whether ARI is configured and on whom (the password itself

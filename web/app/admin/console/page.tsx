@@ -22,6 +22,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { loadAgentUploadStats, loadEnabledTriggerPatterns } from '@/lib/adminReads';
 import {
   buildSignals, sortSignals, overallState, driftFromTuning, driftAges,
   inRaidWindow, verNum, type Signal, type SignalState,
@@ -55,9 +56,13 @@ async function loadFacts() {
     sb.from('agent_upload_stats').select('character, last_status_code, last_error, last_uploaded_at')
       .eq('last_ok', false).gte('last_uploaded_at', dayAgo)
       .order('last_uploaded_at', { ascending: false }).limit(50),
-    sb.from('agent_upload_stats').select('character, agent_version').gte('last_uploaded_at', weekAgo).limit(2000),
+    // Paged, not `.limit(2000)` / `.limit(1000)`: both sit above PostgREST's 1,000-row response
+    // cap, which cuts a read silently. 733 stat rows in 7 days (987 in 30) and 484 enabled
+    // triggers are under it today; the fleet and the trigger table only grow.
+    loadAgentUploadStats<{ character: string; agent_version: string | null }>(
+      sb, 'character, agent_version', q => q.gte('last_uploaded_at', weekAgo)),
     sb.from('agent_backfill_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-    sb.from('guild_triggers').select('pattern').eq('enabled', true).limit(1000),
+    loadEnabledTriggerPatterns(sb),
   ]);
 
   // Distinct characters, not rows — agent_upload_stats is one row per
@@ -72,7 +77,7 @@ async function loadFacts() {
     .filter((n): n is number => n != null);
 
   const byVersion = new Map<string, Set<string>>();
-  for (const r of (versions.data ?? []) as { character: string; agent_version: string | null }[]) {
+  for (const r of versions) {
     const key = r.agent_version ?? '(unknown)';
     if (!byVersion.has(key)) byVersion.set(key, new Set());
     byVersion.get(key)!.add(r.character);
@@ -82,7 +87,7 @@ async function loadFacts() {
     .sort((a, b) => (verNum(b.version) ?? -1) - (verNum(a.version) ?? -1));
 
   const errRows = (errors.data ?? []) as { character: string; last_status_code: number | null; last_error: string | null; last_uploaded_at: string }[];
-  const patterns = ((triggers.data ?? []) as { pattern: string | null }[]).map(t => t.pattern ?? '');
+  const patterns = triggers;
 
   return {
     tuning: (tuningRow.data?.tuning as Record<string, unknown>) ?? {},

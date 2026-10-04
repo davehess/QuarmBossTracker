@@ -29,6 +29,7 @@ import {
   bucketEncounters, killStats, attributeLoot,
   type CatalogRow, type GuideEncounter, type DropRow, type AwardRow,
 } from '@/lib/raidGuide';
+import { loadAwardsForItems, loadDropperCounts } from '@/lib/fullReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,18 +112,17 @@ async function load(bossId: string) {
 
   if (drops.length) {
     const ids = [...new Set(drops.map(d => d.item_id))];
-    const [countRes, awardRes] = await Promise.all([
-      sb.from('eqemu_npc_drops').select('item_id, npc_id').in('item_id', ids).limit(5000),
-      sb.from('opendkp_loot').select('item_name, character_name, dkp').in('item_name', [...new Set(drops.map(d => d.item_name))]).limit(3000),
+    // How many DISTINCT npcs drop each item, counted in SQL (item_dropper_counts).
+    // This used to read every (item, npc) row — 24,108 for one boss, 53 of the 132
+    // curated bosses over 1,000 — and PostgREST's silent cap kept 1,000, so items
+    // that are on a dozen tables read as sole-source and carried someone else's
+    // DKP. Awards are PAGED for the same reason (the biggest boss is 602 rows today).
+    const [dropperCounts, awards] = await Promise.all([
+      loadDropperCounts(sb, ids),
+      loadAwardsForItems(sb, [...new Set(drops.map(d => d.item_name))]),
     ]);
-    const counts = new Map<number, Set<number>>();
-    for (const r of ((countRes.data as { item_id: number; npc_id: number }[] | null) ?? [])) {
-      const s = counts.get(r.item_id) || new Set<number>();
-      s.add(r.npc_id);
-      counts.set(r.item_id, s);
-    }
-    base.dropperCounts = new Map([...counts].map(([k, v]) => [k, v.size]));
-    base.awards = ((awardRes.data as AwardRow[] | null) ?? []);
+    base.dropperCounts = dropperCounts;
+    base.awards = awards;
   }
 
   base.spawns = (((spawnRes.data as unknown as { eqemu_spawn2: SpawnRow }[] | null) ?? [])

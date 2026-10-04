@@ -3413,6 +3413,35 @@ list, plus `overlay_tuning`, `ui_snapshots`, `ui_socials_index`,
 authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
 
+### Reading past the 1,000-row cap (2026-10-04, §155)
+PostgREST answers at most 1,000 rows per response, silently. That includes
+`.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.
+A read that can match more takes one of three shapes:
+- **Pages** over a unique ORDER BY: web `selectAll` (`web/lib/selectAll.ts`;
+  it throws on a failed page, so a section that can live without the data
+  catches it) and bot `selectAllPaged` (`utils/supabase.js`; it takes
+  `'a,b'` composite orders and `rpc/<fn>` for STABLE functions).
+- **SQL aggregates** that return a few rows.
+- **One jsonb value**, which is not row-capped.
+
+Loaders, one per read, each with its page named in its header:
+- `web/lib/fullReads.ts`: parses, raid, guide, db.
+- `web/lib/adminReads.ts` and `adminQueueData.ts`: admin.
+- `web/lib/capSafeReads.ts`: /me, tells, character pages.
+- `web/lib/roster.ts` `loadRoster()`.
+
+Guards:
+- **Bot:** `select()` warns on an unpaged 1,000-row answer, and `/health`
+  carries `supabase_row_cap`.
+- **Ratchets:** `test/db-read-discipline.test.js` covers the bot and
+  `test/db-read-discipline-web.test.js` covers web: one-call ranges, unpaged
+  set-returning RPCs, unbounded big reads, and pages on a non-unique key. Its
+  `UNIQUE_KEYS` map comes from `pg_index`. A new paged table goes there.
+- **Fakes that enforce the cap:** `test/_fake-postgrest.js` (bot `select`
+  stub), `_fake-fetch-postgrest.js` (fetch), `_cap_fake_supabase.js`, and
+  `_fake-supabase-js.js` / `_postgrest-fake.js` / `_fake-supabase-me.js`
+  (web client).
+
 ---
 
 ## Recent additions — 2026-07 sprint (quick index)

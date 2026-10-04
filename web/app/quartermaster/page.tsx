@@ -25,6 +25,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
@@ -72,22 +73,24 @@ type Loaded = {
 async function load(userId: string, officer: boolean): Promise<Loaded> {
   const sb = supabaseAdmin();
 
-  const { data: charData } = await sb
-    .from('characters')
-    .select('name, class, rank, main_name, main_name_override, exclude_from_stats, exclude_inventory')
-    .eq('guild_id', 'wolfpack');
-  const chars = (charData ?? []) as CharRow[];
+  // The shared roster read (web/lib/roster.ts): paged, and the same read ownedCharacters() below uses.
+  const chars: CharRow[] = await loadRoster();
   const charByLower = new Map(chars.map(c => [c.name.toLowerCase(), c]));
 
   // ── Board 1 — kit coverage (gear rows for exactly the catalog ids) ──────────
-  const { data: gearData } = await sb
+  // Paged: a plain read stops at the API's 1,000 rows however high the .limit is set (415 today, but it is
+  // every kit item on every character). (character, loc, slot) is the rest of the primary key once the
+  // guild is fixed, so the pages never skip or repeat a row.
+  const gearData = await selectAll<{ character: string; item_id: number }>((from, to) => sb
     .from('character_gear')
     .select('character, item_id')
+    .eq('guild_id', 'wolfpack')
     .in('item_id', KIT_ITEM_IDS)
     .in('loc', ['equipped', 'bag'])
-    .limit(20000);
+    .order('character').order('loc').order('slot')
+    .range(from, to));
   const kitRows: KitOwnerRow[] = [];
-  for (const g of (gearData ?? []) as { character: string; item_id: number }[]) {
+  for (const g of gearData) {
     const c = charByLower.get(g.character.toLowerCase());
     if (!c || excluded(c)) continue;
     kitRows.push({ itemId: g.item_id, character: c.name, main: mainOf(c), className: c.class });
@@ -152,7 +155,10 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
         .select('character_name, item_id, item_name, quantity')
         .eq('guild_id', 'wolfpack')
         .in('character_name', invNames)
-        .order('character_name').order('item_name').order('item_id')
+        // `id` ends the order: (character_name, item_name, item_id) repeats when a character holds
+        // one item in two slots, and tied rows fall either side of a page boundary. Measured
+        // 2026-10-04: 12 of 49,418 rows never came back with the order stopping at item_id.
+        .order('character_name').order('item_name').order('item_id').order('id')
         .range(from, to));
     for (const r of invData) {
       const k = r.character_name.toLowerCase();

@@ -22,6 +22,8 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { loadRoster } from '@/lib/roster';
+import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Roster — Wolf Pack' };
@@ -65,26 +67,25 @@ export default async function RosterPage(
 
   const admin = supabaseAdmin();
   const since60 = new Date(Date.now() - 60 * 86400_000).toISOString();
-  const [{ data: charsRaw }, { data: raidsRaw }] = await Promise.all([
-    admin.from('characters')
-      .select('name, class, main_name, active, rank')
-      .eq('guild_id', 'wolfpack'),
+  const [chars, { data: raidsRaw }] = await Promise.all([
+    loadRoster() as Promise<CharRow[]>,   // the shared, paged roster read (web/lib/roster.ts)
     admin.from('opendkp_raids')
       .select('raid_id, ts, name')
       .gte('ts', since60),
   ]);
-  const chars = (charsRaw ?? []) as CharRow[];
   const allRaids = (raidsRaw ?? []) as Raid[];
   const altRaids = allRaids.filter(r => ALT_NIGHT_RX.test(r.name ?? ''));
   const raids = altView ? altRaids : allRaids;
 
   let ticks: Tick[] = [];
   if (raids.length > 0) {
-    const { data } = await admin.from('opendkp_ticks')
+    // Paged: one `.range(0, 99999)` is still capped at the API's 1,000 rows. tick_id is the primary key.
+    const data = await selectAll<Tick>((from, to) => admin.from('opendkp_ticks')
       .select('raid_id, attendees')
       .in('raid_id', raids.map(r => r.raid_id))
-      .range(0, 99999);
-    ticks = ((data ?? []) as Tick[]).filter(t => Array.isArray(t.attendees) && t.attendees.length > 0);
+      .order('tick_id')
+      .range(from, to));
+    ticks = data.filter(t => Array.isArray(t.attendees) && t.attendees.length > 0);
   }
   const totalTicks = ticks.length;
 

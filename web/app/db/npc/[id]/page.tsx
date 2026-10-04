@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { loadSpawn2 } from '@/lib/fullReads';
 import { MOB_CLASS_NAMES, decodeMobSpecials, deUnderscore } from '@/lib/npcDecode';
 import { ERA_LABEL } from '@/lib/itemDecode';
 
@@ -72,11 +73,11 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
   }
   let spawns: SpawnPoint[] = [];
   if (chanceByGroup.size) {
-    const { data: pts } = await sb.from('eqemu_spawn2')
-      .select('spawngroup_id, zone_short, x, y, z, respawntime')
-      .in('spawngroup_id', [...chanceByGroup.keys()]).limit(300);
+    // PAGED, not `.limit(300)`: four NPCs have more spawn points than that (max 319),
+    // and the points that fell off the end were the ones listed last.
+    const pts = await loadSpawn2<SpawnPoint & { spawngroup_id: number }>(sb, [...chanceByGroup.keys()]);
     const seen = new Set<string>();
-    for (const p of ((pts ?? []) as (SpawnPoint & { spawngroup_id: number })[])) {
+    for (const p of pts) {
       const key = `${p.zone_short}|${Math.round(p.x)}|${Math.round(p.y)}|${Math.round(p.z)}`;
       if (seen.has(key)) continue;
       seen.add(key);

@@ -18,6 +18,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
+import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
 
 export const dynamic = 'force-dynamic';
 
@@ -136,42 +137,20 @@ export default async function AdminTriggersPage({
   await requireOfficer();
   const p = await searchParams;
   const admin = supabaseAdmin();
-  let q: any = admin
-    .from('guild_triggers')
-    .select('id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name')
-    .order('category')
-    .order('name');
-  if (p.category) q = q.eq('category', p.category);
-  const { data: rows } = await q;
-  const triggers = (rows ?? []) as TriggerRow[];
+  // Paged (512 triggers today; a plain read stops at 1,000 without saying so).
+  const triggers = await loadGuildTriggers<TriggerRow>(admin,
+    'id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name',
+    p.category);
 
   // ── Trigger timing feedback aggregate (the guild lead, 2026-06-26 — v1.1.3).
   // Last 30 days of votes (« Earlier / ✓ Good! / » Too early) from Mimic's
   // trigger overlay. Group by trigger_name (denormalised at write time so we
   // don't need to join), compute the dominant direction + a confidence so the
   // table can render a clear recommendation chip. Empty-state covered.
+  // Tallied in Postgres: 30 days is ~48k rows, and PostgREST returns at most 1,000 rows per response,
+  // silently, so the old read tallied the newest 1,000 as the whole month.
   const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const { data: fbRows } = await admin
-    .from('trigger_timing_feedback')
-    .select('trigger_id, trigger_name, direction, voted_at')
-    .gte('voted_at', since30)
-    .order('voted_at', { ascending: false })
-    .limit(5000);
-  type FbRow = { trigger_id: string | null; trigger_name: string; direction: 'earlier' | 'good' | 'too_early'; voted_at: string };
-  const fb = (fbRows ?? []) as FbRow[];
-  type FbAgg = { name: string; total: number; earlier: number; good: number; tooEarly: number; lastVote: string | null; triggerId: string | null };
-  const fbAggMap = new Map<string, FbAgg>();
-  for (const r of fb) {
-    const k = (r.trigger_name || '(unknown)').trim();
-    let a = fbAggMap.get(k);
-    if (!a) { a = { name: k, total: 0, earlier: 0, good: 0, tooEarly: 0, lastVote: null, triggerId: r.trigger_id || null }; fbAggMap.set(k, a); }
-    a.total++;
-    if (r.direction === 'earlier')    a.earlier++;
-    else if (r.direction === 'good')  a.good++;
-    else if (r.direction === 'too_early') a.tooEarly++;
-    if (!a.lastVote || r.voted_at > a.lastVote) a.lastVote = r.voted_at;
-    if (!a.triggerId && r.trigger_id) a.triggerId = r.trigger_id;
-  }
+  const { aggs: fbAll, total: fbTotal } = foldFeedback(await loadFeedbackRollup(admin, since30));
   // Recommendation: dominant direction with a small confidence threshold so a
   // single drive-by vote doesn't flip a trigger to 'too early'. ≥3 votes AND
   // ≥60% dominance flag the recommendation; everything else stays 'mixed'.
@@ -184,8 +163,7 @@ export default async function AdminTriggersPage({
     if (max === a.earlier)  return { label: '« fire earlier', cls: 'text-orange  border-orange/50 bg-orange/10',  help: 'consensus says the actual event happens BEFORE the trigger — push the trigger earlier.' };
     return { label: '» delay', cls: 'text-red-400 border-red-400/50 bg-red-400/10', help: 'consensus says the trigger fires BEFORE the actual event — delay the trigger.' };
   }
-  const fbAggs = [...fbAggMap.values()].sort((a, b) => b.total - a.total).slice(0, 50);
-  const fbTotal = fb.length;
+  const fbAggs = fbAll.slice(0, 50);
 
   const editTarget = p.edit ? triggers.find(t => t.id === p.edit) : null;
   const overlayDefault = editTarget?.actions?.find?.((a: any) => a?.type === 'text_overlay') || {};
@@ -227,7 +205,7 @@ export default async function AdminTriggersPage({
         <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
           <h3 className="text-lg text-purple">🗳 Trigger timing feedback</h3>
           <span className="text-xs text-dim">
-            last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAggMap.size.toLocaleString()} trigger{fbAggMap.size === 1 ? '' : 's'}
+            last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAll.length.toLocaleString()} trigger{fbAll.length === 1 ? '' : 's'}
           </span>
         </div>
         <p className="text-xs text-dim leading-5 mb-3">

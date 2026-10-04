@@ -67,6 +67,21 @@ async function sb(pathname, opts = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// path → sha of every script already mirrored (5,719 rows, so six pages: PostgREST
+// answers at most 1,000 rows however large a limit asks for). Walked in `path`
+// order — the primary key. The walk had no order, and an unordered offset walk
+// can skip a row at a page boundary and repeat another. `get` is `sb`.
+async function fetchKnownShas(get) {
+  const known = new Map();
+  for (let offset = 0; ; offset += 1000) {
+    const page = await get(`/eqemu_quest_scripts?select=path,sha&order=path.asc&limit=1000&offset=${offset}`);
+    if (!page || !page.length) break;
+    for (const r of page) known.set(r.path, r.sha);
+    if (page.length < 1000) break;
+  }
+  return known;
+}
+
 // Git's blob sha is sha1("blob <len>\0" + contents) — the same value the GitHub
 // API reports per file. Computing it locally lets us skip unchanged files
 // without a second API round-trip per file (there are ~1500 of them).
@@ -121,16 +136,8 @@ async function main() {
   const root = path.join(tmp, roots[0]);
 
   // Existing shas, so an unchanged week is a no-op instead of 1500 upserts.
-  const known = new Map();
-  if (!FORCE) {
-    for (let offset = 0; ; offset += 1000) {
-      const page = await sb(`/eqemu_quest_scripts?select=path,sha&limit=1000&offset=${offset}`);
-      if (!page || !page.length) break;
-      for (const r of page) known.set(r.path, r.sha);
-      if (page.length < 1000) break;
-    }
-    console.log(`  ${known.size} already mirrored`);
-  }
+  const known = FORCE ? new Map() : await fetchKnownShas(sb);
+  if (!FORCE) console.log(`  ${known.size} already mirrored`);
 
   // Valid zone short names, so a stray top-level directory (docs, tooling)
   // never lands as a phantom "zone".
@@ -214,7 +221,7 @@ async function main() {
 
 // Pure helpers exported for tests; the sync only runs as a CLI, so requiring
 // this file from a test never fires a network fetch or touches Supabase.
-module.exports = { classify, gitBlobSha, MAX_FILE_BYTES };
+module.exports = { classify, gitBlobSha, fetchKnownShas, MAX_FILE_BYTES };
 if (require.main === module) {
   main().catch(err => { console.error('FATAL:', err); process.exit(1); });
 }

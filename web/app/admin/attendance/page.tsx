@@ -30,6 +30,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
+import { loadRoster } from '@/lib/roster';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 
@@ -180,11 +181,8 @@ async function loadData() {
   const since60 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [{ data: chars }, { data: raids90 }] = await Promise.all([
-    admin
-      .from('characters')
-      .select('name, class, main_name, active, rank')
-      .eq('guild_id', 'wolfpack'),
+  const [chars, { data: raids90 }] = await Promise.all([
+    loadRoster() as Promise<CharRow[]>,   // the shared, paged roster read (web/lib/roster.ts)
     admin
       .from('opendkp_raids')
       .select('raid_id, ts')
@@ -193,7 +191,7 @@ async function loadData() {
   ]);
 
   const raids = (raids90 ?? []) as Raid[];
-  if (raids.length === 0) return { chars: (chars ?? []) as CharRow[], raids: [], ticks: [], since30, since60, since90 };
+  if (raids.length === 0) return { chars, raids: [], ticks: [], since30, since60, since90 };
 
   const raidIds = raids.map(r => r.raid_id);
   // PostgREST IN() takes paginated chunks; 374 ids is small enough to fit.
@@ -221,7 +219,7 @@ async function loadData() {
   }
 
   return {
-    chars: (chars ?? []) as CharRow[],
+    chars,
     raids,
     raids365: (raids365 ?? []) as Raid[],
     ticks: (ticks ?? []) as Tick[],

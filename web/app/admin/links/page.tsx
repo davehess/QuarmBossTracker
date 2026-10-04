@@ -28,6 +28,7 @@ import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
 import { authorizeMimicForMember } from './mimic-link-actions';
 import { createSiteAccessInvite } from './site-access-actions';
+import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -494,7 +495,7 @@ export default async function AdminLinksPage({
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }, { data: registerReqs }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, uploads, { data: whoRows }, { data: registerReqs }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
@@ -512,12 +513,14 @@ export default async function AdminLinksPage({
       .eq('guild_id', 'wolfpack')
       .eq('status', 'pending')
       .order('created_at', { ascending: true }),
-    admin
-      .from('agent_upload_stats')
-      .select('character, uploaded_by_discord_id, last_uploaded_at')
-      .not('uploaded_by_discord_id', 'is', null)
-      .not('character', 'is', null)
-      .limit(3000),
+    // Every uploader row, paged: the old `.limit(3000)` was cut at PostgREST's 1,000-row
+    // response cap, so on 1,721 stat rows (1,682 with an uploader) about a fifth of the
+    // characters never reached the same-uploader and unregistered lists.
+    loadAgentUploadStats<{ character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }>(
+      admin,
+      'character, uploaded_by_discord_id, last_uploaded_at',
+      q => q.not('uploaded_by_discord_id', 'is', null).not('character', 'is', null),
+    ),
     admin
       .from('who_observations')
       .select('character, level, class, observed_at')
@@ -713,24 +716,21 @@ export default async function AdminLinksPage({
   }
 
   // Targeted /who level fill — the recency-windowed whoRows above misses
-  // characters last /who'd outside the most-recent 3000 observations, which
-  // is exactly the long-tail alt case (rarely-played alts showed "?"). For
-  // every unregistered name still missing a level, look it up directly by
+  // characters last /who'd outside its window (the newest 1,000 observations:
+  // that query's `.limit(3000)` is cut at PostgREST's 1,000-row response cap),
+  // which is exactly the long-tail alt case (rarely-played alts showed "?").
+  // For every unregistered name still missing a level, look it up directly by
   // name across ALL of who_observations (bounded to the candidate set) and
   // keep the highest level + most recent class seen — including the owner's
   // own /who when their Mimic captured it (the guild lead, 2026-06-22).
+  // Paged and chunked by name (loadWhoForNames): its old `.limit(5000)` was the
+  // same silent cut — 635 rows today, so it held, but the alt list only grows.
   {
     const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
     if (needLevel.length > 0) {
-      const { data: targetedWho } = await admin
-        .from('who_observations')
-        .select('character, level, class, observed_at')
-        .eq('guild_id', 'wolfpack')
-        .in('character', needLevel)
-        .order('observed_at', { ascending: false })
-        .limit(5000);
+      const targetedWho = await loadWhoForNames(admin, 'wolfpack', needLevel);
       const best = new Map<string, { level: number | null; cls: string | null }>();
-      for (const w of (targetedWho ?? []) as { character: string; level: number | null; class: string | null }[]) {
+      for (const w of targetedWho) {
         const k = (w.character || '').toLowerCase();
         const cur = best.get(k);
         const lvl = (w.level != null && (cur?.level == null || w.level > cur.level)) ? w.level : (cur?.level ?? null);

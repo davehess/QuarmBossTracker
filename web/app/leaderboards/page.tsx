@@ -16,6 +16,7 @@ import { fmtDmg, fmtDuration, fmtDkp, cleanBossName } from '@/lib/format';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { curatedNpcIds } from '@/lib/bossFilter';
+import { loadLootSpend } from '@/lib/fullReads';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -98,27 +99,12 @@ async function load(w: ResolvedWindow, legacy: boolean) {
     .limit(20);
   const attendance = (attendanceRaw as AttendanceRow[]) ?? [];
 
-  // 3. Loot spend: aggregate from opendkp_loot_recent by character. Postgres
-  // does the heavy lifting via a single fetch + JS sum since the view doesn't
-  // expose a per-character rollup natively. NOTE: the view itself is a
+  // 3. Loot spend: summed per character IN SQL (leaderboard_loot_spend over
+  // opendkp_loot_recent), top 20. The old fetch-and-sum read 1,000 of the
+  // view's 9,251 lifetime rows — PostgREST's silent cap — so the board ranked
+  // the first 1,000 awards, not the guild's spend. NOTE: the view itself is a
   // "recent" sync window — long lookbacks under-count (caveat shown in UI).
-  let lootQuery = sb
-    .from('opendkp_loot_recent')
-    .select('character_name, dkp');
-  if (since) lootQuery = lootQuery.gte('raid_date', since.slice(0, 10));
-  const { data: lootRaw } = await lootQuery;
-  const lootByChar = new Map<string, { total_dkp: number; items: number }>();
-  for (const r of (lootRaw ?? []) as { character_name: string; dkp: number }[]) {
-    const k = r.character_name;
-    const existing = lootByChar.get(k) || { total_dkp: 0, items: 0 };
-    existing.total_dkp += r.dkp || 0;
-    existing.items     += 1;
-    lootByChar.set(k, existing);
-  }
-  const lootSpend: LootSpend[] = [...lootByChar.entries()]
-    .map(([character_name, v]) => ({ character_name, total_dkp: v.total_dkp, items: v.items }))
-    .sort((a, b) => b.total_dkp - a.total_dkp)
-    .slice(0, 20);
+  const lootSpend: LootSpend[] = await loadLootSpend(sb, since ? since.slice(0, 10) : null, 20);
 
   return { topDamage, attendance, lootSpend };
 }

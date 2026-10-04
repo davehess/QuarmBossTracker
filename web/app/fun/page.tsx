@@ -380,7 +380,7 @@ SECTIONS.push(async (sb, counters) => {
       (from, to) => sb.from('fun_events')
         .select('target, event_ts')
         .eq('event_type', 'dragon_punch')
-        .order('event_ts', { ascending: true })
+        .order('event_ts', { ascending: true }).order('id', { ascending: true })
         .range(from, to));
     const seen = new Set<string>();
     for (const r of dpRows) {
@@ -413,7 +413,7 @@ SECTIONS.push(async (sb, counters) => {
   // number grows as more bards upload. Cast count is parked until/if a
   // bystander-side "begins singing Dirge of …" detector ships.
   try {
-    const [totals, names] = await Promise.all([getDirgeTotals(), loadNameMap(sb)]);
+    const [totals, names] = await Promise.all([getDirgeTotals(), loadNameMap()]);
     let dirgeDamage = 0;
     let dirgeHits = 0;
     const byBard = new Map<string, number>();
@@ -469,7 +469,7 @@ SECTIONS.push(async (sb, counters) => {
       sb.from('fun_events')
         .select('caster', { count: 'exact' })
         .eq('event_type', 'lord_of_ire_killed'),
-      loadNameMap(sb),
+      loadNameMap(),
     ]);
     // Fold alts into their main so the card's top-3 matches
     // /fun/lord-of-ire's "By main" list — the outside was
@@ -550,7 +550,7 @@ SECTIONS.push(async (sb, counters) => {
       (from, to) => sb.from('fun_events')
         .select('caster')
         .eq('event_type', 'drunkard')
-        .order('event_ts', { ascending: true })
+        .order('event_ts', { ascending: true }).order('id', { ascending: true })
         .range(from, to));
     const tally = new Map<string, number>();
     for (const r of drRows) {
@@ -646,19 +646,23 @@ SECTIONS.push(async (sb, counters) => {
   // isn't stuck at zero before the necro installs.
   const TWITCH_MID = 100;  // mid-tier (Covetous) mana for the point estimate
   try {
-    const [{ data: twRows }, { count: recvCount }] = await Promise.all([
-      sb.from('fun_events').select('caster, reagent_qty').eq('event_type', 'mana_twitch'),
+    // Summed in SQL, one row per caster (fun_caster_tally): a plain select of the events returns
+    // at most 1,000 rows, and mana_twitch is 686 and growing ~8 a day. A failed read throws (selectAll)
+    // and leaves the card out via the catch below; reading it as "no twitches" would be a wrong zero.
+    const [twData, { count: recvCount }] = await Promise.all([
+      selectAll<{ caster: string; events: number; qty: number }>((from, to) =>
+        sb.rpc('fun_caster_tally', { p_event_type: 'mana_twitch' }).range(from, to)),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mana_twitch_received'),
     ]);
-    const rows = (twRows ?? []) as { caster: string | null; reagent_qty: number | null }[];
     const received = recvCount ?? 0;
     let totalMana = 0;
+    let twitches = 0;
     const byCaster = new Map<string, number>();
-    for (const r of rows) {
-      const mana = Number(r.reagent_qty) || 0;
+    for (const r of twData) {
+      const mana = Number(r.qty) || 0;
       totalMana += mana;
-      const k = r.caster || 'unknown';
-      byCaster.set(k, (byCaster.get(k) ?? 0) + mana);
+      twitches += Number(r.events) || 0;
+      byCaster.set(r.caster, (byCaster.get(r.caster) ?? 0) + mana);
     }
     const top = [...byCaster.entries()].sort((a, b) => b[1] - a[1])[0];
     if (totalMana > 0) {
@@ -666,7 +670,7 @@ SECTIONS.push(async (sb, counters) => {
         label: 'Mana donated to casters',
         emoji: '⚡',
         value: totalMana,
-        sub: `across ${rows.length.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}${received > 0 ? ` · +${received.toLocaleString()} more seen from the receiving end` : ''}`,
+        sub: `across ${twitches.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}${received > 0 ? ` · +${received.toLocaleString()} more seen from the receiving end` : ''}`,
       });
     } else if (received > 0) {
       counters.push({
@@ -694,17 +698,21 @@ SECTIONS.push(async (sb, counters) => {
   // when he's not on the agent, but it's inflated by group size, so we never
   // present it AS the cast count — just as coverage / a "feeding the group" note.
   try {
-    const [{ data: mwRows, count: mwTotal }, { count: recourseCount }] = await Promise.all([
-      sb.from('fun_events').select('caster', { count: 'exact' }).eq('event_type', 'mind_wrack_cast'),
+    // The per-caster tally is counted in SQL (fun_caster_tally), not in JS over a plain select, which
+    // stops at 1,000 rows (mind_wrack_cast is 615 and growing). A failed read throws and leaves the card out.
+    const [mwData, { count: recourseCount }] = await Promise.all([
+      selectAll<{ caster: string; events: number }>((from, to) =>
+        sb.rpc('fun_caster_tally', { p_event_type: 'mind_wrack_cast' }).range(from, to)),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mind_wrack_recourse'),
     ]);
     const tally = new Map<string, number>();
-    for (const r of (mwRows ?? []) as { caster: string | null }[]) {
-      const k = r.caster || 'unknown';
-      tally.set(k, (tally.get(k) ?? 0) + 1);
+    let total = 0;
+    for (const r of mwData) {
+      const n = Number(r.events) || 0;
+      tally.set(r.caster, n);
+      total += n;
     }
     const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
-    const total = mwTotal ?? 0;
     const recourse = recourseCount ?? 0;
     if (total > 0) {
       counters.push({

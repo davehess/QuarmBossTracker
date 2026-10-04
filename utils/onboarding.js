@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.198': [
+    '**Busy nights no longer get cut short.** The buff queue, Extended Target\'s debuffs, the raid review\'s slows and callouts, Mimic\'s damage panel, your DKP balance and bid history, and the loot and roll windows all read the whole night now. Before, each one stopped at the first 1,000 rows, so an earlier Aegolism could show as missing.',
+  ],
   '3.1.197': [
     '**Mimic\'s UI backups list only shows the character you opened it for.** It used to list every character on your account under each one, with no name on the rows, so a Restore could pick another character\'s backup.',
   ],

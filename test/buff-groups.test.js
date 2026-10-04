@@ -401,6 +401,9 @@ async function callHandler({ identity = { discord_id: 'u1' }, query = 'class=Cle
   const fakeSupabase = {
     isEnabled: () => true,
     select: async (table) => tables[table] || [],
+    // the roster and the per-(target, spell) buff function are read page by page (PostgREST's 1,000-row
+    // cap); the fixture answers them in one page, the buff function from the `buff_casts` rows
+    selectAllPaged: async (table) => (table === 'rpc/latest_buff_landings' ? tables.buff_casts : tables[table]) || [],
   };
   const modules = {
     './utils/supabase': fakeSupabase,

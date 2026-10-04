@@ -106,17 +106,16 @@ describe('selectAll — draining past the silent cap', () => {
     expect(calls).toBe(4);
   });
 
-  it('a null data payload ends the drain without throwing', async () => {
-    // out.push(...null) would throw; the guard has to stay even though the
-    // empty-array case is covered by the short-page stop.
+  it('a null data payload throws instead of ending the drain', async () => {
+    // out.push(...null) would throw an unhelpful TypeError, and ending quietly
+    // would hand back a short list as if it were the whole one.
     let n = 0;
-    const rows = await selectAll(() => {
+    await expect(selectAll(() => {
       n++;
       return Promise.resolve(n === 1
         ? { data: Array.from({ length: 1000 }, (_, i) => ({ id: i })), error: null }
         : { data: null, error: null });
-    });
-    expect(rows).toHaveLength(1000);
+    })).rejects.toThrow(/rows 1000-1999 failed after 1000 loaded/);
   });
 
   it('an empty table is one request and an empty array', async () => {
@@ -125,23 +124,44 @@ describe('selectAll — draining past the silent cap', () => {
     expect(s.calls).toHaveLength(1);
   });
 
-  it('an error mid-drain returns the partial set instead of throwing', async () => {
+  it('an error mid-drain throws, naming the page and the cause, instead of returning the partial set', async () => {
+    // With the API's 8 s statement_timeout a slow page is a real path. The old
+    // behaviour returned the first 1,000 rows and the caller drew them as the
+    // whole list.
     let n = 0;
-    const rows = await selectAll(() => {
+    const boom = { message: 'canceling statement due to statement timeout', code: '57014' };
+    const failure = selectAll(() => {
       n++;
       return Promise.resolve(n === 1
         ? { data: Array.from({ length: 1000 }, (_, i) => ({ id: i })), error: null }
-        : { data: null, error: new Error('boom') });
+        : { data: null, error: boom });
     });
-    expect(rows).toHaveLength(1000);
+    await expect(failure).rejects.toThrow(/rows 1000-1999 failed after 1000 loaded: canceling statement due to statement timeout/);
+    await expect(failure).rejects.toMatchObject({ cause: boom });
+    expect(n, 'a failed page must not be retried or skipped past').toBe(2);
   });
 
-  it('hardCap bounds a runaway and reports the truncation', async () => {
+  it('an error on the first page throws too (a read that failed is not an empty table)', async () => {
+    await expect(selectAll(() => Promise.resolve({ data: null, error: new Error('boom') })))
+      .rejects.toThrow(/rows 0-999 failed after 0 loaded: boom/);
+    // …and an error value that is not an Error object still reads as a message.
+    await expect(selectAll(() => Promise.resolve({ data: null, error: 'gateway down' })))
+      .rejects.toThrow(/gateway down/);
+  });
+
+  it('hardCap bounds a runaway, warns, and reports the truncation', async () => {
     const s = serverWithCap(100_000);
     let reported = null;
-    const rows = await selectAll(s.build, { hardCap: 3000, onTruncate: (n) => { reported = n; } });
+    const warned = [];
+    const warn = console.warn;
+    console.warn = (...a) => warned.push(a.join(' '));
+    let rows;
+    try {
+      rows = await selectAll(s.build, { hardCap: 3000, onTruncate: (n) => { reported = n; } });
+    } finally { console.warn = warn; }
     expect(rows.length).toBeLessThanOrEqual(3000);
     expect(reported, 'a truncated set must be announceable, not silent').toBe(3000);
+    expect(warned.join('\n'), 'and logged even when the caller passed no onTruncate').toMatch(/3000-row hardCap/);
   });
 });
 
@@ -175,7 +195,8 @@ describe('call sites that overflow today', () => {
     // from 61% and 37% of the data respectively.
     const s = web('app/admin/readiness/page.tsx');
     expect(s).toMatch(/selectAll<GearRow>/);
-    expect(s).toMatch(/character_spellbook[\s\S]{0,200}?\.range\(from, to\)/);
+    // (the order now ends on spell_id, the rest of the spellbook's unique key, so the chain is a little longer)
+    expect(s).toMatch(/character_spellbook[\s\S]{0,260}?\.range\(from, to\)/);
     expect(s).not.toMatch(/character_gear[\s\S]{0,300}?\.limit\(20000\)/);
     expect(s).not.toMatch(/character_spellbook[\s\S]{0,300}?\.limit\(50000\)/);
   });

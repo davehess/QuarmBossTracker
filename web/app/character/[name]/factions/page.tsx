@@ -25,6 +25,10 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { groupFactions } from '@/lib/factionGroups';
 import ConsTable from './ConsTable';
 import { selectAll } from '@/lib/selectAll';
+import {
+  fetchFactionCons, fetchNpcTypesByName, fetchFactionListFull, fetchFactionMods,
+  type FactionConRow as ConRow,
+} from '@/lib/capSafeReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +49,6 @@ type StandingRow = {
   last_hit_at: string;
   last_direction: number | null;
 };
-type ConRow = { mob: string; standing: string; rank: number | null; event_ts: string };
 // Con row enriched with the mob's faction + PQDI link targets (resolved from
 // the eqemu faction mirror).
 export type ConEnriched = {
@@ -80,17 +83,16 @@ const STANDING_COLORS: Record<string, string> = {
 
 async function load(decoded: string) {
   const sb = supabaseAdmin();
-  const [standingRes, consRes, charRes] = await Promise.all([
+  const [standingRes, cons, charRes] = await Promise.all([
     sb.from('faction_standing')
       .select('faction, better_count, worse_count, better_total, worse_total, better_priced, worse_priced, capped_max_at, capped_min_at, first_hit_at, last_hit_at, last_direction')
       .ilike('character', decoded)
       .order('last_hit_at', { ascending: false })
       .limit(500),
-    sb.from('faction_cons')
-      .select('mob, standing, rank, event_ts')
-      .ilike('character', decoded)
-      .order('event_ts', { ascending: false })
-      .limit(500),
+    // Every latest-con row, paged: 16 characters have more than the old
+    // `.limit(500)` (max 3,234), so their cons table and faction groupings were
+    // built from the newest 500 only.
+    fetchFactionCons(sb, decoded),
     // race/class/deity_id power the per-character faction baseline (see
     // computeBaseline below). characters.deity_id joins eqemu_faction_list_mod
     // via mod_name='d<deity_id>'; race + class likewise via r<N> / c<N>.
@@ -100,7 +102,6 @@ async function load(decoded: string) {
       .limit(1),
   ]);
   const char = (charRes.data && charRes.data[0]) || null;
-  const cons = (consRes.data ?? []) as ConRow[];
 
   // Resolve each con'd mob → its faction (name + PQDI faction id) via the
   // eqemu mirror chain: npc_types(name → id, npc_faction_id) → npc_faction
@@ -120,18 +121,12 @@ async function load(decoded: string) {
     const queryForms = [...new Set(conNames.map(toUnder))];
     // underscore-name(lower) → { id, npcFactionId }; keep the lowest id per name.
     const npcByName = new Map<string, { id: number; npcFactionId: number | null }>();
-    const CHUNK = 80;
-    for (let i = 0; i < queryForms.length; i += CHUNK) {
-      const slice = queryForms.slice(i, i + CHUNK);
-      const { data } = await sb
-        .from('eqemu_npc_types')
-        .select('id, name, npc_faction_id')
-        .in('name', slice);
-      for (const n of ((data ?? []) as { id: number; name: string; npc_faction_id: number | null }[])) {
-        const k = (n.name || '').toLowerCase();
-        const cur = npcByName.get(k);
-        if (!cur || n.id < cur.id) npcByName.set(k, { id: n.id, npcFactionId: n.npc_faction_id ?? null });
-      }
+    // Chunks of 80 names, each drained past the cap (a mob name repeats across
+    // zones: one chunk has returned 854 rows) — see fetchNpcTypesByName.
+    for (const n of await fetchNpcTypesByName(sb, queryForms)) {
+      const k = (n.name || '').toLowerCase();
+      const cur = npcByName.get(k);
+      if (!cur || n.id < cur.id) npcByName.set(k, { id: n.id, npcFactionId: n.npc_faction_id ?? null });
     }
     // npc_faction → primaryfaction, then faction_list → name.
     const npcFactionIds = [...new Set([...npcByName.values()].map(v => v.npcFactionId).filter((x): x is number => x != null && x > 0))];
@@ -211,21 +206,19 @@ async function load(decoded: string) {
 
   if (modCodes.length > 0) {
     // Pull mod rows applying to this character and the matching faction_list
-    // entries in parallel. Bounded — typical faction count is a few hundred.
-    const [{ data: modRows }, { data: factionRows }] = await Promise.all([
-      sb.from('eqemu_faction_list_mod')
-        .select('faction_id, mod, mod_name')
-        .in('mod_name', modCodes)
-        .limit(20000),
-      sb.from('eqemu_faction_list_full')
-        .select('id, name, base')
-        .limit(5000),
+    // entries in parallel. ⚠ Both drained past the cap: eqemu_faction_list_full
+    // holds 2,123 rows and a `.limit(5000)` returned 1,000 of them, so 52% of
+    // factions were seeded at base 0 / no name; the mod set is 669 rows for the
+    // widest character, close enough that it is paged too.
+    const [modRows, factionRows] = await Promise.all([
+      fetchFactionMods(sb, modCodes),
+      fetchFactionListFull(sb),
     ]);
-    for (const f of ((factionRows ?? []) as { id: number; name: string | null; base: number | null }[])) {
+    for (const f of factionRows) {
       const b = f.base ?? 0;
       baseline.set(f.id, { name: f.name, base: b, total: b, mods: [] });
     }
-    for (const m of ((modRows ?? []) as { faction_id: number; mod: number | null; mod_name: string }[])) {
+    for (const m of modRows) {
       const cur = baseline.get(m.faction_id);
       const delta = m.mod ?? 0;
       if (cur) {
