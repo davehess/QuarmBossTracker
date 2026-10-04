@@ -103,6 +103,10 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ HUD DS badge counts worn-gear shields (agent 3.7.80 on beta, bot 3.1.202, 2026-10-04).** The guild lead:
+  "Missing my additional DS from my neck slot" (Talisman of Vah Kerrath, +8 on a 10-point shield, hits for 18).
+  Gear adds only on top of a shield spell, as the server does. Two items carry one today. Waits on the guild lead
+  checking the badge on the beta. §159.
 - **⏳ Buff blocks tab for Quarm's `#blockbuff` (agent 3.7.79 on beta, 2026-10-04).**
   - Per-character sets, with bard-song starter sets ("Pulling", "No bard run speed") and a damage-shield
     `#blockbuffif` pair.

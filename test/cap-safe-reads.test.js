@@ -644,6 +644,25 @@ describe('8c · catalogs read whole, and a failed page is never cached as the ca
       expect(body.entries.every(e => e.clickeffect > 0)).toBe(true);
     });
 
+    it('carries the worn damage-shield items as their own list, not as clicky entries', async () => {
+      const worn = [{ item_id: 8364, item_name: 'Talisman of Vah Kerrath', ds: 8 }, { item_id: 15805, item_name: 'Shroud of Eternity', ds: 5 }];
+      fake = installFakePostgrest({ tables: { eqemu_items: items(), item_worn_damage_shield: worn } });
+      const body = JSON.parse((await get(load().handler)).body);
+      expect(body.version).toBe(2);
+      expect(body.worn_ds).toEqual([{ id: 8364, name: 'Talisman of Vah Kerrath', ds: 8 }, { id: 15805, name: 'Shroud of Eternity', ds: 5 }]);
+      expect(body.entries.some(e => e.name === 'Talisman of Vah Kerrath')).toBe(false);
+    });
+
+    it('a failed worn-shield read still serves the clickies, with an empty worn list', async () => {
+      fake = installFakePostgrest({ tables: { eqemu_items: items(), item_worn_damage_shield: [{ item_id: 1, item_name: 'x', ds: 3 }] } });
+      fake.failWhen = ({ table }) => table === 'item_worn_damage_shield';
+      const r = await get(load().handler);
+      expect(r.status).toBe(200);
+      const body = JSON.parse(r.body);
+      expect(body.worn_ds).toEqual([]);
+      expect(body.count).toBeGreaterThan(1000);
+    });
+
     it('a failed page is not cached: with no good catalog the agent gets a 503 (and keeps its disk cache)', async () => {
       fake = installFakePostgrest({ tables: { eqemu_items: items() } });
       fake.failWhen = ({ table, query }) => table === 'eqemu_items' && /offset=1000/.test(query);

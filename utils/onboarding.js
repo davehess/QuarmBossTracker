@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.202': [
+    '**Mimic\'s DS badge counts the shield from your gear.** A Talisman of Vah Kerrath (+8) or Shroud of Eternity (+5) adds to your damage shield spell, so a 10-point shield with the Talisman now reads 18, as it hits. Gear adds nothing without a shield spell, and the badge shows that too. Needs the beta Mimic for now.',
+  ],
   '3.1.201': [
     '**/encounter tonight works again.** It failed with an error on any day that had a fight; it now lists the day\'s fights with the short id that /encounter view takes.',
   ],
