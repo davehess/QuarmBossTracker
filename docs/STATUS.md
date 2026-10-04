@@ -109,6 +109,10 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **✅/⏳ Our players' levels on /who and Target Info (bot 3.1.196 live; agent 3.7.76 on beta, 2026-10-04).**
+  who-lookup adds each member's own Mimic level and the last /who level (`latest_character_levels`, highest
+  wins); the beta agent adds Zeal's exact raid level (and group level with /pipeverbose). Graduates with the next
+  stable Mimic. §150.
 - **⏳ Buffs grouped by raid group (bot 3.1.195 live; /buffs previews and the buff queue on beta, 2026-10-04).**
   The queue's `groups[]` names who IN each group can group-cast a missing line (a group buff lands on the caster's
   own group). Pick [b.wolfpack.quest/buffs?v=b](https://b.wolfpack.quest/buffs?v=b) (group cards) or

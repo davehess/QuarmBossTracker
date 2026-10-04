@@ -301,6 +301,15 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   ("Looted in <plane>"); precedence Mimic > /who > loot > owner's tick. The guide checklist auto-ticks from it
   ("looted there"). Test: `test/pop-loot-proof.test.js`. §146.
 
+### Levels for our /anon players (bot 3.1.196, agent 3.7.76 beta, 2026-10-04)
+- Bot: `_handleAgentWhoLookup` pass 3b → RPC `latest_character_levels(p_guild_id, p_names)`
+  (`supabase/migrations/20261004120000_latest_character_levels.sql`): `level` from `xp_events` (the member's own
+  Mimic), `who_level` from `who_observations` (last non-anon /who); highest wins. Test: `test/who-lookup-levels.test.js`.
+- Agent: `_zealLevelFor(name)` (Zeal raid pipe `_lastRaidPipe`, then the type-6 group sample with /pipeverbose, 2-min
+  freshness) feeds `buildWhoSnapshot` anon rows (`entry.known` copy), `_targetPlayerInfo` (`level_src 'zeal'`,
+  shown like 'who' in `mobinfo.html`) and the xp event `group_members`. Tests: `test/who-target-card.test.js`,
+  `test/mana-drain-and-con.test.js`, `test/me-hud-timers.test.js`. §150.
+
 ### Buffs by raid group (bot 3.1.195, web beta, Mimic beta, 2026-10-04)
 - Bot: `utils/buffGroups.js` `buildBuffGroups` (pure) feeds `groups[]` + `self_group` on
   `GET /api/agent/raid-buff-queue` (`_handleAgentRaidBuffQueue`, every raid member before the 40-row caps).

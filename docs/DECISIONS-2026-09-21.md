@@ -6626,9 +6626,40 @@ buff queue as well"*.
   - By buff clusters each buff's people by group;
   - mini adds the group that needs each buff most.
 - **Open, for the guild lead:** pick ?v=b or ?v=c.
-- **Unverified until a raid:** `raid_roster` was empty off-raid, so Zeal's "ungrouped" value is
-  unconfirmed. Null, 0, negative and over 12 are treated as ungrouped.
+- **"Ungrouped" settled from Zeal's source** (2026-10-04, §150's research): `named_pipe.cpp` sends
+  `"0"` for `kRaidUngrouped` and `GroupNumber + 1` otherwise, so groups are 1–12 and 0 is ungrouped,
+  which is what all three surfaces already assume.
 - **Left alone, on purpose:**
   - Spiritual Purity sits in HP slot C though it is a regen buff;
   - `UPGRADE_CHAINS` still spells Bih`Li without the backtick;
   - Mark of the Predator is uncategorized.
+
+### 150. Our own players' levels fill in on /who and Target Info (2026-10-04, bot 3.1.196 · agent 3.7.76 beta)
+
+The guild lead, with a /who overlay screenshot: *"We shouldn't have a gap in our own players levels."* Two
+of ten guildmates, both /anon, showed an italic class and no level.
+
+- **Why it was blank:** who-lookup's class came from the guild roster or an override, neither of which
+  carries a level, and the history pass that does carry one ran only for names still missing a class.
+- **History alone would have been wrong:** one of the two had last shown 59 in /who (September 28) and
+  reported 64 from their own Mimic that day. Planes of Power raised the cap in between.
+- **Bot 3.1.196 (live):** a new pass asks `latest_character_levels` (migration `20261004120000`, applied
+  to production in the same session) for every name:
+  - the newest level the character's own Mimic uploaded to `xp_events`;
+  - the last non-anon /who level from `who_observations`.
+  - The highest of those wins (levels only rise).
+  - It reads `who_observations` on its own index, about 3 ms for 10 names, not through the
+    `who_directory` view, which scans the whole table at about 1.4 s. That is why the history pass was
+    left alone.
+- **Agent 3.7.76 (beta):** `_zealLevelFor` takes the exact level from Zeal, no older than 2 minutes:
+  - raid data always carries it;
+  - group data only with `/pipeverbose` on.
+  - It fills /anon rows on /who and outranks history.
+  - On Target Info and the /who card it ranks after a live /who and before an even con, with no
+    "(last seen)" tag.
+  - Group mates' levels in the experience log fill the same way.
+  - An /anon row that still carries a level from before the person went anon gives way to a newer one.
+- **Verified on production:** all ten people in the screenshot now resolve: the two blanks to 60
+  (history) and 64 (their own Mimic).
+- **Privacy:** an /anon guildmate's level now reaches other guild Mimics, the same GUILD scope their
+  class already had. Their own Mimic uploaded that level already (the group XP analysis reads it).
