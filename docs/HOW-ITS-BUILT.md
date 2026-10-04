@@ -3413,6 +3413,12 @@ list, plus `overlay_tuning`, `ui_snapshots`, `ui_socials_index`,
 authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
 
+### Quarm patch notes (`quarm_patch_notes`, bot 3.1.199, §158)
+The bot copies every post in Quarm's patch-notes channel into `quarm_patch_notes`. The channel is
+`QUARM_PATCH_NOTES_CHANNEL_ID`, defaulting to 1175117242682331146. The code is `_syncQuarmPatchNotes`,
+`_quarmNoteRow` and `_quarmNoteLive` in `index.js`. Read it to quote a Quarm change word for word.
+`content_missing` rows mean the Message Content intent was off when they were fetched.
+
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes
 `.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.
