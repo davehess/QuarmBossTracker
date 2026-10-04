@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'who-levels-2026-10-04',
+    title: 'Levels for /anon guildmates',
+    version: 'Bot 3.1.196 · Agent 3.7.76',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The /who overlay no longer leaves a blank level next to guildmates who are /anon.',
+    features: [
+      { name: 'Their own level, not an old one', blurb: 'A guildmate running Mimic shows the level their Mimic reports, so it stays right after they level up.' },
+      { name: 'Straight from the raid window', blurb: 'In the beta Mimic, anyone in your raid shows the exact level your raid window has. Group mates do too when they have /pipeverbose on.' },
+      { name: 'Target Info agrees', blurb: 'Targeting one of them shows that level with no “last seen” tag.' },
+    ],
+    fixes: [
+      'An /anon guildmate whose class was known no longer shows a class with no level.',
+    ],
+  },
+  {
     key: 'buffs-by-group-2026-10-04',
     title: 'Buffs by raid group',
     version: 'Bot 3.1.195 · Mimic beta',
