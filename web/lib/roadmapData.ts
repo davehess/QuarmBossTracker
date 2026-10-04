@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'encounter-tonight-2026-10-04',
+    title: '/encounter tonight is back',
+    version: 'Bot 3.1.201 · Web 1.8.96',
+    date: '2026-10-04',
+    headline: 'The Discord list of the day’s fights works again.',
+    features: [],
+    fixes: [
+      '/encounter tonight failed with an error on any day that had a fight. It now lists them, each with the short id /encounter view takes.',
+    ],
+  },
+  {
     key: 'row-cap-2026-10-04',
     title: 'The whole night, every time',
     version: 'Bot 3.1.198 · Web 1.8.95',
