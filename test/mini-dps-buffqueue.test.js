@@ -277,8 +277,9 @@ const payload = () => ({
   ],
 });
 const cats = (list) => list.map((c) => [c.label, c.who.map((r) => r.name)]);
-const chips = (h) => [...h.matchAll(/<button type="button" class="(mchip[^"]*)" data-mcat="([^"]*)"><span class="wp-mini-name">([^<]*)<\/span> <b class="wp-mini-num">(\d+)<\/b><\/button>/g)]
-  .map((m) => ({ cls: m[1], key: m[2], label: m[3], n: Number(m[4]) }));
+// A buff chip may end in the busiest group (` · G3×3`, 2026-10-04): captured as `top`, null when absent.
+const chips = (h) => [...h.matchAll(/<button type="button" class="(mchip[^"]*)" data-mcat="([^"]*)"><span class="wp-mini-name">([^<]*)<\/span> <b class="wp-mini-num">(\d+)<\/b>(?: <span class="wp-mini-num mtop">([^<]*)<\/span>)?<\/button>/g)]
+  .map((m) => ({ cls: m[1], key: m[2], label: m[3], n: Number(m[4]), top: m[5] || null }));
 
 describe('Buff queue mini: the ledger', () => {
   it('buff categories keep the queue\'s own order; no `missing` is Other; counts are characters', () => {
