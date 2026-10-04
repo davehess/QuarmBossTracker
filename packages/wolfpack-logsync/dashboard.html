@@ -185,6 +185,24 @@ button.wp-key:hover { border-color:var(--blue); }
    the user the banner is naming THIS row. */
 button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-out infinite; box-shadow:0 0 0 0 rgba(86,211,100,0.7); }
 .subtle { color:var(--dim); font-size:12px; margin:4px 0 12px 0; }
+/* 🔇 Buff blocks tab (the #blockbuff picker). */
+.wp-bb-set { border:1px solid var(--border); border-radius:6px; padding:10px; margin:0 0 10px; background:var(--bg); }
+.wp-bb-hd { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; margin:0 0 6px; font-size:13px; }
+.wp-bb-chips { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 8px; }
+.wp-bb-chip { border:1px solid var(--border); border-radius:12px; padding:1px 8px; font-size:11px; background:#0b0f15; white-space:nowrap; }
+.wp-bb-if { color:var(--orange); }
+.wp-bb-x { background:none; border:none; color:var(--dim); cursor:pointer; padding:0 2px; font:inherit; }
+.wp-bb-x:hover { color:var(--red); }
+.wp-bb-btns { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 6px; }
+.wp-bb-warn { border:1px solid var(--gold); color:var(--gold); background:#2a2210; border-radius:5px; padding:4px 10px; font-size:11px; margin:0 0 8px; }
+.wp-bb-note { font-size:11px; color:var(--dim); margin:0 0 6px; line-height:1.45; }
+.wp-bb-note.ok { color:var(--green); }
+.wp-bb-note.err { color:var(--red); }
+.wp-bb-row { display:flex; gap:8px; align-items:center; padding:2px 0; font-size:12px; }
+.wp-bb-row.done code { color:var(--dim); text-decoration:line-through; }
+.wp-bb-res { display:flex; gap:8px; align-items:center; justify-content:space-between; padding:2px 0; font-size:12px; }
+.wp-bb-ed { display:grid; gap:8px; margin:8px 0 0; font-size:12px; }
+.wp-bb-ed input[type=text] { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 6px; font:inherit; font-size:12px; }
 .spell-link { color:inherit; text-decoration:none; border-bottom:1px dotted var(--blue); }
 .spell-link:hover { color:var(--blue); border-bottom-color:transparent; }
 .tag { background:#1f6feb22; color:var(--blue); padding:2px 6px; border-radius:4px; font-size:11px; }
@@ -323,6 +341,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
   <button data-tab="buffs">✨ Buffs</button>
+  <button data-tab="buffblocks">🔇 Buff blocks</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
@@ -366,6 +385,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
 <div id="buffs" class="section"></div>
+<div id="buffblocks" class="section"></div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
      not independent .section tabs, so both show whenever Fights is active. -->
@@ -9518,6 +9538,429 @@ async function dismissTopDamage(key) {
   fetchAll();
   setInterval(fetchAll, {{WP:Number(process.env.WP_AUCTION_POLL_MS) || 7000}});
   setInterval(runTicks, 1000);
+})();
+
+// ── 🔇 Buff blocks: the #blockbuff picker (the guild lead, 2026-10-04) ───────
+// Quarm's #blockbuff / #blockbuffif / #allowbuff commands keep other players'
+// buffs off you. This tab is the picker: a set list per character, bard-song
+// starters, and two ways to use a set. Copy its lines (EQ's chat box takes one
+// line per paste), or have Mimic write them into social macros in the
+// character's ini: right away when the character is logged out, queued until
+// log-out when logged in (EQ rewrites the ini from memory on camp).
+// ⚠ Mimic never types into the game. Copying and the ini are the only paths.
+// Owns #wpBbBody inside #buffblocks and polls /api/buffblocks only while the tab
+// is showing. Anything that moves on its own (logged-in state, queued writes,
+// "5m ago", the socials line, search results, the copy stepper) lives in its own
+// wpBb* placeholder with its own fill fn, so the sets markup stays byte-stable
+// and a poll never repaints a form the player is typing in.
+(function(){
+  var sec = document.getElementById("buffblocks");
+  if (!sec) return;
+  var data = null;          // the last /api/buffblocks answer
+  var character = "";       // the picked character ("" = whichever the agent lists first)
+  var ui = { lines: {}, msg: {}, q: {}, cond: {} };
+  var catName = {};         // spell id -> name, the bard catalog
+  var idName = null;        // spell id -> name, the agent's whole spell catalog (loaded on first search)
+  var idNameLoading = false;
+  var reqId = 0, applied = 0;
+
+  var card = document.createElement("div");
+  card.id = "wpBuffBlocks";
+  card.className = "card wide";
+  card.innerHTML = '<h2>🔇 Buff blocks <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· block buffs other players cast on you</span></h2>'
+    + '<div id="wpBbBody"><div class="dim" style="padding:6px">loading…</div></div>';
+  sec.appendChild(card);
+
+  function setOf(id){ var ss = (data && data.sets) || []; for (var i = 0; i < ss.length; i++) if (ss[i].id === id) return ss[i]; return null; }
+  function nameOf(id){ return (data && data.names && data.names[id]) || catName[id] || (idName && idName[id]) || ""; }
+  function plain(s){ return { id: s.id, name: s.name, short: s.short, entries: s.entries }; }
+  function allPlain(){ return ((data && data.sets) || []).map(plain); }
+  function newId(){ return "n" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+  function setMsg(id, cls, text){ ui.msg[id] = { cls: cls, text: text, at: Date.now() }; }
+  function ranges(b){
+    var out = [], i = 0;
+    while (i < b.length) { var j = i; while (j + 1 < b.length && b[j + 1] === b[j] + 1) j++; out.push(j > i ? b[i] + "–" + b[j] : String(b[i])); i = j + 1; }
+    return out.join(", ");
+  }
+  function describeSlots(slots){
+    var pages = {};
+    for (var i = 0; i < slots.length; i++) { var s = slots[i]; (pages[s.page] = pages[s.page] || { block: [], allow: [] })[s.kind].push(s.button); }
+    return Object.keys(pages).map(Number).sort(function(a, b){ return a - b; }).map(function(p){
+      var bits = [];
+      if (pages[p].block.length) bits.push(ranges(pages[p].block.sort(function(a, b){ return a - b; })) + " (block)");
+      if (pages[p].allow.length) bits.push(ranges(pages[p].allow.sort(function(a, b){ return a - b; })) + " (allow)");
+      return "Page " + p + " buttons " + bits.join(", ");
+    }).join("; ");
+  }
+
+  // ── talking to the agent ──
+  // Every answer carries the full view; a response older than one already shown
+  // is dropped, so a slow poll cannot put an old state back after a save.
+  function take(id, v){
+    if (id < applied) return;
+    applied = id; data = v; character = v.character || character;
+    catName = {};
+    (v.catalog || []).forEach(function(c){ catName[c.id] = c.name; });
+    render();
+  }
+  function api(path, body){
+    var id = ++reqId;
+    var opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" };
+    return fetch(path, opt).then(function(r){ return r.json(); }).then(function(j){
+      if (j && j.view) take(id, j.view); else if (j && j.sets) take(id, j);
+      return j;
+    });
+  }
+  function poll(){
+    if (!sec.classList.contains("active") || document.hidden) return;
+    api("/api/buffblocks?character=" + encodeURIComponent(character)).catch(function(){});
+  }
+  function saveSets(sets){ return api("/api/buffblocks/sets", { character: character, sets: sets }).catch(function(){}); }
+  function editSet(id, fn){
+    var sets = allPlain();
+    for (var i = 0; i < sets.length; i++) if (sets[i].id === id) {
+      var c = { id: sets[i].id, name: sets[i].name, short: sets[i].short, entries: sets[i].entries.slice() };
+      fn(c); sets[i] = c; break;
+    }
+    return saveSets(sets);
+  }
+  function loadNames(){
+    if (idName || idNameLoading) return;
+    idNameLoading = true;
+    fetch("/api/spell-names.json").then(function(r){ return r.ok ? r.json() : {}; }).then(function(m){
+      idName = m || {}; idNameLoading = false;
+      ((data && data.sets) || []).forEach(function(s){ fillRes(s.id); });
+    }).catch(function(){ idNameLoading = false; });
+  }
+
+  // ── the sets markup (byte-stable between polls: nothing time-based in here) ──
+  function chipHtml(e, setId, idx, removable){
+    var s = '<span class="wp-bb-chip">' + esc(nameOf(e.spell) || ("Spell " + e.spell)) + ' <span class="dim">#' + e.spell + '</span>';
+    if (e.if) s += ' <span class="wp-bb-if">only while ' + esc(nameOf(e.if) || ("spell " + e.if)) + ' <span class="dim">#' + e.if + '</span></span>';
+    if (removable) s += ' <button type="button" class="wp-bb-x" data-bb="rmchip" data-set="' + esc(setId) + '" data-i="' + idx + '" title="Take this out of the set">✕</button>';
+    return s + '</span>';
+  }
+  function famBoxes(s){
+    var plainIds = {};
+    s.entries.forEach(function(e){ if (!e.if) plainIds[e.spell] = 1; });
+    return (data.families || []).map(function(f){
+      var total = 0, have = 0;
+      (data.catalog || []).forEach(function(c){ if (c.family === f.key) { total++; if (plainIds[c.id]) have++; } });
+      var state = have === 0 ? "none" : have === total ? "all" : "some";
+      return '<label style="white-space:nowrap"><input type="checkbox" data-bb="fam" data-set="' + esc(s.id) + '" data-fam="' + esc(f.key) + '" data-state="' + state + '"' + (state === "all" ? " checked" : "") + '> '
+        + esc(f.label) + ' <span class="dim">(' + total + ')</span></label>';
+    }).join(" ");
+  }
+  function setHtml(s){
+    var id = esc(s.id), off = s.entries.length ? "" : " disabled";
+    var pill = s.on === true ? '<span class="wp-st on">ON</span>' : s.on === false ? '<span class="wp-st">off</span>' : '<span class="wp-st" title="Say you ran its lines to track this">not marked</span>';
+    var h = '<div class="wp-bb-set"><div class="wp-bb-hd"><b>' + esc(s.name) + '</b> ' + pill + ' <span class="dim" id="wpBbAgo_' + id + '"></span></div>';
+    if (s.entries.length > data.cap) h += '<div class="wp-bb-warn">This set alone is ' + s.entries.length + ' blocks, over the ' + data.cap + ' a character may be able to hold. Trim it.</div>';
+    h += '<div class="wp-bb-chips">' + (s.entries.length ? s.entries.map(function(e){ return chipHtml(e, s.id, 0, false); }).join("") : '<span class="dim">Empty. Open the editor to add spells.</span>') + '</div>';
+    h += '<div class="wp-bb-btns">'
+      + '<button type="button" class="wp-btn" data-bb="lines" data-kind="block" data-set="' + id + '"' + off + ' title="The #blockbuff lines to paste in game, one at a time">📋 Block lines</button>'
+      + '<button type="button" class="wp-btn" data-bb="lines" data-kind="allow" data-set="' + id + '"' + off + ' title="The #allowbuff lines that undo this set">📋 Allow lines</button>'
+      + '<button type="button" class="wp-btn pri" data-bb="socials" data-set="' + id + '"' + off + ' title="Write these lines into social macros in your ini, to drag onto a hotbar">🎛 Make socials</button>'
+      + '<button type="button" class="wp-btn ghost" data-bb="delset" data-set="' + id + '">🗑 Delete</button></div>';
+    h += '<div id="wpBbSoc_' + id + '"></div><div id="wpBbLines_' + id + '"></div>';
+    h += '<details ' + wpKeep('bb|edit|' + String(data.character || "").toLowerCase() + '|' + s.id) + '><summary class="dim" style="cursor:pointer;font-size:12px">✏ Edit this set</summary><div class="wp-bb-ed">'
+      + '<label>Name <input type="text" data-bb="rename" data-set="' + id + '" maxlength="40" value="' + esc(s.name) + '"></label>'
+      + '<label>Hotkey label <input type="text" data-bb="short" data-set="' + id + '" maxlength="7" size="9" value="' + esc(s.short) + '"> <span class="dim">socials read &quot;Blk ' + esc(s.short) + ' 1/4&quot;</span></label>'
+      + '<div><span class="wp-lbl">Bard song families</span><br>' + famBoxes(s) + '</div>'
+      + '<div><span class="wp-lbl">Add a spell</span><br><input type="text" id="wpBbQ_' + id + '" data-bb="q" data-set="' + id + '" size="24" placeholder="name or spell id"> '
+      + '<input type="text" id="wpBbC_' + id + '" data-bb="cond" data-set="' + id + '" size="24" placeholder="only while… (optional)"></div>'
+      + '<div id="wpBbRes_' + id + '"></div>'
+      + '<div class="wp-bb-chips">' + s.entries.map(function(e, i){ return chipHtml(e, s.id, i, true); }).join("") + '</div>'
+      + '</div></details></div>';
+    return h;
+  }
+  function mainHtml(){
+    if (!data) return '<div class="dim" style="padding:6px">loading…</div>';
+    var h = '<div class="wp-bb-note">Block buffs other players cast on you. In game, type <code>#blockbuff</code> to see what the server has on you. Mimic never types into the game for you: copy the lines and paste them, or let Mimic write them into social macros (hotkeys) that you drag onto a hotbar once.</div>'
+      + '<div class="wp-bb-note">Test before you rely on it: if a mob is angry at someone, a helpful spell cast on them can put the caster on the hate list of that mob before the block applies. A blocked song may still pull the bard in, so try it with a bard on an engaged monk first.</div>';
+    if (!data.character) return h + '<div class="dim" style="padding:6px">No characters yet. Open EverQuest with Mimic running so it can see your log files, then come back here.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin:0 0 8px"><label class="dim" style="font-size:11px">Character <select data-bb="char">'
+      + (data.characters || []).map(function(c){ return '<option value="' + esc(c.character) + '"' + (c.character === data.character ? " selected" : "") + '>' + esc(c.character) + '</option>'; }).join("")
+      + '</select></label><span id="wpBbLive" style="font-size:11px"></span></div>';
+    if (data.onCount > data.cap) h += '<div class="wp-bb-warn">The sets marked ON add up to ' + data.onCount + ' blocks. EverQuest allows about ' + data.cap + ' in a list like this and Quarm has not said what its limit is, so some may be refused. Trim a set or turn one off.</div>';
+    h += '<div id="wpBbPending"></div>';
+    h += '<div class="wp-lbl" style="margin:6px 0 4px">Add a starter set</div><div class="wp-bb-btns">'
+      + (data.starters || []).map(function(st){ return '<button type="button" class="wp-btn" data-bb="starter" data-key="' + esc(st.key) + '" title="' + esc(st.note || "") + '">＋ ' + esc(st.name) + '</button>'; }).join("")
+      + '<button type="button" class="wp-btn ghost" data-bb="newset">＋ Empty set</button></div>';
+    h += '<details ' + wpKeep('bb|startnotes') + '><summary class="dim" style="cursor:pointer;font-size:11px;margin-bottom:6px">What are the starter sets?</summary>'
+      + (data.starters || []).map(function(st){ return '<div class="wp-bb-note"><b>' + esc(st.name) + '</b> (' + st.entries.length + ' blocks): ' + esc(st.note || "") + '</div>'; }).join("")
+      + '</details>';
+    var ss = data.sets || [];
+    h += ss.length ? ss.map(setHtml).join("") : '<div class="dim" style="padding:6px 0">No sets for ' + esc(data.character) + ' yet. Add a starter set above and make it yours.</div>';
+    return h;
+  }
+
+  // ── the placeholders: everything that moves without a click ──
+  function fillLive(){
+    var el = document.getElementById("wpBbLive");
+    if (!el || !data) return;
+    var h;
+    if (!data.watched) h = '<span class="dim">Mimic is not watching this character right now, so Make socials is off. The copy buttons still work.</span>';
+    else if (data.loggedIn) h = '<span style="color:var(--green)">●</span> ' + esc(data.character) + ' looks logged in: Make socials waits and writes when you log out.';
+    else h = '<span class="dim">○</span> ' + esc(data.character) + ' looks logged out: Make socials writes right away.';
+    morphInto(el, h);
+  }
+  function fillPending(){
+    var el = document.getElementById("wpBbPending");
+    if (!el || !data) return;
+    var ps = data.pending || [];
+    if (!ps.length) { morphInto(el, ""); return; }
+    var h = '<div class="wp-bb-note"><b>Waiting for you to log out</b>. Written the moment ' + esc(data.character) + ' logs out:<ul style="margin:4px 0 0 18px;padding:0">';
+    ps.forEach(function(p){
+      var s = setOf(p.setId);
+      h += '<li>' + esc(s ? s.name : "a set") + ' · queued ' + fmtAgo(p.queuedAt)
+        + (p.error ? ' · <span style="color:var(--red)">last try failed: ' + esc(p.error) + '</span>' : '') + '</li>';
+    });
+    morphInto(el, h + '</ul></div>');
+  }
+  function fillTimes(){
+    ((data && data.sets) || []).forEach(function(s){
+      var el = document.getElementById("wpBbAgo_" + s.id);
+      if (!el) return;
+      var t = s.changedAt ? ("marked " + fmtAgo(s.changedAt)) : "";
+      if (el.textContent !== t) el.textContent = t;
+    });
+  }
+  function fillSoc(s){
+    var el = document.getElementById("wpBbSoc_" + s.id);
+    if (!el) return;
+    var h = "", m = ui.msg[s.id];
+    if (m && Date.now() - m.at < 15000) h += '<div class="wp-bb-note ' + m.cls + '">' + esc(m.text) + '</div>';
+    var pend = null;
+    ((data && data.pending) || []).forEach(function(p){ if (p.setId === s.id) pend = p; });
+    if (pend) {
+      h += '<div class="wp-bb-note">⏳ Waiting for you to log out; written then.'
+        + (pend.error ? ' <span style="color:var(--red)">Last try failed: ' + esc(pend.error) + '</span>' : '') + '</div>';
+    } else if (s.socials && s.socials.slots && s.socials.slots.length) {
+      h += '<div class="wp-bb-note">🎛 Written ' + (s.socials.at ? fmtAgo(s.socials.at) + ' ' : '') + 'to ' + esc(describeSlots(s.socials.slots))
+        + '. Drag them onto a hotbar from the in-game Socials window.'
+        + (s.stale ? ' <span style="color:var(--gold)">⚠ The set changed since. Press Make socials again.</span>' : '') + '</div>';
+    }
+    morphInto(el, h);
+  }
+  function fillLines(s){
+    var el = document.getElementById("wpBbLines_" + s.id);
+    if (!el) return;
+    var st = ui.lines[s.id];
+    if (!st) { morphInto(el, ""); return; }
+    var lines = (s.lines && s.lines[st.kind]) || [], sid = esc(s.id);
+    var h = '<div class="wp-bb-set" style="margin:0 0 8px"><div class="wp-bb-note">The EverQuest chat box takes one line per paste. Click 📋 on a line, paste it in game and press Enter, or use Copy next to step through them.</div>';
+    lines.forEach(function(ln, i){
+      h += '<div class="wp-bb-row' + (i < st.next ? " done" : "") + '"><button type="button" class="wp-btn" data-bb="copyrow" data-set="' + sid + '" data-i="' + i + '" title="Copy this line">' + (i < st.next ? "✓" : "📋") + '</button><code>' + esc(ln) + '</code></div>';
+    });
+    h += '<div class="wp-bb-btns" style="margin-top:6px"><button type="button" class="wp-btn pri" data-bb="copynext" data-set="' + sid + '">'
+      + (st.next < lines.length ? "Copy next (" + (st.next + 1) + "/" + lines.length + ")" : "All copied ✓ (copy again)") + '</button>'
+      + '<button type="button" class="wp-btn" data-bb="ran" data-kind="' + esc(st.kind) + '" data-set="' + sid + '">✓ I ran these: mark ' + (st.kind === "block" ? "ON" : "OFF") + '</button>'
+      + '<button type="button" class="wp-btn ghost" data-bb="closelines" data-set="' + sid + '">Close</button></div></div>';
+    morphInto(el, h);
+  }
+  function resolveSpell(text){
+    var lo = String(text).toLowerCase().trim();
+    if (/^[0-9]+$/.test(lo)) { var n = Number(lo); return n > 0 && n < 65536 ? n : 0; }
+    var hit = 0, pools = [catName, (data && data.names) || {}, idName || {}];
+    pools.forEach(function(p){ Object.keys(p).forEach(function(k){ if (!hit && String(p[k]).toLowerCase() === lo) hit = Number(k); }); });
+    return hit;
+  }
+  function searchSpells(q){
+    var lo = q.toLowerCase(), out = [], seen = {};
+    if (/^[0-9]+$/.test(lo)) { var n = Number(lo); return n > 0 && n < 65536 ? [{ id: n, name: nameOf(n) }] : []; }
+    var pools = [catName, idName || {}];
+    [true, false].forEach(function(prefixOnly){
+      pools.forEach(function(p){
+        var ks = Object.keys(p);
+        for (var i = 0; i < ks.length && out.length < 8; i++) {
+          var nm = String(p[ks[i]]), at = nm.toLowerCase().indexOf(lo);
+          if (seen[ks[i]] || at < 0 || (prefixOnly && at !== 0)) continue;
+          seen[ks[i]] = 1; out.push({ id: Number(ks[i]), name: nm });
+        }
+      });
+    });
+    return out;
+  }
+  function fillRes(id){
+    var el = document.getElementById("wpBbRes_" + id);
+    if (!el) return;
+    var qi = document.getElementById("wpBbQ_" + id), ci = document.getElementById("wpBbC_" + id);
+    if (qi && qi.value !== (ui.q[id] || "")) qi.value = ui.q[id] || "";
+    if (ci && ci.value !== (ui.cond[id] || "")) ci.value = ui.cond[id] || "";
+    var q = (ui.q[id] || "").trim(), c = (ui.cond[id] || "").trim();
+    if (!q) { morphInto(el, ""); return; }
+    var cond = c ? resolveSpell(c) : 0;
+    if (c && !cond) { morphInto(el, '<div class="wp-bb-note err">No spell found for "only while ' + esc(c) + '". Type its exact name or its spell id.</div>'); return; }
+    var res = searchSpells(q);
+    if (!res.length) { morphInto(el, '<div class="wp-bb-note">' + (idName ? "Nothing matches that." : "Loading the spell list…") + '</div>'); return; }
+    morphInto(el, res.map(function(r){
+      return '<div class="wp-bb-res"><span>' + esc(r.name || "Spell") + ' <span class="dim">#' + r.id + '</span>' + (cond ? ' <span class="wp-bb-if">only while ' + esc(nameOf(cond) || ("spell " + cond)) + '</span>' : '') + '</span>'
+        + '<button type="button" class="wp-btn" data-bb="addres" data-set="' + esc(id) + '" data-spell="' + r.id + '" data-cond="' + (cond || "") + '">Add</button></div>';
+    }).join(""));
+  }
+  function fillAll(){
+    fillLive(); fillPending(); fillTimes();
+    ((data && data.sets) || []).forEach(function(s){ fillSoc(s); fillLines(s); fillRes(s.id); });
+    var some = sec.querySelectorAll('input[data-state="some"]');
+    for (var i = 0; i < some.length; i++) some[i].indeterminate = true;
+  }
+  function render(){
+    var body = document.getElementById("wpBbBody");
+    if (!body) return;
+    var ae = document.activeElement, keepId = "", keepPos = 0;
+    if (ae && ae.id && ae.tagName === "INPUT" && body.contains(ae)) { keepId = ae.id; keepPos = ae.selectionStart || 0; }
+    morphInto(body, mainHtml());
+    fillAll();
+    if (keepId) {
+      var again = document.getElementById(keepId);
+      if (again && again !== document.activeElement) { again.focus(); try { again.setSelectionRange(keepPos, keepPos); } catch (e) { void e; } }
+    }
+  }
+
+  // ── copying: the clipboard is the only way a line reaches the game ──
+  function legacyCopy(text){
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) { return false; }
+  }
+  function copyText(text){
+    return new Promise(function(resolve){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function(){ resolve(true); }, function(){ resolve(legacyCopy(text)); });
+          return;
+        }
+      } catch (e) { void e; }
+      resolve(legacyCopy(text));
+    });
+  }
+  function copyLine(id, i){
+    var s = setOf(id), st = ui.lines[id];
+    if (!s || !st) return;
+    var lines = (s.lines && s.lines[st.kind]) || [];
+    if (i < 0 || i >= lines.length) return;
+    copyText(lines[i]).then(function(ok){
+      if (!ok) { setMsg(id, "err", "Could not reach the clipboard. Select the line and copy it by hand."); fillSoc(s); return; }
+      st.next = i + 1; fillLines(s);
+    });
+  }
+
+  // ── clicks ──
+  function toggleFam(id, fam, on){
+    var ids = [];
+    (data.catalog || []).forEach(function(c){ if (c.family === fam) ids.push(c.id); });
+    editSet(id, function(s){
+      if (on) {
+        var have = {};
+        s.entries.forEach(function(e){ if (!e.if) have[e.spell] = 1; });
+        ids.forEach(function(x){ if (!have[x]) s.entries.push({ spell: x }); });
+      } else {
+        s.entries = s.entries.filter(function(e){ return e.if || ids.indexOf(e.spell) < 0; });
+      }
+    });
+  }
+  function addStarter(key){
+    var st = null;
+    (data.starters || []).forEach(function(x){ if (x.key === key) st = x; });
+    if (!st) return;
+    var sets = allPlain();
+    sets.push({ id: newId(), name: st.name, short: st.short, entries: st.entries.slice() });
+    saveSets(sets);
+  }
+  function addEmpty(){
+    var id = newId(), sets = allPlain();
+    sets.push({ id: id, name: "New set", short: "", entries: [] });
+    // open its editor: wpKeep reads this store, and the new id is known here
+    _wpOpenDetails['bb|edit|' + String(data.character || "").toLowerCase() + '|' + id] = true;
+    saveSets(sets);
+  }
+  sec.addEventListener("click", function(ev){
+    var t = ev.target && ev.target.closest ? ev.target.closest("[data-bb]") : null;
+    if (!t || !sec.contains(t) || t.tagName === "INPUT" || t.tagName === "SELECT" || t.disabled) return;
+    var a = t.getAttribute("data-bb"), id = t.getAttribute("data-set") || "", s = setOf(id);
+    if (a === "starter") return addStarter(t.getAttribute("data-key"));
+    if (a === "newset") return addEmpty();
+    if (a === "delset") {
+      if (!s || !confirm('Delete "' + s.name + '"? Socials Mimic already wrote stay in your ini.')) return;
+      delete ui.lines[id];
+      saveSets(allPlain().filter(function(x){ return x.id !== id; }));
+      return;
+    }
+    if (a === "rmchip") { var i = Number(t.getAttribute("data-i")); editSet(id, function(x){ x.entries.splice(i, 1); }); return; }
+    if (a === "addres") {
+      var sp = Number(t.getAttribute("data-spell")), cd = Number(t.getAttribute("data-cond")) || 0;
+      ui.q[id] = ""; ui.cond[id] = "";
+      editSet(id, function(x){
+        for (var k = 0; k < x.entries.length; k++) if (x.entries[k].spell === sp && (x.entries[k].if || 0) === cd) return;
+        x.entries.push(cd ? { spell: sp, if: cd } : { spell: sp });
+      });
+      return;
+    }
+    if (!s) return;
+    if (a === "lines") {
+      var kind = t.getAttribute("data-kind");
+      if (ui.lines[id] && ui.lines[id].kind === kind) delete ui.lines[id]; else ui.lines[id] = { kind: kind, next: 0 };
+      fillLines(s);
+      return;
+    }
+    if (a === "closelines") { delete ui.lines[id]; fillLines(s); return; }
+    if (a === "copyrow") { copyLine(id, Number(t.getAttribute("data-i"))); return; }
+    if (a === "copynext") {
+      var st = ui.lines[id];
+      if (st) copyLine(id, st.next >= ((s.lines && s.lines[st.kind]) || []).length ? 0 : st.next);
+      return;
+    }
+    if (a === "ran") {
+      var on = t.getAttribute("data-kind") === "block";
+      delete ui.lines[id];
+      api("/api/buffblocks/state", { character: character, setId: id, on: on }).then(function(j){
+        setMsg(id, j && j.ok ? "ok" : "err", j && j.ok ? ("Marked " + (on ? "ON" : "off") + ".") : ((j && j.error) || "Could not record that."));
+        var again = setOf(id); if (again) fillSoc(again);
+      }).catch(function(){});
+      return;
+    }
+    if (a === "socials") {
+      setMsg(id, "ok", "Working…"); fillSoc(s);
+      api("/api/buffblocks/socials", { character: character, setId: id, kind: "both" }).then(function(j){
+        if (j && j.applied) setMsg(id, "ok", "Written to " + describeSlots(j.slots || []) + ". Drag them onto a hotbar." + (j.changed ? "" : " (Nothing needed changing.)"));
+        else if (j && j.queued) setMsg(id, "ok", "Waiting for you to log out; written then.");
+        else setMsg(id, "err", (j && j.error) || "Could not write the socials.");
+        var again = setOf(id); if (again) fillSoc(again);
+      }).catch(function(){ setMsg(id, "err", "The agent did not answer."); fillSoc(s); });
+    }
+  });
+  sec.addEventListener("change", function(ev){
+    var t = ev.target;
+    if (!t || !t.getAttribute) return;
+    var a = t.getAttribute("data-bb"), id = t.getAttribute("data-set") || "";
+    if (!a) return;
+    if (a === "char") { character = t.value; poll(); return; }
+    if (a === "fam") { toggleFam(id, t.getAttribute("data-fam"), t.checked); return; }
+    if (a === "rename") {
+      var v = t.value.trim();
+      if (v) editSet(id, function(x){ x.name = v; }); else t.value = (setOf(id) || {}).name || "";
+      return;
+    }
+    if (a === "short") editSet(id, function(x){ x.short = t.value; });
+  });
+  sec.addEventListener("input", function(ev){
+    var t = ev.target, a = t && t.getAttribute && t.getAttribute("data-bb");
+    if (a !== "q" && a !== "cond") return;
+    var id = t.getAttribute("data-set");
+    ui[a][id] = t.value;
+    loadNames();
+    fillRes(id);
+  });
+
+  var navBtn = document.querySelector('.nav button[data-tab="buffblocks"]');
+  if (navBtn) navBtn.addEventListener("click", function(){ setTimeout(poll, 0); });
+  setInterval(poll, 5000);
 })();
 
 // ── Read-only uploader banner ──────────────────────────────────────────────
