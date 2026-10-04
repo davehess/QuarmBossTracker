@@ -1,6 +1,7 @@
 // The Quarm patch notes mirror (the guild lead, 2026-10-04: "1175117242682331146 is the Quarm patch notes
-// channel id in our discord. pull everything from there"): every message in that channel is stored in
-// quarm_patch_notes, new and edited posts as they arrive, and a sweep every 6 hours fills the history.
+// channel id in our discord. pull everything from there"): every Quarm post in that channel (the followed
+// channels' webhook posts, not members' messages) is stored in quarm_patch_notes, new and edited posts as
+// they arrive, and a sweep every 6 hours fills the history.
 //
 // Runs the bot's REAL mapper, sweep and live writer (sliced out of index.js) against a fake channel and
 // an in-memory Supabase. The wiring (the two listeners, the schedule) and the migration are checked as
@@ -21,9 +22,11 @@ const idOf = (i) => String(BASE + BigInt(i));
 const T0 = Date.UTC(2026, 0, 1);
 
 // A Discord message as discord.js hands it over: a Date for each timestamp, Maps for attachments.
+// Quarm's posts reach the channel through a follow webhook, so the default message carries a webhookId;
+// a member's message is `mk(i, { webhookId: null })`.
 const mk = (i, over = {}) => ({
   id: idOf(i), channelId: 'CH', createdAt: new Date(T0 + i * 60_000), editedAt: null,
-  content: `note ${i}`, embeds: [], attachments: new Map(), partial: false,
+  content: `note ${i}`, embeds: [], attachments: new Map(), partial: false, webhookId: 'wh',
   author: { username: 'Quarm Hook', globalName: null }, member: null, ...over,
 });
 
@@ -36,7 +39,7 @@ function harness({ total = 250, env = {} } = {}) {
   const logs = { warn: [], log: [] };
   const fakeConsole = { warn: (...a) => logs.warn.push(a.join(' ')), log: (...a) => logs.log.push(a.join(' ')) };
 
-  const db = { notes: new Map(), kv: new Map(), upserts: [], conflict: new Set(), enabled: true,
+  const db = { notes: new Map(), kv: new Map(), upserts: [], dels: [], conflict: new Set(), enabled: true,
     failKvRead: false, failNotesSelect: false, failNotesUpsert: false, throwOnNotesUpsert: false };
   const supabase = {
     isEnabled: () => db.enabled,
@@ -61,6 +64,12 @@ function harness({ total = 250, env = {} } = {}) {
       db.upserts.push(rows.map(r => r.message_id));
       for (const r of rows) db.notes.set(r.message_id, r);
       return rows;
+    },
+    del: async (table, qs) => {
+      const ids = /message_id=in\.\(([^)]*)\)/.exec(qs)[1].split(',');
+      db.dels.push(ids);
+      for (const id of ids) db.notes.delete(id);
+      return null;   // return=minimal: an empty body, the same as a failure
     },
   };
 
@@ -179,6 +188,44 @@ describe('the sweep', () => {
     expect(h.status().error).toBeUndefined();
     expect(h.status().last_run).toMatch(/^\d{4}-\d\d-\d\dT/);
     for (const r of h.db.notes.values()) expect(r.fetched_at).toMatch(/^\d{4}-/);
+  });
+
+  it('keeps only Quarm\'s webhook posts: members\' messages in the channel are never stored', async () => {
+    const h = harness({ total: 0 });
+    // 150 messages, every third one a member talking (no webhookId).
+    for (let i = 1; i <= 150; i++) h.push(mk(i, i % 3 === 0 ? { webhookId: null, content: 'member chat' } : {}));
+    await h._syncQuarmPatchNotes();
+    expect(h.db.notes.size).toBe(100);
+    for (const r of h.db.notes.values()) expect(r.content).not.toBe('member chat');
+    expect(h.status()).toMatchObject({ fetched: 150, new: 100, complete: true });
+    // A later run with nothing new stops on the first page even though its oldest message is a member's.
+    h.ch.fetches.length = 0;
+    await h._syncQuarmPatchNotes();
+    expect(h.ch.fetches).toHaveLength(1);
+    // A page of nothing but members' messages is read past, not mistaken for stored territory or written.
+    const h2 = harness({ total: 0 });
+    for (let i = 1; i <= 100; i++) h2.push(mk(i));
+    for (let i = 101; i <= 200; i++) h2.push(mk(i, { webhookId: null }));
+    await h2._syncQuarmPatchNotes();
+    expect(h2.db.notes.size).toBe(100);
+    expect(h2.ch.fetches).toHaveLength(3);
+  });
+
+  it('removes the members\' messages an earlier sweep stored: one full walk after the upgrade, then incremental', async () => {
+    const h = harness({ total: 0 });
+    for (let i = 1; i <= 150; i++) h.push(mk(i, i % 3 === 0 ? { webhookId: null, content: 'member chat' } : {}));
+    // What bot 3.1.199 left: every message stored, the history marked complete, no feed_only flag.
+    for (const m of h.ch.all) h.db.notes.set(m.id, h._quarmNoteRow(m));
+    h.db.kv.set('quarm_patch_notes_sync', { complete: true, message_content_intent: true });
+    await h._syncQuarmPatchNotes();
+    expect(h.ch.fetches).toHaveLength(2);                 // past the stored first page, to the start
+    expect(h.db.notes.size).toBe(100);
+    for (const r of h.db.notes.values()) expect(r.content).not.toBe('member chat');
+    expect(h.db.dels.flat()).toContain(idOf(3));          // a stray on the second page went too
+    expect(h.status()).toMatchObject({ complete: true, feed_only: true, new: 0, stored: 0 });
+    h.ch.fetches.length = 0;
+    await h._syncQuarmPatchNotes();
+    expect(h.ch.fetches).toHaveLength(1);
   });
 
   it('a later run with 3 new messages fetches ONE page and stops', async () => {
@@ -342,6 +389,13 @@ describe('the live writer (messageCreate / messageUpdate)', () => {
     expect([...h.db.notes.keys()]).toEqual([idOf(9)]);
     expect(h.db.notes.get(idOf(9))).toMatchObject({ content: 'new post', content_missing: false });
     expect(h.db.notes.get(idOf(9)).fetched_at).toMatch(/^\d{4}-/);
+  });
+
+  it('skips a member\'s message, including one that arrives as a partial edit', async () => {
+    const h = harness({ total: 0 });
+    await h._quarmNoteLive(mk(9, { webhookId: null, content: 'member chat' }));
+    await h._quarmNoteLive({ id: idOf(10), partial: true, channelId: 'CH', fetch: async () => mk(10, { webhookId: null }) });
+    expect(h.db.notes.size).toBe(0);
   });
 
   it('fetches a partial message whole before writing it', async () => {

@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `/encounter tonight` (`e.id` on a view with no `id`); `opendkp_loot_recent` repeats 13 auctions; `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
 | **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
@@ -6969,3 +6970,16 @@ there"*.
 - **Migration:** `20261004160000_quarm_patch_notes.sql`. The MCP `apply_migration` call timed out three times,
   so it went in as four separate `execute_sql` statements. The version was then recorded in
   `supabase_migrations.schema_migrations` by hand. Same SQL, same version as the committed file.
+- **Only Quarm's own posts (bot 3.1.200, the same day).** The first sweep stored all 4,265 messages in the
+  channel. Only 1,348 were Quarm's: the channel follows Quarm's #patch-notes, #announcements and
+  #server-status-downtimes, and members talk in it too.
+  - A followed-channel post is written by a webhook. So the sweep and the live writer now keep only messages
+    with a `webhookId`.
+  - The sweep's "already stored" stop looks at the oldest Quarm post on the page. A member's message is never
+    stored, so it cannot be the stop.
+  - **Cleanup:** the sweep deletes any member message on a page it reads. A `feed_only` flag in the bot_kv
+    status forces one full walk after the upgrade, so the 2,917 member rows go on the first run.
+  - Why the bot cleans up and not SQL: the Supabase MCP holds a `DELETE` for a confirmation, and a
+    non-interactive session cannot give one (both `execute_sql` and `apply_migration` timed out on it).
+    A migration file would not help either: the GitHub integration does not apply files pushed to `main`.
+  - Every stored row is still blank: the intent is off. The open-items row has the two steps.
