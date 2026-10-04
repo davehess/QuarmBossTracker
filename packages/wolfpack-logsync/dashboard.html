@@ -2963,6 +2963,20 @@ async function wpToggleCrashShare(on) {
   } catch (e) {}
 }
 
+// Which Zeal build a crash happened on, for the card's title line (the guild lead, 2026-10-04: "i've had
+// a number of zeal crashes lately that i can't tell if they're from my test versions or from the main
+// version"). The crash dialog prints "1.4.8 (<label>)": an official release labels it with the bare
+// short commit hash, our fork's test build with "testall-<hash>", a hand build with whatever was typed
+// ("testall", "pr229") or "UNOFFICIAL". Null when there is nothing to go on.
+function wpZealBuildTag(ver) {
+  const m = /\(([^)]*)\)/.exec(String(ver || ''));
+  if (!m) return null;
+  const label = m[1].trim();
+  if (/^[0-9a-f]{7,40}$/i.test(label)) return { test: false, text: 'Zeal official' };
+  if (label) return { test: true, text: '🧪 Zeal test build' };
+  return null;
+}
+
 async function wpRunCrashReview() {
   const out = document.getElementById('wpCrashOut');
   const btn = document.getElementById('wpCrashBtn');
@@ -2987,8 +3001,12 @@ async function wpRunCrashReview() {
       const when = c.when ? new Date(c.when).toLocaleString() : c.zip_name;
       h += '<details ' + wpKeep('crashrev|' + c.zip_name) + ' style="margin-top:8px;'
          + 'border:1px solid #30363d;border-radius:6px;padding:8px">';
+      const bt = wpZealBuildTag(c.reason && c.reason.zeal_version);
       h += '<summary style="cursor:pointer"><b>' + esc(when) + '</b> \u2014 '
-         + '<span style="color:' + tone + '">' + esc(v.headline || 'Unreadable') + '</span></summary>';
+         + '<span style="color:' + tone + '">' + esc(v.headline || 'Unreadable') + '</span>'
+         + (bt ? ' <span title="' + esc(c.reason.zeal_version) + '" style="font-size:11px;padding:0 5px;border-radius:4px;'
+           + 'border:1px solid ' + (bt.test ? '#d29922;color:#e3b341' : '#30363d;color:#8b949e') + '">' + esc(bt.text) + '</span>' : '')
+         + '</summary>';
       for (const n of (v.notes || [])) {
         h += '<div style="margin:6px 0 0 0">\u2022 ' + esc(n) + '</div>';
       }
