@@ -1368,6 +1368,7 @@ TODO, abandoned, folly; retired queues live in `docs/archive/`). Ordered plan:
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
 `docs/code-signing.md` (CLOSED 2026-07-14 — SignPath declined: user base too small; installers stay unsigned unless another provider appears), `docs/PRIVACY.md`.
 Headline items parked for later: UI Studio web viewer/editor on `/me/ui` +
-automatic UI/eqclient.ini cloud backups; OpenDKP auction wiring (creation
-captured, bid/award endpoints not); guild timeline; chat→parse extraction;
+automatic UI/eqclient.ini cloud backups; OpenDKP change feed / scoped service
+credential (every write endpoint is captured and wired in `utils/opendkp.js` — the
+asks live in `docs/DESIGN-opendkp-audit-cursor.md`, unsent); guild timeline; chat→parse extraction;
 spells/tradeskill/faction advisors on `/me`; long-haul storage partitioning.
