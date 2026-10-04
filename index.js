@@ -16345,6 +16345,8 @@ async function _handleAgentMobPack(req, res) {
 //                           (Quarm's anon-by-default raiders); class lives here
 //   3. supabase characters — secondary backstop / pulled if roster misses
 // All in-memory after the first lookup, so it's cheap to call per /who.
+// The LEVEL gets one more read at the end (pass 3b): the member's own Mimic-reported
+// level from xp_events, and the last non-anon /who level from who_observations.
 // Officer-curated /who overrides (class + Zek, set on /admin/who) cached with a
 // SHORT TTL just for the de-anon path. state.whoData only pulls who_overrides
 // every 30 min (fine for /whois), but that made an officer's just-set class take
@@ -16604,6 +16606,45 @@ async function _handleAgentWhoLookup(req, res) {
         }
       }
     } catch (err) { console.warn('[who-lookup] characters backfill failed:', err?.message); }
+  }
+
+  // Pass 3b: levels (the guild lead, 2026-10-04: "We shouldn't have a gap in our own players
+  // levels."). One RPC, two sources per name: the member's OWN Mimic-reported level (xp_events
+  // carries the exact level every Mimic-running character uploads on each experience gain, the
+  // freshest we hold) and the last non-anon /who level (who_level, from who_observations). The
+  // roster and overrides give a class and no level, and the last /who level goes stale across a
+  // cap raise (59 against a Mimic-reported 64 the same day). who_observations is read here, not
+  // through the who_directory view: the view scans the whole table (~1.4 s for 10 names, ~3 ms
+  // on the table's own index). A name only known from these gets a result. Several sources → the
+  // HIGHEST level wins (levels only rise; a death de-level is rare and short). Every requested
+  // name is asked; fail-open like the passes above.
+  if (names.length) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        // xp_events stores names in EQ capitalisation and the RPC matches those exactly
+        // (who_observations is matched on lower() both sides).
+        const eqNames = [...new Set(names.map(s => s[0].toUpperCase() + s.slice(1).toLowerCase()))];
+        const rows = await supabase.rpc('latest_character_levels', {
+          p_guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          p_names:    eqNames,
+        });
+        if (!Array.isArray(rows)) throw new Error('rpc result is not an array');
+        for (const row of rows) {
+          const key = String(row?.character || '').toLowerCase();
+          const mimicLvl = Number(row?.level);
+          const whoLvl   = Number(row?.who_level);
+          const hasMimic = Number.isInteger(mimicLvl) && mimicLvl >= 1;
+          const hasWho   = Number.isInteger(whoLvl) && whoLvl >= 1;
+          if (!key || (!hasMimic && !hasWho)) continue;
+          const cur = results[key] || (results[key] = {
+            class: null, level: null, guild: null, guild_rank: null, is_zek: false, last_seen: null, source: hasMimic ? 'mimic' : 'who',
+          });
+          const best = Math.max(cur.level || 0, hasMimic ? mimicLvl : 0, hasWho ? whoLvl : 0);
+          if (best > (cur.level || 0)) cur.level = best;
+        }
+      }
+    } catch (err) { console.warn('[who-lookup] level lookup failed:', err?.message); }
   }
 
   // Pass 4 (#111): main-in-parens + Mimic presence for guild members. Runs for
