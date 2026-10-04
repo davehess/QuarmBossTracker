@@ -3413,6 +3413,19 @@ list, plus `overlay_tuning`, `ui_snapshots`, `ui_socials_index`,
 authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
 
+### Buff blocks tab (agent 3.7.79 on beta, §157)
+A dashboard tab for Quarm's `#blockbuff` / `#blockbuffif` / `#allowbuff`, with per-character sets kept in
+`logsync.buffblocks.json`.
+- **Starter sets:** the bard songs that land on other players.
+- **Per set:**
+  - the lines to copy, one per paste;
+  - or Block and Allow socials, five lines each, written by `_applyIniKeyEditsToFile` when
+    `_charLooksLoggedIn` says the character is out, and queued until then otherwise.
+- **Routes:** `/api/buffblocks`, `/api/buffblocks/{sets,state,socials}`.
+- **Slot safety:** a set's socials are reused only while they still carry the name Mimic gave them, and new
+  ones go only into empty slots.
+- **Not built yet:** reading the server's block list. Its reply text isn't public.
+
 ### Quarm patch notes (`quarm_patch_notes`, bot 3.1.199, §158)
 The bot copies every post in Quarm's patch-notes channel into `quarm_patch_notes`. The channel is
 `QUARM_PATCH_NOTES_CHANNEL_ID`, defaulting to 1175117242682331146. The code is `_syncQuarmPatchNotes`,
