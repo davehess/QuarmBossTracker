@@ -8,8 +8,26 @@
 //   2. exporting it from `categories`
 //   3. (optional) adding a section to /admin/queue/page.tsx
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { unstable_cache } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { rankIndex } from '@/lib/eras';
+import { selectAll } from './selectAll';
+import {
+  chatEvidenceWindows, combatWindows, foldTimesByFamily, newestUploadPerName,
+  readChatSpeakers, readChatTimes, readCombatTimes, readWhoClassKnown, readWhoLatest,
+  type ChatSpeaker,
+} from './adminQueueData';
+
+// ⚠ THE 1,000-ROW CAP (the guild lead, 2026-10-04: "review all of the other tables for silent 500 or
+// 100 caps"). PostgREST returns at most 1,000 rows per response, silently, and `.limit(20000)` does not
+// raise it. This banner runs on EVERY admin page and used to count 14-30 day windows of chat and /who
+// in JS, so its counts came from the first 1,000 rows the planner returned: 8 of the 117 speakers
+// missing from OpenDKP, 6 of 41 with no class signal. The big windows are now aggregated in Postgres
+// (adminQueueData.ts → 20261004140400_cap_safe_admin.sql) and the roster-sized reads page through
+// selectAll. Do not add a plain `.select()` over a table that can pass 1,000 rows here.
+
+type Sb = SupabaseClient;
 
 const WINDOW = '14 days';
 
@@ -38,10 +56,9 @@ export type QueueCategory = {
 // every raid tick and won't show up on attendance pages. The single most
 // impactful officer-action queue — every name here is a member whose
 // participation we're under-counting.
-async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
-  // Pull the OpenDKP roster (small — a few hundred names) and the last
-  // 14 days of chat aggregated by speaker. Diff in memory — Supabase
+async function loadUnrosteredChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>): Promise<QueueCategory> {
+  // Pull the OpenDKP roster (a few hundred names, paged so it cannot be cut at the 1,000-row cap) and the
+  // last 14 days of chat aggregated by speaker in Postgres. Diff in memory — Supabase
   // doesn't expose a NOT IN against a sub-select via PostgREST.
   //
   // ROSTER SOURCE: we used to read from opendkp_character_id_to_name —
@@ -52,40 +69,32 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
   // in opendkp_attendance_recent — every character who's been ticked
   // shows up there — backstopped by characters.opendkp_id (set by the
   // OpenDKP sync when a character gets parented in the roster).
-  const [{ data: attendees }, { data: rosterChars }, { data: msgs }] = await Promise.all([
-    sb.from('opendkp_attendance_recent').select('character_name'),
-    sb.from('characters').select('name, opendkp_id').not('opendkp_id', 'is', null),
-    sb.from('chat_messages')
-      .select('speaker, ts')
-      .in('channel', ['guild', 'raid'])
-      .gt('ts', new Date(Date.now() - 14 * 86400000).toISOString())
-      .limit(20000),
+  const [attendees, rosterChars, speakers] = await Promise.all([
+    // opendkp_attendance_recent is GROUP BY character, so character_name is unique: a stable order.
+    selectAll<{ character_name: string | null }>((from, to) => sb
+      .from('opendkp_attendance_recent').select('character_name')
+      .order('character_name').range(from, to)),
+    // No guild filter here, so the order is the whole primary key (guild_id, name).
+    selectAll<{ name: string | null; opendkp_id: number | null }>((from, to) => sb
+      .from('characters').select('name, opendkp_id').not('opendkp_id', 'is', null)
+      .order('guild_id').order('name').range(from, to)),
+    speakersP,
   ]);
   const rostered = new Set<string>();
-  for (const r of (attendees ?? []) as { character_name: string | null }[]) {
+  for (const r of attendees) {
     if (r.character_name) rostered.add(r.character_name.toLowerCase());
   }
-  for (const r of (rosterChars ?? []) as { name: string | null; opendkp_id: number | null }[]) {
+  for (const r of rosterChars) {
     if (r.name && r.opendkp_id != null) rostered.add(r.name.toLowerCase());
   }
-  const bySpeaker = new Map<string, { count: number; last: string }>();
-  for (const m of (msgs ?? []) as { speaker: string; ts: string }[]) {
-    if (!m.speaker) continue;
-    if (rostered.has(m.speaker.toLowerCase())) continue;
-    const cur = bySpeaker.get(m.speaker);
-    if (!cur) bySpeaker.set(m.speaker, { count: 1, last: m.ts });
-    else {
-      cur.count += 1;
-      if (m.ts > cur.last) cur.last = m.ts;
-    }
-  }
-  const items: QueueItem[] = [...bySpeaker.entries()]
-    .map(([speaker, v]) => ({
-      key:    speaker.toLowerCase(),
-      label:  speaker,
-      count:  v.count,
-      last:   v.last,
-      detail: `${v.count} message${v.count === 1 ? '' : 's'}`,
+  const items: QueueItem[] = speakers
+    .filter(s => s.speaker && !rostered.has(s.speaker.toLowerCase()))
+    .map(s => ({
+      key:    s.speaker.toLowerCase(),
+      label:  s.speaker,
+      count:  s.n,
+      last:   s.last,
+      detail: `${s.n} message${s.n === 1 ? '' : 's'}`,
       href:   `/admin/members`,    // closest existing fix-it page
     }))
     .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
@@ -105,58 +114,36 @@ async function loadUnrosteredChatSpeakers(): Promise<QueueCategory> {
 // observation within the last 30 days. These render in chat as plain
 // "Name: text" instead of "Name [60 Class]: text". Officers can fill class
 // manually via /admin/who which writes who_overrides.
-async function loadUnenrichableChatSpeakers(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
-  const sinceMs   = Date.now() - 14 * 86400000;
+async function loadUnenrichableChatSpeakers(sb: Sb, speakersP: Promise<ChatSpeaker[]>): Promise<QueueCategory> {
   const sinceWho  = new Date(Date.now() - 30 * 86400000).toISOString();
-  const [{ data: msgs }, { data: chars }, { data: whoRows }] = await Promise.all([
-    sb.from('chat_messages')
-      .select('speaker, ts')
-      .in('channel', ['guild', 'raid'])
-      .gt('ts', new Date(sinceMs).toISOString())
-      .limit(20000),
-    sb.from('characters').select('name, class').eq('guild_id', 'wolfpack'),
-    sb.from('who_observations')
-      .select('character, class, anonymous')
-      .gt('observed_at', sinceWho)
-      .eq('anonymous', false)
-      .not('class', 'is', null)
-      .limit(20000),
+  const [speakers, chars] = await Promise.all([
+    speakersP,
+    selectAll<{ name: string; class: string | null }>((from, to) => sb
+      .from('characters').select('name, class').eq('guild_id', 'wolfpack')
+      .order('name').range(from, to)),
   ]);
 
   // Two enrichment sources — both produce a "we know their class" signal.
   const classFromCharacters = new Set<string>();
-  for (const c of (chars ?? []) as { name: string; class: string | null }[]) {
+  for (const c of chars) {
     if (c.name && c.class) classFromCharacters.add(c.name.toLowerCase());
   }
-  const classFromWho = new Set<string>();
-  for (const w of (whoRows ?? []) as { character: string; class: string | null }[]) {
-    if (w.character && w.class) classFromWho.add(w.character.toLowerCase());
-  }
+  // The /who half asks only about the speakers the roster did not already settle: the few hundred names
+  // in chat, not every name /who has seen in 30 days (3,051 of them).
+  const unsettled = speakers.filter(s => s.speaker && !classFromCharacters.has(s.speaker.toLowerCase()));
+  const classFromWho = await readWhoClassKnown(sb, unsettled.map(s => s.speaker), sinceWho);
 
-  const bySpeaker = new Map<string, { count: number; last: string }>();
-  for (const m of (msgs ?? []) as { speaker: string; ts: string }[]) {
-    if (!m.speaker) continue;
-    const lk = m.speaker.toLowerCase();
-    if (classFromCharacters.has(lk) || classFromWho.has(lk)) continue;
-    const cur = bySpeaker.get(m.speaker);
-    if (!cur) bySpeaker.set(m.speaker, { count: 1, last: m.ts });
-    else {
-      cur.count += 1;
-      if (m.ts > cur.last) cur.last = m.ts;
-    }
-  }
-
-  const items: QueueItem[] = [...bySpeaker.entries()]
-    .map(([speaker, v]) => ({
-      key:    speaker.toLowerCase(),
-      label:  speaker,
-      count:  v.count,
-      last:   v.last,
-      detail: `${v.count} message${v.count === 1 ? '' : 's'} — chat renders as "Name:" only`,
+  const items: QueueItem[] = unsettled
+    .filter(s => !classFromWho.has(s.speaker.toLowerCase()))
+    .map(s => ({
+      key:    s.speaker.toLowerCase(),
+      label:  s.speaker,
+      count:  s.n,
+      last:   s.last,
+      detail: `${s.n} message${s.n === 1 ? '' : 's'} — chat renders as "Name:" only`,
       // /who has the inline class fill-in (writes who_overrides) and is
       // member-readable, so officers can fix the class without leaving the page.
-      href:   `/who?q=${encodeURIComponent(speaker)}`,
+      href:   `/who?q=${encodeURIComponent(s.speaker)}`,
     }))
     .sort((a, b) => (b.last || '').localeCompare(a.last || ''));
   return {
@@ -176,52 +163,37 @@ async function loadUnenrichableChatSpeakers(): Promise<QueueCategory> {
 // so officers see the backlog at a glance instead of having to navigate
 // to /admin/links and scroll. The fix-it action lives in /admin/links
 // (the Register form), which is what `href` jumps to.
-async function loadUnregisteredOpenDKP(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
-  const [{ data: uploads }, { data: chars }, { data: whoRows }] = await Promise.all([
-    sb.from('agent_upload_stats')
+async function loadUnregisteredOpenDKP(sb: Sb): Promise<QueueCategory> {
+  const [uploads, chars] = await Promise.all([
+    // One row per (guild_id, character, endpoint): the primary key, so a stable order to page on.
+    selectAll<{ character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }>((from, to) => sb
+      .from('agent_upload_stats')
       .select('character, uploaded_by_discord_id, last_uploaded_at')
       .not('uploaded_by_discord_id', 'is', null)
       .not('character', 'is', null)
-      .limit(3000),
-    sb.from('characters')
+      .order('guild_id').order('character').order('endpoint')
+      .range(from, to)),
+    selectAll<{ name: string }>((from, to) => sb
+      .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack'),
-    sb.from('who_observations')
-      .select('character, level, class, observed_at')
       .eq('guild_id', 'wolfpack')
-      .order('observed_at', { ascending: false })
-      .limit(3000),
+      .order('name').range(from, to)),
   ]);
 
   const rostered = new Set<string>();
-  for (const c of (chars ?? []) as { name: string }[]) {
+  for (const c of chars) {
     if (c.name) rostered.add(c.name.toLowerCase());
   }
-  const whoByName = new Map<string, { level: number | null; cls: string | null }>();
-  for (const w of (whoRows ?? []) as { character: string; level: number | null; class: string | null }[]) {
-    const k = (w.character || '').toLowerCase();
-    if (k && !whoByName.has(k)) whoByName.set(k, { level: w.level ?? null, cls: w.class ?? null });
-  }
+  const unregistered = newestUploadPerName(uploads, k => rostered.has(k));    // drops operator streams / junk too
+  // Each name's newest /who row, asked for by name: the old read took the newest 3,000 /who rows of all
+  // 161,000, which reached back 2.7 hours and found a level for almost nobody.
+  const whoByName = await readWhoLatest(sb, unregistered.map(u => u.name));
 
-  const seen = new Set<string>();
   type Row = { name: string; last: string | null; level: number | null; cls: string | null };
-  const rows: Row[] = [];
-  for (const u of (uploads ?? []) as { character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }[]) {
-    const name = (u.character || '').trim();
-    if (!name || !u.uploaded_by_discord_id) continue;
-    if (!/^[A-Za-z]{3,20}$/.test(name)) continue;       // operator streams / junk
-    const k = name.toLowerCase();
-    if (seen.has(k) || rostered.has(k)) continue;
-    seen.add(k);
-    const who = whoByName.get(k);
-    rows.push({
-      name,
-      last:  u.last_uploaded_at ?? null,
-      level: who?.level ?? null,
-      cls:   who?.cls ?? null,
-    });
-  }
+  const rows: Row[] = unregistered.map(u => {
+    const who = whoByName.get(u.name.toLowerCase());
+    return { name: u.name, last: u.last, level: who?.level ?? null, cls: who?.cls ?? null };
+  });
 
   const items: QueueItem[] = rows
     .map(r => {
@@ -258,8 +230,7 @@ async function loadUnregisteredOpenDKP(): Promise<QueueCategory> {
 // follow-up cadence. Action link drops the officer onto /admin/links so
 // they can pick a Discord member from the dropdown if the player hasn't
 // claimed within OpenDKP's own UI yet.
-async function loadAwaitingOpenDKPClaim(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
+async function loadAwaitingOpenDKPClaim(sb: Sb): Promise<QueueCategory> {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data: rows } = await sb
     .from('characters')
@@ -310,10 +281,12 @@ type FamilyIndex = {
   members:  Map<string, Set<string>>;
   display:  Map<string, string>;
 };
-async function loadFamilyIndex(sb: ReturnType<typeof supabaseAdmin>): Promise<FamilyIndex> {
-  const { data } = await sb.from('characters')
-    .select('name, main_name, discord_id, rank').eq('guild_id', 'wolfpack');
-  const rows = (data ?? []) as { name: string; main_name: string | null; discord_id: string | null; rank: string | null }[];
+async function loadFamilyIndex(sb: Sb): Promise<FamilyIndex> {
+  // Paged: truncating this at 1,000 characters would split families, and every family judgement
+  // below (who "missed" a tick) is made against the whole family.
+  const rows = await selectAll<{ name: string; main_name: string | null; discord_id: string | null; rank: string | null }>((from, to) => sb
+    .from('characters').select('name, main_name, discord_id, rank').eq('guild_id', 'wolfpack')
+    .order('name').range(from, to));
   const lc = (s: string) => s.toLowerCase();
   const parent = new Map<string, string>();
   const ensure = (x: string) => { if (!parent.has(x)) parent.set(x, x); };
@@ -387,8 +360,7 @@ function parseTickTime(raidTs: string, description: string | null): string | nul
 // partial attendance and never flagged. Grouped by family → "Main (Alt)" when
 // an alt held the surrounding ticks; each row lists which tick of which raid
 // and the evidence (⚔ combat / 💬 chat). Officer hand-credits in OpenDKP.
-async function loadPotentialMissingTicks(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
+async function loadPotentialMissingTicks(sb: Sb): Promise<QueueCategory> {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const summary = 'Raiders who were present (ticked before/after, or shown by combat + chat) but missing from a tick snapshot — a swap/LD/zone mid-raid, or still fighting at raid end when the last loot tick was taken. Late joins / early leaves with no corroboration aren\'t flagged. Grouped by family; expand for which tick of which raid + evidence. Officer hand-credits in OpenDKP.';
   const emptyCat: QueueCategory = { id: 'missing_ticks', icon: '🎟️', title: 'Potentially missing raid ticks', summary, count: 0, items: [], fixHelpHref: 'https://wolfpack.opendkp.com/#/raids' };
@@ -471,19 +443,15 @@ async function loadPotentialMissingTicks(): Promise<QueueCategory> {
     for (const fid of candFamIds) for (const ln of (fam.members.get(fid) ?? [])) {
       const disp = fam.display.get(ln) || ln; speakers.push(disp); speakerToFam.set(disp.toLowerCase(), fid);
     }
-    const { data: chat } = await sb.from('chat_messages')
-      .select('speaker, ts').in('channel', ['guild', 'raid'])
-      .in('speaker', speakers.slice(0, 400)).gte('ts', since).limit(20000);
-    for (const m of ((chat ?? []) as { speaker: string | null; ts: string | null }[])) {
-      if (!m.speaker || !m.ts) continue;
-      const fid = speakerToFam.get(m.speaker.toLowerCase());
-      if (!fid) continue;
-      const arr = famChat.get(fid) ?? []; arr.push(Date.parse(m.ts)); famChat.set(fid, arr);
-    }
+    // Chat is fetched for the windows the checks below can ask about (a few hours around each raid),
+    // not 30 days of every member: the last read of this was ~18k rows delivered as 1,000.
+    foldTimesByFamily(
+      await readChatTimes(sb, speakers, since, chatEvidenceWindows(candidates)),
+      speakerToFam, famChat);
 
-    // Combat only matters for EDGE candidates (interior is self-evident). Fetch
-    // per edge-raid: encounters in the raid window + which family members were
-    // in them. Bounded — few raids produce edge candidates.
+    // Combat only matters for EDGE candidates (interior is self-evident). One call for every
+    // edge raid's window: the encounters in it and which family members were in them. A raid can
+    // hold ~300 encounters and ~1,400 player rows, past what a plain read returns.
     const edge = candidates.filter(c => c.kind !== 'interior');
     const edgeRaidIds = [...new Set(edge.map(c => c.raidId))];
     const edgeFamIds = new Set(edge.map(c => c.familyId));
@@ -492,28 +460,9 @@ async function loadPotentialMissingTicks(): Promise<QueueCategory> {
     for (const fid of edgeFamIds) for (const ln of (fam.members.get(fid) ?? [])) {
       const disp = fam.display.get(ln) || ln; memberNames.push(disp); memberToFam.set(disp.toLowerCase(), fid);
     }
-    await Promise.all(edgeRaidIds.map(async (rid) => {
-      const meta = raidMeta.get(rid)!;
-      const lo = new Date(Date.parse(meta.ts) - 10 * 60000).toISOString();
-      const hi = new Date(Date.parse(meta.ts) + 6 * 3600000).toISOString();
-      const { data: encs } = await sb.from('encounters')
-        .select('id, started_at').eq('guild_id', 'wolfpack')
-        .gte('started_at', lo).lte('started_at', hi).limit(300);
-      const encList = (encs ?? []) as { id: string; started_at: string }[];
-      if (encList.length === 0) return;
-      const startById = new Map(encList.map(e => [e.id, Date.parse(e.started_at)]));
-      const { data: eps } = await sb.from('encounter_players')
-        .select('encounter_id, character_name')
-        .in('encounter_id', encList.map(e => e.id))
-        .in('character_name', memberNames.slice(0, 400)).limit(20000);
-      for (const ep of ((eps ?? []) as { encounter_id: string; character_name: string | null }[])) {
-        if (!ep.character_name) continue;
-        const fid = memberToFam.get(ep.character_name.toLowerCase());
-        const t = startById.get(ep.encounter_id);
-        if (!fid || t == null) continue;
-        const arr = famCombat.get(fid) ?? []; arr.push(t); famCombat.set(fid, arr);
-      }
-    }));
+    foldTimesByFamily(
+      await readCombatTimes(sb, memberNames, combatWindows(edgeRaidIds.map(rid => raidMeta.get(rid)!.ts))),
+      memberToFam, famCombat);
   }
 
   // ── Resolve candidates: keep interior always; keep edges only when combat or
@@ -582,8 +531,7 @@ async function loadPotentialMissingTicks(): Promise<QueueCategory> {
 // lines where the same in-game broadcast was stored under both a ghost name
 // (non-roster, one uploader) and a real roster name (seen by bystanders). The
 // fix is on the member's machine: remove the stray log from Mimic's watch dir.
-async function loadChatMisattribution(): Promise<QueueCategory> {
-  const sb = supabaseAdmin();
+async function loadChatMisattribution(sb: Sb): Promise<QueueCategory> {
   const summary = 'Members whose agent is tailing a stray/old log file, so their guild chat posts under the wrong name (the bot now auto-relabels what it can, but the source should be fixed). Ask the member to remove the named log from the folder Mimic watches.';
   const { data, error } = await sb.rpc('chat_attribution_conflicts', { p_days: 7 });
   const rows = (data ?? []) as { ghost_speaker: string; uploader_discord_id: string; likely_real: string; lines: number; last_line: string }[];
@@ -611,18 +559,30 @@ async function loadChatMisattribution(): Promise<QueueCategory> {
 
 // Load every category in parallel. Caller uses the total count for the
 // banner, the per-category counts for the badges, and items for /admin/queue.
-export async function loadAdminQueue(): Promise<{
+// Takes the client so a test can run it against a fake; the page calls loadAdminQueue below.
+export async function loadAdminQueueWith(sb: Sb): Promise<{
   total:      number;
   categories: QueueCategory[];
 }> {
+  // Both chat categories judge the same 14 days of speakers: one aggregate, shared.
+  const speakersP = readChatSpeakers(sb, new Date(Date.now() - 14 * 86400000).toISOString());
   const categories = await Promise.all([
-    loadUnrosteredChatSpeakers(),
-    loadUnenrichableChatSpeakers(),
-    loadUnregisteredOpenDKP(),
-    loadAwaitingOpenDKPClaim(),
-    loadPotentialMissingTicks(),
-    loadChatMisattribution(),
+    loadUnrosteredChatSpeakers(sb, speakersP),
+    loadUnenrichableChatSpeakers(sb, speakersP),
+    loadUnregisteredOpenDKP(sb),
+    loadAwaitingOpenDKPClaim(sb),
+    loadPotentialMissingTicks(sb),
+    loadChatMisattribution(sb),
   ]);
   const total = categories.reduce((acc, c) => acc + c.count, 0);
   return { total, categories };
 }
+
+// Every admin page renders this banner, so it is cached for a minute: the aggregates behind it scan
+// 14-30 days of chat and /who, which is wasted work once per admin navigation. A fix an officer makes
+// shows within the minute.
+export const loadAdminQueue = unstable_cache(
+  () => loadAdminQueueWith(supabaseAdmin()),
+  ['admin-queue'],
+  { revalidate: 60 },
+);
