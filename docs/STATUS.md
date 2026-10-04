@@ -103,6 +103,11 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ UI backups: one character per list, and a file list (bot 3.1.197 live; Mimic beta, 2026-10-04).** The Backups
+  list under a character showed every character on the account, unnamed, each with Restore (filtered by owner
+  only). Bot now filters by character too (`test/ui-layout-list-scope.test.js`). Settings → UI backups → 📄 Files
+  lists what a backup holds (the server keeps no names). Restore writes files under their own names, so a wrong
+  row never overwrote the character's own files, but it did roll back the shared `eqclient.ini` / `zeal.ini`.
 - **⏳ Canvas: presets are the real overlays, tight margins, the HUD ring + its builder (alpha `5adafea8`, agent 3.7.74
   beta for the Command Center, 2026-10-03).** Waiting on the guild lead's look in the alpha. §142.
 - **⏳ PoP overlay Quests mode (Mimic beta `b84e25b8`, 2026-10-03).** Slides / Quests toggle; every PoP guide step with

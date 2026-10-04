@@ -2333,7 +2333,14 @@ editable HotButtons/Socials grids, and the **macro suggestion catalog**
 empty Socials slots). All saves go through `write-pages` (key-level, guarded:
 blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
-resolution rescale on the way back.
+resolution rescale on the way back. A bundle (`_readUiBundle`, `main.js`) is
+`eqclient.ini` + `zeal.ini` (shared by every character) and every top-level
+`.ini` named for the character — `UI_<Name>*` (layout), `<Name>_pq.proj.ini`
+(hotbuttons, socials, Zeal key binds), Zeal's `<Name>_bandolier.ini` /
+`_spellsets.ini` / `_protected.ini`. The list is scoped to owner AND character
+(bot 3.1.197; it was owner-only, so every character's list showed the whole
+family). The server keeps no file names — Settings → UI backups → 📄 Files
+downloads the bundle to list them (Mimic beta, 2026-10-04).
 
 ### Bringing in a character nothing else can see (🧳 on `/me`)
 A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no

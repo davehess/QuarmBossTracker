@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'ui-backups-2026-10-04',
+    title: 'Whose backup is this?',
+    version: 'Bot 3.1.197 · Web 1.8.94 · Mimic beta',
+    date: '2026-10-04',
+    headline: 'Mimic’s UI backups list only shows the character you opened it for, and can tell you what is in each backup.',
+    features: [
+      { name: '📄 Files', blurb: 'Settings → UI backups → Backups → 📄 Files lists every file in a backup and what it is: window layout, hotbuttons and socials, bandolier, spell sets, game and Zeal settings. In the beta Mimic.' },
+    ],
+    fixes: [
+      'The Backups list under one character showed every character on your account, with no name on the rows, so Restore could pick another character’s backup.',
+    ],
+  },
+  {
     key: 'fun-crash-card-2026-10-04',
     title: 'Raid crashes only',
     version: 'Web 1.8.93',

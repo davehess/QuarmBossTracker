@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.197': [
+    '**Mimic\'s UI backups list only shows the character you opened it for.** It used to list every character on your account under each one, with no name on the rows, so a Restore could pick another character\'s backup.',
+  ],
   '3.1.196': [
     '**Mimic\'s /who overlay shows a level for guildmates who are /anon.** It uses the level their own Mimic reports, or the last level /who showed, whichever is higher. The beta Mimic also takes the exact level of anyone in your raid straight from the raid window.',
   ],
