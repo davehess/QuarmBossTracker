@@ -62,6 +62,11 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'valor', 'resolution', 'heroic bond', 'virtue', 'health', 'center', 'fortitude',
     'khura', 'focus of spirit', 'arch shielding', 'spiritual purity',
     'protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
+    // Group versions that share no stem with the single-target line they replace, so they read as
+    // "missing" (2026-10-04, the group-buff pass): the cleric Mark line = Symbol's group cast (slot B,
+    // SPA 69+79; Kazad`s keeps its backtick, the DB spelling, with the straight-quote spelling too) and
+    // the shaman's Focus of the Seventh = Khura's group successor (slot C). Mirrors utils/raidBuffs.js.
+    "marzin's mark", "naltron's mark", 'kazad`s mark', "kazad's mark", 'focus of the seventh',
   ],
   // HP regeneration over time. Nature's Recovery (lvl 49 druid line) and
   // its rank variants don't share a stem with the other regen spells; add
@@ -75,6 +80,10 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
   manaRegen: [
     'clarity', 'koadic', 'endless intellect', 'breeze', 'clairvoyance',
     'gift of insight', 'gift of pure thought', 'auspice',
+    // 2026-10-04: Boon of the Clear Mind is the enchanter's group mana regen (SPA 15, no shared stem).
+    // Spiritual Dominion is HP + mana regen (SPA 0 + 15, +9 each) — NOT attack; manaRegen is the line a
+    // caster or priest is expected to carry, so it lives here rather than in regen (first hit wins).
+    'boon of the clear mind', 'spiritual dominion',
   ],
   // Attack-speed haste. ("Speed of the Shissar"/"Swift like the Wind" are
   // haste — they don't collide with SoW, which matches "spirit of wolf".)
@@ -89,17 +98,27 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
     'haste', 'celerity', 'quickness', 'swift', 'speed of', 'augmentation',
     'alacrity', 'aanya', 'battle cry', 'warsong', 'verses of victory',
     'visions of grandeur', 'beta vog',
+    // 2026-10-04: the enchanter's group haste (SPA 11). "Speed of the Brood" is already caught by
+    // 'speed of' above, so it is not repeated.
+    "vallon's quickening",
   ],
   // Movement / run speed (SoW family + bard travel songs).
   runSpeed: [
     'spirit of wolf', 'spirit of the wolf', 'flight of eagle', 'pack spirit',
     'selo', 'journeyman', 'run speed', 'spirit of the shrew',
+    // 2026-10-04: the DB spells it with a backtick, so the old "spirit of bihli" never matched Bih`Li;
+    // Spirit of Eagle is the single-target run speed + levitate (Flight of Eagles is caught above).
+    'spirit of bih`li', 'spirit of eagle',
   ],
   // ATK / STR / offense (incl. the Beastlord/Druid avatar + warder lines).
   attack: [
     'strength', 'avatar', 'ferocity', 'champion', 'primal', 'war march',
     'savage', 'brutal', 'might of', 'tumultuous', 'aggression', 'bull',
     'call of the predator', 'feral avatar', 'ancient: feral',
+    // 2026-10-04: Spirit of the Predator is the ranger's group ATK (SPA 2); Spiritual Vigor is ATK +40
+    // with max HP +225 (SPA 2 + 69) — ATK is the line a melee role is expected to carry. Talisman of the
+    // Brute was on the list to add but is STA only (SPA 7), so it stays out of "attack".
+    'spirit of the predator', 'spiritual vigor',
   ],
   // Damage shields. Mage line: Shield of Flame / Cadeau of Flame /
   // Inferno Shield. Cleric Barrier of Combustion / Boon of Immolation.
@@ -110,7 +129,9 @@ const KEYWORDS: Record<BuffCategory, string[]> = {
        'damage shield', 'legacy of', 'shield of barbs',
        'cadeau of flame', 'shield of flame', 'inferno shield', 'fiery might',
        'barrier of combustion', 'boon of immolation',
-       'aura of vinitras', 'aura of the defender'],
+       'aura of vinitras', 'aura of the defender',
+       // 2026-10-04: the mage's Ro line (SPA 59 damage shield + 46 fire resist).
+       'maelstrom of ro', 'aegis of ro'],
   // Levitation — situational but worth a visible row (Hate trenches, Sky).
   levitate: ['levitat', 'dead men floating', 'dead man floating', 'flying'],
   // See Invisible and Invisibility — separate categories so the dashboard
@@ -146,6 +167,7 @@ const SECONDARY_CATEGORY: [string, BuffCategory][] = [
   ['visions of grandeur', 'attack'],
   ['beta vog',            'attack'],   // Quarm PoP-beta VoG — same +ATK rider
   ['spirit of bihli',     'attack'],
+  ['spirit of bih`li',    'attack'],   // the real spell name has a backtick; same entry as utils/raidBuffs.js
   // POTG/POTC carry a mana-regen component — the reason casters take the
   // druid line over group Aego in HP slot A.
   ['protection of the glades',  'manaRegen'],
@@ -201,11 +223,12 @@ export const UPGRADE_CHAINS: UpgradeChain[] = [
   {
     key: 'aego',
     label: 'Aego line',
-    // Bottom-up Cleric "Type One" HP+AC line (the guild lead-confirmed), then group
-    // versions: Courage L1 → Center L9 → Daring L19 → Bravery L24 → Valor
-    // L34 → Resolution L44 → Heroism L49 → Heroic Bond L54 → Fortitude L55
-    // → Temperance (group) → Aegolism (group, A+B) → Blessing of Aegolism
-    // → Ancient: Gift of Aegolism.
+    // Bottom-up Cleric "Type One" HP+AC line (the guild lead-confirmed): Courage L1 →
+    // Center L9 → Daring L19 → Bravery L24 → Valor L34 → Resolution L44 →
+    // Heroism L49 → Heroic Bond L54 → Fortitude L55 → Temperance (single,
+    // targettype 5) → Aegolism (single, A+B) → then the GROUP versions, Blessing of
+    // Aegolism and Ancient: Gift of Aegolism (targettype 41). Checked against
+    // eqemu_spells 2026-10-04; these were labelled "group" before.
     chain: ['courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
             'heroism', 'heroic bond', 'fortitude',
             'temperance', 'aegolism', 'blessing of aegolism', 'ancient: gift of aegolism'],
@@ -224,8 +247,9 @@ export const UPGRADE_CHAINS: UpgradeChain[] = [
     key: 'focus',
     label: 'Focus line',
     // Bottom-up: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) → Focus of Spirit
-    // (L57 group HP/AC) → Khura's Focusing (L60 top-end single-target). The
-    // queue flags any link below the buffer's class max as "upgradable".
+    // (L57 HP/AC, single-target — targettype 5) → Khura's Focusing (L60 top end,
+    // GROUP — targettype 41). The queue flags any link below the buffer's class
+    // max as "upgradable".
     chain: ['inner fire', 'talisman of tnarg', 'talisman of kragg', 'focus of spirit', 'khura'],
     classes: ['shaman'],
   },
@@ -422,14 +446,16 @@ export const HP_SLOT_PROVIDER: Record<HpSlot, string> = {
 //   A — Cleric "Type One" HP+AC line:
 //        Courage (L1) → Center (L9) → Daring (L19) → Bravery (L24) →
 //        Valor (L34) → Resolution (L44) → Heroism (L49) → Heroic Bond (L54)
-//        → Fortitude (L55) → Aegolism (L60 group, fills A+B) →
-//        Blessing of Aegolism (L60 group).
-//        Druid POTG/POTC (group) and Shaman Wunshi/Temperance (group) live
-//        here too.
+//        → Fortitude (L55) → Aegolism (L60, single-target, fills A+B) →
+//        Blessing of Aegolism (L60 GROUP).
+//        Druid POTG (group, targettype 41) / POTC (single, 5) and Temperance
+//        (single, 5) live here too; Talisman of Wunshi is not in the eqemu_spells
+//        mirror, so its target type is unchecked. (POTC and Temperance were labelled
+//        "group" before; eqemu_spells says otherwise, 2026-10-04.)
 //   B — Cleric "Symbol of" line: Transal (L14) → Ryltan (L24) →
 //        Pinzarn (L34) → Naltron (L44) → Marzin (L54). All match "symbol of".
 //   C — Shaman HP line: Inner Fire (L1) → Tnarg (L49) → Kragg (L55) →
-//        Focus of Spirit (L57 group) → Khura's Focusing (L60). Plus
+//        Focus of Spirit (L57, single) → Khura's Focusing (L60, GROUP). Plus
 //        Cleric Brell's line + Wizard Arch Shielding.
 // UPGRADE_CHAINS flags lower-link versions as "upgradable" (light green) so
 // the queue nudges a buffer to recast at their class max.
@@ -437,9 +463,11 @@ const HP_SLOT_KEYWORDS: Record<HpSlot, string[]> = {
   A: ['protection of the glades', 'protection of the cabbage', 'talisman of wunshi',
       'temperance', 'courage', 'center', 'daring', 'bravery', 'valor', 'resolution',
       'heroism', 'heroic bond', 'fortitude'],
-  B: ['symbol of'],
+  // The Mark line is the group cast of the Symbol line (same SPA 69+79, same slot); Focus of the
+  // Seventh is Khura's group successor. Mirrors utils/raidBuffs.js (2026-10-04).
+  B: ['symbol of', "marzin's mark", "naltron's mark", 'kazad`s mark', "kazad's mark"],
   C: ['khura', 'focus of spirit', 'talisman of kragg', 'talisman of tnarg', 'inner fire',
-      'brell', 'arch shielding', 'spiritual purity'],
+      'brell', 'arch shielding', 'spiritual purity', 'focus of the seventh'],
 };
 // 'virtue' — Virtue is the PoP successor to Aegolism (same Type-One slot,
 // bigger numbers) and matches Quarm's PoP-beta reward "Beta Virtue" too.
