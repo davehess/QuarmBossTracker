@@ -104,7 +104,7 @@ describe('one paginator per runtime', () => {
 // believes a big number lifts the cap; each actually reads at most 1000 rows.
 // Convert a site to the shared paginator (or bound it deliberately at ≤1000
 // with its ordering checked) and LOWER this number. Never raise it.
-const OVER_CAP_BASELINE = 85;
+const OVER_CAP_BASELINE = 77;
 
 function overCapSites() {
   const hits = [];
