@@ -499,14 +499,15 @@
   // saying. see_hide is 0 rows today; the branch costs nothing and covers a
   // future sync that sets one.
   // A player target's card (2026-09-24). Level says where it came from — an
-  // exact /who, an even con, a con RANGE (in EverQuest's own con colours), or
-  // the last level /who history saw — because those are different confidences.
+  // exact /who or Zeal's raid and group roster (both exact, so no tag), an even con, a con
+  // RANGE (in EverQuest's own con colours), or the last level /who history saw — because
+  // those are different confidences.
   var CON_COLOURS = { green: '#56d364', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: '#f85149' };
   var CON_NAMES = { green: 'green', lightblue: 'light blue', blue: 'blue', white: 'even', yellow: 'yellow', red: 'red' };
   function playerCard(pl){
     var lvl = '';
     if (pl.level != null) {
-      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
+      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' || pl.level_src === 'zeal' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
     } else if (pl.level_min != null || pl.level_max != null) {
       lvl = 'level <b>' + (pl.level_max == null ? pl.level_min + '+' : (pl.level_min === pl.level_max ? pl.level_min : pl.level_min + '–' + pl.level_max)) + '</b>'
           + (pl.history_level ? ' <span style="color:#8b949e">· last seen ' + pl.history_level + '</span>' : '');

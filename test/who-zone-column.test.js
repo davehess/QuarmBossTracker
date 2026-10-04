@@ -29,6 +29,7 @@ function load() {
     function fetchWhoLookup() {}
     function _currentTargetState() { return null; }
     const _raidClassByName = new Map();
+    function _zealLevelFor() { return null; }
     function conLevelFor() { return null; }
     function normalizeClass(s) { return s; }
     function pvpDrainState() { return null; }
