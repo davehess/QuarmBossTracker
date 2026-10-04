@@ -27,9 +27,11 @@ function fight(boss, opts = {}) {
     targetName: boss,
     startedAt: opts.startedAt || iso(60_000),
     flushedAt: opts.flushedAt || Date.now(),
+    // `dmg` is the RAW damage the live meter shows; swing/proc/spell are THREAT and are NOT the same
+    // number (2026-10-04) — a fixture without `dmg` would be a row of a fight that dealt none.
     perPlayer: opts.perPlayer || {
-      Hitya:   { swing: 5000, proc: 1000, spell: 0 },
-      Wabumkin:{ swing: 0, proc: 0, spell: 40000 },
+      Hitya:   { swing: 5000, proc: 1000, spell: 0, dmg: 6000 },
+      Wabumkin:{ swing: 0, proc: 0, spell: 40000, dmg: 40000 },
     },
   };
 }
@@ -70,12 +72,13 @@ describe('capturing a fight', () => {
     expect(_fightHistoryForTest().map(h => h.boss)).toEqual(['Second', 'First']);
   });
 
-  // 30 since 2026-10-02 (the guild lead: "History should be much longer").
-  it('keeps the last thirty', () => {
-    for (let i = 1; i <= 35; i++) _recordFightHistory(fight('Mob ' + i));
+  // 30 since 2026-10-02 (the guild lead: "History should be much longer"), 100 since 2026-10-04
+  // ("damage/tanking meter could have more history in it").
+  it('keeps the last hundred', () => {
+    for (let i = 1; i <= 105; i++) _recordFightHistory(fight('Mob ' + i));
     const h = _fightHistoryForTest();
-    expect(h.length).toBe(30);
-    expect(h[0].boss).toBe('Mob 35');
+    expect(h.length).toBe(100);
+    expect(h[0].boss).toBe('Mob 105');
     expect(h.map(x => x.boss)).not.toContain('Mob 5');
     expect(h.map(x => x.boss)).toContain('Mob 6');
   });
@@ -133,7 +136,60 @@ describe('refuses to record nonsense', () => {
     // Trash pulls still deserve a row; targetName is what names them.
     _recordFightHistory({ bossName: null, targetName: 'a shissar disciple',
                           startedAt: iso(30_000), flushedAt: Date.now(),
-                          perPlayer: { Hitya: { swing: 100 } } });
+                          perPlayer: { Hitya: { swing: 100, dmg: 100 } } });
     expect(_fightHistoryForTest()[0].boss).toBe('a shissar disciple');
+  });
+});
+
+// The guild lead, 2026-10-04: "damage/tanking meter could have more history in it. Make sure the history
+// correctly attributes pet data to owners and DS hits from tanks." The first thing wrong with it: a row
+// was swing+proc+spell, which is THREAT — a taunt adds the gap to the top of the table, a resisted
+// spell adds 320, and a successful hate proc adds its own — so a tank who dealt 100 read 1,961.
+describe('a row is the damage dealt, not the threat built', () => {
+  beforeEach(() => _resetFightHistoryForTest());
+
+  const tank = { swing: 100, proc: 901, spell: 960, dmg: 100 };      // t1: 100 dealt, 1,961 of threat
+
+  it('uses the raw damage, whatever the threat says', () => {
+    _recordFightHistory(fight('Aten Ha Ra', { perPlayer: { Brackwyn: tank, Aldenmar: { swing: 1000, dmg: 1000 } } }));
+    const local = _fightHistoryForTest()[0].local;
+    expect(local.find(p => p.character === 'Brackwyn').dmg).toBe(100);
+    expect(local.map(p => p.character)).toEqual(['Aldenmar', 'Brackwyn']);     // ranked on damage: the tank is NOT first
+  });
+
+  it('a raider whose threat was zeroed (zoned mid-fight) is still on the board', () => {
+    // _threatLine zeroes swing/proc/spell on "LOADING, PLEASE WAIT..." but never the raw damage.
+    _recordFightHistory(fight('Aten Ha Ra', { perPlayer: { Brackwyn: { swing: 0, proc: 0, spell: 0, dmg: 5000 } } }));
+    expect(_fightHistoryForTest()[0].local).toEqual([{ character: 'Brackwyn', dmg: 5000, pet_owner: null }]);
+  });
+
+  it('a row with no raw damage is not a damage row, however much threat it carries', () => {
+    _recordFightHistory(fight('Aten Ha Ra', { perPlayer: { Rethlan: { swing: 0, proc: 4000, spell: 900, dmg: 0 } } }));
+    expect(_fightHistoryForTest()[0].local).toEqual([]);
+  });
+});
+
+describe('what a row keeps from the live one', () => {
+  beforeEach(() => _resetFightHistoryForTest());
+
+  it('keeps the pet labels the live meter shows, so History can fold and label them', () => {
+    _recordFightHistory(fight('Aten Ha Ra', { perPlayer: {
+      Nyssara:               { dmg: 300 },
+      Kebantik:              { dmg: 100, pet_owner: 'Nyssara', pet_spawn_id: 1234 },
+      'a fungoid sporeling': { dmg: 90, pet_charm: true },
+      Gobeker:               { dmg: 80, pet_summoned: true },
+    } }));
+    const by = Object.fromEntries(_fightHistoryForTest()[0].local.map(p => [p.character, p]));
+    expect(by.Kebantik).toMatchObject({ pet_owner: 'Nyssara', pet_spawn_id: 1234 });
+    expect(by['a fungoid sporeling'].pet_charm).toBe(true);
+    expect(by.Gobeker.pet_summoned).toBe(true);
+    expect(by.Nyssara).toEqual({ character: 'Nyssara', dmg: 300, pet_owner: null });    // a raider carries no pet fields
+  });
+
+  it('stores the damage taken for a Tank History to come (kept, not shown)', () => {
+    _recordFightHistory(fight('Aten Ha Ra', { perPlayer: { Corvale: { dmg: 500, took: 210, tookMax: 130 }, Aldenmar: { dmg: 400 } } }));
+    const by = Object.fromEntries(_fightHistoryForTest()[0].local.map(p => [p.character, p]));
+    expect(by.Corvale).toMatchObject({ took: 210, tookMax: 130 });
+    expect(by.Aldenmar.took).toBeUndefined();
   });
 });

@@ -37,6 +37,9 @@ packages/wolfpack-logsync/logsync.queue.json
 packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json
+# The DPS meter's History (agent 2026-10-04): named raiders and their damage, machine-local.
+packages/wolfpack-logsync/logsync.fights.json
+packages/wolfpack-logsync/logsync.fights.json.tmp
 packages/wolfpack-logsync/logsync.pid.json
 # Durable upload queue + pet/buff state. Same machine-local runtime class as the
 # four above, but they were missing from this list — so merely REQUIRING the

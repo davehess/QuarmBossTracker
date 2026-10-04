@@ -33,6 +33,26 @@ describe('History fight list', () => {
     expect(h).toContain('still settling');
   });
 
+  it('says which numbers it is showing: synced = the guild\'s came back, local = this machine only', () => {
+    const guild = [{ character: 'Aldenmar', dmg: 5 }];
+    expect(histItemHtml(fight({ players: guild, uploaders: 3 }), 0, false, now)).toContain('class="hs-synced">synced<');
+    // A restored fight the guild could no longer be asked about is settled as it stands: it must NOT read
+    // "synced" (nothing came back), nor "…" (it is not waiting any more).
+    const asIs = histItemHtml(fight({ settled: true, players: [], upload: 'sent' }), 0, false, now);
+    expect(asIs).toContain('class="hs-local">local<');
+    expect(asIs).not.toContain('Lord Vyemm …');
+    expect(asIs).toContain('the guild numbers did not come back');
+    expect(histItemHtml(fight({ settled: false, upload: 'local' }), 0, false, now)).toContain('this machine only, never uploaded');
+  });
+
+  it('the header says "this machine" for it, not "0 clients"', () => {
+    expect(js).toMatch(/\(GUILD \? ' · ' \+ \(HIST\.uploaders \|\| 0\) \+ ' clients' : ' · this machine'\)/);
+  });
+
+  it('a hundred fights scroll inside the board instead of growing the window past the screen', () => {
+    expect(css).toMatch(/body\.hist \.histlist\{display:block;[^}]*max-height:320px;overflow-y:auto/);
+  });
+
   it('a mob name cannot break out of the row', () => {
     expect(histItemHtml(fight({ boss: '<img src=x>' }), 0, false, now)).not.toContain('<img');
   });
