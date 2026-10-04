@@ -11,8 +11,13 @@
 //    few seconds apart, so marking and undoing act on every row within
 //    QUIT_WINDOW_MS of the chosen one.
 //
-// 2. "Raids since" counts RAID NIGHTS (public.raid_nights), not calendar days
-//    with an encounter. A Saturday group night is not a raid.
+// 2. Only an LD DURING A REAL RAID counts, and "raids since" counts real raids.
+//    A real raid is one the officers logged in OpenDKP (public.opendkp_raids), and
+//    he attended it when his name is in one of its ticks (public.opendkp_ticks).
+//    public.raid_nights is NOT that record: the bot opens a row for ANY encounter
+//    on a Sun/Wed/Thu evening and has none for an off-schedule raid, so a Saturday
+//    group night or an empty Wednesday looked like a raid. An LD at 10:00 on a
+//    raid DATE is not during the raid either, so the clock has to fit too.
 
 export const QUIT_WINDOW_MS = 2 * 60_000;
 
@@ -61,9 +66,9 @@ export function countEvents(lds: Ld[]): number {
 }
 
 export type LdView = {
-  /** The LDs that count, oldest first. */
+  /** The LDs that count (during a real raid, not forgiven), oldest first. */
   counted: Ld[];
-  /** Distinct /quit events forgiven, for the "N /quit forgiven" line. */
+  /** Distinct /quit events forgiven during a raid, for the "N /quit forgiven" line. */
   forgivenEvents: number;
   /** What "It was a /quit" would mark: the most recent LD that still counts. */
   mark: Ld | null;
@@ -71,7 +76,14 @@ export type LdView = {
   undo: Ld | null;
 };
 
-export function ldView(lds: Ld[]): LdView {
+/**
+ * `raidDates` is not optional: the page and the server action must read the same
+ * list, or "the LD I would mark" and "the LD on screen" drift apart. An LD outside
+ * a raid is dropped here, before anything else, so it is not counted, not "last",
+ * not forgiven, and not offered to the button.
+ */
+export function ldView(allLds: Ld[], raidDates: ReadonlySet<string>): LdView {
+  const lds = allLds.filter(l => isDuringRaid(l.ts, raidDates));
   const counted = lds.filter(l => !l.forgiven);
   const forgiven = lds.filter(l => l.forgiven);
   const lastCounted = counted.length ? counted[counted.length - 1] : null;
@@ -142,21 +154,74 @@ export function raidNightOf(ms: number): string {
   return `${p.year}-${p.month}-${p.day}`;
 }
 
-/** The raid nights (from raid_nights.date) that at least one of these encounter starts falls on. */
-export function attendedNights(startsMs: number[], raidNights: Iterable<string>): Set<string> {
-  const nights = new Set(raidNights);
+// ── Real raids (OpenDKP) ────────────────────────────────────────────────────
+const ET_HOUR = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23',
+});
+
+/**
+ * A raid's date, 'YYYY-MM-DD', from opendkp_raids.ts. OpenDKP keeps a raid's date
+ * as NOON UTC of that date, so the UTC calendar date IS the raid's date (no
+ * Eastern conversion: that is for LD instants, which carry a real time of day).
+ */
+export function raidDateOf(ts: string | number | Date | null | undefined): string | null {
+  if (ts == null) return null;
+  const ms = new Date(ts).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : null;
+}
+
+/** Every distinct raid date in opendkp_raids. */
+export function raidDatesOf(raids: Array<{ ts: string | null }>): Set<string> {
   const out = new Set<string>();
-  for (const t of startsMs) {
-    if (!Number.isFinite(t)) continue;
-    const n = raidNightOf(t);
-    if (nights.has(n)) out.add(n);
+  for (const r of raids) {
+    const d = raidDateOf(r.ts);
+    if (d) out.add(d);
   }
   return out;
 }
 
 /**
- * `since`: attended raid nights after the last LD's night. `best`: the most
- * attended nights between any two consecutive LDs. Both are strict: the night an
+ * Was this instant during a real raid? Its raid night (Eastern date, 5 hours
+ * back, see raidNightOf) must be a raid date, AND the Eastern clock must be
+ * between 19:00 and 05:00: the same 5 hours back puts that window at hour >= 14.
+ * Without the clock, a 10:00 LD on a raid date, hours before the pull, would count.
+ */
+export function isDuringRaid(ms: number, raidDates: ReadonlySet<string>): boolean {
+  if (!Number.isFinite(ms) || !raidDates.has(raidNightOf(ms))) return false;
+  return Number(ET_HOUR.format(new Date(ms - 5 * 3_600_000))) >= 14;
+}
+
+/**
+ * The raid dates he attended: any raid on the date with a tick that lists him.
+ * `ticks` is what the page pulls, only the ticks that name him, so a row here is
+ * a hit; a raid_id with no raid row is ignored.
+ */
+export function attendedRaidDates(raids: Array<{ raid_id: number | string; ts: string | null }>, ticks: Array<{ raid_id: number | string }>): Set<string> {
+  const dateOf = new Map(raids.map(r => [String(r.raid_id), raidDateOf(r.ts)]));
+  const out = new Set<string>();
+  for (const t of ticks) {
+    const d = dateOf.get(String(t.raid_id));
+    if (d) out.add(d);
+  }
+  return out;
+}
+
+/**
+ * The PostgREST `or` filter that finds the ticks naming a character. PostgREST
+ * cannot match an array element case-insensitively, so the likely spellings are
+ * listed instead; OpenDKP stores one canonical spelling per name (checked
+ * 2026-10-04: all 420 ticks since January used 'Peopleslayer'), and a filter in
+ * the query keeps every tick's whole attendee list out of the page's egress.
+ */
+export function attendeeFilter(name: string): string {
+  const lower = name.toLowerCase();
+  const spellings = new Set([name, lower, name.toUpperCase(), lower.charAt(0).toUpperCase() + lower.slice(1)]);
+  return [...spellings].map(n => `attendees.cs.{${n}}`).join(',');
+}
+
+/**
+ * `since`: attended raid dates after the last LD's night. `best`: the most
+ * attended dates between any two consecutive LDs. Both are strict: the night an
  * LD happened on is not a night he got through, on either side. `countedLdMs`
  * must be the LDs that count, oldest first.
  */

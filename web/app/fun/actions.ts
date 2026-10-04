@@ -2,7 +2,8 @@
 
 // Mark an LD on the /fun card as "it was a /quit" (the guild lead, 2026-10-04),
 // or take the mark back. A /quit looks exactly like a crash from every observer's
-// log, so the player or an officer says so by hand.
+// log, so the player or an officer says so by hand. Only an LD during a real raid
+// is on the card, so only one of those can be marked.
 //
 // The gate is HERE, not only in the page: an action can be invoked directly, so
 // the button being hidden proves nothing. The write goes through the service role
@@ -17,6 +18,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { viewerMayMarkQuit } from '@/lib/funLdAuth';
+import { loadRaidDates } from '@/lib/funLdRaids';
 import {
   QUIT_WINDOW_MS, isQuit, ldView, parseLds, siblingsOf, viewerDiscordId, withQuit, withoutQuit,
   type LdRow,
@@ -38,8 +40,17 @@ export async function setLdQuit(quit: boolean, ts: string): Promise<{ ok: boolea
     .order('event_ts', { ascending: true });
   if (error) return { ok: false, error: error.message };
 
+  // The same raid dates the page reads, so "the LD I would mark" is the LD on the
+  // card: an LD outside a real raid is not on the card and cannot be marked.
+  let raidDates: Set<string>;
+  try {
+    raidDates = await loadRaidDates(sb);
+  } catch {
+    return { ok: false, error: 'Could not read the raid list — try again.' };
+  }
+
   const lds = parseLds((data ?? []) as LdRow[]);
-  const view = ldView(lds);
+  const view = ldView(lds, raidDates);
   const target = quit ? view.mark : view.undo;
   if (!target || Math.abs(target.ts - at) > QUIT_WINDOW_MS) {
     return { ok: false, error: 'The LD list changed — refresh the page.' };
