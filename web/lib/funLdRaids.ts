@@ -18,9 +18,9 @@ async function loadRaids(sb: SupabaseClient): Promise<RaidRow[]> {
     .select('raid_id, ts')
     .order('raid_id')
     .range(from, to));
-  // selectAll hands back a partial set on a failed page. No raids at all is not
-  // "no raids happened", it is a read that failed: say so instead of drawing a
-  // card that quietly shows no LDs.
+  // selectAll throws on a failed page, so a short list never gets here. An empty
+  // one still is not "no raids happened" (there are ~420), it is a read that
+  // returned nothing: say so instead of drawing a card that quietly shows no LDs.
   if (raids.length === 0) throw new Error('opendkp_raids returned nothing');
   return raids;
 }

@@ -494,8 +494,12 @@ export default async function AdminChatPage({
 
   // Item catalog — only fetched (and cached for an hour) when we're about to
   // render an actual chat log. Browse/bucket views don't need it.
+  // A failed catalog read throws and is not cached (lib/item-link.ts); the log still renders, unlinked.
   const itemCatalog: ItemCatalog = inLogMode
-    ? await loadItemCatalog(supabaseAdmin())
+    ? await loadItemCatalog(supabaseAdmin()).catch((err): ItemCatalog => {
+        console.error('[admin/chat] item catalog unavailable, rendering the log without item links:', err);
+        return new Map();
+      })
     : new Map();
 
   // Group log by speaker for the "by speaker" toggle? Future. For v1, just

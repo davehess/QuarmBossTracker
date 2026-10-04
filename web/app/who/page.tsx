@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
 
 export const dynamic = 'force-dynamic';
@@ -105,13 +106,10 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // so we never observed a class. Used as a fallback below the observed class.
   // ALSO pull opendkp_id so the table can deep-link Wolf Pack member names to
   // their OpenDKP character page for easy edits (the guild lead, 2026-06-21).
-  const { data: chars } = await admin
-    .from('characters')
-    .select('name, class, opendkp_id')
-    .eq('guild_id', 'wolfpack');
+  const chars = await loadRoster();   // the shared, paged roster read (web/lib/roster.ts)
   const rosterClassByName = new Map<string, string>();
   const opendkpIdByName  = new Map<string, number>();
-  for (const c of (chars ?? []) as { name: string; class: string | null; opendkp_id: number | null }[]) {
+  for (const c of chars) {
     if (!c.name) continue;
     const k = c.name.toLowerCase();
     if (c.class) rosterClassByName.set(k, c.class);

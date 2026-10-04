@@ -48,6 +48,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { selectAll } from '@/lib/selectAll';
 import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
@@ -150,13 +151,17 @@ export default async function PopFlagsPage(
   // the My Characters view — that one deliberately ignores `scope`, see the
   // header note).
   const sbAdmin = supabaseAdmin();
-  const [{ data: needRows }, myCharsAll, traderNames, flaggedHidden] = await Promise.all([
-    sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }),
+  // pop_spell_needs returns one row per (spell, character): 2,712 of them on 2026-10-04, and the API
+  // hands back 1,000 a request, so the first read showed 37% of the table and 29 characters read as
+  // "nothing missing". Read a page at a time; the function's ORDER BY ends on a unique key
+  // (20261004140800_cap_safe_pop.sql) so the pages never skip or repeat a row.
+  const [needRows, myCharsAll, traderNames, flaggedHidden] = await Promise.all([
+    selectAll<SpellNeed>((from, to) => sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }).range(from, to)),
     ownedCharacters(user.id),
     loadTraderNames(sbAdmin),
     loadHiddenNames(sbAdmin),
   ]);
-  const spellNeedsAll = groupNeeds((needRows ?? []) as SpellNeed[]);
+  const spellNeedsAll = groupNeeds(needRows);
 
   // Traders, characters under level 46 and characters their owner hid are tucked away on the two lists
   // that name individual characters (My Characters and the spell-needs table), behind ?all=1 (the guild
@@ -197,11 +202,14 @@ export default async function PopFlagsPage(
   const myNeeds = spellNeeds.filter(n => myNameSet.has(n.name.toLowerCase()));
   let mySpellbookNames = new Set<string>();
   if (myChars.length > 0) {
-    const orClause = myChars.map(c => `character_name.ilike.${c.name}`).join(',');
-    const { data: sbRows } = await sbAdmin.from('character_spellbook')
-      .select('character_name').eq('guild_id', 'wolfpack').or(orClause).limit(1000);
-    mySpellbookNames = new Set(
-      ((sbRows ?? []) as { character_name: string }[]).map(r => r.character_name.toLowerCase()));
+    // Which of them have any spellbook rows: asked of the database as one lowered name each
+    // (pop_spellbook_names). Reading the rows themselves and keeping the names stopped at the API's
+    // 1,000-row cap, and one household has 1,095, so a character whose rows all sat past the first
+    // 1,000 would have read as "no spellbook on file".
+    const haveBook = await selectAll<{ character_key: string }>((from, to) => sbAdmin
+      .rpc('pop_spellbook_names', { p_guild_id: 'wolfpack', p_names: myChars.map(c => c.name.toLowerCase()) })
+      .range(from, to));
+    mySpellbookNames = new Set(haveBook.map(r => r.character_key));
   }
   const mineOrder = (rows: typeof myCharsAll) => [...rows].sort((a, b) =>
     (a.main_name ? 1 : 0) - (b.main_name ? 1 : 0) || a.name.localeCompare(b.name));
@@ -215,36 +223,25 @@ export default async function PopFlagsPage(
   // unmapped grants so that's probably a database row restriction"). Real flags are read a page at a
   // time; the unmapped are only counted.
   async function mappedFlagRows(): Promise<FlagRow[]> {
-    const out: FlagRow[] = [];
-    for (let from = 0; from < 50_000; from += 1000) {
-      // 'hail' rows are witnessed hails (who talked to which NPC), evidence and not flags (§119).
-      const { data } = await sb.from('pop_flags')
-        .select('character, flag_key, earned_at, boss, zone')
-        .not('flag_key', 'in', '(unmapped,hail)')
-        .order('earned_at', { ascending: true }).order('id', { ascending: true })
-        .range(from, from + 999);
-      const rows = (data ?? []) as FlagRow[];
-      out.push(...rows);
-      if (rows.length < 1000) break;
-    }
-    return out;
+    // selectAll (not a loop of our own): a page that fails throws instead of ending the read with the
+    // flags so far, which would draw a half-flagged guild as if it were the whole one.
+    // 'hail' rows are witnessed hails (who talked to which NPC), evidence and not flags (§119).
+    return selectAll<FlagRow>((from, to) => sb.from('pop_flags')
+      .select('character, flag_key, earned_at, boss, zone')
+      .not('flag_key', 'in', '(unmapped,hail)')
+      .order('earned_at', { ascending: true }).order('id', { ascending: true })
+      .range(from, to));
   }
   // The flags members ticked for their own characters (the guild lead, 2026-10-03). The same table the
   // /pop/guide checklist writes, read by the keys that stand for a flag; paged by its primary key because
   // the API returns at most 1,000 rows a request.
   async function selfTickRows(): Promise<{ character_name: string; item_key: string }[]> {
-    const out: { character_name: string; item_key: string }[] = [];
-    for (let from = 0; from < 20_000; from += 1000) {
-      const { data } = await sb.from('pop_guide_ticks')
-        .select('character_name, item_key')
-        .eq('guild_id', 'wolfpack').in('item_key', SELF_TICK_KEYS)
-        .order('character_name', { ascending: true }).order('item_key', { ascending: true })
-        .range(from, from + 999);
-      const rows = (data ?? []) as { character_name: string; item_key: string }[];
-      out.push(...rows);
-      if (rows.length < 1000) break;
-    }
-    return out;
+    // (character_name, item_key) is the rest of the primary key once the guild is fixed.
+    return selectAll<{ character_name: string; item_key: string }>((from, to) => sb.from('pop_guide_ticks')
+      .select('character_name, item_key')
+      .eq('guild_id', 'wolfpack').in('item_key', SELF_TICK_KEYS)
+      .order('character_name', { ascending: true }).order('item_key', { ascending: true })
+      .range(from, to));
   }
   // Justice trial marks each character holds (the guild lead, 2026-10-01: "For Justice capture the Marks
   // they have based on the one that they did"). A mark looted in the Plane of Justice counts for anyone;
@@ -260,26 +257,17 @@ export default async function PopFlagsPage(
     byName.set(MARK_OF_JUSTICE.name, MARK_OF_JUSTICE.name);
     const byId = new Map<number, string>(JUSTICE_MARKS.map(m => [m.id, m.name]));
     byId.set(MARK_OF_JUSTICE.id, MARK_OF_JUSTICE.name);
-    // A page at a time: the API returns at most 1,000 rows a request, whatever limit is asked.
-    async function paged<T>(q: (from: number) => PromiseLike<{ data: unknown[] | null }>): Promise<T[]> {
-      const rows: T[] = [];
-      for (let from = 0; from < 20_000; from += 1000) {
-        const { data } = await q(from);
-        const page = (data ?? []) as T[];
-        rows.push(...page);
-        if (page.length < 1000) break;
-      }
-      return rows;
-    }
+    // A page at a time (selectAll): the API returns at most 1,000 rows a request, whatever limit is asked,
+    // and a page that fails throws rather than leaving a character without the marks it holds.
     const [loots, inv] = await Promise.all([
-      paged<{ looter_character: string; item_name: string }>(from => sb.from('looted_items')
+      selectAll<{ looter_character: string; item_name: string }>((from, to) => sb.from('looted_items')
         .select('looter_character, item_name')
         .eq('guild_id', 'wolfpack').eq('zone', '201').in('item_name', [...byName.keys()])
-        .order('id', { ascending: true }).range(from, from + 999)),
-      paged<{ character_name: string; item_id: number }>(from => sb.from('character_inventory')
+        .order('id', { ascending: true }).range(from, to)),
+      selectAll<{ character_name: string; item_id: number }>((from, to) => sb.from('character_inventory')
         .select('character_name, item_id')
         .eq('guild_id', 'wolfpack').in('item_id', [...byId.keys()])
-        .order('id', { ascending: true }).range(from, from + 999)),
+        .order('id', { ascending: true }).range(from, to)),
     ]);
     for (const r of loots) add(r.looter_character, r.item_name);
     const invRows = inv;
@@ -344,14 +332,18 @@ export default async function PopFlagsPage(
   const nameOf = new Map([...members.map(m => m.name), ...myChars.map(c => c.name), ...myUnknown.map(c => c.name)].map(n => [n.toLowerCase(), n]));
   // Loot is read beside it (pop_loot_sightings, every character, a page at a time) and kept for the same
   // names, so one more round trip does not wait on the first.
-  const [{ data: sightRows }, lootRows] = await Promise.all([
+  // /who is paged like the loot: 133 sightings for the roster after four days of PoP and growing, and the
+  // API stops at 1,000 a request. pop_who_sightings orders its rows (character, zone), its group key.
+  type SightRow = Sighting & { character_key: string };
+  const [sightRows, lootRows] = await Promise.all([
     nameOf.size
-      ? sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES })
-      : { data: [] },
+      ? selectAll<SightRow>((from, to) =>
+        sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES }).range(from, to))
+      : Promise.resolve([] as SightRow[]),
     nameOf.size ? loadLootSightings(sb) : Promise.resolve([] as LootRow[]),
   ]);
   const sightBy = new Map<string, Sighting[]>();
-  for (const r of (sightRows ?? []) as (Sighting & { character_key: string })[]) {
+  for (const r of sightRows) {
     if (!sightBy.has(r.character_key)) sightBy.set(r.character_key, []);
     sightBy.get(r.character_key)!.push(r);
   }
