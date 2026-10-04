@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Buffs by raid group** (§149) | Bot 3.1.195 live (`groups[]`, group-buff keyword fixes); /buffs previews + buff queue By group on beta | the guild lead: pick https://b.wolfpack.quest/buffs?v=b (**group cards**) or ?v=c (**buff lines**); try By group in the Mimic beta buff queue at the next raid |
 | **Discord onboarding overhaul** | Re-mapped 2026-10-03 (`docs/DESIGN-onboarding-overhaul.md`, "2026-10-03 refresh"): the parser card says Mimic v1.0.0, its link renders raw, the Parser.bat zip 404s, it says paste a /token; the welcome never links /start; joiners with closed DMs pile into the shared thread; the agent-release DMs carry the dead zip | the guild lead: pick **A — Doorway: Discord just points at wolfpack.quest/start**, **B — Walkthrough inside Discord: five click-through pages**, or **C — Self-ticking checklist: shows what you've done**; stop or keep the agent-release DMs |
 | **Discord setup on the website** (§148) | Mapped 2026-10-04 (`docs/DESIGN-discord-setup-page.md`): 45 destinations are env-only, no permission check, no job last-run record; web → Supabase → bot polling is the proven path | the guild lead: pick **A — Health page: see what's wired**, **B — Pick on the site: dropdowns, live in a minute** (recommended, A first), or **C — The bot builds it: one button creates what's missing** |
 | **PoP pages live; stable Mimic 2.7.8; self-ticked flags; loot proof** | **§143–§146.** Live: web 1.8.83–1.8.85 (the /pop, /pop/guide, /me work from beta, the spellbook fixes), Mimic 2.7.8 stable (agent 3.7.75), the #raid-chat post (bot 3.1.194), members tick their own flags (1.8.86), loot proves flags (1.8.87, purple ✓), the guide in script order with the Justice flag on the Mavuin hail and the Bastion flag on the shrine click (1.8.88, §147; the overlay's ordered steps on Mimic beta) | the guild lead: (1) accept 2.7.8 when EverQuest is closed; (2) check https://wolfpack.quest/pop?view=mine and https://wolfpack.quest/me on a phone; (3) pick the guide redesign and Essences queue previews (`?v=b`/`?v=c`) when ready; (4) read the ordered steps on https://wolfpack.quest/pop/guide; (5) say whether Aerin`Dar's flag moves to the Halls of Honor door step (§147) |
@@ -6585,3 +6586,49 @@ just be a spot in the website, wolfpack.quest and then permissions reviews, sche
   permissions, the scheduled jobs — should be a place on wolfpack.quest, not env vars and Discord commands.
   Same line as "Discord is a projection" (2026-08-16) and the self-host wizard epic. Being mapped; options
   follow in the same shape.
+
+### 149. Buffs grouped by raid group, on /buffs and in the buff queue (2026-10-04, bot 3.1.195 · web beta · Mimic beta)
+
+The guild lead: *"we should be grouping people for buffs on https://wolfpack.quest/buffs — treat that like the
+buff queue as well"*.
+
+- **The rule everything rests on:** in this era a GROUP buff lands on the CASTER'S OWN group (no Target
+  Group Buff before Omens of War; Quarm's behaviour unverified, and the wording is right either way). So a
+  hint only ever names a caster IN the group that is short ("Haste ×4 → Corvale: Vallon's Quickening"), or
+  says nobody there can ("no enchanter in G3", meaning single-target it or move someone). Never "an
+  enchanter somewhere in the raid".
+- **Bot 3.1.195 (live):**
+  - `raid-buff-queue` gains `groups[]`, built from every raid member before the 40-row caps, plus
+    `self_group` and per-line `classes`. Pure builder: `utils/buffGroups.js`.
+  - `GROUP_SPELLS` (`utils/raidBuffs.js`): the group version of each line per class, with the level it
+    needs. A caster is named for the best spell their level allows. All 28 ids verified in
+    `eqemu_spells`: targettype 41, except Kazad`s Mark, which is 3.
+- **Keyword gaps fixed** (they read as "missing" before):
+  - the Marzin / Naltron / Kazad marks;
+  - Focus of the Seventh, Vallon's Quickening, Spirit of Bih`Li (the backtick never matched), Spirit of
+    Eagle;
+  - Spirit of the Predator, Spiritual Vigor (attack) and Spiritual Dominion (mana regen, verified by its
+    effects);
+  - Boon of the Clear Mind, Maelstrom of Ro and Aegis of Ro.
+  - Comments corrected: Aegolism, Temperance and POTC are single-target; Khura's Focusing is group.
+- **Website, beta previews** (default page unchanged):
+  - [b.wolfpack.quest/buffs?v=b](https://b.wolfpack.quest/buffs?v=b) — **Group cards: one card per raid
+    group**, each saying who's short and who in that group can cast it.
+  - [?v=c](https://b.wolfpack.quest/buffs?v=c) — **Buff lines: one section per buff**, listing the groups
+    that need it.
+  - Both split by raid first: two raids both have a group 1.
+  - Fixed for all three views: the freshest roster row wins. A regroup used to show a stale group for up
+    to 15 minutes.
+  - `web/lib/buffGroups.ts` carries the same `GROUP_SPELLS`; a test fails if the two tables differ.
+- **Mimic beta (the buff queue overlay):**
+  - a **By buff | By group** switch;
+  - By group puts your group first, with the caster hints;
+  - By buff clusters each buff's people by group;
+  - mini adds the group that needs each buff most.
+- **Open, for the guild lead:** pick ?v=b or ?v=c.
+- **Unverified until a raid:** `raid_roster` was empty off-raid, so Zeal's "ungrouped" value is
+  unconfirmed. Null, 0, negative and over 12 are treated as ungrouped.
+- **Left alone, on purpose:**
+  - Spiritual Purity sits in HP slot C though it is a regen buff;
+  - `UPGRADE_CHAINS` still spells Bih`Li without the backtick;
+  - Mark of the Predator is uncategorized.

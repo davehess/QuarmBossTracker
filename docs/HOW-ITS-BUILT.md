@@ -301,6 +301,16 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   ("Looted in <plane>"); precedence Mimic > /who > loot > owner's tick. The guide checklist auto-ticks from it
   ("looted there"). Test: `test/pop-loot-proof.test.js`. §146.
 
+### Buffs by raid group (bot 3.1.195, web beta, Mimic beta, 2026-10-04)
+- Bot: `utils/buffGroups.js` `buildBuffGroups` (pure) feeds `groups[]` + `self_group` on
+  `GET /api/agent/raid-buff-queue` (`_handleAgentRaidBuffQueue`, every raid member before the 40-row caps).
+  `GROUP_SPELLS` + `buffCategoriesPresent` / `missingLines` live in `utils/raidBuffs.js`. Test:
+  `test/buff-groups.test.js` (runs the real handler on fake tables).
+- Web: `web/lib/buffGroups.ts` (same `GROUP_SPELLS`, sync-tested) + `web/app/buffs/BuffGroups.tsx`, switched by
+  `?v=b` / `?v=c` in `web/app/buffs/page.tsx` (beta only until picked). Test: `test/buff-groups-web.test.js`.
+- Mimic: `apps/mimic/buffqueue.html` By buff | By group (`wp:bq:view`), reads `groups` / `self_group` /
+  `classes`, falls back to the queue rows on an older bot. Test: `test/buffqueue-groups.test.js`. §149.
+
 ### PoP guide steps in script order (web 1.8.88, Mimic beta, 2026-10-03)
 - `GuideItem.seq?: Act[]` in `web/lib/popGuide.ts` (the `SEQ` table): hail / say / give / get / kill / click /
   zone / wait / note, with `times`, `until`, `sit`, and `src` (the `eqemu_quest_scripts` path). `seqRows` turns
