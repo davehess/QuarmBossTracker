@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Buff-block picker** (§157) | Building on beta: dashboard tab with sets, copy lines, socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
+| **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `/encounter tonight` (`e.id` on a view with no `id`); `opendkp_loot_recent` repeats 13 auctions; `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
 | **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
@@ -6906,7 +6906,12 @@ unnamed, each with Restore. It was filtered by owner only.
 - **No harm from a wrong row:** restore writes each file under its own name. Another character's row never
   overwrote this character's files, only the shared `eqclient.ini` / `zeal.ini`.
 
-### 157. A buff-block picker in Mimic for Quarm's `#blockbuff` (2026-10-04, building on beta)
+### 157. A buff-block picker in Mimic for Quarm's `#blockbuff` (2026-10-04, agent 3.7.79 on beta)
+
+**Shipped to beta** as `f1b9a4e2`: a Buff blocks tab on the dashboard. The agent side has
+`logsync.buffblocks.json`, `GET /api/buffblocks`, `POST /api/buffblocks/{sets,state,socials}`, and the
+`_bb*` helpers. It reuses `_applyIniKeyEditsToFile` behind `_charLooksLoggedIn`. Tests are in
+`test/buff-blocks.test.js` (44). The details below are the research and the calls behind it.
 
 Quarm added three player commands (patch notes Oct 2–4): `#blockbuff <id>` (alone, it lists your blocks),
 `#blockbuffif <id> <active id>` and `#allowbuff <id> [active id]`. Blocks live on the character, server-side.
