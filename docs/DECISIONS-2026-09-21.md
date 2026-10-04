@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
+| **Zeal crashes on the fork** (§151) | 3 new teardown crashes, all on the fork's test build; crash list now tags official vs test (agent 3.7.77 beta) | the guild lead: A/B on official Zeal (or `/tag persist off`); a local session reads the three dumps |
 | **Buffs by raid group** (§149) | Bot 3.1.195 live (`groups[]`, group-buff keyword fixes); /buffs previews + buff queue By group on beta | the guild lead: pick https://b.wolfpack.quest/buffs?v=b (**group cards**) or ?v=c (**buff lines**); try By group in the Mimic beta buff queue at the next raid |
 | **Discord onboarding overhaul** | Re-mapped 2026-10-03 (`docs/DESIGN-onboarding-overhaul.md`, "2026-10-03 refresh"): the parser card says Mimic v1.0.0, its link renders raw, the Parser.bat zip 404s, it says paste a /token; the welcome never links /start; joiners with closed DMs pile into the shared thread; the agent-release DMs carry the dead zip | the guild lead: pick **A — Doorway: Discord just points at wolfpack.quest/start**, **B — Walkthrough inside Discord: five click-through pages**, or **C — Self-ticking checklist: shows what you've done**; stop or keep the agent-release DMs |
 | **Discord setup on the website** (§148) | Mapped 2026-10-04 (`docs/DESIGN-discord-setup-page.md`): 45 destinations are env-only, no permission check, no job last-run record; web → Supabase → bot polling is the proven path | the guild lead: pick **A — Health page: see what's wired**, **B — Pick on the site: dropdowns, live in a minute** (recommended, A first), or **C — The bot builds it: one button creates what's missing** |
@@ -6663,3 +6665,41 @@ of ten guildmates, both /anon, showed an italic class and no level.
   (history) and 64 (their own Mimic).
 - **Privacy:** an /anon guildmate's level now reaches other guild Mimics, the same GUILD scope their
   class already had. Their own Mimic uploaded that level already (the group XP analysis reads it).
+
+### 151. The guild lead's recent Zeal crashes are on the fork's test build (2026-10-04, agent 3.7.77 beta)
+
+The guild lead: *"i've had a number of zeal crashes lately that i can't tell if they're from my test versions
+or from the main version, please look into them"*. Read from `crash_reports` (639 rows since 2026-08-03).
+
+- **How a build identifies itself:** the crash dialog's `Zeal Version: 1.4.8 (<label>)`, stored
+  verbatim in `crash_reports.zeal_version`.
+  - An official release labels it with the bare short commit hash (`create_release.yml`).
+  - Our fork's CI build uses `testall-<hash>` (`build-test-all.yml`).
+  - A hand build uses whatever was typed (`testall`, `pr229`), or `UNOFFICIAL`.
+  - ⚠ `agent_upload_stats.zeal_version` drops the label, so fleet-wide fork vs official can only be
+    read from crash rows.
+- **What it found:**
+  - All four crashes the guild lead uploaded since 2026-09-20 were on fork or test builds; none on
+    official since 2026-08-14.
+  - **Three are one new signature:** `eqgame.exe` at `0x00520EFF`, last Zeal callback
+    `CleanUpUI : Exit`, game state 1 (leaving the world for character select).
+    - On 10-01 (twice) and 10-02, all on `1.4.8 (testall-0a2e25d)`.
+    - Seen nowhere else in the corpus: no other player, never on official.
+  - The fourth (09-25, `Zeal.asi` at Startup) is the fork init-order bug already fixed (§28).
+- **Not proven:**
+  - The fault is in the client's own code (between `MountEQPlayer` and `GetFullZoneName`), so naming the
+    function needs the dumps.
+  - The fork runs code in that teardown window at two points: `NamePlate::handle_entity_destructor`
+    reads the entity's name for saved player tags, and the CleanUI path releases tag-picture textures.
+  - In all three crashes the freed `Self` entity was overwritten with pixel-like bytes; official-build
+    teardown crashes still held a real zone id there.
+  - The NVIDIA driver also changed in the same weeks (a confounder).
+  - The newest test build changes neither path, so updating is not a fix.
+- **Shipped:** Mimic's crash list (Info → Crash review) printed the version only in a closed fold.
+  Each crash's title now carries **"Zeal official"** or **"🧪 Zeal test build"** (`wpZealBuildTag`,
+  agent 3.7.77, beta).
+- **Next:**
+  - The guild lead A/Bs on official Zeal for a few nights, or runs `/tag persist off` on the fork. Not
+    both changes at once with the driver.
+  - A local session reads the three dumps (STATUS, ⚠ Needs a local session).
+  - Fork change only after one of those points at the fork's code.

@@ -896,6 +896,12 @@ next touch one rather than assuming a missing row means a missing doc.
   player called **Susanna** (47 rows, never a boss) and real players named
   Dread, Terror and Fright, all of which are also mob names.
 
+- **⚠ Needs a local session — read the guild lead's three fork-build crash dumps (2026-10-04, §151).**
+  `A:\EQ\crashes\2026-10-01_16-34-16.zip`, `2026-10-01_20-04-08.zip`, `2026-10-02_23-18-57.zip` (Zeal
+  `1.4.8 (testall-0a2e25d)`, Zeal.asi md5 `faa46947…`). Run `scripts/read-minidump.py` on each (method in §28), get
+  the matching PDB from the fork's Actions run #1 artifact `zeal_test-all_0a2e25d`, and name the function at
+  `eqgame.exe 0x00520EFF`. Answer wanted: is `Zeal.asi` (`handle_entity_destructor`, tag-picture texture release) on
+  the crashing thread? If yes, make the destructor pointer-only.
 - **⚠ Needs a local session — how the Quarm client records windowed vs full screen (2026-09-29).**
   Mimic should know whether EverQuest runs exclusive full screen, so it can warn when an overlay sits on
   EQ's own screen (overlays generally cannot draw over exclusive full screen) and skip the screen-change
