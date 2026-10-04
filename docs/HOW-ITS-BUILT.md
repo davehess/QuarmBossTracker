@@ -301,6 +301,14 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   ("Looted in <plane>"); precedence Mimic > /who > loot > owner's tick. The guide checklist auto-ticks from it
   ("looted there"). Test: `test/pop-loot-proof.test.js`. §146.
 
+### PoP overlay: trial parts, briefs, text size, fixed height (web data + Mimic beta, 2026-10-04)
+- Data: `GuidePart` / `parts` + `JUSTICE_TRIALS` in `web/lib/popGuide.ts`; `brief` + `BRIEFS` in `web/lib/popGuideMore.ts`;
+  carried by `scripts/sync-pop-quests.js` into `apps/mimic/pop-quests.js`. Tests: `test/pop-guide-seq.test.js`,
+  `test/pop-quests-sync.test.js`, `test/pop-guide-more.test.js`.
+- Overlay: `apps/mimic/popraid.html` — parts as `<details>` (`_qOpen` key `<step>|part|<part>`), brief + "More" fold,
+  Aa slider (`wp:pop:fs`, zoom on `#content`), fixed height (`wp:pop:height`, `#grip`, dblclick = fit, `overlayAutoHeight`),
+  card takes the mouse in fixed mode. Tests: `test/pop-overlay-quests.test.js`, `test/mini-popraid-charm.test.js`. §152.
+
 ### Levels for our /anon players (bot 3.1.196, agent 3.7.76 beta, 2026-10-04)
 - Bot: `_handleAgentWhoLookup` pass 3b → RPC `latest_character_levels(p_guild_id, p_names)`
   (`supabase/migrations/20261004120000_latest_character_levels.sql`): `level` from `xp_events` (the member's own

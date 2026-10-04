@@ -109,6 +109,9 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ PoP overlay round (web data live; overlay on Mimic beta, 2026-10-04).** Justice trials as six folds, one-line
+  briefs on the 23 wordiest steps (full text under More), Aa text size, fixed height that scrolls (no more jumping),
+  the mouse shows over it. Catalog navigation awaits the guild lead's pick (`docs/DESIGN-history-and-quest-nav.md`). §152.
 - **✅/⏳ Our players' levels on /who and Target Info (bot 3.1.196 live; agent 3.7.76 on beta, 2026-10-04).**
   who-lookup adds each member's own Mimic level and the last /who level (`latest_character_levels`, highest
   wins); the beta agent adds Zeal's exact raid level (and group level with /pipeverbose). Graduates with the next
