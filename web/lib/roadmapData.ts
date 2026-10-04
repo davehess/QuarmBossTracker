@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-overlay-round-2026-10-04',
+    title: 'PoP overlay: trials, short steps, text size',
+    version: 'Web 1.8.91 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The PoP overlay is easier to read: each Justice trial has its own section, steps start with one line, and the window stops jumping.',
+    features: [
+      { name: 'Each Justice trial on its own', blurb: 'Lashing, Execution, Stoning, Torture, Hanging and Flame each show their own Tribunal location, what to say, the boss and the Mark.' },
+      { name: 'One line first', blurb: 'The long steps now open with a one-line summary; the full text is one click away under More.' },
+      { name: 'Text size', blurb: 'An Aa button makes the words bigger or smaller without moving the window.' },
+      { name: 'Stays put', blurb: 'The window keeps its height and scrolls, instead of resizing on every step. Drag the bottom edge to set the height, double-click it to fit.' },
+    ],
+    fixes: [
+      'The mouse pointer now shows over the overlay, and clicks on its links and folds no longer fall through to the game.',
+    ],
+  },
+  {
     key: 'who-levels-2026-10-04',
     title: 'Levels for /anon guildmates',
     version: 'Bot 3.1.196 · Agent 3.7.76',

@@ -66,6 +66,12 @@ export type Act = {
   src: string;
 };
 
+// A step that is really several runs of the same thing (the guild lead, 2026-10-04: "The Justice Trials
+// each could use their own subsection"). The parent step keeps its own seq; each part is a short seq of
+// its own plus the place it starts from. Only the Mimic PoP overlay draws parts (a fold each); the
+// website still draws the parent alone, so the parent's seq must keep reading on its own.
+export type GuidePart = { key: string; title: string; where?: Loc[]; seq: Act[] };
+
 export type GuideItem = {
   key: string;
   section: SectionKey;
@@ -80,6 +86,7 @@ export type GuideItem = {
   where?: Loc[];
   chain?: Chain;
   seq?: Act[];         // the whole step in the order the script needs (see Act); attached from SEQ below
+  parts?: GuidePart[]; // the step's runs, one each (see GuidePart); attached from PARTS below
 };
 
 // A quest that is a chain of NPCs (the guild lead, 2026-09-28: "Follow the chain and show the
@@ -755,7 +762,7 @@ const SEQ: Record<string, Act[]> = {
     say('The Tribunal (at the trial)', 'prove', TRIBUNAL),
     say('The Tribunal (at the trial)', 'prepared', TRIBUNAL),
     say('The Tribunal (at the trial)', 'ready to begin the Trial of Lashing', TRIBUNAL),
-    note('Use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.', TRIBUNAL),
+    note('Each Tribunal answers only its own trial, so use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.', TRIBUNAL),
     kill('the trial’s boss', TRIBUNAL, 'win the trial'),
     get(TRIBUNAL, { items: [I('Mark of Execution', 31842), I('Mark of Flame', 31796), I('Mark of Lashing', 31960), I('Mark of Stone', 31845), I('Mark of Suffocation', 31846), I('Mark of Torture', 31844)], text: 'loot the one for that trial' }),
   ],
@@ -1060,7 +1067,42 @@ const SEQ: Record<string, Act[]> = {
   ],
 };
 
-export const GUIDE_ITEMS: GuideItem[] = BASE_ITEMS.map(i => (SEQ[i.key] ? { ...i, seq: SEQ[i.key] } : i));
+// ── The parts of a step (the guild lead, 2026-10-04; see GuidePart above) ───────────────────────────
+// The six Justice trials, one part each. Read on 2026-10-04 from pojustice/The_Tribunal.lua (each Tribunal
+// is one spawn point, and its trial number comes from that spawn point, so it answers only "ready to begin
+// the Trial of <its own word>"), pojustice/encounters/*Trial.lua (the boss each spawns) and the bosses'
+// loot tables (the Mark, 100%). `y`/`x` are the Tribunal's own placed spawn (eqemu_spawn2 345327-345332),
+// Y then X like every other /map here. The Flame trial's script is BurningTrial.lua.
+const JUSTICE_TRIALS: { word: string; script: string; y: number; x: number; boss: string; mark: [string, number] }[] = [
+  { word: 'Lashing', script: 'LashingTrial', y: 817, x: 417, boss: 'Lashman Azakal', mark: ['Mark of Lashing', 31960] },
+  { word: 'Execution', script: 'ExecutionTrial', y: 765, x: 393, boss: 'Prime Executioner Vathoch', mark: ['Mark of Execution', 31842] },
+  { word: 'Stoning', script: 'StoningTrial', y: 714, x: 418, boss: 'Yurae Zhaleem', mark: ['Mark of Stone', 31845] },
+  { word: 'Torture', script: 'TortureTrial', y: 713, x: 521, boss: 'Punisher Veshtaq', mark: ['Mark of Torture', 31844] },
+  { word: 'Hanging', script: 'HangingTrial', y: 764, x: 543, boss: 'Gallows Master Teion', mark: ['Mark of Suffocation', 31846] },
+  { word: 'Flame', script: 'BurningTrial', y: 816, x: 521, boss: 'Punisher of Flame', mark: ['Mark of Flame', 31796] },
+];
+const PARTS: Record<string, GuidePart[]> = {
+  flag_trial_justice: JUSTICE_TRIALS.map(t => {
+    const at = `The Tribunal (Trial of ${t.word})`;
+    const script = `pojustice/encounters/${t.script}.lua`;
+    return {
+      key: t.word.toLowerCase(),
+      title: `Trial of ${t.word} → ${t.mark[0]}`,
+      where: [{ npc: 'The Tribunal', zone: 'pojustice' as const, y: t.y, x: t.x, note: `Trial of ${t.word}` }],
+      seq: [
+        say(at, 'prove', TRIBUNAL),
+        say(at, 'prepared', TRIBUNAL),
+        say(at, `ready to begin the Trial of ${t.word}`, TRIBUNAL),
+        kill(t.boss, script),
+        get(script, { items: [I(t.mark[0], t.mark[1])] }),
+      ],
+    };
+  }),
+};
+
+export const GUIDE_ITEMS: GuideItem[] = BASE_ITEMS.map(i => (SEQ[i.key] || PARTS[i.key]
+  ? { ...i, ...(SEQ[i.key] ? { seq: SEQ[i.key] } : {}), ...(PARTS[i.key] ? { parts: PARTS[i.key] } : {}) }
+  : i));
 
 export const GUIDE_KEYS = new Set(GUIDE_ITEMS.map(i => i.key));
 
