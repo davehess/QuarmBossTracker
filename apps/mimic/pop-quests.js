@@ -86,6 +86,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Seer Mal Nae`Shi shows and repairs your flags, but only while you sit: /sit, then say her line. If she answers that “no recent events spark a memory”, there is nothing new to unlock yet. Grand Librarian Maelin hands out the flags you are owed. Repeat each phrase until nothing new comes. Visit Maelin before and after the Zeks and after Saryrn.",
+       "brief": "Sit down before you talk to the Seer. Go back and forth between her and Maelin until neither has anything new.",
        "says": [
         {
          "to": "Seer Mal Nae`Shi",
@@ -1340,6 +1341,7 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "Any one of the six: Mark of Execution, Mark of Flame, Mark of Lashing, Mark of Stone, Mark of Suffocation or Mark of Torture. The trial’s boss drops SIX of its Mark, one each, so one win covers six people; run it again for the rest. To start, tell that trial’s Tribunal “prove”, then “prepared”, then “I am ready to begin the Trial of Lashing” (or Execution, Stoning, Torture, Hanging, Flame); it takes everyone in your group standing close. After a win it can run again in 10 minutes, after a loss in 1.",
+       "brief": "Win any ONE of the six trials. Its boss drops 6 of its Mark, one each. Retry 1 min after a loss, 10 after a win.",
        "says": [
         {
          "to": "The Tribunal (at the trial)",
@@ -1371,7 +1373,7 @@ window.POP_QUESTS = {
         },
         {
          "kind": "note",
-         "text": "Use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.",
+         "text": "Each Tribunal answers only its own trial, so use the name of the trial you stand at: Lashing, Execution, Stoning, Torture, Hanging or Flame. It takes everyone in your group standing close.",
          "src": "pojustice/The_Tribunal.lua"
         },
         {
@@ -1392,6 +1394,278 @@ window.POP_QUESTS = {
           "Mark of Torture"
          ],
          "src": "pojustice/The_Tribunal.lua"
+        }
+       ],
+       "parts": [
+        {
+         "key": "lashing",
+         "title": "Trial of Lashing → Mark of Lashing",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 817,
+           "x": 417,
+           "note": "Trial of Lashing"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Lashing)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Lashing)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Lashing)",
+           "text": "ready to begin the Trial of Lashing",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Lashman Azakal",
+           "src": "pojustice/encounters/LashingTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Lashing"
+           ],
+           "src": "pojustice/encounters/LashingTrial.lua"
+          }
+         ]
+        },
+        {
+         "key": "execution",
+         "title": "Trial of Execution → Mark of Execution",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 765,
+           "x": 393,
+           "note": "Trial of Execution"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Execution)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Execution)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Execution)",
+           "text": "ready to begin the Trial of Execution",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Prime Executioner Vathoch",
+           "src": "pojustice/encounters/ExecutionTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Execution"
+           ],
+           "src": "pojustice/encounters/ExecutionTrial.lua"
+          }
+         ]
+        },
+        {
+         "key": "stoning",
+         "title": "Trial of Stoning → Mark of Stone",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 714,
+           "x": 418,
+           "note": "Trial of Stoning"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Stoning)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Stoning)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Stoning)",
+           "text": "ready to begin the Trial of Stoning",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Yurae Zhaleem",
+           "src": "pojustice/encounters/StoningTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Stone"
+           ],
+           "src": "pojustice/encounters/StoningTrial.lua"
+          }
+         ]
+        },
+        {
+         "key": "torture",
+         "title": "Trial of Torture → Mark of Torture",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 713,
+           "x": 521,
+           "note": "Trial of Torture"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Torture)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Torture)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Torture)",
+           "text": "ready to begin the Trial of Torture",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Punisher Veshtaq",
+           "src": "pojustice/encounters/TortureTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Torture"
+           ],
+           "src": "pojustice/encounters/TortureTrial.lua"
+          }
+         ]
+        },
+        {
+         "key": "hanging",
+         "title": "Trial of Hanging → Mark of Suffocation",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 764,
+           "x": 543,
+           "note": "Trial of Hanging"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Hanging)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Hanging)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Hanging)",
+           "text": "ready to begin the Trial of Hanging",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Gallows Master Teion",
+           "src": "pojustice/encounters/HangingTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Suffocation"
+           ],
+           "src": "pojustice/encounters/HangingTrial.lua"
+          }
+         ]
+        },
+        {
+         "key": "flame",
+         "title": "Trial of Flame → Mark of Flame",
+         "where": [
+          {
+           "npc": "The Tribunal",
+           "zone": "Plane of Justice",
+           "y": 816,
+           "x": 521,
+           "note": "Trial of Flame"
+          }
+         ],
+         "seq": [
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Flame)",
+           "text": "prove",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Flame)",
+           "text": "prepared",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "say",
+           "to": "The Tribunal (Trial of Flame)",
+           "text": "ready to begin the Trial of Flame",
+           "src": "pojustice/The_Tribunal.lua"
+          },
+          {
+           "kind": "kill",
+           "to": "Punisher of Flame",
+           "src": "pojustice/encounters/BurningTrial.lua"
+          },
+          {
+           "kind": "get",
+           "items": [
+            "Mark of Flame"
+           ],
+           "src": "pojustice/encounters/BurningTrial.lua"
+          }
+         ]
         }
        ],
        "expect": "A raid. Six Marks drop per win, one each, so bring six who need it and run it again for the rest. Pick any of the six trials. A loss can be retried in a minute, a win in ten.",
@@ -1460,6 +1734,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "The Bastion of Thunder shrine in the Plane of Storms checks for this flag, so do not skip it. Needs the Tribunal’s “mavuin sent me” first (your Mavuin flag at 2); this hail moves it to 3, which the Valor and Storms portals in Tranquility check, and so does Aerin`Dar’s projection. His reply points you to Karana and Mithaniel Marr.",
+       "brief": "Hail Mavuin: this is your Justice flag. Needs the Tribunal’s “mavuin sent me” first.",
        "says": [
         {
          "to": "Mavuin",
@@ -1499,6 +1774,7 @@ window.POP_QUESTS = {
        "title": "Optional: The Seventh Hammer (all six Marks)",
        "who": "raid",
        "detail": "With all six Marks in your bags, tell a Tribunal “knowledge” for The Mark of Justice; the Marks are checked, not taken. With only some it says there are more trials yet. Hold The Mark of Justice on your cursor and click a trial portal to reach the Hammer. Per person, and not needed for any flag.",
+       "brief": "Optional. Needs all six Marks in your bags at once. The Tribunal checks them but does not take them.",
        "says": [
         {
          "to": "The Tribunal",
@@ -1550,6 +1826,7 @@ window.POP_QUESTS = {
        "title": "Optional: the factory door key from Xanamech Nezmirthafen",
        "who": "raid",
        "detail": "One person in the raid needs it. The script gives no item: Xanamech Nezmirthafen is the beast Nitram Anizok builds, and killing it lets you hail Nitram for the flag that opens the main factory door. His talk is only story (“collecting materials” is where he names the parts); the trade is what starts it: give him a Copper Node, a Bundle of Super Conductive Wires and an Intact Power Cell (each drops at about 2% from Innovation’s clockwork), all three in one trade. He walks to the beast and puts the power unit in; kill it, then hail him while your group or raid still holds the kill credit. He leaves 10 minutes later. Then click the factory door.",
+       "brief": "Optional. Hand Nitram three clockwork parts, kill the beast he builds, then hail him for the factory door flag.",
        "says": [
         {
          "to": "Nitram Anizok",
@@ -1737,6 +2014,7 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "He appears near the boss room after the kill. The Behemoth wakes when the 10th clockwork device dies. He answers only the group or raid that has the kill credit, and the hail gives the real flag only if you told Giwin you would test the machine first; otherwise it is a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards.",
+       "brief": "Kill the Behemoth, then hail Giwin with the kill credit. Promise him a machine test first or it is a checklist flag.",
        "says": [
         {
          "to": "Giwin Mirakon (appears after the kill)",
@@ -1827,6 +2105,7 @@ window.POP_QUESTS = {
        "who": "group",
        "must": true,
        "detail": "Up to 24 players, 4 groups per dream. Hail Thelin at the end to zone out. The hail is your Thelin flag at 2; clicking the portal to the Lair of Terris Thule afterwards is what opens the Lair. Needs Adroha’s “tortured by nightmares” first (your Thelin flag at 1): without it Thelin only screams and falls back asleep. Each group leader tells Thelin “ready” outside and is carried in; three dreams run at once, and the group has 5 minutes to tell the Thelin inside “ready” too, or Terris Thule throws everyone out. He then walks the maze collecting the dagger pieces, a wave at each stop. The boss at the end always drops the Dagger Blade Shard: hand it to Thelin for Thelin’s Dagger. When he and Terris have finished talking, hail him: that is the flag, and it ports you out. He stays 10 minutes. Anyone in the group without Adroha’s flag only gets a checklist flag, which the Seer’s “unlock my memories” turns into the real one afterwards. Before the end, only “ready” (outside, then inside) moves things on; Hail, “dagger” and “help” are his story.",
+       "brief": "Up to 24 players, 4 groups per dream. Hail Thelin at the end: that hail is the flag.",
        "says": [
         {
          "to": "Thelin Poxbourne (outside the maze)",
@@ -1968,6 +2247,7 @@ window.POP_QUESTS = {
        "title": "Optional: escort Aid Eino through Nightmare for the Tiny Gold Fist (Essences of Power, part 1)",
        "who": "group",
        "detail": "The start phrase works only at night in game (8 PM to 7 AM). Stand by the big tree near the waterfall on the upper plateau and say “Quellious be my guide”. Aid Eino steps out and walks the zone while four waves come for him: 4 tortured banshees; 2 nightstalkers; 5 hobgoblins; then 4 banshees and 4 bats. He sits for a few minutes, then The Dreamkeeper appears (level 64, 40,000 HP, hits up to 622, slowable). Keep everything off Eino: he is level 50 with 10,000 HP. Loot the Strand of Nightmare, follow him to the Tranquility portal, and when he says “Hand me the strand from the beast”, give it to him for the Fist and 100,000 experience. One strand drops and he leaves after the hand-in, so it is one Fist per run. The tree answers again 36 minutes after a start. Keep the Fist: part two needs it. Hailing Aid Eino in PoK first is optional; “help” is where he tells you all this.",
+       "brief": "Optional. Night in game only. Keep Aid Eino alive through four waves and the Dreamkeeper, then hand him the strand.",
        "says": [
         {
          "to": "The big tree in Nightmare",
@@ -2109,6 +2389,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "He answers as Thelin, and only once your Thelin flag stands at 3: Terris Thule dead and her projection hailed. Before that Adroha says there is no response to be had from Thelin. This hail is the other half of the Torment portal check, with the second Elder Fuirstel visit. His script prints “You receive a character flag!” (no “have”).",
+       "brief": "Hail Elder Poxbourne once Terris Thule is dead and her projection is hailed. It is half of the Torment portal check.",
        "says": [
         {
          "to": "Elder Poxbourne",
@@ -2149,6 +2430,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Only answers once your Grummus flag is done, and only if you asked Adler about the ward before Grummus fell: the projection after Grummus moves your Fuirstel flag to 2 only from 1, and this hail moves it from 2 to 3. Before that he only groans. Do it before Bertoxxulous dies, because his projection moves the flag from 3 to 4.",
+       "brief": "Hail Elder Fuirstel before Bertoxxulous dies. Needs Grummus done, and Adler asked about the ward before Grummus fell.",
        "says": [
         {
          "to": "Elder Fuirstel",
@@ -2183,6 +2465,7 @@ window.POP_QUESTS = {
        "who": "group",
        "check": true,
        "detail": "Five nameds. Tarkil puts the key to the lower Crypt on your keyring. (The upstream script sets your bertox_key flag instead, which the door to the lower Crypt checks, and adds no item.) He appears where High Priest Ultor Szanvon dies and answers only the group or raid with the kill credit, once each; he leaves after 10 minutes.",
+       "brief": "Kill the five Carprin nameds, then hail Tarkil Adan while you hold the kill credit. It is your way into the lower Crypt.",
        "says": [
         {
          "to": "Tarkil Adan",
@@ -2304,6 +2587,7 @@ window.POP_QUESTS = {
        "who": "group",
        "must": true,
        "detail": "Everyone does their own. 1) Hand Askr ONE Storm Giant Head (any camp’s; 60% from its giants). Then say “it was me”, “paying attention”, and “continue” twice for Askr’s Bag of Verity. 2) Combine a Storm Volaas Beard (south camp), a Storm Taarid Bone (west) and a Storm Satuur Sash (north) in the bag; give him Askr’s Sealed Bag of Verity. 3) Say “bastion of thunder” for a second bag; combine two Esoteric Medallions from DIFFERENT camps in it (south, west or north; each camp’s named drops three) and give him the Esoteric Meld. Leaving the zone resets his conversation, so answer him right after each hand-in.",
+       "brief": "Everyone does their own: a head for a bag, three parts for the flag, two medallions for the second. Stay in the zone.",
        "says": [
         {
          "to": "Askr the Lost",
@@ -2633,6 +2917,7 @@ window.POP_QUESTS = {
        "title": "The Keeper of Sorrows, then hail Tylis Newleaf",
        "who": "raid",
        "detail": "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
+       "brief": "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
        "says": [
         {
          "to": "Tylis Newleaf (in Torment)",
@@ -2788,6 +3073,7 @@ window.POP_QUESTS = {
        "title": "The Symbol of Torden opens Agnarr’s tower: one per raid, and the raid needs it",
        "who": "raid",
        "detail": "Combine the Sandstorm Sphere, Lightning Sphere, Blizzard Sphere and Tornado Sphere inside an Unadorned Symbol of Torden. Each sphere is a 25% drop from wing trash; the Unadorned Symbol drops from Auliffe Chaoswind, Brynju Thunderclap, Eindride Icestorm, Kuanbyr Hailstorm or Agnarr’s four adds. The holder puts it on the cursor and clicks the courtyard tower portal; the raid then has 5 minutes to click in. Anyone else clicking wakes the storm watchers.",
+       "brief": "Build one Symbol per raid: four spheres in an Unadorned Symbol. The holder clicks the portal; all follow in 5 minutes.",
        "where": [
         {
          "npc": "The tower portal",
@@ -3102,6 +3388,7 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "detail": "A failed trial can be retried after 10 minutes. Only “ready” starts the trial; Hail is his story. After the win he stands here again; hail him while you are in the group or raid that won, for your credit. All three credits together are what opens the Temple of Marr portals and what Mithaniel Marr’s projection checks.",
+       "brief": "Win the trial, then hail Alekson while you are in the winning group for your credit. A loss can retry in 10 minutes.",
        "says": [
         {
          "to": "Alekson Garn (to start the trial)",
@@ -3240,6 +3527,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Hail him once you hold both flags: the Saryrn projection and the Mithaniel Marr projection each gave you half. He joins them, gives your cipher flag and clears the two halves. It is half of the Sol Ro tower gate; the other half is the Zek notes (two steps on). If you already have the cipher, Hail only asks whether you found any lore.",
+       "brief": "Hail Maelin once you hold both halves, Saryrn’s and Mithaniel Marr’s. He joins them into your cipher flag.",
        "says": [
         {
          "to": "Grand Librarian Maelin",
@@ -3275,6 +3563,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Needs both: Karana’s “path of the Fallen” (your Karana flag at 4) and the notes Mithaniel Marr’s projection gives you, silently, when you hail it after the Temple of Marr. Say “lore”. With only one of the two he says there must be another piece. With both he reads them, gives a flag and clears the two notes. His second reading needs this one.",
+       "brief": "Needs Karana’s path flag and Mithaniel’s notes. Maelin reads both and gives you a flag.",
        "says": [
         {
          "to": "Grand Librarian Maelin",
@@ -3356,6 +3645,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Needs the cipher and both Zek projections hailed (your Zeks flag at 5). Say “information”: he reads the notes and moves you to Zeks 6. Rallos Zek’s projection needs 6 before it gives the real flag, and the Sol Ro tower portal checks 6 together with the cipher. Without the cipher he only says the notes cannot be read. If you did Rallos first, his projection gave only a checklist flag; once this reading is done the Seer’s “unlock my memories” turns it into the real one.",
+       "brief": "Needs the cipher and both Zek projections hailed. Maelin reads the notes and moves you to Zeks 6.",
        "says": [
         {
          "to": "Grand Librarian Maelin",
@@ -3477,6 +3767,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Needs his first reading (“lore”, your Zebuxoruk flag at 1) and Rallos Zek’s projection hailed (your Zeks flag at 7). Say “information”: he tells you the time machine in Innovation needs the essence of the elements, and your Zebuxoruk flag becomes 2. That is what the Air, Earth and Water portals in Tranquility check, and the Plane of Time needs it too. If your Zeks flag is still at 5 or 6, “information” gives the Zek reading instead.",
+       "brief": "Needs his first reading and Rallos Zek’s projection hailed. This second reading opens Air, Earth and Water.",
        "says": [
         {
          "to": "Grand Librarian Maelin",
@@ -3518,6 +3809,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "In Tranquility, at the Plane of Fire portal. Hail, “plane of fire” and “demise” are her story; “portal's destination” is the one that gives your first Fire flag. Do it before Solusek Ro: his projection moves you to the second Fire flag only from this one. If you skip it his projection gives a checklist flag, and the Seer’s “unlock my memories” turns that into the second flag as long as your Zeks flag is at 7, so it can be mended afterwards.",
+       "brief": "Ask Miak about the portal’s destination before you kill Solusek Ro. That gives your first Fire flag.",
        "says": [
         {
          "to": "Miak the Searedsoul",
@@ -3581,6 +3873,7 @@ window.POP_QUESTS = {
        "title": "The five Tower of Solusek Ro minis",
        "who": "raid",
        "detail": "Xuzl, Arlyxir, the Protector of Dresolik, Rizlona and Jiva, in any order. Each wing is a boss fight and then a click, and everyone clicks their own: when the boss dies a flaming cauldron appears for 30 minutes, and while it is up you click the cauldron to take that wing’s flag. Click when it is not there and you only become disoriented. Dresolik’s Protector appears when the last of the four Guardians of Dresolik dies; Rizlona has a second form where she falls, and it is that one’s death that leaves the cauldron. Nobody speaks to anything here. All five wings, with your Zeks flag at 7 (every flag up to Rallos Zek and the Zek notes), open the lava runes that take you into Solusek Ro’s chamber, and his projection checks all five too.",
+       "brief": "Five wings, any order. Kill each boss, then click its flaming cauldron within 30 minutes. Everyone clicks their own.",
        "where": [
         {
          "npc": "Xuzl",
@@ -3965,6 +4258,7 @@ window.POP_QUESTS = {
        "title": "Optional: the four Essences of Power for a Jade Hoop of Speed or another reward (part 2)",
        "who": "raid",
        "detail": "Carry the Tiny Gold Fist: Councilwoman Kerasha answers only while you have it, and checks no flags. Say “essences of power” for a Sacred Bowl. Put in the Essence of Fire (Fennin Ro), Essence of Wind (Xegony), Essence of Water (Coirnav) and Essence of Earth (the Avatar of Earth, the Rathe Council), and combine for Power of the Planes. Each god drops its essence on 40% of kills, one per kill, and you can hold only one of each, so they are a loot call. They are not the four the Plane of Time needs. Give her Power of the Planes for the Jade Hoop of Speed. To change it, hand the reward back for the next one, in this order: Frizzniks Endless Coin Purse, Cord of Invigoration, Mace of the Ancients, Ring of Farsight, then the Hoop again.",
+       "brief": "Optional. Keep the Fist, combine the four gods’ essences in the bowl, then trade the result for a reward.",
        "says": [
         {
          "to": "Councilwoman Kerasha",
@@ -4122,6 +4416,7 @@ window.POP_QUESTS = {
        "who": "solo",
        "must": true,
        "detail": "Carry the Quintessence to Chronographer Muon, go up to the clocks, tell Loreseeker Maelin you have researched, then click the machine. Needs Maelin’s second reading (your Zebuxoruk flag at 2) and the Quintessence in your bags (Muon does not count the bank). Muon: Hail, then “yes” carries you up to the time-projection chamber, and Loreseeker Maelin appears there. Clicking the time machine is what sets your Plane of Time flag and carries you in. The portal back in Tranquility then also asks for level 65.",
+       "brief": "Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.",
        "says": [
         {
          "to": "Chronographer Muon",

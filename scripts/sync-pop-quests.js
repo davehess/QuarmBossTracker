@@ -23,7 +23,10 @@
 // the words to say (with /sit), the places (zone + the Y X /map takes), the chain's start / story /
 // hand-ins, the expect / turn-in / go-back notes, and `seq` (the guild lead, 2026-10-03: the whole step
 // as one ordered list of hail / say / give / get / kill / click / zone / wait / note acts, each with the
-// script it was read from; the overlay draws it in place of says + turn-in when a step has one).
+// script it was read from; the overlay draws it in place of says + turn-in when a step has one), `parts`
+// (the guild lead, 2026-10-04: a step that is several runs, e.g. the six Justice trials, each with its
+// own title, places and seq) and `brief` (a one-or-two-sentence version of the step, 120 characters at
+// most; the overlay shows it first and folds the full detail under "More").
 // WHAT IS DROPPED: the checkbox keys' flag
 // plumbing, the auto-tick explanations and the site-relative links (none of them mean anything in
 // an overlay). [[Item Name#id]] tokens become the bare name: the overlay has no item cards.
@@ -89,16 +92,25 @@ function build(g) {
     if (item.must) q.must = true;
     if (item.check) q.check = true;
     if (item.detail) q.detail = item.detail;
+    if (more.brief) q.brief = more.brief;
     if (item.says && item.says.length) {
       q.says = item.says.map((s) => (s.sit ? { to: s.to, text: s.text, sit: true } : { to: s.to, text: s.text }));
     }
     if (item.where && item.where.length) q.where = item.where.map(loc);
-    if (item.seq && item.seq.length) {
-      // Field order is fixed so the generated file is byte-stable; clean() turns [[Name#id]] into Name.
-      q.seq = item.seq.map((a) => {
-        const o = { kind: a.kind };
-        for (const k of ['to', 'text', 'items', 'sit', 'times', 'until']) if (a[k] !== undefined) o[k] = a[k];
-        o.src = a.src;
+    // Field order is fixed so the generated file is byte-stable; clean() turns [[Name#id]] into Name.
+    const act = (a) => {
+      const o = { kind: a.kind };
+      for (const k of ['to', 'text', 'items', 'sit', 'times', 'until']) if (a[k] !== undefined) o[k] = a[k];
+      o.src = a.src;
+      return o;
+    };
+    if (item.seq && item.seq.length) q.seq = item.seq.map(act);
+    // A step's parts (the Justice trials): each one a title, its own places and its own seq.
+    if (item.parts && item.parts.length) {
+      q.parts = item.parts.map((p) => {
+        const o = { key: p.key, title: p.title };
+        if (p.where && p.where.length) o.where = p.where.map(loc);
+        o.seq = p.seq.map(act);
         return o;
       });
     }

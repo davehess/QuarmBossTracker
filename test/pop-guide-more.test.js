@@ -33,6 +33,28 @@ describe('the extra detail', () => {
     expect(STEP_MORE.flag_askr.turnIn.map(t => t.to.npc)).toEqual(['Askr the Lost', 'Askr the Lost', 'Askr the Lost']);
     expect(STEP_MORE.flag_askr.back[0].npc).toBe('The shrine in Mount Grenidor');
   });
+  // The guild lead, 2026-10-04: "The What to do is wordy." A brief is the short version the Mimic overlay
+  // shows first; the detail it summarises is never cut (the overlay folds it under "More").
+  it('every step whose detail runs past 300 characters has a brief of 120 characters or fewer, in plain words', () => {
+    const long = GUIDE_ITEMS.filter(i => (i.detail ?? '').length > 300);
+    expect(long.length).toBeGreaterThanOrEqual(23);
+    for (const i of long) {
+      const brief = STEP_MORE[i.key]?.brief;
+      expect(brief, `${i.key} has a long detail and no brief`).toBeTruthy();
+      expect(brief.length, `${i.key}: ${brief.length} characters`).toBeLessThanOrEqual(120);
+      expect(brief.length, i.key).toBeLessThan(i.detail.length / 2);
+    }
+    for (const [key, more] of Object.entries(STEP_MORE)) {
+      if (!more.brief) continue;
+      expect(more.brief, key).not.toMatch(/\[\[|#\d|\/say|https?:|\/map/);
+      expect(more.brief.trim(), key).toBe(more.brief);
+    }
+  });
+  it('the Justice trial step’s brief is the guild lead’s sentence, and its detail and expect are untouched', () => {
+    expect(STEP_MORE.flag_trial_justice.brief).toBe('Win any ONE of the six trials. Its boss drops 6 of its Mark, one each. Retry 1 min after a loss, 10 after a win.');
+    expect(STEP_MORE.flag_trial_justice.expect).toMatch(/^A raid\. Six Marks drop per win/);
+    expect(GUIDE_ITEMS.find(i => i.key === 'flag_trial_justice').detail).toMatch(/^Any one of the six: /);
+  });
   it('gathers a step’s places for its map, without repeats', () => {
     const askr = GUIDE_ITEMS.find(i => i.key === 'flag_askr');
     const places = stepPlaces(askr, STEP_MORE.flag_askr);

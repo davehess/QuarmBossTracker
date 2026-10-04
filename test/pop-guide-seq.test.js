@@ -114,6 +114,9 @@ const SCRIPTS = new Set([
   'powater/encounters/Coirnav.lua', 'solrotower/#Rizlona.lua', 'solrotower/Arlyxir.lua', 'solrotower/Guardian_of_Dresolik.lua',
   'solrotower/Jiva.lua', 'solrotower/Rizlona.lua', 'solrotower/Solusek_Ro.lua', 'solrotower/The_Protector_of_Dresolik.lua',
   'solrotower/Xuzl.lua', 'solrotower/player.lua',
+  // The six Justice trials (a part's kill and its Mark are cited to the script that spawns the boss).
+  'pojustice/encounters/BurningTrial.lua', 'pojustice/encounters/ExecutionTrial.lua', 'pojustice/encounters/HangingTrial.lua',
+  'pojustice/encounters/LashingTrial.lua', 'pojustice/encounters/StoningTrial.lua', 'pojustice/encounters/TortureTrial.lua',
 ]);
 
 // id → name for every item token in a seq (eqemu_items, 2026-10-03). The database drops some apostrophes
@@ -414,6 +417,96 @@ describe('other steps where the order, a repeat or a loop is the point', () => {
       expect(hail, k).toBeGreaterThan(kill);
       expect(s[hail].to, k).toBe('A Planar Projection');
     }
+  });
+});
+
+// The six Justice trials as PARTS of the trial step (the guild lead, 2026-10-04: "The Justice Trials each
+// could use their own subsection"). Snapshot pulled 2026-10-04: SPAWN is eqemu_spawn2 345327..345332 (the
+// table stores x then y; the guide writes Y then X, like every /map), which pojustice/The_Tribunal.lua maps
+// to trial 1..6 through SPAWNPOINT_IDS, so each Tribunal answers only "ready to begin the Trial of <its
+// word>"; BOSS is the BOSS_TYPE of each pojustice/encounters/*Trial.lua, and the Mark is that boss's loot
+// table entry (100%). The Flame trial's script is BurningTrial.lua.
+// [word, spawn2 id, x, y, encounter script, boss, Mark, Mark item id]
+const TRIALS = [
+  ['Lashing', 345327, 417, 817, 'LashingTrial', 'Lashman Azakal', 'Mark of Lashing', 31960],
+  ['Execution', 345328, 393, 765, 'ExecutionTrial', 'Prime Executioner Vathoch', 'Mark of Execution', 31842],
+  ['Stoning', 345329, 418, 714, 'StoningTrial', 'Yurae Zhaleem', 'Mark of Stone', 31845],
+  ['Torture', 345330, 521, 713, 'TortureTrial', 'Punisher Veshtaq', 'Mark of Torture', 31844],
+  ['Hanging', 345331, 543, 764, 'HangingTrial', 'Gallows Master Teion', 'Mark of Suffocation', 31846],
+  ['Flame', 345332, 521, 816, 'BurningTrial', 'Punisher of Flame', 'Mark of Flame', 31796],
+];
+
+describe('a step can have parts: the six Justice trials, one each', () => {
+  const parent = step('flag_trial_justice');
+  const parts = parent.parts;
+
+  it('only the trial step has parts, and its step key (the tick storage key) did not move', () => {
+    expect(GUIDE_ITEMS.filter(i => i.parts).map(i => i.key)).toEqual(['flag_trial_justice']);
+    expect(parent.section).toBe('t1');
+    expect(parent.who).toBe('raid');
+  });
+
+  it('is six parts in the Tribunal’s own order, titled by the trial and the Mark it earns, with unique keys', () => {
+    expect(parts.map(p => p.title)).toEqual(TRIALS.map(t => `Trial of ${t[0]} → ${t[6]}`));
+    expect(new Set(parts.map(p => p.key)).size).toBe(6);
+    for (const p of parts) expect(p.key, p.title).toMatch(/^[a-z]+$/);
+  });
+
+  it('each part starts at its own Tribunal: the placed spawn, Y then X, in the Plane of Justice', () => {
+    parts.forEach((p, n) => {
+      const [word, , x, y] = TRIALS[n];
+      expect(p.where.length, word).toBe(1);
+      expect(p.where[0], word).toMatchObject({ npc: 'The Tribunal', zone: 'pojustice', y, x });
+    });
+    // Six different circles, not one circle named six times.
+    expect(new Set(parts.map(p => `${p.where[0].y} ${p.where[0].x}`)).size).toBe(6);
+  });
+
+  it('each part is prove, prepared, "ready to begin the Trial of <its word>", kill its boss, get its Mark', () => {
+    parts.forEach((p, n) => {
+      const [word, , , , script, boss, mark, id] = TRIALS[n];
+      expect(p.seq.map(a => a.kind), word).toEqual(['say', 'say', 'say', 'kill', 'get']);
+      expect(p.seq.slice(0, 3).map(a => a.text), word).toEqual(['prove', 'prepared', `ready to begin the Trial of ${word}`]);
+      for (const a of p.seq.slice(0, 3)) {
+        expect(a.to, word).toBe(`The Tribunal (Trial of ${word})`);
+        expect(a.src, word).toBe('pojustice/The_Tribunal.lua');
+        expect(sayOk(a), `${word}: “${a.text}” is not a keyword of ${a.src}`).toBe(true);
+      }
+      expect(p.seq[3], word).toMatchObject({ kind: 'kill', to: boss, src: `pojustice/encounters/${script}.lua` });
+      expect(p.seq[4].items, word).toEqual([`[[${mark}#${id}]]`]);
+      expect(p.seq[4].src, word).toBe(`pojustice/encounters/${script}.lua`);
+      for (const a of p.seq) expect(SCRIPTS.has(a.src), `${word}: ${a.src}`).toBe(true);
+    });
+  });
+
+  it('a part’s phrase is ONLY its own trial’s: no part says another trial’s word', () => {
+    parts.forEach((p, n) => {
+      const others = TRIALS.filter((_, k) => k !== n).map(t => t[0]);
+      for (const a of p.seq) for (const w of others) expect(a.text ?? '', `${TRIALS[n][0]} mentions ${w}`).not.toContain(w);
+    });
+  });
+
+  it('every Mark in a part is a real item with its real name, and the six are the six the parent’s detail lists', () => {
+    for (const p of parts) {
+      const m = TOKEN.exec(p.seq[4].items[0]);
+      expect(ITEMS[Number(m[2])], p.title).toBeTruthy();
+      expect(noApos(m[1]), p.title).toBe(noApos(ITEMS[Number(m[2])]));
+      expect(parent.detail, p.title).toContain(p.seq[4].items[0]);
+    }
+  });
+
+  it('says once, in the PARENT, that each Tribunal answers only its own trial (not six times in the parts)', () => {
+    const notes = parent.seq.filter(a => a.kind === 'note');
+    expect(notes.length).toBe(1);
+    expect(notes[0].text).toMatch(/Each Tribunal answers only its own trial/);
+    for (const p of parts) expect(p.seq.filter(a => a.kind === 'note').length, p.title).toBe(0);
+  });
+
+  it('the parent keeps its own seq, phrases and detail: the website draws the parent alone', () => {
+    expect(parent.seq.filter(a => a.kind === 'say').map(a => a.text)).toEqual(['prove', 'prepared', 'ready to begin the Trial of Lashing']);
+    expect(parent.says.map(s => s.text)).toEqual(['prove', 'prepared']);
+    expect(parent.detail).toMatch(/SIX of its Mark/);
+    expect(parent.where).toBeUndefined();
   });
 });
 
