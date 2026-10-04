@@ -109,6 +109,11 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ Buffs grouped by raid group (bot 3.1.195 live; /buffs previews and the buff queue on beta, 2026-10-04).**
+  The queue's `groups[]` names who IN each group can group-cast a missing line (a group buff lands on the caster's
+  own group). Pick [b.wolfpack.quest/buffs?v=b](https://b.wolfpack.quest/buffs?v=b) (group cards) or
+  [?v=c](https://b.wolfpack.quest/buffs?v=c) (buff lines); Mimic beta has By buff | By group. Group-buff keyword
+  gaps fixed (Marzin's Mark, Vallon's Quickening, Spirit of Bih`Li and others). §149.
 - **⏳ PoP guide in script order (web 1.8.88 live, Mimic overlay on beta, 2026-10-03).** 65 steps carry one ordered
   list of hail / say / give / get / kill / click / zone-in, each act cited to its quest script, on
   [wolfpack.quest/pop/guide](https://wolfpack.quest/pop/guide) and in Mimic's PoP overlay (beta). The Justice flag

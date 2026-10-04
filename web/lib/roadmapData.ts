@@ -37,6 +37,22 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'buffs-by-group-2026-10-04',
+    title: 'Buffs by raid group',
+    version: 'Bot 3.1.195 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The buff queue now knows which group is short on what, and who in that group can group-cast it.',
+    features: [
+      { name: 'Who in your group can cast it', blurb: 'A group buff only lands on the caster’s own group, so the queue names the caster in that group (“Haste ×4 → your enchanter: Vallon’s Quickening”), or says nobody there can.' },
+      { name: 'By buff or by group', blurb: 'The buff queue overlay in the beta Mimic has a switch: by buff, or one block per raid group with yours first.' },
+      { name: 'Two layouts to try on the website', blurb: 'The buffs page on the beta site has group cards and buff lines to compare.' },
+    ],
+    fixes: [
+      'Group buffs like Marzin’s Mark, Focus of the Seventh, Vallon’s Quickening and Spirit of Bih`Li no longer show as missing.',
+    ],
+  },
+  {
     key: 'pop-guide-order-2026-10-03',
     title: 'The PoP guide, step by step in order',
     version: 'Web 1.8.88',
