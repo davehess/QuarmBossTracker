@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **/fun crash card** (§154) | On beta: "It was a /quit" override for the member or an officer; raids-since counts real raid nights only; card stays up top at 0 | the guild lead: try https://b.wolfpack.quest/fun, say "graduate"; say whether a crash outside a raid should still reset the count |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
 | **Zeal crashes on the fork** (§151) | 3 new teardown crashes, all on the fork's test build; crash list now tags official vs test (agent 3.7.77 beta) | the guild lead: A/B on official Zeal (or `/tag persist off`); a local session reads the three dumps |
 | **Buffs by raid group** (§149) | Bot 3.1.195 live (`groups[]`, group-buff keyword fixes); /buffs previews + buff queue By group on beta | the guild lead: pick https://b.wolfpack.quest/buffs?v=b (**group cards**) or ?v=c (**buff lines**); try By group in the Mimic beta buff queue at the next raid |
@@ -6776,3 +6777,37 @@ tests whose fixtures encoded it.
     option pick (`docs/DESIGN-history-and-quest-nav.md` §2).
 - **Not yet:** saved fights keep only rows with damage dealt, so a tank who dealt none has no row. That
   is for the Tank-history build to decide.
+
+### 154. /fun crash card: a /quit can be forgiven, and only real raid nights count (2026-10-04, web beta preview)
+
+The guild lead: *"since this is a fun item, Peopleslayer should be able to override Linkdeaths if he used /quit
+or /q to leave the game. it looks like a crash but it happens much faster"*, then *"also last night wasn't a
+real raid"*. The card showed "1 raid since", counting a Saturday group night.
+
+- **Why it has to be manual:**
+  - The LD comes from other raiders' logs ("<name> has gone Linkdead.").
+  - A /quit drops the connection exactly like a crash, so no log can tell them apart.
+- **Override:**
+  - "It was a /quit" sits next to the card's Last LD line, drawn only for the Discord account that owns
+    the character or an officer (`isOfficer`).
+  - The server action re-checks that, and refuses if the LD on screen is not the one it would mark.
+  - It merges `{quit, by, at}` into `fun_events.detail` on every row within ±2 minutes, since several
+    raiders upload the same LD. No migration.
+  - A row arriving later within 2 minutes of a marked one is forgiven too.
+  - Forgiven LDs drop out of last LD, raids-since, the record and the lifetime count. The card says
+    "N /quit forgiven", and "Undo /quit" takes it back.
+- **Raid nights:**
+  - "Raids since" and the record now count `raid_nights` dates he took part in. That table holds all 228
+    raid nights since 2025-01, all Sun/Wed/Thu, written by the bot at the first fight of each raid.
+  - An encounter maps to the Eastern date of (start − 5 h).
+  - The two old encounter queries were silently capped at 1,000 rows; he has 1,739. Now `selectAll`.
+- **Display:** the card stays up top at 0 ("0 raids since" is the joke), not in "Quiet for now".
+- **On today's data:**
+  - Unmarked, the card reads 0. The Oct 3 LD stands, and no raid night since.
+  - Once the Oct 3 LD is marked a /quit, it reads 3 (Sep 24, Sep 27, Oct 1) since the Sep 14 LD.
+- **Open, for the guild lead:**
+  - Graduate to the live /fun.
+  - Whether a crash outside a raid night should still reset the count. Today it does, unless it is
+    marked a /quit.
+- Files: `web/lib/funLd.ts` (rules), `web/lib/funLdAuth.ts` (gate), `web/app/fun/actions.ts`,
+  `QuitButton.tsx`. Test: `test/fun-ld-quit.test.js`.
