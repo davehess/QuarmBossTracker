@@ -10330,7 +10330,9 @@ ipcMain.handle('zeal-install-update', async () => {
     const eqDir = _zealEqDir();
     if (!eqDir) return { ok: false, error: 'No EverQuest folder is set. Add one in Settings first.' };
     if (await _isEqRunning()) {
-      return { ok: false, error: 'Close EverQuest first — Zeal.asi is loaded by the running game and can\'t be replaced while it\'s open.' };
+      // A check of THIS PC's processes only (tasklist) — never the bot or another computer you are logged
+      // in on (the guild lead, 2026-10-04, updating on a second PC, read it as "you're logged in").
+      return { ok: false, error: 'EverQuest (eqgame.exe) is running on this PC — Zeal.asi is loaded by the game and can\'t be replaced while it\'s open. Close it and try again. Don\'t see a game window? A stuck one may still be running: Task Manager → Details → eqgame.exe → End task.' };
     }
     const cfg = loadConfig();
     const res = await zealUpdater.install(eqDir, { source: cfg.zealSource });
