@@ -7874,7 +7874,19 @@ function buildWhoSnapshot() {
     const cached = _whoLookupCache.get(k);
     const fresh = cached && (now - cached.at) < WHO_LOOKUP_TTL_MS;
     const data = fresh ? (cached.data || null) : null;
-    if (v.anonymous) entry.known = data;              // de-anon fallback
+    if (v.anonymous) {
+      entry.known = data;                             // de-anon fallback
+      // Zeal knows the exact CURRENT level of anyone in your raid or group, /anon or not (the guild
+      // lead, 2026-10-04: "We shouldn't have a gap in our own players levels."), so it outranks the
+      // last level history saw. A copy: `data` is the shared cached lookup, never edited in place.
+      const zl = _zealLevelFor(v.name);
+      if (zl) entry.known = Object.assign({}, data || {}, { level: zl });
+      // An /anon row can still carry the level /who showed before they hid it (recordWhoEvent keeps
+      // it), which the overlay would show ahead of `known`. That is history too, so a Zeal level, or a
+      // higher one from the bot (a member's own Mimic), replaces it.
+      const kl = entry.known && Number(entry.known.level);
+      if (entry.level && kl > 0 && (zl || kl > entry.level)) entry.level = null;
+    }
     if (data) {
       if (data.main)  entry.main  = data.main;        // #111 main-in-parens
       if (data.mimic) entry.mimic = true;             // #111 wolf icon
@@ -14584,7 +14596,7 @@ function _xpNoteRawLine(line, character, nowMs) {
   for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
     if (!g || !g.text || g.slot < 11 || g.slot > 15) continue;
     const gl = String(g.text).toLowerCase(), gw = whoData.get(gl);
-    group.push({ name: String(g.text), class: _raidClassByName.get(gl) || (gw && gw.class) || null, level: gw && gw.level ? gw.level : null });
+    group.push({ name: String(g.text), class: _raidClassByName.get(gl) || (gw && gw.class) || null, level: (gw && gw.level) || _zealLevelFor(gl) || null });
   }
   const ev = {
     character, at: new Date(atMs).toISOString(), kind,
@@ -40500,7 +40512,8 @@ function _zealBuffsForName(nameLower) {
 }
 // A PLAYER target's identity for Target Info (the guild lead, 2026-09-24:
 // "add in class and level from /who data for target overlay for players").
-// Level, best source first: a live /who that is not anonymous (exact) → your
+// Level, best source first: a live /who that is not anonymous (exact) → Zeal's
+// raid or group roster (exact and current — the guild lead, 2026-10-04) → your
 // own /consider (a white con is exact, any other colour a range — see
 // noteConsiderLevel) → /who history from the bot (the last level anyone saw).
 // Class from live /who, the raid roster, or history. Null for an NPC.
@@ -40527,7 +40540,9 @@ function _targetPlayerInfo(st, selfChar, cached) {
   let level = null, level_min = null, level_max = null, level_src = null;
   const conKey = con ? _conPhraseKey(con.phrase) : '';
   const evenCon = con && con.my > 0 && (conKey === 'looks like quite a gamble' || conKey === 'looks like an even fight');
+  const zealLevel = _zealLevelFor(name);
   if (liveWho && Number(liveWho.level) > 0) { level = Number(liveWho.level); level_src = 'who'; }
+  else if (zealLevel) { level = zealLevel; level_src = 'zeal'; }
   else if (evenCon) { level = con.my; level_src = 'con'; }
   else if (hist && Number(hist.level) > 0) { level = Number(hist.level); level_src = 'history'; }
   const clsRaw = (liveWho && liveWho.class) || raidCls || (hist && hist.class) || null;
@@ -43194,6 +43209,32 @@ const _raidClassByName = new Map();
 function _raidRosterHas(name) {
   if (!name || _raidRosterMembers.size === 0) return false;
   return _raidRosterMembers.has(String(name).toLowerCase());
+}
+// A player's EXACT, CURRENT level straight from Zeal (the guild lead, 2026-10-04: "We shouldn't
+// have a gap in our own players levels."). Everyone in your raid carries one on the type-5 pipe,
+// /anon or not; a group mate carries one on type 6 only while /pipeverbose is on, so a missing
+// level there means unknown, not zero. A sample older than two minutes is not trusted: people
+// leave the raid and level up. Raid first, then group. A positive integer, else null; never throws.
+function _zealLevelFor(name) {
+  try {
+    const k = String(name || '').trim().toLowerCase();
+    if (!k) return null;
+    const FRESH_MS = 120_000, now = Date.now();
+    const lvl = (m) => { const n = Math.trunc(Number(m && m.level)); return n > 0 ? n : null; };
+    const named = (m) => !!(m && m.name && String(m.name).toLowerCase() === k);
+    if (_lastRaidPipe && now - _lastRaidPipe.at <= FRESH_MS) {
+      const hit = (_lastRaidPipe.members || []).find(named);
+      if (hit && lvl(hit)) return lvl(hit);
+    }
+    const g = _zeal.lastSamples['6'];
+    if (g && now - g.at <= FRESH_MS) {
+      let inner = g.obj && g.obj.data;
+      if (typeof inner === 'string') inner = JSON.parse(inner);   // double-encoded, like type 5
+      const hit = Array.isArray(inner) ? inner.find(m => named(m) && lvl(m)) : null;
+      if (hit) return lvl(hit);
+    }
+  } catch { /* malformed sample: unknown */ }
+  return null;
 }
 // #150 — a captured name that is one of OUR pets (charm or summoned). The
 // require_raid_member gate below must PASS for a Death-Touch-on-a-pet: a pet is

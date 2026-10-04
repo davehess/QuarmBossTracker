@@ -25,6 +25,7 @@ const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
 const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
 const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
 const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
+const zealLevel = sliceBlock(agent, 'function _zealLevelFor(name) {', '\n}');
 
 const dsSlack = agent.match(/const DS_UNLISTED_SLACK = [^\n]+/)[0];
 const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.match(/const _SLAIN_YOU_RX = [^\n]+/)[0];
@@ -38,7 +39,9 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
   const pre = `
     const _spellByNameLower = new Map();
     const _zealState = ${JSON.stringify(zeal)};
-    const whoData = new Map();
+    const whoData = new Map(Object.entries(globalThis.__who || {}));
+    const _zeal = { lastSamples: globalThis.__zealSamples || {} };
+    ${zealLevel}
     const _raidClassByName = new Map();
     const CHARM_SPELLS = new Map();
     const stats = { currentEncounterThreat: null, characterInventories: globalThis.__invs || {} };
@@ -680,7 +683,7 @@ describe('side arcs: the rampage target and raiders running low', () => {
 // that are together during the day and find what compositions work and in what area in what zone,
 // with what mobs we're killing" · "Also track when we have an XP potion on".
 describe('XP events', () => {
-  afterEach(() => { vi.useRealTimers(); globalThis.__uploads = null; });
+  afterEach(() => { vi.useRealTimers(); globalThis.__uploads = null; globalThis.__who = null; globalThis.__raidPipe = null; globalThis.__zealSamples = null; });
   const zeal = (xp, aa, extra = {}) => ({ Aldenmar: Object.assign({
     charInfo: [{ id: 2, value: '58' }, { id: 3, value: 'Cleric' }, { id: 26, value: xp + '%' }, { id: 27, value: aa + '%' }, { id: 71, value: '3' }],
     gauges: [{ slot: 11, text: 'Brackwyn', hp_pct: 90 }, { slot: 12, text: 'Corvale', hp_pct: 100 }],
@@ -719,6 +722,34 @@ describe('XP events', () => {
     const [a, b] = h._xpPending;
     expect(b).toMatchObject({ kind: 'solo', xp_before: 41.5, xp_after: 43, potion: false, mob: null });
     expect(Date.parse(b.at)).toBe(Date.parse(a.at) + 1);
+  });
+
+  // The guild lead, 2026-10-04: "We shouldn't have a gap in our own players levels." An /anon group mate
+  // has no /who level, but Zeal does: the raid roster always, the group pipe with /pipeverbose on.
+  it('a group mate\'s level comes from Zeal when /who has none, and /who wins when it has one', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    globalThis.__raidPipe = { at: clock - 1000, members: [{ name: 'Brackwyn', class: 'Bard', level: '60' }] };
+    globalThis.__zealSamples = { '6': { at: clock - 1000, obj: { type: 6, character: 'Aldenmar',
+      data: JSON.stringify([{ name: 'Corvale', spawn_id: 9, level: 57 }]) } } };
+    const h = load({ zeal: zeal(41.5, 10) });
+    h._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending[0].group_members).toMatchObject([{ name: 'Brackwyn', level: 60 }, { name: 'Corvale', level: 57 }]);
+
+    globalThis.__who = { brackwyn: { name: 'Brackwyn', class: 'Bard', level: 59, anonymous: false } };
+    const w = load({ zeal: zeal(41.5, 10) });
+    w._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(w._xpPending[0].group_members[0]).toMatchObject({ name: 'Brackwyn', level: 59 });
+  });
+
+  it('no Zeal level for a group mate (no /pipeverbose, not in the raid) stays null', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    globalThis.__zealSamples = { '6': { at: clock - 1000, obj: { type: 6, data: JSON.stringify([{ name: 'Corvale', spawn_id: 9 }]) } } };
+    const h = load({ zeal: zeal(41.5, 10) });
+    h._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending[0].group_members.map(g => g.level)).toEqual([null, null]);
   });
 
   it('raid experience is its own kind', () => {
