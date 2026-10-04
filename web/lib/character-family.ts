@@ -173,17 +173,17 @@ export async function loadEraTimeline(
   const [bidsById, bidsByName, loot, ticks] = await Promise.all([
     familyIds.length > 0
       ? selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
-          .gt('value', 100).in('character_id', familyIds).order('auction_id').order('character_id').range(from, to))
+          .gt('value', 100).in('character_id', familyIds).order('auction_id').order('character_id').order('id').range(from, to))
       : Promise.resolve([] as BidRow[]),
     selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
       .gt('value', 100).is('character_id', null).in('character_name', familyNames)
-      .order('auction_id').order('character_name').range(from, to)),
+      .order('auction_id').order('character_name').order('id').range(from, to)),
     selectAll<LootRow>((from, to) => sb.from('opendkp_loot_recent')
       .select('character_name, dkp, raid_date, item_name').in('character_name', familyNames)
-      .order('raid_date', { ascending: true }).order('character_name').order('item_name').range(from, to)),
+      .order('raid_date', { ascending: true }).order('character_name').order('item_name').order('auction_id').range(from, to)),
     selectAll<TickRow>((from, to) => sb.from('opendkp_ticks')
       .select('value, attendees, raid_id, opendkp_raids!inner(ts)').overlaps('attendees', familyNames)
-      .order('raid_id').range(from, to)),
+      .order('raid_id').order('tick_id').range(from, to)),
   ]);
 
   type BidRow   = { character_id: number | null; character_name: string | null; value: number | null; auction_id: number | null; opendkp_auctions: { end_at: string | null } | { end_at: string | null }[] | null };

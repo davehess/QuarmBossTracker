@@ -19,6 +19,7 @@ import WindowPicker from '@/components/WindowPicker';
 import { FightCards, FightTable } from './Fights';
 import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
+import { loadPvpBossKills } from '@/lib/fullReads';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -164,16 +165,13 @@ type BossKill = {
 async function loadBossTimers(): Promise<BossKill[]> {
   const sb = supabaseAdmin();
   const since = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
-  const { data } = await sb
-    .from('pvp_boss_kills')
-    .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest, spawn_earliest_override')
-    .eq('guild_id', 'wolfpack')
-    .gte('killed_at', since)
-    .order('killed_at', { ascending: false })
-    .limit(2000);
+  // PAGED, not `.limit(2000)`: PostgREST caps a response at 1,000 whatever the limit
+  // says, and 90 days is already 511 of those. Newest first, so the first row seen
+  // per boss is its latest kill.
+  const data = await loadPvpBossKills<BossKill>(sb, since);
   const seen = new Set<string>();
   const out: BossKill[] = [];
-  for (const r of (data ?? []) as BossKill[]) {
+  for (const r of data) {
     if (seen.has(r.boss_id)) continue;
     seen.add(r.boss_id);
     out.push(r);

@@ -76,7 +76,7 @@ export default async function AdminAdoptionPage() {
       .from('opendkp_ticks')
       .select('raid_id, attendees')
       .in('raid_id', raidRows.map(r => r.raid_id))
-      .order('raid_id')
+      .order('raid_id').order('tick_id')
       .range(from, to));
     attendees = [...new Set(ticks.flatMap(t => Array.isArray(t.attendees) ? t.attendees : []))];
   }

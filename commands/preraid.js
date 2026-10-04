@@ -63,9 +63,11 @@ async function gather(client) {
 
   // ── our own average, from raid_roster (what actually showed up) ───────────
   const since = new Date(now - CLASS_AVG_NIGHTS * 8 * 24 * 3600_000).toISOString();
+  // Ordered on the key left once guild_id is pinned (uploader, name): `name` alone
+  // repeats once per uploading agent, and ties let a page boundary skip rows.
   const rosterRows = await supabase.selectAllPaged('raid_roster',
     `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,class,captured_at`, 'name').catch(() => null) || [];
+    `&select=name,class,captured_at`, 'uploaded_by_discord_id,name').catch(() => null) || [];
   // Bucket by raid NIGHT (ET date), then average the per-night class counts.
   const perNight = new Map();
   for (const r of rosterRows) {
@@ -124,9 +126,11 @@ async function gather(client) {
   });
 
   // ── lockouts ─────────────────────────────────────────────────────────────
+  // (character, boss_key) is the key once guild_id is pinned; `character` alone
+  // has one row per boss, so its ties could drop a raider's lockout at a boundary.
   const lockRows = await supabase.selectAllPaged('character_lockouts',
     `guild_id=eq.${encodeURIComponent(guildId)}&expires_at=gt.${encodeURIComponent(new Date(now).toISOString())}` +
-    `&select=character,boss_key,expires_at,ours`, 'character').catch(() => null) || [];
+    `&select=character,boss_key,expires_at,ours`, 'character,boss_key').catch(() => null) || [];
   const charRows = await supabase.selectAllPaged('characters',
     `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name`, 'name').catch(() => null) || [];
   const kindByName = new Map();

@@ -12,7 +12,7 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDuration } from '@/lib/format';
-import { median } from '@/lib/raidGuide';
+import { loadGuideKillRollup } from '@/lib/fullReads';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -39,7 +39,6 @@ type BoardRow = {
   expansion: string | null; emoji: string | null;
 };
 type LocalRow = { npc_id: number; internal_id: string; strat_notes: string | null };
-type EncRow   = { npc_id: number; duration_sec: number | null; total_damage: number | null; ended_at: string | null; classification: string | null };
 
 type GuideIndexRow = {
   bossId: string; name: string; zone: string | null; emoji: string | null;
@@ -51,37 +50,32 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
   try {
     const sb = supabaseAdmin();
 
-    const [boardRes, localRes, encRes] = await Promise.all([
+    // Kills and median kill time come from guide_kill_rollup, which counts in SQL
+    // over EVERY encounter. The page used to pull `.limit(20000)` encounter rows
+    // and count them here, but PostgREST hands back 1,000 of the 27,948, so every
+    // boss's kills were understated about 2.6x. bosses_local is read for the curated
+    // rows only (auto_registered = false: 132 of 1,729, the rest are first-kill
+    // self-registrations the boards never name), which also keeps it under the cap.
+    const [boardRes, localRes, rollup] = await Promise.all([
       sb.from('bot_boards').select('boss_id, name, zone, expansion, emoji'),
-      sb.from('bosses_local').select('npc_id, internal_id, strat_notes'),
-      sb.from('encounters')
-        .select('npc_id, duration_sec, total_damage, ended_at, classification')
-        .gt('total_damage', 0)
-        .limit(20000),
+      sb.from('bosses_local').select('npc_id, internal_id, strat_notes').eq('auto_registered', false),
+      loadGuideKillRollup(sb),
     ]);
     if (boardRes.error) return { rows: [], error: boardRes.error.message };
 
     const boards = (boardRes.data ?? []) as BoardRow[];
     const locals = (localRes.data ?? []) as LocalRow[];
-    const encs   = (encRes.data ?? []) as EncRow[];
 
     const localByInternal = new Map(locals.map(l => [l.internal_id, l]));
-    const byNpc = new Map<number, EncRow[]>();
-    for (const e of encs) {
-      if (e.npc_id == null || e.classification || e.ended_at == null) continue;
-      const arr = byNpc.get(e.npc_id) || [];
-      arr.push(e);
-      byNpc.set(e.npc_id, arr);
-    }
+    const rollupByNpc = new Map(rollup.map(r => [r.npc_id, r]));
 
     const rows: GuideIndexRow[] = boards.map((b) => {
       const local = localByInternal.get(b.boss_id) || null;
       const expansion = b.expansion || 'Classic';
-      const fights = local ? (byNpc.get(local.npc_id) ?? []) : [];
-      // Index-level floor: half the median damage. The per-boss page uses the
-      // stronger catalog-HP floor (see raidGuide.bucketEncounters).
-      const medDmg = median(fights.map(f => f.total_damage)) ?? 0;
-      const complete = fights.filter(f => (f.total_damage || 0) >= medDmg * 0.5);
+      // Index-level floor: half the median damage, applied in the rollup. The
+      // per-boss page uses the stronger catalog-HP floor (see
+      // raidGuide.bucketEncounters).
+      const roll = local ? rollupByNpc.get(local.npc_id) : undefined;
       return {
         bossId: b.boss_id,
         name: b.name || b.boss_id,
@@ -89,8 +83,8 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
         emoji: b.emoji,
         expansion,
         npcId: local?.npc_id ?? null,
-        kills: complete.length,
-        medianDurationSec: median(complete.map(f => f.duration_sec)),
+        kills: roll?.kills ?? 0,
+        medianDurationSec: roll?.median_duration_sec ?? null,
         hasNotes: !!(local?.strat_notes && local.strat_notes.trim()),
       };
     });

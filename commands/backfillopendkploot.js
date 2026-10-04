@@ -138,22 +138,20 @@ module.exports = {
       const chunk = distinctIds.slice(i, i + 100);
       const inList = chunk.join(',');
       try {
-        const rows = await supabase.select('eqemu_npc_drops',
-          `item_id=in.(${inList})&select=item_id,npc_id,npc_name&limit=20000`);
-        if (!Array.isArray(rows)) continue;
-        const byItem = new Map();
-        for (const row of rows) {
-          if (!byItem.has(row.item_id)) byItem.set(row.item_id, new Set());
-          byItem.get(row.item_id).add(row.npc_id + '::' + row.npc_name);
+        // eqemu_item_drop_owner: one row per item, its NPC count and (count 1) that NPC. The (item,
+        // NPC) pairs of a 100-item chunk are thousands of rows and PostgREST cut them at 1,000 —
+        // `limit=20000` does not lift it — so a cut item read as a single NPC's drop or as none.
+        const rows = await supabase.select('eqemu_item_drop_owner',
+          `item_id=in.(${inList})&select=item_id,npc_count,npc_id,npc_name`);
+        // A failed read is not "no NPC drops these": step 4 would file the chunk as unknown, and those
+        // rows are kept once written. Stop here instead; nothing has been written yet.
+        if (!Array.isArray(rows)) {
+          return interaction.editReply('⚠ The drop-table lookup failed, so nothing was written — filing these awards as unknown on a failed read would stick. Run it again.');
         }
-        for (const [id, set] of byItem) {
-          if (set.size === 1) {
-            const [pair] = [...set];
-            const [npcIdStr, npcName] = pair.split('::');
-            dropOwnerByItem.set(id, { npc_id: parseInt(npcIdStr, 10), npc_name: npcName });
-          } else {
-            dropOwnerByItem.set(id, null);   // ambiguous
-          }
+        for (const row of rows) {
+          dropOwnerByItem.set(row.item_id, row.npc_count === 1
+            ? { npc_id: row.npc_id, npc_name: row.npc_name }
+            : null);   // null = ambiguous
         }
       } catch (err) {
         console.warn('[backfillopendkploot] drops lookup failed:', err?.message);

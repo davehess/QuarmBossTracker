@@ -11,6 +11,7 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { loadRoster } from '@/lib/roster';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER, isCorpse,
   type BuffCategory, type Role,
@@ -63,16 +64,13 @@ export default async function BuffsPage(
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   const admin = supabaseAdmin();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }] = await Promise.all([
+  const [{ data: liveRows }, charRows, { data: rosterRows }] = await Promise.all([
     admin
       .from('character_live_state')
       .select('character, zone_name, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
       .eq('guild_id', 'wolfpack')
       .order('updated_at', { ascending: false }),
-    admin
-      .from('characters')
-      .select('name, class')
-      .eq('guild_id', 'wolfpack'),
+    loadRoster(),   // the shared, paged roster read (web/lib/roster.ts)
     admin
       .from('raid_roster')
       .select('name, class, group_num, level, rank, captured_at, uploaded_by_discord_id')
@@ -97,8 +95,7 @@ export default async function BuffsPage(
   // back to the live Zeal class from the raid roster for anyone not yet in the
   // characters table.
   const classByName = new Map<string, string | null>(
-    ((charRows ?? []) as { name: string; class: string | null }[])
-      .map(c => [c.name.toLowerCase(), c.class]),
+    charRows.map(c => [c.name.toLowerCase(), c.class] as const),
   );
   const classFor = (name: string): string | null =>
     classByName.get(name.toLowerCase()) ?? rosterByName.get(name.toLowerCase())?.class ?? null;

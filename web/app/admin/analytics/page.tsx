@@ -12,6 +12,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { dailyVolume, loadPageViewStats, topViewers } from '@/lib/pageViewStats';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,10 +23,6 @@ const RANGES: { label: string; days: number }[] = [
   { label: '90d',   days: 90 },
 ];
 
-type ViewRow = {
-  user_id: string; path: string; route: string; viewed_at: string;
-};
-
 export default async function AdminAnalyticsPage({ searchParams }: { searchParams: Promise<{ range?: string }> }) {
   await requireOfficer();
   const { range } = await searchParams;
@@ -33,16 +30,13 @@ export default async function AdminAnalyticsPage({ searchParams }: { searchParam
   const sinceIso = new Date(Date.now() - chosen.days * 24 * 60 * 60 * 1000).toISOString();
 
   const admin = supabaseAdmin();
-  const { data: rows } = await admin
-    .from('page_views')
-    .select('user_id, path, route, viewed_at')
-    .gte('viewed_at', sinceIso)
-    .limit(50000);
-  const views = (rows ?? []) as ViewRow[];
+  // Aggregated in Postgres: a 7-day range is 12k+ views and PostgREST returns at most 1,000 rows,
+  // silently, so counting a plain read here showed the first 1,000 views as the whole range.
+  const stats = await loadPageViewStats(admin, sinceIso);
 
   // Resolve user ids → discord nickname (for the viewer table). We only need
-  // ids that appear in this window. wolfpack_members.user_id is the join key.
-  const userIds = Array.from(new Set(views.map(v => v.user_id)));
+  // the ids in the top-viewers list. wolfpack_members.user_id is the join key.
+  const userIds = stats.top_users.map(u => u.user_id);
   const nameByUser = new Map<string, string>();
   if (userIds.length > 0) {
     const { data: members } = await admin
@@ -54,42 +48,14 @@ export default async function AdminAnalyticsPage({ searchParams }: { searchParam
     }
   }
 
-  // Aggregate: by route, by path, by user. Also per-day for the sparkline.
-  const byRoute = new Map<string, { count: number; uniqueUsers: Set<string> }>();
-  const byPath  = new Map<string, { count: number; uniqueUsers: Set<string> }>();
-  const byUser  = new Map<string, { count: number; lastSeen: string }>();
-  const byDay   = new Map<string, number>();   // YYYY-MM-DD → count
-  for (const v of views) {
-    const r = byRoute.get(v.route) ?? { count: 0, uniqueUsers: new Set<string>() };
-    r.count++; r.uniqueUsers.add(v.user_id); byRoute.set(v.route, r);
-    const p = byPath.get(v.path) ?? { count: 0, uniqueUsers: new Set<string>() };
-    p.count++; p.uniqueUsers.add(v.user_id); byPath.set(v.path, p);
-    const u = byUser.get(v.user_id) ?? { count: 0, lastSeen: v.viewed_at };
-    u.count++; if (v.viewed_at > u.lastSeen) u.lastSeen = v.viewed_at;
-    byUser.set(v.user_id, u);
-    const day = v.viewed_at.slice(0, 10);
-    byDay.set(day, (byDay.get(day) ?? 0) + 1);
-  }
-  const topRoutes = [...byRoute.entries()]
-    .map(([route, v]) => ({ route, count: v.count, uniques: v.uniqueUsers.size }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 25);
-  const topPaths = [...byPath.entries()]
-    .map(([path, v]) => ({ path, count: v.count, uniques: v.uniqueUsers.size }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 25);
-  const topUsers = [...byUser.entries()]
-    .map(([uid, v]) => ({ name: nameByUser.get(uid) ?? uid.slice(0, 8), count: v.count, lastSeen: v.lastSeen }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 25);
-  const uniqueViewers = new Set(views.map(v => v.user_id)).size;
+  // The top-25 lists, the totals and the per-day counts all come back from page_view_stats.
+  const topRoutes = stats.top_routes;
+  const topPaths  = stats.top_paths;
+  const topUsers  = topViewers(stats.top_users, nameByUser);
+  const uniqueViewers = stats.unique_viewers;
 
   // Sparkline data — count per day across the range, filling in zeros.
-  const days: { day: string; count: number }[] = [];
-  for (let i = chosen.days - 1; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    days.push({ day: d, count: byDay.get(d) ?? 0 });
-  }
+  const days = dailyVolume(stats.by_day, chosen.days, Date.now());
   const dayMax = Math.max(1, ...days.map(d => d.count));
 
   return (
@@ -117,17 +83,17 @@ export default async function AdminAnalyticsPage({ searchParams }: { searchParam
           and so are admin pages so officer browsing doesn&apos;t dominate the numbers.
         </p>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-          <Stat label="Total views" value={views.length} />
+          <Stat label="Total views" value={stats.total} />
           <Stat label="Unique viewers" value={uniqueViewers} />
-          <Stat label="Routes seen" value={byRoute.size} />
-          <Stat label="Paths seen" value={byPath.size} />
+          <Stat label="Routes seen" value={stats.routes_seen} />
+          <Stat label="Paths seen" value={stats.paths_seen} />
         </div>
       </section>
 
       {/* Daily sparkline */}
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-3">Daily volume</h3>
-        {views.length === 0 ? (
+        {stats.total === 0 ? (
           <p className="text-sm text-dim italic">No views in this range yet. Logging started when this feature shipped — check back tomorrow.</p>
         ) : (
           <div className="flex items-end gap-1 h-24">

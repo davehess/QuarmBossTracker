@@ -2333,7 +2333,14 @@ editable HotButtons/Socials grids, and the **macro suggestion catalog**
 empty Socials slots). All saves go through `write-pages` (key-level, guarded:
 blocked while EQ runs). Cloud backup/restore: `uiStudioCapture` → bot
 `ui_layout` (encrypted `ui_snapshots`) → list/download/restore with
-resolution rescale on the way back.
+resolution rescale on the way back. A bundle (`_readUiBundle`, `main.js`) is
+`eqclient.ini` + `zeal.ini` (shared by every character) and every top-level
+`.ini` named for the character — `UI_<Name>*` (layout), `<Name>_pq.proj.ini`
+(hotbuttons, socials, Zeal key binds), Zeal's `<Name>_bandolier.ini` /
+`_spellsets.ini` / `_protected.ini`. The list is scoped to owner AND character
+(bot 3.1.197; it was owner-only, so every character's list showed the whole
+family). The server keeps no file names — Settings → UI backups → 📄 Files
+downloads the bundle to list them (Mimic beta, 2026-10-04).
 
 ### Bringing in a character nothing else can see (🧳 on `/me`)
 A bank mule or a never-raiding alt produces no logs, no `/who` sighting and no
@@ -3405,6 +3412,35 @@ list, plus `overlay_tuning`, `ui_snapshots`, `ui_socials_index`,
 `bump_agent_upload_stat`. RLS: Tier 1 anon+authenticated read; guild tables
 authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
+
+### Reading past the 1,000-row cap (2026-10-04, §155)
+PostgREST answers at most 1,000 rows per response, silently. That includes
+`.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.
+A read that can match more takes one of three shapes:
+- **Pages** over a unique ORDER BY: web `selectAll` (`web/lib/selectAll.ts`;
+  it throws on a failed page, so a section that can live without the data
+  catches it) and bot `selectAllPaged` (`utils/supabase.js`; it takes
+  `'a,b'` composite orders and `rpc/<fn>` for STABLE functions).
+- **SQL aggregates** that return a few rows.
+- **One jsonb value**, which is not row-capped.
+
+Loaders, one per read, each with its page named in its header:
+- `web/lib/fullReads.ts`: parses, raid, guide, db.
+- `web/lib/adminReads.ts` and `adminQueueData.ts`: admin.
+- `web/lib/capSafeReads.ts`: /me, tells, character pages.
+- `web/lib/roster.ts` `loadRoster()`.
+
+Guards:
+- **Bot:** `select()` warns on an unpaged 1,000-row answer, and `/health`
+  carries `supabase_row_cap`.
+- **Ratchets:** `test/db-read-discipline.test.js` covers the bot and
+  `test/db-read-discipline-web.test.js` covers web: one-call ranges, unpaged
+  set-returning RPCs, unbounded big reads, and pages on a non-unique key. Its
+  `UNIQUE_KEYS` map comes from `pg_index`. A new paged table goes there.
+- **Fakes that enforce the cap:** `test/_fake-postgrest.js` (bot `select`
+  stub), `_fake-fetch-postgrest.js` (fetch), `_cap_fake_supabase.js`, and
+  `_fake-supabase-js.js` / `_postgrest-fake.js` / `_fake-supabase-me.js`
+  (web client).
 
 ---
 

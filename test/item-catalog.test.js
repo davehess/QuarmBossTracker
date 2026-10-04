@@ -10,7 +10,10 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 import { BOT_INDEX, readSource, sliceBlock, stripSql } from './_source-slice.js';
+
+const realSupabase = createRequire(import.meta.url)('../utils/supabase.js');
 
 const src = readSource(BOT_INDEX);
 const handler = sliceBlock(src, 'async function _handleAgentItemCatalog(req, res', '\n}');
@@ -42,7 +45,7 @@ describe('item catalog endpoint', () => {
     // PostgREST answers at most 1000 rows whatever limit is asked. A page size above that came
     // back "short" and ended the loop: agents got 1,000 of 11,104 items until 2026-10-01.
     const ROWS = 2500;
-    const supabase = {
+    const capped = {
       select: async (_t, qs) => {
         const off = Number(/offset=(\d+)/.exec(qs)[1]);
         const lim = Math.min(Number(/limit=(\d+)/.exec(qs)[1]), 1000);   // the server's cap
@@ -51,6 +54,9 @@ describe('item catalog endpoint', () => {
         return out;
       },
     };
+    // The handler reads through the shared pager (utils/supabase.js selectAllPaged); feed the REAL
+    // pager this capped server, so the walk past the cap is the shipped one.
+    const supabase = { ...capped, selectAllPaged: (t, q, order) => realSupabase.selectAllPaged(t, q, order, capped.select) };
     let cache = null;
     // eslint-disable-next-line no-new-func
     const fn = new Function('require', 'mimicLink', '_ITEM_CATALOG_TTL_MS', 'setCache',
@@ -64,12 +70,13 @@ describe('item catalog endpoint', () => {
 
   it('reads the view, so the era join stays in Postgres', () => {
     expect(handler).toMatch(/item_catalog_droppable/);
-    expect(handler).toMatch(/offset=/);         // paged — the view is 11k rows
+    expect(handler).toMatch(/selectAllPaged\('item_catalog_droppable'/);   // paged — the view is 11k rows
   });
 
   it('survives a Supabase failure instead of 500ing the fleet', () => {
-    // An empty catalog degrades the picker to asking the server, which is how
-    // it worked before this existed.
+    // A failed read is never cached and never served half-built: the last good catalog keeps
+    // serving, and with none the agent keeps its own disk cache (or the picker asks the server,
+    // which is how it worked before this existed). Behaviour: test/cap-safe-reads.test.js.
     expect(handler).toMatch(/catch \(err\)/);
     expect(handler).toMatch(/\[item-catalog\] fetch failed/);
   });

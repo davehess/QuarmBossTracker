@@ -46,6 +46,8 @@ function build({ roster = [], raids = [], ticks = [], chars = FAMILY, enabled = 
         if (table === 'opendkp_ticks')  return ${JSON.stringify(ticks)};
         return [];
       },
+      // the roster read is paged (a roster passes PostgREST's 1,000-row cap at peak): same rows, same failures
+      async selectAllPaged(table, q) { return this.select(table, q); },
     });
     const process = { env: {} };
   ` + block + `

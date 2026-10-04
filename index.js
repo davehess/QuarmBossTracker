@@ -3053,9 +3053,11 @@ async function computeHotDiceNightAward() {
 
   let rows = [];
   try {
-    rows = await supabase.select('roll_sets',
+    // Paged: a busy day is more than PostgREST's silent 1,000 whatever `limit` says (1,130 roll sets in
+    // the ET day of 2026-10-02), and the award counts wins out of every contested set.
+    rows = await supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(startIso)}&started_at=lt.${encodeURIComponent(endIso)}` +
-      `&select=roll_from,roll_to,started_at,rolls&limit=2000`);
+      `&select=roll_from,roll_to,started_at,rolls`, 'id');
   } catch (err) { console.warn('[hot-dice-night] roll_sets fetch failed:', err?.message); return; }
   if (!Array.isArray(rows) || rows.length === 0) return;
 
@@ -6395,26 +6397,22 @@ async function _recomputeCommonMacros() {
   if (!supabase.isEnabled()) return;
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // Page through the whole index (PostgREST caps a single response at 1000).
-  const all = [];
-  for (let from = 0; ; from += 1000) {
-    const rows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines&offset=${from}&limit=1000`);
-    if (!Array.isArray(rows) || rows.length === 0) break;
-    all.push(...rows);
-    if (rows.length < 1000) break;
-  }
+  // Ordered by the key — with guild_id pinned, (character, page, button) is
+  // unique. The walk used to carry no order, so a page boundary could skip one
+  // macro and repeat another and the tally of carriers shifted run to run.
+  const all = await supabase.selectAllPaged('ui_socials_index',
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines`, 'character,page,button');
+  // A failed page is not an empty index: rewriting common_macros from nothing,
+  // or from half the rows, would wipe or shrink it. Keep what is there.
+  if (!all) { console.warn('[common-macros] index read failed — keeping the existing common_macros'); return; }
   // Class per carrying character — powers the /me/ui "what do other druids
   // run" filter. Best-effort: characters without a known class just don't
   // contribute to the tally (the macro still counts toward char_count).
   const classByChar = new Map();
   try {
-    for (let from = 0; ; from += 1000) {
-      const rows = await supabase.select('characters',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class&offset=${from}&limit=1000`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
-      for (const r of rows) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
-      if (rows.length < 1000) break;
-    }
+    const chars = await supabase.selectAllPaged('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class`, 'name');
+    for (const r of (chars || [])) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
   } catch { /* class column is enrichment only */ }
   const bySig = new Map();   // sig → { chars:Set, names:Map, lines }
   for (const r of all) {
@@ -6461,9 +6459,14 @@ async function _backfillSocialsIndex() {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   try {
     const indexed = new Set();
-    const idxRows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character&limit=1000`);
-    for (const r of (idxRows || [])) indexed.add(String(r.character).toLowerCase());
+    // The "already indexed" set, whole: the index holds 1,165 rows (one per
+    // macro), and `limit=1000` saw only the first 1,000 — so characters past it
+    // looked unindexed and were decrypted and re-indexed after EVERY boot.
+    const idxRows = await supabase.selectAllPaged('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=character`, 'character,page,button');
+    // A failed read is not "nothing indexed" — that would redo every character.
+    if (!idxRows) { console.warn('[ui-socials-index] backfill skipped: index read failed'); return; }
+    for (const r of idxRows) indexed.add(String(r.character).toLowerCase());
     // Newest snapshots first; first hit per character wins.
     const snaps = await supabase.select('ui_snapshots',
       `select=id,character_name,owner_discord_id,created_at&order=created_at.desc&limit=500`);
@@ -6768,10 +6771,13 @@ function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
 // quietly disagreeing about what somebody can afford.
 async function _familyDkpFromMirror(family) {
   const supabase = require('./utils/supabase');
-  const famClause = _ilikeAnyClause('character_name', family);
   const ADJ_LIMIT = 1000;
-  const [tickRows, adjRows, spentRows] = await Promise.all([
-    supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
+  const [mirrorRows, adjRows] = await Promise.all([
+    // Ticks earned and loot spent per family name, summed in the database
+    // (family_dkp_mirror, migration 20261004140200). This used to read the family's tick rows with
+    // `limit=3000`, which PostgREST holds to 1,000: 18 families have more (the most, 1,456), and the
+    // understatement ran from 35 to 2,347 DKP of `earned` on the production mirror, 2026-10-04.
+    supabase.rpc('family_dkp_mirror', { p_names: family }),
     // ⚠ Unfiltered: adjustments have no queryable character column (the name is
     // inside `raw`), so this pulls the whole table and filters in JS. 295 rows
     // today against a 1000 cap — lots of headroom, but it is the SAME shape as
@@ -6787,30 +6793,26 @@ async function _familyDkpFromMirror(family) {
     // "happens automatically based on settings that we've deployed in open
     // dkp". The handful of 2024 rows at other times are the manual era.)
     supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
-    supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
   ]);
+  // A failed read is not a family that never earned a tick: carrying on would show a balance with no
+  // earnings in it as if it were the answer. The callers already treat a throw as "no figure".
+  if (!Array.isArray(mirrorRows)) throw new Error('family_dkp_mirror read failed');
   if ((adjRows || []).length >= ADJ_LIMIT) {
     console.warn(`[dkp-mirror] adjustments hit the ${ADJ_LIMIT}-row cap — balances may be UNDERSTATED.`
       + ' Paginate this read or give adjustments a queryable character column.');
   }
-  const famLc = new Set(family.map(f => f.toLowerCase()));
   const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
   let fresh = 0;
-  for (const t of (tickRows || [])) {
-    const att = Array.isArray(t.attendees) ? t.attendees : [];
-    for (const nm of att) { const k = String(nm).toLowerCase(); if (per.has(k)) per.get(k).earned += (t.value || 0); }
-    if (t.fetched_at) fresh = Math.max(fresh, Date.parse(t.fetched_at) || 0);
+  for (const m of mirrorRows) {
+    const row = per.get(String(m.name_lower || '').toLowerCase());
+    if (row) { row.earned += Number(m.earned) || 0; row.spent += Number(m.spent) || 0; }
+    if (m.fetched_at) fresh = Math.max(fresh, Date.parse(m.fetched_at) || 0);
   }
   for (const a of (adjRows || [])) {
     const nm = a.raw && a.raw.Character && a.raw.Character.Name;
     const k = nm ? String(nm).toLowerCase() : '';
     if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
     if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
-  }
-  for (const l of (spentRows || [])) {
-    const k = String(l.character_name || '').toLowerCase();
-    if (famLc.has(k) && per.has(k)) per.get(k).spent += (l.dkp || 0);
-    if (l.fetched_at) fresh = Math.max(fresh, Date.parse(l.fetched_at) || 0);
   }
   return { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true,
            fetched_at: fresh ? new Date(fresh).toISOString() : null };
@@ -7077,15 +7079,18 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now()) {
   const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
   const slackIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS - 5 * 60_000).toISOString());
   const g = encodeURIComponent(guildId);
+  // Paged, newest first: a 12h window on a busy loot night holds more than the `limit=400` / `limit=500`
+  // these were (1,021 roll sets and 1,070 looted rows in the 12h to 2026-10-03 03:30 UTC), and a cut
+  // drops the OLDEST rows of the night.
   const [rollRows, lootedRows] = await Promise.all([
-    supabase.select('roll_sets',
+    supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${g}&started_at=gte.${sinceIso}`
-      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at&order=started_at.desc&limit=400`),
-    supabase.select('looted_items',
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at.desc,id'),
+    supabase.selectAllPaged('looted_items',
       `guild_id=eq.${g}&looted_at=gte.${slackIso}`
-      + `&select=looter_character,item_name,zone,looted_at&order=looted_at.desc&limit=500`),
+      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at.desc,id'),
   ]);
-  // supabase.select answers null on ANY failure (timeout, breaker, 4xx/5xx), and
+  // supabase.select / selectAllPaged answer null on ANY failure (timeout, breaker, 4xx/5xx), and
   // a null is not an empty night — throw so the 60s cache never holds a hollow
   // panel and the agent sees an error instead of "nobody looted anything".
   if (!Array.isArray(rollRows) || !Array.isArray(lootedRows)) throw new Error('night-loot: roll_sets / looted_items fetch failed');
@@ -7277,27 +7282,19 @@ async function _handleAgentServerPanel(req, res) {
 
   try {
     if (key === 'damage') {
-      // Top characters by 30d total damage (recent_encounters via
-      // encounter_players → encounters). Keep response small; dashboard
-      // overlays rank+total+dps onto its existing "Damage" panel layout.
-      const rows = await supabase.select(
-        'encounter_players',
-        `select=character_name,total_damage,dps,encounters!inner(started_at)` +
-        `&encounters.started_at=gte.${since30d}` +
-        `&order=total_damage.desc&limit=200`
-      );
-      // Aggregate by character (multiple encounter rows per char)
-      const byChar = new Map();
-      for (const r of (rows || [])) {
-        const k = r.character_name;
-        if (!k) continue;
-        const cur = byChar.get(k) || { character: k, totalDamage: 0, encounters: 0, peakDps: 0 };
-        cur.totalDamage += r.total_damage || 0;
-        cur.encounters  += 1;
-        if ((r.dps || 0) > cur.peakDps) cur.peakDps = r.dps || 0;
-        byChar.set(k, cur);
-      }
-      const list = [...byChar.values()].sort((a, b) => b.totalDamage - a.totalDamage).slice(0, 25);
+      // Top characters by 30d total damage (encounter_players → encounters). Keep response small;
+      // dashboard overlays rank+total+dps onto its existing "Damage" panel layout.
+      // Summed in the database: this used to total the 200 largest SINGLE-FIGHT rows and call that
+      // the "30 d total" (a top-25 whose first place showed 5.5M over 19 fights against a real 15.8M
+      // over 845, 2026-10-04) — a ranking of one-fight peaks, wrong by construction.
+      const rows = await supabase.rpc('encounter_damage_by_character',
+        { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+      const list = (rows || []).map(r => ({
+        character: r.character_name,
+        totalDamage: Number(r.total_damage) || 0,
+        encounters: Number(r.encounters) || 0,
+        peakDps: Number(r.peak_dps) || 0,
+      })).sort((a, b) => b.totalDamage - a.totalDamage).slice(0, 25);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ key, scope: 'last 30d', updated_at: new Date().toISOString(), rows: list }));
     }
@@ -7368,32 +7365,41 @@ async function _handleAgentServerPanel(req, res) {
     if (key === 'threat') {
       if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
       const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      // Pull recent snapshots for any encounter where this character appears
-      // in per_player. PostgREST JSONB existence: per_player=cs.{character}
-      // (contains) is the cheap test.
-      const rows = await supabase.select(
-        'encounter_threat_snapshots',
-        `select=boss_name,snapshot_at,per_player,total` +
+      // Read the per-fight rank rollup, not the raw snapshot stream. encounter_threat_snapshots is
+      // 1.5M rows / 1.4 GB and `per_player` containment has no index, so the old read was a seq scan
+      // the 10s abort killed (and, when it did answer, capped at 1,000 of its 2,000 rows). The
+      // rollup (rollup_threat_ranks) already ranks every character in every snapshot: one row per
+      // (boss or raid night, character) with how many snapshots it saw them in and how many of those
+      // they led / were top 3 in, so the totals below are sums, and `recent` lists whole fights
+      // (rank = their average rank in it, of = the average field size) instead of single snapshots.
+      // ⚠ Only as fresh as the rollup: the newest rolled_up_at in the table is 2026-08-19, and the
+      // rollup's own source scan has no usable snapshot_at index (the one migration 20260923010000 adds
+      // is not in production), the likely reason. Until it runs again this reads 0 for any fight after
+      // that date.
+      const rows = await supabase.selectAllPaged(
+        'encounter_threat_rank',
+        `select=boss_name,boss_name_key,started_at_key,snapshots,times_top1,times_top3,avg_rank,avg_field` +
         `&guild_id=eq.${encodeURIComponent(guildId)}` +
-        `&snapshot_at=gte.${since}` +
-        `&per_player=cs.${encodeURIComponent(JSON.stringify({ [character]: {} }))}` +
-        `&order=snapshot_at.desc&limit=2000`
+        `&character_name=ilike.${encodeURIComponent(character)}` +
+        `&started_at_key=gte.${encodeURIComponent(since)}`,
+        'started_at_key.desc,boss_name_key'
       );
-      // Rank the character within each snapshot; aggregate.
-      let topCount = 0, top3Count = 0;
+      let snapshotCount = 0, topCount = 0, top3Count = 0;
       const recent = [];
       for (const r of (rows || [])) {
-        const entries = Object.entries(r.per_player || {}).map(([n, v]) => [n, (v.swing||0)+(v.proc||0)+(v.spell||0)+(v.heal||0)]).sort((a,b)=>b[1]-a[1]);
-        const idx = entries.findIndex(e => (e[0]||'').toLowerCase() === character.toLowerCase());
-        if (idx === 0) topCount++;
-        if (idx >= 0 && idx < 3) top3Count++;
-        if (recent.length < 10) recent.push({ boss: r.boss_name, snapshot_at: r.snapshot_at, rank: idx + 1, of: entries.length });
+        snapshotCount += Number(r.snapshots) || 0;
+        topCount      += Number(r.times_top1) || 0;
+        top3Count     += Number(r.times_top3) || 0;
+        if (recent.length < 10) recent.push({
+          boss: r.boss_name || r.boss_name_key, snapshot_at: r.started_at_key,
+          rank: Math.round(Number(r.avg_rank)) || 0, of: Math.round(Number(r.avg_field)) || 0,
+        });
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         key, character, scope: 'last 30d',
         updated_at: new Date().toISOString(),
-        snapshots: (rows || []).length,
+        snapshots: snapshotCount,
         times_topped_threat: topCount,
         times_top3:          top3Count,
         recent,
@@ -7615,9 +7621,12 @@ async function _handleAgentServerPanel(req, res) {
       const ck = 'item-history:' + ids.slice().sort((a, b) => a - b).join(',');
       const cached = _lootCacheGet(ck);
       if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
-      const aucRows = await supabase.select(
+      // Paged, newest first: 60 ids can hold 1,600 settled auctions (the 60 busiest items do), and
+      // `limit=400` kept only the newest 400, so an item whose auctions were all older vanished.
+      const aucRows = await supabase.selectAllPaged(
         'opendkp_auctions',
-        `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${ids.join(',')})&winner=not.is.null&order=end_at.desc&limit=400`
+        `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${ids.join(',')})&winner=not.is.null`,
+        'end_at.desc,auction_id'
       ) || [];
       // Most-recent-first auctions per item; collect the winning auction ids for
       // a single runner-up bid lookup.
@@ -7740,11 +7749,16 @@ async function _handleAgentServerPanel(req, res) {
         // Date only. Without the name those rows are unkeyable and every miss
         // they witness is silently invisible (a member's Vengeful Mail loss,
         // 2026-08-30 — present in the mirror, skipped by the builder).
-        const rawBids = await supabase.select(
+        // Paged on the table's own id: the busiest family has 1,196 bids, past PostgREST's silent
+        // 1,000 (a `limit=3000` read of it was 1,000), and the dropped bids were misses nobody saw.
+        const rawBids = await supabase.selectAllPaged(
           'opendkp_auction_bids',
-          `select=auction_id,character_id,character_name,value&or=(${bidClauses.slice(0, 26).join(',')})&limit=3000`
+          `select=auction_id,character_id,character_name,value&or=(${bidClauses.slice(0, 26).join(',')})`,
+          'id'
         ) || [];
-        const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))].slice(0, 1000);
+        // Not sliced to 1,000 any more: bids are read in id order, so that slice silently dropped the
+        // LAST (newest) auctions of the busiest family (1,196 bids). The chunk loop below takes any count.
+        const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))];
         const aucById = new Map();
         if (aids.length) {
           // in.() is capped per request to keep URLs sane; chunk the auction fetch.
@@ -7800,7 +7814,8 @@ async function _handleAgentServerPanel(req, res) {
         let lootRows = [];
         for (let i = 0; i < raidIds.length; i += 200) {
           const chunk = raidIds.slice(i, i + 200);
-          const lr = await supabase.select('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})&limit=5000`) || [];
+          // Paged: 200 raids of loot is ~5.3k rows, five times PostgREST's silent per-response cap.
+          const lr = await supabase.selectAllPaged('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})`, 'id') || [];
           lootRows = lootRows.concat(lr);
         }
         const inferred = _resolveCharIdNames(wonAuctions, lootRows);
@@ -7848,9 +7863,12 @@ async function _handleAgentServerPanel(req, res) {
       let misses = _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }).slice(0, 60);
       if (misses.length) {
         const missIds = misses.map(m => m.item_id);
-        const mAuc = await supabase.select(
+        // Paged, newest first: 60 items average ~350 settled auctions and the busiest ones far more,
+        // so `limit=600` cut the OLDEST auctions of every item and some items vanished whole.
+        const mAuc = await supabase.selectAllPaged(
           'opendkp_auctions',
-          `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${missIds.slice(0, 60).join(',')})&winner=not.is.null&order=end_at.desc&limit=600`
+          `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${missIds.slice(0, 60).join(',')})&winner=not.is.null`,
+          'end_at.desc,auction_id'
         ) || [];
         const mByItem = new Map();
         for (const a of mAuc) { if (!mByItem.has(a.item_id)) mByItem.set(a.item_id, []); mByItem.get(a.item_id).push(a); }
@@ -7877,7 +7895,9 @@ async function _handleAgentServerPanel(req, res) {
         let eAuc = [];
         for (let i = 0; i < listedIds.length; i += 150) {
           const chunk = listedIds.slice(i, i + 150);
-          const r = await supabase.select('opendkp_auctions', `select=item_id,raid_id,end_at&item_id=in.(${chunk.join(',')})&order=end_at.desc&limit=2000`) || [];
+          // Paged, newest first (the loop below takes the first row per item as the most recent):
+          // 150 items x ~7.7 auctions is ~1,150 rows, just past the 1,000 cap.
+          const r = await supabase.selectAllPaged('opendkp_auctions', `select=item_id,raid_id,end_at&item_id=in.(${chunk.join(',')})`, 'end_at.desc,auction_id') || [];
           eAuc = eAuc.concat(r);
         }
         const raidIds = [...new Set(eAuc.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
@@ -8521,9 +8541,12 @@ async function _handleAgentUiLayoutList(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ snapshots: [] }));
   }
+  // Owner AND character: the owner alone listed every character in the family
+  // under each one, with no name on the row — so "Backups" under one character
+  // showed (and offered to restore) another's (the guild lead, 2026-10-04).
   const rows = await supabase.select(
     'ui_snapshots',
-    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&character_name=ilike.${encodeURIComponent(character)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
   ).catch(() => []);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
@@ -8667,9 +8690,11 @@ async function _familyInRaidTonight(characterName, { freshMs = _AUTOBID_ROSTER_F
 
     // (a) Any family member standing in the raid right now.
     const since = new Date(now.getTime() - freshMs).toISOString();
-    const roster = await supabase.select('raid_roster',
+    // Paged: one row per (uploader, name) is ~1,000 at peak, so a `limit=1000` read could miss the
+    // family member standing in the raid and refuse an auto-bid.
+    const roster = await supabase.selectAllPaged('raid_roster',
       `guild_id=eq.${encodeURIComponent(guildId)}`
-      + `&captured_at=gte.${encodeURIComponent(since)}&select=name&limit=1000`) || [];
+      + `&captured_at=gte.${encodeURIComponent(since)}&select=name`, 'uploaded_by_discord_id.asc,name') || [];
     const hit = roster.find(r => family.has(String(r.name || '').trim().toLowerCase()));
     if (hit) return { ok: true, via: 'roster', character: hit.name, family: family.size };
 
@@ -8968,8 +8993,10 @@ async function _factionValueMap() {
       const [names, entries, npcs] = await Promise.all([
         supabase.selectAllPaged('eqemu_faction_list_full',
           'id=gt.0&select=id,name', 'id', undefined),
+        // ⚠ Ordered on the whole primary key. npc_faction_id alone is not unique
+        // (many factions per npc_faction), and a replay on it lost 4 of 5,354 rows.
         supabase.selectAllPaged('eqemu_npc_faction_entries',
-          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id', undefined),
+          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id,faction_id', undefined),
         // ⚠ Narrow select on purpose: this is an 18k-row table and egress is
         // the metered thing on our plan, so the default all-columns paged read
         // would pull the whole NPC catalog to learn two fields.
@@ -10270,8 +10297,6 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // Switched to the REST helper's actual signature.
       const supabase = require('./utils/supabase');
       const entries = [];
-      let from = 0;
-      const PAGE = 1000;
       // effect_id_1..3 / raw are transient — used ONLY here to detect SPA 59
       // (damage shield) and its per-hit magnitude, then dropped. Only entries
       // that ARE a damage shield carry the derived `ds` field onward, so the
@@ -10471,26 +10496,27 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // unflagged catalog as "bot too old" and leaves its mechanic index idle.
       const npcCastable = new Set();
       try {
-        let nfrom = 0;
-        while (true) {
-          const nrows = await supabase.select('eqemu_npc_spells_entries',
-            `select=spellid&order=spellid.asc&offset=${nfrom}&limit=${PAGE}`);
-          if (!Array.isArray(nrows) || nrows.length === 0) break;
+        // All or nothing: selectAllPaged returns null when any page fails, so a
+        // failed read leaves the flag unset (served as "bot too old" for an hour)
+        // rather than half-set (some NPC spells silently unflagged). Ordered on
+        // the whole key — spellid alone has ties.
+        const nrows = await supabase.selectAllPaged('eqemu_npc_spells_entries',
+          'select=spellid', 'npc_spells_id,spellid,minlevel');
+        if (Array.isArray(nrows)) {
           for (const nr of nrows) if (nr && nr.spellid != null) npcCastable.add(Number(nr.spellid));
-          if (nrows.length < PAGE) break;
-          nfrom += PAGE;
+        } else {
+          console.warn('[spell-catalog] NPC-castable flag unavailable: read failed');
         }
       } catch (err) {
         npcCastable.clear();
         console.warn('[spell-catalog] NPC-castable flag unavailable:', err && err.message);
       }
-      while (true) {
-        // PostgREST paging via Range header is wrapped by Supabase's REST API
-        // as offset/limit query params. We pass them as `&offset=X&limit=Y`
-        // which the supabase utility forwards verbatim.
-        const data = await supabase.select('eqemu_spells',
-          `${SELECT}&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
+      {
+        // One paged read of the whole spell table. A failed page throws to the
+        // catch below: this used to `break` on it and cache whatever had loaded
+        // — nothing at all, if it was the first page — for an hour.
+        const data = await supabase.selectAllPaged('eqemu_spells', SELECT, 'id');
+        if (!Array.isArray(data)) throw new Error('eqemu_spells read failed');
         for (const r of data) {
           const _hm = _healMagnitude(r);
           // Live bot-side name→amount map so a relayed heal cast that arrives
@@ -10560,8 +10586,6 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             npc:        npcCastable.has(Number(r.id)) ? 1 : undefined,
           });
         }
-        if (data.length < PAGE) break;
-        from += PAGE;
       }
       const body = JSON.stringify({
         version: 8,   // v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
@@ -10603,8 +10627,9 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
 // item catalog is huge but virtually static.
 //
 // Defensively handles the case where the migration adding casttime /
-// clickeffect / clicktype columns hasn't applied yet — returns an empty
-// catalog instead of 500ing so the agent can still operate.
+// clickeffect / clicktype columns hasn't applied yet — a failed read is never
+// cached; the agent gets a 503 and keeps its own disk cache, which is how it
+// already treats any non-200 here.
 let _itemClickyCache    = null;
 const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
 async function _handleAgentItemClickies(req, res, isPublic) {
@@ -10615,40 +10640,49 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let failed = false;
     try {
       const supabase = require('./utils/supabase');
-      let from = 0;
-      const PAGE = 1000;
-      while (true) {
-        const data = await supabase.select('eqemu_items',
-          `select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
-        for (const r of data) {
-          entries.push({
-            id: r.id, name: r.name,
-            casttime: r.casttime, clickeffect: r.clickeffect,
-            clicktype: r.clicktype, clicklevel: r.clicklevel,
-            // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
-            maxcharges: r.maxcharges != null ? r.maxcharges : null,
-          });
-        }
-        if (data.length < PAGE) break;
-        from += PAGE;
+      // ⚠ Paged, and filtered to items that really have a click. `clickeffect` is
+      // NOT NULL on every item (-1 = no click: 23,092 rows · 0: 2,269 · >0: 1,611),
+      // so the old `not.is.null` matched all 26,972 items and the 1,000-row cap
+      // handed agents the 1,000 LOWEST ids — 57 of the 1,611 real clickies.
+      // Paging alone would have shipped every item in the game.
+      const data = await supabase.selectAllPaged('eqemu_items',
+        'select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=gt.0', 'id');
+      if (!Array.isArray(data)) throw new Error('eqemu_items read failed');
+      for (const r of data) {
+        entries.push({
+          id: r.id, name: r.name,
+          casttime: r.casttime, clickeffect: r.clickeffect,
+          clicktype: r.clicktype, clicklevel: r.clicklevel,
+          // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
+          maxcharges: r.maxcharges != null ? r.maxcharges : null,
+        });
       }
     } catch (err) {
-      // Column missing (migration not applied yet) or other transient
-      // failure — keep the bot alive and return an empty catalog so the
-      // agent gracefully falls back to spell-based cast times.
-      console.warn('[item-clickies] fetch failed (returning empty):', err && err.message);
+      // Column missing (migration not applied yet) or other transient failure.
+      // Nothing from a failed read is cached: the last good catalog keeps serving
+      // (retry in 5 min), and with none the agent gets a 503 and keeps ITS disk
+      // cache — this used to cache an empty or partial catalog for 6 h.
+      failed = true;
+      console.warn('[item-clickies] fetch failed (keeping the last good catalog):', err && err.message);
     }
-    const body = JSON.stringify({
-      version: 1,
-      fetched_at: new Date().toISOString(),
-      count: entries.length,
-      entries,
-    });
-    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
-    _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemClickyCache) {
+      _itemClickyCache.fetchedAt = Date.now() - _ITEM_CLICKY_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
   }
   const ifNoneMatch = req.headers['if-none-match'];
   if (ifNoneMatch && ifNoneMatch === _itemClickyCache.etag) {
@@ -10688,35 +10722,41 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
   const fresh = _itemCatalogCache && (Date.now() - _itemCatalogCache.fetchedAt) < _ITEM_CATALOG_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let failed = false;
     try {
       const supabase = require('./utils/supabase');
-      let from = 0;
-      // Never above 1000: PostgREST answers at most 1000 rows, so a bigger page came back
-      // "short" and ended the loop. It was 2000 until 2026-10-01, and agents got 1,000 of 11,104 items.
-      const PAGE = 1000;
-      while (true) {
-        const data = await supabase.select('item_catalog_droppable',
-          `select=item_id,item_name,era&order=item_id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
-        // Array-of-arrays, not objects: at 11k rows the key names would be
-        // most of the payload.
-        for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
-        if (data.length < PAGE) break;
-        from += PAGE;
-      }
+      // Paged by the shared reader, which keeps every page at the 1000 cap (it was
+      // 2000 until 2026-10-01, and agents got 1,000 of 11,104 items) and gives up
+      // on a failed page instead of handing back the pages before it.
+      const data = await supabase.selectAllPaged('item_catalog_droppable',
+        'select=item_id,item_name,era', 'item_id');
+      if (!Array.isArray(data)) throw new Error('item_catalog_droppable read failed');
+      // Array-of-arrays, not objects: at 11k rows the key names would be
+      // most of the payload.
+      for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
     } catch (err) {
-      // Keep the bot alive and serve what we have. An empty catalog makes the
-      // picker fall back to asking the server, which is how it worked before.
-      console.warn('[item-catalog] fetch failed (serving', entries.length, 'rows):', err && err.message);
+      // Nothing from a failed read is cached (it used to cache the partial
+      // catalog for 12 h). The last good one keeps serving, retrying in 5 min;
+      // with none the agent gets a 503 and keeps its disk cache — or, with no
+      // cache either, the picker asks the server, as it did before the catalog.
+      failed = true;
+      console.warn('[item-catalog] fetch failed (keeping the last good catalog):', err && err.message);
     }
-    const body = JSON.stringify({
-      version: 1,
-      fetched_at: new Date().toISOString(),
-      count: entries.length,
-      entries,
-    });
-    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
-    _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemCatalogCache) {
+      _itemCatalogCache.fetchedAt = Date.now() - _ITEM_CATALOG_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
   }
   const ifNoneMatch = req.headers['if-none-match'];
   if (ifNoneMatch && ifNoneMatch === _itemCatalogCache.etag) {
@@ -13814,9 +13854,11 @@ function _keepRaidSplit(split) {
 async function _liveRaidSplit(supabase, guildId) {
   if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < 5000) return _raidSplitCache.split;
   const since = new Date(Date.now() - _raidGroups.RAID_LIVE_MS).toISOString();
-  const rows = await supabase.select('raid_roster',
+  // Paged: one row per (uploader, name), ~1,000 at peak. A truncated read drops whole uploaders,
+  // and the split reads "one raid" when it cannot see the second.
+  const rows = await supabase.selectAllPaged('raid_roster',
     `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,rank,uploaded_by_discord_id,captured_at`).catch(() => null);
+    `&select=name,rank,uploaded_by_discord_id,captured_at`, 'uploaded_by_discord_id.asc,name').catch(() => null);
   if (!rows) return _raidGroups.groupRaids([]);
   return _keepRaidSplit(_raidGroups.groupRaids(rows));
 }
@@ -13914,16 +13956,21 @@ async function _handleAgentExtendedTarget(req, res) {
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
         `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
         `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
-      supabase.select('buff_casts',
-        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
-        `&select=target,target_id,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
+      // Every landing still inside its duration, newest first, paged. A 30-minute window holds up to
+      // ~4,250 buff_casts rows and `limit=600` kept the newest 600, i.e. the last few minutes, so
+      // debuffs landed earlier fell off the board; the function drops the rows the loop below skips
+      // as expired anyway (migration 20261004140200_cap_safe_reads.sql), leaving <= ~650.
+      supabase.selectAllPaged('rpc/recent_debuff_landings',
+        `p_guild_id=${encodeURIComponent(guildId)}&p_since=${encodeURIComponent(debuffSince)}`,
+        'cast_at.desc,id'),
       // #194: raid-wide position from the type-5 forward (beta agents). One
       // Mimic in the raid covers every member's loc; rows without loc_at are
       // pre-forwarding uploads and are skipped at use time. Best-effort — the
       // clustering works (with less coverage) when this returns nothing.
-      supabase.select('raid_roster',
+      // Paged: one row per (uploader, name), ~1,000 at peak.
+      supabase.selectAllPaged('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&loc_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`).catch(() => []),
+        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`, 'uploaded_by_discord_id.asc,name').catch(() => []),
     ]);
     globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows, rosterLocRows };
     }
@@ -14537,12 +14584,13 @@ async function _spellFxMap() {
   const supabase = require('./utils/supabase');
   try {
     const m = new Map();
-    let from = 0;
-    const PAGE = 1000;
-    while (true) {
-      const rows = await supabase.select('eqemu_spells',
-        `select=name,raw,buffduration,good_effect&order=id.asc&offset=${from}&limit=${PAGE}`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
+    {
+      // One paged read. A failed page throws to the catch below and keeps the
+      // previous map: this used to `break` on it and cache the spells loaded so
+      // far — the focus-haste limit checks and the cure detection read this map.
+      const rows = await supabase.selectAllPaged('eqemu_spells',
+        'select=name,raw,buffduration,good_effect', 'id');
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells read failed');
       for (const sp of rows) {
         if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         const fx = m.get(sp.name.toLowerCase()) || { res: {} };
@@ -14586,8 +14634,6 @@ async function _spellFxMap() {
         if (fx.cureBlindMaybe && fx.good === 1) fx.cureBlind = true;
         m.set(sp.name.toLowerCase(), fx);
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
     }
     _spellFxByName = m;
     _spellFxAt = Date.now();
@@ -14729,19 +14775,22 @@ async function _handleAgentRaidBuffQueue(req, res) {
     [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
-      supabase.select('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
+      // Paged: one row per (uploader, name) is ~1,000 rows at peak (21 uploaders x 48), which is
+      // PostgREST's silent per-response cap, so an unpaged read dropped raiders off the queue.
+      supabase.selectAllPaged('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`,
+        'uploaded_by_discord_id.asc,name'),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
-      // Buff-queue row limit. Default 2000 — cranked up 2026-06-21 after
-      // the Pro upgrade (post-egress-squeeze was 400; original was 3000).
-      // A 3h window with 30 active raiders peaks ~300-400 *distinct*
-      // rows but with cast repetition the raw count climbs higher; 2000
-      // gives a full history for the buff queue's prioritization logic.
-      // Configurable via BUFF_QUEUE_POLL_LIMIT.
-      supabase.select('buff_casts',
-        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 2000}`),
+      // The newest still-running row per (target, spell) — NOT the newest N rows. A busy 3h window
+      // holds 7-15k buff_casts rows but only ~350 distinct running (target, spell) pairs; a
+      // `limit=2000` read was really 1,000, i.e. the last ~4 minutes of the raid, so an Aegolism cast
+      // an hour ago read as missing (2026-10-04 audit). The function drops expired rows itself, the
+      // same test the loop below applies (migration 20261004140200_cap_safe_reads.sql). Paged, so a
+      // raid big enough to pass 1,000 pairs is still read whole.
+      supabase.selectAllPaged('rpc/latest_buff_landings',
+        `p_guild_id=${encodeURIComponent(guildId)}&p_since=${encodeURIComponent(buffCastsSince)}`,
+        'target.asc,spell_name'),
     ]);
     globalThis._rbqBundleCache = { at: Date.now(), liveRows, rosterRows, charRows, buffCastRows };
     }
@@ -15205,15 +15254,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const sinceIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
       const dmgByName = new Map();
       try {
-        // 20s memo (2026-07-07 review): a 5000-row join per shaman/beastlord
-        // poll, but tonight's damage totals move slowly.
+        // 20s memo (2026-07-07 review): tonight's damage totals move slowly.
+        // Summed in the database, one row per character: the 6h join is 2-3k rows on a raid night and
+        // the `limit=5000` read of it was really PostgREST's 1,000, so half the raiders (54 of 105 in a
+        // measured 6h window, 2026-10-04) had no damage and sorted to the bottom of the queue.
         let dmg;
         if (globalThis._burstDmgCache && Date.now() - globalThis._burstDmgCache.at < 20_000) {
           dmg = globalThis._burstDmgCache.dmg;
         } else {
-          dmg = await supabase.select('encounter_players',
-          `encounters.guild_id=eq.${encodeURIComponent(guildId)}&encounters.started_at=gte.${encodeURIComponent(sinceIso)}` +
-          `&select=character_name,total_damage,encounters!inner(guild_id,started_at)&limit=5000`);
+          dmg = await supabase.rpc('encounter_damage_by_character', { p_guild_id: guildId, p_since: sinceIso });
           globalThis._burstDmgCache = { at: Date.now(), dmg };
         }
         for (const r of (dmg || [])) {
@@ -15459,15 +15508,31 @@ function _focusHastePctFor(caster, spell, baseCastSecs) {
   }
   return best;
 }
+let _focusHasteInflight = false;
 function _refreshFocusHaste() {
   _focusHasteAt = _focusHasteAt || Date.now();   // guard tight error loops
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
-  (async () => {
+  // The read is several requests now, and every cast event asks while the cache
+  // is stale — one refresh at a time.
+  if (_focusHasteInflight) return;
+  _focusHasteInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — it must not read as "nobody wears a focus".
+  const backoff = () => {
+    _focusHasteByChar = _focusHasteByChar || new Map();
+    _focusHasteAt = Date.now() - _FOCUS_HASTE_TTL_MS + 60_000;
+  };
+  return (async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-    const gear = await supabase.select('character_gear',
-      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id&limit=10000`);
-    if (!Array.isArray(gear) || gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
+    // ⚠ Paged: 3,327 equipped rows (223 characters) against PostgREST's silent
+    // 1,000-row cap. The old `limit=10000` read ~30% of them, in no order, so
+    // most raiders' spell-haste foci were unknown and their cast bars ran long.
+    // guild_id and loc are pinned, so (character, slot) is unique.
+    const gear = await supabase.selectAllPaged('character_gear',
+      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id`, 'character,slot');
+    if (!Array.isArray(gear)) { backoff(); return; }
+    if (gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
     const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
     // item → worn-effect spell id (chunked in() lists keep the URLs sane)
     const wornByItem = new Map();
@@ -15475,7 +15540,10 @@ function _refreshFocusHaste() {
       const chunk = itemIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_items',
         `id=in.(${chunk.join(',')})&select=id,worneffect`);
-      for (const r of rows || []) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+      // A failed chunk throws to the catch below: a map built without it would
+      // be cached as the whole truth.
+      if (!Array.isArray(rows)) throw new Error('eqemu_items chunk read failed');
+      for (const r of rows) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
     }
     const spellIds = [...new Set(wornByItem.values())];
     const fociBySpell = new Map();   // spell id → focus decode (or null)
@@ -15483,7 +15551,8 @@ function _refreshFocusHaste() {
       const chunk = spellIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_spells',
         `id=in.(${chunk.join(',')})&select=id,raw`);
-      for (const sp of rows || []) {
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells chunk read failed');
+      for (const sp of rows) {
         if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
         for (let j = 0; j < sp.raw.eff.length; j++) {
@@ -15509,7 +15578,8 @@ function _refreshFocusHaste() {
     _focusHasteByChar = m;
     _focusHasteAt = Date.now();
     console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
-  })().catch(e => console.warn('[focus-haste] refresh failed:', e && e.message));
+  })().catch(e => { console.warn('[focus-haste] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _focusHasteInflight = false; });
 }
 
 // Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
@@ -15526,13 +15596,29 @@ function _catalogCastSecs(name) {
   }
   return _catalogCastSecsByName.get(String(name).toLowerCase()) || 0;
 }
+let _catalogCastSecsInflight = false;
 function _refreshCatalogCastSecs() {
   const supabase = require('./utils/supabase');
+  // Four paged requests now, and every cast asks while the cache is stale —
+  // one refresh at a time.
+  if (_catalogCastSecsInflight) return;
+  _catalogCastSecsInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — an empty map cached for an hour reads as "no
+  // spell has a cast time".
+  const backoff = () => {
+    _catalogCastSecsByName = _catalogCastSecsByName || new Map();
+    _catalogCastSecsAt = Date.now() - _CATALOG_CAST_TTL_MS + 60_000;
+  };
   // fire-and-forget refresh; subsequent callers use whatever's loaded
-  supabase.select('eqemu_spells', 'select=name,cast_time&order=id.asc&limit=10000')
+  // ⚠ Paged: eqemu_spells holds 3,933 rows and PostgREST caps a response at
+  // 1,000, so `limit=10000` kept only the lowest 1,000 ids — 812 of the 2,331
+  // spells that have a cast time. Every higher-id spell fell back to the 4s stub.
+  const p = supabase.selectAllPaged('eqemu_spells', 'select=name,cast_time', 'id')
     .then(rows => {
+      if (!Array.isArray(rows)) { backoff(); return; }
       const m = new Map();
-      for (const r of rows || []) {
+      for (const r of rows) {
         if (!r || !r.name) continue;
         const ms = Number(r.cast_time) || 0;
         if (ms > 0) m.set(String(r.name).toLowerCase(), Math.round(ms / 100) / 10);
@@ -15540,9 +15626,11 @@ function _refreshCatalogCastSecs() {
       _catalogCastSecsByName = m;
       _catalogCastSecsAt = Date.now();
     })
-    .catch(e => console.warn('[catalog cast secs] refresh failed:', e && e.message));
+    .catch(e => { console.warn('[catalog cast secs] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _catalogCastSecsInflight = false; });
   // Mark touched so we don't refire on a tight error loop.
   _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
+  return p;
 }
 
 // ── Target Info's F/Q/V tab: quest and vendor for one NPC ─────────────────────
@@ -15951,18 +16039,17 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
               // b) Per-item "how many NPCs drop this" → exposes uniqueness so
               //    the overlay can ⭐ items unique to THIS mob and dim items
               //    that drop from many places (gems, spells, cloth pieces).
-              const cands = await supabase.select('eqemu_npc_drops',
-                `item_id=in.(${itemIds.join(',')})&select=item_id,npc_id&limit=50000`);
+              // One row per item with its NPC count (eqemu_item_drop_owner, migration 20261004140200):
+              // the (item, NPC) pairs of these items are thousands of rows (27.7 NPCs per item on
+              // average) and PostgREST cut them at 1,000, so a cut item read as "unique to this mob".
+              const cands = await supabase.select('eqemu_item_drop_owner',
+                `item_id=in.(${itemIds.join(',')})&select=item_id,npc_count`);
               if (Array.isArray(cands)) {
-                const distinct = new Map();
-                for (const row of cands) {
-                  if (!distinct.has(row.item_id)) distinct.set(row.item_id, new Set());
-                  distinct.get(row.item_id).add(row.npc_id);
-                }
+                const countByItem = new Map(cands.map(row => [row.item_id, Number(row.npc_count) || 0]));
                 for (const it of loot) {
-                  const n = distinct.get(it.id);
-                  it.candidate_npcs = n ? n.size : 0;
-                  it.unique_to_mob  = (n && n.size === 1);
+                  const n = countByItem.get(it.id) || 0;
+                  it.candidate_npcs = n;
+                  it.unique_to_mob  = (n === 1);
                 }
               }
             }
@@ -18348,13 +18435,15 @@ async function _refreshEventRollCardNow() {
   const sinceMs = target.event ? (target.event.window?.fromMs || target.event.startMs) : (Date.now() - 12 * 3600_000);
   const sinceIso = new Date(sinceMs - 5 * 60_000).toISOString();
 
+  // Paged, oldest first: an event window on a busy loot night passes `limit=300` / `limit=500` (and the
+  // 1,000 PostgREST holds them to), and the card must list the whole window, not its first slice.
   const [rollRows, lootedRows] = await Promise.all([
-    supabase.select('roll_sets',
+    supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(sinceIso)}`
-      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at&order=started_at.asc&limit=300`).catch(() => []),
-    supabase.select('looted_items',
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at,id').catch(() => []),
+    supabase.selectAllPaged('looted_items',
       `guild_id=eq.${encodeURIComponent(guildId)}&looted_at=gte.${encodeURIComponent(sinceIso)}`
-      + `&select=looter_character,item_name,zone,looted_at&order=looted_at.asc&limit=500`).catch(() => []),
+      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at,id').catch(() => []),
   ]);
   const { buildRollSessions, renderRollLootLines } = require('./utils/rollLoot');
   const sessions = buildRollSessions(rollRows || [], lootedRows || []);
@@ -20004,9 +20093,13 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
   if (!supabase.isEnabled()) return { version: '0', triggers: [], note: 'supabase disabled' };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
-  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true&order=category.asc,name.asc`;
+  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true`;
   if (category) q += `&category=eq.${encodeURIComponent(category)}`;
-  const rows = await supabase.select('guild_triggers', q);
+  // Paged, in the order the agents have always been served (category, name) with
+  // id to break ties. It was one unpaged read: 484 enabled rows today, but a
+  // single import added 381 of them, so the 1,000-row cap was one import away
+  // from silently dropping triggers off the end of every agent's set.
+  const rows = await supabase.selectAllPaged('guild_triggers', q, 'category,name,id');
 
   // Server-side class targeting filter — applies_to_classes is text[]; we
   // include triggers where the column is null/empty OR overlaps the
@@ -22572,6 +22665,10 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
     let breaker = null;
     try { breaker = require('./utils/supabase').breakerState(); } catch { /* */ }
+    // Reads that came back with exactly PostgREST's 1,000-row cap and no limit of
+    // their own: almost certainly truncated. Non-zero here means a read needs paging.
+    let rowCap = null;
+    try { rowCap = require('./utils/supabase').capStats(); } catch { /* */ }
     const budgets = {};
     for (const [kind, book] of _budgetBuckets) {
       const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
@@ -22583,7 +22680,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, budgets,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets,
     }));
   }
 

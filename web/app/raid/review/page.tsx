@@ -20,6 +20,7 @@ import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import { resolveWindow } from '@/lib/timeWindow';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { selectAll } from '@/lib/selectAll';
+import { loadLootRecent, loadReviewEncounters } from '@/lib/fullReads';
 import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import WindowPicker from '@/components/WindowPicker';
 
@@ -52,8 +53,6 @@ type NightRow = {
   lootDkp: number;
 };
 
-const ROW_LIMIT = 400;
-
 async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]; error: string | null }> {
   try {
     const sb = supabaseAdmin();
@@ -62,20 +61,10 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
     // page) — a night that was only someone's farming is not a raid night.
     const curated = await curatedNpcIds(sb);
 
-    let encQuery = sb
-      .from('encounters')
-      .select(`
-        id, started_at, ended_at, duration_sec, total_damage, zone_short, classification,
-        eqemu_npc_types ( name, zone_short ),
-        encounter_players ( character_name, total_damage )
-      `)
-      .gt('total_damage', 0)
-      .in('npc_id', curated)
-      .order('started_at', { ascending: false })
-      .limit(ROW_LIMIT);
-    if (sinceIso) encQuery = encQuery.gte('started_at', sinceIso);
-    const { data: encs, error: encErr } = await encQuery;
-    if (encErr) return { nights: [], error: encErr.message };
+    // PAGED, not `.limit(400)`: the curated encounters are 341 at 60 days, 514
+    // at 90 and 1,893 lifetime, and a night is only as complete as the fights
+    // that were read. Every night of the window is needed to place its card.
+    const encs = await loadReviewEncounters<EncRow>(sb, curated, sinceIso);
 
     const { data: rosterRows } = await sb
       .from('characters')
@@ -91,14 +80,13 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
     const zones = new Map<string, ZoneRow>((zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]));
 
     // Per-night loot rollup from OpenDKP (keyed on the same ET raid_date).
+    // PAGED: the view is 933 rows at 90 days and 9,251 lifetime.
     const since10 = (sinceIso ?? '1970-01-01').slice(0, 10);
-    let lootQuery = sb
-      .from('opendkp_loot_recent')
-      .select('raid_date, dkp');
-    if (sinceIso) lootQuery = lootQuery.gte('raid_date', since10);
-    const { data: lootRows } = await lootQuery;
+    const lootRows = await loadLootRecent<{ raid_date: string; dkp: number }>(
+      sb, 'raid_date, dkp', sinceIso ? since10 : null,
+    );
     const lootByDate = new Map<string, { count: number; dkp: number }>();
-    for (const l of (lootRows ?? []) as { raid_date: string; dkp: number }[]) {
+    for (const l of lootRows) {
       const e = lootByDate.get(l.raid_date) || { count: 0, dkp: 0 };
       e.count += 1;
       e.dkp += l.dkp || 0;
@@ -111,7 +99,7 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
       kills: number; wipes: number; totalDamage: number;
       zones: Set<string>; bosses: Map<string, number>;
     }>();
-    for (const enc of (encs as unknown as EncRow[]) ?? []) {
+    for (const enc of encs) {
       if (enc.classification === 'foreign') continue;
       if (enc.classification == null && isAutoForeign(guildShare(enc.encounter_players ?? [], roster))) continue;
       const k = dayKey(enc.started_at);

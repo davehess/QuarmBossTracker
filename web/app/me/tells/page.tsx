@@ -16,6 +16,7 @@ import TellNotifications from './TellNotifications';
 import BulkTellsToggle from './BulkTellsToggle';
 import TellsSnoozeControl from './TellsSnoozeControl';
 import { userTz, fmtShort, relTime } from '@/lib/timezone';
+import { fetchTellSummary, EMPTY_TELL_SUMMARY } from '@/lib/capSafeReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +50,12 @@ async function loadOwnerCharacters(userId: string) {
   };
 }
 
+// The stream shows the newest 50. The totals and the conversation list are NOT
+// derived from this — they were, from a `.limit(2000)` that PostgREST capped at
+// 1,000, so an owner with 9,156 tells saw "1,000 total" and 95 conversations
+// instead of 384. They come from me_tell_summary (see fetchTellSummary).
+const RECENT_TELLS = 50;
+
 async function loadTells(discordId: string): Promise<TellRow[]> {
   const admin = supabaseAdmin();
   const { data } = await admin
@@ -56,41 +63,8 @@ async function loadTells(discordId: string): Promise<TellRow[]> {
     .select('id, owner_character, direction, other_name, text, ts, dm_relayed_at')
     .eq('owner_discord_id', discordId)
     .order('ts', { ascending: false })
-    .limit(2000);
+    .limit(RECENT_TELLS);
   return (data ?? []) as TellRow[];
-}
-
-type Conversation = {
-  other: string;
-  total: number;
-  incoming: number;
-  outgoing: number;
-  lastTs: string;
-  lastText: string;
-  lastDirection: 'incoming' | 'outgoing';
-  lastChar: string;
-};
-
-function buildConversations(tells: TellRow[]): Conversation[] {
-  const by = new Map<string, Conversation>();
-  for (const t of tells) {
-    const key = t.other_name.toLowerCase();
-    let c = by.get(key);
-    if (!c) {
-      c = { other: t.other_name, total: 0, incoming: 0, outgoing: 0,
-            lastTs: t.ts, lastText: t.text, lastDirection: t.direction, lastChar: t.owner_character };
-      by.set(key, c);
-    }
-    c.total += 1;
-    if (t.direction === 'incoming') c.incoming += 1; else c.outgoing += 1;
-    if (t.ts > c.lastTs) {
-      c.lastTs = t.ts; c.lastText = t.text;
-      c.lastDirection = t.direction; c.lastChar = t.owner_character;
-    }
-    // Keep newest name spelling if it differs.
-    if (t.ts >= c.lastTs) c.other = t.other_name;
-  }
-  return [...by.values()].sort((a, b) => b.lastTs.localeCompare(a.lastTs));
 }
 
 // fmtTs/relTime now come from @/lib/timezone (imported at top of file via
@@ -104,9 +78,13 @@ export default async function TellsPage() {
   const tz = await userTz();
   const { discordId, chars, pausedUntil } = await loadOwnerCharacters(user.id);
   const optedIn = chars.filter(c => c.tell_relay);
-  const tells   = discordId ? await loadTells(discordId) : [];
-  const conversations = buildConversations(tells);
-  const recent = tells.slice(0, 50);
+  // PRIVATE: discordId is the signed-in user's own (resolved above from
+  // user.id on the server). me_tell_summary filters on it inside the function
+  // and is granted to service_role only — never pass an id from the client.
+  const [recent, summary] = discordId
+    ? await Promise.all([loadTells(discordId), fetchTellSummary(supabaseAdmin(), discordId)])
+    : [[] as TellRow[], EMPTY_TELL_SUMMARY];
+  const conversations = summary.top;
 
   return (
     <div className="space-y-6">
@@ -138,10 +116,10 @@ export default async function TellsPage() {
           </div>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
-          <Stat label="Conversations" value={conversations.length} />
-          <Stat label="Total tells"   value={tells.length} />
-          <Stat label="Incoming"      value={tells.filter(t => t.direction === 'incoming').length} color="text-blue" />
-          <Stat label="Outgoing"      value={tells.filter(t => t.direction === 'outgoing').length} color="text-green" />
+          <Stat label="Conversations" value={summary.conversations} />
+          <Stat label="Total tells"   value={summary.total} />
+          <Stat label="Incoming"      value={summary.incoming} color="text-blue" />
+          <Stat label="Outgoing"      value={summary.outgoing} color="text-green" />
         </div>
         {chars.length > 0 && (
           <div className="mt-4 pt-3 border-t border-border/40">

@@ -155,7 +155,9 @@ describe('the loaders (against a fake client)', () => {
 describe('the pages apply it', () => {
   it('ownedCharacters carries rank and hidden_from_lists, and filters on neither', () => {
     const owned = stripJs(read('web/lib/ownedCharacters.ts'));
-    expect(owned).toMatch(/\.select\('name, main_name, class, active, rank, hidden_from_lists, discord_id'\)/);
+    // The roster is the shared, paged read (web/lib/roster.ts), which selects these columns for every page.
+    expect(owned).toMatch(/await loadRoster\(\)/);
+    expect(stripJs(read('web/lib/roster.ts'))).toMatch(/\.select\('name, class, rank, main_name, [^']*\bdiscord_id\b[^']*\bhidden_from_lists\b[^']*'\)/);
     expect(owned).toMatch(/\.map\(\(\{ name, main_name, class: cls, active, rank, hidden_from_lists \}\) => \(\{ name, main_name, class: cls, active, rank, hidden_from_lists \}\)\)/);
     // The account walk returns every character; only the lists above it tuck any away.
     expect(owned).not.toMatch(/\.(eq|neq|is|not)\('hidden_from_lists'/);

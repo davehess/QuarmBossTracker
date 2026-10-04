@@ -27,6 +27,7 @@ import { requireOfficer } from '@/lib/officer';
 import {
   computeCompGaps, ARCHETYPE_LABEL, type CompTemplate, type CompGaps,
 } from '@/lib/comp';
+import { loadSignupStatuses, loadRaidWindowNames } from '@/lib/adminReads';
 
 export const dynamic = 'force-dynamic';
 
@@ -120,11 +121,9 @@ export default async function AdminSignupsPage({
   // Stats header
   let totalSignups = 0, totalGoing = 0, totalTentative = 0;
   if (events.length > 0) {
-    const { data: allSigs } = await admin
-      .from('rh_signups')
-      .select('event_id, status')
-      .in('event_id', events.map(e => e.id));
-    for (const s of (allSigs ?? []) as { status: string | null }[]) {
+    // Paged: the 60-day option is 2,046 sign-up rows, and one unpaged read returns 1,000.
+    const allSigs = await loadSignupStatuses(admin, events.map(e => e.id));
+    for (const s of allSigs) {
       totalSignups++;
       const b = bucketStatus(s.status);
       if (b === 'going') totalGoing++;
@@ -139,6 +138,7 @@ export default async function AdminSignupsPage({
     showed: Set<string>;        // discord_ids who appeared (any signal)
     tickedSlot1: Set<string>;   // discord_ids ticked into slot 1 (on time)
     showedNoSignup: { discord_id: string; charName: string }[];
+    windowError: string | null; // the parse + /who fallback could not be read (see raid_window_names)
   } | null = null;
 
   if (params.event) {
@@ -159,6 +159,7 @@ export default async function AdminSignupsPage({
       const showed = new Set<string>();
       const tickedSlot1 = new Set<string>();           // present at start
       const showedDiscordToChar = new Map<string, string>();
+      let windowError: string | null = null;
 
       if (start) {
         const lo = new Date(start.getTime() - 1 * 60 * 60 * 1000).toISOString();
@@ -206,33 +207,19 @@ export default async function AdminSignupsPage({
           }
         }
 
-        // FALLBACK — encounter_players within window (catches anyone whose
-        // tick attribution didn't flow through OpenDKP).
-        const { data: encs } = await admin
-          .from('encounters')
-          .select('id')
-          .gte('started_at', lo).lt('started_at', hi);
-        const encIds = ((encs ?? []) as { id: string }[]).map(e => e.id);
-        if (encIds.length > 0) {
-          const { data: eps } = await admin
-            .from('encounter_players')
-            .select('character_name')
-            .in('encounter_id', encIds);
-          for (const ep of (eps ?? []) as { character_name: string }[]) {
-            const d = charToDiscord.get(ep.character_name.toLowerCase());
-            if (d) { showed.add(d); if (!showedDiscordToChar.has(d)) showedDiscordToChar.set(d, ep.character_name); }
-          }
-        }
-
-        // BROADEST FALLBACK — who_observations
-        const { data: whos } = await admin
-          .from('who_observations')
-          .select('character')
-          .gte('observed_at', lo).lt('observed_at', hi)
-          .limit(50000);
-        for (const w of (whos ?? []) as { character: string }[]) {
-          const d = charToDiscord.get((w.character || '').toLowerCase());
-          if (d) { showed.add(d); if (!showedDiscordToChar.has(d)) showedDiscordToChar.set(d, w.character); }
+        // FALLBACKS — encounter_players within the window (catches anyone whose
+        // tick attribution didn't flow through OpenDKP), then who_observations
+        // (the broadest signal). Both only ever answered "which characters were
+        // around", so the database returns the DISTINCT names for the window
+        // (raid_window_names) instead of every player and /who row: a 6-hour
+        // window is up to 2,854 player rows and 3,166 /who rows, 16 and 22 of the
+        // last 46 events over PostgREST's 1,000-row cap, and the old reads cut
+        // them there without an error (`.in(encounter_id, ids)`, `.limit(50000)`).
+        const around = await loadRaidWindowNames(admin, lo, hi);
+        windowError = around.error?.message ?? null;
+        for (const name of around.names) {
+          const d = charToDiscord.get(name.toLowerCase());
+          if (d) { showed.add(d); if (!showedDiscordToChar.has(d)) showedDiscordToChar.set(d, name); }
         }
       }
 
@@ -242,7 +229,7 @@ export default async function AdminSignupsPage({
         if (!signedDiscord.has(d)) showedNoSignup.push({ discord_id: d, charName: showedDiscordToChar.get(d) || d });
       }
 
-      detail = { event, signups: sList, showed, tickedSlot1, showedNoSignup };
+      detail = { event, signups: sList, showed, tickedSlot1, showedNoSignup, windowError };
     }
   }
 
@@ -445,6 +432,7 @@ function DetailView({
     showed: Set<string>;
     tickedSlot1: Set<string>;
     showedNoSignup: { discord_id: string; charName: string }[];
+    windowError: string | null;
   };
   memberByDiscord: Map<string, Member>;
   backHref: string;
@@ -457,7 +445,7 @@ function DetailView({
   } | null;
   lookbackDays: number;
 }) {
-  const { event, signups, showed, tickedSlot1, showedNoSignup } = detail;
+  const { event, signups, showed, tickedSlot1, showedNoSignup, windowError } = detail;
 
   // Showed-going split by punctuality. tickedSlot1 = on time; in showed but
   // not slot1 = late arrival (ticked into slot 2/3/4 or just appeared via
@@ -509,6 +497,12 @@ function DetailView({
           <Stat label="Unsignaled" value={showedNoSignup.length}     color="text-purple" />
           <Stat label="Declined"  value={buckets.absence.length}     color="text-dim" />
         </div>
+        {windowError && (
+          <p className="text-xs text-red mt-3">
+            ⚠ The parse and <code>/who</code> fallback could not be read ({windowError}), so only OpenDKP
+            ticks are counted as showing up — treat the No-show count as an upper bound.
+          </p>
+        )}
       </section>
 
       {compMatch && (

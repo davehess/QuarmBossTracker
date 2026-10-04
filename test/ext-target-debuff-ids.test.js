@@ -11,7 +11,9 @@
 // Run: npx vitest run test/ext-target-debuff-ids.test.js
 
 import { describe, it, expect } from 'vitest';
-import { readSource, BOT_INDEX, sliceBlock, evalBlock, stripJs } from './_source-slice.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { readSource, BOT_INDEX, ROOT, sliceBlock, evalBlock, stripJs, stripSql } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
 const { _extDebuffInstances, _extAttributeDebuffs } = evalBlock(
@@ -103,7 +105,11 @@ describe('_extAttributeDebuffs — a spawn id places the debuff first', () => {
 describe('wiring (comment-stripped source)', () => {
   const clean = stripJs(src);
   it('the landing\'s spawn id is selected, zone-checked, and reaches the attribution', () => {
-    expect(clean).toContain('&select=target,target_id,spell_name,dur_ticks,cast_at,observer,is_charm_spell');
+    // The landings come from recent_debuff_landings (20261004140200_cap_safe_reads.sql), which returns the
+    // same columns the old buff_casts select named — target_id and observer included.
+    expect(clean).toContain("selectAllPaged('rpc/recent_debuff_landings'");
+    const sql = stripSql(fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '20261004140200_cap_safe_reads.sql'), 'utf8'));
+    expect(sql).toContain('select b.id, b.target, b.target_id, b.spell_name, b.dur_ticks, b.cast_at, b.observer, b.is_charm_spell');
     expect(clean).toMatch(/const sid = \(Number\(b\.target_id\) > 0 && !\(scopeZone && obsZone && obsZone !== scopeZone\)\) \? Number\(b\.target_id\) : null;/);
     expect(clean).toContain('return _extDebuffInstances(landingsByTarget.get(key)).map(d => ({');
     expect(clean).toContain('_extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol, spawnOfRaider);');

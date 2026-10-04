@@ -14,6 +14,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
 import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
@@ -25,10 +26,6 @@ export const dynamic = 'force-dynamic';
 // Alts are DKP-tracker placeholders, not people in a slot).
 const ROSTER_RANKS = new Set(['Raid Pack', 'Officer', 'Pack Leader', 'Recruit']);
 
-type CharRow = {
-  name: string; class: string | null; rank: string | null;
-  exclude_from_stats: boolean | null; exclude_inventory: boolean | null;
-};
 type GearRow = { character: string; loc: string; slot: string; item_id: number; item_name: string };
 type ItemRow = { id: number; mr: number | null; clickeffect: number | null; worneffect: number | null };
 
@@ -41,11 +38,7 @@ type Row = {
 
 async function load(): Promise<Row[]> {
   const sb = supabaseAdmin();
-  const { data: charRows } = await sb
-    .from('characters')
-    .select('name, class, rank, exclude_from_stats, exclude_inventory')
-    .eq('guild_id', 'wolfpack');
-  const roster = ((charRows ?? []) as CharRow[])
+  const roster = (await loadRoster())   // the shared, paged roster read (web/lib/roster.ts)
     .filter(c => c.rank != null && ROSTER_RANKS.has(c.rank));
   const names = roster.map(c => c.name);
   if (names.length === 0) return [];
@@ -70,7 +63,7 @@ async function load(): Promise<Row[]> {
       .select('character, loc, slot, item_id, item_name')
       .in('character', computeNames)
       .in('loc', ['equipped', 'bag'])
-      .order('character').order('slot').order('item_id')
+      .order('character').order('slot').order('item_id').order('loc')
       .range(from, to));
     for (const g of gearRows) {
       const k = g.character.toLowerCase();
@@ -109,7 +102,7 @@ async function load(): Promise<Row[]> {
         .select('character_name, spell_name')
         .eq('guild_id', 'wolfpack')
         .in('character_name', computeNames)
-        .order('character_name').order('spell_name')
+        .order('character_name').order('spell_name').order('spell_id')
         .range(from, to));
     for (const b of bookRows) {
       if (!b.spell_name) continue;

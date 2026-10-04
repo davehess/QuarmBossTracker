@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `/encounter tonight` (`e.id` on a view with no `id`); `opendkp_loot_recent` repeats 13 auctions; `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
 | **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
 | **Zeal crashes on the fork** (§151) | 3 new teardown crashes, all on the fork's test build; crash list now tags official vs test (agent 3.7.77 beta) | the guild lead: A/B on official Zeal (or `/tag persist off`); a local session reads the three dumps |
@@ -6817,9 +6818,86 @@ real raid"*. The card showed "1 raid since", counting a Saturday group night.
   - On today's data, 2 of 15 LDs count, both Fri Jan 16 2026 around 20:15 ET. Raids since: 63 (stays
     there until the next raid). Lifetime: 2.
   - Next guild raid: **2026-10-14** (the guild lead).
-- **Found on the way, not fixed (§155 follow-up):** `raid_nights` is not a record of real raids.
+- **Found on the way, not fixed (follow-up, in the open-items table):** `raid_nights` is not a record of real raids.
   - `linkEncounterToRaidNight` opens a row for any encounter on Sun/Wed/Thu after 20:30 ET.
   - Since mid-August it holds every Wednesday and Oct 1, with no raid, and misses the off-schedule raids
     (Sat 8/22, Tue 9/1).
   - Anything that reads `raid_nights` or `encounters.raid_night_id` as "a raid" inherits that. Until
     Oct 14, any group night on Sun/Wed/Thu adds a false one.
+
+### 155. Every read past PostgREST's 1,000-row cap now returns complete data (2026-10-04, bot 3.1.198 · web 1.8.95)
+
+The guild lead: *"review all of the other tables for silent 500 or 100 caps. I thought we had something in
+the design."* The design had `selectAll` / `selectAllPaged` and a ratchet that counted `.limit(N>1000)` text.
+It missed three things. A single `.range(0, N)` call is capped too. So are a set-returning RPC and a view.
+And a page that orders on a non-unique key drops and repeats rows at page boundaries.
+
+- **How it ran:** three Sonnet audits (web pages, web lib/API, bot) measured every read against production.
+  Eight Sonnet branches then fixed them, each with a cap-enforcing fake and a mutation check. They were merged
+  here, with nine migrations applied through the MCP (`20261004140000` … `140800`).
+- **What was broken, measured on production (a few of many):**
+  - Timer recovery and the raid review read the first 1,000 boss kills. The review showed no slows on
+    2026-09-27, with 174 in the window.
+  - The buff queue saw 4 minutes of a 3-hour window: 49 of 354 running (target, spell) pairs, 0 of 71
+    Aegolism-line casts.
+  - Extended Target saw 27 of 97 running debuffs.
+  - The Mimic damage panel's "30 d" top 25 shared 16 names with the real one.
+  - 18 families' mirror DKP read low by up to 2,347.
+  - /guide counted 581 kills of 1,436. /leaderboards' top spender was the wrong character.
+  - /admin/agents was missing 190 of 435 characters. The analytics page showed 1,000 of 12,242 views.
+  - /me stats for the heaviest raider read 1,000 of 3,807 fights.
+  - /me/tells counted 1,000 of 9,156. 29 of 117 characters were missing from /pop spell needs.
+  - /quartermaster lost 12 inventory rows and doubled 12 (non-unique order).
+- **The fixes take one of three shapes:**
+  - **Paged** over a unique ORDER BY (`selectAll` / `selectAllPaged`).
+  - **Summed in SQL**: an aggregate RPC whose answer is a few rows.
+  - **One jsonb value**, which is not row-capped.
+  - New RPCs are `security invoker`, `search_path` pinned, and granted to `service_role` only.
+    `me_tell_summary` filters on the owner inside the function.
+- **Guards, so it cannot come back quietly:**
+  - **Bot:** `select()` warns once per call site when a read returns exactly 1,000 rows unpaged, and
+    `/health` carries `supabase_row_cap`. Two ratchets cover over-cap limits (now **22**, was 82) and
+    unbounded big-table reads (**4**).
+  - **Web:** `test/db-read-discipline-web.test.js` ratchets four counts: one-call `.range(0, N≥1000)` (**1**),
+    unpaged set-returning RPCs (**24**), unbounded big-table reads (**93**) and paged reads on a non-unique
+    key (**2**). The map of each paged table's unique key comes from `pg_index`.
+- **Ruling made here: `selectAll` throws on a failed page.** It used to return the rows it had, which is the
+  same silent partial set.
+  - A page that can live without a section catches the throw. /me's suspects, attendance, heartbeats and loot
+    do; the admin loaders turn it into their error banner.
+  - Everything else shows the error page instead of a short list.
+- **Behaviour changes worth knowing:**
+  - /admin/encounters lists backfill candidates only on fights with missing damage (673 a week, not ~44
+    names on every trash row).
+  - The item-clickies catalog served to agents is the 1,611 real clickies, not the 1,000 lowest item ids.
+  - Mimic's threat rank rows are now whole fights.
+  - Bid-history's pooled DKP counts every family name (it stopped at 25).
+  - `BUFF_QUEUE_POLL_LIMIT` is retired.
+- **Found, not fixed (open items):**
+  - `_refreshFocusHaste` decodes `eqemu_items.worneffect`, so it finds no foci. The foci are in
+    `focus_effect`: 183 haste foci across 103 characters.
+  - The /admin/triggers "Votes" total counts 48,200 `expired` rows; 12 are real votes.
+  - `/encounter tonight` reads `e.id` from a view that has no `id`.
+  - `opendkp_loot_recent` repeats 13 auctions, because one OpenDKP id matches two characters.
+  - `guild_held_spell_needs` takes ~31 s, so /admin/spells likely shows its error.
+  - The threat rollup has not run since 2026-08-19. It is the unapplied `snapshot_at` index above.
+  - 627 `loot_observations` rows disagree with the drop tables (officer decision).
+- **Self-host wizard:** the cap is a Supabase/PostgREST default (`max-rows`). A self-hosted PostgREST may set
+  another, and the paged reads work under any value. Logged in `DESIGN-selfhost-wizard.md` §3.
+
+### 156. A character's UI backups list only that character (2026-10-04, bot 3.1.197 · Mimic beta)
+
+The guild lead, after backing up nine characters at once: *"What 19 files were backed up for <main>? My
+macros/socials/bandoliers?"* The Backups list under that character showed every character on the account,
+unnamed, each with Restore. It was filtered by owner only.
+
+- **Fix:** the bot filters by character too (`test/ui-layout-list-scope.test.js`, live in 3.1.197).
+- **New:** Settings → UI backups → 📄 Files lists what a backup holds. The server stores the bundle encrypted
+  and keeps no names, so it downloads the backup to list them.
+- **What a bundle holds:**
+  - `eqclient.ini` and `zeal.ini`.
+  - Every top-level `.ini` named for the character: `UI_<Name>*` (layout), `<Name>_pq.proj.ini` (hotbuttons,
+    socials, Zeal key binds), and Zeal's `_bandolier.ini` / `_spellsets.ini` / `_protected.ini`.
+  - That main's backup was 18 files, with 98 socials indexed from `<Name>_pq.proj.ini`.
+- **No harm from a wrong row:** restore writes each file under its own name. Another character's row never
+  overwrote this character's files, only the shared `eqclient.ini` / `zeal.ini`.
