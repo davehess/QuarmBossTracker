@@ -15100,16 +15100,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // raid-wide information regardless of who can fix it.
       if (bardGroupScope != null && rr && rr.group_num !== bardGroupScope) continue;
       const expected = rb.ROLE_TARGETS[role] || [];
-      const byCategory = {};
-      for (const b of buffs) if (b && b.name) {
-        const cat = rb.categorizeBuff(b.name);
-        if (cat) (byCategory[cat] = byCategory[cat] || []).push(b.name);
-        // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana
-        // regen (a POTG caster isn't "missing Mana Regen" to an enchanter).
-        for (const sec of rb.secondaryCategoriesFor(b.name)) {
-          if (sec !== cat && !(byCategory[sec] = byCategory[sec] || []).includes(b.name)) byCategory[sec].push(b.name);
-        }
-      }
+      // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana regen (a
+      // POTG caster isn't "missing Mana Regen" to an enchanter). Shared with
+      // the group view's rb.missingLines so the two cannot drift.
+      const byCategory = rb.buffCategoriesPresent(buffs.map(b => b && b.name));
       const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
       // Only nag the buffer about HP slots THEIR class can actually fill —
@@ -15308,6 +15302,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // mirrors /raid's severity intent.
     const mgbTrained = await _mgbTrainedSet(supabase, guildId);
     const rosterOut = [];
+    // One row per scoped raider for the `groups` view — built here, before any
+    // cap, because buffQueue only lists what the buffer's class can fix (and is
+    // cut to 40) while the group view needs every raider's gaps.
+    const groupRows = [];
     for (const [k, rr] of rosterByName) {
       const live = liveByName.get(k);
       const inferred = inferredBuffsByName.get(k) || null;
@@ -15317,6 +15315,13 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
       const missingHp = rb.HP_SLOTS.filter(sl => !hpSlots[sl]).length;
       const noSignal = !live && !(inferred && inferred.length);
+      // `characters.class` can read "Unknown"; the Zeal roster row then knows better.
+      const gCls = (cls && !/^unknown$/i.test(cls)) ? cls : (rr.class || cls || null);
+      groupRows.push({
+        name: rr.name, class: gCls, level: rr.level, group: rr.group_num,
+        inferred: !live && !!(inferred && inferred.length), noSignal,
+        missing: noSignal ? [] : rb.missingLines(buffs.map(b => b && b.name), rb.classToRole(gCls)),
+      });
       let tier = 'unknown';
       if (!noSignal) {
         const totalBuffs = buffs.filter(b => b && b.name).length;
@@ -15366,6 +15371,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // empty-state hint mentions groups.
       group_mode:   groupMode,
     };
+    // Buffs by GROUP (the guild lead, 2026-10-04): raid mode only — group mode has no
+    // roster, so no group numbers. Additive; older clients ignore the fields.
+    // self_group = the requester's own group (null if ungrouped / not on the roster), so the
+    // overlay can list the buffer's group first.
+    if (!groupMode) {
+      const buffGroups = require('./utils/buffGroups');
+      out.groups = buffGroups.buildBuffGroups(groupRows);
+      out.self_group = buffGroups.groupOf(out.groups, bufferCharacter);
+    }
     if (burstSpec) { out[burstSpec.key] = burstQueue; out.burst_label = burstSpec.label; }
     if (raidSplit.multi) out.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
