@@ -103,6 +103,12 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, live 2026-10-04).** The guild lead
+  asked for a sweep for silent 500/100 caps. Three audits plus eight fix branches covered the buff queue,
+  Extended Target, the raid review, DKP mirror, bids, loot, catalogs, /guide, /parses, /leaderboards, /me,
+  tells, character pages, /pop, /fun, /quartermaster and the admin pages. Nine migrations were applied. Over-cap
+  sites went from 82 to 22, and new web ratchets were added. Findings needing a call (haste foci column, trigger
+  Votes) are in the §155 open-items row.
 - **⏳ UI backups: one character per list, and a file list (bot 3.1.197 live; Mimic beta, 2026-10-04).** The Backups
   list under a character showed every character on the account, unnamed, each with Restore (filtered by owner
   only). Bot now filters by character too (`test/ui-layout-list-scope.test.js`). Settings → UI backups → 📄 Files

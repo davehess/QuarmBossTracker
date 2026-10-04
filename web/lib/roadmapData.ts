@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'row-cap-2026-10-04',
+    title: 'The whole night, every time',
+    version: 'Bot 3.1.198 · Web 1.8.95',
+    date: '2026-10-04',
+    headline: 'Pages and overlays that quietly stopped after 1,000 rows now read everything.',
+    features: [
+      { name: 'Raid tools', blurb: 'The buff queue, Extended Target debuffs, the raid review’s slows and callouts, and Mimic’s damage panel see the whole raid, not its last few minutes.' },
+      { name: 'DKP and loot', blurb: 'Your DKP balance, bid history, and the loot and roll windows count every tick and every roll.' },
+      { name: 'Your pages', blurb: '/me, your tells, character pages, /pop, /guide, /parses, /leaderboards and /quartermaster show complete numbers. The heaviest raiders were seeing about a quarter of their fights.' },
+    ],
+    fixes: [
+      'The buff queue could show an earlier Aegolism as missing on a busy night.',
+      'The /guide kill counts were about a third of the real number, and /leaderboards named the wrong top DKP spender.',
+      '/pop spell needs left out 29 characters.',
+      '/quartermaster could skip some items and list others twice.',
+    ],
+  },
+  {
     key: 'ui-backups-2026-10-04',
     title: 'Whose backup is this?',
     version: 'Bot 3.1.197 · Web 1.8.94 · Mimic beta',

@@ -280,7 +280,7 @@ async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
       .select('character_name, item_name, dkp, raid_date, raid_name')
       .in('character_name', names)
       .order('raid_date', { ascending: false })
-      .range(from, to)),
+      .range(from, to)).catch(() => [] as (LootRow & { character_name: string })[]),
     admin.from('wishlists').select('character_name').in('character_name', names).limit(1000),
     // PvP tallies — case-insensitive on purpose (the broadcast names are not
     // canonicalised). Assists are credited to the assister on someone else's
@@ -542,9 +542,9 @@ async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance |
       .range(from, to)),
   ]);
 
-  // Raids exist but no held ticks came back: the tick read failed (selectAll
-  // returns what it has on error) — hide the section rather than draw a year
-  // of "missed". A wrong grid is worse than no grid.
+  // Raids exist but no held ticks came back (a failed read throws, and the
+  // caller hides the section) — hide it rather than draw a year of "missed".
+  // A wrong grid is worse than no grid.
   if (heldTicks.length === 0) return null;
   const nights = buildNights(raids, heldTicks);
   const mine = new Set(myTicks.map(t => t.tick_id));
@@ -674,7 +674,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   const tz = await userTz();
 
   const { discordId, nickname, chars: allChars } = await loadOwnedCharacters(user.id);
-  const suspects = await loadSuspectedCharacters(discordId);
+  // Optional sections: selectAll throws on a failed page (2026-10-04), and a
+  // timed-out side panel must not take the whole page down with it.
+  const suspects = await loadSuspectedCharacters(discordId).catch(() => [] as Suspect[]);
 
   // Honor the per-character data opt-out (characters.exclude_from_stats). We
   // still surface excluded chars in a small footer so the owner can see + flip
@@ -689,7 +691,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
   const [scrap, { floors, coverage }, attendance, fam] = await Promise.all([
     chars.length > 0 ? loadScrap(names) : Promise.resolve(null),
     loadFloorAndCoverage(),
-    loadFamilyAttendance(names),
+    loadFamilyAttendance(names).catch(() => null),
     loadFamilyPrefetch(names),
   ]);
 
@@ -725,7 +727,7 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
 
   // Sync heartbeat: most recent agent upload per owned character. Drives the
   // top-of-page "syncing now / stale / no upload" banner.
-  const heartbeats = await loadSyncHeartbeats(allChars.map(c => c.name));
+  const heartbeats = await loadSyncHeartbeats(allChars.map(c => c.name)).catch(() => new Map<string, Heartbeat>());
   const now = Date.now();
   const liveThresholdMs    = 10 * 60 * 1000;     // ≤10 min ago = syncing
   const recentThresholdMs  =  6 * 60 * 60 * 1000; // ≤6h = "recent"

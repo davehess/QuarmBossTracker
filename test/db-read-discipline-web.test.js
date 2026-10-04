@@ -571,6 +571,21 @@ const UNIQUE_KEYS = {
   adoption_uploader_days: [['discord_id', 'day']],
   encounter_upload_counts: [['encounter_id']],
   who_directory: [['character_key']],
+  // Added when the other 2026-10-04 cap branches merged (pg_index, same day). opendkp_attendance_recent is a
+  // view that GROUPs BY character, so character_name is unique.
+  agent_backfill_requests: [['id'], ['character']],
+  opendkp_attendance_recent: [['character_name']],
+  guild_triggers: [['id']],
+  who_observations: [['id'], ['character', 'observed_minute', 'uploaded_by']],
+  encounters: [['id']],
+  encounter_players: [['encounter_id', 'character_name']],
+  rh_signups: [['event_id', 'signup_id']],
+  faction_cons: [['id'], ['character', 'mob']],
+  eqemu_faction_list_mod: [['id']],
+  encounter_events: [['id']],
+  opendkp_loot: [['id'], ['raid_id', 'character_name', 'dkp']],
+  eqemu_spawn2: [['id']],
+  pvp_boss_kills: [['id'], ['dedup_key']],
 };
 
 const SOURCES = webSources().map(f => [f, stripJs(read(f))]);
@@ -580,9 +595,9 @@ const sites = (fn) => SOURCES.flatMap(([f, src]) => fn(src).map(h => `${f}:${h.l
 
 // Counts on the branch that introduced this file. They may only go DOWN.
 const BASELINE = {
-  overCapRange: 11,          // (a)  admin/encounters x8, parses x3 — other agents' files this round
+  overCapRange: 1,           // (a)  11 on the branch alone; the other cap branches fixed admin/encounters and parses
   unpagedSetReturning: 24,   // (b)  mostly bounded by the arguments passed (item ids, one character's names); review before adding
-  unboundedBigRead: 139,     // (c)  see the failure output for the list; most are filtered to a handful of rows
+  unboundedBigRead: 93,      // (c)  139 on the branch alone; see the failure output for the list; most are filtered to a handful of rows
   nonUniqueOrder: 2,         // (d)  me/page.tsx: opendkp_loot_recent by raid_date, agent_upload_stats by character
 };
 

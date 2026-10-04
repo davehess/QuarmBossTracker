@@ -27,8 +27,9 @@ import { selectInChunks } from './selectInChunks';
 type Q = any;
 const db = (sb: SupabaseClient): Q => sb;
 
-/** The first error any page of a drain reported. selectAll stops at an error and returns what it
- *  has, which is right for a list but wrong for a page that SHOWS the error (the spells page). */
+/** The first error any page of a drain reported, for a page that SHOWS the error (the spells page).
+ *  selectAll throws on a failed page (2026-10-04); `settle` turns that throw into `seen.error` and an
+ *  empty list, so the page draws its error banner instead of the site-wide error page. */
 function firstError() {
   const seen: { error: { message: string } | null } = { error: null };
   const watch = <R extends { error: unknown }>(res: R): R => {
@@ -36,7 +37,13 @@ function firstError() {
     if (e && !seen.error) seen.error = { message: e.message ?? String(e) };
     return res;
   };
-  return { seen, watch };
+  const settle = async <T>(p: Promise<T[]>): Promise<T[]> => {
+    try { return await p; } catch (e) {
+      if (!seen.error) seen.error = { message: e instanceof Error ? e.message : String(e) };
+      return [];
+    }
+  };
+  return { seen, watch, settle };
 }
 
 // ── agent_upload_stats ───────────────────────────────────────────────────────
@@ -155,9 +162,9 @@ export function loadSignupStatuses(sb: SupabaseClient, eventIds: readonly string
  * else was around", and the page would call real attendees no-shows.
  */
 export async function loadRaidWindowNames(sb: SupabaseClient, loIso: string, hiIso: string): Promise<{ names: string[]; error: { message: string } | null }> {
-  const { seen, watch } = firstError();
-  const rows = await selectAll<{ character_name: string }>((from, to) =>
-    Promise.resolve(db(sb).rpc('raid_window_names', { p_lo: loIso, p_hi: hiIso }).range(from, to)).then(watch));
+  const { seen, watch, settle } = firstError();
+  const rows = await settle(selectAll<{ character_name: string }>((from, to) =>
+    Promise.resolve(db(sb).rpc('raid_window_names', { p_lo: loIso, p_hi: hiIso }).range(from, to)).then(watch)));
   return { names: rows.map(r => r.character_name), error: seen.error };
 }
 
@@ -170,9 +177,9 @@ export async function loadRaidWindowNames(sb: SupabaseClient, loIso: string, hiI
  * "no scrolls observed".
  */
 export async function loadHeldSpellNeeds<T>(sb: SupabaseClient, guildId: string): Promise<{ rows: T[]; error: { message: string } | null }> {
-  const { seen, watch } = firstError();
-  const rows = await selectAll<T>((from, to) =>
-    Promise.resolve(db(sb).rpc('guild_held_spell_needs', { p_guild_id: guildId }).range(from, to)).then(watch));
+  const { seen, watch, settle } = firstError();
+  const rows = await settle(selectAll<T>((from, to) =>
+    Promise.resolve(db(sb).rpc('guild_held_spell_needs', { p_guild_id: guildId }).range(from, to)).then(watch)));
   return { rows, error: seen.error };
 }
 
@@ -223,15 +230,15 @@ export async function loadEncounterGap(
   names: readonly string[],
   hardCap: number = GAP_HARD_CAP,
 ): Promise<{ rows: GapRow[]; truncated: boolean; error: { message: string } | null }> {
-  const { seen, watch } = firstError();
+  const { seen, watch, settle } = firstError();
   let truncated = false;
-  const raw = await selectAll<GapRow>(
+  const raw = await settle(selectAll<GapRow>(
     (from, to) => Promise.resolve(
       db(sb).rpc('encounter_gap_audit', {
         p_since: sinceIso, p_names: names as string[], p_limit: to - from + 1, p_offset: from,
       })).then(watch),
     { hardCap, onTruncate: () => { truncated = true; } },
-  );
+  ));
   const byId = new Map<string, GapRow>();
   for (const r of raw) if (!byId.has(r.id)) byId.set(r.id, r);
   return { rows: [...byId.values()], truncated, error: seen.error };
