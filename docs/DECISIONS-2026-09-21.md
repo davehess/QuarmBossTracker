@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Buff-block picker** (§157) | Building on beta: dashboard tab with sets, copy lines, socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: `/encounter tonight` (`e.id` on a view with no `id`); `opendkp_loot_recent` repeats 13 auctions; `guild_held_spell_needs` ~31 s; /admin/encounters curated-only? |
 | **`raid_nights` counts group nights as raids** (§154) | The bot opens a raid night for any Sun/Wed/Thu encounter after 20:30 ET; real raids are the OpenDKP raids. The /fun card now uses OpenDKP (web 1.8.93) | a session: list every reader of `raid_nights` / `encounters.raid_night_id` and decide which should mean "an OpenDKP raid"; no raids until 2026-10-14 |
 | **History + quest navigation picks** (`docs/DESIGN-history-and-quest-nav.md`) | Options written 2026-10-04; the meter-history correctness fixes and the PoP overlay fixes are being built | the guild lead: Target Info history **A — Pager**, **B — Ledger** or **C — Kill log**; Tank history **A — same list, both tabs** or **B — one fight card**; quest navigation **A — drill-down blocks** or **B — two fixed rows**, and what ▶ does at the end of a plane |
@@ -6904,3 +6905,36 @@ unnamed, each with Restore. It was filtered by owner only.
   - That main's backup was 18 files, with 98 socials indexed from `<Name>_pq.proj.ini`.
 - **No harm from a wrong row:** restore writes each file under its own name. Another character's row never
   overwrote this character's files, only the shared `eqclient.ini` / `zeal.ini`.
+
+### 157. A buff-block picker in Mimic for Quarm's `#blockbuff` (2026-10-04, building on beta)
+
+Quarm added three player commands (patch notes Oct 2–4): `#blockbuff <id>` (alone, it lists your blocks),
+`#blockbuffif <id> <active id>` and `#allowbuff <id> [active id]`. Blocks live on the character, server-side.
+
+- **The ask (the guild lead):** *"start building out a picker for this on mimic so that people can see their own
+  sets of block and allow lists buffs and make some for any of the songs that are bards use some monks can
+  toggle them off while pulling and toggle them back on when they're in camp"*.
+- **The delivery call (the guild lead):** *"mimic builds the copy for the player or makes a hotkey if desired if
+  the user is currently logged in on next log out update the social"*. So:
+  - Mimic shows the command lines to copy.
+  - On request, it writes Block and Allow socials into `<Char>_pq.proj.ini`, five lines each.
+  - While the character is logged in, the write is queued until logout. It uses the agent's existing
+    web-edit gate (no Zeal sample for 2 min, log idle 90 s) and its key-level ini writer.
+- **Why nothing else:** Quarm rule 3 forbids software "interacting with the game client", and Zeal's pipe is
+  outbound only (`named_pipe.cpp`, `PIPE_ACCESS_OUTBOUND`). Mimic never types into the game.
+- **Alternative, not built:** Zeal's page-10 social keybinds (Zeal 1.4.4+) re-read
+  `Page10Button<N>Line1-5` from the ini on every press (`page10_binds.cpp` `execute_social`). That would
+  make a live write work without a logout, after a one-time keybind setup. Still five lines per key, and keys
+  can't chain.
+- **Unknowns, which shape v1:**
+  - The server's reply text for all three commands is in no public source. The upstream EQMacEmu has only
+    a stub `IsBlockedBuff()`. v1 records what the player's sets did and reads nothing from the log.
+  - A real `#blockbuff` reply, pasted by anyone, unlocks a list parser beside `parseSllLine`.
+  - Upstream calls `AddHealAggro` before buff slotting (`zone/spells.cpp`). A blocked song may still put
+    the bard on the hate list of the monk's pull. A live test is needed before anyone relies on the pulling
+    set.
+  - Block cap: undocumented. EQEmu's analogue is 20, so the UI warns past 20.
+- **Data:** 66 bard songs that land on others, from `eqemu_spells`. Skills 12/41/49/54/70, good effect,
+  group/AE/single targets. Levels from PQDI, since `spell_class_levels` has no bard rows. Starter sets:
+  "Pulling: bard twist (L47+)" (20 ids), "every rank" (40), "No bard run speed" (717, 2605, 1750, 1330), and
+  a `#blockbuffif` damage-shield pair.
