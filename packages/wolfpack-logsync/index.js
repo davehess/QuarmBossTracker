@@ -14577,6 +14577,46 @@ function _meClickies(character) {
     return { name: c.name, left: charged ? Math.max(0, c.count - used) : null, unlimited, used, worn: c.worn };
   }).sort((a, b) => (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_MAX);
 }
+// Damage shield from WORN gear (the guild lead, 2026-10-04: "Missing my additional DS from my neck
+// slot. It only gets added when you have other damage shield"). An item's worn-effect shield
+// (Talisman of Vah Kerrath +8, Shroud of Eternity +5) adds to a damage-shield SPELL and does nothing
+// on its own: the server returns early when the spell shield is 0 and adds the item part only inside
+// that branch (EQMacEmu zone/attack.cpp Mob::DamageShield). The bot sends the items whose worn effect
+// carries one as `worn_ds` on the item-clickies payload (view item_worn_damage_shield); an older bot
+// sends none and this adds 0. Read from the same exports as the clicky counters, worn slots only.
+let _wornDsByItem = new Map();   // "id:<n>" and "name:<lower>" → per-hit DS
+function _setWornDsCatalog(list) {
+  const m = new Map();
+  for (const w of (Array.isArray(list) ? list : [])) {
+    const ds = Number(w && w.ds);
+    if (!(ds > 0)) continue;
+    if (Number(w.id) > 0) m.set('id:' + Number(w.id), ds);
+    if (w.name) m.set('name:' + String(w.name).toLowerCase(), ds);
+  }
+  _wornDsByItem = m;
+}
+function _wornItemDs(character) {
+  if (!_wornDsByItem.size) return 0;
+  const invs = stats.characterInventories || {};
+  const cl = String(character || '').toLowerCase();
+  const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
+  const inv = key ? invs[key] : null;
+  let items = inv && Array.isArray(inv.items) ? inv.items : null;
+  const since = inv ? (Date.parse(inv._updatedAt || '') || 0) : 0;
+  let q = null;
+  try { q = _quarmyLocalItems(character); } catch { q = null; }
+  if (q && Array.isArray(q.items) && (!items || q.at > since)) items = q.items;   // the newer export wins
+  if (!items) return 0;
+  let sum = 0;
+  for (const it of items) {
+    // Quarmy numbers the paired slots (Ear1, Wrist2, Fingers1); /output inventory does not.
+    if (!INVENTORY_WORN_SLOTS.has(String(it.loc || '').replace(/\d+$/, ''))) continue;
+    const ds = (Number(it.id) > 0 && _wornDsByItem.get('id:' + Number(it.id)))
+      || _wornDsByItem.get('name:' + String(it.name || '').toLowerCase()) || 0;
+    sum += ds;
+  }
+  return sum;
+}
 // ── XP events (FB-37 option B, docs/DESIGN-xp-tracking.md) ─────────────────────
 // The guild lead, 2026-10-02: "observe group composition and xp totals for groups that are together
 // during the day and find what compositions work and in what area in what zone, with what mobs we're
@@ -14823,7 +14863,11 @@ function _serializeMeState() {
   const dsKnown = _knownDsPerHitFor(active, dsWorn);
   if (!combat.ds && (dsKnown || dsWorn.off)) combat.ds = { hits: 0, total: 0, last: null };
   if (combat.ds) {
-    combat.ds.per_hit = dsKnown || combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    // Worn-gear shields add only on top of a shield spell (_wornItemDs). The last-hit fallback
+    // already includes them: it is what landed.
+    const dsItem = dsKnown ? _wornItemDs(active) : 0;
+    combat.ds.per_hit = dsKnown ? dsKnown + dsItem : combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    combat.ds.from_items = dsItem;
     combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
     // Shield cancelled (_dsOffFrom): 0 a hit, whatever landed before the debuff.
     if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.from_buffs = true; combat.ds.kind = null; }
@@ -36237,7 +36281,10 @@ function _loadItemClickiesFromDisk() {
     for (const e of raw.entries) {
       if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
     }
-    _itemClickyMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    // A file written before `worn_ds` was kept: forget its etag, so the next fetch is a full 200.
+    const etag = Array.isArray(raw.worn_ds) ? (raw.etag || null) : null;
+    _itemClickyMeta = { fetchedAt: raw.fetched_at, etag, count: raw.entries.length };
+    _setWornDsCatalog(raw.worn_ds);
     console.log(`[item-clickies] loaded ${raw.entries.length} clicky items from disk (cached ${raw.fetched_at || '?'})`);
   } catch (err) {
     console.warn('[item-clickies] disk load failed:', err && err.message);
@@ -36282,8 +36329,9 @@ function fetchItemClickies({ botUrl, token }) {
               if (e && e.name) _itemClickyByNameLower.set(String(e.name).toLowerCase(), e);
             }
             _itemClickyMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            _setWornDsCatalog(data.worn_ds);
             try {
-              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries };
+              const out = { fetched_at: data.fetched_at, etag: etag || null, entries: data.entries, worn_ds: data.worn_ds || [] };
               fs.writeFileSync(ITEM_CLICKY_FILE + '.tmp', JSON.stringify(out));
               fs.renameSync(ITEM_CLICKY_FILE + '.tmp', ITEM_CLICKY_FILE);
             } catch (e) { /* disk cache best-effort */ }
