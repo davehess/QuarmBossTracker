@@ -8521,9 +8521,12 @@ async function _handleAgentUiLayoutList(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ snapshots: [] }));
   }
+  // Owner AND character: the owner alone listed every character in the family
+  // under each one, with no name on the row — so "Backups" under one character
+  // showed (and offered to restore) another's (the guild lead, 2026-10-04).
   const rows = await supabase.select(
     'ui_snapshots',
-    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&character_name=ilike.${encodeURIComponent(character)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
   ).catch(() => []);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
