@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'fun-crash-card-2026-10-04',
+    title: 'Raid crashes only',
+    version: 'Web 1.8.93',
+    date: '2026-10-04',
+    headline: 'The “Raids since Peopleslayer crashed” card on /fun only counts crashes during real raids now.',
+    features: [
+      { name: 'Real raids only', blurb: 'A raid is one the officers logged in DKP, and a crash only counts if it happened during one. A Saturday group night or an afternoon disconnect no longer resets the count.' },
+      { name: '“It was a /quit”', blurb: 'A /quit looks just like a crash to everyone else. Peopleslayer (or an officer) can now mark one as a /quit and it stops counting.' },
+    ],
+    fixes: [
+      'The card counted any day he fought something as a raid, and only read his first 1,000 fights.',
+      'The date of the last crash showed the next day for an evening crash.',
+    ],
+  },
+  {
     key: 'meter-history-2026-10-04',
     title: 'Meter history you can trust',
     version: 'Agent 3.7.78 · Mimic beta',
