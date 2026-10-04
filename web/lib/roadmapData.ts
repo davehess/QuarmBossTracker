@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'meter-history-2026-10-04',
+    title: 'Meter history you can trust',
+    version: 'Agent 3.7.78 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The DPS meter’s History now shows the damage people actually did, with pets counted under their owners, and keeps your last 100 fights.',
+    features: [
+      { name: '100 fights, kept for a week', blurb: 'History keeps your last 100 fights instead of 30, and they are still there after you restart Mimic.' },
+      { name: 'Pets under their owners', blurb: 'Pet damage in History counts toward its owner, just like the live meter, and is never counted twice.' },
+    ],
+    fixes: [
+      'History added up threat instead of damage, so a tank’s taunts and resisted spells could put them at the top of a fight.',
+      'A charmed pet whose charm broke before the kill disappeared from the meter, taking its damage with it.',
+      'Zoning in the middle of a fight dropped you from that fight’s History.',
+      'Pets that could not be tied to an owner were pasted into the /rs line as if they were raiders.',
+    ],
+  },
+  {
     key: 'pop-overlay-round-2026-10-04',
     title: 'PoP overlay: trials, short steps, text size',
     version: 'Web 1.8.91 · Mimic beta',
