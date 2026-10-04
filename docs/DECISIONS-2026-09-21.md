@@ -6737,3 +6737,42 @@ the mouse over it."*
     disarmed the window after a hop from a button, so a click fell through to EQ.
 - **Waiting on the guild lead:** the catalog navigation (era → plane → step) is an option pick in
   `docs/DESIGN-history-and-quest-nav.md`. It needs one plane tag per step, because the data has none.
+
+### 153. Meter history credited the wrong things; fixed, and it keeps 100 fights (2026-10-04, agent 3.7.78 beta)
+
+The guild lead: *"damage/tanking meter could have more history in it. Make sure the history correctly attributes
+pet data to owners and DS hits from tanks."* An audit drove the real code; every bug below was behind green
+tests whose fixtures encoded it.
+
+- **Threat, not damage:**
+  - History (`_recordFightHistory`), the Target Info corpse list and the HUD's "this fight" / "tonight"
+    added swing + proc + spell. That is threat: taunts, proc and cast hate, and 120 per resist.
+  - Repro: a tank who dealt 100 showed 1,961 and topped the board.
+  - All now read raw `dmg`.
+  - Zoning mid-fight also dropped you from History; fixed by the same change.
+- **Pets:**
+  - History never folded pets into owners (the live meter does). Once the guild numbers settled, a pet
+    counted twice: 1,009 shown on a 909 fight.
+  - History also lost the "(pet)" label, so an unowned pet was pasted into /rs as a raider.
+  - Both fixed: `_histRows` in overlay.html runs the live fold, and drops a guild row for a pet whose
+    owner this machine knows, because the bot folded it already.
+- **Charm breaks:** a charm pet whose charm broke before the kill vanished from the live meter and from
+  History.
+  - It now falls back to the proven-pets list the upload already uses.
+  - Accepted trade-off: that mob's damage after the break also credits the charmer, as the upload
+    already does.
+- **Backfill:** a background (silent) log backfill could stamp the live fight ended and record it into
+  History. Gated.
+- **Damage shields:** correct for one wearer, in live and History. Known limit, unchanged: when two tanks
+  are hit in the same second, the shield credit goes to the last one hit, since the log line does not name
+  the wearer.
+- **More history:**
+  - 100 fights, up from 30.
+  - Kept in `logsync.fights.json` for 7 days across restarts. It used to survive only a restart within
+    10 minutes.
+  - Fetched from `GET /api/fight-history` only while History is open. `/api/state` keeps a 10-fight
+    digest, which alpha's `fight.history` part reads.
+  - Each fight now also stores damage taken and the biggest hit, for a Tank history whose layout is an
+    option pick (`docs/DESIGN-history-and-quest-nav.md` §2).
+- **Not yet:** saved fights keep only rows with damage dealt, so a tank who dealt none has no row. That
+  is for the Tank-history build to decide.

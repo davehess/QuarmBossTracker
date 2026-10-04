@@ -2438,6 +2438,12 @@ debuff, the mini box reads "DS OFF". Boastful Bellow: `_ME_SKILL_LINES` 'bellow'
 started by the resist line or `_meNoteBellow` (landing + your own non-melee hit on that
 mob within 1.5 s, bards only); HUD "BB"; built-in timer `bellow` (Triggers tab).
 
+**2026-10-04 (agent 3.7.78 beta, §153):** History is raw `dmg` (was threat), keeps 100 fights in
+`logsync.fights.json` for 7 days, serves the ring from `GET /api/fight-history[?rev=]` (only while
+History is open; `/api/state` carries a 10-fight digest), and overlay.html's `_histRows` folds pets into
+owners like the live branch. Closed charms fall back to `_provenPets()`; silent builders never record.
+Test: `test/meter-history.test.js`. The 2026-10-02 note below is superseded on the count and the carrier.
+
 **2026-10-02 (agent 3.7.67 beta, bot 3.1.186/3.1.187, §127):** the DPS HUD is
 renamed **DPS/Tank Meter**. History keeps 30 fights (`FIGHT_HISTORY_MAX`) across a
 restart (`saveSessionState.fightHistory`), dedups peer flushes within 8 s, marks each
