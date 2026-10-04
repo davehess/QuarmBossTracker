@@ -32,11 +32,15 @@ import { userTz } from '@/lib/timezone';
 import { guildShare, isAutoForeign } from '@/lib/anomalies';
 import {
   dedupEncounterDeaths, dedupNightDeaths, partitionDeaths, activitySpan, inSpan,
-  dedupeSlows, isValidDateKey, zonedDayRangeUtc,
+  dedupeSlows, isValidDateKey, zonedDayRangeUtc, SLOW_SPELLS,
   type RawDeath, type SlowCast,
 } from '@/lib/raidReview';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { selectAll } from '@/lib/selectAll';
+import {
+  loadEventsForEncounters, loadNightFires, loadNightSlows, nightStreamWindow,
+  type NightFireRow, type NightSlowRow,
+} from '@/lib/fullReads';
 import { addDays, isOfficialRaid, raidNightKey, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import { ClassificationChip } from '@/components/KillCard';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
@@ -74,6 +78,16 @@ type Attendance = { raids: string[]; raiders: string[]; ticks: number; zone: str
 type TrashMob = { name: string; kills: number; damage: number };
 type TrashTally = { kills: number; damage: number; seconds: number; mobs: TrashMob[]; updated_at?: string };
 
+// Personal cast / movement / line-of-sight notices ("Too Far", "Spell Interrupted",
+// "Can Not See") — the bulk of encounter_events kind='fire' and nothing a raid review
+// wants. Lowercase, matched against a row's subtype (or its label when it has none).
+// Sent to raid_night_fires so the SQL drops them; the render filters on it again.
+const FIRE_NOISE = new Set<string>([
+  'too far', 'spell interrupted', 'can not see', 'cannot see',
+  'can not hit from here', 'cannot hit from here', 'range', 'out of range',
+  'camo break', 'invis did break', 'invis',
+]);
+
 async function load(date: string) {
   try {
     const sb = supabaseAdmin();
@@ -86,7 +100,7 @@ async function load(date: string) {
     // non-raid mobs"). Trash keeps its own line: the bot's tally in bot_kv.
     const curated = await curatedNpcIds(sb);
 
-    const [encRes, charRes, zoneRes, slowRes, fireRes, lootRes, raidRes, nightRes] = await Promise.all([
+    const [encRes, charRes, zoneRes, lootRes, raidRes, nightRes] = await Promise.all([
       sb.from('encounters')
         .select(`
           id, started_at, ended_at, duration_sec, total_damage, total_dps, zone_short, npc_id, classification,
@@ -101,21 +115,11 @@ async function load(date: string) {
         .select('name, class, exclude_from_stats')
         .eq('guild_id', 'wolfpack'),
       sb.from('eqemu_zone').select('short_name, long_name'),
-      sb.from('buff_casts')
-        .select('target, spell_name, cast_at, observer')
-        .eq('guild_id', 'wolfpack')
-        .gte('cast_at', startIso)
-        .lt('cast_at', endIso)
-        .order('cast_at', { ascending: true })
-        .limit(5000),
-      sb.from('encounter_events')
-        .select('at, subtype, actor, label')
-        .eq('guild_id', 'wolfpack')
-        .eq('kind', 'fire')
-        .gte('at', startIso)
-        .lt('at', endIso)
-        .order('at', { ascending: true })
-        .limit(3000),
+      // The day-wide streams (slows, mechanics fires) are NOT read here: a raid
+      // night is 8k-33k buff_casts rows and 1.3k-10.9k fires, PostgREST hands
+      // back the first 1,000 of a day, and the first 1,000 of a raid day are the
+      // small hours before the raid. They are read below, once the night's fight
+      // span is known, scoped to that span in SQL.
       sb.from('opendkp_loot_recent')
         .select('item_name, character_name, dkp, game_item_id, notes')
         .eq('raid_date', date)
@@ -185,26 +189,38 @@ async function load(date: string) {
       return true;
     });
 
+    // The night's fight span: first start - 30 min .. last kill + 30 min. The
+    // slows and mechanics fires below are read over it (clipped to the Eastern
+    // day), and the page's own `inSpan` filters stay as a second check.
+    const span = activitySpan(encs.map(e => {
+      const startMs = new Date(e.started_at).getTime();
+      return { startMs, endMs: startMs + (e.duration_sec ?? 0) * 1000 };
+    }));
+    const streamWin = nightStreamWindow(span, startIso, endIso);
+
     // Deaths: pull ONLY the deaths sub-array of raw_parse for the night's
     // encounters (light payload), then run the shared per-encounter dedup.
-    // Timeline events ride the same id list — one extra bounded query.
+    // Timeline events ride the same id list and are PAGED (one night is 2,356
+    // of them); slows and fires are the span-scoped streams described above.
     const encIds = encs.map(e => e.id);
     let deathContribs: { encounter_id: string; deaths: RawDeath[] | null }[] = [];
     let encEvents: EncEventRow[] = [];
+    let slows: NightSlowRow[] = [];
+    let fires: NightFireRow[] = [];
     if (encIds.length) {
-      const [dcRes, evRes] = await Promise.all([
+      const [dcRes, events, slowRows, fireRows] = await Promise.all([
         sb.from('contributions')
           .select('encounter_id, deaths:raw_parse->deaths')
           .in('encounter_id', encIds)
           .limit(4000),
-        sb.from('encounter_events')
-          .select('encounter_id, at, kind, subtype, actor, label')
-          .in('encounter_id', encIds)
-          .order('at', { ascending: true })
-          .limit(6000),
+        loadEventsForEncounters<EncEventRow>(sb, encIds),
+        streamWin ? loadNightSlows(sb, streamWin, [...SLOW_SPELLS]) : Promise.resolve([] as NightSlowRow[]),
+        streamWin ? loadNightFires(sb, streamWin, [...FIRE_NOISE]) : Promise.resolve([] as NightFireRow[]),
       ]);
       deathContribs = (dcRes.data ?? []) as { encounter_id: string; deaths: RawDeath[] | null }[];
-      encEvents = (evRes.data ?? []) as EncEventRow[];
+      encEvents = events;
+      slows = slowRows;
+      fires = fireRows;
     }
 
     // Trash tally (bot_kv, service-role). Keyed by the raid-NIGHT date, which
@@ -221,10 +237,10 @@ async function load(date: string) {
     return {
       ok: true as const,
       encs, zones, classByName, excluded,
-      slows: (slowRes.data ?? []) as SlowCast[],
-      fires: (fireRes.data ?? []) as FireRow[],
+      slows: slows as SlowCast[],
+      fires: fires as FireRow[],
       loot: (lootRes.data ?? []) as LootRow[],
-      deathContribs, encEvents, trash, attendance,
+      deathContribs, encEvents, trash, attendance, span,
     };
   } catch (err: unknown) {
     return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
@@ -250,7 +266,7 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
       </div>
     );
   }
-  const { encs, zones, classByName, excluded, slows, fires, loot, deathContribs, encEvents, trash, attendance } = data;
+  const { encs, zones, classByName, excluded, slows, fires, loot, deathContribs, encEvents, trash, attendance, span } = data;
 
   const bossFor = (e: EncRow) => cleanBossName(e.eqemu_npc_types?.name);
   const zoneFor = (e: EncRow) => {
@@ -352,12 +368,9 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
     .filter(t => t.deaths.length > 0 || t.events.length > 0 || t.fires.length > 0)
     .sort((a, b) => (b.deaths.length - a.deaths.length) || (killAtMs(a.enc) - killAtMs(b.enc)));
 
-  // Bound the day-wide streams (slows, mechanics fires) to the night's actual
-  // fight span ±30min — daytime grinding is not raid-review material.
-  const span = activitySpan(encs.map(e => ({
-    startMs: new Date(e.started_at).getTime(),
-    endMs: killAtMs(e),
-  })));
+  // The day-wide streams (slows, mechanics fires) were read over the night's
+  // actual fight span ±30min (`span`, from load()) — daytime grinding is not
+  // raid-review material — and are bounded to it again here.
 
   // Slows — collapse multi-observer landings, bound to the fight span, then
   // honor exclude on the target (rare — targets are usually the boss).
@@ -371,12 +384,8 @@ export default async function RaidNightReview({ params }: { params: Promise<{ da
   // drop that personal-fail noise and keep the raid-relevant mechanics —
   // Death Touch above all, plus rampage, breath resists, dispels — which is
   // what "what hit us and when" wants. Dedup across uploaders (same label+actor
-  // within 3s), like the parse-page timeline.
-  const FIRE_NOISE = new Set<string>([
-    'too far', 'spell interrupted', 'can not see', 'cannot see',
-    'can not hit from here', 'cannot hit from here', 'range', 'out of range',
-    'camo break', 'invis did break', 'invis',
-  ]);
+  // within 3s), like the parse-page timeline. (FIRE_NOISE is declared above
+  // load(): the SQL read drops the same set, and this filter is the second check.)
   const DT_RE = /death\s*touch|\bdt\b/i;
   type FireMark = { at: string; t: number; label: string; actor: string | null; isDt: boolean };
   const fireSorted = [...fires]

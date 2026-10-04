@@ -21,6 +21,7 @@ import { FightEventLog } from '@/components/FightEventLog';
 import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
 import { selectAll } from '@/lib/selectAll';
+import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -218,35 +219,27 @@ async function load(id: string) {
 
     // Per-fight timeline events (#98) — raid-wide events (rampage/enrage) +
     // trigger fires (incl. Death Touch). Uploaded by every observer; deduped
-    // at read below (same as deaths).
-    const { data: rawEvents } = await sb
-      .from('encounter_events')
-      .select('at, kind, subtype, actor, label')
-      .eq('encounter_id', id)
-      .order('at', { ascending: true });
+    // at read below (same as deaths). PAGED: 11 encounters carry more than 1,000
+    // events (max 1,941), and an unpaged read kept the first 1,000 of the fight.
+    const rawEvents = await loadEncounterEvents<TimelineEventRow>(sb, id);
 
     // "Current at the time" baseline — the highest agent_version seen across
     // ANY contribution uploaded within ±7 days of this encounter's started_at.
     // Anyone uploading on an older version while peers were on a newer one
     // was demonstrably stale at the time, regardless of today's latest. We do
     // a windowed query (not lifetime-MAX) so an encounter from 2025 isn't
-    // judged against 2026 versions.
+    // judged against 2026 versions. The window holds ~21,000 contribution rows
+    // and `.range(0, 9999)` returned 1,000 of them (PostgREST's silent cap), which
+    // left the newest version out: uploaders on 3.7.75 read as current while peers
+    // were on 3.7.78. SQL now returns just the DISTINCT versions (49 in that
+    // window) and the compare below picks the highest.
     let latestAtTime: string | null = null;
     if (enc?.started_at) {
       const t = new Date((enc as { started_at: string }).started_at).getTime();
       const lo = new Date(t - 7 * 86400_000).toISOString();
       const hi = new Date(t + 7 * 86400_000).toISOString();
-      const { data: peers } = await sb
-        .from('contributions')
-        .select('agent_version')
-        .gte('created_at', lo)
-        .lte('created_at', hi)
-        .not('agent_version', 'is', null)
-        .range(0, 9999);
-      for (const r of (peers ?? []) as { agent_version: string | null }[]) {
-        if (r.agent_version && cmpVer(r.agent_version, latestAtTime) > 0) {
-          latestAtTime = r.agent_version;
-        }
+      for (const v of await loadAgentVersionsAround(sb, lo, hi)) {
+        if (cmpVer(v, latestAtTime) > 0) latestAtTime = v;
       }
     }
 

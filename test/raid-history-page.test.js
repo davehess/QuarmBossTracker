@@ -122,7 +122,10 @@ describe('the raid review shows bosses, not farm trash (Hitya, 2026-09-04)', () 
     expect(night).toMatch(/const curated = await curatedNpcIds\(sb\);/);
     expect(night).toMatch(/\.in\('npc_id', curated\)/);
     expect(index).toMatch(/const curated = await curatedNpcIds\(sb\);/);
-    expect(index).toMatch(/\.in\('npc_id', curated\)/);
+    // The index reads its encounters through the PAGED loader (web/lib/fullReads.ts, the 1,000-row cap),
+    // which carries the in-query filter; the page's job is to hand it the curated ids.
+    expect(index).toMatch(/loadReviewEncounters<EncRow>\(sb, curated, sinceIso\)/);
+    expect(read('lib', 'fullReads.ts')).toMatch(/\.in\('npc_id', curated\)/);
   });
 
   it('officers get the live ingest switch on /admin/overlays', () => {

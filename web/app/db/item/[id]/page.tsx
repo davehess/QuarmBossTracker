@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { loadDropperCounts, loadItemDrops } from '@/lib/fullReads';
 import {
   type ItemCard, decodeMask, decodeSlots, fmtPrice, fmtWeight,
   isNoDrop, isNoRent, isLoreItem, loreText,
@@ -55,13 +56,17 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
   const sb = supabaseAdmin();
 
-  const [cardRes, itemRes, dropRes, merchRes, givesRes, getsRes] = await Promise.all([
+  const [cardRes, itemRes, dropRes, dropCounts, merchRes, givesRes, getsRes] = await Promise.all([
     sb.rpc('item_card_info', { p_item_ids: [itemId] }),
     sb.from('eqemu_items')
       .select('id, name, lore, casttime, norent, str, sta, dex, agi, intel, wis, cha, '
             + 'worneffect, worntype, proc_effect, focus_effect, itemtype')
       .eq('id', itemId).maybeSingle(),
-    sb.from('eqemu_npc_drops').select('npc_id, npc_name, effective_chance').eq('item_id', itemId).limit(500),
+    // 124 items have more than 500 droppers (max 1,847), so WHICH 500 matters:
+    // loadItemDrops reads them best-chance first. The exact total is a SQL count of
+    // distinct npcs — the old "Dropped by (N)" read at most 500.
+    loadItemDrops(sb, itemId).then(data => ({ data })),
+    loadDropperCounts(sb, [itemId]),
     sb.from('eqemu_merchantlist').select('merchantid').eq('item', itemId).limit(500),
     // Quest turn-ins, both directions: what this item is handed IN for, and
     // what hands it OUT. jsonb containment against the arrays of {item_id,…}.
@@ -114,6 +119,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
     if (!prev || (d.effective_chance ?? 0) > (prev.effective_chance ?? 0)) dropsByNpc.set(d.npc_id, d);
   }
   const drops = [...dropsByNpc.values()].sort((a, b) => (b.effective_chance ?? 0) - (a.effective_chance ?? 0));
+  const dropTotal = Math.max(dropCounts.get(itemId) ?? 0, drops.length);
 
   // Sold-by: dedupe merchants down to distinct zones.
   const merchZoneIds = new Set<number>();
@@ -246,7 +252,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
 
       {/* Dropped by */}
       <section className="bg-panel border border-border rounded-lg p-4">
-        <h2 className="text-sm text-orange mb-2">Dropped by {drops.length ? `(${drops.length})` : ''}</h2>
+        <h2 className="text-sm text-orange mb-2">Dropped by {dropTotal ? `(${dropTotal})` : ''}</h2>
         {drops.length ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -265,7 +271,7 @@ export default async function DbItemPage({ params }: { params: Promise<{ id: str
                 ))}
               </tbody>
             </table>
-            {drops.length > 60 && <p className="text-dim text-[10px] mt-2">Showing top 60 of {drops.length}.</p>}
+            {dropTotal > Math.min(60, drops.length) && <p className="text-dim text-[10px] mt-2">Showing top {Math.min(60, drops.length)} of {dropTotal}.</p>}
           </div>
         ) : <p className="text-dim text-xs">No drop sources in the mirror.</p>}
       </section>
