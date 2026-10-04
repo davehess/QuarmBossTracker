@@ -194,6 +194,10 @@ next touch one rather than assuming a missing row means a missing doc.
   checkbox, Review button, results) now leads Diagnostics instead of Info. Reverses the 2026-08-13 placement. §137.
 - **✅ New pages go live with a `[beta]` tag (web 1.8.81, 2026-10-03).** `/zeal-icons` (+ `?v=b`) and
   `/db/recipe/<id>` moved from beta to production with `web/components/NewPageTag.tsx` at the top. §135.
+- **⏳ Spectator map on wolfpack.quest: C picked (flat live board), 2026-10-04.** A real zone map under the dots is
+  required; first step is a map-line source we may use. Shows only what Zeal already gives a player (raid positions,
+  a target within 250 units); no staff ask. Needs a positions feed, a `PRIVACY.md` line, and the agent reading
+  Zeal 1.4.8 `target_loc`. DECISIONS-2026-09-21 §160.
 - **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
