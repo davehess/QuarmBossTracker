@@ -40,6 +40,7 @@ echo "| \`CLAUDE.md\` | architecture, release routing, scope boundaries — wins
 echo "| \`docs/HOW-ITS-BUILT.md\` | feature → file + surface index. Read BEFORE saying \"we don't have that\" |"
 echo "| \`docs/STATUS.md\` | status ledger + durable queue, incl. ⚠ needs-a-local-session items |"
 [ -d docs/pq-companion ] && echo "| \`docs/pq-companion/\` | competitor analysis + ranked adaptation plans (unlicensed — reimplement, never copy) |"
+echo "| private briefing → **Branch inventory** tab | what each branch/channel carries, what waits on a pick, release heads — ask \`/recall\` |"
 echo
 
 # ── Live component versions, straight from the source of truth ──────────────

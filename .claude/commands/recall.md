@@ -22,6 +22,16 @@ Dispatch a single `Explore` subagent with `model: haiku` and give it this task:
 > wrong answers), and an explicit "not documented" if the docs genuinely do not
 > cover it. Do not read source code; this is a documentation question.
 
+**Branch and release questions** ("what's on beta", "is X on alpha yet", "which branch has Y", "what's
+waiting to graduate", "which previews need a pick") are answered from the **branch inventory first**, not
+by walking the decision logs (the guild lead, 2026-10-04: *"we should have a more permanent inventory of
+our project's branches so we don't have to iterate through decisions every time"*). It is private: a tab
+named **Branch inventory** in the claude.ai doc titled **"Wolf Pack — private briefing"**. Before
+dispatching the subagent, find that doc by its title in the artifact list (`Artifact` → `list`), read the
+tab with the docs connector, and hand its contents to the subagent alongside the question so it can check
+the docs against it. The repo never carries the doc's link. If the docs connector is not available in
+this session, say so and fall back to `git for-each-ref refs/remotes/origin` plus the docs.
+
 When it reports back:
 
 - Lead with the answer and its citations.
