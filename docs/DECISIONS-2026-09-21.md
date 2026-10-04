@@ -6881,6 +6881,9 @@ And a page that orders on a non-unique key drops and repeats rows at page bounda
   - `opendkp_loot_recent` repeats 13 auctions, because one OpenDKP id matches two characters.
   - `guild_held_spell_needs` takes ~31 s, so /admin/spells likely shows its error.
   - The threat rollup has not run since 2026-08-19. It is the unapplied `snapshot_at` index above.
+  - Beta's /db/item preview (`?v=b` / `?v=c`) reads `item_recipes` in one call. One item is in 1,450
+    recipes, so it must page before that preview graduates. The beta sync by hand (`015d55d2`) paged
+    `quest_scripts_for_item`, which already stops at 200.
   - 627 `loot_observations` rows disagree with the drop tables (officer decision).
 - **Self-host wizard:** the cap is a Supabase/PostgREST default (`max-rows`). A self-hosted PostgREST may set
   another, and the paged reads work under any value. Logged in `DESIGN-selfhost-wizard.md` §3.
