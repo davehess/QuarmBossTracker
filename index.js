@@ -10644,6 +10644,7 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let wornDs = [];
     let failed = false;
     try {
       const supabase = require('./utils/supabase');
@@ -10664,6 +10665,13 @@ async function _handleAgentItemClickies(req, res, isPublic) {
           maxcharges: r.maxcharges != null ? r.maxcharges : null,
         });
       }
+      // Items whose WORN effect is a damage shield (Talisman of Vah Kerrath +8): the HUD adds them on
+      // top of a shield spell (the guild lead, 2026-10-04: "Missing my additional DS from my neck slot").
+      // Their own list, not clicky entries, so nothing that reads `entries` sees them. A failed read
+      // serves the catalog without them: the agent then shows the spell shield alone, as before.
+      const worn = await supabase.select('item_worn_damage_shield', 'select=item_id,item_name,ds&order=item_id&limit=500');
+      if (Array.isArray(worn)) wornDs = worn.map(w => ({ id: w.item_id, name: w.item_name, ds: Number(w.ds) || 0 }));
+      else console.warn('[item-clickies] worn damage-shield read failed — serving without it');
     } catch (err) {
       // Column missing (migration not applied yet) or other transient failure.
       // Nothing from a failed read is cached: the last good catalog keeps serving
@@ -10674,10 +10682,11 @@ async function _handleAgentItemClickies(req, res, isPublic) {
     }
     if (!failed) {
       const body = JSON.stringify({
-        version: 1,
+        version: 2,                         // 2: + worn_ds (additive; older agents ignore it)
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
+        worn_ds: wornDs,
       });
       const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
       _itemClickyCache = { fetchedAt: Date.now(), body, etag };

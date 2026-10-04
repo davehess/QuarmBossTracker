@@ -3708,6 +3708,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   DS below OUT) with a per-hit DS button. Agent: `_meNoteHit` gives the damage
   shield its own `kind: 'ds'`; `combat.feed` entries carry `at`; `combat.ds`
   carries `per_hit` (worn shield via `_knownDsPerHitFor`, else the last hit).
+  **Gear shields (agent 3.7.80, bot 3.1.202, §159):** `per_hit` adds `_wornItemDs` (worn gear whose
+  worn effect is a damage shield, from `/output inventory` or the Quarmy export) only while a shield
+  spell is up; `combat.ds.from_items` says how much. The item list is view `item_worn_damage_shield`,
+  served as `worn_ds` on `/api/agent/item-clickies` (v2).
   **Round four (agent 3.7.9):** cooldowns on an inner arc (`cdItems`), tick
   and swing their own arcs under them (`tickItem` / `swingItem`); `weight`
   part (`HUD_WEIGHTS`, svg class `w-<weight>`); builder is a side panel

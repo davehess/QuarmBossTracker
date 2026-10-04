@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'worn-ds-2026-10-04',
+    title: 'Your gear’s damage shield',
+    version: 'Bot 3.1.202 · Web 1.8.97 · Agent 3.7.80 beta',
+    date: '2026-10-04',
+    channel: 'beta',
+    headline: 'The HUD’s DS badge adds the shield from your gear on top of your shield spell.',
+    features: [
+      { name: 'DS badge', blurb: 'A Talisman of Vah Kerrath (+8) or Shroud of Eternity (+5) adds to a damage shield spell, so a 10-point shield with the Talisman reads 18, as it hits. Gear adds nothing on its own, so without a shield spell the badge reads as before. In the beta Mimic; it reads your gear from /output inventory or your Quarmy export.' },
+    ],
+    fixes: [
+      'The DS badge left out the shield from worn gear.',
+    ],
+  },
+  {
     key: 'encounter-tonight-2026-10-04',
     title: '/encounter tonight is back',
     version: 'Bot 3.1.201 · Web 1.8.96',
