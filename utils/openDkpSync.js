@@ -1966,17 +1966,20 @@ async function foldLootObservations(opts = {}) {
   const dropIds = [...new Set([...catalogIdByAward.values()].filter(v => Number.isFinite(v) && v > 0))];
   const dropOwnerByItem = new Map();
   for (let i = 0; i < dropIds.length; i += 100) {
-    const rows = await supabase.select('eqemu_npc_drops',
-      `item_id=in.(${dropIds.slice(i, i + 100).join(',')})&select=item_id,npc_id,npc_name&limit=20000`);
-    if (!Array.isArray(rows)) continue;
-    const byItem = new Map();
+    // One row per item (eqemu_item_drop_owner): its NPC count and, when the count is 1, that NPC.
+    // The (item, NPC) pairs of a 100-item chunk are thousands of rows (27.7 NPCs per item on
+    // average, 1,847 at most) and PostgREST cut them at 1,000 whatever `limit` said, so an item whose
+    // rows fell past the cut read as dropped by one NPC, or by none (627 loot_observations rows
+    // disagree with the drop tables on 2026-10-04). A chunk now answers with at most its own 100 rows.
+    const rows = await supabase.select('eqemu_item_drop_owner',
+      `item_id=in.(${dropIds.slice(i, i + 100).join(',')})&select=item_id,npc_count,npc_id,npc_name`);
+    // A failed read is not "no NPC drops these": the rows below are written once and the unique index
+    // keeps them (ignore-duplicates), so filing a chunk as unknown on a timeout — or while the view is
+    // not there yet — would stick. Stop and let the next sync pass fold it.
+    if (!Array.isArray(rows)) return { skipped: 'drop owner read failed' };
     for (const row of rows) {
-      if (!byItem.has(row.item_id)) byItem.set(row.item_id, new Map());
-      byItem.get(row.item_id).set(row.npc_id, row.npc_name);
-    }
-    for (const [id, npcs] of byItem) {
-      dropOwnerByItem.set(id, npcs.size === 1
-        ? { npc_id: [...npcs.keys()][0], npc_name: [...npcs.values()][0] }
+      dropOwnerByItem.set(row.item_id, row.npc_count === 1
+        ? { npc_id: row.npc_id, npc_name: row.npc_name }
         : null);
     }
   }
