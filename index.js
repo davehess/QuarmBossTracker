@@ -19611,7 +19611,13 @@ async function relayWebFeedback(readyClient) {
 // older. A re-sweep only sees edits that fall inside the pages it fetches (the newest ~100 when nothing is
 // new). An edit to an older post comes from the messageUpdate listener below, not from the sweep.
 // Status and the resume point live in bot_kv (state.json does not survive a Railway deploy).
+//
+// ONLY QUARM'S OWN POSTS are kept (2026-10-04, the first sweep): the channel follows Quarm's #patch-notes,
+// #announcements and #server-status-downtimes, and members talk in it too. A followed-channel post is
+// written by a webhook (`webhookId`); a member's message is not, and it is not a patch note, so it is
+// never stored.
 const _QUARM_NOTES_CHANNEL_ID = process.env.QUARM_PATCH_NOTES_CHANNEL_ID || '1175117242682331146';
+const _isQuarmFeedPost = (msg) => !!(msg && msg.webhookId);
 const _QUARM_NOTES_KV_KEY = 'quarm_patch_notes_sync';
 const _QUARM_NOTES_CAP = 20_000;     // messages read per run; a bigger channel resumes on the next run
 let _quarmSyncRunning = false;
@@ -19655,11 +19661,13 @@ async function _syncQuarmPatchNotes() {
     if (!Array.isArray(kv)) { console.warn('[quarm-notes] sync state unreadable — skipping this pass'); return; }
     const prev = (kv[0] && kv[0].value) || {};
     const intentOn = process.env.MESSAGE_CONTENT_INTENT === '1';
-    const full = !prev.complete || !!prev.resume_before || (intentOn && !prev.message_content_intent);
+    // `feed_only` is unset until one full walk has run with the member filter: that walk removes the member
+    // messages bot 3.1.199 stored.
+    const full = !prev.complete || !!prev.resume_before || (intentOn && !prev.message_content_intent) || !prev.feed_only;
     const st = {
       last_run: new Date().toISOString(), stored: 0, new: 0, fetched: 0, content_missing: 0,
       complete: !!prev.complete, resume_before: prev.resume_before || null,
-      message_content_intent: !!prev.message_content_intent,
+      message_content_intent: !!prev.message_content_intent, feed_only: !!prev.feed_only,
     };
     let before = full ? (prev.resume_before || undefined) : undefined;
     let finished = false;
@@ -19672,10 +19680,14 @@ async function _syncQuarmPatchNotes() {
         const msgs = page ? [...page.values()] : [];
         if (!msgs.length) { finished = true; break; }
         st.fetched += msgs.length;
-        const rows = msgs.map(_quarmNoteRow);
+        // A member's message on the page is deleted in case an earlier sweep stored it (a no-op once clean;
+        // a failed delete is logged by the client).
+        const strays = msgs.filter(m => !_isQuarmFeedPost(m)).map(m => m.id);
+        if (strays.length) await supabase.del('quarm_patch_notes', `message_id=in.(${strays.join(',')})`);
+        const rows = msgs.filter(_isQuarmFeedPost).map(_quarmNoteRow);
         st.content_missing += rows.filter(r => r.content_missing).length;
-        const have = await supabase.select('quarm_patch_notes',
-          `message_id=in.(${rows.map(r => r.message_id).join(',')})&select=message_id,edited_at,content_missing&limit=${rows.length}`);
+        const have = rows.length ? await supabase.select('quarm_patch_notes',
+          `message_id=in.(${rows.map(r => r.message_id).join(',')})&select=message_id,edited_at,content_missing&limit=${rows.length}`) : [];
         if (!Array.isArray(have)) throw new Error('stored-notes lookup failed');
         const byId = new Map(have.map(h => [h.message_id, h]));
         const instant = (iso) => (iso ? Date.parse(iso) : null);
@@ -19692,8 +19704,11 @@ async function _syncQuarmPatchNotes() {
           st.stored += todo.length;
         }
         before = msgs.reduce((a, m) => (BigInt(m.id) < BigInt(a) ? m.id : a), msgs[0].id);   // the oldest id on the page
+        // The oldest QUARM post on the page decides "already stored": a member's message never is.
+        const oldestKept = rows.length
+          ? rows.reduce((a, r) => (BigInt(r.message_id) < BigInt(a) ? r.message_id : a), rows[0].message_id) : null;
         if (msgs.length < 100) { finished = true; break; }          // the start of the channel
-        if (!full && byId.has(before)) { finished = true; break; }  // back in stored territory
+        if (!full && oldestKept && byId.has(oldestKept)) { finished = true; break; }  // back in stored territory
         if (st.fetched >= _QUARM_NOTES_CAP) {
           st.capped = true;
           console.warn(`[quarm-notes] hit the ${_QUARM_NOTES_CAP}-message cap — the next run resumes from ${before}`);
@@ -19705,7 +19720,7 @@ async function _syncQuarmPatchNotes() {
       console.warn('[quarm-notes] sync failed:', st.error);
     }
     if (finished) {
-      st.complete = true; st.resume_before = null; st.message_content_intent = intentOn;
+      st.complete = true; st.resume_before = null; st.message_content_intent = intentOn; st.feed_only = true;
     } else if (full) {
       st.resume_before = before || null;    // pick the full walk up where it stopped
     }
@@ -19731,6 +19746,7 @@ async function _quarmNoteLive(msg) {
     const supabase = require('./utils/supabase');
     if (!supabase.isEnabled()) return;
     const whole = msg.partial ? await msg.fetch() : msg;
+    if (!_isQuarmFeedPost(whole)) return;   // a member's message, not a Quarm post
     const res = await supabase.upsert('quarm_patch_notes',
       [{ ..._quarmNoteRow(whole), fetched_at: new Date().toISOString() }], 'message_id');
     if (!Array.isArray(res)) console.warn('[quarm-notes] live upsert failed for', msg.id);

@@ -110,9 +110,11 @@ next touch one rather than assuming a missing row means a missing doc.
     logout.
   - Two things wait on players: the server's reply text (no parser until someone pastes it), and a
     bard + monk test of whether a blocked song still pulls the bard in. §157.
-- **✅ Quarm patch notes mirrored into Supabase (bot 3.1.199, 2026-10-04).** The guild lead: "pull everything from" the
-  Quarm patch-notes channel. Table `quarm_patch_notes`, full-history sweep plus live new and edited posts, status in
-  bot_kv `quarm_patch_notes_sync`. If the rows come back `content_missing`, the Message Content intent is off. §158.
+- **⏳ Quarm patch notes mirrored into Supabase (bot 3.1.199, Quarm posts only from 3.1.200, 2026-10-04).** The guild lead:
+  "pull everything from" the Quarm patch-notes channel. Table `quarm_patch_notes`, full-history sweep plus live new
+  and edited posts, status in bot_kv `quarm_patch_notes_sync`. Only Quarm's own posts are kept (webhook posts, 1,348
+  since 2023-11-17); members' messages in the channel are not. Every row is blank (`content_missing`) until the
+  guild lead turns on the Message Content intent: portal toggle first, then `MESSAGE_CONTENT_INTENT=1`. §158.
 - **✅ Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, live 2026-10-04).** The guild lead
   asked for a sweep for silent 500/100 caps. Three audits plus eight fix branches covered the buff queue,
   Extended Target, the raid review, DKP mirror, bids, loot, catalogs, /guide, /parses, /leaderboards, /me,
