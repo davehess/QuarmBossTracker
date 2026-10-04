@@ -8166,6 +8166,10 @@ class EncounterBuilder {
     // hate tables we don't have client-side — these proxies are good enough
     // to rank players and warn when a DPS is closing on the tank.
     this.threatBy = new Map();  // attacker → { swing, proc, spell, heal }
+    // This builder's own last published snapshot (what flush() hands History) and the 2 s memo of
+    // _provenPets() that _publishLiveThreat reads for a charm that broke before the kill.
+    this._liveSnap    = null;
+    this._provenCache = null;
     // deaths: player deaths observed in this encounter.
     // [{ name, ts, riposteDeath: bool, class: string|null }]
     this.deaths           = [];
@@ -8521,6 +8525,16 @@ class EncounterBuilder {
         || (_charmTickTracker.get(nl)?.is_active ? _charmTickTracker.get(nl).owner : null)
         || (!/^an?\s/i.test(nl) ? (this.petLeaders[nl] || null) : null)
         || null;
+      // A charm that BROKE before the kill is in none of the three live proofs above — its pet fell
+      // out of this table (its name is in this.targets from the pre-charm fight, so the line below
+      // dropped it) and took its damage with it, live and in History. _provenPets() is what the upload
+      // path already uses for exactly this: closed sessions and a charm that broke inside this fight.
+      // Accepted trade-off, same as the upload's: damage that mob does AFTER the break is credited to
+      // its former charmer too. Only asked once something charm-shaped exists, and memoised — this runs
+      // on every event and _provenPets() walks them all.
+      if (!petOwner && (this.charmSessions.length > 0 || _charmTickTracker.size > 0)) {
+        petOwner = this._provenPetOwner(nl);
+      }
       if (petOwner === '__SELF__') petOwner = this.character || null;
       const petCharm = !petOwner && /^an?\s/i.test(nl) && !!this.petLeaders[nl];
       if (this.targets.has(name) && !petOwner && !petCharm) continue;
@@ -8603,6 +8617,7 @@ class EncounterBuilder {
       }
     }
     stats.currentEncounterThreat = snap;
+    this._liveSnap = snap;
     // Per-character mirror so a player with several logs sees THEIR focused character's
     // fight even when another character's log just landed an update. Keyed
     // lower-case to match the active-character normalization in /api/state.
@@ -10223,6 +10238,18 @@ class EncounterBuilder {
     }
     return out;
   }
+  // The owner of one pet NAME (lowercase) by the upload path's proofs, from a 2 s memo — the live
+  // threat table asks on every event, and _provenPets() walks every event of the fight. The memo is also
+  // keyed on the closed-session count, so a charm that has just broken is seen at once.
+  _provenPetOwner(nameLower) {
+    const now = Date.now();
+    const c = this._provenCache;
+    if (!c || c.n !== this.charmSessions.length || now - c.at > 2000) {
+      this._provenCache = { at: now, n: this.charmSessions.length, map: this._provenPets() };
+    }
+    const hit = this._provenCache.map.get(nameLower);
+    return hit ? hit.owner : null;
+  }
   flush() {
     // Settle a held DS candidate so a fight that ends on it still counts the
     // hit (as a shield only if the tank's known DS buffs vouch for it).
@@ -10745,19 +10772,25 @@ class EncounterBuilder {
     }
 
     this.onFlush(payload);
-    // Stamp the live-threat snapshot so the dashboard can show stale data
-    // for ~2 min after a fight ends rather than blanking the Threat panel immediately.
-    if (stats.currentEncounterThreat) {
-      stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
-    }
-    _recordFightHistory(stats.currentEncounterThreat, this.character);
-    // Mirror to the per-character map so the 2-min stale window applies
-    // independently per character (a player's other character can
-    // still be mid-fight while this one wraps up).
-    if (this.character && stats.currentEncounterThreatByChar) {
-      const k = String(this.character).toLowerCase();
-      if (stats.currentEncounterThreatByChar[k]) {
-        stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
+    // A SILENT builder (opt-in backfill replaying an OLD log) owns none of this. Its flush used to stamp
+    // flushedAt on the global snapshot — ending the LIVE fight on screen — and record that live fight
+    // into History as though the replay had ended it. So: live builders only, and History gets THIS
+    // builder's own last snapshot (_liveSnap), not whichever builder published last.
+    if (!this.silent) {
+      // Stamp the live-threat snapshot so the dashboard can show stale data
+      // for ~2 min after a fight ends rather than blanking the Threat panel immediately.
+      if (stats.currentEncounterThreat) {
+        stats.currentEncounterThreat = { ...stats.currentEncounterThreat, flushedAt: Date.now() };
+      }
+      if (this._liveSnap) _recordFightHistory({ ...this._liveSnap, flushedAt: Date.now() }, this.character);
+      // Mirror to the per-character map so the 2-min stale window applies
+      // independently per character (a player's other character can
+      // still be mid-fight while this one wraps up).
+      if (this.character && stats.currentEncounterThreatByChar) {
+        const k = String(this.character).toLowerCase();
+        if (stats.currentEncounterThreatByChar[k]) {
+          stats.currentEncounterThreatByChar[k] = { ...stats.currentEncounterThreatByChar[k], flushedAt: Date.now() };
+        }
       }
     }
     // Reset BEFORE closing peers (the guild lead's agent stall, 2026-09-25).
@@ -12207,9 +12240,8 @@ function saveSessionState() {
       sessionTotalDamage: stats.sessionTotalDamage,
       sessionDamageBy:    stats.sessionDamageBy,
       recentParses:       stats.recentParses,
-      // The DPS/Tank Meter's History survives a restart (the guild lead, 2026-10-02: "History
-      // should be much longer").
-      fightHistory:       stats.fightHistory,
+      // (The DPS/Tank Meter's History is not in here: it has its own file, logsync.fights.json,
+      // which does not expire after 10 minutes — _saveFightHistory.)
       topDamageSaw:       stats.topDamageSaw,
       topDamageDid:       stats.topDamageDid,
       sessionDefenders:   stats.sessionDefenders,
@@ -12229,6 +12261,9 @@ function saveSessionState() {
       lastUploadAt:       stats.lastUploadAt,
     };
     fs.writeFileSync(SESSION_FILE, JSON.stringify(payload));
+    // A graceful exit also writes the History ring now, so a settle that landed inside the 5 s save
+    // debounce is not lost.
+    if (_fightsPersist) _saveFightHistory();
   } catch { /* non-fatal */ }
 }
 
@@ -12248,7 +12283,9 @@ function loadSessionState() {
     if (raw.sessionTotalDamage) stats.sessionTotalDamage = raw.sessionTotalDamage;
     if (raw.sessionDamageBy)    stats.sessionDamageBy    = raw.sessionDamageBy;
     if (raw.recentParses)       stats.recentParses       = raw.recentParses;
-    if (Array.isArray(raw.fightHistory)) stats.fightHistory = raw.fightHistory.slice(0, FIGHT_HISTORY_MAX);
+    // Before logsync.fights.json existed the ring rode in here: keep reading it, only so the restart that
+    // installs this version does not lose it. The file wins whenever it has anything.
+    if (Array.isArray(raw.fightHistory) && !(stats.fightHistory && stats.fightHistory.length)) stats.fightHistory = raw.fightHistory.slice(0, FIGHT_HISTORY_MAX);
     if (raw.topDamageSaw)       stats.topDamageSaw       = raw.topDamageSaw;
     if (raw.topDamageDid)       stats.topDamageDid       = raw.topDamageDid;
     if (raw.sessionDefenders)   stats.sessionDefenders   = raw.sessionDefenders;
@@ -14763,7 +14800,7 @@ function _serializeMeState() {
     let dmg = 0;
     for (const [name, p] of Object.entries(et.perPlayer || {})) {
       const owner = String(p.pet_owner || name).toLowerCase();
-      if (owner === cl) dmg += (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
+      if (owner === cl) dmg += (p.dmg || 0);   // raw damage, not threat (taunts/resists add threat, not damage)
     }
     const secs = Math.max(1, Math.round((now - Date.parse(et.startedAt)) / 1000));
     fight = { target: et.bossName || et.targetName || null, dmg, secs, dps: Math.round(dmg / secs) };
@@ -16251,9 +16288,14 @@ function _serializeForDashboard() {
     // the bot is too old to serve it - the HUD then shows local only).
     guildDamage: stats.guildDamage && (Date.now() - stats.guildDamage.at < 30_000)
       ? stats.guildDamage : null,
-    // Settled per-mob guild numbers for the HUD's History tab — see
-    // _recordFightHistory. Newest first, small enough to ride every poll.
-    fightHistory: Array.isArray(stats.fightHistory) ? stats.fightHistory : [],
+    // The History tab's fights are NOT in here any more: up to 100 of them, each with every player's
+    // row, is far too much for a poll every overlay shares (they are at GET /api/fight-history —
+    // _fightHistoryPayload). What stays is a DIGEST of the newest ten — name, length, guild total — for
+    // a consumer that only lists them: the Mimic 3.0 builder's "Recent fights" part (alpha,
+    // apps/mimic/parts.js) reads `fightHistory` off this poll and would go blank without it.
+    fightHistory: (stats.fightHistory || []).slice(0, 10).map(h => ({
+      boss: h.boss, endedMs: h.endedMs, durationSec: h.durationSec, total: h.total, settled: !!h.settled,
+    })),
     crashBundleCount: _crashBundleCount(),
     // Whether crash metadata currently uploads. Mimic owns the setting
     // (cfg.crashReports) and hands it over as an env var at spawn, so this is
@@ -28458,6 +28500,13 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_stateJsonCache.body);
       }
+      // The DPS meter's History: the fights, newest first, read only while that tab is open.
+      if (req.url && (req.url === '/api/fight-history' || req.url.indexOf('/api/fight-history?') === 0)) {
+        let have = '';
+        try { have = new URL(req.url, 'http://x').searchParams.get('rev') || ''; } catch { /* */ }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_fightHistoryPayload(have)));
+      }
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
       //   • self HP %, target name + HP %, current buffs (with ticks remaining)
@@ -34816,12 +34865,21 @@ function startChatRelay() {
 // which would blank an entry that already had good numbers in it. Hence the
 // "only overwrite on a non-empty response" rule below.
 // The guild lead, 2026-10-02: "History should be much longer and specific if it's local or
-// synced." So 30 fights instead of 6, kept across a restart (saveSessionState), and each entry
-// says where it stands: `upload` 'local' (never leaves this machine — no token, dry run, or the
-// character is excluded from stats) or 'sent' (in the upload queue); `settled` (below) is the
-// guild's merged numbers having come back, which the meter shows as synced.
-const FIGHT_HISTORY_MAX = 30;
+// synced." Each entry says where it stands: `upload` 'local' (never leaves this machine — no
+// token, dry run, or the character is excluded from stats) or 'sent' (in the upload queue);
+// `settled` (below) is the guild's merged numbers having come back, which the meter shows as synced.
+// The guild lead, 2026-10-04: "damage/tanking meter could have more history in it." So 100 fights
+// rather than 30, in a file of their own (logsync.fights.json) that outlives the session file's
+// 10-minute expiry — a restart the next day still has last night's raid. Older than 7 days drops.
+const FIGHT_HISTORY_MAX = 100;
+const FIGHT_HISTORY_KEEP_MS = 7 * 24 * 3600_000;
 const FIGHT_HISTORY_SETTLE_MS = [40_000, 100_000];
+// How far back the bot's /live-damage can be trusted to still answer: its default lookback is
+// `now - 3 * 60 * 1000` (index.js _handleAgentLiveDamage). With `fight_start` (bot 3.1.187+) it reads
+// the fight itself however old, but an older bot cannot, and the agent cannot tell which it has — so a
+// restored entry still unsettled past this is marked settled-as-is rather than asked about, which
+// also keeps a restart from fanning up to 100 requests out at the bot.
+const FIGHT_HISTORY_LIVE_WINDOW_MS = 3 * 60_000;
 function _recordFightHistory(et, character) {
   if (!et) return;
   const boss = et.bossName || et.targetName || null;
@@ -34843,8 +34901,23 @@ function _recordFightHistory(et, character) {
   // half of the row is the thing a local-only meter can never give you.
   const local = [];
   for (const [name, p] of Object.entries(et.perPlayer || {})) {
-    const dmg = (p.swing || 0) + (p.proc || 0) + (p.spell || 0);
-    if (dmg > 0) local.push({ character: name, dmg, pet_owner: p.pet_owner || null });
+    // RAW damage (`dmg`), the figure the live meter and the upload both use. swing+proc+spell are
+    // THREAT: they carry taunts, proc and spell hate and 120 per resist (a tank who dealt 100
+    // read 1,961 here), and _threatLine zeroes them when you zone, which dropped the zoner from the
+    // board altogether (the guild lead, 2026-10-04: History "correctly attributes pet data to owners
+    // and DS hits from tanks").
+    const dmg = Number(p.dmg) || 0;
+    if (dmg <= 0) continue;
+    const row = { character: name, dmg, pet_owner: p.pet_owner || null };
+    // What the live row said about a pet, so the History merge can fold an owned pet into its owner
+    // and label an unowned one "(pet)" / "(charmed)" instead of passing it off as a raider.
+    if (p.pet_charm) row.pet_charm = true;
+    if (p.pet_summoned) row.pet_summoned = true;
+    if (p.pet_spawn_id) row.pet_spawn_id = p.pet_spawn_id;
+    // Damage taken, kept for a Tank History to come — stored, not rendered.
+    if (p.took > 0) row.took = p.took;
+    if (p.tookMax > 0) row.tookMax = p.tookMax;
+    local.push(row);
   }
   local.sort((a, b) => b.dmg - a.dmg);
   const entry = {
@@ -34859,19 +34932,38 @@ function _recordFightHistory(et, character) {
     upload: sends ? 'sent' : 'local',
   };
   stats.fightHistory.unshift(entry);
-  if (stats.fightHistory.length > FIGHT_HISTORY_MAX) stats.fightHistory.length = FIGHT_HISTORY_MAX;
+  _trimFightHistory();
   // Me overlay: tonight's damage per character (the dupe guard above keeps a
   // multi-log flush from counting one fight twice).
   if (typeof _meNoteFight === 'function') _meNoteFight(entry);
+  _fightsChanged();
+  _scheduleFightSettle(entry, 0);
+}
 
-  if (!_uploadOpts || _uploadOpts.dryRun || !_uploadOpts.botUrl || !_uploadOpts.token) return;
-  for (const delay of FIGHT_HISTORY_SETTLE_MS) {
+// The cap and the 7-day age-out, applied wherever the ring grows or is read back from disk.
+function _trimFightHistory(now = Date.now()) {
+  const keep = (stats.fightHistory || []).filter(h => h && now - (h.endedMs || 0) <= FIGHT_HISTORY_KEEP_MS);
+  if (keep.length > FIGHT_HISTORY_MAX) keep.length = FIGHT_HISTORY_MAX;
+  stats.fightHistory = keep;
+}
+
+function _canAskGuildForFights() {
+  return !!(_uploadOpts && !_uploadOpts.dryRun && _uploadOpts.botUrl && _uploadOpts.token);
+}
+// The two /live-damage re-asks for one entry, `ageMs` after it ended. A fight recorded just now waits the
+// full 40 s / 100 s; one restored from disk waits only what is left of each, or — if both are already
+// past — asks once, soon.
+function _scheduleFightSettle(entry, ageMs = 0) {
+  if (!_canAskGuildForFights()) return;
+  let waits = FIGHT_HISTORY_SETTLE_MS.map(d => d - ageMs).filter(w => w > 0);
+  if (!waits.length) waits = [5_000];
+  for (const delay of waits) {
     const t = setTimeout(async () => {
       try {
         const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
         // fight_start: this fight's numbers, not the next same-name pull's (bot 3.1.187+; older bots ignore it).
-        const fs0 = startedMs ? `&fight_start=${encodeURIComponent(new Date(startedMs).toISOString())}` : '';
-        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(boss)}${fs0}`, {
+        const fs0 = entry.startedMs ? `&fight_start=${encodeURIComponent(new Date(entry.startedMs).toISOString())}` : '';
+        const r = await fetch(`${base}/live-damage?boss=${encodeURIComponent(entry.boss)}${fs0}`, {
           headers: { Authorization: `Bearer ${_uploadOpts.token}` },
         });
         if (!r.ok) return;                          // old bot → History shows local only
@@ -34883,10 +34975,70 @@ function _recordFightHistory(et, character) {
         entry.total     = j.total || 0;
         entry.settled   = true;
         entry.settledAt = Date.now();
+        _fightsChanged();
       } catch { /* history is a nicety; never surface a failure here */ }
     }, delay);
     if (t.unref) t.unref();                         // must not hold the process open
   }
+}
+
+// ── Fight history on disk, and on its own endpoint ──────────────────────────
+// Its own file (not logsync.session.json, which expires after 10 minutes and is DELETED when read),
+// written with the same .tmp + rename as the agent's other state files. A bare require() — a test, a
+// probe — never touches the disk: persistence is armed by main() (_startFightHistoryPersistence).
+const FIGHTS_FILE = path.join(__dirname, 'logsync.fights.json');
+let _fightsFile = FIGHTS_FILE;          // a test points this at a temp file
+let _fightsPersist = false;
+let _fightsSaveTimer = null;
+function _saveFightHistory(file = _fightsFile) {
+  try {
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ savedAt: Date.now(), fights: stats.fightHistory || [] }));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* non-fatal */ }
+}
+function _saveFightHistorySoon() {
+  if (!_fightsPersist || _fightsSaveTimer) return;
+  _fightsSaveTimer = setTimeout(() => { _fightsSaveTimer = null; _saveFightHistory(); }, 5_000);
+  if (_fightsSaveTimer.unref) _fightsSaveTimer.unref();
+}
+// A revision for the overlay: it asks `/api/fight-history?rev=<last one it saw>` and an unchanged ring
+// answers in a few bytes. Seeded per process so a restart can never match a revision from before it.
+const _FIGHTS_BOOT = Date.now().toString(36);
+let _fightsRev = 0;
+function _fightsRevision() { return _FIGHTS_BOOT + '.' + _fightsRev; }
+function _fightsChanged() { _fightsRev++; _saveFightHistorySoon(); }
+// GET /api/fight-history[?rev=…] — the ring the DPS meter's History tab lists. It used to ride every
+// /api/state poll (1–2 Hz, to every overlay and the dashboard) and at 100 fights that is far too much
+// to repeat; the overlay reads it only while History is on screen.
+function _fightHistoryPayload(haveRev) {
+  const rev = _fightsRevision();
+  if (haveRev && haveRev === rev) return { rev, unchanged: true };
+  return { rev, max: FIGHT_HISTORY_MAX, fights: stats.fightHistory || [] };
+}
+function _loadFightHistory(file = _fightsFile, now = Date.now()) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!raw || !Array.isArray(raw.fights)) return;
+    stats.fightHistory = raw.fights.filter(h => h && h.boss);
+    _trimFightHistory(now);
+    _fightsRev++;
+  } catch { /* no file yet, or unreadable: start empty */ }
+}
+// Restored entries the guild never answered for: still inside the bot's window → ask again for what is
+// left of the 40 s / 100 s passes; past it (or nothing to ask with) → settled as it stands, so it stops
+// reading "settling…" and the list says it is this machine's view.
+function _resettleRestoredFights(now = Date.now()) {
+  for (const h of stats.fightHistory || []) {
+    if (!h || h.settled) continue;
+    const age = now - (h.endedMs || 0);
+    if (age < FIGHT_HISTORY_LIVE_WINDOW_MS && _canAskGuildForFights()) _scheduleFightSettle(h, Math.max(0, age));
+    else { h.settled = true; h.settledAt = now; }
+  }
+}
+function _startFightHistoryPersistence() {
+  _loadFightHistory();
+  _resettleRestoredFights();
+  _fightsPersist = true;
 }
 
 // ── Fun-event detection ─────────────────────────────────────────────────────
@@ -44423,6 +44575,10 @@ async function main() {
 
   // Load persisted lifetime stats so the dashboard can show them
   loadStats();
+  // The DPS meter's History: its own file, 7 days, loaded here and NOT consumed (the session snapshot
+  // below is deleted when read and expires after 10 minutes). After _uploadOpts is set above, so a
+  // restored fight the guild never answered for can be asked about again.
+  _startFightHistoryPersistence();
   // Restore in-flight session state if the previous run snapshotted within the
   // last 10 minutes (typical for [U] update-and-restart, or quick Ctrl+C).
   const _sessionRestored = loadSessionState();
@@ -45439,6 +45595,11 @@ module.exports = {
   parseRollItemLine, _cleanRollItemCandidate, ROLL_ITEM_LINK_MS,
   _recordFightHistory, _fightHistoryForTest: () => stats.fightHistory,
   _resetFightHistoryForTest: () => { stats.fightHistory = []; },
+  // Meter History on disk + its own endpoint (2026-10-04).
+  FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
+  _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  // Arm persistence onto a temp file (or, with no argument, disarm it again).
+  _fightHistoryPersistForTest: (file) => { _fightsFile = file || FIGHTS_FILE; _fightsPersist = !!file; },
   _noteMobDeathFromState,
   // CH cast bar / interrupt ✕ / DDR grade — exported for the scratchpad harness.
   trackChChainInterrupt, _chGradeForDelta, _chExpectedNextAt,

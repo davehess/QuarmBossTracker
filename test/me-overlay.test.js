@@ -183,9 +183,10 @@ describe('damage', () => {
     expect(n).toEqual({ dmg: 45000, secs: 150, fights: 2, avg_dps: 300 });
   });
 
-  it('this fight: live damage over elapsed time', () => {
+  it('this fight: live DAMAGE (not threat) over elapsed time', () => {
+    // swing/spell carry threat (a taunt and resists inflate them); dmg is what was actually dealt.
     const et = { startedAt: new Date(Date.now() - 20_000).toISOString(), targetName: 'a Kromrif warrior',
-      perPlayer: { Aldenmar: { swing: 3000, spell: 1000 }, Brackwyn: { swing: 9000 } } };
+      perPlayer: { Aldenmar: { dmg: 4000, swing: 5200, spell: 1360 }, Brackwyn: { dmg: 9000, swing: 9000 } } };
     const s = load({ zeal: zealFor('Aldenmar', { cls: 'Ranger' }), et })._serializeMeState();
     expect(s.dps.fight.dmg).toBe(4000);
     expect(s.dps.fight.dps).toBe(200);

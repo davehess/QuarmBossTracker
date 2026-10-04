@@ -1206,7 +1206,8 @@
       var pp = mi._enc.perPlayer;
       var names = Object.keys(pp);
       var rows = names
-        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: (v.swing||0)+(v.proc||0)+(v.spell||0), took: v.took||0 }; })
+        // Raw damage (dmg), not swing+proc+spell — those are threat, and taunts and resists inflate them.
+        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: v.dmg||0, took: v.took||0 }; })
         .filter(function(r){ return r.dmg > 0 || r.took > 0; })
         .sort(function(a,b){ return b.dmg - a.dmg; })
         .slice(0, 5);
