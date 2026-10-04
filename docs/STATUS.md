@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Buff blocks tab for Quarm's `#blockbuff` (agent 3.7.79 on beta, 2026-10-04).**
+  - Per-character sets, with bard-song starter sets ("Pulling", "No bard run speed") and a damage-shield
+    `#blockbuffif` pair.
+  - Block and allow lines to copy, or Block and Allow socials written now if logged out, else at the next
+    logout.
+  - Two things wait on players: the server's reply text (no parser until someone pastes it), and a
+    bard + monk test of whether a blocked song still pulls the bard in. §157.
 - **✅ Quarm patch notes mirrored into Supabase (bot 3.1.199, 2026-10-04).** The guild lead: "pull everything from" the
   Quarm patch-notes channel. Table `quarm_patch_notes`, full-history sweep plus live new and edited posts, status in
   bot_kv `quarm_patch_notes_sync`. If the rows come back `content_missing`, the Message Content intent is off. §158.
