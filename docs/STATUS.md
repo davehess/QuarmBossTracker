@@ -109,6 +109,9 @@ next touch one rather than assuming a missing row means a missing doc.
   copyable `/map`, `/sit`, `/say`; generated from the website guide (`npm run sync:pop-quests`). The guide's say and
   hand-in steps were filled from Quarm's quest scripts the same day (83 steps, 86 phrases, each cited; beta
   `4c7dbe24`); also on [b.wolfpack.quest/pop/guide](https://b.wolfpack.quest/pop/guide). §141.
+- **⏳ Meter history fixed (agent 3.7.78, Mimic beta, 2026-10-04).** History was threat, not damage (a tank showed
+  1,961 for 100 dealt); pets now fold into owners (no double count), charm breaks keep the pet, 100 fights kept 7 days
+  across restarts. Tank history + Target Info history await picks (`docs/DESIGN-history-and-quest-nav.md`). §153.
 - **⏳ PoP overlay round (web data live; overlay on Mimic beta, 2026-10-04).** Justice trials as six folds, one-line
   briefs on the 23 wordiest steps (full text under More), Aa text size, fixed height that scrolls (no more jumping),
   the mouse shows over it. Catalog navigation awaits the guild lead's pick (`docs/DESIGN-history-and-quest-nav.md`). §152.
