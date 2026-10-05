@@ -4,10 +4,28 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
 } = require('discord.js');
 const { EXPANSION_ORDER, EXPANSION_META, isPopLocked } = require('./config');
+const { shortClockInTz } = require('./timezone');
 
 const ZONE_COLS      = 3;
 const MAX_ROWS       = 5;
 const BUTTONS_PER_ROW = 5;
+const DAY_MS         = 24 * 3600000;
+
+/**
+ * The tag on a boss that is on cooldown. A kill date means nothing on a 3 h
+ * timer, so a boss whose whole timer is 24 h or less shows the Eastern clock
+ * time it is UP again — "up 9:42p" — and a longer timer keeps the kill date
+ * "(m/d)" (the guild lead, 2026-10-05). A timer an officer pushed past a day
+ * out (/updatetimer) falls back to the date: a bare clock time would be
+ * ambiguous there.
+ */
+function cooldownTag(boss, entry, now) {
+  if (Number(boss.timerHours) <= 24 && entry.nextSpawn - now <= DAY_MS) {
+    return `up ${shortClockInTz(entry.nextSpawn)}`;
+  }
+  const d = new Date(entry.killedAt);
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
 
 /**
  * Build panels for ONE expansion only.
@@ -76,8 +94,7 @@ function buildExpansionEmbed(color, title, chunk, killState, now, totalChunks, c
         const entry = killState[boss.id];
         const onCD  = entry && entry.nextSpawn > now;
         if (onCD) {
-          const d = new Date(entry.killedAt);
-          return `💀 ~~${boss.name}~~ (${d.getMonth()+1}/${d.getDate()})`;
+          return `💀 ~~${boss.name}~~ (${cooldownTag(boss, entry, now)})`;
         }
         return `${boss.emoji || '•'} ${boss.name}`;
       });
@@ -123,9 +140,8 @@ function makeBossButton(boss, killState, now) {
   const entry = killState[boss.id];
   const onCD  = entry && entry.nextSpawn > now;
   if (onCD) {
-    const d = new Date(entry.killedAt);
     return new ButtonBuilder().setCustomId(`kill:${boss.id}`)
-      .setLabel(`💀 ${boss.name} (${d.getMonth()+1}/${d.getDate()})`.slice(0, 80))
+      .setLabel(`💀 ${boss.name} (${cooldownTag(boss, entry, now)})`.slice(0, 80))
       .setStyle(ButtonStyle.Secondary);
   }
   return new ButtonBuilder().setCustomId(`kill:${boss.id}`)
@@ -133,4 +149,4 @@ function makeBossButton(boss, killState, now) {
     .setStyle(ButtonStyle.Danger);
 }
 
-module.exports = { buildExpansionPanels, buildAllExpansionPanels, makeBossButton, EXPANSION_ORDER, EXPANSION_META };
+module.exports = { buildExpansionPanels, buildAllExpansionPanels, makeBossButton, cooldownTag, EXPANSION_ORDER, EXPANSION_META };

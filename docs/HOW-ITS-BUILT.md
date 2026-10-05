@@ -370,7 +370,14 @@ slot is expected rather than a bug. Behaviour-tested by
 executing the helper (`test/reporter-claim.test.js`).
 
 ### Raid timers & boards
-`data/bosses.json` (hot-reloaded, 133 bosses) defines spawn windows.
+`data/bosses.json` (hot-reloaded, 158 bosses) defines spawn windows.
+**Short-timer PoP named (bot 3.1.204, 2026-10-05):** Bastion of Thunder's eight named at 3 h and the
+24 h named from Quarm's Oct 4–5 notes sit on the PoP board per zone. A timer ≤ 24 h labels its button with
+the Eastern time it is up (`cooldownTag` in `utils/board.js`, `shortClockInTz`); ≤ 6 h bosses
+(`isShortTimerBoss`) get no warning / spawned post / Historic line and stay out of "Spawning in 24 Hours".
+`lockout: false` on those named = no character lockout from a kill (`utils/killLockouts.js`).
+`findBossFromName` partial matches are whole words, and a boss name inside a longer "a/an …" or
+"… of <boss>" mob is trash (the Ture / "tortured" false kills).
 Kills arrive via `/kill`-family commands or agent `bosskill` uploads
 (instance kills auto-start timers). `#raid-mobs` holds four fixed message
 slots + one thread per expansion (cooldown card, zone kill cards, board
@@ -892,7 +899,8 @@ Dashboard card (💬 Send feedback) + tray item, both landing on
 adds `log_excerpt`, `log_meta`, `client`, `client_version`, `platform`) and the
 officer feedback thread.
 **The slice**: `buildFeedbackLogSlice(minutes)` tails the newest watched log,
-keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB.
+keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB. Over the cap it keeps the
+NEWEST lines (agent 3.7.81; it kept the oldest before, so FB-51's excerpt ended 44 min early).
 ⚠ **Redaction REUSES `triggerVisibleLine`** — the same audited predicate the
 local trigger engine is gated on — plus a `/who` + location drop. Never
 hand-roll a second filter: this one is already the privacy boundary, and a
@@ -1642,6 +1650,33 @@ dropped at the **byte level before parse** (`docs/PRIVACY.md`). Modes:
 `--watch` (default), `--since <ISO>` backfill, `--once`, `--dry-run`.
 Dashboard on `localhost:7777` — see the escape-hazard + rendering rules in
 `CLAUDE.md` (one giant template literal; run `npm run check:dashboard`).
+**Lag meter (agent 3.7.82, beta, §163; 3.7.83 reads the Quarm client's eqhost.txt):** Windows only, local
+only. Pings the default gateway (`route print -4 0.0.0.0`, lowest metric) and the login server from
+`<EQ>/eqhost.txt` (the Quarm/TAKP client's `[Login Servers]` block of quoted `"host:port"` entries, or the
+classic `[LoginServer]` + `Host=`; `[Registration Servers]` is ignored) once a
+second, as counted `ping -n 300` runs (an endless `ping -t` would be orphaned: Mimic stops the agent with
+TerminateProcess, so exit handlers never run). 30-min ring per target, samples marked with
+`_liveFightActive()`. Pure `_netStats` / `_netVerdict` (home = router line bad; beyond = only the server
+line bad). `GET /api/net`, `POST /api/net/toggle` (pref `net_meter_off`). Shown on the dashboard's
+Diagnostics "📶 Connection" card (`renderNetMeter`) and one line on the Tick overlay (`zealhealth.html`).
+Tests: `test/net-meter.test.js`.
+**Two silence guards (agent 3.7.81, FB-51):**
+- **Tail watchdog** (`tailFile` + `_tailStalled`): the read loop is a setTimeout chain over
+  `fs.promises`, so one call that never settles would end it silently. A per-file watchdog (sync
+  fs, nothing while healthy) warns `[tail] … reads stopped` after 15 s, reads synchronously until
+  the async reader recovers, and a generation counter stops double delivery. Status in `_tailStatus`.
+- **Log-silent check** (`_logSilentCheck` / `_logSilentSweep`, every 30 s): Zeal has the primary
+  character in game (live state < 60 s) but their log has had no line for 5 min → one
+  `[log-silent]` warning per episode and `logSilent` on `/api/state`. The case it was
+  built for: EverQuest stopped writing a 540 MB log mid-session; the agent was healthy and had
+  nothing to read. Drawn as a header banner since agent 3.7.85 (3.7.81 served it, nothing rendered it).
+- **🗄 Archive log & start fresh** (agent 3.7.85, `_archiveLogNow`, `POST /api/log/archive`): the
+  sweep's `LogArchive/` rename on demand, stamp with seconds, empty file left behind, `manual:true` in
+  `logRotations`; `in_use` when EQ holds the file (→ `/log off`, click again, `/log on`). Buttons on
+  the log-silent banner and in the Info tab's 🗂 Log archiving card. `tailFile`'s size < pos reset
+  picks up the new file.
+⚠ **Log archiving (`_logRotateSweep`, 500 MB) never runs in watch mode.** Its timers are inside
+the `--once` branch, which exits within seconds; found 2026-10-05, not changed (§162).
 
 ### Durable upload queue
 Every outbound POST persists to `logsync.queue.json`; 15s drain, exponential
@@ -2304,8 +2339,17 @@ Tests: `test/tag-setup-keys.test.js`, `test/tag-autojoin-file-write.test.js`.
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
-resolution, drag/snap editor, writes back with `.bak` (`write-bundle`) or
-defers until logout (`defer-save` + background watcher).
+resolution, drag/snap editor, writes back with `.bak` or defers until logout
+(`defer-save` + background watcher).
+**Save sends KEY EDITS, not file texts** (since 2026-10-05, the guild lead's pick A; DECISIONS-2026-09-21
+§164): `_buildSaveEdits` lists only the windows moved or resized in this session (every window when the
+layout is rescaled to another resolution block), and main's `_applyUiKeyEdits` re-reads each file and
+changes only those keys (`apps/mimic/iniKeyEdits.js`, shared with the hotbar-pages writer), both for an
+immediate Save (`ui-studio-write-edits`) and for the after-logout save (`_applyDeferredEntry`, onto the file
+EQ just wrote, `.bak-eq`). Before, Save rebuilt whole files from the copy read at Load and wrote every
+window, the ~50 hidden bag windows included, so it put back everything EQ had saved since. Pending saves
+queued by an older Mimic (whole texts) are dropped at load. A cloud backup loaded into the editor (📥
+Restore) still writes whole files (`write-bundle`) and refuses while the character is logged in.
 ⚠ **The bundle is SEVERAL files, and only ONE of them is the one EQ reads.**
 `_readUiBundle` enumerates the per-character inis and then catch-alls any other
 `.ini` belonging to the character (server-suffix variants, `/loadskin`
@@ -2458,7 +2502,11 @@ restart (`saveSessionState.fightHistory`), dedups peer flushes within 8 s, marks
 for that fight's own snapshots. A fight also closes when your own Zeal target turns
 into its corpse or hits 0% (`_noteMobDeathFromState` →
 `EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
-HUD (`me.html`): enrage zone 10% (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`),
+HUD per-mob ⚡ procs / ✦ stuns-aggro (agent 3.7.88): `_meNoteHit` proc flag + `_meNoteMyLanding` (catalog
+cc 'stun' or `hate` > 0, bot 3.1.205), keyed name#spawn id → `/api/me` `target.my_procs` / `my_stuns`;
+drawn above the DS badge, builder part `procs`.
+HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
+on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
 from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:
@@ -3442,7 +3490,15 @@ The raid on the zone map, live, for signed-in members.
 - **Map:** `/api/spectator/map?zone=` → `web/lib/zoneMap/` (`slice.ts` cuts walls out of the EQEmu collision
   mesh; `brewall.ts` parses Brewall's lines as Zeal ships them; `load.ts` fetches both). Cached per zone in
   `zone_map_lines` (service role only). Brewall's files are never committed here.
-- **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`.
+- **Recording for replay (bot 3.1.203, §161):** `utils/raidTrack.js`. The raid-roster ingest hands its rows to
+  `noteRows()` (memory only); every 3 s the freshest real position per raider becomes a frame; each finished
+  minute is ONE row in `raid_track_minutes` (compact JSON text: who, zones, frames), zone stamped per uploader
+  from `character_live_state`. `exclude_from_stats` characters are never written. Kept indefinitely; the Tower
+  archive (`scripts/lib/archive-merge.sql`) creates the table there and keeps every row. A sweep exists but is
+  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`. No replay page yet:
+  the look is the guild lead's pick (§161).
+- **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
+  `test/raid-track.test.js`.
 
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes

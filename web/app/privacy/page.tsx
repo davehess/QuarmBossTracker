@@ -70,6 +70,7 @@ const SWITCHES: { name: string; where: string; does: string; doesnt: string }[] 
 const RETENTION: [string, string][] = [
   ['Who targeted what', '1 day'],
   ['Raid roster with positions', 'about a day'],
+  ['Raid positions kept for replay (one sample every few seconds)', "Kept for now; the Archive's copy is permanent"],
   ['Buffs and debuffs seen landing', '7 days'],
   ['Per-hit parse detail', '7 days (the parse totals are kept)'],
   ['Threat snapshots', '30 days is the rule; the clean-up has fallen behind, so older ones exist today'],
@@ -183,6 +184,11 @@ export default function PrivacyPage() {
           <li>the folders of GINA and EQLogParser, if you have them, so it can offer to import your triggers;</li>
           <li>the list of running programs, to see whether EverQuest is running.</li>
         </Bullets>
+        <p>
+          <B>What Mimic sends from your PC on its own.</B> The beta Mimic pings your router and the Quarm login
+          server named in your <code>eqhost.txt</code> once a second, to draw the lag meter on its Diagnostics tab.
+          The results stay on your PC; switch it off on that card.
+        </p>
         <p>
           It <B>never</B> records keystrokes, captures your screen, or reads your browser, passwords or
           clipboard. It uses a few global hotkeys you set; that is not a keyboard hook.
@@ -436,7 +442,7 @@ export default function PrivacyPage() {
           {([
             ['ONLY YOU', 'bg-purple/20 text-purple border-purple/40', <>Your relayed tells; your <Link href="/me" className="text-blue hover:underline">/me</Link> page.</>],
             ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. Two switches on /me share them with members, separately: <B>Quest page</B> and <B>Inventory page</B>.</>],
-            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP, buffs and those timers — that&apos;s how the buff queue and Target Info work. While you are in a raid, your latest position in the zone is shown to signed-in members on the <Link href="/spectator" className="text-blue hover:underline">spectator page</Link> (live only; nothing new is stored).</>],
+            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP, buffs and those timers — that&apos;s how the buff queue and Target Info work. While you are in a raid, your latest position in the zone is shown to signed-in members on the <Link href="/spectator" className="text-blue hover:underline">spectator page</Link>, and kept, one sample every few seconds, so a raid can be replayed. Characters set to exclude from stats are never kept.</>],
             ['OFFICERS', 'bg-gold/20 text-gold border-gold/40', <>The admin pages cover all of it, including chat history, member page views and feedback.</>],
             ['DISCORD', 'bg-blue/20 text-blue border-blue/40', <>Whoever can read the channel: relayed guild and raid chat, parse cards (which name deaths), the night&apos;s damage leaderboard, deathrolls, PvP kills and feedback.</>],
             ['ANON', 'bg-panel text-dim border-border', <>Guild-wide totals with <B>no names</B> (&ldquo;the Pack summoned 4,000 stacks of food&rdquo;).</>],

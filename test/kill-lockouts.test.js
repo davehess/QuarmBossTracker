@@ -160,6 +160,16 @@ describe('buildKillLockouts', () => {
     expect(buildKillLockouts({ ...base, boss: { ...VENTANI, timerHours: 0 } })).toEqual([]);
   });
 
+  // The PoP named moved to 3 h / 24 h respawns (2026-10-05) are board timers, not engage locks.
+  it('files no lockout for a respawn-only named (lockout: false), and every new PoP named is one', () => {
+    expect(buildKillLockouts({ ...base, boss: { ...VENTANI, lockout: false } })).toEqual([]);
+    expect(buildKillLockouts(base).length).toBeGreaterThan(0);
+    const bosses = require('../data/bosses.json');
+    for (const id of ['gaukr_sandstorm', 'eindride_icestorm', 'banord_paffa', 'the_sleep_walker', 'manaetic_prototype_xi']) {
+      expect(bosses.find(b => b.id === id)?.lockout).toBe(false);
+    }
+  });
+
   it('refuses incomplete input', () => {
     expect(buildKillLockouts({ ...base, boss: null })).toEqual([]);
     expect(buildKillLockouts({ ...base, participants: [] })).toEqual([]);

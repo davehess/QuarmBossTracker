@@ -63,6 +63,27 @@ create table if not exists archive_meta.merge_log (
   rows_kept   bigint          -- archive only: rows we hold that the snapshot lost
 );
 
+-- Tables created upstream AFTER this archive was built never arrive on their own: the merge only
+-- touches tables that exist on BOTH sides, and a table missing here is skipped without a word
+-- (faction_hits and encounter_threat_graph went that way). An archive table that must not be
+-- missed is therefore created here, with the same definition as its migration.
+-- raid_track_minutes: the raid replay recorder, one row per minute of positions
+-- (migration 20261005020000; the guild lead, 2026-10-05: "captured to the local tower backup and
+-- kept there").
+create table if not exists public.raid_track_minutes (
+  guild_id   text        not null,
+  minute_at  timestamptz not null,
+  night_key  text,
+  raiders    integer     not null default 0,
+  frames     integer     not null default 0,
+  zones      text[]      not null default '{}',
+  data       text        not null,
+  created_at timestamptz not null default now(),
+  primary key (guild_id, minute_at)
+);
+create index if not exists raid_track_minutes_minute_at_idx on public.raid_track_minutes (minute_at);
+create index if not exists raid_track_minutes_night_idx on public.raid_track_minutes (guild_id, night_key);
+
 -- The two passes must agree on what a table's primary key is, so they ask the
 -- same function rather than each carrying a copy of the catalog query.
 create or replace function archive_meta.pk_columns(p_table text)
@@ -104,7 +125,9 @@ declare
     'chat_messages', 'tells', 'fun_events', 'looted_items', 'loot_observations',
     'roll_sets', 'roll_set_overrides', 'pvp_kills', 'pvp_assists',
     'pvp_boss_kills', 'trigger_timing_feedback', 'zeal_tag_observations',
-    'page_views', 'audit_log'
+    'page_views', 'audit_log',
+    -- raid replay positions: kept here forever, whatever production keeps
+    'raid_track_minutes'
   ];
   missing       text;
   merge_order   text[];            -- parents first, children after

@@ -304,7 +304,8 @@ It edits **EverQuest's own ini files**, not Mimic overlays. Window geometry for 
 numeric X/Y/W/H). Rescale source→target (positions scale, sizes stay; skin XML design sizes only for
 windows the ini gives no size). Save writes only the target-resolution block through
 `_backupAndWriteFile` (`.bak-<ts>`, atomic rename); a **deferred save** applies after logout when
-the character is live in Zeal (`userData/ui-studio-pending.json`, checked every 8 s). Hotbar pages /
+the character is live in Zeal (`userData/ui-studio-pending.json`, checked every 8 s). Since 2026-10-05
+both write only the moved windows' keys into the file as it is on disk (`_applyUiKeyEdits`). Hotbar pages /
 UI inspector (hotbutton keys, socials, chat `ChannelMap` routing, macro suggestions; blocked while
 EQ runs). Spell-set bulk swap. PvP sets (bundled templates, class prompt, preview, import as a `.md`).
 ☁ Backup uploads the plaintext bundle to the bot (`/api/agent/ui_layout`, encrypted there) with

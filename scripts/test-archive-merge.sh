@@ -101,6 +101,17 @@ create table public.page_views (id bigint generated always as identity primary k
 insert into public.page_views (id, path) overriding system value values (1,'/raid');
 create table snap.page_views (id bigint primary key, path text);
 insert into snap.page_views values (1,'/raid'),(2,'/parses');
+
+-- CREATED BY THE MERGE: raid_track_minutes exists upstream but not in this
+-- archive yet (no public table here). The merge script creates it, then
+-- archives it like every other archive table.
+create table snap.raid_track_minutes (guild_id text not null, minute_at timestamptz not null,
+       night_key text, raiders int not null default 0, frames int not null default 0,
+       zones text[] not null default '{}', data text not null,
+       created_at timestamptz not null default now(), primary key (guild_id, minute_at));
+insert into snap.raid_track_minutes (guild_id, minute_at, raiders, frames, data)
+     values ('wolfpack','2026-10-07 00:00:00+00',40,20,'{"v":1}'),
+            ('wolfpack','2026-10-07 00:01:00+00',41,20,'{"v":1}');
 SQL
 
 fail=0
@@ -140,6 +151,15 @@ check "identity column takes the snapshot's id"   "$(q 'select count(*) from pag
 check "rows_before is counted pre-delete"         \
   "$(q "select rows_before||'->'||rows_after from archive_meta.merge_log
           where table_name='bosses_local' order by id limit 1")" "2->1"
+check "merge creates raid_track_minutes and fills it" "$(q 'select count(*) from raid_track_minutes')" 2
+
+# Production later drops a minute (a retention sweep, if one is ever turned on):
+# the archive keeps it.
+run -q -c "delete from snap.raid_track_minutes where minute_at = '2026-10-07 00:00:00+00'"
+if ! run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; then
+  echo "  FAIL merge after the raid_track prune errored:"; sed -n '1,12p' "$OUT" | sed 's/^/       /'; fail=1
+fi
+check "raid_track_minutes keeps a minute production dropped" "$(q 'select count(*) from raid_track_minutes')" 2
 
 # LAST, because it leaves the database unmergeable: an allowlisted ARCHIVE table
 # the snapshot lacks must STOP the run, never be skipped. That silent skip is how

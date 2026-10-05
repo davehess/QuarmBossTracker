@@ -278,7 +278,7 @@ const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
-const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
+const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
 
 function getBosses() {
   delete require.cache[require.resolve('./data/bosses.json')];
@@ -2750,29 +2750,36 @@ function startSpawnChecker(readyClient) {
         const remaining = entry.nextSpawn - now;
         const expansion = getBossExpansion(boss);
         const threadId  = getThreadId(expansion);
+        // A 3 h boss is on the board and in Active Cooldowns but posts no 30-min
+        // warning, no "spawned" message and no Historic Kills line — it would be
+        // eight bosses every three hours (the guild lead, 2026-10-05). The
+        // clearKill + board refresh below still run, so its button flips to "up".
+        const quiet = isShortTimerBoss(boss);
 
         // ── Boss has spawned ───────────────────────────────────────────────
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
           alertedSoon.delete(boss.id);
 
-          // Archive zone card
-          await archiveZoneCardEntry(readyClient, boss, bosses, state, historyThread);
+          // Archive zone card (a quiet boss still drops off the card, minus the history line)
+          await archiveZoneCardEntry(readyClient, boss, bosses, state, quiet ? null : historyThread);
 
           // Update the "soon" alert message in place to "spawned", or post new spawned msg
-          const alertMsgId = getSpawnAlertMessageId(boss.id);
-          const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
-          const spawnedEmbed = buildSpawnedEmbed(boss);
-          if (alertMsgId) {
-            try {
-              const alertMsg = await target.messages.fetch(alertMsgId);
-              await alertMsg.edit({ embeds: [spawnedEmbed] });
-            } catch {
+          if (!quiet) {
+            const alertMsgId = getSpawnAlertMessageId(boss.id);
+            const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
+            const spawnedEmbed = buildSpawnedEmbed(boss);
+            if (alertMsgId) {
+              try {
+                const alertMsg = await target.messages.fetch(alertMsgId);
+                await alertMsg.edit({ embeds: [spawnedEmbed] });
+              } catch {
+                await target.send({ embeds: [spawnedEmbed] });
+              }
+              clearSpawnAlertMessageId(boss.id);
+            } else {
               await target.send({ embeds: [spawnedEmbed] });
             }
-            clearSpawnAlertMessageId(boss.id);
-          } else {
-            await target.send({ embeds: [spawnedEmbed] });
           }
 
           clearKill(boss.id);
@@ -2785,7 +2792,7 @@ function startSpawnChecker(readyClient) {
         if (remaining > 30 * 60 * 1000) { alertedSpawned.delete(boss.id); alertedSoon.delete(boss.id); }
 
         // ── 30 min warning ─────────────────────────────────────────────────
-        if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
+        if (!quiet && remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           const target = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
           const sent = await target.send({ embeds: [buildSpawnAlertEmbed(boss)] });
@@ -3430,6 +3437,36 @@ function scheduleMidnightSummary(readyClient) {
         }
       } catch (err) {
         console.warn('[midnight] raid_roster retention skipped:', err?.message);
+      }
+
+      // ── Retention sweep: raid_track_minutes ───────────────────────────────
+      // The raid replay recorder (utils/raidTrack.js) writes one row per UTC minute while a raid
+      // is up, ~2–4 MB a night. Every raid is KEPT until storage becomes an issue (the guild lead,
+      // 2026-10-05), so this is off unless RAID_TRACK_RETENTION_DAYS is set to a number of days.
+      // Even then it deletes only what the Tower archive already holds — the same fail-closed gate
+      // as the threat-snapshot sweep: bot_kv `archive_watermark_raid_track_minutes` = { through:
+      // ISO } ("every minute at or before this is on Tower"). No watermark → delete nothing.
+      // minute_at leads its own index (migration 20261005020000), so the delete does not seq-scan.
+      try {
+        const supabase = require('./utils/supabase');
+        const retainDays = parseInt(process.env.RAID_TRACK_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 0;
+        if (supabase.isEnabled() && keep > 0) {
+          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const rows = await supabase.select('bot_kv',
+            `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.archive_watermark_raid_track_minutes&select=value&limit=1`);
+          const raw = Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.through;
+          const archivedThrough = raw ? Date.parse(raw) : NaN;
+          if (!Number.isFinite(archivedThrough)) {
+            console.warn('[midnight] raid_track_minutes retention skipped: no Tower archive watermark — nothing deleted');
+          } else {
+            const cutoff = new Date(Math.min(Date.now() - keep * 24 * 60 * 60 * 1000, archivedThrough)).toISOString();
+            await supabase.del('raid_track_minutes', `minute_at=lt.${encodeURIComponent(cutoff)}`);
+            console.log(`[midnight] swept raid_track_minutes before ${cutoff} (archived on Tower)`);
+          }
+        }
+      } catch (err) {
+        console.warn('[midnight] raid_track_minutes retention skipped:', err?.message);
       }
 
       // ── Retention sweep: who_observations ─────────────────────────────────
@@ -10452,6 +10489,17 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
         return out.length ? out : null;
       }
+      // Hate a spell ADDS to its target: effect 92 (instant hate) with a POSITIVE base — the Terror
+      // line, Taunting / Enraging Blow, Pique (checked against the live catalog 2026-10-05). A
+      // negative base takes hate OFF (Jolt, Concussion), so it is not a hate spell. The agent's Me HUD
+      // counts a landing of one as an "aggro" spell beside the stuns (the guild lead, 2026-10-05).
+      function _hateAdded(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : [r.effect_id_1, r.effect_id_2, r.effect_id_3];
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : [r.effect_base_value_1, r.effect_base_value_2, r.effect_base_value_3];
+        let sum = 0;
+        for (let i = 0; i < eff.length; i++) if (Number(eff[i]) === 92 && Number(base[i]) > 0) sum += Number(base[i]);
+        return sum > 0 ? sum : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -10565,6 +10613,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             ds_heal: _dsHealMagnitude(r) || undefined,
             // Crowd control on a detrimental spell (_ccKinds), e.g. ['mez'].
             cc: _ccKinds(r) || undefined,
+            // Hate the spell adds (_hateAdded) — omitted for the ~99% that add none.
+            hate: _hateAdded(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
@@ -12857,6 +12907,9 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
 if (process.env.RAID_TICK_CAPTURE !== '0') {
   setInterval(() => { _captureRaidTickIfDue().catch(err => console.warn('[raid-tick] pass failed:', err?.message)); }, 60_000);
 }
+
+// Raid replay recorder (utils/raidTrack.js): folds the roster uploads into one row per minute.
+require('./utils/raidTrack').start();
 
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
@@ -17946,6 +17999,8 @@ async function _handleAgentRaidRoster(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
+  // Hand the positions to the raid replay recorder (memory only, no I/O, never throws).
+  try { require('./utils/raidTrack').noteRows(rows, identity.discord_id); } catch {}
   try {
     // Plain upsert per (guild, uploader, name) — merge-duplicates (#72 item 2.1).
     // This replaced the old DELETE-then-upsert: one round trip instead of two
