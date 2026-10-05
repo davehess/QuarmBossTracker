@@ -1643,6 +1643,16 @@ dropped at the **byte level before parse** (`docs/PRIVACY.md`). Modes:
 `--watch` (default), `--since <ISO>` backfill, `--once`, `--dry-run`.
 Dashboard on `localhost:7777` — see the escape-hazard + rendering rules in
 `CLAUDE.md` (one giant template literal; run `npm run check:dashboard`).
+**Lag meter (agent 3.7.82, beta, §163; 3.7.83 reads the Quarm client's eqhost.txt):** Windows only, local
+only. Pings the default gateway (`route print -4 0.0.0.0`, lowest metric) and the login server from
+`<EQ>/eqhost.txt` (the Quarm/TAKP client's `[Login Servers]` block of quoted `"host:port"` entries, or the
+classic `[LoginServer]` + `Host=`; `[Registration Servers]` is ignored) once a
+second, as counted `ping -n 300` runs (an endless `ping -t` would be orphaned: Mimic stops the agent with
+TerminateProcess, so exit handlers never run). 30-min ring per target, samples marked with
+`_liveFightActive()`. Pure `_netStats` / `_netVerdict` (home = router line bad; beyond = only the server
+line bad). `GET /api/net`, `POST /api/net/toggle` (pref `net_meter_off`). Shown on the dashboard's
+Diagnostics "📶 Connection" card (`renderNetMeter`) and one line on the Tick overlay (`zealhealth.html`).
+Tests: `test/net-meter.test.js`.
 **Two silence guards (agent 3.7.81, FB-51):**
 - **Tail watchdog** (`tailFile` + `_tailStalled`): the read loop is a setTimeout chain over
   `fs.promises`, so one call that never settles would end it silently. A per-file watchdog (sync

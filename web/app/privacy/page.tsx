@@ -185,6 +185,11 @@ export default function PrivacyPage() {
           <li>the list of running programs, to see whether EverQuest is running.</li>
         </Bullets>
         <p>
+          <B>What Mimic sends from your PC on its own.</B> The beta Mimic pings your router and the Quarm login
+          server named in your <code>eqhost.txt</code> once a second, to draw the lag meter on its Diagnostics tab.
+          The results stay on your PC; switch it off on that card.
+        </p>
+        <p>
           It <B>never</B> records keystrokes, captures your screen, or reads your browser, passwords or
           clipboard. It uses a few global hotkeys you set; that is not a keyboard hook.
         </p>

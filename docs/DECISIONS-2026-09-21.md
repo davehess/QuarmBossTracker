@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
 | **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
 | **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls. **Raid replay (§161):** recorder built (bot 3.1.203 on `claude/sharp-lamport-dC0TW`, migration applied), NOT on main yet; every raid kept, Tower keeps a permanent copy once its merge script is updated | the guild lead: release bot 3.1.203 to main before Wednesday's raid or nothing is recorded; copy the new `archive-merge.sql` onto Tower (or a local session does); look at the spectator on the next raid night; pick the replay look (A night scrubber / B fight replays / C trails). A session: replay previews on b.wolfpack.quest after Wednesday; target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
@@ -7183,3 +7184,27 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   before reaching them. That is how the log reached 540 MB. Wiring it into watch mode would start renaming
   members' logs for the first time, so it waits on the guild lead's yes.
 - Also noted: the bug-report preview shows the first 400 lines of the kept slice (now the oldest of the newest).
+
+### 163. A lag meter in Mimic (2026-10-05)
+- **Ask (the guild lead):** a member "is complaining about lag. can we help diagnose network lag?" Nothing on any
+  surface measured a player's connection to the server (the buff queue's "lag?" button is about that overlay).
+- **Offered:** A — check-now `pathping` button; B — always-on meter; C — lag inferred from the log. **Picked B**
+  (*"Lets go with B"*).
+- **Built (agent 3.7.82, beta `874ccbfd`):** two targets pinged once a second from the player's PC: the default
+  gateway and the login server in `eqhost.txt` (read per install, never hard-coded; it is the route to the host,
+  not an exact zone ping). The verdict splits home network from beyond it, which is the question a lag complaint
+  needs answered. Samples are marked when a fight is live. Diagnostics card + one Tick overlay line.
+- **eqhost.txt has two shapes (agent 3.7.83, `899b2ded`):** the guild lead's file is the Quarm/TAKP client's
+  `[Login Servers]` block of quoted `"loginserver.takproject.net:6000"` entries, not the classic
+  `[LoginServer]` + `Host=` the first parser expected, so 3.7.82 would have pinged only the router on a real
+  install. The parser reads both; `[Registration Servers]` is ignored.
+- **The login server is a fair proxy for the zone server (measured 2026-10-05):** Resource Monitor on the guild
+  lead's PC showed eqgame.exe sending to 70.35.159.26 while in a zone; the login server
+  (`loginserver.takproject.net`) resolves to 70.35.159.18, the same /24, so the route is the same until the
+  last hop. No zone-server override needed for now. (Finding the address without admin rights is not possible
+  for UDP: `netstat` shows no remote end, and Resource Monitor needs elevation.)
+- **Local only, on by default, switchable off;** `PRIVACY.md` and `/privacy` say so (web 1.8.101).
+- **Counted pings, not `ping -t`:** Mimic kills the agent with TerminateProcess on Windows, so an endless ping
+  would outlive every restart. A counted run dies within 5 minutes at worst.
+- **Not yet seen on Windows:** the parser was checked against hand-written English and localized output and a
+  fake ping on Linux. Next: a beta tester (or the member who reported the lag) runs it and sends the Copy summary.

@@ -236,6 +236,12 @@ Your own opt-outs don't stop this — that was a deliberate choice (the guild
 lead, 2026-08-13), because the fight happened to everyone in it. If you want
 something removed, ask.
 
+## Lag meter (beta Mimic, on by default, never uploaded)
+
+The beta Mimic (agent 3.7.82 and later) pings your router and the Quarm login server named
+in your `eqhost.txt` once a second to draw a latency and packet-loss graph on its
+Diagnostics tab. The results stay on your PC. Switch it off on the 📶 Connection card.
+
 ## Crash reports (off by default)
 
 Turn on *Share crash reports* in the tray menu. Mimic then sends, for each Zeal

@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'lag-meter-2026-10-05',
+    title: 'Lag meter',
+    version: 'Agent 3.7.83 beta · Web 1.8.101',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic shows whether your lag is your home network or past it.',
+    features: [
+      { name: 'Connection card', blurb: 'On the Diagnostics tab: two lines over the last ten minutes, your router and the Quarm server, pinged once a second, with lost packets marked and fights shaded. If your router line spikes, it is your Wi-Fi or home network; if only the server line does, it is your internet provider or the server. Copy summary gives you a short paragraph to paste in Discord. It stays on your PC and you can switch it off.' },
+      { name: 'Tick overlay', blurb: 'One line, “📶 Quarm 48 ms · 0% loss”, amber or red when it is bad.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'log-silent-2026-10-05',
     title: 'When EverQuest stops logging',
     version: 'Agent 3.7.81 beta',
