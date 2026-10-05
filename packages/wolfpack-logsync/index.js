@@ -18333,6 +18333,15 @@ function renderHeader(s) {
   } else if (cp.down && cp.reason === 'floor') {
     h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">⚠ <b>Your agent is below the guild minimum</b> (v' + esc(s.version) + '). Uploads are paused until you update — press <b>[U]</b> or the ↻ Update button. Your overlays keep working on local data.</div>';
   }
+  // FB-51: EverQuest stopped writing the log while Zeal still sees the character. Static text +
+  // s.logSilent (silentSince is the last line's time, not "now") → byte-stable across polls.
+  if (s.logSilent) {
+    h += '<div class="banner" style="background:#3a2a0a;color:#f6c365;border:1px solid #6b5320">'
+       + '📜 <b>Your EverQuest log has gone quiet</b> (<code>' + esc(s.logSilent.file) + '</code>) while ' + esc(s.logSilent.character) + ' is in game. '
+       + 'Triggers and parses need that file. Type <b>/log on</b> in EverQuest, or start a fresh file. '
+       + '<button class="btn" style="margin-left:6px" data-char="' + esc(s.logSilent.character) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button>'
+       + '</div>';
+  }
   if (hasNewer) h += '<div class="banner update">★ Update available — <button id="updateBtn" style="margin-left:8px;background:#fff;color:#000;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:bold">Install now</button></div>';
   if (s.sessionResumed)  h += '<div class="banner resumed">↻ Session resumed from previous run</div>';
   // Stale-backfill nudge. Lives in the header (always visible across tabs)
@@ -23361,6 +23370,19 @@ function renderInfo(s) {
       h += '<div class="dim" style="font-size:12px;margin-bottom:4px">Log archiving is <b>off</b>. Big log files will keep growing.</div>';
       h += '<button class="btn" onclick="wpLogRotateToggle(0)">Turn log archiving on</button>';
     }
+    // Manual archive (the guild lead, 2026-10-05, FB-51): one button per watched character, whatever the size.
+    // Names only — no sizes or times — so the section stays byte-stable across polls.
+    const _archChars = [];
+    (s.watchedLogs || []).forEach(function (w) {
+      if (w && w.character && _archChars.indexOf(w.character) < 0) _archChars.push(w.character);
+    });
+    if (_archChars.length) {
+      h += '<div style="margin-top:8px;font-size:11px" class="dim">Want a clean start? Move a log into <code>LogArchive</code> now. Nothing is deleted.</div>';
+      _archChars.forEach(function (c) {
+        h += '<div style="margin-top:4px"><button class="btn" data-char="' + esc(c) + '" onclick="wpLogArchive(this)">🗄 Archive log &amp; start fresh</button> '
+          + '<span class="dim" style="font-size:11px">' + esc(c) + '</span></div>';
+      });
+    }
     h += '</div>';
   }
   h += '<div class="card"><h2>🏷 Zeal tag capture</h2>';
@@ -27795,6 +27817,28 @@ async function dismissTopDamage(key) {
     fetch('/api/log-rotate/seen', { method: 'POST' })
       .then(function () { location.reload(); }).catch(function () {});
   }
+  // "Archive log & start fresh" (the guild lead, 2026-10-05, FB-51). Result goes through alert():
+  // the sections repaint every poll, so a message element inside one would be wiped.
+  function wpLogArchive(btn) {
+    var ch = btn && btn.getAttribute('data-char');
+    if (!ch) return;
+    if (!confirm('Move ' + ch + '’s EverQuest log into the LogArchive folder and start a fresh one? Nothing is deleted.')) return;
+    fetch('/api/log/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: ch }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        alert('Archived to LogArchive\\\\' + j.archived_name + '. In EverQuest type /log off, then /log on, so EQ starts writing the new file.');
+      } else if (j && j.reason === 'in_use') {
+        alert('EverQuest still has the log open. In game type /log off, click again, then /log on.');
+      } else if (j && j.reason === 'not_found') {
+        alert('That log is no longer being watched, so nothing was archived.');
+      } else {
+        alert('Could not archive the log: ' + ((j && j.message) || 'unknown error'));
+      }
+    }).catch(function (err) { alert('Could not archive the log: ' + (err && err.message || err)); });
+  }
   function wpLogRotateToggle(off) {
     fetch('/api/log-rotate/toggle', {
       method: 'POST',
@@ -31091,6 +31135,17 @@ function startWebDashboard(port) {
         _saveAgentPrefs({ log_rotate_off: off });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _logRotateEnabled() }));
+      }
+
+      // POST /api/log/archive { character } — "Archive log & start fresh" (the guild lead, 2026-10-05).
+      // Moves that character's watched log into LogArchive/ and leaves an empty file behind.
+      if (req.url === '/api/log/archive' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let character = '';
+        try { character = String(JSON.parse(body || '{}').character || ''); } catch { character = ''; }
+        const out = _archiveLogNow(character);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(out));
       }
 
       // 📶 Connection meter (local only, nothing uploaded). GET /api/net is the whole picture the
@@ -45659,6 +45714,51 @@ function _rotateArchiveName(logPath, nowMs) {
               + '-' + pad(d.getHours()) + pad(d.getMinutes());
   return path.basename(logPath).replace(/\.txt$/i, '') + '.' + stamp + '.txt';
 }
+// Same name with SECONDS appended to the stamp (…-HHMMSS.txt). A separate wrapper rather than a flag
+// so _rotateArchiveName's text and output stay exactly what test/log-rotate.test.js slices and pins.
+function _rotateArchiveNameSeconds(logPath, nowMs) {
+  const sec = String(new Date(nowMs).getSeconds()).padStart(2, '0');
+  return _rotateArchiveName(logPath, nowMs).replace(/\.txt$/i, sec + '.txt');
+}
+
+// "Archive log & start fresh" (the guild lead, 2026-10-05, FB-51): a log that stopped being written
+// mid-session, or one the player simply wants a clean start on, gets the same move the size-based
+// sweep does — rename into LogArchive/, empty replacement at the original path — on demand. The
+// stamp carries SECONDS so two clicks in one minute cannot collide (a rename onto an existing file
+// would silently replace the first archive on Windows). The tailer's size<pos handling resets to 0.
+// EQ still holds the OLD file open until the player types /log off then /log on; Windows refuses
+// the rename while it does, which is reported as 'in_use' rather than worked around.
+function _archiveLogNow(character, nowMs = Date.now()) {
+  const lc = String(character || '').toLowerCase();
+  let w = null;
+  for (const x of (stats.watchedLogs || [])) {
+    if (x && x.logPath && lc && String(x.character || '').toLowerCase() === lc && (!w || (x.lastSeen || 0) > (w.lastSeen || 0))) w = x;
+  }
+  if (!w) return { ok: false, reason: 'not_found' };
+  try {
+    const st = fs.statSync(w.logPath);
+    const dir = path.join(path.dirname(w.logPath), 'LogArchive');
+    fs.mkdirSync(dir, { recursive: true });
+    const archivedName = _rotateArchiveNameSeconds(w.logPath, nowMs);
+    const dest = path.join(dir, archivedName);
+    fs.renameSync(w.logPath, dest);
+    try { fs.writeFileSync(w.logPath, '', { flag: 'wx' }); } catch { /* recreated by EQ */ }
+    const mb = Math.round(st.size / (1024 * 1024));
+    if (!Array.isArray(stats.logRotations)) stats.logRotations = [];
+    stats.logRotations.unshift({ file: path.basename(w.logPath), dest, mb, at: new Date(nowMs).toISOString(), manual: true });
+    if (stats.logRotations.length > 10) stats.logRotations.length = 10;
+    if (_logSilent && String(_logSilent.character || '').toLowerCase() === lc) _logSilent = null;
+    console.log('[log-archive] ' + path.basename(w.logPath) + ' (' + mb + 'MB) → ' + dest + ' (manual)');
+    return { ok: true, dest, archived_name: archivedName, mb };
+  } catch (err) {
+    if (err && (err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES')) {
+      console.warn('[log-archive] ' + path.basename(w.logPath) + ' is in use by EverQuest — not archived (' + err.code + ')');
+      return { ok: false, reason: 'in_use' };
+    }
+    console.warn('[log-archive] failed: ' + (err && err.message));
+    return { ok: false, reason: 'error', message: String((err && err.message) || err) };
+  }
+}
 
 // Tiny persisted agent prefs (state dir, beside personal_triggers.json).
 // First use: the dashboard's log-archiving off switch — env vars are not a
@@ -47546,6 +47646,7 @@ module.exports = {
   // FB-51 tail watchdog — exported so the tests drive the shipped decision + loop.
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,
+  _archiveLogNow, _rotateArchiveName, _rotateArchiveNameSeconds, _logRotationsForTest: () => stats.logRotations,
   // 📶 Connection meter — pure parts + the stdout feed, exported so the tests drive the shipped code.
   _netParsePingLine, _netParseEqHost, _netParseGateway, _netStats, _netVerdict, _netSeries, _netFightSpan,
   _netNewTarget, _netOnData, _netPush, _netPayload, _netTargetsForTest: () => _net,
