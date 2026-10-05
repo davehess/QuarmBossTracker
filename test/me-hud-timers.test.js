@@ -661,6 +661,14 @@ describe('side arcs: the rampage target and raiders running low', () => {
     expect(s.low_hp).toEqual([{ name: 'Nyssara', hp_pct: 9 }, { name: 'Brackwyn', hp_pct: 18 }, { name: 'Zarrin', hp_pct: 24 }]);
   });
 
+  // The guild lead, 2026-10-05, on a thin arc at the HUD's top left reading "1 6%": the XP / AA / gem
+  // gauges carry text and a percent too, and were listed as low raiders.
+  it('lists only group members\' health bars, never the XP, AA, cast, tick or spell-gem gauges', () => {
+    const others = [4, 5, 7, 8, 9, 10, 16, 17, 23, 24, 25, 26, 33].map((slot) => ({ slot, text: '1', hp_pct: 6 }));
+    const z = { Aldenmar: { charInfo: [{ id: 3, value: 'Cleric' }], gauges: gauges.concat(others), updatedAt: clock } };
+    expect(load({ zeal: z })._serializeMeState().low_hp).toEqual([{ name: 'Brackwyn', hp_pct: 18 }]);
+  });
+
   it('a stale raid window is ignored, and the list holds three at most', () => {
     globalThis.__raidPipe = { at: clock - 60_000, members: [{ name: 'Nyssara', hp_pct: 9 }] };
     expect(load({ zeal: Z() })._serializeMeState().low_hp.map(m => m.name)).toEqual(['Brackwyn']);
