@@ -27,6 +27,9 @@ as $$
      and r.name is not null
      and r.loc_x is not null
      and r.loc_y is not null
+     -- (0,0,0) is how an uploader reports a raider who is in another zone; a newer zero row from that
+     -- uploader must not hide a real position another uploader has for the same raider.
+     and not (r.loc_x = 0 and r.loc_y = 0 and coalesce(r.loc_z, 0) = 0)
      and r.loc_at > now() - make_interval(secs => least(greatest(coalesce(p_fresh_s, 30), 1), 300))
    order by lower(r.name), r.loc_at desc
    limit 300;

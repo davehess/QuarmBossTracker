@@ -3433,6 +3433,17 @@ through followed-channel webhooks; members' messages in the channel are skipped 
 `_quarmNoteRow` and `_quarmNoteLive` in `index.js`. Read it to quote a Quarm change word for word.
 `content_missing` rows mean the Message Content intent was off when they were fetched.
 
+### Spectator map (`/spectator`, web 1.8.98, §160)
+The raid on the zone map, live, for signed-in members.
+- **Page:** `web/app/spectator/page.tsx` + `SpectatorBoard.tsx` (canvas, polls every 3 s); the rules (axis
+  swap, zone voting, framing, layers) are in `web/lib/spectator.ts`.
+- **Positions:** `/api/spectator/positions` → SQL `spectator_positions()` (one row per raider from
+  `raid_roster`, (0,0,0) dropped). Server x = `loc_y`, server y = `loc_x`.
+- **Map:** `/api/spectator/map?zone=` → `web/lib/zoneMap/` (`slice.ts` cuts walls out of the EQEmu collision
+  mesh; `brewall.ts` parses Brewall's lines as Zeal ships them; `load.ts` fetches both). Cached per zone in
+  `zone_map_lines` (service role only). Brewall's files are never committed here.
+- **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`.
+
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes
 `.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.
