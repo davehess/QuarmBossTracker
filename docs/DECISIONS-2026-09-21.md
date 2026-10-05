@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Spectator map on wolfpack.quest** (§160) | **Picked C** (flat live board), 2026-10-04. A real zone map under the dots is required ("or it's useless"). No staff ask: it shows only what Zeal already gives a player. No code yet | a session: settle the map-line source (licence), then build C as a new [beta] page (positions feed, `PRIVACY.md` line, agent reads Zeal 1.4.8 `target_loc`). After 00:30 ET for anything on `main` |
+| **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls | the guild lead: look at it on the next raid night. A session: target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: /admin/encounters curated-only? (`/encounter tonight`, the doubled OpenDKP auctions and the 29 s spell-needs call were fixed 2026-10-04) |
@@ -7072,3 +7072,35 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
     built: no positions for mobs nobody targets, no pather predictions. This supersedes the "ask staff" gate in
     §131 and `DESIGN-zone-radar.md` for that scope.
   - Still needed before raider dots show on the site: a `PRIVACY.md` line (positions shown to signed-in members).
+- **Brewall's maps underneath (the guild lead, 2026-10-05):** *"include brewall maps underneath. I'm not
+  concerned with the licensing right now because this is still gated behind Discord."* So the board's default
+  layer is Brewall's lines, as Zeal ships them. Rules that keep that call contained:
+  - **Never in this public repo.** The route fetches each zone's files at run time from Zeal's public repo
+    (`coastalredwood/Zeal`, `Zeal/zone_map_src/map_files/`, 180 zones), caches them in `zone_map_lines`, and
+    serves them only through the signed-in route. Tests use invented strings.
+  - **`zone_map_lines` has no read policy at all** (service role only). A Discord account can get an
+    `authenticated` session from Supabase without passing the guild check in the sign-in callback, so an
+    `authenticated` policy would have handed the art to anyone with Discord.
+- **Built (web 1.8.98, 2026-10-05), live after the raid freeze:**
+  - `/spectator` [beta], under Raid in the nav. `web/app/spectator/` + `web/lib/spectator.ts`.
+  - **Positions:** `GET /api/spectator/positions` (signed-in) calls `spectator_positions()` (migration
+    `20261005003000`): one row per raider, freshest wins, (0,0,0) rows dropped (an uploader reports a raider
+    in another zone that way). raid_roster holds one row per uploader × raider: 1,125 rows inside 30 s for 45
+    raiders on 2026-10-04, so the raw read the first draft used would have dropped raiders. The board polls
+    every 3 s, the upload cadence.
+  - **Axes, settled on live data:** server x = `raid_roster.loc_y`, server y = `loc_x`. With the swap, 15 of
+    19 raiders in the Plane of Innovation stood within 8 units of a floor in the collision mesh; without it,
+    none had a floor anywhere below. The page draws north-up like Zeal's map (screen = −server).
+  - **Zone:** raid_roster has none. A raider's own `character_live_state` zone, else the zone most of that
+    uploader's raiders are in, else the raid's.
+  - **Map:** `GET /api/spectator/map?zone=` (signed-in) returns two layers in the server frame: `eqemu` (wall
+    lines sliced from the GPL EQEmu collision mesh, `web/lib/zoneMap/slice.ts`, the Python reference ported
+    exactly) and `brewall`. Each is fetched on the first request for a zone and cached in `zone_map_lines`
+    (migration `20261005010000`; ~170 KB a zone, ~30 MB for all 180 at worst). Zone names are checked
+    against `eqemu_zone` before any URL is built.
+  - **Board:** Brewall, generated walls or both; floors (the raid's floor bright); fit raid uses the raid's
+    core so a corpse run does not shrink the view; group roster with tap-to-find; scale bar, north arrow.
+  - **Not yet:** target markers (needs the agent to read Zeal 1.4.8 `target_loc`); heading direction is
+    assumed counter-clockwise from north (`HEADING_CCW`) until checked in game.
+  - **Privacy:** one line in `docs/PRIVACY.md` and `/privacy`: while you are in a raid, your latest position
+    is shown to signed-in members on this page; nothing new is stored.

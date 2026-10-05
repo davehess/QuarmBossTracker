@@ -24,6 +24,7 @@ export const GROUPS: Group[] = [
       { href: '/raid',          label: 'Raid HQ' },
       { href: '/boards',        label: 'Spawn boards' },
       { href: '/buffs',         label: 'Buffs' },
+      { href: '/spectator',     label: 'Spectator' },
       { href: '/rolls',         label: 'Rolls' },
     ],
   },

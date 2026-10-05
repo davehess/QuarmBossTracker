@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'spectator-2026-10-05',
+    title: 'Spectator',
+    version: 'Web 1.8.98',
+    date: '2026-10-05',
+    headline: 'A new page shows the raid on the zone map, live.',
+    features: [
+      { name: 'Spectator [beta]', blurb: 'Raid › Spectator shows where everyone in the raid is standing right now, on the zone’s map: Brewall’s map lines underneath, every raider as a dot in their class colour with the way they face, and the group roster beside it. Positions come from the raiders running Mimic and refresh every few seconds. Switch to walls generated from the server’s own zone geometry, pick a floor, zoom, or fit the raid or the whole zone.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'worn-ds-2026-10-04',
     title: 'Your gear’s damage shield',
     version: 'Bot 3.1.202 · Web 1.8.97 · Agent 3.7.80 beta',
