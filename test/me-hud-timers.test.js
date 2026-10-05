@@ -305,19 +305,19 @@ describe('target read-outs', () => {
   // The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's
   // going off too late and I'm getting hit. And then when it ends, it should no longer be red
   // underneath the name."
-  it('says "Enrage soon" once as the target crosses 10%, re-arms for a fresh mob, and an ended enrage clears', () => {
+  it('says "Enrage soon" once as the target crosses 12%, re-arms for a fresh mob, and an ended enrage clears', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     globalThis.__enragePushed = [];
     const at = (hp, id = 7) => { globalThis.__enrageTgt = st({ target_hp_pct: hp, target_id: id }); h._tickEnrageWarn(clock); };
-    at(40); at(11);
-    expect(globalThis.__enragePushed).toHaveLength(0);              // 11% is not yet
-    at(10); at(9); at(4);
-    expect(globalThis.__enragePushed).toHaveLength(1);              // once, at 10%
+    at(40); at(13);
+    expect(globalThis.__enragePushed).toHaveLength(0);              // 13% is not yet
+    at(12); at(9); at(4);
+    expect(globalThis.__enragePushed).toHaveLength(1);              // once, at 12%
     expect(globalThis.__enragePushed[0]).toMatchObject({ tts: 'Enrage soon', scope: 'enrage', color: 'red' });
     at(9, 8);                                                       // another of the same name, already low
     expect(globalThis.__enragePushed).toHaveLength(2);
-    at(100, 7); at(10, 7);                                          // a respawn under the old id re-arms
+    at(100, 7); at(12, 7);                                          // a respawn under the old id re-arms
     expect(globalThis.__enragePushed).toHaveLength(3);
     // A mob that cannot enrage says nothing.
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [] } });
@@ -327,7 +327,7 @@ describe('target read-outs', () => {
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     say(h, 'Aldenmar', 'a gnoll warlord has become ENRAGED.');
     let t = h._meTargetExtras(st(), 'Aldenmar', clock);
-    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 10 });
+    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 12 });
     say(h, 'Aldenmar', 'a gnoll warlord is no longer enraged.');
     t = h._meTargetExtras(st(), 'Aldenmar', clock);
     expect(t).toMatchObject({ enraged: false, enrage_ended: true });   // the red goes
