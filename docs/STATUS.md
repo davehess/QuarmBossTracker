@@ -199,6 +199,12 @@ next touch one rather than assuming a missing row means a missing doc.
   walls generated from the GPL EQEmu meshes as a second layer. Checked against the 2026-10-04 raid in the Plane of
   Innovation: the dots sit inside the walls. Next: target markers (agent reads Zeal 1.4.8 `target_loc`) and an
   in-game heading check. DECISIONS-2026-09-21 §160.
+- **🧪 FB-51 on beta (agent 3.7.81, 2026-10-05): when EverQuest stops writing your log.** No damage and no rolls
+  for an hour: EverQuest had stopped writing a 540 MB log at 00:45 while the player kept playing (moving the log
+  aside and restarting EQ fixed it; why it stopped is not known). Now: a `[log-silent]` warning when Zeal has you in
+  game but your log is quiet for 5 min (state field only, no UI yet), a tail watchdog that recovers a hung read,
+  bug-report excerpts that keep the newest lines, and no false "corrupt queue" on an empty queue. Open: the log
+  archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
 - **⏳ Raid replay: recorder built (bot 3.1.203, 2026-10-05), not on main yet; the replay page waits on a pick.**
   Keeps every raid's positions, one sample per raider every 3 s, one row per minute in `raid_track_minutes`
   (~2–4 MB a full night). **Every raid is kept until storage becomes an issue, and the Tower archive keeps its

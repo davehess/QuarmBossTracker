@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
 | **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls. **Raid replay (§161):** recorder built (bot 3.1.203 on `claude/sharp-lamport-dC0TW`, migration applied), NOT on main yet; every raid kept, Tower keeps a permanent copy once its merge script is updated | the guild lead: release bot 3.1.203 to main before Wednesday's raid or nothing is recorded; copy the new `archive-merge.sql` onto Tower (or a local session does); look at the spectator on the next raid night; pick the replay look (A night scrubber / B fight replays / C trails). A session: replay previews on b.wolfpack.quest after Wednesday; target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
@@ -7155,3 +7156,30 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   one still picture per fight, no playback.** Previews go on b.wolfpack.quest once Wednesday is recorded.
 - **Not in a replay yet:** mobs. Target positions need Zeal 1.4.8 across the fleet and the agent sending
   `target_loc`.
+
+### 162. FB-51: EverQuest stopped writing the log, and nothing said so (2026-10-05)
+- **Report (the guild lead, late Sunday):** "I'm not currently seeing rolls", then "the damage isn't loading
+  either", then FB-51 "NO damage on fights, no rolls, missing plenty of stuff". Zeal's abbreviated chat showed
+  rolls as `[0:222]: 26 rolled by X.`, a red herring: the log file keeps the two-line form, and four other
+  agents (one on the same 3.7.80 beta) captured those rolls.
+- **What it was:** the player's `eqlog_<char>_pq.proj.txt` (540 MB) stopped being written at 00:45 while they
+  kept playing; Explorer showed "Date modified 12:45 AM" at the size the agent found on its 00:49 restart. Every
+  agent line after that came from Zeal's pipe or relays; nothing local. **Fix in the field:** move the log
+  aside, restart EverQuest, which starts a fresh file. **Why EQ stopped is NOT known** (size, a `/log` toggle, or
+  another folder were all possible; the fresh file fixed it). Do not cite a size limit as the cause.
+- **Ruled out on the way, so the next session need not re-check:** roll format, Zeal chat display,
+  `exclude_from_stats`, agent 3.7.80 (worn-DS code runs only in the HUD state), a client switch, the camp
+  state, log rotation (none ran), disk space (37 GB free).
+- **Shipped to beta, agent 3.7.81 (`27022a44`, "Fixes FB-51"):**
+  - `[log-silent]`: Zeal has the primary character in game (< 60 s) and their log has had no line for 5 min →
+    one warning per episode and `logSilent` on `/api/state`. No UI yet; the on-screen form is the guild lead's
+    call (UI rule). It would have flagged this case at about 00:50.
+  - Tail watchdog: a hung `fs.promises` call in `tailFile` can no longer end the read loop silently.
+  - Bug-report excerpts keep the NEWEST lines over the cap (they kept the oldest; FB-51's ended at 00:31).
+  - An empty upload-queue file no longer reads as "corrupt" (it did on every boot after an empty shutdown:
+    24 times in one member's log).
+- **Found, not changed: log archiving has never run in Mimic.** `_logRotateSweep` (500 MB, default on since
+  2026-08-07) has its timers inside the `--once` branch, which exits after a few seconds; watch mode returns
+  before reaching them. That is how the log reached 540 MB. Wiring it into watch mode would start renaming
+  members' logs for the first time, so it waits on the guild lead's yes.
+- Also noted: the bug-report preview shows the first 400 lines of the kept slice (now the oldest of the newest).

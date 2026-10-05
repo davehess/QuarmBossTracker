@@ -892,7 +892,8 @@ Dashboard card (💬 Send feedback) + tray item, both landing on
 adds `log_excerpt`, `log_meta`, `client`, `client_version`, `platform`) and the
 officer feedback thread.
 **The slice**: `buildFeedbackLogSlice(minutes)` tails the newest watched log,
-keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB.
+keeps the last 15/30/60 minutes, and caps at 6000 lines / 512 KB. Over the cap it keeps the
+NEWEST lines (agent 3.7.81; it kept the oldest before, so FB-51's excerpt ended 44 min early).
 ⚠ **Redaction REUSES `triggerVisibleLine`** — the same audited predicate the
 local trigger engine is gated on — plus a `/who` + location drop. Never
 hand-roll a second filter: this one is already the privacy boundary, and a
@@ -1642,6 +1643,18 @@ dropped at the **byte level before parse** (`docs/PRIVACY.md`). Modes:
 `--watch` (default), `--since <ISO>` backfill, `--once`, `--dry-run`.
 Dashboard on `localhost:7777` — see the escape-hazard + rendering rules in
 `CLAUDE.md` (one giant template literal; run `npm run check:dashboard`).
+**Two silence guards (agent 3.7.81, FB-51):**
+- **Tail watchdog** (`tailFile` + `_tailStalled`): the read loop is a setTimeout chain over
+  `fs.promises`, so one call that never settles would end it silently. A per-file watchdog (sync
+  fs, nothing while healthy) warns `[tail] … reads stopped` after 15 s, reads synchronously until
+  the async reader recovers, and a generation counter stops double delivery. Status in `_tailStatus`.
+- **Log-silent check** (`_logSilentCheck` / `_logSilentSweep`, every 30 s): Zeal has the primary
+  character in game (live state < 60 s) but their log has had no line for 5 min → one
+  `[log-silent]` warning per episode and `logSilent` on `/api/state` (no UI yet). The case it was
+  built for: EverQuest stopped writing a 540 MB log mid-session; the agent was healthy and had
+  nothing to read.
+⚠ **Log archiving (`_logRotateSweep`, 500 MB) never runs in watch mode.** Its timers are inside
+the `--once` branch, which exits within seconds; found 2026-10-05, not changed (§162).
 
 ### Durable upload queue
 Every outbound POST persists to `logsync.queue.json`; 15s drain, exponential

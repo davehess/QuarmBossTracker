@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'log-silent-2026-10-05',
+    title: 'When EverQuest stops logging',
+    version: 'Agent 3.7.81 beta',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic notices when EverQuest stops writing your log, and bug reports carry the newest part of it.',
+    features: [
+      { name: 'Silent log check', blurb: 'If Zeal says you are in game but your log has had no new lines for five minutes, Mimic notes it in its own log: EverQuest has stopped logging (/log switches it) or is writing to another folder. Without a log there is no damage meter, no rolls and no triggers, so this is the first thing to check. A warning on screen comes next.' },
+    ],
+    fixes: [
+      'A bug report with a busy log attached sent the oldest part of the hour and cut off the newest.',
+      'Mimic could stop reading a log without saying so if a file read never finished; it now notices within 15 seconds and keeps reading.',
+    ],
+  },
+  {
     key: 'spectator-2026-10-05',
     title: 'Spectator',
     version: 'Web 1.8.98',
