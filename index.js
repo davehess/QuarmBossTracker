@@ -10489,6 +10489,17 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
         }
         return out.length ? out : null;
       }
+      // Hate a spell ADDS to its target: effect 92 (instant hate) with a POSITIVE base — the Terror
+      // line, Taunting / Enraging Blow, Pique (checked against the live catalog 2026-10-05). A
+      // negative base takes hate OFF (Jolt, Concussion), so it is not a hate spell. The agent's Me HUD
+      // counts a landing of one as an "aggro" spell beside the stuns (the guild lead, 2026-10-05).
+      function _hateAdded(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : [r.effect_id_1, r.effect_id_2, r.effect_id_3];
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : [r.effect_base_value_1, r.effect_base_value_2, r.effect_base_value_3];
+        let sum = 0;
+        for (let i = 0; i < eff.length; i++) if (Number(eff[i]) === 92 && Number(base[i]) > 0) sum += Number(base[i]);
+        return sum > 0 ? sum : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
       // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
@@ -10602,6 +10613,8 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             ds_heal: _dsHealMagnitude(r) || undefined,
             // Crowd control on a detrimental spell (_ccKinds), e.g. ['mez'].
             cc: _ccKinds(r) || undefined,
+            // Hate the spell adds (_hateAdded) — omitted for the ~99% that add none.
+            hate: _hateAdded(r) || undefined,
             // Decoded effect strings, for the dashboard's Buffs tab. Attached
             // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
             // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
