@@ -3432,6 +3432,36 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] raid_roster retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: raid_track_minutes ───────────────────────────────
+      // The raid replay recorder (utils/raidTrack.js) writes one row per UTC minute while a raid
+      // is up, ~2–4 MB a night. Every raid is KEPT until storage becomes an issue (the guild lead,
+      // 2026-10-05), so this is off unless RAID_TRACK_RETENTION_DAYS is set to a number of days.
+      // Even then it deletes only what the Tower archive already holds — the same fail-closed gate
+      // as the threat-snapshot sweep: bot_kv `archive_watermark_raid_track_minutes` = { through:
+      // ISO } ("every minute at or before this is on Tower"). No watermark → delete nothing.
+      // minute_at leads its own index (migration 20261005020000), so the delete does not seq-scan.
+      try {
+        const supabase = require('./utils/supabase');
+        const retainDays = parseInt(process.env.RAID_TRACK_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 0;
+        if (supabase.isEnabled() && keep > 0) {
+          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const rows = await supabase.select('bot_kv',
+            `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.archive_watermark_raid_track_minutes&select=value&limit=1`);
+          const raw = Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.through;
+          const archivedThrough = raw ? Date.parse(raw) : NaN;
+          if (!Number.isFinite(archivedThrough)) {
+            console.warn('[midnight] raid_track_minutes retention skipped: no Tower archive watermark — nothing deleted');
+          } else {
+            const cutoff = new Date(Math.min(Date.now() - keep * 24 * 60 * 60 * 1000, archivedThrough)).toISOString();
+            await supabase.del('raid_track_minutes', `minute_at=lt.${encodeURIComponent(cutoff)}`);
+            console.log(`[midnight] swept raid_track_minutes before ${cutoff} (archived on Tower)`);
+          }
+        }
+      } catch (err) {
+        console.warn('[midnight] raid_track_minutes retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: who_observations ─────────────────────────────────
       // Keep the who INFORMATION but not every instance (the guild lead, 2026-07-07):
       // everything from the last N days stays raw (feeds the ±3-min Zek
@@ -12858,6 +12888,9 @@ if (process.env.RAID_TICK_CAPTURE !== '0') {
   setInterval(() => { _captureRaidTickIfDue().catch(err => console.warn('[raid-tick] pass failed:', err?.message)); }, 60_000);
 }
 
+// Raid replay recorder (utils/raidTrack.js): folds the roster uploads into one row per minute.
+require('./utils/raidTrack').start();
+
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
 // The guild lead 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
@@ -17946,6 +17979,8 @@ async function _handleAgentRaidRoster(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
+  // Hand the positions to the raid replay recorder (memory only, no I/O, never throws).
+  try { require('./utils/raidTrack').noteRows(rows, identity.discord_id); } catch {}
   try {
     // Plain upsert per (guild, uploader, name) — merge-duplicates (#72 item 2.1).
     // This replaced the old DELETE-then-upsert: one round trip instead of two

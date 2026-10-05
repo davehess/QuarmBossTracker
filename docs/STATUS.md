@@ -199,6 +199,13 @@ next touch one rather than assuming a missing row means a missing doc.
   walls generated from the GPL EQEmu meshes as a second layer. Checked against the 2026-10-04 raid in the Plane of
   Innovation: the dots sit inside the walls. Next: target markers (agent reads Zeal 1.4.8 `target_loc`) and an
   in-game heading check. DECISIONS-2026-09-21 §160.
+- **⏳ Raid replay: recorder built (bot 3.1.203, 2026-10-05), not on main yet; the replay page waits on a pick.**
+  Keeps every raid's positions, one sample per raider every 3 s, one row per minute in `raid_track_minutes`
+  (~2–4 MB a full night). **Every raid is kept until storage becomes an issue, and the Tower archive keeps its
+  own copy forever** (the guild lead, 2026-10-05); a sweep, if ever turned on, deletes only what Tower holds.
+  Migration applied; the code waits on `claude/sharp-lamport-dC0TW` for the guild lead to release it. Released
+  before Wednesday 2026-10-07, that is the first raid recorded. ⚠ Tower step below. The look (A night scrubber, B fight replays on the
+  raid review, C trails) is the guild lead's pick. DECISIONS-2026-09-21 §161.
 - **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
@@ -937,6 +944,14 @@ next touch one rather than assuming a missing row means a missing doc.
   player called **Susanna** (47 rows, never a boss) and real players named
   Dread, Terror and Fright, all of which are also mob names.
 
+- **⚠ Needs a local session (or the guild lead) — put the raid replay table on Tower (2026-10-05, §161).**
+  Tower's copy of `scripts/lib/archive-merge.sql` is not a git checkout, so the change only reaches the nightly
+  archive when the file is copied there by hand (method + md5 drift check: `docs/HANDOFF-tower-archive-catchup.md`).
+  The new file creates `public.raid_track_minutes` on Tower and archives it (insert/update, never delete). Then:
+  `PGHOST=… bash scripts/test-archive-merge.sh` on Tower (not run from the cloud: no Postgres server allowed
+  here); after the first recorded raid, `select count(*), max(minute_at) from raid_track_minutes` on Tower.
+  Nothing else depends on it until someone turns on `RAID_TRACK_RETENTION_DAYS`, which also needs
+  `bot_kv archive_watermark_raid_track_minutes` written (none exists, so a sweep deletes nothing).
 - **⚠ Needs a local session — read the guild lead's three fork-build crash dumps (2026-10-04, §151).**
   `A:\EQ\crashes\2026-10-01_16-34-16.zip`, `2026-10-01_20-04-08.zip`, `2026-10-02_23-18-57.zip` (Zeal
   `1.4.8 (testall-0a2e25d)`, Zeal.asi md5 `faa46947…`). Run `scripts/read-minidump.py` on each (method in §28), get

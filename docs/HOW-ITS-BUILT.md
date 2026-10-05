@@ -3442,7 +3442,15 @@ The raid on the zone map, live, for signed-in members.
 - **Map:** `/api/spectator/map?zone=` → `web/lib/zoneMap/` (`slice.ts` cuts walls out of the EQEmu collision
   mesh; `brewall.ts` parses Brewall's lines as Zeal ships them; `load.ts` fetches both). Cached per zone in
   `zone_map_lines` (service role only). Brewall's files are never committed here.
-- **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`.
+- **Recording for replay (bot 3.1.203, §161):** `utils/raidTrack.js`. The raid-roster ingest hands its rows to
+  `noteRows()` (memory only); every 3 s the freshest real position per raider becomes a frame; each finished
+  minute is ONE row in `raid_track_minutes` (compact JSON text: who, zones, frames), zone stamped per uploader
+  from `character_live_state`. `exclude_from_stats` characters are never written. Kept indefinitely; the Tower
+  archive (`scripts/lib/archive-merge.sql`) creates the table there and keeps every row. A sweep exists but is
+  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`. No replay page yet:
+  the look is the guild lead's pick (§161).
+- **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
+  `test/raid-track.test.js`.
 
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes

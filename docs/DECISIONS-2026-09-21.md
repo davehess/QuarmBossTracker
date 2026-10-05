@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls | the guild lead: look at it on the next raid night. A session: target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
+| **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls. **Raid replay (§161):** recorder built (bot 3.1.203 on `claude/sharp-lamport-dC0TW`, migration applied), NOT on main yet; every raid kept, Tower keeps a permanent copy once its merge script is updated | the guild lead: release bot 3.1.203 to main before Wednesday's raid or nothing is recorded; copy the new `archive-merge.sql` onto Tower (or a local session does); look at the spectator on the next raid night; pick the replay look (A night scrubber / B fight replays / C trails). A session: replay previews on b.wolfpack.quest after Wednesday; target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: /admin/encounters curated-only? (`/encounter tonight`, the doubled OpenDKP auctions and the 29 s spell-needs call were fixed 2026-10-04) |
@@ -7103,4 +7103,55 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   - **Not yet:** target markers (needs the agent to read Zeal 1.4.8 `target_loc`); heading direction is
     assumed counter-clockwise from north (`HEADING_CCW`) until checked in game.
   - **Privacy:** one line in `docs/PRIVACY.md` and `/privacy`: while you are in a raid, your latest position
-    is shown to signed-in members on this page; nothing new is stored.
+    is shown to signed-in members on this page; nothing new is stored. (Superseded the same night by §161:
+    positions are now kept for replay.)
+
+### 161. Raid replay: keep every raid's positions, replay look not yet picked (2026-10-05)
+- **The ask (the guild lead, 2026-10-05):** *"can we replay raid timeline with the locations? I'd love to keep them
+  for a raid and be able to figure out how things look after the fact."*
+- **Nothing was kept before this.** `raid_roster` is an upsert, one row per uploader × raider, and the midnight
+  chain drops rows over an hour old. No other table holds positions over time (`xp_events` has a loc per XP kill
+  only). So the 2026-10-04 evening group (51 placed, 28 uploaders, gone by 21:08 ET) cannot be replayed.
+- **Measured for sizing:** each Mimic posts the roster every ~4 s with ~50 members (3,755 posts in 10 minutes on
+  2026-10-04 ≈ 6.3 a second); 72% of member rows are (0,0,0), an uploader's way of saying "another zone". Full
+  nights run 41–51 raiders; Wednesday and Thursday 7–28. Appending raw uploads would have been ~3.4 M rows a night.
+- **Recorder (bot 3.1.203), built without waiting for the pick** because every look needs the same data and
+  Wednesday is the next chance to capture a raid:
+  - `utils/raidTrack.js`. The raid-roster handler hands its rows to `noteRows()` (memory only, never throws).
+    The first uploader to report a raider keeps them for 6 s so two slightly different views do not shimmer;
+    HP is taken from any uploader, since each one only has gauges for its own group.
+  - Every 3 s (`RAID_TRACK_STEP_S`) the raiders seen in the last 6 s become a frame, if six or more are placed
+    (`RAID_TRACK_MIN_PLACED`). Each finished minute is ONE row in `raid_track_minutes` (migration
+    `20261005020000`, applied 2026-10-05): `data` is compact JSON text (`who`, `zones`, frames of
+    `[dt, i, x, y, z, heading, hp, zone]`; −1 = unknown), text rather than jsonb because number arrays store
+    about 3× smaller. x/y are raw `loc_x`/`loc_y`; the web swaps them when plotting.
+  - Zone is stamped at write time, per uploader (an uploader only places raiders in its own zone): the majority
+    `character_live_state` zone of that uploader's raiders, else the minute's majority.
+  - **`exclude_from_stats` characters are never written**, matching the raid review; a minute is not written
+    until that list has loaded once (fail closed).
+  - Size: ~2–4 MB a full night, ~0.5 GB a year.
+  - **Retention — the guild lead's call (2026-10-05):** *"I want this captured to the local tower backup and kept
+    there. let's plan on retaining raids for now until it becomes a storage issue."* So:
+    - Supabase keeps every raid. `RAID_TRACK_RETENTION_DAYS` is unset by default; the sweep is off.
+    - Tower keeps a permanent copy: `raid_track_minutes` is an ARCHIVE table in `scripts/lib/archive-merge.sql`
+      (insert and update, never delete), and that script creates the table on Tower, because the merge skips a
+      table Tower lacks without a word (how `faction_hits` never arrived). `scripts/test-archive-merge.sh`
+      covers both: the table is created and filled, and a minute production drops stays.
+    - If storage ever forces a sweep, it deletes only up to `bot_kv archive_watermark_raid_track_minutes`
+      (`{ through }`), the threat-snapshot gate: no watermark, nothing deleted. Nobody writes that watermark
+      yet, so turning the sweep on today deletes nothing.
+    - Manual step: Tower's copy of the merge script is not a git checkout, so the guild lead or a local session
+      copies it over (STATUS ⚠ item). A cloud session reaches Tower read-only, and could not start a Postgres
+      to run the self-test here either.
+  - Service role only (RLS on, no policies, no anon/authenticated grants). `docs/PRIVACY.md` and `/privacy`
+    now say positions are kept for replay, with a permanent copy in the Archive (web 1.8.99).
+  - **Not on main yet.** Committed 2026-10-05 on `claude/sharp-lamport-dC0TW`; the push to main inside the
+    Sunday freeze window was held back by the session's permission check (the guild lead's "no raid, push it"
+    covered the spectator push before it). It lands when the guild lead releases it. The migration is already
+    applied; the empty table is harmless until the bot code lands, and `/privacy` keeps saying "nothing is
+    stored" until then, which stays true.
+- **The look, offered (not picked):** **A — Night scrubber: the live map gets a timeline** (play/pause, 1–60×,
+  boss kills marked; recommended); **B — Fight replays: each kill on the raid review gets a ▶**; **C — Trails:
+  one still picture per fight, no playback.** Previews go on b.wolfpack.quest once Wednesday is recorded.
+- **Not in a replay yet:** mobs. Target positions need Zeal 1.4.8 across the fleet and the agent sending
+  `target_loc`.
