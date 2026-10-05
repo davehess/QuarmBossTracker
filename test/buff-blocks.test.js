@@ -500,6 +500,7 @@ function makeTab(agent, extra = {}) {
   };
   // Re-rendering the body replaces its placeholders, so the stubs are dropped with it.
   const body = mkEl('wpBbBody', (v) => { bodyHtml = v; bodyWrites++; registry.clear(); });
+  body.contains = () => true;
   const sec = {
     classList: { contains: () => true }, appendChild() {}, contains: () => true, querySelectorAll: () => [],
     addEventListener(t, fn) { listeners[t] = fn; },
@@ -548,6 +549,11 @@ function makeTab(agent, extra = {}) {
     async click(attrs) { listeners.click({ target: node(attrs) }); await settle(); },
     async change(attrs, props = {}) { listeners.change({ target: node(attrs, { tagName: 'INPUT', ...props }) }); await settle(); },
     async type(attrs, value) { listeners.input({ target: node(attrs, { tagName: 'INPUT', value }) }); await settle(); },
+    focus(el) { document.activeElement = el; },
+    async blur() { document.activeElement = null; listeners.focusout({}); await settle(); },
+    listeners,
+    settle,
+    node,
   };
 }
 
@@ -568,6 +574,30 @@ describe('the Buff blocks tab, run against the real agent view', () => {
     expect(tab.html).toContain('#blockbuff</code> to see what the server has on you');
     expect(tab.html).toMatch(/hate list of that mob before the block applies/);
     expect(tab.html).toContain('Mimic never types into the game');
+  });
+
+  // The guild lead, 2026-10-05: a starter set's Name "does not let me edit". Opening "✏ Edit this set"
+  // changes the markup (wpKeep writes `open`), so the next poll rewrote the body under the Name field,
+  // which has no id to restore: focus and the rest of the typing were lost.
+  it('never repaints under the Name field while it is being typed in; repaints once focus leaves', async () => {
+    await withTwist();
+    const before = tab.writes;
+    tab.focus({ id: '', tagName: 'INPUT', type: 'text' });            // the Name input has no id
+    await tab.click({ 'data-bb': 'starter', 'data-key': 'druid-ds' }); // a save answers and would repaint
+    expect(sets()).toHaveLength(2);                                    // the save itself went through
+    expect(tab.writes).toBe(before);                                   // ...but the body was not rewritten
+    await tab.blur();
+    expect(tab.writes).toBe(before + 1);
+    expect(tab.html).toContain('Druid');
+  });
+
+  it('a rename followed at once by another set button keeps the new name', async () => {
+    await withTwist();
+    // no await between them: the click lands before the rename's answer, as a real click after typing does
+    tab.listeners.change({ target: tab.node({ 'data-bb': 'rename', 'data-set': setId }, { tagName: 'INPUT', value: 'My pull set' }) });
+    tab.listeners.click({ target: tab.node({ 'data-bb': 'newset' }) });
+    await tab.settle();
+    expect(sets().map(s => s.name)).toEqual(['My pull set', 'New set']);
   });
 
   it('adds a starter as a COPY and shows its songs as chips, conditional ones with their "only while"', async () => {

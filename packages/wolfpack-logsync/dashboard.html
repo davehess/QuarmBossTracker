@@ -9817,7 +9817,12 @@ async function dismissTopDamage(key) {
     var sets = allPlain();
     for (var i = 0; i < sets.length; i++) if (sets[i].id === id) {
       var c = { id: sets[i].id, name: sets[i].name, short: sets[i].short, entries: sets[i].entries.slice() };
-      fn(c); sets[i] = c; break;
+      fn(c); sets[i] = c;
+      // Into the view now, not when the answer lands: a rename followed at once by "＋ Empty set" or a
+      // starter built the second save from the old view, and that later save put the old name back.
+      var live = setOf(id);
+      if (live) { live.name = c.name; live.short = c.short; live.entries = c.entries; }
+      break;
     }
     return saveSets(sets);
   }
@@ -10002,10 +10007,18 @@ async function dismissTopDamage(key) {
     var some = sec.querySelectorAll('input[data-state="some"]');
     for (var i = 0; i < some.length; i++) some[i].indeterminate = true;
   }
+  var held = false;         // a repaint was skipped because a Name/hotkey field has focus
   function render(){
     var body = document.getElementById("wpBbBody");
     if (!body) return;
     var ae = document.activeElement, keepId = "", keepPos = 0;
+    // Never repaint under a text field that cannot be put back (the set Name and the hotkey label carry no
+    // id): the repaint destroys it, keystrokes land nowhere and the typed text is lost (the guild lead,
+    // 2026-10-05: a starter set's Name "does not let me edit"). A repaint is due whenever a <details> was
+    // toggled, because wpKeep then writes the open attribute, so the first poll after "✏ Edit this set"
+    // rewrote the body under the Name field. Hold it and run it when focus leaves the field.
+    held = !!(ae && !ae.id && ae.tagName === "INPUT" && ae.type === "text" && body.contains(ae));
+    if (held) return;
     if (ae && ae.id && ae.tagName === "INPUT" && body.contains(ae)) { keepId = ae.id; keepPos = ae.selectionStart || 0; }
     morphInto(body, mainHtml());
     fillAll();
@@ -10146,6 +10159,8 @@ async function dismissTopDamage(key) {
     }
     if (a === "short") editSet(id, function(x){ x.short = t.value; });
   });
+  // the delay keeps the repaint out of a click that is still in progress (blur comes on mousedown)
+  sec.addEventListener("focusout", function(){ if (held) setTimeout(render, 250); });
   sec.addEventListener("input", function(ev){
     var t = ev.target, a = t && t.getAttribute && t.getAttribute("data-bb");
     if (a !== "q" && a !== "cond") return;
