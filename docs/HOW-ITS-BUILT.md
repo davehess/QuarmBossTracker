@@ -370,7 +370,14 @@ slot is expected rather than a bug. Behaviour-tested by
 executing the helper (`test/reporter-claim.test.js`).
 
 ### Raid timers & boards
-`data/bosses.json` (hot-reloaded, 133 bosses) defines spawn windows.
+`data/bosses.json` (hot-reloaded, 158 bosses) defines spawn windows.
+**Short-timer PoP named (bot 3.1.204, 2026-10-05):** Bastion of Thunder's eight named at 3 h and the
+24 h named from Quarm's Oct 4–5 notes sit on the PoP board per zone. A timer ≤ 24 h labels its button with
+the Eastern time it is up (`cooldownTag` in `utils/board.js`, `shortClockInTz`); ≤ 6 h bosses
+(`isShortTimerBoss`) get no warning / spawned post / Historic line and stay out of "Spawning in 24 Hours".
+`lockout: false` on those named = no character lockout from a kill (`utils/killLockouts.js`).
+`findBossFromName` partial matches are whole words, and a boss name inside a longer "a/an …" or
+"… of <boss>" mob is trash (the Ture / "tortured" false kills).
 Kills arrive via `/kill`-family commands or agent `bosskill` uploads
 (instance kills auto-start timers). `#raid-mobs` holds four fixed message
 slots + one thread per expansion (cooldown card, zone kill cards, board
@@ -1660,9 +1667,14 @@ Tests: `test/net-meter.test.js`.
   the async reader recovers, and a generation counter stops double delivery. Status in `_tailStatus`.
 - **Log-silent check** (`_logSilentCheck` / `_logSilentSweep`, every 30 s): Zeal has the primary
   character in game (live state < 60 s) but their log has had no line for 5 min → one
-  `[log-silent]` warning per episode and `logSilent` on `/api/state` (no UI yet). The case it was
+  `[log-silent]` warning per episode and `logSilent` on `/api/state`. The case it was
   built for: EverQuest stopped writing a 540 MB log mid-session; the agent was healthy and had
-  nothing to read.
+  nothing to read. Drawn as a header banner since agent 3.7.85 (3.7.81 served it, nothing rendered it).
+- **🗄 Archive log & start fresh** (agent 3.7.85, `_archiveLogNow`, `POST /api/log/archive`): the
+  sweep's `LogArchive/` rename on demand, stamp with seconds, empty file left behind, `manual:true` in
+  `logRotations`; `in_use` when EQ holds the file (→ `/log off`, click again, `/log on`). Buttons on
+  the log-silent banner and in the Info tab's 🗂 Log archiving card. `tailFile`'s size < pos reset
+  picks up the new file.
 ⚠ **Log archiving (`_logRotateSweep`, 500 MB) never runs in watch mode.** Its timers are inside
 the `--once` branch, which exits within seconds; found 2026-10-05, not changed (§162).
 
@@ -2327,8 +2339,17 @@ Tests: `test/tag-setup-keys.test.js`, `test/tag-autojoin-file-write.test.js`.
 ### UI Studio (`ui-studio.html`)
 Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
-resolution, drag/snap editor, writes back with `.bak` (`write-bundle`) or
-defers until logout (`defer-save` + background watcher).
+resolution, drag/snap editor, writes back with `.bak` or defers until logout
+(`defer-save` + background watcher).
+**Save sends KEY EDITS, not file texts** (since 2026-10-05, the guild lead's pick A; DECISIONS-2026-09-21
+§164): `_buildSaveEdits` lists only the windows moved or resized in this session (every window when the
+layout is rescaled to another resolution block), and main's `_applyUiKeyEdits` re-reads each file and
+changes only those keys (`apps/mimic/iniKeyEdits.js`, shared with the hotbar-pages writer), both for an
+immediate Save (`ui-studio-write-edits`) and for the after-logout save (`_applyDeferredEntry`, onto the file
+EQ just wrote, `.bak-eq`). Before, Save rebuilt whole files from the copy read at Load and wrote every
+window, the ~50 hidden bag windows included, so it put back everything EQ had saved since. Pending saves
+queued by an older Mimic (whole texts) are dropped at load. A cloud backup loaded into the editor (📥
+Restore) still writes whole files (`write-bundle`) and refuses while the character is logged in.
 ⚠ **The bundle is SEVERAL files, and only ONE of them is the one EQ reads.**
 `_readUiBundle` enumerates the per-character inis and then catch-alls any other
 `.ini` belonging to the character (server-suffix variants, `/loadskin`
@@ -2481,7 +2502,11 @@ restart (`saveSessionState.fightHistory`), dedups peer flushes within 8 s, marks
 for that fight's own snapshots. A fight also closes when your own Zeal target turns
 into its corpse or hits 0% (`_noteMobDeathFromState` →
 `EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
-HUD (`me.html`): enrage zone 10% (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`),
+HUD per-mob ⚡ procs / ✦ stuns-aggro (agent 3.7.88): `_meNoteHit` proc flag + `_meNoteMyLanding` (catalog
+cc 'stun' or `hate` > 0, bot 3.1.205), keyed name#spawn id → `/api/me` `target.my_procs` / `my_stuns`;
+drawn above the DS badge, builder part `procs`.
+HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
+on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
 from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:

@@ -204,6 +204,14 @@ next touch one rather than assuming a missing row means a missing doc.
   both lines on the Diagnostics tab's 📶 Connection card plus one line on the Tick overlay; the verdict says
   whether it is home network or beyond. Not yet seen on a Windows PC: a beta tester confirms ping streams live and
   eyeballs the card. DECISIONS-2026-09-21 §163.
+- **🧪 Agent 3.7.84–3.7.85 on beta (2026-10-05): fresh log in one click; Enrage soon at 12%.** The log stopped
+  again at 10:50 (no damage, no uploads while Zeal stayed live), so: a header banner when the log goes quiet
+  (3.7.81 computed it but nothing drew it) and 🗄 Archive log & start fresh (moves the log into `LogArchive/`,
+  empty file behind, then `/log off` + `/log on`). "Enrage soon" warns at 12%, ticks every 250 ms and jumps the
+  speech queue. Timing votes file under the trigger's name. The Canvas callouts panel no longer cuts off the vote
+  row (`b67bc333`); Buff blocks rename fixed (agent 3.7.86); UI Studio Save writes only the moved windows' keys
+  into the file as it is on disk (pick A, `c281fea6`). Open: why EQ stops logging; the Command Center hail-slot
+  pick. DECISIONS-2026-09-21 §164.
 - **🧪 FB-51 on beta (agent 3.7.81, 2026-10-05): when EverQuest stops writing your log.** No damage and no rolls
   for an hour: EverQuest had stopped writing a 540 MB log at 00:45 while the player kept playing (moving the log
   aside and restarting EQ fixed it; why it stopped is not known). Now: a `[log-silent]` warning when Zeal has you in
