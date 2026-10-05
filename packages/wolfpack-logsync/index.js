@@ -45779,22 +45779,30 @@ function _netParsePingLine(line, afterHeader) {
   return { kind: 'lost' };
 }
 
-// eqhost.txt → the login server's host (no port), or null. The file is an INI: a
-// `[LoginServer]` section holding `Host=<address>:<port>`. The host goes straight onto a
-// command line, so it must look like a name or an address; one that starts with "-" would
-// be read by ping as an option.
+// eqhost.txt → the login server's host (no port), or null. Two shapes exist: the classic INI
+// (`[LoginServer]` + `Host=<address>:<port>`) and the one the Quarm/TAKP client actually ships
+// (the guild lead's file, 2026-10-05) — a `[Login Servers]` section whose `{ … }` block lists
+// quoted `"<address>:<port>"` entries (a `[Registration Servers]` block sits beside it and is
+// ignored). First usable entry wins. The host goes straight onto a command line, so it must look
+// like a name or an address; one that starts with "-" would be read by ping as an option.
 function _netParseEqHost(text) {
   let inSection = false;
   for (const raw of String(text || '').split(/\r?\n/)) {
     const line = raw.replace(/^﻿/, '').trim();
     if (!line || line[0] === ';' || line[0] === '#') continue;
     const sec = /^\[([^\]]*)\]/.exec(line);
-    if (sec) { inSection = sec[1].trim().toLowerCase() === 'loginserver'; continue; }
-    if (!inSection) continue;
+    if (sec) {
+      const name = sec[1].replace(/\s+/g, '').toLowerCase();
+      inSection = name === 'loginserver' || name === 'loginservers';
+      continue;
+    }
+    if (!inSection || line === '{' || line === '}') continue;
     const kv = /^host\s*=\s*(.*)$/i.exec(line);
-    if (!kv) continue;
-    const host = kv[1].replace(/\s*[;#].*$/, '').trim().replace(/:\d+$/, '');
-    return /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host) ? host : null;
+    const quoted = /^"([^"]*)"/.exec(line);
+    const val = kv ? kv[1] : quoted ? quoted[1] : null;
+    if (val == null) continue;
+    const host = val.replace(/\s*[;#].*$/, '').trim().replace(/:\d+$/, '');
+    if (/^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host)) return host;
   }
   return null;
 }
@@ -46036,7 +46044,7 @@ function _netReadGameHost() {
     const host = _netParseEqHost(txt);
     if (host) return { host, note: null };
   }
-  return { host: null, note: !sawDir ? 'EverQuest folder not known yet' : !sawFile ? 'no eqhost.txt in your EverQuest folder' : 'eqhost.txt has no [LoginServer] Host' };
+  return { host: null, note: !sawDir ? 'EverQuest folder not known yet' : !sawFile ? 'no eqhost.txt in your EverQuest folder' : 'eqhost.txt names no login server' };
 }
 
 function _netResolveGateway() {
