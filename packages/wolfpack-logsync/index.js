@@ -14149,7 +14149,10 @@ const _meEnraged = new Map();   // mobLower → until
 // off too late and I'm getting hit. And then when it ends, it should no longer be red underneath the
 // name." So the warning line is 10%, a spoken "Enrage soon" plays once per mob as it crosses it, an
 // enrage that has ended clears the red, and a mob's death clears all of it for the next one.
-const ENRAGE_WARN_PCT = 10;
+// 12% since 2026-10-05 (the guild lead: '"Enrage Soon" goes off WAY too late. it should be hitting
+// at 12-10% of mob hp left'): the warning now lands as the target shows 12%, checked four times a
+// second, and the trigger window speaks it ahead of anything else in its queue.
+const ENRAGE_WARN_PCT = 12;
 const _meEnrageEnded = new Map();   // mobLower → when its enrage ended
 const _enrageWarned = new Map();    // "mobLower#spawnid" → when "Enrage soon" was spoken
 function _mobCanEnrage(name, zoneId) {
@@ -14184,7 +14187,7 @@ function _tickEnrageWarn(nowMs) {
     test:        false,
   });
 }
-setInterval(() => { try { _tickEnrageWarn(Date.now()); } catch { void 0; } }, 1000).unref();
+setInterval(() => { try { _tickEnrageWarn(Date.now()); } catch { void 0; } }, 250).unref();
 
 // TRACKING — the HUD's eight arrows (a member's idea, 2026-09-25: "for tracking.
 // Ahead, Ahead and to right/left, behind left/right behind you"; the guild lead:
@@ -15235,7 +15238,7 @@ function _serializeTankState() {
   const enrage = {
     boss_name:        bossName,
     enrages:          _isEnrageBoss(bossName),
-    threshold_pct:    ENRAGE_WARN_PCT,   // 10% (the guild lead, 2026-10-02: 8% "is going off too late")
+    threshold_pct:    ENRAGE_WARN_PCT,   // 12% (the guild lead: 8%, then 10%, "WAY too late")
     warn_pct:         15,                // warn the tank starting at 15%
     target_hp_pct:    targetHpPct,
     // Enraged now; or its enrage has already ended (the warning box stops flashing red).

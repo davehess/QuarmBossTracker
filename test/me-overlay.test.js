@@ -363,7 +363,7 @@ describe('the three HUDs', () => {
     // Round four, the guild lead: "The ENRAGES section should just make a red
     // outline for the last 8% of the healthbar" — 10% since 2026-10-02 ("8% is
     // going off too late and I'm getting hit").
-    it(name + ' outlines the last 10% of the target\'s health bar in red for a mob that can enrage', () => {
+    it(name + ' outlines the last 12% of the target\'s health bar in red for a mob that can enrage', () => {
       const RED = /<path d="M([\d.]+) ([\d.]+) A172 172 0 0 1 ([\d.]+) ([\d.]+)" stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/;
       const can = fn(base), not = fn(cleric);
       const m = can.match(RED);
@@ -372,7 +372,7 @@ describe('the three HUDs', () => {
       // Clockwise degrees from 12 o'clock: the bar runs -44..44, the outline covers its low end only.
       const deg = (x, y) => Math.atan2(x - 200, 200 - y) * 180 / Math.PI;
       expect(deg(+m[1], +m[2])).toBeCloseTo(-44, 0);
-      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.10, 0);
+      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.12, 0);
       expect(can).not.toMatch(/>enrages</);                        // the outline says it; no word
       const on = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enraged: true }) }));
       expect(on).toContain('ENRAGED');

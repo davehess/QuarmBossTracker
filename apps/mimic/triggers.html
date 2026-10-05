@@ -500,6 +500,8 @@
     var t = String((meta && meta.trigger) || '');
     // A missed CH beat wipes the raid; everything else can wait 2 seconds.
     if (/^CH GO$/i.test(t)) return 2;
+    // Nor does a late "Enrage soon" (the guild lead, 2026-10-05: "goes off WAY too late").
+    if (/^Enrage soon$/i.test(t)) return 2;
     return 1;
   }
 
