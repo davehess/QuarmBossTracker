@@ -379,7 +379,13 @@ the Eastern time it is up (`cooldownTag` in `utils/board.js`, `shortClockInTz`);
 `findBossFromName` partial matches are whole words, and a boss name inside a longer "a/an …" or
 "… of <boss>" mob is trash (the Ture / "tortured" false kills).
 Kills arrive via `/kill`-family commands or agent `bosskill` uploads
-(instance kills auto-start timers). `#raid-mobs` holds four fixed message
+(instance kills auto-start timers). **Only our own kills start a timer from a fight upload (bot 3.1.207,
+§165):** `utils/killContext.js` sorts a confirmed kill into ours / pvp / live / unknown (PvP "(Instanced)"
+broadcast or a PvP flag → pvp; guild share under half of 3+, or another guild on a /who one of the fighters
+took → live; 1–2 fighters with nothing else → unknown), decided post-ack in `_decideKillDeferred` (index.js;
+150 s wait in Hate/Fear/Sky/Hole). pvp/live set `encounters.classification` (`classification_by = 'auto'`,
+never over an officer's mark), and the restart re-seed `latest_kill_per_npc` reads only unclassified,
+finished kills with 3+ players. `#raid-mobs` holds four fixed message
 slots + one thread per expansion (cooldown card, zone kill cards, board
 panels) — all **edited in place** by message id; anchor ids resolve
 `process.env.<KEY>` → `state.channelSlots` → null so they survive volume
@@ -2078,7 +2084,10 @@ Guild set polled from the bot (2 min; class-filtered), personal set from
 replaced the divergent `_translateDotNetRegex` / `_translateGinaPlaceholders`
 pair on 2026-08-07. `{s}` placeholders compile to named groups;
 `_captureMatchesCharmPet` suppresses self-charm-pet fires; roster gate via
-`require_raid_member`. Zeal gauge conditions fire without a log line.
+`require_raid_member` — in a raid the capture must be a raid member or our pet; out of a raid it is
+suppressed only when `_knownNpcNotPlayer` (zone mob pack / Target Info says NPC, and no own character,
+group mate, /who sighting or pet has the name), else falls open (agent 3.7.89, §165). Zeal gauge
+conditions fire without a log line.
 Cross-Mimic relay: detecting agent POSTs `trigger-relay`, others poll
 `recent-fires` (~1.5s) and run the same actions; dedup by name+captures in 8s.
 Fires live in an **in-memory ring buffer** — nothing durable, so "has this
@@ -2168,6 +2177,12 @@ backup). Socials/HotButtons allowlist re-checked agent-side. Results POST to
 left) and `trackHealerManaLine` parse raid-chat macros into raid-wide boards.
 `_serializeCommandCenterState` = tank state (target/MT/rampage/DA/DT/enrage)
 + DA broadcasts + healer mana + the bot's debuff queue as cure alerts.
+**Hail board (bot 3.1.206 + agent 3.7.89 beta, 2026-10-05, §165):** a hail-spawning PoP boss kill opens a
+window in `utils/hailBoard.js` (`HAIL_BOSSES`; windows in `bot_kv` `hail_windows`; the raid at the kill minus
+anyone `pop_flags` + `STAGE_IMPLIES` already flag). Agent `_pollHailBoard` reads `GET /api/agent/hail-board`
+into the `hail` key of the Command Center state; a witnessed or own flag-NPC hail (`parseWitnessedHail`,
+`_hailNpcWanted`) rides the pop-flag upload; a tap posts the local `/api/hail-mark` (`_localOriginOk`) →
+`POST /api/agent/hail-mark`. Render: `hailBoardHtml` in `apps/mimic/command.html`.
 
 ---
 

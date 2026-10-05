@@ -326,7 +326,9 @@ describe('a confirmed kill records the boss\'s own timer, exactly', () => {
 
   it('the encounter path records matchedBoss.timerHours, and only on a confirmed kill', () => {
     const src = readSource(BOT_INDEX);
-    const block = stripJs(sliceBlock(src, 'if (encounter.confirmed_kill !== true) {', 'already on cooldown — parse recorded, no timer change'));
+    // The timer decision moved into _decideKillDeferred (post-ack, after the kill-context verdict); the
+    // confirmed-kill gate is at its call site — test/kill-context.test.js pins that half.
+    const block = stripJs(sliceBlock(src, 'const _decideKillDeferred = async () => {', 'already on cooldown — parse recorded, no timer change'));
     expect(block).toMatch(/recordKill\(matchedBoss\.id, matchedBoss\.timerHours, null\)/);
     expect(block).toMatch(/!bossState \|\| !bossState\.killedAt \|\| bossState\.nextSpawn <= now/);
   });

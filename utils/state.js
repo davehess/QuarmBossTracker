@@ -140,6 +140,19 @@ function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
   return state.bosses[bossId];
 }
 
+// Anything that must react to a recorded kill, whichever path recorded it (board button, /kill, the agent's
+// kill relay, the encounter upload, /sll): register here instead of adding a line to every call site. Exported
+// `recordKill` is the wrapper below; the function above is left exactly as it was.
+const _killListeners = [];
+function onKillRecorded(fn) { _killListeners.push(fn); }
+function recordKillNotifying(bossId, timerHours, killedBy, killedAtOverride) {
+  const entry = recordKill(bossId, timerHours, killedBy, killedAtOverride);
+  for (const fn of _killListeners) {
+    try { Promise.resolve(fn({ bossId, killedAt: entry.killedAt, killedBy })).catch(() => {}); } catch { /* a listener never fails a kill */ }
+  }
+  return entry;
+}
+
 function overrideTimer(bossId, nextSpawn) {
   const state = loadState();
   if (!state.bosses[bossId]) return false;
@@ -1053,7 +1066,8 @@ function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
 
 module.exports = {
-  recordKill, overrideTimer, clearKill, getBossState, getAllState, restoreBossState,
+  recordKill: recordKillNotifying, onKillRecorded,
+  overrideTimer, clearKill, getBossState, getAllState, restoreBossState,
   getExpansionBoard, saveExpansionBoard,
   getChannelSlots,
   getSummaryMessageId, setSummaryMessageId,
