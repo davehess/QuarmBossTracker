@@ -11037,7 +11037,11 @@ function _loadQueueFromDisk() {
     } else {
       // No NDJSON entries — try the legacy single-object form. Safe to
       // string-parse: the hard-read guard already bounded the buffer.
-      const raw = JSON.parse(buf.toString('utf8'));
+      // An EMPTY queue persists as an empty (or whitespace-only) file — that is
+      // an empty queue, not a corrupt one (it was moved aside as .corrupt-* with a
+      // warning on every boot: "Unexpected end of JSON input").
+      const text = buf.toString('utf8');
+      const raw = text.trim() ? JSON.parse(text) : null;
       if (Array.isArray(raw?.pending)) {
         _uploadQueue = raw.pending;
         for (const e of _uploadQueue) e._bytes = _entryBytes(e);
@@ -16078,6 +16082,9 @@ function _serializeForDashboard() {
     // these characters from anything but account inventory"): hidden characters join the tucked-away set.
     // Display only — the Watched Logs diagnostic card still lists every file and nothing uploads differently.
     watchedLogs:        (stats.watchedLogs || []).map(w => ({ ...w, level: _levelOf(w.character), hidden: _hiddenFromLists(w.character) })),
+    // FB-51: null, or { character, file, silentSince } while the primary character's log has gone quiet
+    // though Zeal says they are in game. silentSince is the last line's time, so the JSON is byte-stable.
+    logSilent:          _logSilent,
     // ── Buffs tab (the guild lead, 2026-09-02) ───────────────────────────────────────
     // Two provenances, never blended:
     //   buffsActive   what each watched character is carrying RIGHT NOW, from
@@ -39886,8 +39893,11 @@ function buildFeedbackLogSlice(minutes, nowMs) {
   if (all.length && !/^\[/.test(all[0])) all.shift();
 
   const cutoff = (Number.isFinite(nowMs) ? nowMs : Date.now()) - mins * 60_000;
-  const kept = [];
-  let removed = 0, bytes = 0, truncated = false, firstTs = null, lastTs = null;
+  // Collect the whole window, then trim from the FRONT: a busy window that
+  // overflows the caps must keep the NEWEST lines, because the report is about
+  // what just happened (FB-51: the excerpt ended 44 minutes before it was sent).
+  const cand = [], candTs = [];
+  let removed = 0;
   for (let i = 0; i < all.length; i++) {
     const line = all[i];
     if (!line) continue;
@@ -39897,11 +39907,17 @@ function buildFeedbackLogSlice(minutes, nowMs) {
     // "removed" in the redaction sense, so they are not counted as such.
     if (tsMs != null && tsMs < cutoff) continue;
     if (!_feedbackLineAllowed(line)) { removed++; continue; }
-    if (tsMs != null) { if (firstTs == null) firstTs = tsMs; lastTs = tsMs; }
-    if (kept.length >= FEEDBACK_MAX_LINES || bytes + line.length + 1 > FEEDBACK_MAX_BYTES) {
-      truncated = true; break;
-    }
-    kept.push(line); bytes += line.length + 1;
+    cand.push(line); candTs.push(tsMs);
+  }
+  let from = cand.length, bytes = 0;
+  while (from > 0 && cand.length - from < FEEDBACK_MAX_LINES && bytes + cand[from - 1].length + 1 <= FEEDBACK_MAX_BYTES) {
+    from--; bytes += cand[from].length + 1;
+  }
+  const truncated = from > 0;
+  const kept = cand.slice(from);
+  let firstTs = null, lastTs = null;
+  for (let i = from; i < cand.length; i++) {
+    if (candTs[i] != null) { if (firstTs == null) firstTs = candTs[i]; lastTs = candTs[i]; }
   }
   return {
     ok: true,
@@ -45214,16 +45230,50 @@ function uploadTells({ character, tells }, { dryRun } = {}) {
 // Polls every 500ms. Uses fs.stat to detect size growth. Reads only NEW bytes.
 // Handles file rotation (size goes down → start from 0) and Windows line endings.
 
-async function tailFile(logPath, onLine) {
+// Tail-stall tunables + status (FB-51). Status is keyed by log basename so a
+// dashboard/diagnostic could surface it later; nothing reads it yet.
+const TAIL_STALL_MS        = 15_000;   // no finished read / one read hung this long = stalled
+const TAIL_WATCHDOG_MS     = 5_000;    // watchdog cadence while healthy
+const TAIL_STALLED_POLL_MS = 500;      // sync-read cadence while stalled (triggers need it fast)
+const _tailStatus = new Map();         // basename → { stalled, stalls, syncReads, lastStallAt }
+
+async function tailFile(logPath, onLine, opts = {}) {
   let stat;
   try { stat = await fs.promises.stat(logPath); }
   catch (err) { throw new Error(`Cannot stat ${logPath}: ${err.message}`); }
 
   let pos = stat.size;
   let buf = '';
+  const base = path.basename(logPath);
   if (!_dashboardEnabled) {
-    console.log(`[${path.basename(logPath)}] tailing from offset ${pos} (file size ${stat.size})`);
+    console.log(`[${base}] tailing from offset ${pos} (file size ${stat.size})`);
   }
+
+  // Stall watchdog (FB-51, 2026-10-05): after a Restart one install tailed a log
+  // from offset == size and then delivered NOTHING for 25+ minutes while the
+  // event loop stayed alive. The loop below is a self-scheduling setTimeout
+  // chain over fs.promises calls, so one promise that never settles ends it for
+  // good with no warning. The watchdog uses SYNC fs only (main thread, no
+  // libuv threadpool), notices a read hung or the chain dead, says so once, then
+  // reads the file itself until the async loop comes back.
+  const stallMs = opts.stallMs || TAIL_STALL_MS;
+  const watchdogMs = opts.watchdogMs || TAIL_WATCHDOG_MS;
+  const st = { stalled: false, stalls: 0, syncReads: 0, lastStallAt: 0 };
+  _tailStatus.set(base, st);
+  let inFlightSince = 0;          // start of the async read now awaiting; 0 = none
+  let lastDoneAt = Date.now();    // last time the async loop finished an iteration
+  // `gen` changes whenever pos/buf do. An async read remembers it before each
+  // await and discards its bytes if the watchdog got there first, so the two
+  // paths can never deliver the same bytes (or mistake a stale stat for a rotation).
+  let gen = 0;
+  const deliver = (text, newPos) => {
+    buf += text;
+    const lines = buf.split(/\r?\n/);
+    buf = lines.pop() || '';
+    for (const line of lines) if (line) onLine(line);
+    pos = newPos;
+    gen++;
+  };
 
   // Read every 150 ms while the log is being written, 500 ms once it has been
   // quiet for a minute (the guild's co-leader, 2026-09-26, on the charm-break
@@ -45232,36 +45282,149 @@ async function tailFile(logPath, onLine) {
   // so a slow read can never overlap the next one.
   let lastGrowAt = 0;
   const readNew = async () => {
+    const myGen = gen;
+    inFlightSince = Date.now();
     try {
       const s = await fs.promises.stat(logPath);
-      if (s.size < pos) {
+      if (s.size < pos && gen === myGen) {   // a stale stat (gen moved) is not a rotation
         // File rotated/truncated — start from new top
-        console.log(`[${path.basename(logPath)}] file rotated; resetting position`);
+        console.log(`[${base}] file rotated; resetting position`);
         pos = 0;
         buf = '';
+        gen++;
       }
       if (s.size > pos) {
         lastGrowAt = Date.now();
+        const startGen = gen, from = pos;   // pos can move under us across the awaits below
         const fd = await fs.promises.open(logPath, 'r');
-        const len = s.size - pos;
+        const len = s.size - from;
         const data = Buffer.alloc(len);
-        await fd.read(data, 0, len, pos);
+        await fd.read(data, 0, len, from);
         await fd.close();
-        buf += data.toString('utf8');
-        const lines = buf.split(/\r?\n/);
-        buf = lines.pop() || '';
-        for (const line of lines) if (line) onLine(line);
-        pos = s.size;
+        if (gen === startGen) deliver(data.toString('utf8'), s.size);   // else the watchdog already delivered these bytes
       }
     } catch (err) {
       console.warn(`[tail] ${err.message}`);
     }
+    inFlightSince = 0;
+    lastDoneAt = Date.now();
+    if (st.stalled) {
+      st.stalled = false;
+      console.warn(`[tail] ${base}: async reader recovered after ${st.syncReads} synchronous read(s) — back to normal reads`);
+    }
     setTimeout(readNew, _tailDelayMs(lastGrowAt, Date.now()));
   };
   setTimeout(readNew, 500);
+
+  let wd = null, wdFast = false;
+  const arm = (fast) => {
+    if (wd && wdFast === fast) return;
+    if (wd) clearInterval(wd);
+    wdFast = fast;
+    wd = setInterval(watchdog, fast ? Math.min(watchdogMs, TAIL_STALLED_POLL_MS) : watchdogMs);
+    if (wd.unref) wd.unref();
+  };
+  const watchdog = () => {
+    try {
+      const now = Date.now();
+      if (!st.stalled && wdFast) arm(false);   // the async reader recovered: back to the slow cadence
+      // Healthy fast path, zero fs calls: any stall implies the loop has not
+      // finished an iteration for stallMs (a hung read started after the last one).
+      if (!st.stalled && now - lastDoneAt < stallMs) return;
+      let size;
+      try { size = fs.statSync(logPath).size; } catch { return; }
+      if (!st.stalled) {
+        if (!_tailStalled({ inFlightSince, lastDoneAt, size, pos, now, thresholdMs: stallMs })) return;
+        st.stalled = true; st.stalls++; st.lastStallAt = now;
+        const ahead = size > pos ? `file ${((size - pos) / 1024).toFixed(1)} KB ahead` : size < pos ? 'file rotated' : 'file idle';
+        console.warn(`[tail] ${base}: reads stopped (no read finished for ${Math.round((now - lastDoneAt) / 1000)}s, ${ahead}) — reading synchronously until the async reader recovers`);
+        arm(true);
+      }
+      // Same rotation + carry-over handling as the async path.
+      if (size < pos) {
+        console.log(`[${base}] file rotated; resetting position`);
+        pos = 0;
+        buf = '';
+        gen++;
+      }
+      if (size > pos) {
+        const len = size - pos;
+        const data = Buffer.alloc(len);
+        const fd = fs.openSync(logPath, 'r');
+        let got = 0;
+        try { got = fs.readSync(fd, data, 0, len, pos); } finally { fs.closeSync(fd); }
+        st.syncReads++;
+        deliver(data.toString('utf8', 0, got), pos + got);
+      }
+      lastSyncErr = '';
+    } catch (err) {
+      // Polled twice a second while stalled: say a given failure once, not every tick.
+      if (err.message !== lastSyncErr) console.warn(`[tail] ${base}: synchronous read failed: ${err.message}`);
+      lastSyncErr = err.message;
+    }
+  };
+  let lastSyncErr = '';
+  arm(false);
 }
 function _tailDelayMs(lastGrowAt, now) {
   return (now - lastGrowAt) < 60_000 ? 150 : 500;
+}
+
+// Pure decision — exercised directly by test/tail-watchdog.test.js. Stalled when
+// ONE read has been in flight longer than the threshold (a promise that never
+// settles), or the file has moved past pos (grown, or been rotated below it) and
+// the async loop has finished no iteration for the threshold (the chain died).
+function _tailStalled({ inFlightSince, lastDoneAt, size, pos, now, thresholdMs }) {
+  if (!(thresholdMs > 0)) return false;
+  if (inFlightSince && now - inFlightSince >= thresholdMs) return true;
+  if (size !== pos && now - lastDoneAt >= thresholdMs) return true;
+  return false;
+}
+
+// ── "Your log has gone silent" (FB-51, 2026-10-05) ──────────────────────────
+// One player's eqlog stopped being WRITTEN while they kept playing (EverQuest's
+// /log toggled off, or logging to another folder). The agent was healthy and had
+// nothing to read, and nothing said so. The agent knows two things: Zeal still
+// reports the character in game (live state refreshed within the last minute) and
+// the watched log's last line (`watched.lastSeen`, seeded from the file's mtime).
+// In game + a quiet log for 5 minutes = say so, once per episode.
+const LOG_SILENT_MS            = 5 * 60_000;   // no new line for this long...
+const LOG_SILENT_ZEAL_FRESH_MS = 60_000;       // ...while Zeal heard from the character this recently
+const LOG_SILENT_SWEEP_MS      = 30_000;
+let _logSilent = null;   // { character, file, silentSince } while the primary's log is silent, else null
+
+// Pure decision — exercised directly by test/log-silent.test.js. No Zeal contact
+// (or none for the log) means the character is not in game: never a warning.
+function _logSilentCheck({ zealUpdatedAt, logLastLineAt, now, zealFreshMs = LOG_SILENT_ZEAL_FRESH_MS, silentMs = LOG_SILENT_MS }) {
+  if (!zealUpdatedAt || !logLastLineAt) return false;
+  if (now - zealUpdatedAt > zealFreshMs) return false;   // logged out, or Zeal went quiet
+  return now - logLastLineAt >= silentMs;
+}
+
+function _logSilentSweep(now = Date.now()) {
+  const ch = _primaryCharacter();
+  const lc = ch ? ch.toLowerCase() : '';
+  let zealUpdatedAt = 0;
+  for (const k of Object.keys(_zealState)) {
+    if (k.toLowerCase() === lc) zealUpdatedAt = Math.max(zealUpdatedAt, (_zealState[k] && _zealState[k].updatedAt) || 0);
+  }
+  let w = null;
+  for (const x of (stats.watchedLogs || [])) {
+    if (x && x.logPath && String(x.character || '').toLowerCase() === lc && (!w || (x.lastSeen || 0) > (w.lastSeen || 0))) w = x;
+  }
+  const logLastLineAt = (w && w.lastSeen) || 0;
+  const silent = !!w && _logSilentCheck({ zealUpdatedAt, logLastLineAt, now });
+  if (silent && !_logSilent) {
+    const file = path.basename(w.logPath);
+    _logSilent = { character: ch, file, silentSince: logLastLineAt };
+    console.warn(`[log-silent] ${file} has had no new lines for ${Math.floor((now - logLastLineAt) / 60_000)} min while ${ch} is in game — EverQuest may have stopped logging (/log toggles it) or is writing to another folder`);
+  } else if (!silent && _logSilent) {
+    const resumed = logLastLineAt > _logSilent.silentSince;
+    console.log(resumed
+      ? `[log-silent] ${_logSilent.file} is producing lines again`
+      : `[log-silent] ${_logSilent.character} is no longer in game — silence warning cleared`);
+    _logSilent = null;
+  }
 }
 
 // ── Log rotation (feedback: a member 2026-08-07) ────────────────────────────
@@ -46636,6 +46799,9 @@ async function main() {
         }
       });
     }
+    // FB-51: say so when the primary character's log goes quiet while Zeal has them in game.
+    const _silentTimer = setInterval(() => { try { _logSilentSweep(); } catch { void 0; } }, LOG_SILENT_SWEEP_MS);
+    if (_silentTimer.unref) _silentTimer.unref();
     // Run forever; intervals keep us alive
     return;
   }
@@ -46762,6 +46928,9 @@ module.exports = {
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
+  // FB-51 tail watchdog — exported so the tests drive the shipped decision + loop.
+  tailFile, _tailStalled, _tailStatus,
+  _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   // FB-34 per-character triggers / FB-35 pooled pet owners — exported for their tests.
   _normCharList, _triggerOnFor, _playingCharactersLc, _builtinTimerKindsOn,
