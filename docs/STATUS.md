@@ -194,6 +194,17 @@ next touch one rather than assuming a missing row means a missing doc.
   checkbox, Review button, results) now leads Diagnostics instead of Info. Reverses the 2026-08-13 placement. §137.
 - **✅ New pages go live with a `[beta]` tag (web 1.8.81, 2026-10-03).** `/zeal-icons` (+ `?v=b`) and
   `/db/recipe/<id>` moved from beta to production with `web/components/NewPageTag.tsx` at the top. §135.
+- **⏳ Bristlebane, the raid-voice bot: phase 1 on main, not deployed (bristlebane 0.1.0 + bot 3.1.208,
+  2026-10-05).** A separate Discord app on Tower (`apps/bristlebane`): joins the raid voice channel while
+  `GET /api/agent/raid-live` says a raid is on, leaves when it ends, records ONLY members who ran
+  `/bristlebane optin` (optout / forget delete). No speech yet. Waits on the guild lead: the Coolify app +
+  the bot token + the shared key + a recordings share, the screen pick (B / A / C), and the client-art
+  rights call. Next: callouts moved over from RaidBosses (whose own voice very likely broke on 2026-03-01 —
+  `/voicetest`), then the `/screen` page. DECISIONS-2026-09-21 §166.
+- **⏳ How raiders look, kept per raid night (bot 3.1.208, 2026-10-05).** `raid_night_appearance`: race,
+  deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
+  position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's
+  appearance feed (gender, face, hair, dyes), which needs a push this session cannot make. §166.
 - **🧪 Hail board on beta (agent 3.7.89 `564de49c`, bot 3.1.206, 2026-10-05).** After a flag boss dies the
   Command Center lists the raid at the kill as still to hail / hailed with the NPC's clock; flagged characters
   are left off; a seen hail or a tap moves a name. The bot side reached main with 3.1.207 the same evening;

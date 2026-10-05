@@ -1,7 +1,7 @@
 # Wolf Pack EQ Platform — Claude Code Handoff
 
 A guild platform for Wolf Pack on Project Quarm (EverQuest emu), grown from a
-Discord raid-timer bot into four independently-versioned components in one
+Discord raid-timer bot into five independently-versioned components in one
 monorepo. This file is the authoritative architectural map; `README.md` is the
 user-facing setup guide + command reference. When they conflict, this file wins.
 
@@ -11,11 +11,12 @@ user-facing setup guide + command reference. When they conflict, this file wins.
 | **Web** (`wolfpack.quest`) | `web/` (Next.js 14) | Vercel, auto-deploys on push to `main` | `main` |
 | **Agent** (`wolfpack-logsync`) | `packages/wolfpack-logsync/` (single-file Node, zero deps) | End-user machines — bundled inside Mimic, or standalone via `Parser.bat` | bundled with Mimic; CLI zip via `release-parser.yml` |
 | **Mimic** (Electron desktop) | `apps/mimic/` | End-user Windows machines, auto-updates via electron-updater | `release-mimic.yml` on version bump (`main` = stable channel, `beta` = beta channel) |
+| **Bristlebane** (raid-voice bot, its own Discord app) | `apps/bristlebane/` (Node 22, own lockfile + Dockerfile) | Tower, a Coolify app (Dockerfile, base dir `/apps/bristlebane`) | `main`; redeployed in Coolify (no auto-deploy — the poller only follows the web mirror) |
 
 **Versions live in each component's `package.json` — nowhere else.** Do NOT
 maintain version numbers in this file or in README.md. (We used to keep a
 version table here; it caused repeated merge conflicts between `main` and
-`beta` and drifted constantly. `git log --oneline -5` + the four package.json
+`beta` and drifted constantly. `git log --oneline -5` + the five package.json
 files are the source of truth.)
 
 Other fixed facts: Node 20, discord.js v14, Supabase project
