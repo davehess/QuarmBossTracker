@@ -13376,13 +13376,15 @@ function _meNoteHit(character, ev) {
     else if (!name && !lastCast.claimed) { fromCast = true; lastCast.claimed = true; }
   }
   const nearSwing = arr.some(x => x.dir === 'out' && x.kind === 'melee' && Math.abs(t - x.t) <= 1500);
-  arr.push({ t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
+  const hit = { t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
     anon: dir === 'out' && kind === 'spell' && nonMelee, cast: fromCast,
-    proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast });
+    proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast };
+  arr.push(hit);
+  if (hit.proc) _meProcCount(cl, hit, true);
   if (dir === 'out' && kind === 'melee') {
     for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
       const x = arr[i];
-      if (x.dir === 'out' && x.kind === 'spell' && !x.proc && !x.cast) x.proc = true;
+      if (x.dir === 'out' && x.kind === 'spell' && !x.proc && !x.cast) { x.proc = true; _meProcCount(cl, x, true); }
     }
   }
   if (dir === 'in' && kind === 'melee' && ev.attacker) {
@@ -13391,6 +13393,7 @@ function _meNoteHit(character, ev) {
       const x = arr[i];
       if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
       x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false;
+      _meProcCount(cl, x, false);   // it was the shield after all: not a proc
     }
   }
   const cutoff = t - 10 * 60_000;
@@ -13443,6 +13446,7 @@ function _meNoteMobDeath(name, t) {
   _meEnraged.delete(k);
   _meEnrageEnded.delete(k);
   for (const wk of [..._enrageWarned.keys()]) if (wk.startsWith(k + '#')) _enrageWarned.delete(wk);
+  _meMineClear(k);   // its procs and stuns: the next mob of that name starts at 0
   const list = _meMobDeaths.get(k) || [];
   list.push(t);
   if (list.length > 8) list.shift();
@@ -13465,6 +13469,99 @@ function _meMobTallies(cl, now) {
   return [...by.values()]
     .filter(v => v.dead_at != null ? now - v.dead_at <= _ME_TALLY_DEAD_MS : now - v.last <= _ME_TALLY_IDLE_MS)
     .sort((a, b) => b.last - a.last).slice(0, 4);
+}
+
+// ── What you have put into the mob: procs, and stuns / aggro spells (the guild lead, 2026-10-05) ──
+// "Hud should have the number of procs that you have had on a mob, as well as how many stuns/aggro
+// spells you've put into the mob." Two counters per mob, sent as target.my_procs / target.my_stuns:
+//   · procs — the weapon procs the hit ledger already paints purple (_meNoteHit: your spell damage
+//     in the same moment as your own swing, not a spell you began casting). Counted as a hit is
+//     marked a proc, and taken back if it turns out to have been your damage shield.
+//   · stuns — a spell YOU cast that LANDED (resolveSelfCastLanding, off the spell's own
+//     cast_on_other text — "You begin casting" alone counts nothing, a resist prints no landing)
+//     that the catalog says is a stun (cc has 'stun': effect 21) or adds hate (hate > 0: effect 92
+//     with a POSITIVE base — a negative one is Jolt, which takes hate off). Stun and hate are ONE
+//     counter. A stun that came from a proc has no cast of yours behind it, so it is not here, and
+//     it is no damage hit either, so it is not a proc here: procs and stuns never share a landing.
+// Keyed like the HUD's other per-target state, "mobname#spawnid": the id only when this machine can
+// prove it (the character's own target, _provableTargetId), else the name alone. A death line clears
+// the name (_meNoteMobDeath), an entry untouched for 30 minutes drops out, and a different spawn id
+// of the same name reads 0 — so the next mob starts clean. ⚠ A same-name death while several of that
+// name are alive clears them all: the line names no spawn, and they count up again from the next hit.
+const _meMine = new Map();   // charLower → Map("mobnorm#id" → { norm, id, procs, stuns, at })
+const _ME_MINE_IDLE_MS = 30 * 60_000;
+function _meMineBump(cl, mob, id, field, by, atMs) {
+  const norm = _normMobName(mob);
+  if (!norm) return;
+  const sid = Number.isInteger(id) && id > 0 ? id : null;   // a 0 is "no target", never spawn zero
+  const key = norm + '#' + (sid || '');
+  let m = _meMine.get(cl);
+  if (!m) { m = new Map(); _meMine.set(cl, m); }
+  let e = m.get(key);
+  if (!e) {
+    if (by < 0) return;
+    e = { norm, id: sid, procs: 0, stuns: 0, at: atMs };
+    m.set(key, e);
+    if (m.size > 100) m.delete(m.keys().next().value);
+  }
+  e[field] = Math.max(0, e[field] + by);
+  if (by > 0 && atMs > e.at) e.at = atMs;
+}
+// Mark a ledger hit as counted (or give it back); a hit remembers what it was counted under.
+function _meProcCount(cl, h, on) {
+  if (on) {
+    if (h.counted || !h.other) return;
+    const id = _provableTargetId(cl, h.other);
+    h.counted = { id };
+    _meMineBump(cl, h.other, id, 'procs', 1, h.t);
+  } else if (h.counted) {
+    _meMineBump(cl, h.other, h.counted.id, 'procs', -1, h.t);
+    h.counted = null;
+  }
+}
+// The numbers for the mob you are targeting: its own spawn id when both sides know one, else by name.
+function _meMineFor(cl, name, id, now) {
+  const out = { procs: 0, stuns: 0 };
+  const m = _meMine.get(cl);
+  if (!m) return out;
+  const norm = _normMobName(name);
+  const sid = Number.isInteger(id) && id > 0 ? id : null;
+  for (const [k, e] of m) {
+    if (now - e.at > _ME_MINE_IDLE_MS) { m.delete(k); continue; }
+    if (e.norm !== norm || (sid && e.id && e.id !== sid)) continue;
+    out.procs += e.procs; out.stuns += e.stuns;
+  }
+  return out;
+}
+function _meMineClear(name) {
+  const norm = _normMobName(name);
+  if (!norm) return;
+  for (const m of _meMine.values()) for (const [k, e] of m) if (e.norm === norm) m.delete(k);
+}
+function _meStunOrAggro(e) {
+  return !!e && ((Array.isArray(e.cc) && e.cc.includes('stun')) || Number(e.hate) > 0);
+}
+// Called with the event resolveSelfCastLanding built for a landing in YOUR log (_selfCast).
+// A cast lands once on a mob: an identical landing line from someone else's spell inside the same
+// 12 s window finds the cast already spent and is not yours too. (An area spell lands on several mobs
+// from one cast — each mob is spent once.)
+function _meNoteMyLanding(character, ev) {
+  if (!ev || !ev._selfCast || !ev.target || !ev.spell_name) return;
+  const e = _meSpell(ev.spell_name);
+  if (!_meStunOrAggro(e)) return;
+  const cl = String(character || '').toLowerCase();
+  const norm = _normMobName(ev.target);
+  const atMs = Date.parse(ev.cast_at) || Date.now();
+  const casts = _recentSelfCast.get(cl) || [];
+  let rc = null;
+  for (let i = casts.length - 1; i >= 0; i--) {
+    const c = casts[i];
+    if (_meSpell(c.spellLower) !== e || atMs - c.atMs > SELF_CAST_WINDOW_MS || (c.mined && c.mined.has(norm))) continue;
+    rc = c; break;
+  }
+  if (!rc) return;
+  (rc.mined = rc.mined || new Set()).add(norm);
+  _meMineBump(cl, ev.target, ev.target_id, 'stuns', 1, atMs);
 }
 
 // ── HUD timers and target read-outs (the guild lead, 2026-09-24) ─────────────
@@ -14484,8 +14581,11 @@ function _meTargetExtras(st, active, now) {
   const slow = _bestSlowForTarget(tl, now);
   const until = _meEnraged.get(tl);
   if (until && until <= now) _meEnraged.delete(tl);
+  const mine = _meMineFor(String(active || '').toLowerCase(), st.target_name, st.target_id, now);
   return {
     tot,
+    // What you have put into it: procs landed, and stuns / aggro spells landed (see _meMineBump).
+    my_procs: mine.procs, my_stuns: mine.stuns,
     slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
     enrage: specials ? specials.includes('Enrage') : null,
     // A summoner starts pulling its target to it below 97% HP (the server's
@@ -47257,6 +47357,8 @@ async function main() {
           // targeting it (see _provableTargetId). Stamped BEFORE the upload push
           // below so the local map and buff_casts carry the same answer.
           bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);
+          // Me HUD: a stun or an aggro spell of YOURS that landed counts toward the target's tally.
+          try { _meNoteMyLanding(b.character, bcEvt); } catch (e) { void e; }
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
           // #154 — don't upload instant/uncatalogued self-cast nukes to
           // buff_casts: they carry no debuff timer and the cross-client

@@ -633,6 +633,10 @@
               flurry: !corpse && (t.flurry === true || t.flurry_lit === true), flurryLit: !corpse && t.flurry_lit === true,
               rampage: !corpse && (t.rampage === true || t.rampage_lit === true), rampageLit: !corpse && t.rampage_lit === true };
     }
+    // What you have put into the target (the agent's target.my_procs / my_stuns): weapon procs, and
+    // stuns plus aggro spells that landed. None for a corpse, and none from an agent that sends neither.
+    d.mine = (t && t.corpse !== true && (t.my_procs != null || t.my_stuns != null))
+      ? { procs: Math.max(0, Math.round(+t.my_procs || 0)), stuns: Math.max(0, Math.round(+t.my_stuns || 0)) } : null;
     var c = s.combat || null;
     d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
     d.ds = c && c.ds ? c.ds : null;
@@ -762,6 +766,7 @@
     ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
+      ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
       ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
     ['Raid', [['ramp', 'Rampage target (top right)'], ['lowhp', 'Raiders under 25% (top left)']]],
@@ -775,13 +780,13 @@
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
-    hitsIn: 1, hitsOut: 1, ds: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
+    hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'resists', 'track'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -1111,6 +1116,44 @@
       + ringLabel(id, r + 2.5, a0, a1, '<tspan fill="' + col + '">' + esc(label) + ' </tspan><tspan fill="' + hpColor(hp) + '">' + pctTxt(hp) + '</tspan>', fs);
   }
   function P2(cx, cy, r, deg){ var t = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; }
+  // Procs and stuns on the target (the guild lead, 2026-10-05: "Hud should have the number of procs
+  // that you have had on a mob, as well as how many stuns/aggro spells you've put into the mob. on
+  // the right side of the circle hud above the damage shield, Procs can go to the right of damage
+  // and stuns/aggro spells can go to the right of that"). One short row over the damage-shield
+  // button, flush against the ring like the hit column above it, left to right: damage (that column
+  // and the END arc's "out", already drawn just above), then ⚡ procs in the ledger's purple, then ✦
+  // stuns and aggro spells in gold — a bolt and a spark drawn here, not text glyphs, so every machine
+  // shows the same shapes. A 0 stays, dim, the way the shield button does. Its place is fixed: the
+  // band between the last hit row's baseline (y 239.5) and the shield column's top line (its capitals
+  // start at y 251.6 even at the largest text) — and the thorns' tips, y 252.5. Its text stops
+  // growing at 1.15× so it cannot touch either, and shrinks, never wraps, to stay inside the ring
+  // and out of the open middle.
+  var MINE_Y = 249.5;
+  var MINE_BOLT = 'M2.2 -5.5 L-3.4 1 L-0.4 1 L-2.2 5.5 L3.4 -1.6 L0.4 -1.6 Z';
+  var MINE_SPARK = 'M0 -5.5 L1.5 -1.5 L5.5 0 L1.5 1.5 L0 5.5 L-1.5 1.5 L-5.5 0 L-1.5 -1.5 Z';
+  function mineRow(m){
+    var base = 9 * Math.min(1.15, sz('procs')), chips = [[m.procs, 'var(--purple)', MINE_BOLT], [m.stuns, 'var(--gold)', MINE_SPARK]];
+    var fs = base, span, w;
+    for (var i = 0; i < 12; i++) {
+      fs = Math.floor(fs * 10) / 10;   // the size is written to a tenth: measure what is drawn
+      var top = MINE_Y - fs, dyFar = MINE_Y - 200, dyNear = Math.max(0, top - 200);
+      span = { outer: 200 + Math.sqrt(Math.max(0, LANE_EDGE_R * LANE_EDGE_R - dyFar * dyFar)),
+               inner: 200 + Math.sqrt(Math.max(0, LANE_MID_R * LANE_MID_R - dyNear * dyNear)) };
+      w = chips.reduce(function(a, c){ return a + 0.8 * fs + 0.2 * fs + String(c[0]).length * 0.6 * fs; }, 0) + 0.9 * fs * (chips.length - 1);
+      if (w <= span.outer - span.inner || fs <= base * 0.6) break;
+      fs *= 0.92;
+    }
+    var x = span.outer - w, h = '<g class="mine">';
+    chips.forEach(function(c){
+      var dim = !c[0], col = dim ? 'var(--dim)' : c[1], k = Math.round(fs * 72) / 1000;   // 10 units tall = the digits' cap height
+      h += '<path d="' + c[2] + '" transform="translate(' + f1(x + 0.4 * fs) + ' ' + f1(MINE_Y - 0.36 * fs) + ') scale(' + k + ')" fill="' + col + '"'
+        + ' stroke="rgba(0,0,0,.8)" stroke-width="' + f1(1.2 / k) + '" paint-order="stroke" stroke-linejoin="round"' + (dim ? ' opacity="0.6"' : '') + '/>';
+      x += fs;
+      h += T(x, MINE_Y, String(c[0]), f1(fs), col, 'start', 700);
+      x += String(c[0]).length * 0.6 * fs + 0.9 * fs;
+    });
+    return h + '</g>';
+  }
   var SUMMON_PCT = 97;  // the server's default: a summoner starts pulling below 97%
   function renderHud(s){
     var d = hudData(s), p = hudParts, h = '', R = 172;
@@ -1249,6 +1292,8 @@
         + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, dsc)
         + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5 * Math.min(1.2, sz('ds')), dsc, 'middle', 700);
     }
+    // Procs and stuns/aggro landed on the target, in the band over the damage-shield button (mineRow).
+    if (p.procs && d.mine) h += mineRow(d.mine);
     // The rampage target beside its target's arc on the right, and raiders
     // running low on the left (the guild lead, 2026-10-02: "when there's a
     // rampage, it can be listed next to the main tank on the side as an arc" ·
