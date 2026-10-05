@@ -322,6 +322,13 @@ export default function PrivacyPage() {
           player the same way (&ldquo;Hail, friend&rdquo;) is stored too — we can&apos;t tell them apart.
         </p>
         <p>
+          <B>Live, while Mimic runs</B> (the hail board, on beta): a hail of a flag NPC — yours, or one
+          your log saw — is sent the same way (who hailed, which NPC, the zone, the time, whose log saw
+          it), so the Command Center can show who in the raid still has to hail after a flag boss dies. A
+          hail of anyone or anything else is not sent live. Tapping a name on that board to mark it sends
+          the name, the mark and who tapped.
+        </p>
+        <p>
           <B>Your own PoP flags.</B> When you get a flag, Mimic sends the flag line, your zone and the one
           line just before it, but only when that line comes from one of the flag NPCs (Mavuin, the
           Tribunal, the Planar Projections, Maelin and the others): that line is what names the flag. If

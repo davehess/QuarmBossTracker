@@ -7283,3 +7283,50 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
 - **Tower patch for raid positions:** `docs/PATCH-tower-raid-track.md` (pinned to `04d90890`, md5s, 22-check
   self-test). This session cannot write to Tower (read-only login, SSH blocked by tailnet policy), so a local
   terminal or a Claude in Chrome session runs it.
+
+### 165. The hail board ships, no RIP for a named mob, kills that are not ours, and how a pick is asked (2026-10-05)
+
+- **Hail board, option A** (the guild lead: *"For me it's A"*). Bot 3.1.206 (release branch, rides the next
+  main push): `utils/hailBoard.js` opens a window when one of the 15 hail-spawning PoP bosses dies, the raid
+  at the kill is the list, `pop_flags` + `STAGE_IMPLIES` drop anyone already flagged, and the windows live in
+  `bot_kv` (`hail_windows`), not state.json. `GET /api/agent/hail-board`, `POST /api/agent/hail-mark`.
+  Agent 3.7.89 (beta `564de49c`): the Command Center's hail section (still to hail / hailed, the clock, tap a
+  name to mark it), polled every 30 s (5 s with a window open, 10 min after a 404, so beta is quiet until the
+  bot deploys). A hail of a flag NPC — yours or one your log saw — now leaves the machine live; `PRIVACY.md`
+  and `/privacy` say so in the same change.
+- **RIP on a one-word named mob** (the guild lead: *"a RIP callout on one of the wolf named mobs in Bastion of
+  THunder that has a single name"*). "Death touch — RIP" asks for a raid member; with no raid roster the gate
+  fell open. Out of a raid it now suppresses a name that is a known NPC (the zone's mob pack or a resolved
+  Target Info lookup) and not a known player (our characters, our group, /who, our pet); unknown names still
+  fall open (agent 3.7.89, `test/rip-gate-known-npc.test.js`).
+- **Kills that are not ours start no timer** (the guild lead: *"Lord of Ire PVP kills are still being
+  triggered as regular guild instance kills … If anyone from outside of our guild is in the zone there's a
+  good chance they are in live and we do not count those timers"*). Zone ids cannot tell open world, guild
+  instance and PvP instance apart (Hate is 76 for all three). The rule, in order: **pvp** if the
+  "(Instanced)" PvP kill broadcast for that boss lands within 2 minutes, or a participant had the PvP flag on
+  in Hate/Fear/Sky/Hole; **live** if 3+ fought and under half are guild, or a /who that one of the
+  fighters took within 10 minutes shows another guild in the zone; **unknown** for a 1–2 person kill with
+  nothing else; otherwise **ours**. The /who rule was narrowed to the fighters' own /who before it shipped:
+  checked against the day's 20 Bastion of Thunder named kills, "anyone's /who" would have marked 6 live —
+  mostly all-guild groups — because a guildmate in live Bastion sees a dozen guilds there while our group
+  is in the guild instance; "a fighter's /who" marks only the 2-of-5 group the roster rule already catches.
+  Checked the PvP rule the same way: every Lord of Ire kill in four months was by 1–2 people and every
+  broadcast names "Plane of Hate (Instanced)", the PvP instance, so it cannot catch a guild-raid kill. Only
+  ours starts a board timer; every parse is still kept. pvp/live set `encounters.classification`
+  (never over an officer's mark) — the same mark an officer sets, so, like the 2026-06-29 'foreign' rule
+  (*"if the majority of members of a raid are not Wolfpack members we should flag that, not display on
+  parses"*), those fights leave /parses and the guild kill counts. The restart re-seed
+  (`latest_kill_per_npc`, migration `20261005220000`) reads only unclassified, finished kills with 3+
+  players, so an 'unknown' duo kill (left unclassified — the CHECK has no 'unknown') cannot come back on a
+  deploy. Bosses in Hate/Fear/Sky/Hole wait 150 s before the decision (the broadcast trails the upload);
+  any failed read falls back to recording the timer. Kill-derived lockouts are still written for every
+  verdict (the character really is locked); only their `ours` flag follows pvp/live. Bot 3.1.207.
+  Not gated: `/api/agent/bosskill` and the `/kill` buttons — a human or a lockout relay, not a parse. The day's three board timers from a 2-of-5-guild group (Hreidar, Oreen and Gaukr in Bastion of
+  Thunder, 15:35–16:07 ET) were marked `live` / `classification_by = 'auto'` on production by hand
+  (2026-10-05), so a restart cannot re-seed them; that day's 5–7-player all-guild group kills were left alone.
+- **Grummus 24 h** (the guild lead: *"If grummus is 24h then make it so"*): `data/bosses.json` (bot 3.1.204)
+  and `bosses_local.timer_hours_override` 72 → 24 on production, applied directly 2026-10-05.
+- **How a pick is asked** (the guild lead: *"This format for asking me for answers isn't acceptable. It
+  should tell me the difference, show me the samples"*). Every ask writes each option out with what it
+  includes, a rendered sample, and a tag (faster / can become B / recommended long-term) — never a bare
+  "A or B for X?", including in a to-do line. Folded into `CLAUDE.md` beside the one-liner rule.
