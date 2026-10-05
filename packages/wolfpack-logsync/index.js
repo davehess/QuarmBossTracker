@@ -14735,7 +14735,10 @@ function _meSideArcs(active, st, now, skip) {
     }
   }
   for (const g of (st && Array.isArray(st.gauges) ? st.gauges : [])) {
-    if (!g || !g.text || g.hp_pct == null || g.slot === 1 || g.slot === 6 || g.slot === 16) continue;
+    // Group members' health bars only: Zeal gauges 11-15 (docs/zeal-pipe-protocol.md). Every other
+    // gauge with text — XP, AA XP, cast, breath, the server tick, the spell-gem recasts — is not a
+    // raider, and an AA bar at 6% drew as a "low raider" called "1" (the guild lead, 2026-10-05).
+    if (!g || !g.text || g.hp_pct == null || !(g.slot >= 11 && g.slot <= 15)) continue;
     hp.set(String(g.text).toLowerCase(), { name: String(g.text), hp_pct: Math.round(Number(g.hp_pct)) });
   }
   const not = new Set([String(active || '').toLowerCase(), ...(skip || []).map(s => String(s || '').toLowerCase()),
