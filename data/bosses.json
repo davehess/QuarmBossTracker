@@ -1514,11 +1514,24 @@
     "pqdiUrl": ""
   },
   {
+    "id": "the_ancient_crawler",
+    "name": "The Ancient Crawler",
+    "zone": "Plane of Justice",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "ancient crawler"
+    ],
+    "emoji": "⚖️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/201492",
+    "lockout": false
+  },
+  {
     "id": "grummus",
     "name": "Grummus",
     "zone": "Plane of Disease",
     "expansion": "PoP",
-    "timerHours": 66,
+    "timerHours": 24,
     "nicknames": [
       "grummus"
     ],
@@ -1552,6 +1565,34 @@
     "pqdiUrl": ""
   },
   {
+    "id": "rallius_rattican",
+    "name": "Rallius Rattican",
+    "zone": "Plane of Disease",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "rallius",
+      "rattican"
+    ],
+    "emoji": "🤢",
+    "pqdiUrl": "https://www.pqdi.cc/npc/205134",
+    "lockout": false
+  },
+  {
+    "id": "aramin_the_spider_guardian",
+    "name": "Aramin the Spider Guardian",
+    "zone": "Plane of Disease",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "aramin",
+      "spider guardian"
+    ],
+    "emoji": "🤢",
+    "pqdiUrl": "https://www.pqdi.cc/npc/205095",
+    "lockout": false
+  },
+  {
     "id": "mujaki_the_ravager",
     "name": "Mujaki the Devourer",
     "zone": "Plane of Nightmare",
@@ -1581,6 +1622,73 @@
     "pqdiUrl": ""
   },
   {
+    "id": "terror_matriarch",
+    "name": "Terror Matriarch",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "matriarch"
+    ],
+    "emoji": "😨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/204034",
+    "lockout": false
+  },
+  {
+    "id": "the_bullyrag_bat",
+    "name": "The Bullyrag Bat",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "bullyrag",
+      "bullyrag bat"
+    ],
+    "emoji": "😨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/204010",
+    "lockout": false
+  },
+  {
+    "id": "seilaen",
+    "name": "Seilaen",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "seilaen"
+    ],
+    "emoji": "😨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/204047",
+    "lockout": false
+  },
+  {
+    "id": "untel_dak",
+    "name": "Untel`Dak",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "untel",
+      "untel dak"
+    ],
+    "emoji": "😨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/204035",
+    "lockout": false
+  },
+  {
+    "id": "vhaksiz_the_shade",
+    "name": "Vhaksiz the Shade",
+    "zone": "Plane of Nightmare",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "vhaksiz"
+    ],
+    "emoji": "😨",
+    "pqdiUrl": "https://www.pqdi.cc/npc/204028",
+    "lockout": false
+  },
+  {
     "id": "agnarr_storm_lord",
     "name": "Agnarr the Storm Lord",
     "zone": "Bastion of Thunder",
@@ -1592,6 +1700,118 @@
     ],
     "emoji": "⛈️",
     "pqdiUrl": ""
+  },
+  {
+    "id": "gaukr_sandstorm",
+    "name": "Gaukr Sandstorm",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "gaukr",
+      "sandstorm"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209071",
+    "lockout": false
+  },
+  {
+    "id": "hreidar_lynhillig",
+    "name": "Hreidar Lynhillig",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "hreidar",
+      "lynhillig"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209082",
+    "lockout": false
+  },
+  {
+    "id": "laef_windfall",
+    "name": "Laef Windfall",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "laef",
+      "windfall"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209070",
+    "lockout": false
+  },
+  {
+    "id": "oreen_wavecrasher",
+    "name": "Oreen Wavecrasher",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "oreen",
+      "wavecrasher"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209072",
+    "lockout": false
+  },
+  {
+    "id": "auliffe_chaoswind",
+    "name": "Auliffe Chaoswind",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "auliffe",
+      "chaoswind"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209059",
+    "lockout": false
+  },
+  {
+    "id": "brynju_thunderclap",
+    "name": "Brynju Thunderclap",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "brynju",
+      "thunderclap"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209016",
+    "lockout": false
+  },
+  {
+    "id": "kuanbyr_hailstorm",
+    "name": "Kuanbyr Hailstorm",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "kuanbyr",
+      "hailstorm"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209061",
+    "lockout": false
+  },
+  {
+    "id": "eindride_icestorm",
+    "name": "Eindride Icestorm",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "eindride",
+      "icestorm"
+    ],
+    "emoji": "⚡",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209060",
+    "lockout": false
   },
   {
     "id": "askr_the_lost",
@@ -1620,6 +1840,33 @@
     "pqdiUrl": ""
   },
   {
+    "id": "the_sleep_walker",
+    "name": "The Sleep Walker",
+    "zone": "Plane of Valor",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "sleep walker",
+      "sleepwalker"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/208157",
+    "lockout": false
+  },
+  {
+    "id": "rahlgon",
+    "name": "Rahlgon",
+    "zone": "Plane of Valor",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "rahlgon"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/208176",
+    "lockout": false
+  },
+  {
     "id": "charassis_corrupter",
     "name": "Charassis the Corrupter",
     "zone": "Bastion of Thunder",
@@ -1631,6 +1878,90 @@
     ],
     "emoji": "⚡",
     "pqdiUrl": ""
+  },
+  {
+    "id": "manaetic_prototype_ix",
+    "name": "Manaetic Prototype IX",
+    "zone": "Plane of Innovation",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "prototype ix",
+      "manaetic ix"
+    ],
+    "emoji": "⚙️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/206054",
+    "lockout": false
+  },
+  {
+    "id": "manaetic_prototype_x",
+    "name": "Manaetic Prototype X",
+    "zone": "Plane of Innovation",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "prototype x",
+      "manaetic x"
+    ],
+    "emoji": "⚙️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/206053",
+    "lockout": false
+  },
+  {
+    "id": "manaetic_prototype_xi",
+    "name": "Manaetic Prototype XI",
+    "zone": "Plane of Innovation",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "prototype xi",
+      "manaetic xi"
+    ],
+    "emoji": "⚙️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/206055",
+    "lockout": false
+  },
+  {
+    "id": "banord_paffa",
+    "name": "Banord Paffa",
+    "zone": "Crypt of Decay",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "banord",
+      "paffa",
+      "overlord banord paffa"
+    ],
+    "emoji": "💀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/200020",
+    "lockout": false
+  },
+  {
+    "id": "carprin_deatharn",
+    "name": "Carprin Deatharn",
+    "zone": "Crypt of Decay",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "carprin",
+      "deatharn"
+    ],
+    "emoji": "💀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/200007",
+    "lockout": false
+  },
+  {
+    "id": "spectre_of_corruption",
+    "name": "Spectre of Corruption",
+    "zone": "Crypt of Decay",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "corruption"
+    ],
+    "emoji": "💀",
+    "pqdiUrl": "https://www.pqdi.cc/npc/200016",
+    "lockout": false
   },
   {
     "id": "saryrn",

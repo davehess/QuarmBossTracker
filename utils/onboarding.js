@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.204': [
+    '**The Planes of Power board has timers for the guild instance bosses.** The eight Bastion of Thunder named (3 hours), plus Crypt of Decay, Plane of Disease, Plane of Innovation, Plane of Justice, Plane of Nightmare and Plane of Valor bosses (24 hours), each with a kill button. A boss on a timer of a day or less shows the time it is up again in Eastern ("up 9:42p") instead of the kill date. The 3-hour bosses stay off the spawn alerts and the "Spawning in 24 hours" card, and Grummus is 24 hours now, not 66.',
+    '**A tortured soul no longer counts as a Ture kill.** Boss names now match on whole words, so a mob with a boss\'s letters buried inside its name (tortured, mature, frightfinger) is no longer taken for the boss.',
+  ],
   '3.1.202': [
     '**Mimic\'s DS badge counts the shield from your gear.** A Talisman of Vah Kerrath (+8) or Shroud of Eternity (+5) adds to your damage shield spell, so a 10-point shield with the Talisman now reads 18, as it hits. Gear adds nothing without a shield spell, and the badge shows that too. Needs the beta Mimic for now.',
   ],

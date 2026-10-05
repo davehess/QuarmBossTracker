@@ -148,6 +148,9 @@ function buildKillLockouts({
   guildId, encounterId, observedBy, observedAtMs,
 } = {}) {
   if (!boss || !boss.id || !boss.name) return [];
+  // A respawn-only named (bosses.json `lockout: false` — the PoP named Quarm moved to 3 h / 24 h
+  // respawns on 2026-10-05, notes naming no lockout) carries a board timer, not an engage lock.
+  if (boss.lockout === false) return [];
   const hours = Number(boss.timerHours);
   if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_TIMER_HOURS) return [];
   if (!Number.isFinite(killedAtMs) || killedAtMs <= 0) return [];

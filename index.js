@@ -278,7 +278,7 @@ const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
-const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
+const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
 
 function getBosses() {
   delete require.cache[require.resolve('./data/bosses.json')];
@@ -2750,29 +2750,36 @@ function startSpawnChecker(readyClient) {
         const remaining = entry.nextSpawn - now;
         const expansion = getBossExpansion(boss);
         const threadId  = getThreadId(expansion);
+        // A 3 h boss is on the board and in Active Cooldowns but posts no 30-min
+        // warning, no "spawned" message and no Historic Kills line — it would be
+        // eight bosses every three hours (the guild lead, 2026-10-05). The
+        // clearKill + board refresh below still run, so its button flips to "up".
+        const quiet = isShortTimerBoss(boss);
 
         // ── Boss has spawned ───────────────────────────────────────────────
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
           alertedSoon.delete(boss.id);
 
-          // Archive zone card
-          await archiveZoneCardEntry(readyClient, boss, bosses, state, historyThread);
+          // Archive zone card (a quiet boss still drops off the card, minus the history line)
+          await archiveZoneCardEntry(readyClient, boss, bosses, state, quiet ? null : historyThread);
 
           // Update the "soon" alert message in place to "spawned", or post new spawned msg
-          const alertMsgId = getSpawnAlertMessageId(boss.id);
-          const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
-          const spawnedEmbed = buildSpawnedEmbed(boss);
-          if (alertMsgId) {
-            try {
-              const alertMsg = await target.messages.fetch(alertMsgId);
-              await alertMsg.edit({ embeds: [spawnedEmbed] });
-            } catch {
+          if (!quiet) {
+            const alertMsgId = getSpawnAlertMessageId(boss.id);
+            const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
+            const spawnedEmbed = buildSpawnedEmbed(boss);
+            if (alertMsgId) {
+              try {
+                const alertMsg = await target.messages.fetch(alertMsgId);
+                await alertMsg.edit({ embeds: [spawnedEmbed] });
+              } catch {
+                await target.send({ embeds: [spawnedEmbed] });
+              }
+              clearSpawnAlertMessageId(boss.id);
+            } else {
               await target.send({ embeds: [spawnedEmbed] });
             }
-            clearSpawnAlertMessageId(boss.id);
-          } else {
-            await target.send({ embeds: [spawnedEmbed] });
           }
 
           clearKill(boss.id);
@@ -2785,7 +2792,7 @@ function startSpawnChecker(readyClient) {
         if (remaining > 30 * 60 * 1000) { alertedSpawned.delete(boss.id); alertedSoon.delete(boss.id); }
 
         // ── 30 min warning ─────────────────────────────────────────────────
-        if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
+        if (!quiet && remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           const target = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
           const sent = await target.send({ embeds: [buildSpawnAlertEmbed(boss)] });

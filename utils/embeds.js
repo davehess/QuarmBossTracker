@@ -1,7 +1,7 @@
 // utils/embeds.js
 
 const { EmbedBuilder } = require('discord.js');
-const { discordRelativeTime, discordAbsoluteTime, statusEmoji } = require('./timer');
+const { discordRelativeTime, discordAbsoluteTime, statusEmoji, isShortTimerBoss } = require('./timer');
 const { getDefaultTz } = require('./timezone');
 
 const EXP_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
@@ -66,6 +66,8 @@ function buildSpawningTomorrowCard(bosses, killState) {
     const entry = killState[boss.id];
     if (!entry) continue;
     if (entry.nextSpawn <= now || entry.nextSpawn > in24h) continue;
+    // A 3 h boss is always inside the 24 h window — it would sit here forever.
+    if (isShortTimerBoss(boss)) continue;
     const exp = boss.expansion || 'Luclin';
     if (!byExp[exp]) byExp[exp] = [];
     byExp[exp].push({ boss, entry });
