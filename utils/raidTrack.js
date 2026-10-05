@@ -172,6 +172,24 @@ function closeFinished(nowMs = _clock()) {
   return true;
 }
 
+/**
+ * Is a raid on the ground right now? { placed, lastRowAt }: how many raiders the roster uploads placed in
+ * the last FRESH_MS (the very sample takeFrame() would put in a frame, so "live" here and "worth
+ * recording" there are the same call), and when the newest remembered sample landed (ms, or null when
+ * nothing is remembered; a quiet raid keeps it for up to PRUNE_MS, or longer while the frame timer is not
+ * running). Read-only — it touches no state — and O(tracked raiders), so GET /api/agent/raid-live can call
+ * it on every poll.
+ */
+function liveSnapshot(nowMs = _clock()) {
+  let placed = 0;
+  let lastRowAt = null;
+  for (const e of latest.values()) {
+    if (nowMs - e.atMs <= FRESH_MS) placed++;
+    if (lastRowAt === null || e.atMs > lastRowAt) lastRowAt = e.atMs;
+  }
+  return { placed, lastRowAt };
+}
+
 // ── Zones and exclusions (flush time only) ───────────────────────────────────
 
 const _enc = encodeURIComponent;
@@ -432,7 +450,7 @@ function _state() {
 }
 
 module.exports = {
-  noteRows, takeFrame, closeFinished, buildMinuteRow, resolveSrcZones, flush, start, stop,
+  noteRows, takeFrame, closeFinished, liveSnapshot, buildMinuteRow, resolveSrcZones, flush, start, stop,
   stepS, minPlaced,
   STEP_S_DEFAULT, MIN_PLACED_DEFAULT, STICKY_MS, FRESH_MS, PRUNE_MS, MAX_TRACKED, MAX_PENDING_MINUTES,
   MAX_ATTEMPTS, RETRY_BACKOFF_MS, SAFETY_MS, EXCLUDE_TTL_MS, ZONE_TTL_MS, LIVE_ZONE_MS,

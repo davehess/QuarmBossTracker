@@ -18083,6 +18083,31 @@ async function _handleAgentRaidRoster(req, res) {
   }
 }
 
+// GET /api/agent/raid-live — "is a raid on the ground right now?", polled by Bristlebane (the separate
+// raid-voice bot, apps/bristlebane): it joins the raid voice channel while this says live and leaves when
+// it stops. Answered from memory — the roster samples utils/raidTrack.js already holds ARE the signal
+// (raiders placed in the last few seconds; one in another zone arrives as (0,0,0) and is never counted),
+// so a poll costs no Supabase read. `ended` is the officer's "End raid" flag (_raidEndedInfo, bot_kv, 60 s
+// cache): the roster stays live after the button because everyone is still logged in, so the caller needs
+// it to tell "raid over" from "raid on". It is left out when Supabase is off, since nothing can say.
+// Auth: Bristlebane has no person's session token to send, so when BRISTLEBANE_API_KEY is set THIS route (and
+// no other) also accepts it as the bearer; unset, or any other bearer, falls through to requireAgentAuth.
+async function _handleAgentRaidLive(req, res) {
+  if (!require('./utils/serviceKey').matchesServiceKey(req, process.env.BRISTLEBANE_API_KEY)) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
+  const raidTrack = require('./utils/raidTrack');
+  const now = Date.now();
+  const { placed, lastRowAt } = raidTrack.liveSnapshot(now);
+  const nightKey = require('./utils/raidNight').nightKey(now);
+  const out = { live: placed >= raidTrack.minPlaced(), placed, lastRowAt, nightKey };
+  if (require('./utils/supabase').isEnabled()) out.ended = !!(await _raidEndedInfo(nightKey));
+  out.inWindow = require('./utils/timezone').isInRaidWindow(now);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out));
+}
+
 // ── Stream classification — the dedup/load-shed guardrail (#72/#74) ──────────
 // The rule the Rathe-Council fight makes concrete: you can only safely dedup a
 // stream that is IDENTICAL across observers. A stream where each observer's view
@@ -22581,6 +22606,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentRaidRoster(req, res); }
     catch (err) {
       console.error('[raid-roster] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-live')) {
+    try { return await _handleAgentRaidLive(req, res); }
+    catch (err) {
+      console.error('[raid-live] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

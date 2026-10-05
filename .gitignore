@@ -28,6 +28,8 @@ npm-debug.log*
 # committed for the parser regression net to mean anything.
 !test/fixtures/golden/*.log
 package-lock.json
+# …except Bristlebane's: its Dockerfile runs `npm ci`, which needs the lockfile in the repo.
+!apps/bristlebane/package-lock.json
 dist/
 packages/wolfpack-logsync/logsync.stats.json
 # A user's own imported/authored triggers — local state that happens to live
