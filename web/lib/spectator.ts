@@ -69,10 +69,14 @@ export function toScreen(x: number, y: number): { sx: number; sy: number } {
  * report the same raider, and the roster table keeps only the last writer, but the rule is cheap and the
  * page must not draw a raider twice if that ever changes. Rows with no usable position or time are dropped.
  */
-export function freshestPerName<T extends Pick<RosterPosRow, 'name' | 'loc_at' | 'loc_x' | 'loc_y'>>(rows: T[]): T[] {
+export function freshestPerName<T extends Pick<RosterPosRow, 'name' | 'loc_at' | 'loc_x' | 'loc_y' | 'loc_z'>>(rows: T[]): T[] {
   const best = new Map<string, { row: T; at: number }>();
   for (const r of rows) {
     if (!r.name || !finite(r.loc_x) || !finite(r.loc_y) || !r.loc_at) continue;
+    // Exactly (0, 0, 0) is what a raid member who is not in the uploader's zone arrives as (seen on live data
+    // 2026-10-05: one raider in another plane, 24 uploaders, all zero). Not a place; and dropped BEFORE the
+    // freshest is picked, so a zero row cannot mask a real position another uploader has.
+    if (r.loc_x === 0 && r.loc_y === 0 && r.loc_z === 0) continue;
     const at = Date.parse(r.loc_at);
     if (!Number.isFinite(at)) continue;
     const k = lower(r.name);
@@ -309,6 +313,20 @@ export function raidBox(rs: Pick<Raider, 'x' | 'y'>[]) {
     if (sy > maxY) maxY = sy;
   }
   return { minX, maxX, minY, maxY };
+}
+
+/**
+ * The raiders that make up "the raid" for framing: everyone within max(150, 4 x the typical distance) of the
+ * raid's middle. A dead raider's corpse run, or two people scouting a corridor 300 units off, would
+ * otherwise shrink the other forty to a blob (measured on a live raid, 2026-10-05). A small group is all core.
+ */
+export function coreRaiders<T extends Pick<Raider, 'x' | 'y'>>(rs: T[]): T[] {
+  if (rs.length < 5) return rs;
+  const mx = median(rs.map(r => r.x)) as number;
+  const my = median(rs.map(r => r.y)) as number;
+  const d = rs.map(r => Math.hypot(r.x - mx, r.y - my));
+  const reach = Math.max(150, 4 * (median(d) as number));
+  return rs.filter((_, i) => d[i] <= reach);
 }
 
 /** A round scale-bar length (in game units) that is about 70-140 px wide at this scale. */

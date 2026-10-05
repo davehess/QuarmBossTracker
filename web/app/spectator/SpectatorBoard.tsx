@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DOT_STALE_S, classAbbr, classColor, deriveBands, effectiveLayers, fitView, headingVec, layerBounds,
-  lineNearZ, liftColor, mapBox, median, needsRefit, nearestBand, parseZoneMap, pickZone, raidBox,
+  coreRaiders, lineNearZ, liftColor, mapBox, median, needsRefit, nearestBand, parseZoneMap, pickZone, raidBox,
   scaleBarUnits, toScreen, zoomAt,
   type LayerChoice, type Positions, type Raider, type View, type ZoneMap,
 } from '@/lib/spectator';
@@ -25,10 +25,12 @@ const TEXT = '#c9d1d9';
 const FONT = '12px "Cascadia Code", Consolas, ui-monospace, monospace';
 const LABEL_FONT = '10px "Cascadia Code", Consolas, ui-monospace, monospace';
 const DOT_R = 5.5;
-// Brewall's place names are drawn only once the map is zoomed in this far (pixels per game unit), and at
-// most one per 80x12 px cell, so a zoomed-out zone is lines and dots, not a wall of text.
-const LABEL_MIN_SCALE = 0.15;
-const LABEL_MAX = 150;
+// Brewall's place names are drawn only once the map is zoomed in this far (pixels per game unit), cut to
+// LABEL_CHARS, and never over another name, so a zone is lines and dots with a few words, not a wall of text.
+// (Checked on a real zone: at fit-the-zone scale, 0.15 piled forty names on top of each other.)
+const LABEL_MIN_SCALE = 0.35;
+const LABEL_MAX = 60;
+const LABEL_CHARS = 26;
 
 // A zone's map, ready to draw: everything already in the picture's frame (x, y negated), in flat typed
 // arrays so a frame is a loop. `bands` are the floors the chips show: the generated walls' own, else
@@ -88,17 +90,19 @@ function prepare(map: ZoneMap): Prepared {
   return { gen, bw, bands };
 }
 
-// Low floors cool, high floors warm: a hue per band index.
+// Low floors cool, high floors warm: a hue per band index. Muted (the dots are the loud thing on this page).
 function bandColor(i: number, n: number, alpha: number) {
   const hue = n <= 1 ? 205 : 215 - (i / (n - 1)) * 190;
-  return `hsla(${hue.toFixed(0)}, 65%, 62%, ${alpha})`;
+  return `hsla(${hue.toFixed(0)}, 42%, 60%, ${alpha})`;
 }
 
 const chip = 'rounded border px-2.5 py-1.5 text-xs whitespace-nowrap transition-colors '
   + 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue';
 const chipIdle = 'border-border bg-panel text-text hover:bg-[#21262d]';
 const chipOn = 'border-accent bg-accent text-white';
-const chipOff = 'disabled:opacity-40 disabled:hover:bg-panel';
+// Floors are all on by default, so their "on" is a quiet outline: six solid blue chips read as six alarms.
+const chipFloorOn = 'border-accent bg-accent/15 text-text';
+const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 
 export default function SpectatorBoard() {
   const [feed, setFeed] = useState<{ data: Positions; rxAt: number } | null>(null);
@@ -138,6 +142,8 @@ export default function SpectatorBoard() {
     [feed, zone],
   );
   const otherZones = feed ? feed.data.raiders.length - raiders.length : 0;
+  // Raiders the framing leaves out (a straggler, a corpse run): said on the page so a dot off the edge is not a mystery.
+  const awayCount = raiders.length - coreRaiders(raiders).length;
   const entry = zone ? maps[zone] : undefined;
   const ready = entry?.status === 'ready' ? entry : null;
   const bands = ready ? ready.prep.bands : [];
@@ -172,7 +178,8 @@ export default function SpectatorBoard() {
     // a floor switched off by its chip is not drawn.
     const bw = s.map?.prep.bw;
     if (bw && s.layers.brewall) {
-      const alpha = s.layers.generated ? { on: 0.5, off: 0.1 } : { on: 0.7, off: 0.16 };
+      // (Brighter than first drafted: at 0.7 / 0.16 a zone-wide view of Brewall's lines was barely there.)
+      const alpha = s.layers.generated ? { on: 0.55, off: 0.12 } : { on: 0.9, off: 0.22 };
       ctx.lineCap = 'butt';
       ctx.lineWidth = 1;
       for (const bright of [false, true]) {
@@ -204,7 +211,7 @@ export default function SpectatorBoard() {
       for (let b = 0; b < n; b++) {
         if (s.hidden.has(b)) continue;
         const bright = b === s.focusBand;
-        ctx.strokeStyle = bandColor(b, n, bright ? 0.95 : 0.22);
+        ctx.strokeStyle = bandColor(b, n, bright ? 0.85 : 0.2);
         ctx.lineWidth = bright ? 1.4 : 1;
         const a = gen[b];
         ctx.beginPath();
@@ -219,25 +226,33 @@ export default function SpectatorBoard() {
       }
     }
 
-    // Brewall's place names, only when zoomed in, on the raid's floor, one per cell.
+    // Brewall's place names: only when zoomed in, on the raid's floor, cut short, and never over another name.
+    // A halo in the page colour keeps a name readable where it crosses a wall.
     if (bw && s.layers.brewall && v.scale >= LABEL_MIN_SCALE) {
       ctx.font = LABEL_FONT;
       ctx.textBaseline = 'middle';
       ctx.textAlign = 'center';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = BG;
       ctx.fillStyle = TEXT;
-      ctx.globalAlpha = 0.7;
-      const taken = new Set<string>();
-      let drawn = 0;
+      const placed: [number, number, number, number][] = [];   // x0, y0, x1, y1 of names already drawn
       for (const L of bw.labels) {
+        if (placed.length >= LABEL_MAX) break;
         if (s.hidden.has(L.band)) continue;
         if (s.filter && !lineNearZ(L.z, L.z, s.refZ as number)) continue;
         const px = L.sx * v.scale + ox, py = L.sy * v.scale + oy;
-        if (px < 0 || px > w || py < 0 || py > h) continue;
-        const cell = `${Math.floor(px / 80)}:${Math.floor(py / 12)}`;
-        if (taken.has(cell)) continue;
-        taken.add(cell);
-        ctx.fillText(L.text, px, py);
-        if (++drawn >= LABEL_MAX) break;
+        if (py < 7 || py > h - 7) continue;
+        const name = L.text.replace(/^#/, '');   // "#" marks a placed NPC in the map files
+        const text = name.length > LABEL_CHARS ? name.slice(0, LABEL_CHARS - 1) + '…' : name;
+        const hw = ctx.measureText(text).width / 2 + 3;
+        const box: [number, number, number, number] = [px - hw, py - 7, px + hw, py + 7];
+        if (box[0] < 0 || box[2] > w) continue;   // a name cut by the edge of the picture is not drawn
+        if (placed.some(p => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) continue;
+        placed.push(box);
+        ctx.globalAlpha = 0.85;
+        ctx.strokeText(text, px, py);
+        ctx.fillText(text, px, py);
       }
       ctx.globalAlpha = 1;
       ctx.textAlign = 'start';
@@ -310,19 +325,25 @@ export default function SpectatorBoard() {
     // Scale bar (bottom-left) and north (top-right; north is always up).
     const units = scaleBarUnits(v.scale);
     const len = units * v.scale;
-    ctx.strokeStyle = TEXT;
+    // Words get a halo in the page colour: a wall line runs through them otherwise.
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = BG;
     ctx.fillStyle = TEXT;
+    ctx.lineWidth = 3;
+    ctx.strokeText(`${units.toLocaleString()} units`, 14, h - 34);
+    ctx.fillText(`${units.toLocaleString()} units`, 14, h - 34);
+    ctx.textAlign = 'center';
+    ctx.strokeText('N', w - 22, 36);
+    ctx.fillText('N', w - 22, 36);
+    ctx.textAlign = 'start';
+    ctx.strokeStyle = TEXT;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(14, h - 26); ctx.lineTo(14, h - 18); ctx.lineTo(14 + len, h - 18); ctx.lineTo(14 + len, h - 26);
     ctx.stroke();
-    ctx.fillText(`${units.toLocaleString()} units`, 14, h - 34);
     ctx.beginPath();
     ctx.moveTo(w - 22, 12); ctx.lineTo(w - 16, 26); ctx.lineTo(w - 22, 22); ctx.lineTo(w - 28, 26); ctx.closePath();
     ctx.fill();
-    ctx.textAlign = 'center';
-    ctx.fillText('N', w - 22, 36);
-    ctx.textAlign = 'start';
   }, []);
 
   const schedule = useCallback(() => {
@@ -330,12 +351,13 @@ export default function SpectatorBoard() {
     rafRef.current = requestAnimationFrame(() => { rafRef.current = 0; draw(); });
   }, [draw]);
 
-  // While following, re-fit only when the raid is leaving the picture (see needsRefit).
+  // While following, re-fit only when the raid is leaving the picture (see needsRefit). "The raid" is its
+  // core (coreRaiders): one straggler does not set the zoom.
   const sync = useCallback(() => {
     const { w, h } = sizeRef.current;
     const rs = live.current.raiders;
     if (w && h && followRef.current && rs.length) {
-      const box = raidBox(rs)!;
+      const box = raidBox(coreRaiders(rs))!;
       const v = viewRef.current;
       if (!v || needsRefit(v, box, w, h)) viewRef.current = fitView(box, w, h);
     }
@@ -456,7 +478,7 @@ export default function SpectatorBoard() {
 
   const fitRaid = useCallback(() => {
     const { w, h } = sizeRef.current;
-    const box = raidBox(live.current.raiders);
+    const box = raidBox(coreRaiders(live.current.raiders));
     if (!box || !w) return;
     viewRef.current = fitView(box, w, h);
     setFollow(true);
@@ -639,6 +661,7 @@ export default function SpectatorBoard() {
           <span className={netErr ? 'text-orange' : 'text-green'}>{netErr ? 'Reconnecting…' : '● Live'}</span>
           <span className="text-text">{zoneName}</span>
           <span>{raiders.length} {raiders.length === 1 ? 'raider' : 'raiders'}</span>
+          {awayCount > 0 && <span>{awayCount} away from the raid (tap one in the roster)</span>}
           {otherZones > 0 && <span>{otherZones} in other zones</span>}
           {feed.data.unplaced > 0 && <span>{feed.data.unplaced} not placed (zone unknown)</span>}
         </div>
@@ -667,7 +690,7 @@ export default function SpectatorBoard() {
         </div>
 
         <div ref={wrapRef}
-          className="relative h-[62vh] max-h-[720px] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg">
+          className="relative h-[52vh] max-h-[720px] sm:h-[62vh] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg">
           <canvas ref={canvasRef}
             tabIndex={0}
             role="img"
@@ -713,7 +736,7 @@ export default function SpectatorBoard() {
               <button key={i} type="button" aria-pressed={!hidden.has(i)}
                 title={i === focusBand ? "The raid's floor, drawn bright" : undefined}
                 onClick={() => toggleBand(i)}
-                className={`${chip} ${hidden.has(i) ? chipIdle + ' opacity-60' : chipOn}`}>
+                className={`${chip} ${hidden.has(i) ? chipIdle + ' opacity-60' : chipFloorOn} ${i === focusBand ? 'font-bold' : ''}`}>
                 {i === focusBand ? '● ' : ''}{Math.round(bands[i])}
               </button>
             ))}
@@ -777,13 +800,16 @@ function MapNote({ children }: { children: React.ReactNode }) {
 }
 
 function HpCell({ hp }: { hp: number | null }) {
-  const bar = hp == null ? 'bg-border' : hp > 50 ? 'bg-green' : hp > 25 ? 'bg-orange' : 'bg-red';
+  // Most raiders send no HP (only some uploaders' Zeal does): a dash alone, not forty empty bars.
+  const bar = hp == null ? '' : hp > 50 ? 'bg-green' : hp > 25 ? 'bg-orange' : 'bg-red';
   return (
     <span className="flex w-14 shrink-0 items-center justify-end gap-1.5">
-      <span className="h-1 w-6 overflow-hidden rounded bg-border">
-        <span className={`block h-full ${bar}`} style={{ width: `${hp ?? 0}%` }} />
-      </span>
-      <span className="w-8 text-right tabular-nums text-text">{hp == null ? '–' : `${hp}%`}</span>
+      {hp != null && (
+        <span className="h-1 w-6 overflow-hidden rounded bg-border">
+          <span className={`block h-full ${bar}`} style={{ width: `${hp}%` }} />
+        </span>
+      )}
+      <span className={`w-8 text-right tabular-nums ${hp == null ? 'text-dim' : 'text-text'}`}>{hp == null ? '–' : `${hp}%`}</span>
     </span>
   );
 }

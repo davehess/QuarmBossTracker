@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   serverXY, toScreen, freshestPerName, resolveZoneIds, buildPositions, pickZone, headingVec,
   canonicalClass, classColor, classAbbr, CLASS_COLORS, UNKNOWN_CLASS_COLOR, median, nearestBand,
-  fitView, zoomAt, needsRefit, mapBox, raidBox, scaleBarUnits, parseZoneMap,
+  fitView, zoomAt, needsRefit, mapBox, raidBox, scaleBarUnits, parseZoneMap, coreRaiders,
   effectiveLayers, layerBounds, deriveBands, lineNearZ, liftColor,
   POSITION_FRESH_S, DOT_STALE_S, FLOOR_BAND_Z,
 } from '../web/lib/spectator.ts';
@@ -62,6 +62,19 @@ describe('freshestPerName', () => {
     const out = freshestPerName(rows);
     expect(out).toHaveLength(2);
     expect(out.find(r => r.name.toLowerCase() === 'brackwyn').loc_x).toBe(2);
+  });
+
+  it('drops exactly (0, 0, 0): a raid member in another zone, not a place; it cannot mask a real position', () => {
+    const rows = [
+      row('Aldenmar', { loc_x: 0, loc_y: 0, loc_z: 0, loc_at: ago(1) }),     // newest, but nowhere
+      row('Aldenmar', { loc_x: 40, loc_y: -8, loc_z: 3, loc_at: ago(4) }),   // another uploader's real fix
+      row('Brackwyn', { loc_x: 0, loc_y: 0, loc_z: 0 }),
+      row('Corvale', { loc_x: 0, loc_y: 0, loc_z: 5 }),                      // a real spot that happens to have x = y = 0
+    ];
+    const out = freshestPerName(rows);
+    expect(out.map(r => r.name).sort()).toEqual(['Aldenmar', 'Corvale']);
+    expect(out.find(r => r.name === 'Aldenmar').loc_x).toBe(40);
+    expect(buildPositions([rows[2]], new Map([['brackwyn', 100]]), zones, NOW).raiders).toEqual([]);
   });
 
   it('drops rows with no name, no position or no usable time', () => {
@@ -289,6 +302,26 @@ describe('view maths', () => {
       .toEqual({ minX: -1644, maxX: 1062, minY: -1986, maxY: 1298 });
     expect(raidBox([])).toBeNull();
     expect(raidBox([{ x: 100, y: 50 }, { x: -40, y: 80 }])).toEqual({ minX: -100, maxX: 40, minY: -80, maxY: -50 });
+  });
+
+  it('framing the raid ignores stragglers: a clump of forty and three people hundreds of units off', () => {
+    // Measured shape of a live raid (2026-10-05): ~40 within 60 units of each other, a few far away.
+    const clump = Array.from({ length: 40 }, (_, i) => ({ x: (i % 8) * 8, y: Math.floor(i / 8) * 8, tag: 'clump' }));
+    const far = [{ x: 330, y: 160, tag: 'far' }, { x: -300, y: 90, tag: 'far' }, { x: 20, y: 350, tag: 'far' }];
+    const core = coreRaiders([...clump, ...far]);
+    expect(core.filter(r => r.tag === 'far')).toHaveLength(0);
+    expect(core).toHaveLength(40);
+    // The framing around the core is a tight box, not one stretched to the stragglers.
+    const box = raidBox(core);
+    expect(box.maxX - box.minX).toBeLessThan(100);
+  });
+
+  it('a raid strung out along a corridor is all core, and a small group always is', () => {
+    const line = Array.from({ length: 20 }, (_, i) => ({ x: i * 40, y: 0 }));
+    expect(coreRaiders(line)).toHaveLength(20);
+    const few = [{ x: 0, y: 0 }, { x: 5000, y: 0 }, { x: 0, y: 5000 }];
+    expect(coreRaiders(few)).toEqual(few);
+    expect(coreRaiders([])).toEqual([]);
   });
 
   it('the scale bar is a round number about 70-140 px wide', () => {
