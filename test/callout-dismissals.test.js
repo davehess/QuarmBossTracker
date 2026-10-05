@@ -504,6 +504,26 @@ describe('timing feedback can be switched off', () => {
     expect(v.shown.has('show')).toBe(false);
   });
 
+  // The guild lead, 2026-10-05: "the earlier button no longer works on TTS". A vote named itself
+  // after the shown text, which a built-in callout rewrites every fire, so votes never added up.
+  it('« Earlier is sent under the trigger\'s name and id, not the line it showed', async () => {
+    const block = sliceBlock(overlay, '  let _votesOn = true;',
+      "castVote._t = setTimeout(()=>fbWrap.classList.remove('show'), 2000);\n  }");
+    const calls = [];
+    const el = { classList: { add() {}, remove() {} }, querySelectorAll: () => [] };
+    const fetch = (url, opts) => { calls.push({ url, opts }); return Promise.resolve({ ok: true, json: () => Promise.resolve({}) }); };
+    const make = new Function('fbWrap', 'fbThanks', 'fetch', 'setTimeout', 'setInterval', 'clearTimeout', 'window',
+      'let PORT = 7779; let _lastFireTs = 0; let _lastTrigger = null;\n' + block + '\nreturn { showFeedback, castVote };');
+    const api = make(el, el, fetch, () => 0, () => 0, () => {}, { mimic: { overlayHoverInteractive() {} } });
+    api.showFeedback({ trigger: 'Enrage soon', trigger_id: null, text: '⚠ a gnoll warlord at 12% — enrage soon' });
+    await api.castVote('earlier');
+    const body = JSON.parse(calls.find((c) => /\/api\/triggers\/feedback$/.test(c.url)).opts.body);
+    expect(body).toMatchObject({ direction: 'earlier', trigger_name: 'Enrage soon' });
+    api.showFeedback({ trigger: 'Slow landed', trigger_id: 'g_12', text: 'SLOWED' });
+    await api.castVote('earlier');
+    expect(JSON.parse(calls[calls.length - 1].opts.body)).toMatchObject({ trigger_id: 'g_12', trigger_name: 'Slow landed' });
+  });
+
   it('🔕 is a vote-row button, so it gets the hover handshake, and its click is not a vote', () => {
     expect(overlay).toMatch(/<button class="fb-btn off" data-dir="off"/);
     expect(stripJs(overlay)).toMatch(/if \(b\.getAttribute\('data-dir'\) === 'off'\) stopAsking\(\); else castVote\(/);

@@ -633,8 +633,11 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           direction,
-          trigger_id:   _lastTrigger.id   || null,
-          trigger_name: _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
+          // A fire carries trigger_id + trigger (its name); .text is the shown line, which for a
+          // built-in like "Enrage soon" changes every fire ("⚠ <mob> at 12% — …"), so votes never
+          // added up under one name. Same order as reportCalloutFeedback.
+          trigger_id:   _lastTrigger.trigger_id || _lastTrigger.id || null,
+          trigger_name: _lastTrigger.trigger || _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
           fired_at:     new Date(_lastFireTs).toISOString(),
         }),
       });
