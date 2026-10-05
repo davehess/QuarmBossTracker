@@ -289,7 +289,9 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
 - 🐺 **Signed-in members** — parses, DKP and bids, attendance, loot, kill
   timers, `/who` sightings, and each character's equipped gear and AAs.
   Members' Mimic can look up your current zone, HP, buffs and those timers —
-  that's how the buff queue and Target Info work.
+  that's how the buff queue and Target Info work. While you are in a raid, your
+  latest position in the zone is shown to signed-in members on the spectator
+  page (live only; nothing new is stored).
 - 🛠 **Officers** — the admin pages cover all of it, including chat history,
   member page views and feedback.
 - 💬 **Whoever can read the Discord channel** — relayed guild and raid chat,
