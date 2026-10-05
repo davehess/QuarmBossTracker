@@ -26,7 +26,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, stripJs, ROOT, AGENT_INDEX, BOT_INDEX } from './_source-slice.js';
+import { readSource, sliceBlock, stripJs, stripCss, ROOT, AGENT_INDEX, BOT_INDEX } from './_source-slice.js';
 
 const agentSrc = readSource(AGENT_INDEX);
 const botSrc   = readSource(BOT_INDEX);
@@ -522,6 +522,14 @@ describe('timing feedback can be switched off', () => {
     api.showFeedback({ trigger: 'Slow landed', trigger_id: 'g_12', text: 'SLOWED' });
     await api.castVote('earlier');
     expect(JSON.parse(calls[calls.length - 1].opts.body)).toMatchObject({ trigger_id: 'g_12', trigger_name: 'Slow landed' });
+  });
+
+  // A Canvas callouts panel shorter than callout + vote row clipped the row (centred column spills
+  // out of both ends). Pinned to the bottom, the overflow cuts the callout's top instead.
+  it('in a Canvas callouts panel the column sits on the bottom edge so the vote row is never the part cut off', () => {
+    const css = stripCss(overlay);
+    expect(css).toMatch(/body\.part-callouts\{align-items:flex-end\}/);
+    expect(css).toMatch(/body\.part-callouts #alertcol\{transform-origin:50% 100%\}/);
   });
 
   it('🔕 is a vote-row button, so it gets the hover handshake, and its click is not a vote', () => {

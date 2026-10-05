@@ -251,6 +251,14 @@
     transform:scale(var(--part-scale,1));transform-origin:left bottom}
   body.part.timers-topdown #timers{top:4px;bottom:auto;transform-origin:left top}
   body.part-callouts #alertcol{margin:0 !important;transform:scale(var(--part-scale,1))}
+  /* The callout column sits on the panel's BOTTOM edge, not its middle (the guild lead, 2026-10-05:
+     "the earlier button no longer works"). Centred, a column taller than the panel spills out of
+     both ends and the vote row, second from the bottom, is the first thing cut off, so a panel
+     sized to the callout line had no « Earlier at all. Pinned to the bottom, an overflow cuts
+     the top of a long callout instead and the row stays clickable. */
+  body.part-callouts{align-items:flex-end}
+  body.part-callouts #alertcol{transform-origin:50% 100%}
+  body.part-callouts #sticky:empty{display:none}
   body.part-callouts.part-edit #placeholder{display:block}
 </style></head>
 <body>
