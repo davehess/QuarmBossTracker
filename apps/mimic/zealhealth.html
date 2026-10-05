@@ -60,6 +60,11 @@
   #status .ok{color:#56d364} #status .warn{color:#ffa657} #status .bad{color:#f85149} #status .dim{color:#6e7681}
   #status .arr::after{content:'▸'}
   body.show-detail #status .arr::after{content:'▾'}
+  /* Connection line: the agent's local lag meter (/api/net), one line under the status row.
+     Hidden until the meter has something to say. Amber/red are set from the numbers. */
+  #net{margin-top:3px;font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;cursor:default}
+  #net.warn{color:#ffa657} #net.bad{color:#f85149}
   #detail{display:none;margin-top:5px}
   body.show-detail #detail{display:block}
   .pid{font-size:10px;color:#9aa4ad;text-shadow:0 1px 2px #000;margin-bottom:4px}
@@ -126,6 +131,7 @@
       <button id="layoutBtn" title="Show as dials">◯</button></div>
     <div id="ticks" class="card"></div>
     <div id="status" title="Click for the Zeal health check and this PC's clock"></div>
+    <div id="net" data-wp-interact style="display:none"></div>
     <div id="detail" class="card">
       <div id="pid" class="pid">no EQ process detected</div>
       <div id="types" class="types"></div>
@@ -434,5 +440,47 @@
     }
   }
   poll(); setInterval(poll, 1000);
+
+  // ── Connection line ───────────────────────────────────────────────────────
+  // The agent's local lag meter (/api/net): the game server's ping and packet loss over the last
+  // minute (the router when no game address is known). Amber from 2% loss or a 150 ms p95, red
+  // from 10% or 300 ms. The tooltip carries the plain-English verdict. Hidden when the meter is
+  // off, on a platform without it, or on an agent too old to have it. Nothing leaves this PC.
+  function netLine(n){
+    if (!n || !n.supported || !n.enabled) return null;
+    var key = (n.targets && n.targets.game) ? 'game' : ((n.targets && n.targets.router) ? 'router' : null);
+    if (!key) return null;
+    var label = key === 'game' ? 'Quarm' : 'Router';
+    var verdict = (n.verdict && n.verdict.text) || '';
+    var m = n.stats && n.stats[key] && n.stats[key].m1;
+    if (!m || !m.count) return { text: '📶 ' + label + ' …', cls: '', title: verdict };
+    var loss = m.lossPct;
+    var lossTxt = (loss > 0 && loss < 10 ? loss.toFixed(1) : String(Math.round(loss))) + '% loss';
+    var cls = (loss >= 10 || (m.p95 != null && m.p95 > 300)) ? 'bad' : ((loss >= 2 || (m.p95 != null && m.p95 > 150)) ? 'warn' : '');
+    var ms = function(v){ return v == null ? '—' : Math.round(v) + ' ms'; };
+    return {
+      text: '📶 ' + label + ' ' + (m.median == null ? 'no reply' : ms(m.median)) + ' · ' + lossTxt,
+      cls: cls,
+      title: verdict + '\n\n' + label + ', last minute: now ' + (m.last == null ? 'lost' : ms(m.last)) + ', median ' + ms(m.median) + ', p95 ' + ms(m.p95) + ', ' + lossTxt + '.'
+    };
+  }
+  var netEl = document.getElementById('net'), _netSig = null;
+  function paintNet(n){
+    var v = netLine(n);
+    var sig = v ? v.text + '|' + v.cls + '|' + v.title : '';
+    if (sig === _netSig) return;   // byte-stable: nothing moved, nothing to repaint
+    _netSig = sig;
+    if (!v) { netEl.style.display = 'none'; netEl.textContent = ''; netEl.removeAttribute('title'); }
+    else { netEl.className = v.cls; netEl.textContent = v.text; netEl.title = v.title; netEl.style.display = 'block'; }
+    _requestAutoHeight();
+  }
+  async function pollNet(){
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/net', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      paintNet(await r.json());
+    } catch (e) { paintNet(null); }
+  }
+  pollNet(); setInterval(pollNet, 5000);
 </script>
 </body></html>
