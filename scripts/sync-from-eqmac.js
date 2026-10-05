@@ -404,6 +404,15 @@ function* splitTuples(valuesStr) {
 // We don't trust column order from the dump — we use the column list from the
 // INSERT statement if present, otherwise we apply known positional maps for
 // the EQEmu schema (v1.x). All transforms return null if a row should be skipped.
+// How a zone LOOKS: the sky, the clip distances and the five fog sets (the base set plus the 1-4
+// variants the client picks between). Upstream names are kept as the Supabase column names, so
+// supabase/migrations/20261006010000_eqemu_model_and_fog_columns.sql lists exactly these.
+const ZONE_LOOK_COLS = [
+  'underworld', 'minclip', 'maxclip', 'sky', 'ztype', 'fog_density',
+  ...['', '1', '2', '3', '4'].flatMap(n =>
+    ['fog_red', 'fog_green', 'fog_blue', 'fog_minclip', 'fog_maxclip'].map(c => c + n)),
+];
+
 const TRANSFORMS = {
   zone: (cols, row) => {
     // castoutdoor/hotzone/canlevitate/canbind/zone_exp_multiplier were in the
@@ -412,7 +421,7 @@ const TRANSFORMS = {
     // diffing our zone surface against pq-companion's — see
     // docs/pq-companion/06-data-provenance-and-gaps.md §2).
     const r = pick(cols, row, ['short_name', 'long_name', 'zoneidnumber', 'expansion', 'file', 'safe_x', 'safe_y', 'safe_z', 'min_status', 'note',
-      'castoutdoor', 'hotzone', 'canlevitate', 'canbind', 'zone_exp_multiplier']);
+      'castoutdoor', 'hotzone', 'canlevitate', 'canbind', 'zone_exp_multiplier', ...ZONE_LOOK_COLS]);
     if (!r.short_name) return null;
     return {
       ...r,
@@ -423,7 +432,7 @@ const TRANSFORMS = {
     };
   },
   items: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'maxcharges', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield']);
+    const r = pick(cols, row, ['id', 'name', 'lore', 'loregroup', 'nodrop', 'norent', 'magic', 'itemtype', 'slots', 'icon', 'weight', 'reclevel', 'reqlevel', 'classes', 'races', 'ac', 'hp', 'mana', 'damage', 'delay', 'focuseffect', 'proceffect', 'astr', 'asta', 'adex', 'aagi', 'aint', 'awis', 'acha', 'mr', 'cr', 'dr', 'fr', 'pr', 'price', 'casttime', 'clickeffect', 'clicktype', 'clicklevel', 'maxcharges', 'worneffect', 'worntype', 'attack', 'haste', 'regen', 'manaregen', 'damageshield', 'idfile', 'material', 'color', 'light']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lore: r.lore,
@@ -453,6 +462,12 @@ const TRANSFORMS = {
       worneffect: r.worneffect, worntype: r.worntype,
       attack: r.attack, haste: r.haste,
       regen: r.regen, manaregen: r.manaregen, damageshield: r.damageshield,
+      // What the item looks like on a body (the guild lead, 2026-10-05: "how we look as characters"):
+      // `material` is the armor texture number, `color` the dye (unsigned 32-bit, so bigint on our side),
+      // `idfile` the model name ('IT63') a weapon or shield is drawn from, `light` what it lights.
+      // (A dump without the column leaves it undefined, which JSON drops, so an older dump can never null out a stored value.)
+      idfile: r.idfile == null ? r.idfile : String(r.idfile),
+      material: r.material, color: r.color, light: r.light,
     };
   },
   npc_types: (cols, row) => {

@@ -31,6 +31,10 @@
 // and a minute is NOT written until it has been read at least once (fail closed: a privacy flag that
 // could not be read must not default to "record everyone").
 //
+// LOOKS
+// After a minute row lands, _writeMinute hands that minute's raiders to utils/raidAppearance.js, which
+// keeps a per-night snapshot of how they look (race, worn items → models; migration 20261006020000).
+//
 // ROW SHAPE (data is compact JSON text; see the migration header)
 //   { v:1, step_s, who:[[name,cls,group,level],...], zones:['short',...],
 //     f:[[dt, i,x,y,z,h,hp,zi, i,x,y,z,h,hp,zi, ...], ...] }
@@ -367,7 +371,10 @@ async function _writeMinute(m) {
   // `select=` after the conflict target keeps the echo to two columns: the plain helper either echoes the
   // whole row back (egress) or, with minimal, returns null for success and failure alike.
   const res = await sb.upsert('raid_track_minutes', [row], 'guild_id,minute_at&select=guild_id,minute_at');
-  return Array.isArray(res);
+  if (!Array.isArray(res)) return false;
+  // How the raiders look, once per night and hourly after (utils/raidAppearance.js). Not awaited, never throws.
+  try { require('./raidAppearance').noteMinute({ supabase: sb, guildId: row.guild_id, nightKey: row.night_key, nowMs: m.minuteStartMs, names }); } catch { /* the recorder must not fail on it */ }
+  return true;
 }
 
 /**
