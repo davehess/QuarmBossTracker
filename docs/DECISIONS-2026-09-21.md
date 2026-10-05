@@ -114,7 +114,10 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls | the guild lead: look at it on the next raid night. A session: target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
+| **Log stops / Enrage 12% / « Earlier / Buff-block rename / UI Studio Save / flag hails** (§164) | On beta: agent 3.7.84 (Enrage soon at 12%, spoken first), 3.7.85 (🗄 Archive log & start fresh + the log-silent banner that 3.7.81 never drew), the Canvas vote row fix, 3.7.86 (Buff blocks rename). Why EQ stops logging is unknown. Tower patch written (`PATCH-tower-raid-track.md`), not yet run | the guild lead: A or B for the Command Center hail slot (A recommended); run the Tower patch (local terminal or Claude in Chrome). UI Studio Save: **A picked and on beta** (`c281fea6`) — the guild lead: move a window in Studio, save, log in, check bags kept their spots. A session: build the hail pick |
+| **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
+| **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
+| **Spectator map on wolfpack.quest** (§160) | **Built** (web 1.8.98): `/spectator` [beta], Brewall's lines underneath (the guild lead's call, members only, never in the repo), generated EQEmu walls as a second layer, live raid dots every 3 s. Checked against the 2026-10-04 raid: dots sit inside the walls. **Raid replay (§161):** recorder built (bot 3.1.203 on `claude/sharp-lamport-dC0TW`, migration applied), NOT on main yet; every raid kept, Tower keeps a permanent copy once its merge script is updated | the guild lead: release bot 3.1.203 to main before Wednesday's raid or nothing is recorded; copy the new `archive-merge.sql` onto Tower (or a local session does); look at the spectator on the next raid night; pick the replay look (A night scrubber / B fight replays / C trails). A session: replay previews on b.wolfpack.quest after Wednesday; target markers (the agent reads Zeal 1.4.8 `target_loc`; fleet still on 1.4.7), and the in-game heading-direction check |
 | **Quarm patch notes mirror** (§158) | Live (bot 3.1.200): 1,348 Quarm posts since 2023-11-17 stored, every one blank, because the Message Content intent is off in production | the guild lead: (1) Discord Developer Portal → the bot → Bot → turn on **Message Content Intent**; (2) THEN set `MESSAGE_CONTENT_INTENT=1` on Railway (the other order stops the bot connecting). The next sweep (≤6 h, or a restart) rewrites the blank rows |
 | **Buff-block picker** (§157) | On beta: agent 3.7.79 (`f1b9a4e2`), a Buff blocks dashboard tab with sets, copy lines, and socials written at logout | anyone: type `#blockbuff` in game and paste the reply (it unlocks reading the live list); a bard + monk test of whether a blocked song still pulls the bard into the fight |
 | **Row-cap fixes: what they turned up** (§155) | Every read past the 1,000-row cap is complete (bot 3.1.198 · web 1.8.95, nine migrations applied). Found along the way, not fixed | the guild lead: **haste foci** (`_refreshFocusHaste` reads `worneffect`, the foci are in `focus_effect`; changes cast bars for ~103 characters); **trigger Votes** (count only earlier/good/too_early, not 48k `expired`). A session: /admin/encounters curated-only? (`/encounter tonight`, the doubled OpenDKP auctions and the 29 s spell-needs call were fixed 2026-10-04) |
@@ -7103,4 +7106,180 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   - **Not yet:** target markers (needs the agent to read Zeal 1.4.8 `target_loc`); heading direction is
     assumed counter-clockwise from north (`HEADING_CCW`) until checked in game.
   - **Privacy:** one line in `docs/PRIVACY.md` and `/privacy`: while you are in a raid, your latest position
-    is shown to signed-in members on this page; nothing new is stored.
+    is shown to signed-in members on this page; nothing new is stored. (Superseded the same night by §161:
+    positions are now kept for replay.)
+
+### 161. Raid replay: keep every raid's positions, replay look not yet picked (2026-10-05)
+- **The ask (the guild lead, 2026-10-05):** *"can we replay raid timeline with the locations? I'd love to keep them
+  for a raid and be able to figure out how things look after the fact."*
+- **Nothing was kept before this.** `raid_roster` is an upsert, one row per uploader × raider, and the midnight
+  chain drops rows over an hour old. No other table holds positions over time (`xp_events` has a loc per XP kill
+  only). So the 2026-10-04 evening group (51 placed, 28 uploaders, gone by 21:08 ET) cannot be replayed.
+- **Measured for sizing:** each Mimic posts the roster every ~4 s with ~50 members (3,755 posts in 10 minutes on
+  2026-10-04 ≈ 6.3 a second); 72% of member rows are (0,0,0), an uploader's way of saying "another zone". Full
+  nights run 41–51 raiders; Wednesday and Thursday 7–28. Appending raw uploads would have been ~3.4 M rows a night.
+- **Recorder (bot 3.1.203), built without waiting for the pick** because every look needs the same data and
+  Wednesday is the next chance to capture a raid:
+  - `utils/raidTrack.js`. The raid-roster handler hands its rows to `noteRows()` (memory only, never throws).
+    The first uploader to report a raider keeps them for 6 s so two slightly different views do not shimmer;
+    HP is taken from any uploader, since each one only has gauges for its own group.
+  - Every 3 s (`RAID_TRACK_STEP_S`) the raiders seen in the last 6 s become a frame, if six or more are placed
+    (`RAID_TRACK_MIN_PLACED`). Each finished minute is ONE row in `raid_track_minutes` (migration
+    `20261005020000`, applied 2026-10-05): `data` is compact JSON text (`who`, `zones`, frames of
+    `[dt, i, x, y, z, heading, hp, zone]`; −1 = unknown), text rather than jsonb because number arrays store
+    about 3× smaller. x/y are raw `loc_x`/`loc_y`; the web swaps them when plotting.
+  - Zone is stamped at write time, per uploader (an uploader only places raiders in its own zone): the majority
+    `character_live_state` zone of that uploader's raiders, else the minute's majority.
+  - **`exclude_from_stats` characters are never written**, matching the raid review; a minute is not written
+    until that list has loaded once (fail closed).
+  - Size: ~2–4 MB a full night, ~0.5 GB a year.
+  - **Retention — the guild lead's call (2026-10-05):** *"I want this captured to the local tower backup and kept
+    there. let's plan on retaining raids for now until it becomes a storage issue."* So:
+    - Supabase keeps every raid. `RAID_TRACK_RETENTION_DAYS` is unset by default; the sweep is off.
+    - Tower keeps a permanent copy: `raid_track_minutes` is an ARCHIVE table in `scripts/lib/archive-merge.sql`
+      (insert and update, never delete), and that script creates the table on Tower, because the merge skips a
+      table Tower lacks without a word (how `faction_hits` never arrived). `scripts/test-archive-merge.sh`
+      covers both: the table is created and filled, and a minute production drops stays.
+    - If storage ever forces a sweep, it deletes only up to `bot_kv archive_watermark_raid_track_minutes`
+      (`{ through }`), the threat-snapshot gate: no watermark, nothing deleted. Nobody writes that watermark
+      yet, so turning the sweep on today deletes nothing.
+    - Manual step: Tower's copy of the merge script is not a git checkout, so the guild lead or a local session
+      copies it over (STATUS ⚠ item). A cloud session reaches Tower read-only, and could not start a Postgres
+      to run the self-test here either.
+  - Service role only (RLS on, no policies, no anon/authenticated grants). `docs/PRIVACY.md` and `/privacy`
+    now say positions are kept for replay, with a permanent copy in the Archive (web 1.8.99).
+  - **Not on main yet.** Committed 2026-10-05 on `claude/sharp-lamport-dC0TW`; the push to main inside the
+    Sunday freeze window was held back by the session's permission check (the guild lead's "no raid, push it"
+    covered the spectator push before it). It lands when the guild lead releases it. The migration is already
+    applied; the empty table is harmless until the bot code lands, and `/privacy` keeps saying "nothing is
+    stored" until then, which stays true.
+- **The look, offered (not picked):** **A — Night scrubber: the live map gets a timeline** (play/pause, 1–60×,
+  boss kills marked; recommended); **B — Fight replays: each kill on the raid review gets a ▶**; **C — Trails:
+  one still picture per fight, no playback.** Previews go on b.wolfpack.quest once Wednesday is recorded.
+- **Not in a replay yet:** mobs. Target positions need Zeal 1.4.8 across the fleet and the agent sending
+  `target_loc`.
+
+### 162. FB-51: EverQuest stopped writing the log, and nothing said so (2026-10-05)
+- **Report (the guild lead, late Sunday):** "I'm not currently seeing rolls", then "the damage isn't loading
+  either", then FB-51 "NO damage on fights, no rolls, missing plenty of stuff". Zeal's abbreviated chat showed
+  rolls as `[0:222]: 26 rolled by X.`, a red herring: the log file keeps the two-line form, and four other
+  agents (one on the same 3.7.80 beta) captured those rolls.
+- **What it was:** the player's `eqlog_<char>_pq.proj.txt` (540 MB) stopped being written at 00:45 while they
+  kept playing; Explorer showed "Date modified 12:45 AM" at the size the agent found on its 00:49 restart. Every
+  agent line after that came from Zeal's pipe or relays; nothing local. **Fix in the field:** move the log
+  aside, restart EverQuest, which starts a fresh file. **Why EQ stopped is NOT known** (size, a `/log` toggle, or
+  another folder were all possible; the fresh file fixed it). Do not cite a size limit as the cause.
+- **Ruled out on the way, so the next session need not re-check:** roll format, Zeal chat display,
+  `exclude_from_stats`, agent 3.7.80 (worn-DS code runs only in the HUD state), a client switch, the camp
+  state, log rotation (none ran), disk space (37 GB free).
+- **Shipped to beta, agent 3.7.81 (`27022a44`, "Fixes FB-51"):**
+  - `[log-silent]`: Zeal has the primary character in game (< 60 s) and their log has had no line for 5 min →
+    one warning per episode and `logSilent` on `/api/state`. No UI yet; the on-screen form is the guild lead's
+    call (UI rule). It would have flagged this case at about 00:50.
+  - Tail watchdog: a hung `fs.promises` call in `tailFile` can no longer end the read loop silently.
+  - Bug-report excerpts keep the NEWEST lines over the cap (they kept the oldest; FB-51's ended at 00:31).
+  - An empty upload-queue file no longer reads as "corrupt" (it did on every boot after an empty shutdown:
+    24 times in one member's log).
+- **Found, not changed: log archiving has never run in Mimic.** `_logRotateSweep` (500 MB, default on since
+  2026-08-07) has its timers inside the `--once` branch, which exits after a few seconds; watch mode returns
+  before reaching them. That is how the log reached 540 MB. Wiring it into watch mode would start renaming
+  members' logs for the first time, so it waits on the guild lead's yes.
+- Also noted: the bug-report preview shows the first 400 lines of the kept slice (now the oldest of the newest).
+
+### 163. A lag meter in Mimic (2026-10-05)
+- **Ask (the guild lead):** a member "is complaining about lag. can we help diagnose network lag?" Nothing on any
+  surface measured a player's connection to the server (the buff queue's "lag?" button is about that overlay).
+- **Offered:** A — check-now `pathping` button; B — always-on meter; C — lag inferred from the log. **Picked B**
+  (*"Lets go with B"*).
+- **Built (agent 3.7.82, beta `874ccbfd`):** two targets pinged once a second from the player's PC: the default
+  gateway and the login server in `eqhost.txt` (read per install, never hard-coded; it is the route to the host,
+  not an exact zone ping). The verdict splits home network from beyond it, which is the question a lag complaint
+  needs answered. Samples are marked when a fight is live. Diagnostics card + one Tick overlay line.
+- **eqhost.txt has two shapes (agent 3.7.83, `899b2ded`):** the guild lead's file is the Quarm/TAKP client's
+  `[Login Servers]` block of quoted `"loginserver.takproject.net:6000"` entries, not the classic
+  `[LoginServer]` + `Host=` the first parser expected, so 3.7.82 would have pinged only the router on a real
+  install. The parser reads both; `[Registration Servers]` is ignored.
+- **The login server is a fair proxy for the zone server (measured 2026-10-05):** Resource Monitor on the guild
+  lead's PC showed eqgame.exe sending to 70.35.159.26 while in a zone; the login server
+  (`loginserver.takproject.net`) resolves to 70.35.159.18, the same /24, so the route is the same until the
+  last hop. No zone-server override needed for now. (Finding the address without admin rights is not possible
+  for UDP: `netstat` shows no remote end, and Resource Monitor needs elevation.)
+- **Local only, on by default, switchable off;** `PRIVACY.md` and `/privacy` say so (web 1.8.101).
+- **Counted pings, not `ping -t`:** Mimic kills the agent with TerminateProcess on Windows, so an endless ping
+  would outlive every restart. A counted run dies within 5 minutes at worst.
+- **Not yet seen on Windows:** the parser was checked against hand-written English and localized output and a
+  fake ping on Linux. Next: a beta tester (or the member who reported the lag) runs it and sends the Copy summary.
+
+### 164. Enrage at 12%, a fresh log in one click, and what rewrites EQ's ini files (2026-10-05)
+- **Enrage soon (agent 3.7.84, beta `2853825c`).** The guild lead: *'"Enrage Soon" goes off WAY too late. it
+  should be hitting at 12-10% of mob hp left'*. `ENRAGE_WARN_PCT` 10 → 12 (also the HUD zone and the Tank /
+  Command Center threshold), the check every 250 ms instead of 1 s, and "Enrage soon" at speech priority 2
+  beside CH GO. The plumbing from Zeal to speech is under 1.5 s; the late part was the threshold and the
+  speech queue, which made it wait behind the line being spoken and dropped it after 5 s or behind 3 others.
+- **The log stopped again at 10:50 (FB-53).** The guild lead: *"that's unacceptable. We need a quick way to
+  backup log and start fresh in the mimic client"*. Built (agent 3.7.85, beta `9a5f5a4a`): 🗄 Archive log &
+  start fresh, and the log-silent header banner, which 3.7.81 computed but never drew. Not caused by the bug
+  report's log read: both FB-51 and FB-53 were sent after the log had already stopped. Why EQ stops writing is
+  still unknown; `/log off` + `/log on` is the in-game step to try first.
+- **« Earlier (the guild lead: *"the earlier button no longer works on TTS"*).** Votes now file under the
+  trigger's name and id, not the shown text, so a built-in callout's votes add up (`f568d5fe`); votes still
+  change no timing. The guild lead confirmed the Canvas is on. Reproduced in Chromium with the real Canvas:
+  the callout column was centred in the callouts panel, so a panel shorter than callout + vote row cut the
+  row off first (0–15% of « Earlier visible at 420×120, 420×60, 720×36, 300×120, scale 1.5; no vote sent).
+  Fixed (`b67bc333`): the column sits on the panel's bottom edge; all of those send the vote. By design a vote
+  still cannot land while the Canvas is being arranged, or under another panel.
+- **Buff blocks: a set's Name could not be edited** (the guild lead: *"the starter set ne set for blocking
+  buffs does not let me edit the Name from New set"*). Opening "✏ Edit this set" changes the markup (wpKeep
+  writes `open`), so the next 5 s poll rewrote the tab under the Name field, which has no id to restore:
+  typing "My Pull Set" saved "My Pul". Fixed (agent 3.7.86, `7b6a2606`): the tab holds its repaint while an
+  id-less text field has focus and repaints on focusout; and a rename followed at once by another set button
+  no longer puts the old name back (the change goes into the view before the save).
+- **Bags and the lost /corpse social.** Zeal's toggle-all-bags (keybind 215) opens bags with the client's own
+  call and places nothing; positions come from EQ's own save. The one Mimic writer that can revert
+  `UI_<char>` (bag spots) is UI Studio's Save: it writes the position of EVERY window it read (the ~50 bag
+  windows included, though the stage hides them) from the copy read when Studio opened, as whole files; its
+  deferred "after logout" form runs unattended and keeps EQ's copy as `.bak-eq-<ms>`. It does not write the
+  socials file, so the lost /corpse social more likely came from EQ closing without a zone or camp. Backups
+  only read (`readFileSync`, no lock). Offered: **A** (Save writes only the windows you moved, into the file as
+  it is on disk; a cloud snapshot loaded into Studio still writes every window; old whole-file pending saves
+  are dropped at upgrade) or **B** (keep whole files, guard the deferred queue). **Picked A** (the guild lead,
+  2026-10-05: *"A for UI Studio"*). **Built** (Mimic beta, `c281fea6`): Save sends key edits for the windows
+  moved or resized only (every window on a rescale to another resolution block; a moved-only window keeps
+  EQ's current size), main re-reads each file and changes only those keys (`apps/mimic/iniKeyEdits.js`),
+  immediate and after-logout alike; old whole-text pending saves are dropped at load. One departure from the
+  draft: a cloud backup loaded into Studio keeps the whole-file restore (a new PC may have no files to
+  merge into) and refuses while the character is logged in rather than queueing a restore.
+- **Flag hails in the Command Center** (the guild lead: *"Upon boss death and spawn of a creature that needs
+  to be hailed … track who has not yet hailed and who has already"*). Scoped: 15 PoP kills spawn a hail NPC
+  (Planar Projection and others, 10–20 min, Agnarr/Karana wants a phrase not a hail); only the raid at the
+  kill can get credit; "hailed" comes from a raider's own flag line (Mimic) or a witnessed
+  "<Name> says, 'Hail, …'" (wired only into old-log imports today, `parseWitnessedHail`); "already flagged"
+  from `pop_flags` + `STAGE_IMPLIES`. Offered **A** shared board (bot-backed, everyone sees the same list,
+  tap to mark) or **B** local only. Recommended A; waiting on the pick.
+- **Timers for the PoP named on the board** (the guild lead: *"timers for the guild instances bosses in our
+  zones. They're 3 hours"* → *"put them on the pop board per zone"*, with Quarm's Oct 4–5 notes). Bot
+  3.1.204 (release branch): Bastion of Thunder's eight named at 3 h, the 24 h named per zone (Crypt of Decay,
+  Disease incl. Grummus 66→24, Innovation's Prototypes IX–XI, the Justice crawler, Nightmare's five, Valor's
+  two). Buttons for timers ≤ 24 h show the Eastern time the boss is up; ≤ 6 h bosses stay off spawn alerts
+  and "Spawning in 24 Hours". The new named file no character lockouts (`lockout: false`; the notes give
+  respawns only) — Grummus keeps its old lockout behaviour, unconfirmed. The PoP board grows to 4 messages:
+  someone runs `/board` once after the deploy (until then the board silently does not refresh). Found while
+  scoping, fixed in the same change: the boss matcher took "a tortured soul" / "a tortured banshee" for
+  **Ture** (8 trash fights since Oct 2, 24 false lockout rows, a false Ture board timer to 2026-10-07 23:08 ET;
+  the rows are left to expire unless the guild lead says delete) and would take "a chokidai terror" /
+  "a cleric of vallon zek" for Terror / Vallon Zek.
+- **HUD procs and stuns/aggro per mob** (the guild lead: *"the number of procs that you have had on a mob, as
+  well as how many stuns/aggro spells you've put into the mob. on the right side of the circle hud above the
+  damage shield"*). Agent 3.7.88 (beta `9050be57`): ⚡ procs (the hit ledger's proc flag) and ✦ stuns/aggro
+  (a landed own-cast whose catalog entry is cc 'stun', SPA 21, or adds hate, SPA 92 positive base), per mob
+  keyed name#spawn id, reset on death; one row flush against the ring above the DS badge, builder part
+  `procs`. The hate field comes from bot 3.1.205 (release branch); until it deploys only stuns count.
+  Placement read: procs then stuns left to right, above the DS column; no separate damage chip (the damage
+  is already the hit column and the END arc's "out").
+- **HUD "1 6%" arc** (the guild lead: *"what is this little bar at the top left"*). The low-HP side arc
+  (`_meSideArcs`) took every Zeal gauge with text except 1/6/16, so the XP, AA XP, cast, tick and spell-gem
+  gauges could list as raiders under 25%. Fixed (agent 3.7.87, `f1f1f38a`): group-member gauges 11-15 only,
+  beside the raid window.
+- **Tower patch for raid positions:** `docs/PATCH-tower-raid-track.md` (pinned to `04d90890`, md5s, 22-check
+  self-test). This session cannot write to Tower (read-only login, SSH blocked by tailnet policy), so a local
+  terminal or a Claude in Chrome session runs it.

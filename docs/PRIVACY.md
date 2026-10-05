@@ -236,6 +236,12 @@ Your own opt-outs don't stop this — that was a deliberate choice (the guild
 lead, 2026-08-13), because the fight happened to everyone in it. If you want
 something removed, ask.
 
+## Lag meter (beta Mimic, on by default, never uploaded)
+
+The beta Mimic (agent 3.7.82 and later) pings your router and the Quarm login server named
+in your `eqhost.txt` once a second to draw a latency and packet-loss graph on its
+Diagnostics tab. The results stay on your PC. Switch it off on the 📶 Connection card.
+
 ## Crash reports (off by default)
 
 Turn on *Share crash reports* in the tray menu. Mimic then sends, for each Zeal
@@ -291,7 +297,8 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   Members' Mimic can look up your current zone, HP, buffs and those timers —
   that's how the buff queue and Target Info work. While you are in a raid, your
   latest position in the zone is shown to signed-in members on the spectator
-  page (live only; nothing new is stored).
+  page, and kept, one sample every few seconds, so a raid can be replayed.
+  Characters set to exclude from stats are never kept.
 - 🛠 **Officers** — the admin pages cover all of it, including chat history,
   member page views and feedback.
 - 💬 **Whoever can read the Discord channel** — relayed guild and raid chat,
@@ -324,6 +331,7 @@ server events, counted from the start).
 |---|---|
 | Who targeted what | 1 day |
 | Raid roster with positions | about a day |
+| Raid positions kept for replay (one sample every few seconds) | Kept for now; the Archive's copy is permanent |
 | Buffs and debuffs seen landing | 7 days |
 | Per-hit parse detail | 7 days (the parse totals are kept) |
 | Threat snapshots | 30 days is the rule; the clean-up has fallen behind, so older ones exist today |

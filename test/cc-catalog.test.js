@@ -40,3 +40,34 @@ describe('cc — crowd control on a detrimental spell', () => {
     expect(stripJs(bot)).toMatch(/cc: _ccKinds\(r\) \|\| undefined,/);
   });
 });
+
+// The guild lead, 2026-10-05: the Me HUD counts "stuns/aggro spells you've put into the mob". A stun is
+// cc 'stun' above; an aggro spell is one that ADDS hate — effect 92 with a positive base. A negative
+// base takes hate off (Jolt, Concussion), so it is not one. Checked against the live catalog the same
+// day: 23 spells carry a positive 92 (the Terror line, Taunting/Enraging/Frenzying Blow, Pique, …).
+const { _hateAdded } = evalBlock(sliceBlock(bot, 'function _hateAdded(r) {', '\n      }'), ['_hateAdded']);
+
+describe('hate — what a spell adds to its target', () => {
+  it('a positive effect-92 base is hate added', () => {
+    expect(_hateAdded(sp(0, [92], [450]))).toBe(450);                       // Terror of Death
+    expect(_hateAdded(sp(0, [92, 254], [700, 0]))).toBe(700);               // Enraging Blow
+    expect(_hateAdded(sp(0, [92, 0], [100, -50]))).toBe(100);               // Pique
+    expect(_hateAdded(sp(0, [21, 0, 92], [0, -100, 650]))).toBe(650);       // Anger: a stun that also adds hate
+  });
+
+  it('a negative base takes hate off — Jolt, Concussion — and a plain nuke or buff carries none', () => {
+    expect(_hateAdded(sp(0, [92], [-500]))).toBeNull();                     // Jolt
+    expect(_hateAdded(sp(0, [92], [-400]))).toBeNull();                     // Concussion
+    expect(_hateAdded(sp(0, [0], [-200]))).toBeNull();
+    expect(_hateAdded(sp(1, [4], [42]))).toBeNull();
+  });
+
+  it('reads the three indexed columns when a row carries no raw arrays', () => {
+    expect(_hateAdded({ effect_id_1: 92, effect_base_value_1: 250, effect_id_2: 254, effect_base_value_2: 0 })).toBe(250);
+    expect(_hateAdded({ effect_id_1: 92, effect_base_value_1: -500 })).toBeNull();
+  });
+
+  it('rides the catalog entry', () => {
+    expect(stripJs(bot)).toMatch(/hate: _hateAdded\(r\) \|\| undefined,/);
+  });
+});

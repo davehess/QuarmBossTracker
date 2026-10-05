@@ -37,6 +37,69 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-named-timers-2026-10-05',
+    title: 'Planes of Power named on the board',
+    version: 'Bot 3.1.204 · Web 1.8.102',
+    date: '2026-10-05',
+    headline: 'The Bastion of Thunder named (3 hours) and the 24-hour named in each Planes of Power zone have timers on the board.',
+    features: [
+      { name: 'Named timers', blurb: 'Bastion of Thunder\'s eight named are on a 3-hour timer, and the named Quarm moved to 24 hours in Crypt of Decay, Plane of Disease, Innovation, Justice, Nightmare and Valor are on the board too, each under its own zone. A kill starts the timer.' },
+      { name: 'Back-up time on the button', blurb: 'For a timer of a day or less, the button says when the boss is back up (for example "up 9:42p" Eastern) instead of the day it died. The 3-hour named do not post spawn alerts.' },
+    ],
+    fixes: [
+      'Trash with a boss\'s name inside its own (like "a tortured soul" for Ture) no longer counts as that boss\'s kill.',
+    ],
+  },
+  {
+    key: 'log-archive-enrage-2026-10-05',
+    title: 'Start a fresh log, and an earlier enrage warning',
+    version: 'Agent 3.7.88 beta · Web 1.8.102',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'One click moves a stuck EverQuest log aside, and "Enrage soon" warns at 12%.',
+    features: [
+      { name: 'Archive log & start fresh', blurb: 'When EverQuest stops writing your log, Mimic now says so at the top of its dashboard, with a button that moves the old log into a LogArchive folder (nothing is deleted) and starts an empty one. Then type /log off and /log on in game. The button is also on the Info tab, one per character.' },
+      { name: 'Enrage soon at 12%', blurb: 'The spoken warning now comes at 12% instead of 10%, and it is spoken ahead of any other callout instead of waiting its turn. The red zone on the HUD covers the last 12% to match.' },
+    ],
+    fixes: [
+      'The "your log has gone quiet" warning from the last beta never appeared on screen; it does now.',
+      'Earlier / Good / Too early votes on a callout are filed under the callout\'s name, so votes on one callout add up.',
+      'With the Canvas on, the « Earlier / ✓ Good / » Too early buttons stay inside a small callouts panel and can be clicked again.',
+      'Buff blocks: renaming a set keeps what you type (the tab used to refresh under the Name box and throw it away).',
+      'UI Studio: Save changes only the windows you moved, in your layout file as it is now. Bag spots and anything else EverQuest saved since you opened UI Studio are no longer put back, and "save after logout" adds your changes to EverQuest\'s own save instead of replacing it.',
+      'HUD: the small low-health arc at the top left only warns about group and raid members. Your XP and AA bars and spell cooldowns no longer show up there.',
+      'HUD: above the damage shield on the right of the ring, ⚡ counts your procs on the mob you are fighting and ✦ your stun and aggro spells that landed on it. Both start over on the next mob.',
+    ],
+  },
+  {
+    key: 'lag-meter-2026-10-05',
+    title: 'Lag meter',
+    version: 'Agent 3.7.83 beta · Web 1.8.101',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic shows whether your lag is your home network or past it.',
+    features: [
+      { name: 'Connection card', blurb: 'On the Diagnostics tab: two lines over the last ten minutes, your router and the Quarm server, pinged once a second, with lost packets marked and fights shaded. If your router line spikes, it is your Wi-Fi or home network; if only the server line does, it is your internet provider or the server. Copy summary gives you a short paragraph to paste in Discord. It stays on your PC and you can switch it off.' },
+      { name: 'Tick overlay', blurb: 'One line, “📶 Quarm 48 ms · 0% loss”, amber or red when it is bad.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'log-silent-2026-10-05',
+    title: 'When EverQuest stops logging',
+    version: 'Agent 3.7.81 beta',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic notices when EverQuest stops writing your log, and bug reports carry the newest part of it.',
+    features: [
+      { name: 'Silent log check', blurb: 'If Zeal says you are in game but your log has had no new lines for five minutes, Mimic notes it in its own log: EverQuest has stopped logging (/log switches it) or is writing to another folder. Without a log there is no damage meter, no rolls and no triggers, so this is the first thing to check. A warning on screen comes next.' },
+    ],
+    fixes: [
+      'A bug report with a busy log attached sent the oldest part of the hour and cut off the newest.',
+      'Mimic could stop reading a log without saying so if a file read never finished; it now notices within 15 seconds and keeps reading.',
+    ],
+  },
+  {
     key: 'spectator-2026-10-05',
     title: 'Spectator',
     version: 'Web 1.8.98',
