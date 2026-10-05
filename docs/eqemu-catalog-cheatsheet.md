@@ -53,6 +53,13 @@ it, so nobody re-derives them from EXPLAIN plans again. If you're about to query
 
 ## Items & spells catalog shape
 
+- **What an item LOOKS like (migration 20261006010000, bot 3.1.208):** `eqemu_items.idfile` is the model
+  ('IT63'; weapons → `prim_it`/`sec_it` = the number), `material` the armor texture (0–23), `color` the
+  base dye as **unsigned 32-bit ARGB in a bigint** (it does not fit integer: the dump holds 0xFFFFFF80),
+  `light` the light source. NULL until the first sync after the migration (`sync-quarm` with `force=true`
+  backfills). `eqemu_zone` likewise gains `sky`, `ztype`, `minclip`/`maxclip`, `underworld`,
+  `fog_density` and five fog sets (`fog_red/green/blue` + `fog_minclip/maxclip`, base and 1–4).
+  `raid_night_appearance` is their consumer.
 - **Spell scrolls are items named `Spell: %`.** The class mask is
   `eqemu_items.classes` (bitmask `1 << classId`, WAR=1 … ENC=14). The scribed
   spell name is `regexp_replace(substring(name from 8), '\*+\s*$', '')` (strip

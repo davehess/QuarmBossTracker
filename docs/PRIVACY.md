@@ -305,7 +305,17 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   that's how the buff queue and Target Info work. While you are in a raid, your
   latest position in the zone is shown to signed-in members on the spectator
   page, and kept, one sample every few seconds, so a raid can be replayed.
-  Characters set to exclude from stats are never kept.
+  Alongside, once a raid night (and hourly after), how each raider's character
+  looks is kept for that replay: race, deity and the worn armor and weapons from
+  the gear we already hold (not your inventory for characters set to exclude
+  inventory). Characters set to exclude from stats are never kept.
+- 🎙 **Raid voice (Bristlebane)** — the raid voice bot records **only members
+  who ran `/bristlebane optin`**; nobody else is listened to, kept or named. A
+  recording is one file per person, kept on the guild's home server for raid
+  videos and never published without asking you. `/bristlebane optout` stops it
+  and deletes tonight's recording of you; `/bristlebane forget` opts you out and
+  deletes every recording of you. The bot says in raid chat when it joins and
+  wears `[REC]` while anyone opted in is in the channel.
 - 🛠 **Officers** — the admin pages cover all of it, including chat history,
   member page views and feedback.
 - 💬 **Whoever can read the Discord channel** — relayed guild and raid chat,

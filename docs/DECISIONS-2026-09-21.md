@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; pick the screen (B/A/C); the client-art rights call. A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Log stops / Enrage 12% / « Earlier / Buff-block rename / UI Studio Save / flag hails** (§164) | On beta: agent 3.7.84 (Enrage soon at 12%, spoken first), 3.7.85 (🗄 Archive log & start fresh + the log-silent banner that 3.7.81 never drew), the Canvas vote row fix, 3.7.86 (Buff blocks rename). Why EQ stops logging is unknown. Tower patch written (`PATCH-tower-raid-track.md`), not yet run | the guild lead: A or B for the Command Center hail slot (A recommended); run the Tower patch (local terminal or Claude in Chrome). UI Studio Save: **A picked and on beta** (`c281fea6`) — the guild lead: move a window in Studio, save, log in, check bags kept their spots. A session: build the hail pick |
 | **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
 | **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
@@ -7330,3 +7331,46 @@ location data overlayed like spectator mode on Wolfpack.quest"*. Same day as `DE
   should tell me the difference, show me the samples"*). Every ask writes each option out with what it
   includes, a rendered sample, and a tag (faster / can become B / recommended long-term) — never a bare
   "A or B for X?", including in a to-do line. Folded into `CLAUDE.md` beside the one-liner rule.
+
+### 166. Bristlebane, the raid's voice; how raiders look, kept per night (2026-10-05)
+
+The guild lead: *"set me up a discord bot on tower to join when there is a raid going"* → *"this will be the
+common callout point that people can listen to stream and loot, and be able to change content to slides,
+maps, overviews. this will be bristlebane's job"* → *"mostly the theme and the view of the area and how we
+look as characters so if we animate something in the future it looks good and we can recreate from point
+map during raids."*
+
+- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240; private bot; no privileged
+  intents), its own component `apps/bristlebane/` running as a Coolify app on Tower. Separate because a bot
+  holds one voice connection per server and a second login on the RaidBosses token would answer every
+  command twice. `CLAUDE.md`'s component table now lists five.
+- **Phase 1 built (bristlebane 0.1.0 + bot 3.1.208):** joins the raid voice channel when the main bot's new
+  `GET /api/agent/raid-live` says a raid is on the ground (6+ raiders placed on two polls, End raid not
+  pressed, a person in the channel), leaves on End raid / 10 min not live / 5 min empty. That route answers
+  from the position recorder's memory and takes `BRISTLEBANE_API_KEY` (that route only). No speech yet.
+- **Voice recording is opt-in only** (the guild lead: *"we don't need to have voices in from those that don't
+  consent"*). `/bristlebane optin | optout | forget | status`; optout deletes tonight's audio of you, forget
+  opts you out and deletes all of it (a session call: "delete everything" that left you recording would be
+  a trap). Nobody else is subscribed, decrypted or named. Discord's Developer Terms make publishing a
+  member's voice need their express direction, so a cinematic needs its own yes on top of the opt-in.
+- **Video is not Bristlebane's.** A bot cannot receive Go Live or camera video (no API; Go Live is end-to-end
+  encrypted since 2026-03-01), and the tools that can are user-account automation Discord forbids. The
+  footage comes from members' own recordings and Discord clips (the guild lead: *"I record on my machine,
+  clipping exists on discord. I'm not the only one that streams"*). Recording members' Twitch streams on
+  Tower was offered and withdrawn: Twitch's terms forbid downloading streams.
+- **Shared screen: waiting on the pick** (pictures sent): B a `/screen` page the raid leader drives (map /
+  slides / loot / overview), A the leader Go Lives that page, C a Discord Activity. C is blocked as things
+  stand: unverified Activities run only in servers under 25 members and ours has ~387.
+- **How raiders look, per night (bot 3.1.208):** `raid_night_appearance`, one row per raider per distinct
+  look, written when a night's first track minute lands and hourly after: race, deity and worn armor and
+  weapons from Quarmy gear (else the inventory file), turned into models by the new `eqemu_items.idfile /
+  material / color` columns. `exclude_from_stats` is never written; `exclude_inventory` gets no item data.
+  The catalog also gains each zone's sky, fog colours and clip distances (`eqemu_zone`). Gender, face, hair,
+  beard and dyes need a Zeal fork change (the entity carries them; the pipe's raid loop already holds the
+  pointer) — prepared, not pushed: this session cannot push to the fork.
+- **Waiting on the guild lead:** whether a local session may extract zone and character models from their
+  own installed client for private animation only (never the site or the repo). Until then: walls, colours,
+  positions and appearance data.
+- **Found on the way:** the RaidBosses bot's spoken callouts very likely stopped working on 2026-03-01 — it
+  runs `@discordjs/voice` 0.18 on Node 20, before Discord made end-to-end voice encryption mandatory. Not
+  fixed here: Bristlebane is meant to take the callouts over. `/voicetest` confirms either way.

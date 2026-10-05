@@ -2184,6 +2184,25 @@ into the `hail` key of the Command Center state; a witnessed or own flag-NPC hai
 `_hailNpcWanted`) rides the pop-flag upload; a tap posts the local `/api/hail-mark` (`_localOriginOk`) →
 `POST /api/agent/hail-mark`. Render: `hailBoardHtml` in `apps/mimic/command.html`.
 
+### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
+Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the
+pure parts: `decide()` join/leave rule, `ConsentStore`, `SessionRecorder`, `forgetUser`, notice text,
+`COMMANDS`). Polls the main bot's `GET /api/agent/raid-live` (`_handleAgentRaidLive` in index.js, answered
+from `utils/raidTrack.js liveSnapshot()` + `_raidEndedInfo`; bearer `BRISTLEBANE_API_KEY` via
+`utils/serviceKey.js`, that route only). `@discordjs/voice` 0.19.2 + `@snazzah/davey` (DAVE), Node 22.
+Records only opted-in members (`/bristlebane optin|optout|forget|status`) as `<night>/<session>/<userId>
+.opusraw` (`[u32 arrival_ms][u16 len][opus]`) + `session.json` under `/data/recordings`; consent in
+`/data/consent.json`. Ogg conversion is still a README TODO. Tests: `test/bristlebane.test.js`,
+`test/raid-live.test.js`.
+
+### Raid-night appearance (bot 3.1.208, §166)
+`utils/raidAppearance.js` `noteMinute()` is called by `raidTrack._writeMinute` after a minute row lands:
+`snapshotNight()` on a night's first minute, each raider's first minute and hourly → `raid_night_appearance`
+(`source` quarmy | inventory | who; zeal_entity reserved for the Zeal feed), `lookHash()` over the visible
+fields only. Models come from `eqemu_items.idfile/material/color` (sync `scripts/sync-from-eqmac.js`,
+migration 20261006010000). ARCHIVE table on Tower (`scripts/lib/archive-merge.sql`). Tests:
+`test/raid-appearance.test.js`, `test/sync-model-and-fog-columns.test.js`.
+
 ---
 
 ## Mimic features
