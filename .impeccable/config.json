@@ -28,6 +28,24 @@
           "web/app/pvp/page.tsx"
         ],
         "createdAt": "2026-09-26T09:08:55.546Z"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "apps/mimic/triggers.html"
+        ],
+        "createdAt": "2026-10-05T15:42:20.005Z",
+        "reason": "Repo rule (CLAUDE.md: frontend-design wins over impeccable aesthetics): the timer row's left bar is each trigger's own bar_color (guild_triggers.bar_color, GINA-style rows since 2026-06-03), a functional colour code read mid-raid"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "apps/mimic/triggers.html"
+        ],
+        "createdAt": "2026-10-05T15:42:20.097Z",
+        "reason": "Repo rule (CLAUDE.md: overlays are read mid-raid over a moving 3D scene; frontend-design wins): the #alert halo is a legibility shadow behind the callout text, not decoration"
       }
     ]
   }
