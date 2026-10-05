@@ -6157,6 +6157,9 @@ async function _handleAgentBossKill(req, res) {
       }
       set++;
     } else {
+      // Boss not on the board: the kill listener never sees it, so a hail boss (Mithaniel Marr, Solusek Ro,
+      // the Keeper, the Behemoth, the Arbitor) opens its hail window here, by name.
+      _hailKill({ bossName, killedAtMs: killedAt });
       // Boss not in database — still post to raid channel as FYI (deferred).
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
@@ -9366,6 +9369,65 @@ async function _handleAgentPopFlags(req, res) {
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
+}
+
+// ── The hail board ───────────────────────────────────────────────────────────
+// The guild lead, 2026-10-05: "Upon boss death and spawn of a creature that needs to be hailed, we should
+// have that as an available slot in command center to track who has not yet hailed and who has already."
+// A kill of a boss whose death spawns a hail NPC opens a window (utils/hailBoard.js holds the whole story:
+// the boss → NPC → step table, the status rules, the bot_kv shape). Every Mimic polls GET /hail-board; any
+// raider's tap lands on POST /hail-mark.
+let _hailBoardInst = null;
+const _hailBoard = () => _hailBoardInst || (_hailBoardInst = require('./utils/hailBoard').create({
+  supabase: require('./utils/supabase'),
+  guildId: () => process.env.SUPABASE_GUILD_ID || 'wolfpack',
+}));
+function _hailKill(args) {
+  try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] open failed:', err?.message); }
+}
+// Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
+// (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
+// seen: the agent's kill relay and the confirmed encounter upload.
+require('./utils/state').onKillRecorded(({ bossId, killedAt }) => _hailKill({ bossId, killedAtMs: killedAt }));
+
+// GET /api/agent/hail-board → { windows: [...] }
+async function _handleAgentHailBoard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const board = await _hailBoard().getBoard();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(board));
+}
+
+// POST /api/agent/hail-mark { window_id, name, hailed } → the updated window
+async function _handleAgentHailMark(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const windowId = typeof payload?.window_id === 'string' ? payload.window_id.slice(0, 96) : '';
+  const name = typeof payload?.name === 'string' ? payload.name.trim().slice(0, 64) : '';
+  if (!windowId || !name) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'window_id and name required' }));
+  }
+  // The marker is whoever's session this is; an install with no member row resolves to a bare Discord id.
+  const by = identity.display_name && identity.display_name !== identity.discord_id ? identity.display_name : null;
+  const r = await _hailBoard().markHailed({ windowId, name, hailed: payload.hailed !== false, by });
+  if (r.error) {
+    res.writeHead(r.status || 400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: r.error }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, ...r.window }));
 }
 
 // POST /api/agent/quarmy
@@ -21741,6 +21803,17 @@ async function _handleAgentUpload(req, res) {
     console.warn('[agent] local parse write failed:', err?.message);
   }
 
+  // ── Hail board: a confirmed kill of a boss whose death spawns a hail NPC opens its window. Outside the
+  // Supabase block on purpose — an uncurated boss (Mithaniel Marr and the rest) can be gated out of persisting
+  // and its window must open anyway. One window per death however many agents upload it (utils/hailBoard.js).
+  if (!isBackfill && encounter.confirmed_kill === true && encounter.boss_name) {
+    _hailKill({
+      bossName: encounter.boss_name,
+      killedAtMs: encounter.ended_at ? new Date(encounter.ended_at).getTime() : startedMs + duration * 1000,
+      participants: players.map(p => p.name),
+    });
+  }
+
   // ── Best-effort Supabase write. Falls through silently if Supabase isn't set up ──
   try {
     const supabase = require('./utils/supabase');
@@ -22760,6 +22833,24 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentPopFlags(req, res); }
     catch (err) {
       console.error('[pop-flags] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/hail-board')) {
+    try { return await _handleAgentHailBoard(req, res); }
+    catch (err) {
+      console.error('[hail-board] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/hail-mark') {
+    try { return await _handleAgentHailMark(req, res); }
+    catch (err) {
+      console.error('[hail-mark] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
