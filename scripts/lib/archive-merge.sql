@@ -84,6 +84,36 @@ create table if not exists public.raid_track_minutes (
 create index if not exists raid_track_minutes_minute_at_idx on public.raid_track_minutes (minute_at);
 create index if not exists raid_track_minutes_night_idx on public.raid_track_minutes (guild_id, night_key);
 
+-- raid_night_appearance: how each raider looked on a raid night, one row per distinct look
+-- (migration 20261006020000; the guild lead, 2026-10-05: "how we look as characters … recreate from
+-- point map during raids").
+create table if not exists public.raid_night_appearance (
+  guild_id       text        not null,
+  night_key      text        not null,
+  name_key       text        not null,
+  look_hash      text        not null,
+  character_name text        not null,
+  first_seen_at  timestamptz not null default now(),
+  source         text        not null check (source in ('zeal_entity', 'quarmy', 'inventory', 'who')),
+  race           text,
+  race_id        integer,
+  gender         integer,
+  face           integer,
+  hair_style     integer,
+  hair_color     integer,
+  beard_style    integer,
+  beard_color    integer,
+  texture        integer,
+  height         real,
+  deity          integer,
+  mat            integer[],
+  tint           bigint[],
+  prim_it        integer,
+  sec_it         integer,
+  worn           jsonb,
+  primary key (guild_id, night_key, name_key, look_hash)
+);
+
 -- The two passes must agree on what a table's primary key is, so they ask the
 -- same function rather than each carrying a copy of the catalog query.
 create or replace function archive_meta.pk_columns(p_table text)
@@ -126,8 +156,8 @@ declare
     'roll_sets', 'roll_set_overrides', 'pvp_kills', 'pvp_assists',
     'pvp_boss_kills', 'trigger_timing_feedback', 'zeal_tag_observations',
     'page_views', 'audit_log',
-    -- raid replay positions: kept here forever, whatever production keeps
-    'raid_track_minutes'
+    -- raid replay positions and how the raiders looked: kept here forever, whatever production keeps
+    'raid_track_minutes', 'raid_night_appearance'
   ];
   missing       text;
   merge_order   text[];            -- parents first, children after

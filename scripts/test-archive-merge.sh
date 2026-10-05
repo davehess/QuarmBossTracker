@@ -112,6 +112,23 @@ create table snap.raid_track_minutes (guild_id text not null, minute_at timestam
 insert into snap.raid_track_minutes (guild_id, minute_at, raiders, frames, data)
      values ('wolfpack','2026-10-07 00:00:00+00',40,20,'{"v":1}'),
             ('wolfpack','2026-10-07 00:01:00+00',41,20,'{"v":1}');
+
+-- CREATED BY THE MERGE, same as above: raid_night_appearance, with its array, bigint[] and jsonb
+-- columns (a Dark Elf in two looks: before and after a gear swap) and the source check.
+create table snap.raid_night_appearance (guild_id text not null, night_key text not null,
+       name_key text not null, look_hash text not null, character_name text not null,
+       first_seen_at timestamptz not null default now(),
+       source text not null check (source in ('zeal_entity', 'quarmy', 'inventory', 'who')),
+       race text, race_id integer, gender integer, face integer, hair_style integer, hair_color integer,
+       beard_style integer, beard_color integer, texture integer, height real, deity integer,
+       mat integer[], tint bigint[], prim_it integer, sec_it integer, worn jsonb,
+       primary key (guild_id, night_key, name_key, look_hash));
+insert into snap.raid_night_appearance (guild_id, night_key, name_key, look_hash, character_name, source,
+       race, race_id, mat, tint, prim_it, worn)
+     values ('wolfpack','2026-10-07','aldenmar','0123456789abcdef','Aldenmar','quarmy','Dark Elf',6,
+             '{16,1,0,0,0,0,0}','{4294967168,0,0,0,0,0,0}',63,'[{"slot":"Head","item_id":1001}]'),
+            ('wolfpack','2026-10-07','aldenmar','fedcba9876543210','Aldenmar','quarmy','Dark Elf',6,
+             '{16,2,0,0,0,0,0}','{4294967168,0,0,0,0,0,0}',63,'[{"slot":"Head","item_id":1001}]');
 SQL
 
 fail=0
@@ -160,6 +177,14 @@ if ! run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; th
   echo "  FAIL merge after the raid_track prune errored:"; sed -n '1,12p' "$OUT" | sed 's/^/       /'; fail=1
 fi
 check "raid_track_minutes keeps a minute production dropped" "$(q 'select count(*) from raid_track_minutes')" 2
+
+check "merge creates raid_night_appearance and fills it, arrays and all" \
+  "$(q "select count(*)||'/'||max(tint[1]) from raid_night_appearance")" "2/4294967168"
+run -q -c "delete from snap.raid_night_appearance where look_hash = '0123456789abcdef'"
+if ! run -q -v ON_ERROR_STOP=1 -f scripts/lib/archive-merge.sql >"$OUT" 2>&1; then
+  echo "  FAIL merge after the raid_night_appearance prune errored:"; sed -n '1,12p' "$OUT" | sed 's/^/       /'; fail=1
+fi
+check "raid_night_appearance keeps a look production dropped" "$(q 'select count(*) from raid_night_appearance')" 2
 
 # LAST, because it leaves the database unmergeable: an allowlisted ARCHIVE table
 # the snapshot lacks must STOP the run, never be skipped. That silent skip is how

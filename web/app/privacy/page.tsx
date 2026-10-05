@@ -71,6 +71,8 @@ const RETENTION: [string, string][] = [
   ['Who targeted what', '1 day'],
   ['Raid roster with positions', 'about a day'],
   ['Raid positions kept for replay (one sample every few seconds)', "Kept for now; the Archive's copy is permanent"],
+  ["How each raider's character looks on a raid night (race, worn armor and weapons)", "Kept for now; the Archive's copy is permanent"],
+  ['Raid voice recordings (only members who opted in)', 'Until you run /bristlebane optout (tonight) or /bristlebane forget (all)'],
   ['Buffs and debuffs seen landing', '7 days'],
   ['Per-hit parse detail', '7 days (the parse totals are kept)'],
   ['Threat snapshots', '30 days is the rule; the clean-up has fallen behind, so older ones exist today'],
@@ -449,7 +451,7 @@ export default function PrivacyPage() {
           {([
             ['ONLY YOU', 'bg-purple/20 text-purple border-purple/40', <>Your relayed tells; your <Link href="/me" className="text-blue hover:underline">/me</Link> page.</>],
             ['YOU + OFFICERS', 'bg-orange/20 text-orange border-orange/40', <>Your inventory, spellbook and quest pages. Officers can also upload inventory for any character. Two switches on /me share them with members, separately: <B>Quest page</B> and <B>Inventory page</B>.</>],
-            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP, buffs and those timers — that&apos;s how the buff queue and Target Info work. While you are in a raid, your latest position in the zone is shown to signed-in members on the <Link href="/spectator" className="text-blue hover:underline">spectator page</Link>, and kept, one sample every few seconds, so a raid can be replayed. Characters set to exclude from stats are never kept.</>],
+            ['GUILD', 'bg-green/20 text-green border-green/40', <>Signed-in members: parses, DKP and bids, attendance, loot, kill timers, <code>/who</code> sightings, and each character&apos;s equipped gear and AAs. Members&apos; Mimic can look up your current zone, HP, buffs and those timers — that&apos;s how the buff queue and Target Info work. While you are in a raid, your latest position in the zone is shown to signed-in members on the <Link href="/spectator" className="text-blue hover:underline">spectator page</Link>, and kept, one sample every few seconds, so a raid can be replayed, together with how each raider&apos;s character looks that night (race and worn armor and weapons, from the gear we already hold). Characters set to exclude from stats are never kept. The raid voice bot, Bristlebane, records only members who ran <code>/bristlebane optin</code>; nobody else is listened to or kept, and <code>/bristlebane forget</code> deletes every recording of you.</>],
             ['OFFICERS', 'bg-gold/20 text-gold border-gold/40', <>The admin pages cover all of it, including chat history, member page views and feedback.</>],
             ['DISCORD', 'bg-blue/20 text-blue border-blue/40', <>Whoever can read the channel: relayed guild and raid chat, parse cards (which name deaths), the night&apos;s damage leaderboard, deathrolls, PvP kills and feedback.</>],
             ['ANON', 'bg-panel text-dim border-border', <>Guild-wide totals with <B>no names</B> (&ldquo;the Pack summoned 4,000 stacks of food&rdquo;).</>],

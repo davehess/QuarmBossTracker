@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'bristlebane-looks-2026-10-05',
+    title: 'Bristlebane joins the raid, and the raid remembers how we looked',
+    version: 'Bot 3.1.208 · Web 1.8.104',
+    date: '2026-10-05',
+    headline: 'A new raid-voice bot, Bristlebane, is ready to join the raid channel when a raid starts, and each raid night now keeps what every character looked like next to where they stood.',
+    features: [
+      { name: 'Bristlebane', blurb: 'A second guild bot that joins the raid voice channel by itself when a raid is on and leaves when it ends. It records the voices only of people who ask it to: /bristlebane optin. /bristlebane optout stops and deletes tonight\'s recording of you, /bristlebane forget deletes all of it, and /bristlebane status says where you stand. It says so in raid chat when it joins. Coming next: it takes over the spoken callouts and loot calls.' },
+      { name: 'How we looked', blurb: 'Once a raid night (and every hour after), each raider\'s race and worn armor and weapons are kept next to the raid\'s positions, so a raid can one day be re-created with characters that look like us. The item catalog now knows what each piece of gear looks like, and each zone\'s sky and fog colours.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'kills-not-ours-2026-10-05',
     title: 'Only our own kills start a timer',
     version: 'Bot 3.1.207 · Web 1.8.103',
