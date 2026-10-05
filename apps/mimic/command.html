@@ -157,6 +157,40 @@
   .raids-card .row .cnt{color:#e6edf3;font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
   .raids-card .row .yours{color:#56d364;font-size:9px}
   .raids-card .row.mine .nm{color:#56d364}
+  /* Hail board (the guild lead, 2026-10-05; option A): a PoP boss died and its flag NPC stands for 20
+     minutes. Who still has to hail it is the top list, tappable; who has is green, tappable only when
+     somebody marked them by hand (a tap on one of those undoes it). A tappable chip carries a visible
+     edge and a brighter fill so it reads as a button, the way the amber chip reads as a warning. The clock
+     is painted by script every second (data-end), so the card's own HTML stays byte-stable between polls. */
+  .hail-head{display:flex;align-items:center;gap:6px}
+  .hail-head .npc{text-transform:none;letter-spacing:0;color:#e6edf3}
+  .hail-clock{margin-left:auto;text-transform:none;letter-spacing:0;font-size:10px;font-weight:700;
+    color:#d29922;font-variant-numeric:tabular-nums}
+  .hail-clock.soon{color:#ffa657}
+  .hail-clock.crit{color:#f85149}
+  .hail-sub{display:flex;align-items:baseline;gap:4px;font-size:9px;margin:3px 0 2px;color:#c9d1d9}
+  .hail-sub b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+  .hail-sub.todo{color:#e6edf3;font-weight:700}
+  .hail-sub.done{color:#7ee787;font-weight:700}
+  .hail-sub.done b{color:#7ee787}
+  .hail-chips{display:flex;flex-wrap:wrap;gap:3px;font-size:10px;line-height:1.5}
+  .hail-chip{padding:0 5px;border-radius:3px;border:1px solid transparent;white-space:nowrap;color:#e6edf3;
+    background:rgba(255,255,255,0.06)}
+  .hail-chip.tap{background:rgba(255,255,255,0.10);border-color:rgba(255,255,255,0.32);cursor:pointer}
+  .hail-chip.tap:hover{background:rgba(255,255,255,0.20);border-color:rgba(255,255,255,0.6)}
+  .hail-chip.flag, .hail-chip.flag:hover{background:rgba(140,72,31,0.45);border-color:#f0a52d}
+  .hail-chip.flag:hover{background:rgba(140,72,31,0.7)}
+  .hail-chip.me{font-weight:700;border-color:#f8b87b}
+  .hail-chip .prior{font-size:8px;color:#f0b429;margin-left:4px;letter-spacing:0}
+  .hail-chip.ok{background:rgba(86,211,100,0.28);color:#c8f0cc;border-color:transparent}
+  .hail-chip.ok.undo{border:1px dashed rgba(200,240,204,0.55);cursor:pointer}
+  .hail-chip.ok.undo:hover{background:rgba(86,211,100,0.42)}
+  .hail-chip.pend{opacity:.45;cursor:default}
+  .hail-more{font-size:9px;color:#8b949e;align-self:center;margin-left:2px;cursor:pointer;user-select:none}
+  .hail-more:hover{color:#e6edf3}
+  .hail-dim{font-size:9px;color:#7d8590;margin-top:4px}
+  .hail-foot{font-size:8px;color:#6e7681;margin-top:3px;padding-top:2px;
+    border-top:1px solid rgba(110,118,129,0.25)}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -402,6 +436,85 @@
     return h + '</div>';
   }
 
+  // 🐺 Hail board (the guild lead, 2026-10-05; option A, one board the whole raid shares): a PoP boss
+  // died and its flag NPC stands for 20 minutes. One card per open window: who still has to hail it
+  // (tap a name to mark it hailed, for the whole raid), who has, and how many were flagged before it
+  // opened. The agent hands this over in state.hail, already narrowed to this raid.
+  var HAIL_STILL_CAP = 30;   // a 70-raider list at the open of a window must not outgrow the screen
+  var HAIL_DONE_CAP  = 8;
+  var _hailMore = new Set();   // 'windowId|still' / 'windowId|hailed' lists opened past their cap (this client)
+  var _hailPend = new Set();   // 'windowId|name' taps sent and not answered yet; the chip dims meanwhile
+  // "17:52 left". Painted by paintHailClocks() every second from the card's data-end and never put in
+  // the card's HTML: a clock in the HTML would repaint the whole board each second, and a repaint between
+  // a press and its release throws the tap away.
+  function hailClockText(endMs, nowMs){
+    var left = Math.max(0, Math.round((endMs - nowMs) / 1000));
+    if (left <= 0) return 'closed';
+    return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
+  }
+  function hailMoreHtml(key, total, cap, open){
+    if (total <= cap) return '';
+    return '<span class="hail-more" data-wp-interact data-hail-more="' + esc(key) + '" title="'
+         + (open ? 'Show fewer' : 'Show every name') + '">' + (open ? 'fewer ▴' : '+' + (total - cap) + ' more ▸') + '</span>';
+  }
+  function hailBoardHtml(windows, selfName){
+    var me = String(selfName || '').toLowerCase();
+    var wins = windows.slice().sort(function(a, b){ return (a.ms_left || 0) - (b.ms_left || 0); }).slice(0, 3);
+    var h = '';
+    for (var wi = 0; wi < wins.length; wi++) {
+      var w = wins[wi], wid = String(w.id);
+      var still = (w.still || []).slice(), hailed = w.hailed || [], flagged = w.already_flagged || [];
+      var col = _isCollapsed('hail');
+      var end = w.ends_at_ms != null ? w.ends_at_ms : Math.round((Date.now() + (w.ms_left || 0)) / 1000) * 1000;
+      // You first, so the name you are looking for is where the eye lands.
+      for (var mi = 0; mi < still.length; mi++) {
+        if (String(still[mi].name).toLowerCase() === me) { still.unshift(still.splice(mi, 1)[0]); break; }
+      }
+      h += '<div class="card hail-card"><div class="head hail-head">'
+         +   '<span class="sec-toggle" data-wp-interact data-collapse-key="hail" title="' + (col ? 'Expand' : 'Collapse') + ' this section">'
+         +     (col ? '▸' : '▾') + ' Hail · <span class="npc">' + esc(w.npc_name || w.boss_name || '?') + '</span>'
+         +     (col ? ' (' + still.length + ')' : '') + '</span>'
+         +   '<span class="hail-clock" data-end="' + esc(end) + '"></span>'
+         + '</div>';
+      if (!col) {
+        if (still.length) {
+          var stillOpen = _hailMore.has(wid + '|still');
+          var sMax = stillOpen ? still.length : Math.min(still.length, HAIL_STILL_CAP);
+          h += '<div class="hail-sub todo">Still to hail <b>(' + still.length + ')</b></div><div class="hail-chips">';
+          for (var si = 0; si < sMax; si++) {
+            var sr = still[si], sLow = String(sr.name).toLowerCase();
+            h += '<span class="hail-chip tap' + (sr.prior_missing ? ' flag' : '') + (sLow === me ? ' me' : '')
+               +   (_hailPend.has(wid + '|' + sLow) ? ' pend' : '')
+               +   '" data-wp-interact data-hail-act="mark" data-hail-win="' + esc(wid) + '" data-hail-name="' + esc(sr.name) + '" title="'
+               +   esc(sr.prior_missing ? (sr.prior_note || 'Missing an earlier step, so a hail may not flag them. Tap to mark them hailed.') : 'Tap to mark ' + sr.name + ' as hailed') + '">'
+               +   esc(sr.name) + (sr.prior_missing ? '<span class="prior">⚠ needs prior step</span>' : '') + '</span>';
+          }
+          h += hailMoreHtml(wid + '|still', still.length, HAIL_STILL_CAP, stillOpen) + '</div>';
+        } else {
+          h += '<div class="hail-sub done">Nobody left to hail ✓</div>';
+        }
+        if (hailed.length) {
+          var doneOpen = _hailMore.has(wid + '|hailed');
+          var dMax = doneOpen ? hailed.length : Math.min(hailed.length, HAIL_DONE_CAP);
+          h += '<div class="hail-sub done">Hailed ✓ <b>(' + hailed.length + ')</b></div><div class="hail-chips">';
+          for (var di = 0; di < dMax; di++) {
+            var dr = hailed[di], undo = dr.how === 'marked';
+            var how = dr.how === 'flag' ? 'Got the flag' : (undo ? 'Marked by ' + (dr.by || 'a raider') + ' - tap to undo' : 'Seen hailing');
+            h += '<span class="hail-chip ok' + (undo ? ' undo' : '') + (_hailPend.has(wid + '|' + String(dr.name).toLowerCase()) ? ' pend' : '') + '"'
+               +   (undo ? ' data-wp-interact data-hail-act="unmark" data-hail-win="' + esc(wid) + '" data-hail-name="' + esc(dr.name) + '"' : '')
+               +   ' title="' + esc(how) + '">' + esc(dr.name) + '</span>';
+          }
+          h += hailMoreHtml(wid + '|hailed', hailed.length, HAIL_DONE_CAP, doneOpen) + '</div>';
+        }
+        if (flagged.length) h += '<div class="hail-dim" title="' + esc(flagged.slice(0, 40).join(', ')) + '">' + flagged.length + ' already flagged</div>';
+        var seen = Number(w.seen_by) || 0;
+        h += '<div class="hail-foot">' + (seen > 0 ? 'seen by ' + seen + ' Mimic' + (seen === 1 ? '' : 's') + ' · ' : '') + 'tap a name to mark it hailed</div>';
+      }
+      h += '</div>';
+    }
+    return h;
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -466,6 +579,19 @@
            +      daTags
            +      '<div class="val">' + valText + '</div></div>'
            +  '</div>';
+    }
+
+    // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
+    // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
+    // a window is still open keeps its own cards on top. An open window is the one thing here with a
+    // clock and a name to tap, so it should not sit under the roll and cure lists.
+    if (s.hail && s.hail.length) {
+      var _hailIds = {};
+      for (var hq = 0; hq < s.hail.length; hq++) _hailIds[String(s.hail[hq].id)] = true;
+      _hailMore.forEach(function(k){ if (!_hailIds[k.slice(0, k.lastIndexOf('|'))]) _hailMore.delete(k); });
+      html += hailBoardHtml(s.hail, s.character);
+    } else if (_hailMore.size) {
+      _hailMore.clear();
     }
 
     // Raid-wide DA/invuln broadcasts — every tank currently reporting status
@@ -743,8 +869,36 @@
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
       contentEl.innerHTML = html;
       contentEl.__wpHtml = html;
+      paintHailClocks();
       _requestAutoHeight();
     }
+  }
+
+  // The hail clocks tick on their own: each card carries its end (data-end, this machine's clock) and
+  // the text is written here, once a second, so a clock never makes the card's HTML differ.
+  function paintHailClocks(){
+    var els = contentEl.querySelectorAll('.hail-clock'), now = Date.now();
+    for (var i = 0; i < els.length; i++) {
+      var end = Number(els[i].getAttribute('data-end')), left = (end - now) / 1000;
+      var t = hailClockText(end, now), cls = 'hail-clock' + (left <= 60 ? ' crit' : (left <= 300 ? ' soon' : ''));
+      if (els[i].textContent !== t) els[i].textContent = t;
+      if (els[i].className !== cls) els[i].className = cls;
+    }
+  }
+  setInterval(paintHailClocks, 1000);
+
+  // A tap on a name: mark it hailed (or take a hand-made mark back) for the whole raid. The agent relays
+  // it to the bot and hands back the window, so the next poll already shows it; the chip dims until then.
+  function hailTap(wid, name, hailed){
+    var key = wid + '|' + String(name).toLowerCase();
+    if (!wid || !name || _hailPend.has(key)) return;
+    _hailPend.add(key);
+    if (_lastState) render(_lastState);
+    var done = function(){ _hailPend.delete(key); tick(); };
+    fetch('http://127.0.0.1:' + PORT + '/api/hail-mark', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window_id: wid, name: name, hailed: hailed }),
+    }).then(done, done);
   }
 
   // Curse/Cure dismiss — delegated on #content (rebuilt every poll, so bind
@@ -755,18 +909,36 @@
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
+                             || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
+                             || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
+    // Hail chips act on the PRESS, not the click: the board repaints whenever somebody else hails, and a
+    // repaint between press and release removes the chip the click would have landed on.
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var chip = e.target && e.target.closest ? e.target.closest('.hail-chip[data-hail-act]') : null;
+      if (!chip) return;
+      e.preventDefault(); e.stopPropagation();
+      hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
     contentEl.addEventListener('click', function(e){
+      var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;
+      if (hmore) {
+        e.preventDefault(); e.stopPropagation();
+        var hk = hmore.getAttribute('data-hail-more');
+        if (hk) { if (_hailMore.has(hk)) _hailMore.delete(hk); else _hailMore.add(hk); if (_lastState) render(_lastState); }
+        return;
+      }
       // #153 section collapse toggle — flip the JS store + persist, then
       // re-render immediately from last state (next poll reads the same store).
       var tog = e.target && e.target.closest ? e.target.closest('.sec-toggle') : null;

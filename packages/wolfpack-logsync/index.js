@@ -5271,15 +5271,20 @@ function parsePopFlagLine(line, character) {
 // self-reported grant line. The bot decides whether the hailed NPC is a
 // flagging NPC.
 const _HAIL_WITNESS_RX = /\]\s+(\w+) says,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
+// Your OWN hail (the guild lead, 2026-10-05; the hail board): your own log prints "You say, 'Hail, X'",
+// which the witness form above never matched. Some flag NPCs print no grant line at all (a Planar
+// Projection can hand a flag over silently), so your own hail is the only evidence the board gets for
+// you. Attributed to the log's character, and sent in the same shape as a witnessed one.
+const _HAIL_SELF_RX = /\]\s+You say,?\s*['"]Hail[,!. ]+\s*([^'"]{2,48}?)[!.?]*['"]/i;
 function parseWitnessedHail(line, character) {
   if (!line || line.indexOf('Hail') === -1) return null;
-  const m = line.match(_HAIL_WITNESS_RX);
+  const own = line.match(_HAIL_SELF_RX);
+  const m = own || line.match(_HAIL_WITNESS_RX);
   if (!m) return null;
-  const hailer = String(m[1] || '').trim();
-  const npc    = String(m[2] || '').trim();
+  const hailer = own ? String(character || '').trim() : String(m[1] || '').trim();
+  const npc    = String((own ? m[1] : m[2]) || '').trim();
   if (!hailer || !npc) return null;
-  // "You say, 'Hail, X'" renders as the uploader's own name on Quarm, but a
-  // self-hail is already covered by the authoritative grant line — keep it
+  // A hail of yours is also covered by the authoritative grant line where one prints — keep it
   // anyway, since the bot dedups and a witness for yourself costs nothing.
   const ts = parseEqTimestamp(line);
   let zone = null;
@@ -5294,6 +5299,7 @@ function parseWitnessedHail(line, character) {
     boss:      null,
     source:    'hail_witnessed',
     witness:   character ? String(character).slice(0, 64) : null,
+    self:      !!own,
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
   };
 }
@@ -15577,6 +15583,15 @@ function _serializeCommandCenterState() {
     rolls:         rollSetsSnapshot(15 * 60 * 1000),
     // Live OpenDKP auctions, soonest to close first; a late bid moves an end (2026-10-02).
     auctions:      _dkpAuctionsSnapshot(Date.now()),
+    // The PoP hail board (2026-10-05): who still has to hail the flag NPC a boss's death stood up. The
+    // bot's board is guild-wide, so with two raids at once it keeps to this Mimic's own raid window, the
+    // same rule the priest mana list above follows. [] when no window is open.
+    hail:          (() => {
+      const nowMs = Date.now();
+      const ownRaid = !!_raidSplitNow(nowMs) && _raidRosterMembers.size > 0 &&
+                      !!_lastRaidPipe && (nowMs - (_lastRaidPipe.at || 0)) < 60_000;
+      return _hailBoardSnapshot(_nowOnServerClock(), ownRaid ? _raidRosterMembers : null);
+    })(),
     cures,
     // Per-cleric Divine Intervention readiness — chips on the board.
     di:            diStatusSnapshot(),
@@ -28559,6 +28574,40 @@ const COMMAND_HTML = `<!doctype html>
   .raids-card .row .cnt{color:#e6edf3;font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
   .raids-card .row .yours{color:#56d364;font-size:9px}
   .raids-card .row.mine .nm{color:#56d364}
+  /* Hail board (the guild lead, 2026-10-05; option A): a PoP boss died and its flag NPC stands for 20
+     minutes. Who still has to hail it is the top list, tappable; who has is green, tappable only when
+     somebody marked them by hand (a tap on one of those undoes it). A tappable chip carries a visible
+     edge and a brighter fill so it reads as a button, the way the amber chip reads as a warning. The clock
+     is painted by script every second (data-end), so the card's own HTML stays byte-stable between polls. */
+  .hail-head{display:flex;align-items:center;gap:6px}
+  .hail-head .npc{text-transform:none;letter-spacing:0;color:#e6edf3}
+  .hail-clock{margin-left:auto;text-transform:none;letter-spacing:0;font-size:10px;font-weight:700;
+    color:#d29922;font-variant-numeric:tabular-nums}
+  .hail-clock.soon{color:#ffa657}
+  .hail-clock.crit{color:#f85149}
+  .hail-sub{display:flex;align-items:baseline;gap:4px;font-size:9px;margin:3px 0 2px;color:#c9d1d9}
+  .hail-sub b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+  .hail-sub.todo{color:#e6edf3;font-weight:700}
+  .hail-sub.done{color:#7ee787;font-weight:700}
+  .hail-sub.done b{color:#7ee787}
+  .hail-chips{display:flex;flex-wrap:wrap;gap:3px;font-size:10px;line-height:1.5}
+  .hail-chip{padding:0 5px;border-radius:3px;border:1px solid transparent;white-space:nowrap;color:#e6edf3;
+    background:rgba(255,255,255,0.06)}
+  .hail-chip.tap{background:rgba(255,255,255,0.10);border-color:rgba(255,255,255,0.32);cursor:pointer}
+  .hail-chip.tap:hover{background:rgba(255,255,255,0.20);border-color:rgba(255,255,255,0.6)}
+  .hail-chip.flag, .hail-chip.flag:hover{background:rgba(140,72,31,0.45);border-color:#f0a52d}
+  .hail-chip.flag:hover{background:rgba(140,72,31,0.7)}
+  .hail-chip.me{font-weight:700;border-color:#f8b87b}
+  .hail-chip .prior{font-size:8px;color:#f0b429;margin-left:4px;letter-spacing:0}
+  .hail-chip.ok{background:rgba(86,211,100,0.28);color:#c8f0cc;border-color:transparent}
+  .hail-chip.ok.undo{border:1px dashed rgba(200,240,204,0.55);cursor:pointer}
+  .hail-chip.ok.undo:hover{background:rgba(86,211,100,0.42)}
+  .hail-chip.pend{opacity:.45;cursor:default}
+  .hail-more{font-size:9px;color:#8b949e;align-self:center;margin-left:2px;cursor:pointer;user-select:none}
+  .hail-more:hover{color:#e6edf3}
+  .hail-dim{font-size:9px;color:#7d8590;margin-top:4px}
+  .hail-foot{font-size:8px;color:#6e7681;margin-top:3px;padding-top:2px;
+    border-top:1px solid rgba(110,118,129,0.25)}
   /* drag/lock/setup chrome — shared pattern. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -28804,6 +28853,85 @@ const COMMAND_HTML = `<!doctype html>
     return h + '</div>';
   }
 
+  // 🐺 Hail board (the guild lead, 2026-10-05; option A, one board the whole raid shares): a PoP boss
+  // died and its flag NPC stands for 20 minutes. One card per open window: who still has to hail it
+  // (tap a name to mark it hailed, for the whole raid), who has, and how many were flagged before it
+  // opened. The agent hands this over in state.hail, already narrowed to this raid.
+  var HAIL_STILL_CAP = 30;   // a 70-raider list at the open of a window must not outgrow the screen
+  var HAIL_DONE_CAP  = 8;
+  var _hailMore = new Set();   // 'windowId|still' / 'windowId|hailed' lists opened past their cap (this client)
+  var _hailPend = new Set();   // 'windowId|name' taps sent and not answered yet; the chip dims meanwhile
+  // "17:52 left". Painted by paintHailClocks() every second from the card's data-end and never put in
+  // the card's HTML: a clock in the HTML would repaint the whole board each second, and a repaint between
+  // a press and its release throws the tap away.
+  function hailClockText(endMs, nowMs){
+    var left = Math.max(0, Math.round((endMs - nowMs) / 1000));
+    if (left <= 0) return 'closed';
+    return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
+  }
+  function hailMoreHtml(key, total, cap, open){
+    if (total <= cap) return '';
+    return '<span class="hail-more" data-wp-interact data-hail-more="' + esc(key) + '" title="'
+         + (open ? 'Show fewer' : 'Show every name') + '">' + (open ? 'fewer ▴' : '+' + (total - cap) + ' more ▸') + '</span>';
+  }
+  function hailBoardHtml(windows, selfName){
+    var me = String(selfName || '').toLowerCase();
+    var wins = windows.slice().sort(function(a, b){ return (a.ms_left || 0) - (b.ms_left || 0); }).slice(0, 3);
+    var h = '';
+    for (var wi = 0; wi < wins.length; wi++) {
+      var w = wins[wi], wid = String(w.id);
+      var still = (w.still || []).slice(), hailed = w.hailed || [], flagged = w.already_flagged || [];
+      var col = _isCollapsed('hail');
+      var end = w.ends_at_ms != null ? w.ends_at_ms : Math.round((Date.now() + (w.ms_left || 0)) / 1000) * 1000;
+      // You first, so the name you are looking for is where the eye lands.
+      for (var mi = 0; mi < still.length; mi++) {
+        if (String(still[mi].name).toLowerCase() === me) { still.unshift(still.splice(mi, 1)[0]); break; }
+      }
+      h += '<div class="card hail-card"><div class="head hail-head">'
+         +   '<span class="sec-toggle" data-wp-interact data-collapse-key="hail" title="' + (col ? 'Expand' : 'Collapse') + ' this section">'
+         +     (col ? '▸' : '▾') + ' Hail · <span class="npc">' + esc(w.npc_name || w.boss_name || '?') + '</span>'
+         +     (col ? ' (' + still.length + ')' : '') + '</span>'
+         +   '<span class="hail-clock" data-end="' + esc(end) + '"></span>'
+         + '</div>';
+      if (!col) {
+        if (still.length) {
+          var stillOpen = _hailMore.has(wid + '|still');
+          var sMax = stillOpen ? still.length : Math.min(still.length, HAIL_STILL_CAP);
+          h += '<div class="hail-sub todo">Still to hail <b>(' + still.length + ')</b></div><div class="hail-chips">';
+          for (var si = 0; si < sMax; si++) {
+            var sr = still[si], sLow = String(sr.name).toLowerCase();
+            h += '<span class="hail-chip tap' + (sr.prior_missing ? ' flag' : '') + (sLow === me ? ' me' : '')
+               +   (_hailPend.has(wid + '|' + sLow) ? ' pend' : '')
+               +   '" data-wp-interact data-hail-act="mark" data-hail-win="' + esc(wid) + '" data-hail-name="' + esc(sr.name) + '" title="'
+               +   esc(sr.prior_missing ? (sr.prior_note || 'Missing an earlier step, so a hail may not flag them. Tap to mark them hailed.') : 'Tap to mark ' + sr.name + ' as hailed') + '">'
+               +   esc(sr.name) + (sr.prior_missing ? '<span class="prior">⚠ needs prior step</span>' : '') + '</span>';
+          }
+          h += hailMoreHtml(wid + '|still', still.length, HAIL_STILL_CAP, stillOpen) + '</div>';
+        } else {
+          h += '<div class="hail-sub done">Nobody left to hail ✓</div>';
+        }
+        if (hailed.length) {
+          var doneOpen = _hailMore.has(wid + '|hailed');
+          var dMax = doneOpen ? hailed.length : Math.min(hailed.length, HAIL_DONE_CAP);
+          h += '<div class="hail-sub done">Hailed ✓ <b>(' + hailed.length + ')</b></div><div class="hail-chips">';
+          for (var di = 0; di < dMax; di++) {
+            var dr = hailed[di], undo = dr.how === 'marked';
+            var how = dr.how === 'flag' ? 'Got the flag' : (undo ? 'Marked by ' + (dr.by || 'a raider') + ' - tap to undo' : 'Seen hailing');
+            h += '<span class="hail-chip ok' + (undo ? ' undo' : '') + (_hailPend.has(wid + '|' + String(dr.name).toLowerCase()) ? ' pend' : '') + '"'
+               +   (undo ? ' data-wp-interact data-hail-act="unmark" data-hail-win="' + esc(wid) + '" data-hail-name="' + esc(dr.name) + '"' : '')
+               +   ' title="' + esc(how) + '">' + esc(dr.name) + '</span>';
+          }
+          h += hailMoreHtml(wid + '|hailed', hailed.length, HAIL_DONE_CAP, doneOpen) + '</div>';
+        }
+        if (flagged.length) h += '<div class="hail-dim" title="' + esc(flagged.slice(0, 40).join(', ')) + '">' + flagged.length + ' already flagged</div>';
+        var seen = Number(w.seen_by) || 0;
+        h += '<div class="hail-foot">' + (seen > 0 ? 'seen by ' + seen + ' Mimic' + (seen === 1 ? '' : 's') + ' · ' : '') + 'tap a name to mark it hailed</div>';
+      }
+      h += '</div>';
+    }
+    return h;
+  }
+
   function render(s){
     if (!s || s.character == null) {
       contentEl.innerHTML = '<div id="empty">No focused character yet — launch EQ + Zeal and target a mob.</div>';
@@ -28868,6 +28996,19 @@ const COMMAND_HTML = `<!doctype html>
            +      daTags
            +      '<div class="val">' + valText + '</div></div>'
            +  '</div>';
+    }
+
+    // PoP hail board — straight under the fight cluster (target, enrage, Death Touch, Main Tank, rampage),
+    // above the long lists: after a kill there is no fight to push it down, and a fight that starts while
+    // a window is still open keeps its own cards on top. An open window is the one thing here with a
+    // clock and a name to tap, so it should not sit under the roll and cure lists.
+    if (s.hail && s.hail.length) {
+      var _hailIds = {};
+      for (var hq = 0; hq < s.hail.length; hq++) _hailIds[String(s.hail[hq].id)] = true;
+      _hailMore.forEach(function(k){ if (!_hailIds[k.slice(0, k.lastIndexOf('|'))]) _hailMore.delete(k); });
+      html += hailBoardHtml(s.hail, s.character);
+    } else if (_hailMore.size) {
+      _hailMore.clear();
     }
 
     // Raid-wide DA/invuln broadcasts — every tank currently reporting status
@@ -29145,8 +29286,36 @@ const COMMAND_HTML = `<!doctype html>
     if (contentEl.__wpHtml !== html) {   // byte-stability guard (2026-07-07)
       contentEl.innerHTML = html;
       contentEl.__wpHtml = html;
+      paintHailClocks();
       _requestAutoHeight();
     }
+  }
+
+  // The hail clocks tick on their own: each card carries its end (data-end, this machine's clock) and
+  // the text is written here, once a second, so a clock never makes the card's HTML differ.
+  function paintHailClocks(){
+    var els = contentEl.querySelectorAll('.hail-clock'), now = Date.now();
+    for (var i = 0; i < els.length; i++) {
+      var end = Number(els[i].getAttribute('data-end')), left = (end - now) / 1000;
+      var t = hailClockText(end, now), cls = 'hail-clock' + (left <= 60 ? ' crit' : (left <= 300 ? ' soon' : ''));
+      if (els[i].textContent !== t) els[i].textContent = t;
+      if (els[i].className !== cls) els[i].className = cls;
+    }
+  }
+  setInterval(paintHailClocks, 1000);
+
+  // A tap on a name: mark it hailed (or take a hand-made mark back) for the whole raid. The agent relays
+  // it to the bot and hands back the window, so the next poll already shows it; the chip dims until then.
+  function hailTap(wid, name, hailed){
+    var key = wid + '|' + String(name).toLowerCase();
+    if (!wid || !name || _hailPend.has(key)) return;
+    _hailPend.add(key);
+    if (_lastState) render(_lastState);
+    var done = function(){ _hailPend.delete(key); tick(); };
+    fetch('http://127.0.0.1:' + PORT + '/api/hail-mark', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window_id: wid, name: name, hailed: hailed }),
+    }).then(done, done);
   }
 
   // Curse/Cure dismiss — delegated on #content (rebuilt every poll, so bind
@@ -29157,18 +29326,36 @@ const COMMAND_HTML = `<!doctype html>
     contentEl.addEventListener('mouseover', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
+                             || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
       }
     });
     contentEl.addEventListener('mouseout', function(e){
       var t = e.target;
       if (t && t.closest && (t.closest('.rezDismiss') || t.closest('.cureDismiss') || t.closest('.cureClearAll') || t.closest('.sec-toggle')
-                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy'))) {
+                             || t.closest('.rollMore') || t.closest('.rollDismiss') || t.closest('.rollClearAll') || t.closest('.rollCopy')
+                             || t.closest('[data-wp-interact]'))) {
         try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
       }
     });
+    // Hail chips act on the PRESS, not the click: the board repaints whenever somebody else hails, and a
+    // repaint between press and release removes the chip the click would have landed on.
+    contentEl.addEventListener('mousedown', function(e){
+      if (e.button !== 0) return;
+      var chip = e.target && e.target.closest ? e.target.closest('.hail-chip[data-hail-act]') : null;
+      if (!chip) return;
+      e.preventDefault(); e.stopPropagation();
+      hailTap(chip.getAttribute('data-hail-win'), chip.getAttribute('data-hail-name'), chip.getAttribute('data-hail-act') === 'mark');
+    });
     contentEl.addEventListener('click', function(e){
+      var hmore = e.target && e.target.closest ? e.target.closest('.hail-more') : null;
+      if (hmore) {
+        e.preventDefault(); e.stopPropagation();
+        var hk = hmore.getAttribute('data-hail-more');
+        if (hk) { if (_hailMore.has(hk)) _hailMore.delete(hk); else _hailMore.add(hk); if (_lastState) render(_lastState); }
+        return;
+      }
       // #153 section collapse toggle — flip the JS store + persist, then
       // re-render immediately from last state (next poll reads the same store).
       var tog = e.target && e.target.closest ? e.target.closest('.sec-toggle') : null;
@@ -29638,6 +29825,8 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
+      if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
       // Local state drops immediately so the click feels instant; the relay
       // rides the durable upload queue, and every other Command Center drops
@@ -44365,6 +44554,170 @@ function _pollDkpAuctions() {
   } catch { again(); }
 }
 { const t = setTimeout(_pollDkpAuctions, 15_000); if (t.unref) t.unref(); }
+
+// ── Hail board (the guild lead, 2026-10-05; option A, one board the whole raid shares) ──────────────
+// When a PoP boss dies its flag NPC ("A Planar Projection") stands for 20 minutes and every raider has to
+// hail it. The bot keeps one board per open window (who still has to, who has, who was flagged before it
+// opened) from the grant lines and hails every Mimic uploads, plus names a raider taps by hand. This is
+// the agent half: poll that board, hand it to the Command Center, relay a tap, and pick which live hails
+// are worth sending. An older bot answers 404 and the poll sleeps for ten minutes, never an error.
+const HAIL_POLL_IDLE_MS    = 30_000;    // no window open
+const HAIL_POLL_OPEN_MS    = 5_000;     // a window is open
+const HAIL_POLL_BACKOFF_MS = 600_000;   // the bot has no board (404)
+const HAIL_LIST_MAX        = 300;       // one raid is 72; this only bounds a bad answer
+let _hailBoard = { at: 0, windows: [] };
+const _hailText = (x) => String(x == null ? '' : x).trim().slice(0, 64);
+const _hailRows = (list, shape) => (Array.isArray(list) ? list : []).slice(0, HAIL_LIST_MAX).map(shape).filter(Boolean);
+function _hailNormWindow(w) {
+  if (!w || w.id == null) return null;
+  const expiresMs = Date.parse(w.expires_at);
+  if (!Number.isFinite(expiresMs)) return null;
+  return {
+    id: String(w.id).slice(0, 64),
+    boss_id: w.boss_id == null ? null : _hailText(w.boss_id),
+    boss_name: _hailText(w.boss_name),
+    npc_name: _hailText(w.npc_name),
+    zone: _hailText(w.zone),
+    opened_at: w.opened_at ? String(w.opened_at).slice(0, 40) : null,
+    expires_at: new Date(expiresMs).toISOString(),
+    still: _hailRows(w.still, (s) => {
+      const name = _hailText(s && typeof s === 'object' ? s.name : s);
+      return name ? { name, prior_missing: !!(s && s.prior_missing), prior_note: (s && typeof s.prior_missing === 'string') ? s.prior_missing.slice(0, 80) : null } : null;
+    }),
+    hailed: _hailRows(w.hailed, (h) => {
+      const name = _hailText(h && typeof h === 'object' ? h.name : h);
+      if (!name) return null;
+      const how = h && (h.how === 'flag' || h.how === 'seen' || h.how === 'marked') ? h.how : 'seen';
+      return { name, how, by: h && h.by ? _hailText(h.by) : null };
+    }),
+    already_flagged: _hailRows(w.already_flagged, (n) => _hailText(n && typeof n === 'object' ? n.name : n) || null),
+    seen_by: Math.max(0, Math.round(Number(w.seen_by) || 0)),
+  };
+}
+function _applyHailBoard(payload, nowMs) {
+  const list = payload && Array.isArray(payload.windows) ? payload.windows : [];
+  _hailBoard = { at: nowMs, windows: list.map(_hailNormWindow).filter(Boolean).slice(0, 8) };
+}
+// A mark's answer is the one window it changed: swap it into the cache so the next Command Center poll
+// shows the tap without waiting for the board's own poll.
+function _hailReplaceWindow(w) {
+  const n = _hailNormWindow(w);
+  if (!n) return;
+  const at = _hailBoard.windows.findIndex(x => x.id === n.id);
+  if (at >= 0) _hailBoard.windows[at] = n; else _hailBoard.windows.push(n);
+}
+// What the Command Center is given: only windows still open, with the time left read off the bot's
+// clock (nowMs is on it) and an absolute end on THIS machine's clock for the overlay's ticking clock.
+// raidNames (a lowercase Set) narrows every list to this Mimic's own raid while two raids run; a
+// window with nobody of yours in it is the other raid's and is left out.
+function _hailBoardSnapshot(nowMs, raidNames) {
+  const out = [];
+  for (const w of _hailBoard.windows) {
+    const left = Date.parse(w.expires_at) - nowMs;
+    if (!(left > 0)) continue;
+    const mine = (n) => !raidNames || raidNames.has(String(n).toLowerCase());
+    const still = w.still.filter(s => mine(s.name));
+    const hailed = w.hailed.filter(h => mine(h.name));
+    if (raidNames && !still.length && !hailed.length) continue;
+    out.push({ ...w, still, hailed, already_flagged: w.already_flagged.filter(mine),
+      ms_left: left, ends_at_ms: Math.round((Date.now() + left) / 1000) * 1000 });
+  }
+  return out;
+}
+// Which live hails are worth sending. Hailing is how the flag NPCs hand a flag over, so a hail of one of
+// them is evidence; a hail of a banker or of "friend" is nobody's business (docs/PRIVACY.md: the one /say
+// exception is a hail of a flag NPC). The names are the flag NPCs the grant-line context already knows,
+// and any NPC a window on the board is standing for is added, so a flag NPC missing here cannot leave a
+// board half empty once the bot has opened it.
+const _HAIL_FLAG_NPC_RX = /^(?:(?:an?|the) )?(?:Planar Projection|Tylis|Giwin Mirakon|Nitram Anizok|Tarkil Adan|Mavuin|Tribunal|Adler Fuirstel|Elder Fuirstel|Elder Poxbourne|Adroha Jezith|Thelin|Fahlia Shadyglade|Miak the Searedsoul|Milyk Fuirstel|Maelin|Seer Mal Nae|Askr)\b/i;
+const _hailNpcKey = (s) => String(s || '').toLowerCase().replace(/^(?:an?|the)\s+/, '').replace(/[!.,\s]+$/, '').trim();
+function _hailNpcWanted(npc) {
+  if (!npc) return false;
+  if (_HAIL_FLAG_NPC_RX.test(String(npc).trim())) return true;
+  const k = _hailNpcKey(npc);
+  return !!k && _hailBoard.windows.some(w => _hailNpcKey(w.npc_name) === k);
+}
+// The local port answers a browser that is not one of ours with 403: a web page can POST to 127.0.0.1.
+// Mimic's own pages send this origin, "null" (the file:// fallback) or none at all.
+function _localOriginOk(req) {
+  const o = req && req.headers && req.headers.origin;
+  if (!o || o === 'null') return true;
+  try {
+    const u = new URL(o);
+    return u.protocol === 'file:' || u.hostname === '127.0.0.1' || u.hostname === 'localhost';
+  } catch { return false; }
+}
+// Every 30 s, every 5 s while a window is open, ten minutes after a 404. Nothing without a token, and
+// nothing while the guild has paused the fleet.
+function _pollHailBoard() {
+  const openNow = () => (_hailBoardSnapshot(_nowOnServerClock(), null).length ? HAIL_POLL_OPEN_MS : HAIL_POLL_IDLE_MS);
+  const again = (ms) => { const t = setTimeout(_pollHailBoard, ms); if (t.unref) t.unref(); };
+  const opts = _uploadOpts;
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (!opts || !opts.botUrl || !opts.token || down) return again(HAIL_POLL_IDLE_MS);
+  try {
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/hail-board'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, timeout: 8000,
+      headers: { 'Authorization': `Bearer ${opts.token}`, 'Accept': 'application/json', 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` } }, (res) => {
+      let body = '';
+      res.on('data', c => { body += c; });
+      res.on('end', () => {
+        if (res.statusCode === 404) { _hailBoard = { at: Date.now(), windows: [] }; return again(HAIL_POLL_BACKOFF_MS); }
+        if (res.statusCode === 200) { try { _applyHailBoard(JSON.parse(body), Date.now()); } catch { void 0; } }
+        again(openNow());
+      });
+    });
+    req.on('error', () => again(openNow()));
+    req.on('timeout', () => { req.destroy(); });
+    req.end();
+  } catch { again(openNow()); }
+}
+{ const t = setTimeout(_pollHailBoard, 15_000); if (t.unref) t.unref(); }
+// A tap on a name: forward it to the bot and hand back its answer. cb(status, json) runs once.
+function _hailMarkRelay(bodyObj, cb) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return cb(503, { error: 'not connected — link Mimic in Settings first' });
+  let down = false;
+  try { down = _controlStandDown().down; } catch { void 0; }
+  if (down) return cb(503, { error: 'paused by the guild control plane' });
+  let done = false;
+  const finish = (code, out) => { if (!done) { done = true; cb(code, out); } };
+  const body = JSON.stringify(bodyObj);
+  try {
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/hail-mark'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({ method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname + u.search, timeout: 8000,
+      headers: { 'Authorization': `Bearer ${opts.token}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
+        'Accept': 'application/json', 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` } }, (res) => {
+      let text = '';
+      res.on('data', c => { text += c; });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(text); } catch { void 0; }
+        if (res.statusCode === 200 && j) _hailReplaceWindow(j.window || j);
+        finish(res.statusCode || 502, j || { error: 'bad answer from the bot' });
+      });
+    });
+    req.on('error', (e) => finish(502, { error: 'upstream failed', detail: String(e && e.message || e) }));
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
+    req.end(body);
+  } catch (e) { finish(500, { error: 'relay error', detail: String(e && e.message || e) }); }
+}
+// POST /api/hail-mark (the Command Center's tap): { window_id, name, hailed }.
+async function _handleHailMark(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const windowId = b && b.window_id != null ? String(b.window_id).slice(0, 64) : '';
+  const name = b && b.name ? String(b.name).trim().slice(0, 64) : '';
+  if (!windowId || !name || typeof b.hailed !== 'boolean') return send(400, { error: 'window_id, name and hailed are required' });
+  let by = null;
+  try { by = (stats.activeCharacter && String(stats.activeCharacter)) || (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null; } catch { void 0; }
+  _hailMarkRelay({ window_id: windowId, name, hailed: b.hailed, by }, send);
+}
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
 // whole words only where intended).
@@ -44887,6 +45240,35 @@ function _isOurPetName(nameLower) {
   if (!nameLower) return false;
   return !!_petOwnerByName(nameLower) || knownPetOwners.has(nameLower);
 }
+// The out-of-raid half of the same gate (the guild lead, 2026-10-05: "a RIP callout on one of the
+// wolf named mobs in Bastion of Thunder that has a single name"). With no raid roster the gate fell
+// open, so a one-word named mob passed as a player. A name is suppressed only when it is a known
+// NPC — in the mob pack of a zone one of our characters stands in, or a resolved Target Info
+// lookup — AND not a known player: our own characters, our group, a /who sighting, our pet.
+// Anything unknown still falls open, so out-of-raid testing keeps firing.
+function _knownPlayerName(nameLower) {
+  if (!nameLower) return false;
+  if (whoData.has(nameLower) || _isOurPetName(nameLower)) return true;
+  for (const ch of Object.keys(_zealState)) { if (String(ch).toLowerCase() === nameLower) return true; }
+  try {
+    const g = _zeal.lastSamples['6'];
+    let inner = g && g.obj && g.obj.data;
+    if (typeof inner === 'string') inner = JSON.parse(inner);   // double-encoded, like type 5
+    if (Array.isArray(inner) && inner.some(m => m && m.name && String(m.name).toLowerCase() === nameLower)) return true;
+  } catch { /* malformed sample: not proof either way */ }
+  return false;
+}
+function _knownNpcNotPlayer(name) {
+  const lower = String(name || '').trim().toLowerCase();
+  if (!lower || _knownPlayerName(lower)) return false;
+  for (const st of Object.values(_zealState)) {
+    const z = Number(st && st.zone);
+    if (z > 0 && _mobPackLookup(name, z)) return true;
+  }
+  const prefix = _normMobNameAgent(name) + '|';
+  for (const [k, v] of _mobInfoByName) { if (v && v.mob && k.startsWith(prefix)) return true; }
+  return false;
+}
 
 // ── #136 Raid callout allow-list ─────────────────────────────────────────────
 // The guild-wide voice path fans out EVERY raider's guild-trigger fire to
@@ -44981,15 +45363,21 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
   // for a pet who took 20k non-melee damage and then suppress just the
   // overlay text. So: if ANY action sets require_raid_member AND that
   // capture isn't in the roster, treat the whole trigger as suppressed
-  // (no actions, no timer). Falls open when roster is empty (haven't
-  // seen Type 5 yet) so out-of-raid testing still fires.
-  if (_raidRosterMembers.size > 0) {
+  // (no actions, no timer). With the roster empty (haven't seen Type 5
+  // yet) it suppresses only a known NPC (_knownNpcNotPlayer) and otherwise
+  // falls open, so out-of-raid testing still fires.
+  {
+    const inRaid = _raidRosterMembers.size > 0;
     for (const a of (t.actions || [])) {
       if (!a || !a.require_raid_member) continue;
       const val = captures && captures[String(a.require_raid_member)];
       // Pass when the captured name is a raid member OR one of our pets (#150);
       // only a genuinely-unknown non-pet non-member suppresses.
-      if (!val || (!_raidRosterHas(val) && !_isOurPetName(String(val).toLowerCase()))) {
+      const notMember = inRaid
+        ? (!val || (!_raidRosterHas(val) && !_isOurPetName(String(val).toLowerCase())))
+        : (!!val && _knownNpcNotPlayer(val));
+      if (notMember) {
+        const why = inRaid ? ' not a raid member' : ' a known NPC';
         // TIMER-BEARING triggers still ARM on a suppressed fire (the guild lead
         // 2026-08-19, second cursed-cycle DT landed on a pet and the raid
         // had no countdown): a countdown is CYCLE state, not a victim
@@ -45001,11 +45389,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         // captureSuffix, fixed separately — not a reason to drop the arm.
         const hasTimer = (t.timer_duration_sec > 0 || t.timer_duration_capture);
         if (hasTimer) _startTimer(t, tsMs, test, captures);
-        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' ' + (hasTimer ? 'timer armed, actions suppressed' : 'suppressed') + ' — ' + a.require_raid_member + '=' + val + ' not a raid member');
+        if (!test) console.log('[trigger] ' + (t.name || 'trigger') + ' ' + (hasTimer ? 'timer armed, actions suppressed' : 'suppressed') + ' — ' + a.require_raid_member + '=' + val + why);
         if (!t._noJournal) {
           _journalTrigger({ trigger: t.name, scope: t._scope || (test ? 'test' : 'personal'), checkpoint: TJ.GATES,
                             stopped: true, rehearsal: !!t._rehearsal,
-                            reason: (hasTimer ? 'timer armed; actions suppressed — ' : 'suppressed — ') + a.require_raid_member + '=' + (val || '?') + ' not a raid member' });
+                            reason: (hasTimer ? 'timer armed; actions suppressed — ' : 'suppressed — ') + a.require_raid_member + '=' + (val || '?') + why });
         }
         return;
       }
@@ -47296,6 +47684,18 @@ async function main() {
         try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
+        // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
+        // 2026-10-05) moves a raider from "still to hail" to "hailed" on this. Only a hail of a flag NPC
+        // leaves the machine (_hailNpcWanted), the one /say exception docs/PRIVACY.md names. Every Mimic
+        // in the zone sees the same line, so one install's two logs are collapsed here and the bot
+        // collapses the rest.
+        if (!_sourceExcluded) {
+          const hailEvt = parseWitnessedHail(line, b.character);
+          if (hailEvt && _hailNpcWanted(hailEvt.npc)
+              && !_crossLogDupe('hail|' + hailEvt.character.toLowerCase() + '|' + hailEvt.npc.toLowerCase() + '|' + hailEvt.ts)) {
+            popFlagBuffer.push(hailEvt);
+          }
+        }
 
         // Observed buff landing on another player (fills coverage for raiders
         // not running the agent). Cross-log dedup so a buff seen in main + alt
