@@ -30,6 +30,7 @@ const { spawn } = require('child_process');
 const { startZealWatch } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
+const { applyIniKeyEdits } = require('./iniKeyEdits');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -1409,6 +1410,46 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
   return bakPath;
 }
 
+// UI Studio's key-level save (the guild lead, 2026-10-05: "A for UI Studio").
+// Save no longer writes whole files rebuilt from the copy Studio read at Load —
+// that put back every position EQ had saved since (the bag windows the stage
+// hides, a window moved in game) and, deferred, overwrote EQ's own on-camp save.
+// It sends KEY EDITS instead, and this applies them to each file as it is on
+// disk right now: re-read, change only the named keys (iniKeyEdits.js), back up
+// with _backupAndWriteFile's tags, write. Both Save paths use it — immediate
+// ('ui-studio-write-edits') and after logout (_applyDeferredEntry).
+// edits: [{ file, section, key, value }]. `file` is a bare ini name inside
+// eqDir; anything with a path in it is dropped (never a write outside the EQ
+// folder). A file that is not there is skipped and reported, never created.
+// Returns { written, unchanged, missing } — lists of file names.
+function _cleanUiKeyEdits(edits) {
+  const out = [];
+  for (const e of Array.isArray(edits) ? edits : []) {
+    if (!e || typeof e.file !== 'string' || typeof e.section !== 'string' || typeof e.key !== 'string') continue;
+    if (!/^[\w.-]+\.ini$/i.test(e.file) || !e.section.trim() || !/^[\w.]+$/.test(e.key)) continue;
+    if (e.value != null && !(typeof e.value === 'string' || (typeof e.value === 'number' && isFinite(e.value)))) continue;
+    out.push({ file: e.file, section: e.section, key: e.key, value: e.value == null ? null : String(e.value) });
+  }
+  return out;
+}
+function _applyUiKeyEdits(eqDir, edits, backupTag) {
+  const byFile = new Map();
+  for (const e of _cleanUiKeyEdits(edits)) {
+    if (!byFile.has(e.file)) byFile.set(e.file, []);
+    byFile.get(e.file).push({ section: e.section, key: e.key, value: e.value });
+  }
+  const written = [], unchanged = [], missing = [];
+  for (const [name, list] of byFile) {
+    const fp = path.join(eqDir, name);
+    if (!fs.existsSync(fp)) { missing.push(name); continue; }
+    const r = applyIniKeyEdits(fs.readFileSync(fp, 'utf8'), list);
+    if (!r.changed) { unchanged.push(name); continue; }
+    _backupAndWriteFile(fp, r.text, backupTag);
+    written.push(name);
+  }
+  return { written, unchanged, missing };
+}
+
 // ── UI Studio deferred saves (apply on logout) ──────────────────────────────
 // A save made while the character is logged in can't take effect: EQ keeps the
 // UI layout in memory and overwrites the file on the next camp/zone/quit. So
@@ -1417,12 +1458,25 @@ function _backupAndWriteFile(targetPath, contents, backupTag) {
 // Zeal pipe (= logged out → EQ has written its final layout). Survives closing
 // UI Studio and a Mimic restart.
 function _uiDeferFile() { return path.join(app.getPath('userData'), 'ui-studio-pending.json'); }
-let _uiDeferred = [];   // [{ character, eqDir, bundle:{name:text}, tgtSuffix, queuedAt, sawActive }]
+let _uiDeferred = [];   // [{ character, eqDir, edits:[{file,section,key,value}], tgtSuffix, queuedAt, sawActive }]
 function _loadUiDeferred() {
   try {
     const fp = _uiDeferFile();
     if (fs.existsSync(fp)) { const raw = JSON.parse(fs.readFileSync(fp, 'utf8')); if (Array.isArray(raw)) _uiDeferred = raw; }
   } catch { _uiDeferred = []; }
+  // An entry queued by an older Mimic holds WHOLE FILE TEXTS (`bundle`) built
+  // from the copy Studio read at Load. Applying one would overwrite EQ's own
+  // on-camp save with that stale copy — the bug key edits exist to end (the
+  // guild lead, 2026-10-05) — so it is dropped, never applied.
+  const keep = _uiDeferred.filter(e => e && Array.isArray(e.edits) && e.edits.length);
+  const dropped = _uiDeferred.length - keep.length;
+  if (dropped) {
+    const msg = `[ui-studio] dropped ${dropped} pending deferred save(s) in the old whole-file format — applying one would overwrite EQ's own save with a stale copy; open UI Studio and Save again\n`;
+    console.log(msg.trim());
+    try { appendAgentLog(msg); } catch {}
+    _uiDeferred = keep;
+    _saveUiDeferred();
+  }
 }
 function _saveUiDeferred() {
   try { fs.writeFileSync(_uiDeferFile(), JSON.stringify(_uiDeferred), 'utf8'); } catch {}
@@ -1436,13 +1490,17 @@ function _uiCharActiveInZeal(charLower) {
 }
 function _applyDeferredEntry(entry) {
   let written = 0;
+  // Key edits only, applied to the file as EQ just wrote it on logout (its copy
+  // → .bak-eq). An old whole-text entry is refused even if one got past
+  // _loadUiDeferred — never write a stale copy over EQ's.
+  if (!entry || !Array.isArray(entry.edits) || !entry.edits.length) {
+    appendAgentLog(`[ui-studio] deferred save for ${entry && entry.character} has no key edits (old format) — not applied\n`);
+    return false;
+  }
   try {
-    for (const [name, contents] of Object.entries(entry.bundle || {})) {
-      if (typeof contents !== 'string' || !contents.length) continue;
-      if (!/^[\w.-]+\.ini$/i.test(name)) continue;
-      _backupAndWriteFile(path.join(entry.eqDir, name), contents, 'eq');  // EQ's copy → .bak-eq
-      written++;
-    }
+    const r = _applyUiKeyEdits(entry.eqDir, entry.edits, 'eq');
+    written = r.written.length;
+    if (r.missing.length) appendAgentLog(`[ui-studio] deferred save for ${entry.character}: not found, skipped: ${r.missing.join(', ')}\n`);
   } catch (err) { appendAgentLog(`[ui-studio] deferred apply failed for ${entry.character}: ${err && err.message}\n`); return false; }
   appendAgentLog(`[ui-studio] applied deferred save for ${entry.character} (${written} file(s)) after logout\n`);
   try {
@@ -4427,9 +4485,28 @@ ipcMain.handle('ui-studio-read-bundle', (_e, character, eqDir) => {
   } catch { return null; }
 });
 
-// Write the edited bundle back to disk with .bak backups (via
-// _backupAndWriteFile). Only writes files explicitly present in the
-// bundle map — unchanged INIs are left alone, never accidentally cleared.
+// UI Studio's Save: key edits, applied to the files as they are on disk now
+// (see _applyUiKeyEdits). Replaces 'ui-studio-write-bundle' for window layout.
+ipcMain.handle('ui-studio-write-edits', (_e, eqDir, edits, opts) => {
+  try {
+    const d = String(eqDir || '').trim();
+    if (!d || !Array.isArray(edits)) return { ok: false, error: 'eqDir + edits required' };
+    if (!fs.existsSync(d) || !fs.statSync(d).isDirectory()) {
+      return { ok: false, error: 'eqDir does not exist: ' + d };
+    }
+    const backupTag = (opts && /^[\w-]{1,16}$/.test(String(opts.backupTag || ''))) ? String(opts.backupTag) : null;
+    const r = _applyUiKeyEdits(d, edits, backupTag);
+    return { ok: true, written: r.written, unchanged: r.unchanged, missing: r.missing, count: r.written.length };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+});
+
+// Write whole files back to disk with .bak backups (via _backupAndWriteFile).
+// Only writes files explicitly present in the bundle map — unchanged INIs are
+// left alone, never accidentally cleared. ⚠ Window layout no longer goes
+// through here (it would put back whatever EQ saved since the text was read);
+// the one caller left is the Spell Sets bulk-swap.
 ipcMain.handle('ui-studio-write-bundle', (_e, eqDir, bundle, opts) => {
   try {
     const d = String(eqDir || '').trim();
@@ -4719,64 +4796,9 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
     const written = [];
     for (const [fp, eds] of byFile) {
       const orig = fs.readFileSync(fp, 'utf8');
-      const eol  = /\r\n/.test(orig) ? '\r\n' : '\n';
-      const lines = orig.split(/\r?\n/);
-      // Build (section, key) → desired value map; null means delete.
-      const want = new Map();
-      for (const e of eds) want.set(e.section + '' + e.key, e.value);
-      // Pass 1: walk the file, applying in-place updates / deletions. Track
-      // which section ends each section starts/ends at so we can append new
-      // keys to the right section in pass 2.
-      const sectionEnds = new Map();   // sectionName → index AFTER last line of that section
-      let curSec = null, curStart = -1;
-      const out = [];
-      for (let i = 0; i < lines.length; i++) {
-        const L = lines[i];
-        const ms = L.match(/^\s*\[([^\]]+)\]\s*$/);
-        if (ms) {
-          // Close the previous section before opening the new one.
-          if (curSec) sectionEnds.set(curSec, out.length);
-          curSec = ms[1]; curStart = out.length;
-          out.push(L);
-          continue;
-        }
-        if (curSec) {
-          const mk = L.match(/^(\s*)([\w.]+)\s*=\s*(.*?)(\s*)$/);
-          if (mk) {
-            const k = mk[2];
-            const sig = curSec + '' + k;
-            if (want.has(sig)) {
-              const newVal = want.get(sig);
-              want.delete(sig);
-              if (newVal === null) continue;   // delete line entirely
-              out.push(mk[1] + k + '=' + newVal + mk[4]);
-              continue;
-            }
-          }
-        }
-        out.push(L);
-      }
-      if (curSec) sectionEnds.set(curSec, out.length);
-      // Pass 2: append remaining (still-wanted) keys at the end of their
-      // section. Walk in reverse so we don't invalidate later indices.
-      const remaining = [...want.entries()].map(([sig, value]) => {
-        const [section, key] = sig.split('');
-        return { section, key, value };
-      }).filter(e => e.value !== null);
-      remaining.sort((a, b) => (sectionEnds.get(b.section) ?? -1) - (sectionEnds.get(a.section) ?? -1));
-      for (const e of remaining) {
-        const idx = sectionEnds.get(e.section);
-        if (idx == null) {
-          // Section doesn't exist — append a fresh one at end of file.
-          out.push('[' + e.section + ']');
-          out.push(e.key + '=' + e.value);
-        } else {
-          out.splice(idx, 0, e.key + '=' + e.value);
-          // Shift any later section ends.
-          for (const [s, n] of sectionEnds) if (n > idx) sectionEnds.set(s, n + 1);
-        }
-      }
-      const next = out.join(eol);
+      // The shared key-level walk (iniKeyEdits.js — also what Studio's Save
+      // uses): update in place / delete / add at the end of the section.
+      const next = applyIniKeyEdits(orig, eds).text;
       if (next === orig) { written.push({ file: path.basename(fp), unchanged: true }); continue; }
       const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const bakPath = fp + '.studio-' + ts + '.bak';
@@ -9029,12 +9051,14 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
   try {
     const character = String(params?.character || '').trim();
     const eqDir     = String(params?.eqDir || '').trim();
-    const bundle    = params?.bundle;
-    if (!character || !eqDir || !bundle || typeof bundle !== 'object') return { ok: false, error: 'character + eqDir + bundle required' };
+    // Key edits, never file texts: what is applied later is merged into the file
+    // as EQ leaves it on logout (_applyDeferredEntry), not laid over it.
+    const edits     = _cleanUiKeyEdits(params?.edits);
+    if (!character || !eqDir || !edits.length) return { ok: false, error: 'character + eqDir + edits required' };
     const charLower = character.toLowerCase();
     _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir));
     _uiDeferred.push({
-      character, eqDir, bundle,
+      character, eqDir, edits,
       tgtSuffix: params?.tgtSuffix || null,
       queuedAt: Date.now(),
       sawActive: _uiCharActiveInZeal(charLower),   // seed from current liveness

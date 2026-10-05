@@ -64,7 +64,7 @@ describe('UI Studio shows Zeal\'s raid bars and assist bar as Zeal windows', () 
   it('is wired: loaded from zeal.ini, saved through _zealBarEdits, no grip on a fixed size, in the Zeal filter', () => {
     const code = stripJs(studio);
     expect(code).toMatch(/if \(\/\^zeal\\\.ini\$\/i\.test\(fname\)\) \{\s*_zealBarWindows\(parsed, STATE\.srcW, STATE\.srcH, fxX, fxY\)/);
-    expect(code).toMatch(/if \(w\.zealBar\) \{ edits\[w\.file\]\[w\.section\] = _zealBarEdits\(w\); continue; \}/);
+    expect(code).toMatch(/if \(w\.zealBar\) kv = _zealBarEdits\(w\);/);
     expect(code).toContain("(STATE.selected === i && !w.fixedSize ? '<div class=\"grip se\" data-grip=\"se\"></div>' : '')");
     expect(code).toContain("test:function(n){ return /^zeal|^raidbars$|^assistbar$/i.test(n); }");
   });
