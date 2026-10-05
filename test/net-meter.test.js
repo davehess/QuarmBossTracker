@@ -153,6 +153,17 @@ describe('eqhost.txt', () => {
     expect(_netParseEqHost('[LoginServer]\nHost=203.0.113.9\n')).toBe('203.0.113.9');
   });
 
+  it('reads the Quarm/TAKP client\'s own shape: a [Login Servers] block of quoted host:port entries', () => {
+    // Verbatim from a member's eqhost.txt (2026-10-05). The registration server must not win.
+    const takp = '[Registration Servers]\r\n{\r\n"loginserver.takproject.net:6999"\r\n}\r\n'
+               + '[Login Servers]\r\n{\r\n"loginserver.takproject.net:6000"\r\n}\r\n';
+    expect(_netParseEqHost(takp)).toBe('loginserver.takproject.net');
+    // Registration servers alone are not a login server.
+    expect(_netParseEqHost('[Registration Servers]\n{\n"reg.example:6999"\n}\n')).toBeNull();
+    // The first usable entry wins; a refused one is skipped, not fatal.
+    expect(_netParseEqHost('[Login Servers]\n{\n"-t"\n"second.example:6000"\n}\n')).toBe('second.example');
+  });
+
   it('survives CRLF, a BOM, odd case and spaces around the equals sign', () => {
     expect(_netParseEqHost('﻿[loginserver]\r\n  host = login.example.com:5998  \r\n')).toBe('login.example.com');
   });
