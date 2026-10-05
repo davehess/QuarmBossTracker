@@ -17,7 +17,7 @@ import {
   type LayerChoice, type Positions, type Raider, type View, type ZoneMap,
 } from '@/lib/spectator';
 
-const POLL_MS = 2000;
+const POLL_MS = 3000;   // positions are uploaded every ~3 s, so polling faster only repeats the same rows
 const BG = '#0d1117';
 const PANEL = '#161b22';
 const BORDER = '#30363d';
@@ -344,7 +344,7 @@ export default function SpectatorBoard() {
 
   // ── effects ────────────────────────────────────────────────────────────────
 
-  // The poll: sequential (the next one starts 2 s after the last answer), paused while hidden.
+  // The poll: sequential (the next one starts POLL_MS after the last answer), paused while hidden.
   useEffect(() => {
     let stop = false;
     let busy = false;

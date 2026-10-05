@@ -9,9 +9,9 @@
 // from the raiders around them (resolveZoneIds in lib/spectator.ts). Axis swap and the freshest-per-name
 // rule live there too, with their tests.
 //
-// Every read is bounded for the 1,000-row cap and test/db-read-discipline-web.test.js: a raid is at most 72
-// and two can run at once, so 200 rows is headroom, and character_live_state (over 1,000 rows) is read only
-// for those names with an explicit range.
+// Every read is bounded for the 1,000-row cap and test/db-read-discipline-web.test.js: the positions RPC
+// returns one row per raider (a raid is at most 72 and two can run at once; it stops at 300), and
+// character_live_state (over 1,000 rows) is read only for those names with an explicit range.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
@@ -32,12 +32,11 @@ export async function GET() {
     const admin = supabaseAdmin();
     const now = Date.now();
 
-    const { data: rosterRows, error: rosterErr } = await admin.from('raid_roster')
-      .select('name, class, group_num, level, hp_pct, loc_x, loc_y, loc_z, heading, loc_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
-      .gte('loc_at', new Date(now - POSITION_FRESH_S * 1000).toISOString())
-      .order('loc_at', { ascending: false })
-      .limit(200);
+    // One row per raider, freshest first, from SQL (migration 20261005003000): raid_roster holds one row
+    // per uploader × raider, ~1,100 inside 30 s on a full night, so a raw read would cut raiders off.
+    const { data: rosterRows, error: rosterErr } = await admin
+      .rpc('spectator_positions', { p_guild_id: 'wolfpack', p_fresh_s: POSITION_FRESH_S })
+      .range(0, 299);
     if (rosterErr) return fail(502, 'positions unavailable');
     const rows = (rosterRows ?? []) as RosterPosRow[];
     if (!rows.length) return NextResponse.json(buildPositions([], new Map(), new Map(), now), { headers: NO_STORE });

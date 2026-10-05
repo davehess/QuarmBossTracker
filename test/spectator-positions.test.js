@@ -427,6 +427,16 @@ vi.mock('@/lib/supabase-server', () => ({
 }));
 vi.mock('@/lib/supabase', () => ({
   supabaseAdmin: () => ({
+    // An RPC is recorded as table 'rpc:<name>' with its arguments as the first op.
+    rpc: (fn, args) => {
+      const call = { table: 'rpc:' + fn, ops: [['args', args]] };
+      db.calls.push(call);
+      const q = {
+        range: (...a) => { call.ops.push(['range', ...a]); return q; },
+        then: (ok, bad) => Promise.resolve({ data: db.tables['rpc:' + fn] ?? [], error: null }).then(ok, bad),
+      };
+      return q;
+    },
     from: (table) => {
       const call = { table, ops: [] };
       db.calls.push(call);
@@ -460,7 +470,7 @@ describe('GET /api/spectator/positions', () => {
   it('answers a signed-in member with placed raiders, swapped axes and no-store', async () => {
     db.user = { id: 'member-1' };
     const at = new Date(Date.now() - 2000).toISOString();
-    db.tables.raid_roster = [
+    db.tables['rpc:spectator_positions'] = [
       { name: 'Aldenmar', class: 'Cleric', group_num: 1, level: 60, hp_pct: 90, loc_x: 111, loc_y: -222, loc_z: 7, heading: 128, loc_at: at, uploaded_by_discord_id: 'u1' },
       { name: 'Brackwyn', class: 'Warrior', group_num: 1, level: 60, hp_pct: 40, loc_x: 1, loc_y: 2, loc_z: 3, heading: null, loc_at: at, uploaded_by_discord_id: 'u1' },
     ];
@@ -480,24 +490,25 @@ describe('GET /api/spectator/positions', () => {
 
   it('bounds every read: a fresh-position window and a row cap on each table', async () => {
     db.user = { id: 'member-1' };
-    db.tables.raid_roster = [{ name: 'Aldenmar', class: 'Cleric', group_num: 1, level: 60, hp_pct: 90, loc_x: 1, loc_y: 2, loc_z: 3, heading: 0, loc_at: new Date().toISOString(), uploaded_by_discord_id: 'u1' }];
+    db.tables['rpc:spectator_positions'] = [{ name: 'Aldenmar', class: 'Cleric', group_num: 1, level: 60, hp_pct: 90, loc_x: 1, loc_y: 2, loc_z: 3, heading: 0, loc_at: new Date().toISOString(), uploaded_by_discord_id: 'u1' }];
     db.tables.character_live_state = [{ character: 'Aldenmar', zone_id: 100, zone_name: 'x' }];
     db.tables.eqemu_zone = [{ zone_id: 100, short_name: 'poinnovation', long_name: 'Plane of Innovation' }];
     const { GET } = await import('../web/app/api/spectator/positions/route.ts');
     await GET();
     const ops = (t) => db.calls.find(c => c.table === t).ops;
-    expect(ops('raid_roster').some(o => o[0] === 'gte' && o[1] === 'loc_at')).toBe(true);
-    expect(ops('raid_roster').find(o => o[0] === 'limit')[1]).toBeLessThanOrEqual(200);
+    // One row per raider from SQL, inside the 30 s window, at most 300 rows.
+    expect(ops('rpc:spectator_positions')[0]).toEqual(['args', { p_guild_id: 'wolfpack', p_fresh_s: 30 }]);
+    expect(ops('rpc:spectator_positions').find(o => o[0] === 'range')).toEqual(['range', 0, 299]);
     expect(ops('character_live_state').find(o => o[0] === 'range')).toEqual(['range', 0, 199]);
     expect(ops('character_live_state').find(o => o[0] === 'in')[2]).toEqual(['Aldenmar']);
     expect(ops('eqemu_zone').find(o => o[0] === 'limit')[1]).toBeLessThanOrEqual(100);
   });
 
-  it('an empty raid reads only the roster', async () => {
+  it('an empty raid reads only the positions RPC', async () => {
     db.user = { id: 'member-1' };
     const { GET } = await import('../web/app/api/spectator/positions/route.ts');
     const body = await (await GET()).json();
     expect(body).toMatchObject({ raiders: [], zones: [], unplaced: 0 });
-    expect(db.calls.map(c => c.table)).toEqual(['raid_roster']);
+    expect(db.calls.map(c => c.table)).toEqual(['rpc:spectator_positions']);
   });
 });
