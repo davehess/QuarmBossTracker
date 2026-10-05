@@ -3486,6 +3486,10 @@ function renderDiag(s) {
     +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
     +  '<div id="wpCrashOut"></div></div>';
 
+  // 📶 Connection (lag meter) — filled by renderNetMeter(). Every number in it moves, so it has its
+  // own placeholder, the same isolation as the Zeal card.
+  h += '<div id="wpNetMeter" class="card wide"></div>';
+
   // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
@@ -3530,6 +3534,176 @@ function renderDiag(s) {
   h += '</div>';
   if (!setSectionHTML('diag', h)) return;
   wpWireZealCapture();
+}
+
+// ── 📶 Connection card (Diagnostics) ────────────────────────────────────────
+// A local lag meter: the agent pings your router and the game server's host, and /api/net reports it.
+// If the router line spikes, the lag is in the home network; if only the server line spikes, it is
+// past the router (provider, route, server). Nothing leaves this PC. The card paints into its own
+// #wpNetMeter placeholder (renderDiag emits it), fetches /api/net at most every 5 s, and only while
+// the Diagnostics tab is showing.
+var _wpNet = { data: null, at: 0, busy: false, copiedAt: 0 };
+function _wpNetMs(v) { return v == null ? '—' : String(Math.round(v)); }
+function _wpNetLoss(v) { v = Number(v) || 0; return (v > 0 && v < 10 ? v.toFixed(1) : String(Math.round(v))) + '%'; }
+// Amber from 2% loss or a 150 ms p95, red from 10% or 300 ms (the Tick overlay's thresholds).
+function _wpNetTone(m) {
+  if (!m || !m.count) return '';
+  if (m.lossPct >= 10 || (m.p95 != null && m.p95 > 300)) return 'color:var(--red)';
+  if (m.lossPct >= 2 || (m.p95 != null && m.p95 > 150)) return 'color:var(--orange)';
+  return '';
+}
+function _wpNetChart(d) {
+  var W = 600, H = 130, L = 34, R = 6, T = 6, B = 90;   // plot box: x L..W-R, y T..B; lost marks and time labels sit below it
+  var now = (d.now || Date.now()) / 1000, t0 = now - 600, pw = W - L - R;
+  var X = function (t) { return L + Math.max(0, Math.min(1, (t - t0) / 600)) * pw; };
+  var rs = (d.series && d.series.router) || [], gs = (d.series && d.series.game) || [];
+  var top = 0, i;
+  for (i = 0; i < rs.length; i++) if (rs[i][1] != null && rs[i][1] > top) top = rs[i][1];
+  for (i = 0; i < gs.length; i++) if (gs[i][1] != null && gs[i][1] > top) top = gs[i][1];
+  var yMax = top <= 50 ? 50 : (top <= 100 ? 100 : Math.min(1000, Math.ceil(top / 100) * 100));
+  var Y = function (ms) { return B - Math.min(ms, yMax) / yMax * (B - T); };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Ping to your router and to the game server over the last 10 minutes" style="width:100%;height:auto;max-height:190px;display:block">';
+  // Fight periods: a faint band behind the lines.
+  var fs = rs.length ? rs : gs, run = null;
+  for (i = 0; i <= fs.length; i++) {
+    var inFight = i < fs.length && fs[i][3] === 1;
+    if (inFight && run === null) run = fs[i][0];
+    if (!inFight && run !== null) {
+      s += '<rect x="' + X(run).toFixed(1) + '" y="' + T + '" width="' + Math.max(1, X(fs[i - 1][0] + 5) - X(run)).toFixed(1) + '" height="' + (B - T) + '" fill="#58a6ff" opacity="0.12"/>';
+      run = null;
+    }
+  }
+  // Grid + axis labels.
+  var ticks = [0, yMax / 2, yMax];
+  for (i = 0; i < ticks.length; i++) {
+    s += '<line x1="' + L + '" y1="' + Y(ticks[i]).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(ticks[i]).toFixed(1) + '" stroke="#30363d" stroke-width="1"/>'
+      +  '<text x="' + (L - 4) + '" y="' + (Y(ticks[i]) + 3).toFixed(1) + '" text-anchor="end" fill="#6e7681" font-size="10">' + Math.round(ticks[i]) + (i === ticks.length - 1 ? ' ms' : '') + '</text>';
+  }
+  s += '<text x="' + L + '" y="' + (H - 3) + '" fill="#6e7681" font-size="10">10 min ago</text>'
+    +  '<text x="' + (W - R) + '" y="' + (H - 3) + '" text-anchor="end" fill="#6e7681" font-size="10">now</text>';
+  // One line per target, broken wherever pings were lost or went missing.
+  function line(a, color) {
+    var dd = '', prev = null;
+    for (var k = 0; k < a.length; k++) {
+      if (a[k][1] == null) { prev = null; continue; }
+      dd += (prev !== null && a[k][0] - prev <= 15 ? 'L' : 'M') + X(a[k][0] + 2.5).toFixed(1) + ' ' + Y(a[k][1]).toFixed(1);
+      prev = a[k][0];
+    }
+    return dd ? '<path d="' + dd + '" fill="none" stroke="' + color + '" stroke-width="1.6" stroke-linejoin="round"/>' : '';
+  }
+  s += line(rs, '#58a6ff') + line(gs, '#a371f7');
+  // Lost pings: small red marks under the plot, server on the upper row and router on the lower.
+  function lostRow(a, y) {
+    var o = '';
+    for (var k = 0; k < a.length; k++) if (a[k][2] > 0) o += '<rect x="' + X(a[k][0]).toFixed(1) + '" y="' + y + '" width="3" height="5" fill="#f85149"/>';
+    return o;
+  }
+  s += lostRow(gs, B + 7) + lostRow(rs, B + 15);
+  return s + '</svg>';
+}
+function _wpNetTable(d) {
+  var st = d.stats || {}, notes = d.notes || {};
+  var th = 'style="text-align:right"';
+  var cell = function (txt, tone) { return '<td style="text-align:right;font-variant-numeric:tabular-nums' + (tone ? ';' + tone : '') + '">' + txt + '</td>'; };
+  var t = '<table style="font-size:12px;margin:8px 0 4px"><thead>'
+    + '<tr><th></th><th></th><th colspan="3" style="text-align:center">last minute</th><th colspan="3" style="text-align:center">last 10 minutes</th></tr>'
+    + '<tr><th></th><th ' + th + '>now</th><th ' + th + '>median</th><th ' + th + '>p95</th><th ' + th + '>loss</th><th ' + th + '>median</th><th ' + th + '>p95</th><th ' + th + '>loss</th></tr></thead><tbody>';
+  var rows = [['Router', 'router', '#58a6ff'], ['Server', 'game', '#a371f7']];
+  for (var i = 0; i < rows.length; i++) {
+    var m = st[rows[i][1]];
+    t += '<tr><td><span style="color:' + rows[i][2] + '">●</span> ' + rows[i][0] + '</td>';
+    if (!m) {
+      t += '<td colspan="7" class="dim">' + (rows[i][1] === 'game' ? 'no server address' : 'no router address') + (notes[rows[i][1]] ? ' — ' + esc(notes[rows[i][1]]) : '') + '</td></tr>';
+      continue;
+    }
+    var a = m.m1, b = m.m10;
+    t += cell(a.count ? (a.last == null ? 'lost' : _wpNetMs(a.last) + ' ms') : '—')
+      +  cell(_wpNetMs(a.median) + ' ms') + cell(_wpNetMs(a.p95) + ' ms', _wpNetTone(a)) + cell(_wpNetLoss(a.lossPct), _wpNetTone(a))
+      +  cell(_wpNetMs(b.median) + ' ms') + cell(_wpNetMs(b.p95) + ' ms', _wpNetTone(b)) + cell(_wpNetLoss(b.lossPct), _wpNetTone(b)) + '</tr>';
+  }
+  return t + '</tbody></table>';
+}
+function _wpNetPart(label, m) {
+  return m && m.count ? label + ' median ' + _wpNetMs(m.median) + ' ms, p95 ' + _wpNetMs(m.p95) + ' ms, ' + _wpNetLoss(m.lossPct) + ' loss' : '';
+}
+// One short paragraph, written to be pasted into Discord.
+function _wpNetSummary(d) {
+  var st = d.stats || {};
+  var out = 'Connection check from my PC (Wolf Pack agent, last 10 min): ' + ((d.verdict && d.verdict.text) || '') + ' '
+    + (_wpNetPart('Router', st.router && st.router.m10) || 'Router not measured') + '. '
+    + (_wpNetPart('Game server', st.game && st.game.m10) || 'Game server not measured') + '.';
+  if (d.lastFight) {
+    var lf = d.lastFight;
+    out += ' During my last fight (' + ((lf.router || lf.game || {}).count || 0) + ' pings): '
+      + [_wpNetPart('router', lf.router), _wpNetPart('server', lf.game)].filter(Boolean).join('; ') + '.';
+  }
+  return out;
+}
+function wpNetHtml(d) {
+  var h = '<h2>📶 Connection <span class="dim" style="font-size:11px;font-weight:normal">· is your lag your home network, or past it? Measured on this PC — nothing is uploaded</span></h2>';
+  if (!d) return h + '<div class="dim" style="font-size:12px">Reading the connection meter…</div>';
+  if (d.error) return h + '<div class="dim" style="font-size:12px">The connection meter is not available from this engine. Update the agent to get it.</div>';
+  if (!d.supported) return h + '<div class="dim" style="font-size:12px">' + esc(d.verdict && d.verdict.text) + '</div>';
+  h += '<label style="display:flex;gap:6px;align-items:center;margin:0 0 8px;cursor:pointer;font-size:12px">'
+    +  '<input type="checkbox" onchange="wpNetToggle(this.checked)"' + (d.enabled ? ' checked' : '') + '><span>Measure my connection</span></label>';
+  if (!d.enabled) return h + '<div class="dim" style="font-size:12px">' + esc(d.verdict && d.verdict.text) + '</div>';
+  var v = d.verdict || { code: 'unknown', text: '' };
+  var VT = { home: ['🏠 Your home network', 'var(--orange)'], beyond: ['🌐 Past your router', 'var(--orange)'], ok: ['✓ Looks healthy', 'var(--green)'], unknown: ['… Not sure yet', 'var(--dim)'] };
+  var vt = VT[v.code] || VT.unknown;
+  h += '<div style="margin:0 0 8px"><b style="color:' + vt[1] + '">' + vt[0] + '</b>'
+    +  '<div style="font-size:12px;margin-top:3px;line-height:1.45">' + esc(v.text) + '</div></div>';
+  var hasData = (d.series && ((d.series.router && d.series.router.length) || (d.series.game && d.series.game.length)));
+  if (hasData) {
+    h += _wpNetChart(d)
+      +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#58a6ff">━</span> router · <span style="color:#a371f7">━</span> server · '
+      +  '<span style="color:var(--red)">▮</span> lost pings (upper row server, lower row router) · shaded = a fight was on</div>';
+  }
+  h += _wpNetTable(d);
+  if (d.lastFight) {
+    var lf = d.lastFight;
+    h += '<div class="dim" style="font-size:11px;margin:2px 0 6px">Last fight (' + ((lf.router || lf.game || {}).count || 0) + ' pings): '
+      +  [_wpNetPart('router', lf.router), _wpNetPart('server', lf.game)].filter(Boolean).join(' · ') + '</div>';
+  }
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+    +  '<button type="button" class="wp-btn" onclick="wpNetCopy()">Copy summary</button>'
+    +  '<span class="dim" style="font-size:11px">' + (Date.now() - _wpNet.copiedAt < 2500 ? '✓ Copied — paste it in Discord' : 'one short paragraph for Discord') + '</span></div>';
+  return h;
+}
+function wpNetRepaint() { morphInto(document.getElementById('wpNetMeter'), wpNetHtml(_wpNet.data)); }
+function _wpNetFetch() {
+  _wpNet.busy = true; _wpNet.at = Date.now();
+  fetch('/api/net', { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { _wpNet.data = j; })
+    .catch(function () { _wpNet.data = { error: true }; })
+    .then(function () { _wpNet.busy = false; wpNetRepaint(); });
+}
+function wpNetToggle(on) {
+  fetch('/api/net/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ off: !on }) })
+    .then(function () { _wpNetFetch(); }, function () { _wpNetFetch(); });
+}
+function wpNetCopy() {
+  var d = _wpNet.data;
+  if (!d || !d.supported) return;
+  var text = _wpNetSummary(d);
+  var done = function () { _wpNet.copiedAt = Date.now(); wpNetRepaint(); setTimeout(wpNetRepaint, 2600); };
+  var fallback = function () {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      done();
+    } catch (e) { void e; }
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, fallback); return; }
+  } catch (e) { void e; }
+  fallback();
+}
+function renderNetMeter(s) {
+  var sec = document.getElementById('diag');
+  if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
+  wpNetRepaint();
 }
 
 function renderTriggers(s) {
@@ -7042,6 +7216,7 @@ async function refresh() {
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
+                     ['netmeter', renderNetMeter],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],

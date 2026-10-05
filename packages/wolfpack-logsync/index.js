@@ -20623,6 +20623,10 @@ function renderDiag(s) {
     +  '<button id="wpCrashBtn" onclick="wpRunCrashReview()">Review my crashes</button>'
     +  '<div id="wpCrashOut"></div></div>';
 
+  // 📶 Connection (lag meter) — filled by renderNetMeter(). Every number in it moves, so it has its
+  // own placeholder, the same isolation as the Zeal card.
+  h += '<div id="wpNetMeter" class="card wide"></div>';
+
   // Zeal pipe status — answers "is Zeal flowing?" at a glance. Shows
   // connected pids, total events this session, and per-type counts with the
   // newest sample of each. Only rendered under Mimic (Parser.bat has no Zeal
@@ -20667,6 +20671,176 @@ function renderDiag(s) {
   h += '</div>';
   if (!setSectionHTML('diag', h)) return;
   wpWireZealCapture();
+}
+
+// ── 📶 Connection card (Diagnostics) ────────────────────────────────────────
+// A local lag meter: the agent pings your router and the game server's host, and /api/net reports it.
+// If the router line spikes, the lag is in the home network; if only the server line spikes, it is
+// past the router (provider, route, server). Nothing leaves this PC. The card paints into its own
+// #wpNetMeter placeholder (renderDiag emits it), fetches /api/net at most every 5 s, and only while
+// the Diagnostics tab is showing.
+var _wpNet = { data: null, at: 0, busy: false, copiedAt: 0 };
+function _wpNetMs(v) { return v == null ? '—' : String(Math.round(v)); }
+function _wpNetLoss(v) { v = Number(v) || 0; return (v > 0 && v < 10 ? v.toFixed(1) : String(Math.round(v))) + '%'; }
+// Amber from 2% loss or a 150 ms p95, red from 10% or 300 ms (the Tick overlay's thresholds).
+function _wpNetTone(m) {
+  if (!m || !m.count) return '';
+  if (m.lossPct >= 10 || (m.p95 != null && m.p95 > 300)) return 'color:var(--red)';
+  if (m.lossPct >= 2 || (m.p95 != null && m.p95 > 150)) return 'color:var(--orange)';
+  return '';
+}
+function _wpNetChart(d) {
+  var W = 600, H = 130, L = 34, R = 6, T = 6, B = 90;   // plot box: x L..W-R, y T..B; lost marks and time labels sit below it
+  var now = (d.now || Date.now()) / 1000, t0 = now - 600, pw = W - L - R;
+  var X = function (t) { return L + Math.max(0, Math.min(1, (t - t0) / 600)) * pw; };
+  var rs = (d.series && d.series.router) || [], gs = (d.series && d.series.game) || [];
+  var top = 0, i;
+  for (i = 0; i < rs.length; i++) if (rs[i][1] != null && rs[i][1] > top) top = rs[i][1];
+  for (i = 0; i < gs.length; i++) if (gs[i][1] != null && gs[i][1] > top) top = gs[i][1];
+  var yMax = top <= 50 ? 50 : (top <= 100 ? 100 : Math.min(1000, Math.ceil(top / 100) * 100));
+  var Y = function (ms) { return B - Math.min(ms, yMax) / yMax * (B - T); };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Ping to your router and to the game server over the last 10 minutes" style="width:100%;height:auto;max-height:190px;display:block">';
+  // Fight periods: a faint band behind the lines.
+  var fs = rs.length ? rs : gs, run = null;
+  for (i = 0; i <= fs.length; i++) {
+    var inFight = i < fs.length && fs[i][3] === 1;
+    if (inFight && run === null) run = fs[i][0];
+    if (!inFight && run !== null) {
+      s += '<rect x="' + X(run).toFixed(1) + '" y="' + T + '" width="' + Math.max(1, X(fs[i - 1][0] + 5) - X(run)).toFixed(1) + '" height="' + (B - T) + '" fill="#58a6ff" opacity="0.12"/>';
+      run = null;
+    }
+  }
+  // Grid + axis labels.
+  var ticks = [0, yMax / 2, yMax];
+  for (i = 0; i < ticks.length; i++) {
+    s += '<line x1="' + L + '" y1="' + Y(ticks[i]).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(ticks[i]).toFixed(1) + '" stroke="#30363d" stroke-width="1"/>'
+      +  '<text x="' + (L - 4) + '" y="' + (Y(ticks[i]) + 3).toFixed(1) + '" text-anchor="end" fill="#6e7681" font-size="10">' + Math.round(ticks[i]) + (i === ticks.length - 1 ? ' ms' : '') + '</text>';
+  }
+  s += '<text x="' + L + '" y="' + (H - 3) + '" fill="#6e7681" font-size="10">10 min ago</text>'
+    +  '<text x="' + (W - R) + '" y="' + (H - 3) + '" text-anchor="end" fill="#6e7681" font-size="10">now</text>';
+  // One line per target, broken wherever pings were lost or went missing.
+  function line(a, color) {
+    var dd = '', prev = null;
+    for (var k = 0; k < a.length; k++) {
+      if (a[k][1] == null) { prev = null; continue; }
+      dd += (prev !== null && a[k][0] - prev <= 15 ? 'L' : 'M') + X(a[k][0] + 2.5).toFixed(1) + ' ' + Y(a[k][1]).toFixed(1);
+      prev = a[k][0];
+    }
+    return dd ? '<path d="' + dd + '" fill="none" stroke="' + color + '" stroke-width="1.6" stroke-linejoin="round"/>' : '';
+  }
+  s += line(rs, '#58a6ff') + line(gs, '#a371f7');
+  // Lost pings: small red marks under the plot, server on the upper row and router on the lower.
+  function lostRow(a, y) {
+    var o = '';
+    for (var k = 0; k < a.length; k++) if (a[k][2] > 0) o += '<rect x="' + X(a[k][0]).toFixed(1) + '" y="' + y + '" width="3" height="5" fill="#f85149"/>';
+    return o;
+  }
+  s += lostRow(gs, B + 7) + lostRow(rs, B + 15);
+  return s + '</svg>';
+}
+function _wpNetTable(d) {
+  var st = d.stats || {}, notes = d.notes || {};
+  var th = 'style="text-align:right"';
+  var cell = function (txt, tone) { return '<td style="text-align:right;font-variant-numeric:tabular-nums' + (tone ? ';' + tone : '') + '">' + txt + '</td>'; };
+  var t = '<table style="font-size:12px;margin:8px 0 4px"><thead>'
+    + '<tr><th></th><th></th><th colspan="3" style="text-align:center">last minute</th><th colspan="3" style="text-align:center">last 10 minutes</th></tr>'
+    + '<tr><th></th><th ' + th + '>now</th><th ' + th + '>median</th><th ' + th + '>p95</th><th ' + th + '>loss</th><th ' + th + '>median</th><th ' + th + '>p95</th><th ' + th + '>loss</th></tr></thead><tbody>';
+  var rows = [['Router', 'router', '#58a6ff'], ['Server', 'game', '#a371f7']];
+  for (var i = 0; i < rows.length; i++) {
+    var m = st[rows[i][1]];
+    t += '<tr><td><span style="color:' + rows[i][2] + '">●</span> ' + rows[i][0] + '</td>';
+    if (!m) {
+      t += '<td colspan="7" class="dim">' + (rows[i][1] === 'game' ? 'no server address' : 'no router address') + (notes[rows[i][1]] ? ' — ' + esc(notes[rows[i][1]]) : '') + '</td></tr>';
+      continue;
+    }
+    var a = m.m1, b = m.m10;
+    t += cell(a.count ? (a.last == null ? 'lost' : _wpNetMs(a.last) + ' ms') : '—')
+      +  cell(_wpNetMs(a.median) + ' ms') + cell(_wpNetMs(a.p95) + ' ms', _wpNetTone(a)) + cell(_wpNetLoss(a.lossPct), _wpNetTone(a))
+      +  cell(_wpNetMs(b.median) + ' ms') + cell(_wpNetMs(b.p95) + ' ms', _wpNetTone(b)) + cell(_wpNetLoss(b.lossPct), _wpNetTone(b)) + '</tr>';
+  }
+  return t + '</tbody></table>';
+}
+function _wpNetPart(label, m) {
+  return m && m.count ? label + ' median ' + _wpNetMs(m.median) + ' ms, p95 ' + _wpNetMs(m.p95) + ' ms, ' + _wpNetLoss(m.lossPct) + ' loss' : '';
+}
+// One short paragraph, written to be pasted into Discord.
+function _wpNetSummary(d) {
+  var st = d.stats || {};
+  var out = 'Connection check from my PC (Wolf Pack agent, last 10 min): ' + ((d.verdict && d.verdict.text) || '') + ' '
+    + (_wpNetPart('Router', st.router && st.router.m10) || 'Router not measured') + '. '
+    + (_wpNetPart('Game server', st.game && st.game.m10) || 'Game server not measured') + '.';
+  if (d.lastFight) {
+    var lf = d.lastFight;
+    out += ' During my last fight (' + ((lf.router || lf.game || {}).count || 0) + ' pings): '
+      + [_wpNetPart('router', lf.router), _wpNetPart('server', lf.game)].filter(Boolean).join('; ') + '.';
+  }
+  return out;
+}
+function wpNetHtml(d) {
+  var h = '<h2>📶 Connection <span class="dim" style="font-size:11px;font-weight:normal">· is your lag your home network, or past it? Measured on this PC — nothing is uploaded</span></h2>';
+  if (!d) return h + '<div class="dim" style="font-size:12px">Reading the connection meter…</div>';
+  if (d.error) return h + '<div class="dim" style="font-size:12px">The connection meter is not available from this engine. Update the agent to get it.</div>';
+  if (!d.supported) return h + '<div class="dim" style="font-size:12px">' + esc(d.verdict && d.verdict.text) + '</div>';
+  h += '<label style="display:flex;gap:6px;align-items:center;margin:0 0 8px;cursor:pointer;font-size:12px">'
+    +  '<input type="checkbox" onchange="wpNetToggle(this.checked)"' + (d.enabled ? ' checked' : '') + '><span>Measure my connection</span></label>';
+  if (!d.enabled) return h + '<div class="dim" style="font-size:12px">' + esc(d.verdict && d.verdict.text) + '</div>';
+  var v = d.verdict || { code: 'unknown', text: '' };
+  var VT = { home: ['🏠 Your home network', 'var(--orange)'], beyond: ['🌐 Past your router', 'var(--orange)'], ok: ['✓ Looks healthy', 'var(--green)'], unknown: ['… Not sure yet', 'var(--dim)'] };
+  var vt = VT[v.code] || VT.unknown;
+  h += '<div style="margin:0 0 8px"><b style="color:' + vt[1] + '">' + vt[0] + '</b>'
+    +  '<div style="font-size:12px;margin-top:3px;line-height:1.45">' + esc(v.text) + '</div></div>';
+  var hasData = (d.series && ((d.series.router && d.series.router.length) || (d.series.game && d.series.game.length)));
+  if (hasData) {
+    h += _wpNetChart(d)
+      +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#58a6ff">━</span> router · <span style="color:#a371f7">━</span> server · '
+      +  '<span style="color:var(--red)">▮</span> lost pings (upper row server, lower row router) · shaded = a fight was on</div>';
+  }
+  h += _wpNetTable(d);
+  if (d.lastFight) {
+    var lf = d.lastFight;
+    h += '<div class="dim" style="font-size:11px;margin:2px 0 6px">Last fight (' + ((lf.router || lf.game || {}).count || 0) + ' pings): '
+      +  [_wpNetPart('router', lf.router), _wpNetPart('server', lf.game)].filter(Boolean).join(' · ') + '</div>';
+  }
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">'
+    +  '<button type="button" class="wp-btn" onclick="wpNetCopy()">Copy summary</button>'
+    +  '<span class="dim" style="font-size:11px">' + (Date.now() - _wpNet.copiedAt < 2500 ? '✓ Copied — paste it in Discord' : 'one short paragraph for Discord') + '</span></div>';
+  return h;
+}
+function wpNetRepaint() { morphInto(document.getElementById('wpNetMeter'), wpNetHtml(_wpNet.data)); }
+function _wpNetFetch() {
+  _wpNet.busy = true; _wpNet.at = Date.now();
+  fetch('/api/net', { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) { _wpNet.data = j; })
+    .catch(function () { _wpNet.data = { error: true }; })
+    .then(function () { _wpNet.busy = false; wpNetRepaint(); });
+}
+function wpNetToggle(on) {
+  fetch('/api/net/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ off: !on }) })
+    .then(function () { _wpNetFetch(); }, function () { _wpNetFetch(); });
+}
+function wpNetCopy() {
+  var d = _wpNet.data;
+  if (!d || !d.supported) return;
+  var text = _wpNetSummary(d);
+  var done = function () { _wpNet.copiedAt = Date.now(); wpNetRepaint(); setTimeout(wpNetRepaint, 2600); };
+  var fallback = function () {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      done();
+    } catch (e) { void e; }
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text).then(done, fallback); return; }
+  } catch (e) { void e; }
+  fallback();
+}
+function renderNetMeter(s) {
+  var sec = document.getElementById('diag');
+  if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
+  wpNetRepaint();
 }
 
 function renderTriggers(s) {
@@ -24179,6 +24353,7 @@ async function refresh() {
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
                      ['diag', renderDiag],
+                     ['netmeter', renderNetMeter],
                      ['zealcard', renderZealCard],
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
@@ -30913,6 +31088,24 @@ function startWebDashboard(port) {
         _saveAgentPrefs({ log_rotate_off: off });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ ok: true, enabled: _logRotateEnabled() }));
+      }
+
+      // 📶 Connection meter (local only, nothing uploaded). GET /api/net is the whole picture the
+      // dashboard card and the Tick overlay draw; POST /api/net/toggle flips the persisted
+      // `net_meter_off` pref (body { off: true|false } sets it outright).
+      if (req.method === 'GET' && (req.url === '/api/net' || req.url.indexOf('/api/net?') === 0)) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(_netPayload()));
+      }
+      if (req.url === '/api/net/toggle' && req.method === 'POST') {
+        const body = await _readBody(req).catch(() => '');
+        let off;
+        try { const j = JSON.parse(body || '{}'); if (typeof j.off === 'boolean') off = j.off; } catch { off = undefined; }
+        if (off === undefined) off = !_agentPrefs().net_meter_off;
+        _saveAgentPrefs({ net_meter_off: off });
+        try { _netStart(); _netTick(); } catch { void 0; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ ok: true, enabled: _netEnabled() }));
       }
 
       if (req.url === '/api/personal-triggers/import' && req.method === 'POST') {
@@ -45531,6 +45724,415 @@ async function _logRotateSweep() {
   }
 }
 
+// ── 📶 Connection meter — a local-only lag meter (2026-10-05) ───────────────
+// A member reported lag, and nothing measured a player's own connection to the game. Two pings
+// run from THIS machine for as long as the agent does: the router (the default IPv4 gateway) and
+// the game server's host. Reading them together is the point. If the router line spikes the lag is
+// in the home network; if only the server line spikes it is past the router (the internet
+// provider, the route, or the server). Nothing is uploaded: the dashboard (Diagnostics) and the
+// Tick overlay read it from GET /api/net, and the player copies a summary by hand.
+//
+// ⚠ The game target is the LOGIN server named in eqhost.txt. Zone servers can be other addresses,
+// so this is a proxy for the route to the host, not an exact zone ping.
+//
+// ⚠ Each ping.exe is started with a COUNT (-n NET_RUN_PINGS) and replaced seamlessly when the
+// count is reached, instead of running forever with -t. Mimic stops the agent with a plain
+// kill(), which on Windows is TerminateProcess: no 'exit' handler runs, so an endless `ping -t`
+// child would be orphaned on every agent restart and keep pinging for good. A counted run bounds
+// an orphan's life to NET_RUN_PINGS seconds.
+const NET_RING_MS     = 30 * 60_000;   // samples kept per target
+const NET_RING_MAX    = 2000;          // one a second for 30 minutes is 1800
+const NET_RUN_PINGS   = 300;           // echoes per ping.exe run
+const NET_TICK_MS     = 15_000;        // housekeeping: targets, restarts, the silent-child watchdog
+const NET_GATEWAY_MS  = 10 * 60_000;   // re-read the default gateway this often
+const NET_SILENT_MS   = 30_000;        // a running ping prints a line a second; this long without one is a stall
+const NET_BACKOFF_MIN = 5_000;
+const NET_BACKOFF_MAX = 60_000;
+const NET_VERDICT_MIN = 30;            // samples a verdict needs from each line
+const NET_FIGHT_MIN   = 10;            // samples a fight needs before it gets its own numbers
+
+function _netIsIPv4(s) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(s || ''));
+  return !!m && m.slice(1).every(o => Number(o) <= 255);
+}
+
+// One line of ping.exe output → { kind: 'ok', ms } for a reply, { kind: 'lost' } for a lost
+// sample, or null for a line that carries no sample. Loose on purpose: Windows localizes the
+// words ("Zeit=45ms", "Request timed out.") but keeps `TTL=` and the `ms` unit. `afterHeader` is
+// false for the first line a run prints (its "Pinging <host> …" header, which varies by language)
+// and true after it. A line without a reply's `TTL=` is a lost sample (timed out, unreachable,
+// general failure) unless it is a summary line (`…ms` or `%`).
+function _netParsePingLine(line, afterHeader) {
+  const s = String(line == null ? '' : line).trim();
+  if (!s) return null;
+  if (/TTL\s*=/i.test(s)) {
+    // `time=12ms` and `time<1ms` both end up as a number (under a millisecond reads as 1). The unit
+    // is "ms", or Spanish's bare "m" (`tiempo<1m`, which is what a router prints nearly every time).
+    // The word after `bytes=32` can start with an m ("masa=") and must not be read as the unit.
+    // The second pattern is for a unit that is not Latin at all (Russian prints it in Cyrillic, which
+    // the latin1 decode turns into 0x80+ characters); `bytes=32 TTL=64` has no unit and stays null.
+    const m = /[=<]\s*(\d+)\s*ms?(?![a-z])/i.exec(s) || /[=<]\s*(\d+)\s*[\u0080-￿]{1,4}\s+TTL/i.exec(s);
+    return m ? { kind: 'ok', ms: Number(m[1]) } : null;
+  }
+  if (!afterHeader) return null;
+  if (/\d\s*ms\b|%/i.test(s)) return null;
+  return { kind: 'lost' };
+}
+
+// eqhost.txt → the login server's host (no port), or null. The file is an INI: a
+// `[LoginServer]` section holding `Host=<address>:<port>`. The host goes straight onto a
+// command line, so it must look like a name or an address; one that starts with "-" would
+// be read by ping as an option.
+function _netParseEqHost(text) {
+  let inSection = false;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.replace(/^﻿/, '').trim();
+    if (!line || line[0] === ';' || line[0] === '#') continue;
+    const sec = /^\[([^\]]*)\]/.exec(line);
+    if (sec) { inSection = sec[1].trim().toLowerCase() === 'loginserver'; continue; }
+    if (!inSection) continue;
+    const kv = /^host\s*=\s*(.*)$/i.exec(line);
+    if (!kv) continue;
+    const host = kv[1].replace(/\s*[;#].*$/, '').trim().replace(/:\d+$/, '');
+    return /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(host) ? host : null;
+  }
+  return null;
+}
+
+// `route print -4 0.0.0.0` → the default gateway with the lowest metric, or null. Data rows are
+// `<dest> <mask> <gateway> <interface> <metric>`; an `On-link` gateway is not a router, and the
+// Persistent Routes rows (no metric column) are the same routes again.
+function _netParseGateway(text) {
+  let best = null;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const c = line.trim().split(/\s+/);
+    if (c.length < 5 || c[0] !== '0.0.0.0' || c[1] !== '0.0.0.0') continue;
+    if (!_netIsIPv4(c[2]) || c[2] === '0.0.0.0') continue;
+    const metric = parseInt(c[4], 10);
+    if (!Number.isFinite(metric)) continue;
+    if (!best || metric < best.metric) best = { ip: c[2], metric };
+  }
+  return best ? best.ip : null;
+}
+
+// Samples are { t, ms|null, fight } in time order; ms null = a lost ping. Counts the samples in
+// the window (now - windowMs, now]; every ms statistic is over the replies only.
+// A spike is a lost ping or a reply slower than max(150 ms, 3x the median).
+function _netStats(samples, now, windowMs) {
+  const from = now - windowMs;
+  const got = [];
+  let count = 0, lost = 0, last = null;
+  for (const s of samples || []) {
+    if (!s || s.t <= from || s.t > now) continue;
+    count++;
+    if (s.ms == null) { lost++; last = null; } else { got.push(s.ms); last = s.ms; }
+  }
+  got.sort((a, b) => a - b);
+  const n = got.length;
+  const median = n === 0 ? null : (n % 2 ? got[(n - 1) / 2] : (got[n / 2 - 1] + got[n / 2]) / 2);
+  const limit = Math.max(150, 3 * (median || 0));
+  return {
+    count, lost,
+    lossPct: count ? (lost / count) * 100 : 0,
+    min: n ? got[0] : null,
+    median,
+    p95: n ? got[Math.ceil(0.95 * n) - 1] : null,
+    max: n ? got[n - 1] : null,
+    last,
+    spikes: lost + got.filter(ms => ms > limit).length,
+  };
+}
+
+// The plain-English call. Both arguments are 10-minute _netStats results (or null when that
+// line has no target). `home` = the router line is bad; `beyond` = the router is clean and the
+// server line is bad; `unknown` until each line has NET_VERDICT_MIN samples.
+// A router that answers nothing at all proves nothing (some routers ignore ping), so it is not
+// blamed unless the server line is dead too.
+function _netVerdict({ router, game } = {}) {
+  const enough = (s) => !!s && s.count >= NET_VERDICT_MIN;
+  const unknown = (text) => ({ code: 'unknown', text });
+  const collecting = 'Collecting samples. A verdict needs about half a minute of data.';
+  if (!router) return unknown("Still looking for your router's address, so I can't tell yet.");
+  if (!enough(router)) return unknown(collecting);
+  if (router.lossPct >= 2 || (router.p95 != null && router.p95 > 50)) {
+    if (router.lost === router.count && !(enough(game) && game.lost === game.count)) {
+      return unknown("Your router isn't answering the test pings (some routers ignore them), so I can't tell home lag from outside lag.");
+    }
+    return { code: 'home', text: 'Your home network looks like the problem. The line to your router is dropping or delaying packets. Try a wired connection, move closer to the Wi-Fi, or restart the router.' };
+  }
+  if (!game) return unknown("Your router line looks fine, but the game server's address wasn't found (eqhost.txt), so the part past your router can't be checked.");
+  if (!enough(game)) return unknown(collecting);
+  if (game.lossPct >= 2 || (game.p95 != null && game.p95 > Math.max(150, 3 * (game.median || 0)))) {
+    return { code: 'beyond', text: 'Your home network looks fine. The line to the game server is dropping or delaying packets, so the trouble is past your router: your internet provider, the route to the game, or the server itself.' };
+  }
+  return { code: 'ok', text: 'Your connection looks healthy. There is no meaningful delay or packet loss to your router or to the game server.' };
+}
+
+// The graph's data: the window cut into buckets, each [bucketStartSec, slowestReplyMs|null, lostCount, fightFlag].
+// null = every ping in that bucket was lost.
+function _netSeries(samples, now, windowMs = 600_000, bucketMs = 5_000) {
+  const from = now - windowMs;
+  const out = [];
+  let cur = null;
+  for (const s of samples || []) {
+    if (!s || s.t <= from || s.t > now) continue;
+    const b = Math.floor(s.t / bucketMs);
+    if (!cur || cur.b !== b) { cur = { b, max: null, lost: 0, fight: 0 }; out.push(cur); }
+    if (s.ms == null) cur.lost++; else if (cur.max == null || s.ms > cur.max) cur.max = s.ms;
+    if (s.fight) cur.fight = 1;
+  }
+  return out.slice(-Math.ceil(windowMs / bucketMs)).map(c => [c.b * bucketMs / 1000, c.max, c.lost, c.fight]);
+}
+
+// The newest run of consecutive fight samples that is at least `minSamples` long → { from, to } (ms), or null.
+function _netFightSpan(samples, minSamples = NET_FIGHT_MIN) {
+  const a = samples || [];
+  let end = a.length - 1;
+  while (end >= 0) {
+    while (end >= 0 && !a[end].fight) end--;
+    if (end < 0) return null;
+    let start = end;
+    while (start > 0 && a[start - 1].fight) start--;
+    if (end - start + 1 >= minSamples) return { from: a[start].t, to: a[end].t };
+    end = start - 1;
+  }
+  return null;
+}
+
+// ── The running meter ──
+function _netNewTarget(kind) {
+  return {
+    kind, host: null, ip: null, samples: [],
+    child: null, timer: null, buf: '', afterHeader: false, runCount: 0, healthy: false,
+    spawnedAt: 0, lastDataAt: 0, backoffMs: NET_BACKOFF_MIN, logged: new Set(), error: null,
+  };
+}
+const _net = {
+  platform: process.platform, started: false,
+  router: _netNewTarget('router'), game: _netNewTarget('game'),
+  gwAt: 0, gwTriedAt: 0, gwBusy: false, gameNote: null,
+};
+const _netSupported = () => _net.platform === 'win32';
+const _netEnabled = () => _netSupported() && !_agentPrefs().net_meter_off;
+
+// Say a failure once, not every retry. Cleared when the ping starts answering again.
+function _netLog(t, key, msg) {
+  if (t.logged.has(key)) return;
+  t.logged.add(key);
+  console.warn('[net] ' + t.kind + ': ' + msg);
+}
+
+function _netPush(t, ms, now = Date.now()) {
+  let fight = false;
+  try { fight = _liveFightActive(); } catch { void 0; }
+  const a = t.samples;
+  a.push({ t: now, ms, fight });
+  const keepFrom = now - NET_RING_MS;
+  let cut = 0;
+  while (cut < a.length && a[cut].t < keepFrom) cut++;
+  if (a.length - cut > NET_RING_MAX) cut = a.length - NET_RING_MAX;
+  if (cut) a.splice(0, cut);
+}
+
+// ping.exe's stdout, as it arrives. A run's first line is its header (and carries the
+// resolved address in brackets when the target was a name).
+function _netOnData(t, child, chunk) {
+  if (t.child !== child) return;   // an old run's trailing summary
+  t.lastDataAt = Date.now();
+  const lines = (t.buf + chunk).split('\n');
+  t.buf = lines.pop();                    // the unfinished line, if any
+  if (t.buf.length > 1024) t.buf = '';    // a runaway with no newline is not a ping line
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    const first = !t.afterHeader;
+    t.afterHeader = true;
+    if (first) {
+      const ip = /\[(\d{1,3}(?:\.\d{1,3}){3})\]/.exec(line);
+      if (ip) t.ip = ip[1]; else if (_netIsIPv4(t.host)) t.ip = t.host;
+    }
+    const r = _netParsePingLine(line, !first);
+    if (!r) continue;
+    _netPush(t, r.kind === 'ok' ? r.ms : null);
+    t.runCount++;
+    if (!t.healthy && r.kind === 'ok' && t.runCount >= 5) {
+      t.healthy = true; t.backoffMs = NET_BACKOFF_MIN; t.error = null; t.logged.clear();
+    }
+    if (t.runCount >= NET_RUN_PINGS) {   // this run is done: start the next one now, ignore the old one's summary
+      if (Date.now() - t.spawnedAt < NET_RUN_PINGS * 100) {   // a ping paces itself at one a second; this one is not
+        t.error = 'ping answered faster than once a second';
+        _netLog(t, 'fast', 'ping is not pacing itself (a full run ended within 30 s) — slowing down');
+        _netStopTarget(t);
+        _netRetryLater(t);
+        return;
+      }
+      t.child = null;
+      _netSpawn(t);
+      return;
+    }
+  }
+}
+
+function _netSchedule(t, ms) {
+  clearTimeout(t.timer);
+  t.timer = setTimeout(() => { t.timer = null; _netSpawn(t); }, ms);
+  if (t.timer.unref) t.timer.unref();
+}
+function _netRetryLater(t) {
+  const wait = t.backoffMs;
+  t.backoffMs = Math.min(NET_BACKOFF_MAX, wait * 2);
+  _netSchedule(t, wait);
+}
+
+function _netChildGone(t, child, why) {
+  if (t.child !== child) return;   // already replaced or stopped on purpose
+  t.child = null;
+  if (Date.now() - t.spawnedAt < 10_000) {
+    t.error = 'ping stopped right away (' + why + ')';
+    _netLog(t, 'exit:' + why, 'ping stopped right away (' + why + ') — retrying quietly');
+    _netRetryLater(t);
+  } else {
+    _netSchedule(t, 1000);
+  }
+}
+
+function _netSpawn(t) {
+  if (t.child || !t.host || !_netEnabled()) return;
+  let child;
+  try {
+    child = require('child_process').spawn('ping', ['-n', String(NET_RUN_PINGS), '-4', '-w', '1000', t.host],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (err) {
+    t.error = 'could not start ping';
+    _netLog(t, 'spawn', 'could not start ping: ' + ((err && err.message) || err));
+    _netRetryLater(t);
+    return;
+  }
+  t.child = child;
+  t.buf = ''; t.afterHeader = false; t.runCount = 0; t.healthy = false;
+  t.spawnedAt = t.lastDataAt = Date.now();
+  child.stdout.setEncoding('latin1');   // only the ASCII (TTL=, ms) matters; never throws on a localized codepage
+  child.stdout.on('data', (chunk) => { try { _netOnData(t, child, chunk); } catch { void 0; } });
+  child.on('error', (err) => _netChildGone(t, child, (err && err.code) || 'error'));
+  child.on('close', (code) => _netChildGone(t, child, 'exit ' + code));
+}
+
+function _netStopTarget(t) {
+  clearTimeout(t.timer); t.timer = null;
+  const c = t.child;
+  t.child = null;   // first, so the dying child's events are ignored
+  if (c) { try { c.kill(); } catch { void 0; } }
+}
+function _netStopAll() { _netStopTarget(_net.router); _netStopTarget(_net.game); }
+
+// The game's login server, from eqhost.txt beside eqgame.exe — { host, note }.
+function _netReadGameHost() {
+  let sawDir = false, sawFile = false;
+  for (const dir of _eqSetupDirs()) {
+    sawDir = true;
+    let txt;
+    try { txt = fs.readFileSync(path.join(dir, 'eqhost.txt'), 'utf8'); } catch { continue; }
+    sawFile = true;
+    const host = _netParseEqHost(txt);
+    if (host) return { host, note: null };
+  }
+  return { host: null, note: !sawDir ? 'EverQuest folder not known yet' : !sawFile ? 'no eqhost.txt in your EverQuest folder' : 'eqhost.txt has no [LoginServer] Host' };
+}
+
+function _netResolveGateway() {
+  if (_net.gwBusy) return;
+  _net.gwBusy = true;
+  _net.gwTriedAt = Date.now();
+  const failed = (why) => { _net.gwBusy = false; _net.router.error = why; _netLog(_net.router, 'gateway', why); };
+  try {
+    require('child_process').execFile('route', ['print', '-4', '0.0.0.0'], { windowsHide: true, timeout: 5000 }, (err, out) => {
+      const ip = err ? null : _netParseGateway(String(out || ''));
+      if (!ip) { failed("could not read the default gateway from 'route print'"); return; }
+      _net.gwBusy = false;
+      _net.gwAt = Date.now();
+      const r = _net.router;
+      if (ip === r.host) return;
+      _netStopTarget(r);   // a different network: the old samples are not this router's
+      r.host = ip; r.ip = ip; r.samples = []; r.error = null;
+      _netSpawn(r);
+    });
+  } catch (err) { failed('could not run route: ' + ((err && err.message) || err)); }
+}
+
+function _netTick() {
+  const r = _net.router, g = _net.game;
+  if (!_netEnabled()) { _netStopAll(); r.samples = []; g.samples = []; return; }
+  const now = Date.now();
+  const found = _netReadGameHost();
+  _net.gameNote = found.note;
+  if (found.host !== g.host) {   // first read, or eqhost.txt changed: a different server, a fresh line
+    _netStopTarget(g);
+    g.host = found.host; g.ip = _netIsIPv4(found.host) ? found.host : null; g.samples = []; g.error = null;
+  }
+  if (now - _net.gwAt > NET_GATEWAY_MS && now - _net.gwTriedAt > 60_000) _netResolveGateway();
+  for (const t of [r, g]) {
+    if (t.child && now - t.lastDataAt > NET_SILENT_MS) {   // a running ping prints every second
+      t.error = 'ping went silent';
+      _netLog(t, 'silent', 'ping produced no output for ' + (NET_SILENT_MS / 1000) + 's — restarting it');
+      _netStopTarget(t);
+      _netRetryLater(t);
+    }
+    if (t.host && !t.child && !t.timer) _netSpawn(t);
+  }
+}
+
+// Idempotent. On by default; the `net_meter_off` pref (the dashboard's switch) stops it, and
+// _netTick starts it again within NET_TICK_MS of the pref flipping back.
+function _netStart() {
+  if (_net.started || !_netSupported()) return;
+  _net.started = true;
+  process.on('exit', _netStopAll);
+  const tick = () => { try { _netTick(); } catch (err) { console.warn('[net] tick failed: ' + ((err && err.message) || err)); } };
+  const iv = setInterval(tick, NET_TICK_MS);
+  if (iv.unref) iv.unref();
+  const first = setTimeout(tick, 3_000);   // after the watched logs have named the EQ folder
+  if (first.unref) first.unref();
+}
+
+// GET /api/net
+function _netPayload(now = Date.now()) {
+  const supported = _netSupported();
+  const enabled = _netEnabled();
+  const out = {
+    supported, enabled, now,
+    targets: { router: null, game: null },
+    stats: { router: null, game: null },
+    lastFight: null,
+    verdict: { code: 'unknown', text: '' },
+    series: { router: [], game: [] },
+    notes: { router: null, game: null },
+  };
+  if (!supported) { out.verdict.text = 'The connection meter measures with the Windows ping command, so it only runs on Windows.'; return out; }
+  if (!enabled)   { out.verdict.text = 'The connection meter is turned off.'; return out; }
+  const r = _net.router, g = _net.game;
+  const has = { router: !!r.host, game: !!g.host };
+  if (has.router) out.targets.router = { ip: r.host };
+  if (has.game) out.targets.game = Object.assign({ host: g.host, source: 'eqhost.txt' }, g.ip ? { ip: g.ip } : {});
+  for (const t of [r, g]) {
+    if (!has[t.kind]) continue;
+    out.stats[t.kind] = { m1: _netStats(t.samples, now, 60_000), m10: _netStats(t.samples, now, 600_000) };
+    out.series[t.kind] = _netSeries(t.samples, now);
+  }
+  const span = _netFightSpan(r.samples) || _netFightSpan(g.samples);
+  if (span) {
+    const w = span.to - span.from + 1;
+    out.lastFight = {
+      router: has.router ? _netStats(r.samples, span.to, w) : null,
+      game:   has.game   ? _netStats(g.samples, span.to, w) : null,
+      from: span.from, to: span.to,
+    };
+  }
+  out.verdict = _netVerdict({ router: has.router ? out.stats.router.m10 : null, game: has.game ? out.stats.game.m10 : null });
+  out.notes.router = r.error || (has.router ? null : 'default gateway not found yet');
+  out.notes.game = g.error || _net.gameNote;
+  return out;
+}
+
 // ── Time-window mode (backfill) ─────────────────────────────────────────────
 async function readWindow(logPath, since, until, onLine) {
   // For now, naive: stream the file line by line and only emit lines whose
@@ -46802,6 +47404,8 @@ async function main() {
     // FB-51: say so when the primary character's log goes quiet while Zeal has them in game.
     const _silentTimer = setInterval(() => { try { _logSilentSweep(); } catch { void 0; } }, LOG_SILENT_SWEEP_MS);
     if (_silentTimer.unref) _silentTimer.unref();
+    // 📶 Connection meter: ping the router and the game host from this PC (Windows; local only).
+    try { _netStart(); } catch { void 0; }
     // Run forever; intervals keep us alive
     return;
   }
@@ -46931,6 +47535,10 @@ module.exports = {
   // FB-51 tail watchdog — exported so the tests drive the shipped decision + loop.
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,
+  // 📶 Connection meter — pure parts + the stdout feed, exported so the tests drive the shipped code.
+  _netParsePingLine, _netParseEqHost, _netParseGateway, _netStats, _netVerdict, _netSeries, _netFightSpan,
+  _netNewTarget, _netOnData, _netPush, _netPayload, _netTargetsForTest: () => _net,
+  _netSetPlatformForTest: (p) => { _net.platform = p; },
   _setZealStateForTest: (ch, st) => { if (st) _zealState[ch] = st; else delete _zealState[ch]; },
   // FB-34 per-character triggers / FB-35 pooled pet owners — exported for their tests.
   _normCharList, _triggerOnFor, _playingCharactersLc, _builtinTimerKindsOn,
