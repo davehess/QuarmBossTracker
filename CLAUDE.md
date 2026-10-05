@@ -35,6 +35,17 @@ different or special"*). Lead each option with its letter, a short name and that
 Discord just points at the website**, before any mock or cost table. The costs and detail come after;
 the pick should be makeable from the one-liners alone.
 
+**The ASK itself carries the options, with a picture each — never a bare "A or B for X?"** (the guild
+lead, 2026-10-05: *"This format for asking me for answers isn't acceptable. It should tell me the
+difference, show me the samples, etc."*). Wherever a pick is asked for — including a to-do line — write it
+out in full:
+- **Choose A or B for <feature>:**
+  - **A** includes xyz — *(sample picture)* — *(faster, can become B)*
+  - **B** includes yzq 1+2 — *(sample picture)* — *(recommended long-term)*
+Every option gets a rendered sample (a PNG sent with the reply, or a beta link for web), its contents in
+a phrase, and a tag that places it: faster / cheaper / can grow into another option / recommended. A
+pick still open from an earlier reply is re-asked the same way, with its pictures again, not by letter.
+
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
 adjacent or unrelated code, stop and flag it before proceeding. (The

@@ -179,6 +179,13 @@ that was said. This is evidence of a possible flag, never proof, and is shown
 that way. A player greeting another player the same way ("Hail, friend") is
 stored too — we can't tell them apart.
 
+**Live, while Mimic runs** (the hail board, agent 3.7.89 beta): a hail of a
+flag NPC — yours, or one your log saw — is sent the same way (who hailed, which
+NPC, the zone, the time, whose log saw it), so the Command Center can show who
+in the raid still has to hail after a flag boss dies. A hail of anyone or
+anything else is not sent live. Tapping a name on that board to mark it sends
+the name, the mark and who tapped.
+
 **Your own PoP flags.** When you get a flag, Mimic sends the flag line, your zone
 and the one line just before it, but only when that line comes from one of the
 flag NPCs (Mavuin, the Tribunal, the Planar Projections, Maelin and the others):

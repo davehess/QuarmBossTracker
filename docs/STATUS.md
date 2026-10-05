@@ -194,6 +194,16 @@ next touch one rather than assuming a missing row means a missing doc.
   checkbox, Review button, results) now leads Diagnostics instead of Info. Reverses the 2026-08-13 placement. §137.
 - **✅ New pages go live with a `[beta]` tag (web 1.8.81, 2026-10-03).** `/zeal-icons` (+ `?v=b`) and
   `/db/recipe/<id>` moved from beta to production with `web/components/NewPageTag.tsx` at the top. §135.
+- **🧪 Hail board on beta (agent 3.7.89 `564de49c`, bot 3.1.206, 2026-10-05).** After a flag boss dies the
+  Command Center lists the raid at the kill as still to hail / hailed with the NPC's clock; flagged characters
+  are left off; a seen hail or a tap moves a name. The bot side reached main with 3.1.207 the same evening;
+  beta agents that met the 404 first pick it up within 10 minutes (their back-off).
+  Same build: "Death touch — RIP" no longer calls a one-word named mob outside a raid. Next: watch one PoP
+  flag kill with the board open. DECISIONS-2026-09-21 §165.
+- **✅ Only our own kills start a timer (bot 3.1.207, 2026-10-05).** PvP-instance and open-world
+  kills (PvP broadcast/flag, guild share, other guilds on a fighter's /who) keep their parse, marked live/pvp (so off
+  /parses and kill counts), start no board timer and are skipped by the restart re-seed; 1–2 person kills with no other signal start none either. Lord of Ire
+  PvP kills were starting our Plane of Hate timer. §165.
 - **⏳ Spectator map: `/spectator` [beta] built (web 1.8.98, 2026-10-05).** The raid's live positions on the zone
   map: Brewall's lines underneath (the guild lead's call; members only, fetched at run time, never in the repo) and
   walls generated from the GPL EQEmu meshes as a second layer. Checked against the 2026-10-04 raid in the Plane of

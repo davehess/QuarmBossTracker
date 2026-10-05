@@ -37,6 +37,34 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'kills-not-ours-2026-10-05',
+    title: 'Only our own kills start a timer',
+    version: 'Bot 3.1.207 · Web 1.8.103',
+    date: '2026-10-05',
+    headline: 'A boss killed in the PvP instance or out in the open world no longer starts our board timer.',
+    features: [
+      { name: 'Where was this kill?', blurb: 'Before a kill starts a timer, the bot checks where it happened. If the PvP kill broadcast for that boss shows up, or someone in the fight had their PvP flag on, it was the PvP instance. If most of the people fighting were not in the guild, or a /who one of them took shows another guild in the zone, it was the open world. A kill by one or two people with nothing else to go on starts no timer either. The parse is still kept, marked live or PvP the way an officer would mark it, so it no longer counts as a guild kill.' },
+    ],
+    fixes: [
+      'Lord of Ire kills in the PvP instance were starting our Plane of Hate timer.',
+      'After a bot restart, the board no longer brings back a timer from a kill that was not ours.',
+    ],
+  },
+  {
+    key: 'hail-board-2026-10-05',
+    title: 'Who still has to hail',
+    version: 'Agent 3.7.89 beta · Bot 3.1.206',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'After a flag boss dies, the Command Center shows who in the raid has hailed the flag NPC and who still has to.',
+    features: [
+      { name: 'Hail board', blurb: 'The Command Center lists everyone at the kill under "still to hail" or "hailed", with the time left before the NPC leaves. People who already have that flag are left off. A hail you make or see moves a name across by itself, and anyone can tap a name to mark it. Everyone sees the same list.' },
+    ],
+    fixes: [
+      '"Rest in Peace" no longer fires for a named mob with a one-word name (like the Bastion of Thunder wolves) when you are grouped instead of raiding.',
+    ],
+  },
+  {
     key: 'pop-named-timers-2026-10-05',
     title: 'Planes of Power named on the board',
     version: 'Bot 3.1.204 · Web 1.8.102',

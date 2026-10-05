@@ -29,6 +29,12 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.207': [
+    '**PvP and live kills no longer start a guild boss timer.** A kill of a boss like Lord of Ire in the PvP instance, or in the open world with other guilds in the zone, used to look exactly like our own instance kill and put the timer up. The bot now checks the PvP kill broadcast, whether a fighter was flagged, how many of the fighters are ours and whether one of the fighters saw another guild in the zone on /who. Only a kill that looks like ours starts a timer, and a kill by one or two people with nothing else to go on starts none. The parse is still saved; a kill marked PvP or live stays off the guild kill counts and the parse list, the same as when an officer marks it.',
+  ],
+  '3.1.206': [
+    '**A hail board for the Planes of Power.** When a boss dies and leaves an NPC to hail (the Planar Projections, Giwin Mirakon after the Behemoth, Tylis Newleaf after the Keeper), the bot opens a shared list for the raid that was there: who has hailed, who still has to, and who already holds that flag and does not need to. It fills itself from every Mimic in the raid, and anyone can tap a name to mark it. Mimic\'s Command Center slot for it comes in a later Mimic build.',
+  ],
   '3.1.204': [
     '**The Planes of Power board has timers for the guild instance bosses.** The eight Bastion of Thunder named (3 hours), plus Crypt of Decay, Plane of Disease, Plane of Innovation, Plane of Justice, Plane of Nightmare and Plane of Valor bosses (24 hours), each with a kill button. A boss on a timer of a day or less shows the time it is up again in Eastern ("up 9:42p") instead of the kill date. The 3-hour bosses stay off the spawn alerts and the "Spawning in 24 hours" card, and Grummus is 24 hours now, not 66.',
     '**A tortured soul no longer counts as a Ture kill.** Boss names now match on whole words, so a mob with a boss\'s letters buried inside its name (tortured, mature, frightfinger) is no longer taken for the boss.',

@@ -6157,6 +6157,9 @@ async function _handleAgentBossKill(req, res) {
       }
       set++;
     } else {
+      // Boss not on the board: the kill listener never sees it, so a hail boss (Mithaniel Marr, Solusek Ro,
+      // the Keeper, the Behemoth, the Arbitor) opens its hail window here, by name.
+      _hailKill({ bossName, killedAtMs: killedAt });
       // Boss not in database — still post to raid channel as FYI (deferred).
       // A boss taken off the board on purpose says so, instead of inviting an
       // officer to /addboss it back (§132).
@@ -9366,6 +9369,65 @@ async function _handleAgentPopFlags(req, res) {
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
+}
+
+// ── The hail board ───────────────────────────────────────────────────────────
+// The guild lead, 2026-10-05: "Upon boss death and spawn of a creature that needs to be hailed, we should
+// have that as an available slot in command center to track who has not yet hailed and who has already."
+// A kill of a boss whose death spawns a hail NPC opens a window (utils/hailBoard.js holds the whole story:
+// the boss → NPC → step table, the status rules, the bot_kv shape). Every Mimic polls GET /hail-board; any
+// raider's tap lands on POST /hail-mark.
+let _hailBoardInst = null;
+const _hailBoard = () => _hailBoardInst || (_hailBoardInst = require('./utils/hailBoard').create({
+  supabase: require('./utils/supabase'),
+  guildId: () => process.env.SUPABASE_GUILD_ID || 'wolfpack',
+}));
+function _hailKill(args) {
+  try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] open failed:', err?.message); }
+}
+// Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
+// (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
+// seen: the agent's kill relay and the confirmed encounter upload.
+require('./utils/state').onKillRecorded(({ bossId, killedAt }) => _hailKill({ bossId, killedAtMs: killedAt }));
+
+// GET /api/agent/hail-board → { windows: [...] }
+async function _handleAgentHailBoard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const board = await _hailBoard().getBoard();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(board));
+}
+
+// POST /api/agent/hail-mark { window_id, name, hailed } → the updated window
+async function _handleAgentHailMark(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const windowId = typeof payload?.window_id === 'string' ? payload.window_id.slice(0, 96) : '';
+  const name = typeof payload?.name === 'string' ? payload.name.trim().slice(0, 64) : '';
+  if (!windowId || !name) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'window_id and name required' }));
+  }
+  // The marker is whoever's session this is; an install with no member row resolves to a bare Discord id.
+  const by = identity.display_name && identity.display_name !== identity.discord_id ? identity.display_name : null;
+  const r = await _hailBoard().markHailed({ windowId, name, hailed: payload.hailed !== false, by });
+  if (r.error) {
+    res.writeHead(r.status || 400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: r.error }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, ...r.window }));
 }
 
 // POST /api/agent/quarmy
@@ -20498,7 +20560,7 @@ async function _promoteLockoutBoss(bossName, supabase) {
 // utils/killLockouts.js for why the parse is the higher-coverage source, and
 // the 2026-08-22 migration for why the two share one row per (character, boss).
 async function _recordKillLockouts({
-  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow,
+  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow, killVerdict,
 }) {
   const kl       = require('./utils/killLockouts');
   const supabase = require('./utils/supabase');
@@ -20536,7 +20598,7 @@ async function _recordKillLockouts({
   }
 
   const rows = kl.buildKillLockouts({
-    boss, killedAtMs, participants, inRaidNight, inRaidWindow, roster,
+    boss, killedAtMs, participants, inRaidNight, inRaidWindow, roster, killVerdict,
     guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack',
     encounterId, observedBy: contributor,
   });
@@ -21715,23 +21777,15 @@ async function _handleAgentUpload(req, res) {
         }
 
         // Auto-record kill if (1) the agent confirmed the boss's death line
-        // was observed AND (2) the boss isn't already on cooldown.
+        // was observed AND (2) the boss isn't already on cooldown AND (3) the
+        // kill was in OUR instance. (2) and (3) are decided after the ack, in
+        // _decideKillDeferred below — (3) reads Supabase.
         // confirmed_kill=false uploads (idle-timeout flushes — pulls and
         // wipes where the boss survived) only record the parse; they must
         // not move timers. Old agents (no flag) treated as unconfirmed:
         // safer to require an explicit /kill than fire a wrong timer.
-        const { getBossState, recordKill } = require('./utils/state');
-        const { postKillUpdate } = require('./utils/killops');
-        const bossState = getBossState(matchedBoss.id);
-        const now = Date.now();
         if (encounter.confirmed_kill !== true) {
           console.log(`[agent] ${matchedBoss.name} parse recorded but kill NOT confirmed (no death line observed) — timer unchanged`);
-        } else if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
-          recordKill(matchedBoss.id, matchedBoss.timerHours, null);
-          postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
-          console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);
-        } else {
-          console.log(`[agent] ${matchedBoss.name} already on cooldown — parse recorded, no timer change`);
         }
       } else {
         console.log(`[agent] no bosses.json match for "${encounter.boss_name}" — parse not stored locally`);
@@ -21739,6 +21793,17 @@ async function _handleAgentUpload(req, res) {
     }
   } catch (err) {
     console.warn('[agent] local parse write failed:', err?.message);
+  }
+
+  // ── Hail board: a confirmed kill of a boss whose death spawns a hail NPC opens its window. Outside the
+  // Supabase block on purpose — an uncurated boss (Mithaniel Marr and the rest) can be gated out of persisting
+  // and its window must open anyway. One window per death however many agents upload it (utils/hailBoard.js).
+  if (!isBackfill && encounter.confirmed_kill === true && encounter.boss_name) {
+    _hailKill({
+      bossName: encounter.boss_name,
+      killedAtMs: encounter.ended_at ? new Date(encounter.ended_at).getTime() : startedMs + duration * 1000,
+      participants: players.map(p => p.name),
+    });
   }
 
   // ── Best-effort Supabase write. Falls through silently if Supabase isn't set up ──
@@ -21844,26 +21909,9 @@ async function _handleAgentUpload(req, res) {
           ).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
         }
 
-        // A confirmed kill of a lockout-bearing raid boss IS a lockout
-        // observation for everyone who was there — the guild lead 2026-08-22, on a
-        // Ventani parse a member had uploaded from a non-guild raid: "taeya
-        // reported this Ventani kill so they should have a lockout." The
-        // /sll relay this table was built on needs a human to type /sll in
-        // game, so it had produced zero rows while the encounter pipe had
-        // already captured three foreign raid kills from that same player.
-        // Fire-and-forget: a lockout write must never fail an upload.
-        if (recParseResult?.encounterId && encounter.confirmed_kill === true && matchedBoss) {
-          _recordKillLockouts({
-            boss:        matchedBoss,
-            encounterId: recParseResult.encounterId,
-            killedAtMs:  encounter.ended_at
-                           ? new Date(encounter.ended_at).getTime()
-                           : startedMs + duration * 1000,
-            contributor: character || null,
-            players, healers: uploadedHealers, defenders: uploadedDefenders,
-            inRaidWindow: isRaidWindow,
-          }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
-        }
+        // (The kill-derived lockout write that used to sit here moved into
+        // _decideKillDeferred, after the ack: its `ours` flag now follows the
+        // kill-context verdict, which has to be read first.)
 
         // Persist charm sessions for this encounter. Upsert dedup'd by
         // (guild_id, pet_name, owner, started_at) so re-uploads from
@@ -21908,6 +21956,93 @@ async function _handleAgentUpload(req, res) {
     console.warn('[agent] supabase write failed:', err?.message);
   }
 
+  // ── Which instance was this kill in — and so, does it start a board timer? ──────────────────────────
+  // The guild lead 2026-10-05: "Lord of Ire PVP kills are still being triggered as regular guild instance
+  // kills … If anyone from outside of our guild is in the zone there's a good chance they are in live and
+  // we do not count those timers." Zone ids cannot tell the instances apart, so utils/killContext.js reads
+  // the circumstantial evidence (PvP broadcast, PvP flag, roster share, /who) and only an `ours` verdict
+  // records a timer. A pvp/live verdict also stamps the encounter row's classification, which keeps the
+  // fight out of guild kill counts and — via latest_kill_per_npc — out of timer recovery after a deploy.
+  //
+  // Runs AFTER the ack (the agent never waits on Supabase reads, same as the Discord card work above).
+  // A boss in a PvP-capable zone waits PVP_DEFER_MS first: the PvP broadcast is relayed by another
+  // agent and can trail this upload by ~2 min. Any failure reads as `ours`, i.e. today's behaviour — a
+  // dropped timer on a real guild kill is worse than a wrong one on a PvP kill an officer can clear.
+  const _decideKillDeferred = async () => {
+    const kc = require('./utils/killContext');
+    const killedAtMs = encounter.ended_at ? new Date(encounter.ended_at).getTime() : startedMs + duration * 1000;
+    if (kc.isPvpCapableZone(matchedBoss.zone)) {
+      await new Promise(resolve => { setTimeout(resolve, kc.PVP_DEFER_MS).unref(); });
+    }
+
+    let verdict = { verdict: 'ours', reason: 'kill context unavailable' };
+    let alreadyClassified = null;
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const participants = require('./utils/killLockouts').participantsFromUpload({
+          contributor: character || null, players, healers: uploadedHealers, defenders: uploadedDefenders,
+        });
+        const gathered = await kc.gatherKillSignals({
+          supabase, guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack', ourGuild: WP_GUILD_NAME,
+          boss: matchedBoss, encounterId: _encIdForLink, killedAtMs, participants,
+        });
+        verdict = kc.classifyKillContext(gathered.signals);
+        alreadyClassified = gathered.existingClassification;
+        const patch = kc.classificationPatch(verdict);
+        if (patch && _encIdForLink) {
+          // `classification=is.null`: an officer's mark (or an earlier upload's verdict) is never overwritten.
+          await supabase.update('encounters',
+            `id=eq.${encodeURIComponent(_encIdForLink)}&classification=is.null`, patch);
+        }
+      }
+    } catch (err) {
+      console.warn(`[kill-context] ${matchedBoss.name}: classification failed — recording the timer as before:`, err?.message);
+      verdict = { verdict: 'ours', reason: 'classification failed' };
+      alreadyClassified = null;
+    }
+
+    // A confirmed kill of a lockout-bearing raid boss IS a lockout
+    // observation for everyone who was there — the guild lead 2026-08-22, on a
+    // Ventani parse a member had uploaded from a non-guild raid: "<they>
+    // reported this Ventani kill so they should have a lockout." The
+    // /sll relay this table was built on needs a human to type /sll in
+    // game, so it had produced zero rows while the encounter pipe had
+    // already captured three foreign raid kills from that same player.
+    // A PvP/live kill still locks the characters who were in it — only its `ours` flag follows the verdict.
+    // Fire-and-forget: a lockout write must never fail an upload.
+    if (_encIdForLink) {
+      _recordKillLockouts({
+        boss:        matchedBoss,
+        encounterId: _encIdForLink,
+        killedAtMs,
+        contributor: character || null,
+        players, healers: uploadedHealers, defenders: uploadedDefenders,
+        inRaidWindow: isRaidWindow,
+        killVerdict:  verdict.verdict,
+      }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
+    }
+
+    if (verdict.verdict !== 'ours' || alreadyClassified) {
+      console.log(`[agent] ${matchedBoss.name} kill NOT started as a board timer — `
+        + (alreadyClassified ? `the encounter is already marked "${alreadyClassified}"` : `${verdict.verdict}: ${verdict.reason}`));
+      return;
+    }
+    const { getBossState, recordKill } = require('./utils/state');
+    const { postKillUpdate } = require('./utils/killops');
+    // Read the board AFTER the awaits above: two agents uploading one kill both reach this line, and the
+    // second must see the first's timer.
+    const bossState = getBossState(matchedBoss.id);
+    const now = Date.now();
+    if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+      recordKill(matchedBoss.id, matchedBoss.timerHours, null);
+      postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
+      console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);
+    } else {
+      console.log(`[agent] ${matchedBoss.name} already on cooldown — parse recorded, no timer change`);
+    }
+  };
+
   // Characters the bot wants extra coverage on (comma-separated env var).
   // Agents highlight these in blue on the [O] historical opt-in screen.
   const requestedChars = (process.env.REQUESTED_AGENT_CHARACTERS || '')
@@ -21937,6 +22072,11 @@ async function _handleAgentUpload(req, res) {
   // catch is the backstop so an unexpected throw can't become an unhandled
   // rejection.
   _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
+  // The timer decision rides the same post-ack rule (see _decideKillDeferred above). `matchedBoss` is only
+  // ever set outside backfill, so a replayed log still cannot move a timer.
+  if (matchedBoss && encounter.confirmed_kill === true) {
+    _decideKillDeferred().catch(err => console.warn('[agent] kill decision failed:', err?.message));
+  }
 
   // [#80-live] Live Raid Night Review — post-ack, synchronous, fully swallowed.
   // Two jobs, neither of which may ever reach this handler's control flow:
@@ -22760,6 +22900,24 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentPopFlags(req, res); }
     catch (err) {
       console.error('[pop-flags] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/hail-board')) {
+    try { return await _handleAgentHailBoard(req, res); }
+    catch (err) {
+      console.error('[hail-board] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/hail-mark') {
+    try { return await _handleAgentHailMark(req, res); }
+    catch (err) {
+      console.error('[hail-mark] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

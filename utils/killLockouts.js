@@ -136,6 +136,10 @@ function classifyOurs({ inRaidNight, inRaidWindow, memberFrac, playerCount } = {
  * @param {boolean}  [a.inRaidWindow] kill time falls in a scheduled raid window
  * @param {Set|Array} [a.roster]     lowercased guild character names, for the
  *                                   guild-event test in classifyOurs
+ * @param {string}   [a.killVerdict] utils/killContext.js's verdict. 'pvp' or 'live'
+ *                                   means the fight was in someone else's instance:
+ *                                   the lockout is still real (the character was
+ *                                   there), but it is not OUR kill — ours=false.
  * @param {string}   [a.guildId]
  * @param {string}   [a.encounterId]
  * @param {string}   [a.observedBy]  the uploading character
@@ -144,7 +148,7 @@ function classifyOurs({ inRaidNight, inRaidWindow, memberFrac, playerCount } = {
  */
 function buildKillLockouts({
   boss, killedAtMs, participants,
-  inRaidNight, inRaidWindow, roster,
+  inRaidNight, inRaidWindow, roster, killVerdict,
   guildId, encounterId, observedBy, observedAtMs,
 } = {}) {
   if (!boss || !boss.id || !boss.name) return [];
@@ -162,7 +166,7 @@ function buildKillLockouts({
   // this table, so drop it here rather than making each reader filter.
   if (expiresAt <= (Number.isFinite(observedAtMs) ? observedAtMs : Date.now())) return [];
 
-  const ours = classifyOurs({
+  const ours = (killVerdict === 'pvp' || killVerdict === 'live') ? false : classifyOurs({
     inRaidNight, inRaidWindow,
     memberFrac: memberFraction(participants, roster),
     playerCount: participants.length,
