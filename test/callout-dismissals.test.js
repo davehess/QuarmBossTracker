@@ -328,6 +328,15 @@ describe('the overlay surface itself', () => {
     expect(overlay, 'the #107 loot-only gate is gone').not.toMatch(/if \(t\.dismissible\)\{/);
   });
 
+  // The guild lead, 2026-10-06: "I can't click on these x's either". A clickable <span> needs
+  // data-wp-interact so the preload's document-level arm covers it (CLAUDE.md checklist item 3) — in a
+  // Canvas panel iframe that arm, re-asserted every 150 ms, is the dependable path.
+  it('the countdown ✕ and the pinned-callout ✕ carry data-wp-interact', () => {
+    const code = stripJs(overlay);
+    expect(code).toMatch(/x\.className = 'timer-x';\s*x\.setAttribute\('data-wp-interact', ''\);/);
+    expect(code).toMatch(/x\.className = 'sk-x';\s*x\.setAttribute\('data-wp-interact', ''\);/);
+  });
+
   it('the ✕, the 🗑 clear-all and the sticky row all do the hover handshake', () => {
     // Locked overlays are click-through: without the handshake the click falls
     // through to EQ and "the button does nothing" (CLAUDE.md checklist item 3).
