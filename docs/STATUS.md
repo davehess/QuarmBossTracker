@@ -214,6 +214,10 @@ next touch one rather than assuming a missing row means a missing doc.
   Mimic reads (`/api/agent/my-parses`). Both read one function, `my_parse_series`. On beta: a My parses tab in
   Mimic's main window and a Trend view on the DPS/Tank Meter (local fights, tonight / 7 days). Open: only 14 of 43
   PoP bosses are on the boss list, so Bosses is thin; `/me/parses` is not linked from `/me` yet. §170.
+  Same evening: mules and traders fold behind "+N more" (web 1.8.108, agent 3.7.91 beta).
+- **✅ Long-term bidding out of the timers (agent 3.7.92 stable hot-swap · 3.7.93 beta, 2026-10-06).** Auctions set to
+  run over 6 h get no countdown and no Command Center row; the bidding window still lists them. ⏳ The ✕ on timer
+  chips was reported unclickable; investigation open. §171.
 - **⏳ The announcer cast: written, nothing built (2026-10-06).** miMIC (your ear, the fight), Bristlebane (the
   room's laugh) and Lord Mobsincamp (meaning and the Ledger). The bible is `docs/DESIGN-raid-announcers.md` and the
   engine `docs/DESIGN-announcer-engine.md`; the personas are Character Card V2 files. Waits on the guild lead: a
