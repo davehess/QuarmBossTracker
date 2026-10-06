@@ -722,6 +722,7 @@
       span.textContent = (t.rehearsal ? '🧪 ' : '📌 ') + (t.text || t.tts || 'Alert');
       const x = document.createElement('span');
       x.className = 'sk-x';
+      x.setAttribute('data-wp-interact', '');   // as the countdown ✕: the preload's document-level arm covers it
       x.textContent = '✕';
       x.title = 'Dismiss this pinned callout';
       row.appendChild(span);
@@ -1025,6 +1026,10 @@
         {
           const x = document.createElement('span');
           x.className = 'timer-x';
+          // A clickable <span> needs data-wp-interact so the preload's document-level arm (re-asserted every
+          // 150 ms) covers it too, not only the one mouseenter below; in a Canvas panel that iframe arm is the
+          // dependable path (the guild lead, 2026-10-06: "I can't click on these x's either").
+          x.setAttribute('data-wp-interact', '');
           x.textContent = '✕';
           x.title = 'Dismiss this countdown (yours only)';
           x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
