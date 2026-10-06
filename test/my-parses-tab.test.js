@@ -500,10 +500,199 @@ describe('the tab\'s states, captions and links', () => {
   });
 });
 
+// ── the character chips: mains and real alts first, the rest behind "+N more" ───────────────────────────────
+// The guild lead, 2026-10-06, looking at ~50 chips: "my expectation on this list is mains and real alts". The bot
+// sends {name, class, active, hidden, fights, recent} per character; an older bot sends only the first three.
+describe('the character chips: who is shown, who is tucked away', () => {
+  const pure = sliceBlock(dash, 'var WP_MP_WINDOWS =', '\nfunction wpMpRepaint').replace(/\nfunction wpMpRepaint$/, '\n');
+  const mk = () => new Function('esc', 'localStorage', pure + '\nreturn { _wpMp, wpMpSplitChars, wpMpHtml, WP_MP_HIDDEN_TIP };')(esc, undefined);
+  const T = mk();
+  const split = (chars, sel) => { const r = T.wpMpSplitChars(chars, sel); return { shown: r.shown.map(c => c.name), folded: r.folded.map(c => c.name) }; };
+  const CH = (name, over) => ({ name, class: 'Cleric', active: false, hidden: false, fights: 4, recent: 8, ...over });
+
+  describe('wpMpSplitChars', () => {
+    it('a hidden character is folded, even one that fought', () => {
+      expect(split([CH('Aldenmar'), CH('Brackwyn', { hidden: true, fights: 30, recent: 30 })])).toEqual({ shown: ['Aldenmar'], folded: ['Brackwyn'] });
+    });
+
+    it('a character with no fights in the window and none in 30 days is folded; either count keeps it shown', () => {
+      const r = split([
+        CH('Aldenmar', { fights: 0, recent: 0 }),
+        CH('Brackwyn', { fights: 0, recent: 3 }),          // quiet this window, fought this month
+        CH('Corvale', { fights: 2, recent: 0 }),           // cannot happen (the window is inside 30 days at most) but still shown
+        CH('Rethlan', { fights: 6, recent: 6 }),
+      ]);
+      expect(r.folded).toEqual(['Aldenmar']);
+      expect(r.shown.sort()).toEqual(['Brackwyn', 'Corvale', 'Rethlan']);
+    });
+
+    it('an older bot (no hidden, no counts) folds nothing: a missing hidden is false and missing counts mean show it', () => {
+      const old = [{ name: 'Aldenmar', class: 'Cleric', active: true }, { name: 'Brackwyn', class: 'Wizard', active: false }, { name: 'Corvale', active: false }];
+      expect(split(old)).toEqual({ shown: ['Aldenmar', 'Brackwyn', 'Corvale'], folded: [] });
+      // half an answer is still "unknown": only a character with BOTH counts at zero is quiet
+      expect(split([CH('Aldenmar', { fights: 0, recent: undefined }), CH('Brackwyn', { fights: undefined, recent: 0 }), CH('Corvale', { fights: null, recent: null })]).folded).toEqual([]);
+      // and a missing hidden next to counts is not hidden
+      expect(split([{ name: 'Aldenmar', fights: 3, recent: 3 }])).toEqual({ shown: ['Aldenmar'], folded: [] });
+    });
+
+    it('sorts by fights (most first), then active, then name; an old bot\'s own order (active, then name) survives', () => {
+      const r = split([
+        CH('Zarrin', { fights: 2 }), CH('brackwyn', { fights: 9 }), CH('Corvale', { fights: 9, active: true }),
+        CH('Aldenmar', { fights: 2 }), CH('Nyssara', { fights: 2, active: true }), CH('Rethlan', { fights: 9 }),
+      ]);
+      expect(r.shown).toEqual(['Corvale', 'brackwyn', 'Rethlan', 'Nyssara', 'Aldenmar', 'Zarrin']);
+      const old = [{ name: 'Nyssara', active: true }, { name: 'Zarrin', active: true }, { name: 'Aldenmar', active: false }, { name: 'Brackwyn', active: false }];
+      expect(split(old).shown).toEqual(['Nyssara', 'Zarrin', 'Aldenmar', 'Brackwyn']);
+    });
+
+    it('the folded list is the quiet ones first, the hidden ones last, each sorted the same way', () => {
+      const r = split([
+        CH('Aldenmar', { hidden: true, fights: 50, recent: 50 }), CH('Brackwyn', { fights: 0, recent: 0, active: true }),
+        CH('Corvale', { hidden: true, fights: 0, recent: 0, active: true }), CH('Zarrin', { fights: 0, recent: 0 }), CH('Rethlan'),
+      ]);
+      expect(r.shown).toEqual(['Rethlan']);
+      expect(r.folded).toEqual(['Brackwyn', 'Zarrin', 'Aldenmar', 'Corvale']);
+    });
+
+    it('the selected character always lands in shown, whatever its flags and however its case', () => {
+      const chars = [CH('Aldenmar'), CH('Brackwyn', { hidden: true }), CH('Corvale', { fights: 0, recent: 0 })];
+      expect(split(chars, 'brackwyn')).toEqual({ shown: ['Aldenmar', 'Brackwyn'], folded: ['Corvale'] });
+      expect(split(chars, 'CORVALE')).toEqual({ shown: ['Aldenmar', 'Corvale'], folded: ['Brackwyn'] });
+      expect(split(chars, 'Nobody')).toEqual({ shown: ['Aldenmar'], folded: ['Corvale', 'Brackwyn'] });      // the hidden one last
+      expect(split(chars, '')).toEqual({ shown: ['Aldenmar'], folded: ['Corvale', 'Brackwyn'] });
+    });
+
+    it('hands back the very objects it was given, once each, and survives junk', () => {
+      const a = CH('Aldenmar'), b = CH('Brackwyn', { hidden: true });
+      const r = T.wpMpSplitChars([a, b], '');
+      expect(r.shown[0]).toBe(a);
+      expect(r.folded[0]).toBe(b);
+      expect(T.wpMpSplitChars(null, 'x')).toEqual({ shown: [], folded: [] });
+      expect(T.wpMpSplitChars(undefined)).toEqual({ shown: [], folded: [] });
+      expect(split([null, {}, { name: '' }, CH('Aldenmar')])).toEqual({ shown: ['Aldenmar'], folded: [] });
+      // hidden is only ever the boolean true: a stray truthy value does not hide a character
+      expect(split([CH('Aldenmar', { hidden: 'false' }), CH('Brackwyn', { hidden: 1 })]).folded).toEqual([]);
+    });
+  });
+
+  describe('the chip row', () => {
+    const html = (chars, patch) => { const t = mk(); Object.assign(t._wpMp, { state: 'ok', asOf: AS_OF, data: ANSWER(), chars }, patch); return t.wpMpHtml(); };
+    const chipRe = /<button type="button" class="wp-btn( pri)?" data-k="char" data-v="([^"]*)" onclick="wpMpSet\(this\)"([^>]*)>([^<]*)<\/button>/g;
+    const chips = (h) => [...h.matchAll(chipRe)].map(m => ({ v: m[2], on: !!m[1], attrs: m[3], label: m[4], at: m.index }));
+    const toggle = (h) => { const m = /<button type="button" class="wp-btn ghost" onclick="wpMpMore\(\)"[^>]*>([^<]*)<\/button>/.exec(h); return m && { label: m[1], at: m.index }; };
+    // two raiders' worth of real characters, and a pile of mules and traders behind them
+    const family = [CH('Aldenmar', { active: true, fights: 14, recent: 40 }), CH('Brackwyn', { fights: 6, recent: 20 }), CH('Corvale', { fights: 0, recent: 4 })];
+    const pile = [
+      ...Array.from({ length: 30 }, (_, i) => CH('Quill' + String.fromCharCode(97 + (i % 26)) + (i >= 26 ? 'z' : ''), { fights: 0, recent: 0 })),
+      ...Array.from({ length: 17 }, (_, i) => CH('Bank' + String.fromCharCode(97 + i), { hidden: true, fights: 0, recent: 0 })),   // sort BEFORE Quill*: hidden-last must be the rule, not the alphabet
+    ];
+    const all = [...pile, ...family];                                              // 3 + 47 = 50
+
+    it('50 characters draw All, the three that matter and "+47 more" as the last chip; the pile is not in the HTML', () => {
+      const h = html(all);
+      expect(chips(h).map(c => c.v)).toEqual(['', 'Aldenmar', 'Brackwyn', 'Corvale']);
+      expect(toggle(h).label).toBe('+47 more');
+      expect(toggle(h).at, 'the toggle comes after the shown chips').toBeGreaterThan(chips(h)[3].at);
+      expect(h).not.toContain('Quill');
+      expect(h).not.toContain('Bank');
+      expect(h).not.toContain('fewer');
+    });
+
+    it('"+N more" counts the folded ones, so it drops by one when a folded character is the selected one', () => {
+      expect(toggle(html(all, { char: 'Quillb' })).label).toBe('+46 more');
+      const h = html(all, { char: 'Quillb' });
+      expect(chips(h).map(c => c.v), 'the selected one is on the row without opening it').toEqual(['', 'Aldenmar', 'Brackwyn', 'Corvale', 'Quillb']);
+      expect(chips(h).filter(c => c.on).map(c => c.v), 'and lit').toEqual(['Quillb']);
+    });
+
+    it('opened ("fewer"): the tucked-away ones follow the shown ones, the quiet ones before the hidden ones; hidden ones are dimmed and say why', () => {
+      const h = html(all, { showAll: true });
+      const c = chips(h);
+      expect(c).toHaveLength(1 + 50);
+      expect(toggle(h).label).toBe('fewer');
+      expect(h).not.toMatch(/\+\d+ more/);
+      expect(c.slice(0, 4).map(x => x.v)).toEqual(['', 'Aldenmar', 'Brackwyn', 'Corvale']);
+      expect(toggle(h).at).toBeGreaterThan(c[3].at);
+      expect(toggle(h).at, 'the folded chips come after the toggle, so it keeps its place').toBeLessThan(c[4].at);
+      const folded = c.slice(4);
+      expect(folded.filter(x => x.v.startsWith('Quill'))).toHaveLength(30);
+      expect(folded.findIndex(x => x.v.startsWith('Bank')), 'hidden ones last').toBe(30);
+      for (const x of folded) {
+        const hid = x.v.startsWith('Bank');
+        expect(x.attrs.includes('opacity:.55'), x.v).toBe(hid);
+        expect(x.attrs.includes('title="' + T.WP_MP_HIDDEN_TIP + '"'), x.v).toBe(hid);
+      }
+      expect(T.WP_MP_HIDDEN_TIP).toBe('Hidden on wolfpack.quest/me (Hide from lists)');
+      expect(c.slice(0, 4).every(x => !x.attrs.includes('opacity'))).toBe(true);
+    });
+
+    it('a hidden character that is the selected one is lit, not dimmed', () => {
+      const h = html([...family, CH('Trader', { hidden: true })], { char: 'trader', showAll: true });
+      const t = chips(h).find(x => x.v === 'Trader');
+      expect(t.on).toBe(true);
+      expect(t.attrs).not.toContain('opacity');
+    });
+
+    it('the row waits for a second chip: one lone character with nothing folded shows no Character row at all', () => {
+      expect(html([family[0]])).not.toContain('Character');
+      expect(html([])).not.toContain('Character');
+      expect(html([family[0]])).not.toContain('data-k="char"');
+      // but one shown plus anything folded is a real choice
+      const h = html([family[0], CH('Quilla', { fights: 0, recent: 0 })]);
+      expect(chips(h).map(c => c.v)).toEqual(['', 'Aldenmar']);
+      expect(toggle(h).label).toBe('+1 more');
+      // and nothing shown at all (every character quiet or hidden) still offers All and the toggle
+      const none = html(pile);
+      expect(chips(none).map(c => c.v)).toEqual(['']);
+      expect(toggle(none).label).toBe('+47 more');
+    });
+
+    it('an older bot (no hidden, no counts): every character is a chip, no toggle, no note', () => {
+      const old = [{ name: 'Aldenmar', class: 'Cleric', active: true }, { name: 'Brackwyn', class: 'Wizard', active: false }];
+      const h = html(old);
+      expect(chips(h).map(c => c.v)).toEqual(['', 'Aldenmar', 'Brackwyn']);
+      expect(toggle(h)).toBeNull();
+      expect(h).not.toContain('tucked away');
+      expect(chips(h)[1].attrs).toContain('title="Cleric"');
+    });
+
+    it('a short line says what is tucked away, links wolfpack.quest/me through the shell, and only shows when something is', () => {
+      const note = 'Characters with no fights in 30 days, and ones you hid on ';
+      const h = html(all);
+      expect(h).toContain(note);
+      expect(h).toContain(', are tucked away.');
+      const a = /<a href="(https:\/\/wolfpack\.quest\/me)" target="_blank" rel="noreferrer" onclick="return wpMpLink\(this\)"[^>]*>wolfpack\.quest\/me<\/a>/.exec(h);
+      expect(a, 'the same link pattern as the tab\'s other links').not.toBeNull();
+      const allowed = new Function(sliceBlock(MAIN, 'const ALLOW = /', '/i;') + '\nreturn ALLOW;')();
+      expect(allowed.test(a[1])).toBe(true);
+      expect(h.indexOf(note), 'under the controls').toBeGreaterThan(h.indexOf('Open on wolfpack.quest'));
+      expect(html(all, { showAll: true })).toContain(note);                       // still true while opened
+      expect(html(family)).not.toContain('tucked away');
+      expect(html(family)).not.toContain('wolfpack.quest/me"');
+      expect(html(all, { state: 'unavailable', data: null })).toContain('tucked away');   // the note and the row travel together
+    });
+
+    it('keeps the section byte-stable and clear of the name-click and details rules', () => {
+      for (const patch of [{}, { showAll: true }, { char: 'Quillb' }]) {
+        const h = html(all, patch);
+        expect(h).toBe(html(JSON.parse(JSON.stringify(all)), patch));
+        expect(h).not.toContain('class="name"');
+        expect(h).not.toContain('<details');
+        expect(h).not.toMatch(/ago\b|NaN|undefined|null/);
+      }
+    });
+
+    it('character names are escaped', () => {
+      const h = html([CH('Aldenmar'), CH('Brackwyn'), CH('x"><script>', { hidden: true })], { showAll: true });
+      expect(h).not.toContain('<script>');
+    });
+  });
+});
+
 describe('asking: only when opened, on a change, or on ↻', () => {
   const full = sliceBlock(dash, 'var WP_MP_WINDOWS =', '\nfunction renderTriggers(s) {').replace(/\nfunction renderTriggers\(s\) \{$/, '\n');
   const build = new Function('esc', 'localStorage', 'setSectionHTML', 'fetch', 'window',
-    full + '\nreturn { _wpMp, wpMpFetch, wpMpSet, wpMpRefresh, wpMpOpenTab, wpMpLink, wpMpHtml };');
+    full + '\nreturn { _wpMp, wpMpFetch, wpMpSet, wpMpRefresh, wpMpOpenTab, wpMpLink, wpMpHtml, wpMpMore };');
   const el = (k, v) => ({ getAttribute: (a) => ({ 'data-k': k, 'data-v': v })[a] ?? null });
 
   function harness(saved, win = {}) {
@@ -615,6 +804,42 @@ describe('asking: only when opened, on a change, or on ↻', () => {
     h.wpMpOpenTab(); h.calls[0].ok(ANSWER()); await tick();
     expect(h.calls).toHaveLength(1);
     expect(h._wpMp.char).toBe('brackwyn');
+  });
+
+  it('"+N more" / "fewer" only repaint: no ask, nothing saved, and the choice is not lost by an answer landing', async () => {
+    const chars = [
+      { name: 'Aldenmar', class: 'Cleric', active: true, hidden: false, fights: 9, recent: 9 },
+      { name: 'Brackwyn', class: 'Wizard', active: false, hidden: false, fights: 3, recent: 3 },
+      { name: 'Quilla', class: 'Rogue', active: false, hidden: true, fights: 0, recent: 0 },
+    ];
+    const h = harness();
+    h.wpMpOpenTab(); h.calls[0].ok(ANSWER({ characters: chars })); await tick();
+    expect(h.last()).toContain('+1 more');
+    expect(h.last()).not.toContain('Quilla');
+    const painted = h.painted.length;
+    h.wpMpMore();
+    expect(h.painted.length, 'one repaint').toBe(painted + 1);
+    expect(h.last()).toContain('>fewer</button>');
+    expect(h.last()).toContain('data-v="Quilla"');
+    expect(h.calls, 'nothing was asked').toHaveLength(1);
+    expect(h.store['wp:myParses'], 'and nothing saved').toBeUndefined();
+    h.wpMpRefresh(); h.calls[1].ok(ANSWER({ characters: chars })); await tick();
+    expect(h.last(), 'a new answer keeps it open').toContain('>fewer</button>');
+    h.wpMpMore();
+    expect(h.last()).toContain('+1 more');
+    expect(h.last()).not.toContain('Quilla');
+  });
+
+  it('a remembered character that is hidden is still listed, so it stays selected and on the row', async () => {
+    const chars = [
+      { name: 'Aldenmar', active: true, hidden: false, fights: 9, recent: 9 },
+      { name: 'Brackwyn', active: false, hidden: true, fights: 2, recent: 2 },
+    ];
+    const h = harness({ w: '7d', scope: 'bosses', char: 'Brackwyn' });
+    h.wpMpOpenTab(); h.calls[0].ok(ANSWER({ characters: chars })); await tick();
+    expect(h.calls, 'no reset to All').toHaveLength(1);
+    expect(h._wpMp.char).toBe('Brackwyn');
+    expect(h.last()).toMatch(/class="wp-btn pri" data-k="char" data-v="Brackwyn"/);
   });
 
   it('opens wolfpack.quest links through the shell when there is one, and lets a plain browser follow the link', () => {
