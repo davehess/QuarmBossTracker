@@ -201,11 +201,13 @@ next touch one rather than assuming a missing row means a missing doc.
   the bot token + the shared key + a recordings share, and the client-art rights call. Next: callouts moved
   over from RaidBosses (whose own voice very likely broke on 2026-03-01 — `/voicetest`). DECISIONS-2026-09-21
   §166.
-- **⏳ The raid screen: B being built, C planned (2026-10-06).** B is `wolfpack.quest/screen` (Map / Slides /
-  Loot / Overview, officers switch it). It goes live with the [beta] tag, and its 3-second read comes from
-  the Railway bot because of Vercel Hobby's invocation cap. C, a Discord Activity, is planned in
-  `docs/DESIGN-raid-screen-activity.md`. It is blocked on Discord verifying the app, so the first step is the
-  guild lead reading the portal's App Verification tab. §166.
+- **✅ The raid screen is live, [beta] (web 1.8.106 · bot 3.1.209, 2026-10-06).** `wolfpack.quest/screen`: Map /
+  Slides / Loot / Overview, officers switch it, everyone follows in ~3 s. Its 3-second read comes from the
+  Railway bot once `SCREEN_TOKEN_SECRET` (Railway + Vercel) and `SCREEN_LIVE_URL` (Vercel) are set; until then it
+  polls Vercel every 8 s. Shipped after an adversarial review (8 confirmed defects fixed, sealed bids among them).
+  Next: the guild lead sets the two variables, then an officer drives it on a raid night. C, a Discord Activity,
+  is planned in `docs/DESIGN-raid-screen-activity.md` and blocked on Discord verifying the app (first step: the
+  guild lead reads the portal's App Verification tab). §166.
 - **⏳ How raiders look, kept per raid night (bot 3.1.208, 2026-10-05).** `raid_night_appearance`: race,
   deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
   position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's

@@ -7399,6 +7399,18 @@ map during raids."*
     same ticket.
   - While the secret is unset, the page polls Vercel as `/spectator` does today.
   - Slow reads (zone maps, the loot and kill feed once a minute) stay on Vercel.
+- **Shipped 2026-10-06 (web 1.8.106 · bot 3.1.209), live with the [beta] tag**, after an adversarial review:
+  31 agents, 13 findings, 8 confirmed by two skeptics each, all fixed with tests that fail without the fix.
+  - **Sealed bids:** the screen showed the high bidder and amount on an auction still open, because the
+    OpenDKP mirror can capture the leader mid-auction. An open auction now shows only the item and its
+    closing time.
+  - **Slides:** deleting or moving another slide switched what everyone saw. The slide that is up now keeps
+    its place.
+  - **Clocks:** a viewer with a fast PC clock fell back to polling Vercel for good. Ticket life is now
+    measured on the page's own clock.
+  - **Fallback cost:** until the variables are set, `/screen` polls Vercel every 8 s (not 3 s), and officers
+    see "live feed: website (slower)".
+  - Migration `20261006120000_raid_screen.sql` was applied through the MCP.
 
 ### 167. The guild lead's own machines are private; the platform gets the pattern (2026-10-06)
 

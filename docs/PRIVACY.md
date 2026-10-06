@@ -304,7 +304,8 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   Members' Mimic can look up your current zone, HP, buffs and those timers —
   that's how the buff queue and Target Info work. While you are in a raid, your
   latest position in the zone is shown to signed-in members on the spectator
-  page, and kept, one sample every few seconds, so a raid can be replayed.
+  page and the raid screen (`/screen`, whose live view is served by the guild
+  bot), and kept, one sample every few seconds, so a raid can be replayed.
   Alongside, once a raid night (and hourly after), how each raider's character
   looks is kept for that replay: race, deity and the worn armor and weapons from
   the gear we already hold (not your inventory for characters set to exclude
