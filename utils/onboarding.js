@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.210': [
+    '**Your parses over time.** wolfpack.quest/me/parses graphs your own fights over a day, a week, 30 or 90 days, this expansion or all time, bosses only or every fight, and shows how each fight compares with your usual on that boss. The Mimic beta gets the same chart as a My parses tab.',
+  ],
   '3.1.207': [
     '**PvP and live kills no longer start a guild boss timer.** A kill of a boss like Lord of Ire in the PvP instance, or in the open world with other guilds in the zone, used to look exactly like our own instance kill and put the timer up. The bot now checks the PvP kill broadcast, whether a fighter was flagged, how many of the fighters are ours and whether one of the fighters saw another guild in the zone on /who. Only a kill that looks like ours starts a timer, and a kill by one or two people with nothing else to go on starts none. The parse is still saved; a kill marked PvP or live stays off the guild kill counts and the parse list, the same as when an officer marks it.',
   ],

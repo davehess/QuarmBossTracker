@@ -13978,6 +13978,48 @@ async function _handleAgentLiveDamage(req, res) {
   return res.end(body);
 }
 
+// GET /api/agent/my-parses?w=<1d|7d|30d|90d|exp|life>&scope=<bosses|all>&char=<name>
+//
+// The signed-in raider's own parses over a window, for Mimic's My parses chart (a member asked
+// 2026-10-06 for a graph of their parses over a variable window; the guild lead picked this design).
+// One call to the my_parse_series() function (supabase/migrations/20261006200000_my_parse_series.sql),
+// the same one wolfpack.quest/me/parses reads, so the two always agree. utils/myParses.js has the query
+// rules and the cache; this is the route.
+// WHO: the person is the Mimic session's own discord_id and nothing in the query string can change that.
+// The function is service_role only for the same reason.
+// A read route, not an ingest stream: no shed flag and no admission budget. A raid's worth of raiders
+// opening the chart at once costs one function call each per five minutes (the cache below), and a
+// failed read is a 502 that is never cached.
+const myParses = require('./utils/myParses');
+const _myParsesCache = myParses.createCache();
+async function _handleAgentMyParses(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const discordId = String(identity.discord_id || '');
+  if (!discordId) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'no linked account' }));
+  }
+
+  const q = myParses.parseQuery(req.url);
+  const key = myParses.cacheKey(discordId, q);
+  let body = _myParsesCache.get(key);
+  if (!body) {
+    const out = await myParses.fetchSeries(require('./utils/supabase'), discordId, q);
+    if (!out) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unavailable' }));
+    }
+    body = JSON.stringify(out);
+    _myParsesCache.set(key, body);
+  }
+
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Vary': 'Accept-Encoding' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  return res.end(gzip ? require('zlib').gzipSync(body) : body);
+}
+
 // The live raid split (§124, utils/raidGroups.js): which raid each uploader and raider is in when
 // two or more run at once. The buff queue computes it from the roster it already reads and leaves
 // it here; other handlers read it here, and fetch only the last RAID_LIVE_MS of uploads (the only
@@ -22428,6 +22470,14 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[live-damage] handler error:', err);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ players: [], note: 'error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/my-parses')) {
+    try { return await _handleAgentMyParses(req, res); }
+    catch (err) {
+      console.error('[my-parses] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
   if (req.method === 'GET' && req.url.startsWith('/api/agent/extended-target')) {
