@@ -7399,3 +7399,20 @@ map during raids."*
     same ticket.
   - While the secret is unset, the page polls Vercel as `/spectator` does today.
   - Slow reads (zone maps, the loot and kill feed once a minute) stay on Vercel.
+
+### 167. The guild lead's own machines are private; the platform gets the pattern (2026-10-06)
+
+The guild lead: *"this detail should be written outside of our GitHub repo for things not generalized for
+the platform. design recommendations for hardware I operate can be part of it, but nothing with secrets or
+that exposes me to anything."*
+
+- **Where it lives:** a new **Home lab** tab in the private briefing holds which machine does what, the
+  recommended jobs per machine, the Tower rebuild question and a hardening checklist. Rule recorded in
+  `CLAUDE.md` beside the other private-briefing tabs.
+- **What the repo gets:** only the generalized pattern, for the self-host wizard: always-on duties (the
+  assistant, voices, speech-to-text, the raid voice bot) live on one wired box nobody games on; gaming PCs
+  are helpers that take picture jobs only when they are free (no game running, idle, GPU free). Written into
+  `DESIGN-selfhost-wizard.md` §3.
+- **Raid announcers** (miMIC, Bristlebane, Lord Mobsincamp) are being designed now: the cast bible and the
+  announcer engine come to the repo with no member names; anything about the guild lead's own setup goes to
+  the Home lab tab.

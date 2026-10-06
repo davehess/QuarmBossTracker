@@ -308,6 +308,14 @@ never carries its link) holds:
   release question, so answer those from it instead of walking the DECISIONS files. A session that
   creates, merges or retires a branch, opens or graduates a preview, or cuts a release updates that tab
   before it finishes.
+- the **Home lab** tab (the guild lead, 2026-10-06): *"this detail should be written outside of our GitHub
+  repo for things not generalized for the platform. design recommendations for hardware I operate can be
+  part of it, but nothing with secrets or that exposes me to anything."* The guild lead's own machines and
+  how they are used go here and only here: which PC is gamed on, which card runs what, wired vs Wi-Fi,
+  personal agents and their accounts, the Tower rebuild plan and its costs. The repo gets the
+  generalized pattern (e.g. "an always-on home plus helpers that render when free"), never the house.
+  **Even that tab carries no addresses, tokens, open ports or "this box is unpatched" statements**: a
+  hardening list there is a checklist the guild lead ticks, never a record of what is exposed.
 
 Everything else still goes in the public DECISIONS file. A private call gets a
 one-line public pointer only when other sessions need to know that it exists.
