@@ -3534,6 +3534,40 @@ The raid on the zone map, live, for signed-in members.
 - **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
   `test/raid-track.test.js`.
 
+### Raid screen (`/screen`, web 1.8.106 · bot 3.1.209, §166)
+One page the raid keeps open. An officer switches it between Map, Slides, Loot and Overview, and every
+viewer follows within ~3 s. New page, so it carries `NewPageTag` ([beta]).
+- **Page:** `web/app/screen/page.tsx`, `ScreenBoard.tsx` (bar, rail, polls), `ScreenPanels.tsx` (Slides / Loot /
+  Overview), `SlideEditor.tsx` (officer drawer). The Map mode is `SpectatorBoard` with `embedded` and `shared`
+  (positions handed in, no poll of its own). Rules: `web/lib/raidScreen.ts`; server reads and writes:
+  `web/lib/raidScreenServer.ts`.
+- **Tables** (migration `20261006120000_raid_screen.sql`, RLS on, no policies, service role only):
+  `raid_screen_state` (one row per guild: mode, slide, who drove it) and `raid_screen_slides` (the deck).
+- **Routes on Vercel:** `/api/screen/state` (GET members, POST officers), `/api/screen/slides` (officers write),
+  `/api/screen/feed` (loot awards, picked-up loot, tonight's kills, next spawns; 10 s shared answer, polled every
+  60 s), `/api/screen/ticket` (mints the screen ticket, below).
+- **The 3-second read comes from the bot, not Vercel** (Vercel Hobby's 1M invocations a month). `GET
+  /api/screen/live` on the bot (`utils/screenLive.js`) answers positions from `utils/raidTrack.js` memory
+  (`liveRows`), plus the screen state and live auctions. Supabase reads behind it are memoized for the whole bot
+  (zones ≤ 1 per 10 s, state ≤ 1 per 2 s; a last good value is served for at most 60 s / 20 s when Supabase
+  fails). Uploader Discord ids are replaced with `u1`, `u2`… before they leave. The 200 answer is gzipped when
+  the browser accepts it. The page shapes the payload with the same pure functions the Vercel routes use
+  (`buildPositions`, `buildScreenState`).
+- **Sealed bids stay sealed:** an auction still open shows only the item and "bidding open · closes in …"; the
+  leader and the amount appear only once it has ended (`buildAwards`), on both the Vercel and bot paths.
+- **The slide that is up keeps its place** when other slides are deleted or moved (`slideIndexAfter`, written in
+  the same request).
+- **Screen ticket:** `v1.<payload>.<HMAC-SHA256>`, 2 h, `aud: 'screen'`, signed by `web/lib/screenTicket.ts`,
+  checked by `utils/screenTicket.js`, one secret `SCREEN_TOKEN_SECRET` on both hosts. The bot answers CORS only
+  for `SCREEN_ALLOWED_ORIGINS` (default wolfpack.quest and b.wolfpack.quest).
+- **Fallback:** `web/lib/screenLive.ts` (`createScreenLive`, `useScreenLive`). While `SCREEN_TOKEN_SECRET` or
+  `SCREEN_LIVE_URL` is unset, or the bot fails three times, the page polls the Vercel routes (every 8 s on
+  `/screen`, 3 s on `/spectator`) and re-tries the bot once a minute; officers see "live feed: website (slower)".
+  The ticket's life is counted on the page's own clock (`ttl`), so a wrong PC clock cannot force the fallback.
+  Turning the secret off on Railway is the kill switch.
+- **The Discord Activity version** (option C) is planned, not built: `docs/DESIGN-raid-screen-activity.md`.
+- **Tests:** `test/raid-screen.test.js`, `test/screen-live.test.js`.
+
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes
 `.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.

@@ -5,7 +5,8 @@
 // Rules this file keeps:
 //   * No free-running loop. A frame is drawn only when something changed (a poll, a pan, a toggle, a
 //     resize), through one requestAnimationFrame guard.
-//   * The poll pauses while the tab is hidden and resumes at once when it is shown again.
+//   * The poll (lib/useScreenLive.ts: the bot's feed, with Vercel as the fallback) pauses while the tab is
+//     hidden and resumes at once when it is shown again.
 //   * The map for a zone is fetched once and kept for the visit.
 //   * Colour is never the only carrier: the roster beside the map spells out class, group and HP.
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts with their tests.
@@ -14,10 +15,10 @@ import {
   DOT_STALE_S, classAbbr, classColor, deriveBands, effectiveLayers, fitView, headingVec, layerBounds,
   coreRaiders, lineNearZ, liftColor, mapBox, median, needsRefit, nearestBand, parseZoneMap, pickZone, raidBox,
   scaleBarUnits, toScreen, zoomAt,
-  type LayerChoice, type Positions, type Raider, type View, type ZoneMap,
+  type LayerChoice, type Raider, type View, type ZoneMap,
 } from '@/lib/spectator';
+import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
 
-const POLL_MS = 3000;   // positions are uploaded every ~3 s, so polling faster only repeats the same rows
 const BG = '#0d1117';
 const PANEL = '#161b22';
 const BORDER = '#30363d';
@@ -104,10 +105,17 @@ const chipOn = 'border-accent bg-accent text-white';
 const chipFloorOn = 'border-accent bg-accent/15 text-text';
 const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 
-export default function SpectatorBoard() {
-  const [feed, setFeed] = useState<{ data: Positions; rxAt: number } | null>(null);
-  const [netErr, setNetErr] = useState(false);
-  const [signedOut, setSignedOut] = useState(false);
+// `embedded`: the board inside /screen, which owns the page chrome. It drops the roster column and the help
+// line (the screen's right rail has its own panels), the "Live" word (the screen's bar says it), and lets the
+// map take the height of the window. Everything else is the same board.
+// `shared`: positions handed in by a parent that already reads them (the screen reads the bot once for the whole
+// page); given, the board does not poll at all. Left out, the board reads them itself (/spectator).
+export default function SpectatorBoard({ embedded = false, shared }: {
+  embedded?: boolean;
+  shared?: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'>;
+} = {}) {
+  const own = useScreenLive({ enabled: shared === undefined });
+  const { feed, netErr, signedOut } = shared ?? own;
   const [chosen, setChosen] = useState<string | null>(null);
   const [maps, setMaps] = useState<Record<string, MapEntry>>({});
   const [hidden, setHidden] = useState<Set<number>>(new Set());
@@ -366,45 +374,6 @@ export default function SpectatorBoard() {
 
   // ── effects ────────────────────────────────────────────────────────────────
 
-  // The poll: sequential (the next one starts POLL_MS after the last answer), paused while hidden.
-  useEffect(() => {
-    let stop = false;
-    let busy = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let ctrl: AbortController | undefined;
-    const run = async () => {
-      timer = undefined;
-      if (stop || busy || document.hidden) return;
-      busy = true;
-      ctrl = new AbortController();
-      try {
-        const res = await fetch('/api/spectator/positions', { cache: 'no-store', signal: ctrl.signal });
-        if (res.status === 401) { setSignedOut(true); stop = true; return; }
-        if (!res.ok) throw new Error('feed ' + res.status);
-        const j = await res.json();
-        if (!Array.isArray(j?.raiders) || !Array.isArray(j?.zones)) throw new Error('feed shape');
-        if (!stop) { setFeed({ data: j as Positions, rxAt: Date.now() }); setNetErr(false); }
-      } catch (e) {
-        if (!stop && (e as Error)?.name !== 'AbortError') setNetErr(true);
-      } finally {
-        busy = false;
-      }
-      if (!stop && !document.hidden) timer = setTimeout(run, POLL_MS);
-    };
-    const onVisibility = () => {
-      if (document.hidden) { if (timer) clearTimeout(timer); timer = undefined; ctrl?.abort(); }
-      else if (!timer && !busy) run();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    run();
-    return () => {
-      stop = true;
-      if (timer) clearTimeout(timer);
-      ctrl?.abort();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
-
   // The map for the zone on screen: once per zone, kept for the visit. 404 = no map yet.
   const loadMap = useCallback((z: string) => {
     if (mapReqs.current.has(z)) return;
@@ -627,7 +596,7 @@ export default function SpectatorBoard() {
     return (
       <Panel>
         Your session ended.{' '}
-        <a href="/auth/signin?next=/spectator" className="underline">Sign in again</a> to see the board.
+        <a href={embedded ? '/auth/signin?next=/screen' : '/auth/signin?next=/spectator'} className="underline">Sign in again</a> to see the board.
       </Panel>
     );
   }
@@ -655,13 +624,15 @@ export default function SpectatorBoard() {
   const elapsed = (Date.now() - feed.rxAt) / 1000;
 
   return (
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div className={embedded ? 'min-w-0' : 'grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]'}>
       <div className="min-w-0">
         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dim">
-          <span className={netErr ? 'text-orange' : 'text-green'}>{netErr ? 'Reconnecting…' : '● Live'}</span>
+          {(!embedded || netErr) && (
+            <span className={netErr ? 'text-orange' : 'text-green'}>{netErr ? 'Reconnecting…' : '● Live'}</span>
+          )}
           <span className="text-text">{zoneName}</span>
           <span>{raiders.length} {raiders.length === 1 ? 'raider' : 'raiders'}</span>
-          {awayCount > 0 && <span>{awayCount} away from the raid (tap one in the roster)</span>}
+          {awayCount > 0 && <span>{awayCount} away from the raid{embedded ? '' : ' (tap one in the roster)'}</span>}
           {otherZones > 0 && <span>{otherZones} in other zones</span>}
           {feed.data.unplaced > 0 && <span>{feed.data.unplaced} not placed (zone unknown)</span>}
         </div>
@@ -690,7 +661,8 @@ export default function SpectatorBoard() {
         </div>
 
         <div ref={wrapRef}
-          className="relative h-[52vh] max-h-[720px] sm:h-[62vh] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg">
+          className={`relative w-full overflow-hidden rounded-md border border-border bg-bg min-h-[320px] ${
+            embedded ? 'h-[56vh] lg:h-[calc(100vh-17rem)]' : 'h-[52vh] max-h-[720px] sm:h-[62vh]'}`}>
           <canvas ref={canvasRef}
             tabIndex={0}
             role="img"
@@ -742,12 +714,15 @@ export default function SpectatorBoard() {
             ))}
           </div>
         )}
-        <p className="mt-2 text-xs text-dim">
-          Drag to pan, scroll or pinch to zoom. Dots point the way each raider faces and fade when a position is more than {DOT_STALE_S} seconds old.
-          {bands.length > 1 ? ' The bright lines are the floor the raid is on.' : ''}
-        </p>
+        {!embedded && (
+          <p className="mt-2 text-xs text-dim">
+            Drag to pan, scroll or pinch to zoom. Dots point the way each raider faces and fade when a position is more than {DOT_STALE_S} seconds old.
+            {bands.length > 1 ? ' The bright lines are the floor the raid is on.' : ''}
+          </p>
+        )}
       </div>
 
+      {!embedded && (
       <aside className="min-w-0 rounded-md border border-border bg-panel p-2 lg:max-h-[80vh] lg:overflow-y-auto" aria-label="Raid roster">
         <ul className="space-y-3">
           {groupKeys.map(g => (
@@ -779,6 +754,7 @@ export default function SpectatorBoard() {
           ))}
         </ul>
       </aside>
+      )}
     </div>
   );
 }

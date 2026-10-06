@@ -39,6 +39,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },
   '/raid':         { title: 'Live Raid', description: 'The raid right now — who’s in, groups, HP, and buffs, live from Zeal.' },
   '/spectator':    { title: '[beta] Spectator', description: 'The raid on a map, live — everyone’s position in the zone they are in, with the zone’s walls underneath.' },
+  '/screen':       { title: '[beta] Raid screen', description: 'One page the whole raid watches — the map, slides, loot or an overview, switched by the raid leader and followed live.' },
   '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS/Tank Meter, triggers, buff queue, and log sync for Project Quarm.' },
   '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },

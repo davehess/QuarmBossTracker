@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'raid-screen-2026-10-06',
+    title: 'The raid screen',
+    version: 'Web 1.8.106 · Bot 3.1.209',
+    date: '2026-10-06',
+    headline: 'One page the whole raid can keep open on a second monitor or a phone, and the raid leader decides what it shows.',
+    features: [
+      { name: 'wolfpack.quest/screen', blurb: 'Map, Slides, Loot or Overview. Map is the live raid on the zone map. Slides are the raid leader\'s own notes for the next fight. Loot shows what was awarded and picked up tonight. Overview shows who is where by group and class, tonight\'s boss kills and the next spawns. When an officer switches it, everyone\'s page follows within a few seconds, and "Driving:" says who. Members only. It is new, so it is marked [beta].' },
+      { name: 'Bristlebane links it', blurb: 'When Bristlebane joins the raid channel, its notice can carry a link to the raid screen.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'bristlebane-looks-2026-10-05',
     title: 'Bristlebane joins the raid, and the raid remembers how we looked',
     version: 'Bot 3.1.208 · Web 1.8.104',
