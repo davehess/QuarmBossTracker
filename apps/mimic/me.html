@@ -581,6 +581,8 @@
   // also smaller text."
   function slowText(t){
     if (!t || t.corpse) return null;
+    // FB-54: a slow on it hastes it, and that beats Unslowable — red, ahead of every slow state.
+    if (t.reverse_slow) return { s: 'reverse slow', c: 'var(--red)', size: 9.5 };
     if (t.slow) return { s: 'slowed' + (t.slow.pct ? ' ' + t.slow.pct + '%' : '') + (t.slow.remaining_secs != null ? ' · ' + mmss(t.slow.remaining_secs * 1000) : ''), c: 'var(--green)', size: 9.5 };
     if (t.unslowable) return { s: 'unslowable', c: 'var(--dim)', size: 8 };
     if (t.enrage != null) return { s: 'not slowed', c: 'var(--orange)', size: 9.5 };   // a mob we have the catalog row for
