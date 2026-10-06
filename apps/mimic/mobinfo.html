@@ -63,6 +63,14 @@
   .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
   .fac .up{color:#56d364}
   .fac .dn{color:#f85149}
+  /* What the mob IS on, who will assist it, what it helps (above the on-kill list). Wraps — the
+     window is small and a zone can hold a dozen helpers. The faction name is the one link; the
+     handshake and the click are wired with the PQDI chip's, below. */
+  .fhead{margin-bottom:3px}
+  .fmeta{font-size:10px;line-height:1.35;padding:1px 0;color:#c9d1d9;overflow-wrap:anywhere}
+  .fmeta .fk{color:#6e7681}
+  .facl{color:#d2a8ff;cursor:pointer;text-decoration:none;border-bottom:1px dotted #a371f7}
+  .facl:hover{color:#e9d5ff;border-bottom-color:#d2a8ff}
   /* F/Q/V sub-tabs (Faction / Quest / Vendor), the quest rows and their copy chips. */
   .fqvtabs{display:flex;gap:3px;margin:6px 0 3px}
   .fqvtab{background:rgba(255,255,255,0.04);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
@@ -634,6 +642,14 @@
         bodyEl.__wpHtml = null;
         return;
       }
+      // The faction name on the Faction sub-tab: its wolfpack.quest page, same IPC as the PQDI chip.
+      var fl = t.closest('.facl');
+      if (fl) {
+        ev.preventDefault();
+        var furl = fl.getAttribute('data-facl');
+        if (furl) { try { window.mimic.openExternal(furl); } catch (e) {} }
+        return;
+      }
       var a = t.closest('.pqdi');
       if (!a) return;
       ev.preventDefault();
@@ -641,11 +657,11 @@
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
   }
@@ -677,11 +693,50 @@
   // client log — ⚠ names live in eqemu_faction_list_full because the short
   // faction_list table is EMPTY in our mirror, and a null name silently drops
   // the row. Sorted biggest swing first by the bot.
+  //
+  // Above the on-kill list sits the faction the mob IS on, linked to its wolfpack.quest page,
+  // who in this zone will assist it, and which factions it helps (the guild lead, 2026-10-06:
+  // "Faction should say the faction the mob is on and link to the faction page ... Faction
+  // should also list who the creatures will assist"). The bot sends faction_primary
+  // {id,name}, faction_assists [{id,name}], faction_assisted_by [{name,npc_id}] (+ a
+  // faction_assisted_by_more count); an older bot sends none and the tab reads as it did.
   function renderFactions(mob){
     var f = mob && mob.factions;
+    var prim = mob && mob.faction_primary;
+    var by = mob && mob.faction_assisted_by;
+    var byMore = Number(mob && mob.faction_assisted_by_more) || 0;
+    var helps = mob && mob.faction_assists;
+    // Names as plain escaped text; a name that repeats (five guards of one kind) is folded to "×5".
+    function nameList(list){
+      var seen = [], count = [];
+      (Array.isArray(list) ? list : []).forEach(function(x){
+        var n = x && x.name ? String(x.name) : '';
+        if (!n) return;
+        var i = seen.indexOf(n);
+        if (i < 0) { seen.push(n); count.push(1); } else count[i]++;
+      });
+      return seen.map(function(n, i){ return esc(n) + (count[i] > 1 ? ' ×' + count[i] : ''); });
+    }
+    var head = '';
+    if (prim && prim.name) {
+      // The id is interpolated into a URL, so only a plain integer makes a link; else the bare name.
+      var link = /^\d+$/.test(String(prim.id))
+        ? '<a class="facl" data-facl="https://wolfpack.quest/db/faction/' + prim.id + '" title="Open this faction on wolfpack.quest (opens your browser)">' + esc(prim.name) + ' ↗</a>'
+        : esc(prim.name);
+      head += '<div class="fmeta"><span class="fk">Faction:</span> ' + link + '</div>';
+    }
+    var byNames = nameList(by);
+    if (byNames.length || byMore > 0) {
+      head += '<div class="fmeta"><span class="fk">Assisted by:</span> ' + byNames.join(', ')
+            + (byMore > 0 ? (byNames.length ? ' ' : '') + '<span class="fk">+' + byMore + ' more</span>' : '') + '</div>';
+    }
+    var helpNames = nameList(helps);
+    if (helpNames.length) head += '<div class="fmeta"><span class="fk">Helps:</span> ' + helpNames.join(', ') + '</div>';
+    if (head) head = '<div class="fhead">' + head + '</div>';
     if (!f || !f.length) {
-      return '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
-           + (mob ? 'No faction change recorded for this mob.' : '') + '</div>';
+      var none = '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
+               + (mob ? (head ? 'No faction change on kill.' : 'No faction change recorded for this mob.') : '') + '</div>';
+      return head ? '<div class="facwrap">' + head + none + '</div>' : none;
     }
     var rows = f.map(function(r){
       var up = Number(r.value) > 0;
@@ -690,7 +745,7 @@
            +   '<span class="fv ' + (up ? 'up' : 'dn') + '">' + (up ? '+' : '') + r.value + '</span>'
            + '</div>';
     }).join('');
-    return '<div class="facwrap"><div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+    return '<div class="facwrap">' + head + '<div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
   }
 
   // ── F/Q/V: Faction · Quest · Vendor ───────────────────────────────────────
