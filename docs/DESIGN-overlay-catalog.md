@@ -127,7 +127,8 @@ Invented names in examples are conventions, not people.
 - **Surfaces.** Mini "Me and my neighbours". Dock. Dashboard: session cards only (DEEPS, Damage Done, Top Damage, Incoming Damage), each also a panel overlay. Web: `/parses/[id]` post-fight; a `/mimic/mini` mock.
 - **Dependencies.** None of catalog / bosses.json / who / prefs. Bot only for History guild numbers.
 - **Raid impact.** No per-fight damage or damage-taken ranking, no /rs line. The local view alone "saw 0.1–8.3% of a fight" on the worst client — the guild number is what makes it honest.
-- **State.** localStorage `wp.damageTabMode`, `wp.deepsRows`; cfg `showHud`, `hudBounds`, opacity, mini, dock.
+- **Trend tab** (beta, 2026-10-06, §170). Beside History: a sparkline of the player's own DPS per fight (pets credited to the owner, damage ÷ `durationSec`), tonight (6am local cutoff, the HUD's rule) or 7 days, Dealt / Taken when the ring carries `took`; the newest 8 fights as rows, a row opens that fight in History. Reads the same `GET /api/fight-history` call as History (one call site: `TAB_MODE === 'history' || _trendShown`); mini keeps the scoreboard and does not fetch.
+- **State.** localStorage `wp.damageTabMode` (now also `trend`), `wp.trendRange`, `wp.trendField`, `wp.deepsRows`; cfg `showHud`, `hudBounds`, opacity, mini, dock.
 - **Caveats.** DPS/Sec are relative to fight length, not each player's active time. **Found in code:** "me" is computed from `s.character || s.uploaderCharacter || s.self`, none of which `/api/state` sends at the top level — so the "you" highlight, the always-show-YOU row and mini's centring on you never happen (mini falls back to the top 3). Logged in STATUS.
 
 ### Tank — `tank.html`
