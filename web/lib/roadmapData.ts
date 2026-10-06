@@ -39,13 +39,14 @@ export const releases: Release[] = [
   {
     key: 'long-bids-2026-10-06',
     title: 'Long-term bidding leaves your timers',
-    version: 'Agent 3.7.92 · Web 1.8.108',
+    version: 'Agent 3.7.92 · Web 1.8.109 · Bot 3.1.212',
     date: '2026-10-06',
     headline: 'Auctions that run for weeks no longer fill the timers window and the Command Center.',
     features: [
       { name: 'My parses: mains and real alts', blurb: 'The character row on wolfpack.quest/me/parses shows the characters you actually fight on. Ones you hid on My Stats ("Hide from lists"), traders, and ones with no fights in 30 days sit behind "+N more". "All" leaves hidden characters out.' },
     ],
     fixes: [
+      'Mobs that get faster when you slow them ("Reverse Slow" on PQDI) are now flagged in red on their wolfpack.quest/db page and in Mimic\'s Target Info, so you know not to slow them. Their other abilities also read correctly now: the old list had a few wrong, such as showing "Uses Warrior Skills" as "Immune Ranged Attacks".',
       'Long-term bidding (auctions set to run longer than six hours) no longer shows as a countdown in the timers window or a row in the Command Center. You still bid on them in the Loot bidding window. Every Mimic picks this up by itself.',
     ],
   },

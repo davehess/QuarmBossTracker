@@ -218,6 +218,9 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Long-term bidding out of the timers (agent 3.7.92 stable hot-swap · 3.7.93 beta, 2026-10-06).** Auctions set to
   run over 6 h get no countdown and no Command Center row; the bidding window still lists them. ⏳ The ✕ on timer
   chips was reported unclickable; hardened on beta (`data-wp-interact`, `cf817067`), awaiting a retest. §171.
+- **✅ Reverse Slow called out; mob abilities in Quarm's numbering (FB-54, bot 3.1.212 · web 1.8.109, 2026-10-06).**
+  Five PoP mobs turn a slow into a haste; Target Info and `/db/npc` flag them. Three false chips gone (44, 46, 7).
+  Mimic beta warnings (red chip, HUD, callout) next. §173.
 - **✅ Target Info says a mob's faction and who assists it (bot 3.1.211 · Mimic beta, 2026-10-06).** "Faction: KOS ↗"
   (links to wolfpack.quest), "Assisted by:" same-zone NPCs that will help it, "Helps:" factions it defends. §172.
 - **⏳ The announcer cast: written, nothing built (2026-10-06).** miMIC (your ear, the fight), Bristlebane (the
