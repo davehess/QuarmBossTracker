@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; pick the screen (B/A/C); the client-art rights call. A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
+| **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B picked** (`/screen`, building; its 3-second read comes from the bot, `SCREEN_TOKEN_SECRET` on Vercel + Railway), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: ship `/screen`; dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Log stops / Enrage 12% / « Earlier / Buff-block rename / UI Studio Save / flag hails** (§164) | On beta: agent 3.7.84 (Enrage soon at 12%, spoken first), 3.7.85 (🗄 Archive log & start fresh + the log-silent banner that 3.7.81 never drew), the Canvas vote row fix, 3.7.86 (Buff blocks rename). Why EQ stops logging is unknown. Tower patch written (`PATCH-tower-raid-track.md`), not yet run | the guild lead: A or B for the Command Center hail slot (A recommended); run the Tower patch (local terminal or Claude in Chrome). UI Studio Save: **A picked and on beta** (`c281fea6`) — the guild lead: move a window in Studio, save, log in, check bags kept their spots. A session: build the hail pick |
 | **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
 | **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
@@ -7383,3 +7383,19 @@ map during raids."*
   README's old list (six) had drifted. Wolf Pack keeps its two apps. Before one token can carry both, the
   two command registrations must become one (each bulk-overwrites the guild's commands today) — written into
   `DESIGN-selfhost-wizard.md` §3.
+- **Screen picked: B now, C planned** (the guild lead, 2026-10-06: *"B now, start the C planning"*). B is
+  `wolfpack.quest/screen`, a new page, so it goes live with the [beta] tag (§135): Map / Slides / Loot /
+  Overview, officers switch it, everyone follows within ~3 s. C (a Discord Activity) is planned in
+  `docs/DESIGN-raid-screen-activity.md`. It is blocked until Discord verifies the app. A one-server app may
+  not be allowed to apply, so the first step is the guild lead reading the portal's App Verification tab.
+- **The raid screen's 3-second read is served by the Railway bot, not Vercel** (2026-10-06). Vercel Hobby
+  allows 1,000,000 function invocations a month, and going over means waiting 30 days. As first drafted,
+  `/screen` would have spent ~600k of them in one raid night with 60 viewers, and every one of those polls
+  also called GoTrue. The bot already holds every raider's latest position in memory (`utils/raidTrack.js`),
+  so it answers `GET /api/screen/live` with positions and the screen state:
+  - Supabase reads are memoized to a few per minute in total.
+  - The page signs in to the bot with a 2-hour HMAC screen ticket (`SCREEN_TOKEN_SECRET`, the same value on
+    Vercel and Railway), minted by `/api/screen/ticket` from the site's sign-in. C's Activity will mint the
+    same ticket.
+  - While the secret is unset, the page polls Vercel as `/spectator` does today.
+  - Slow reads (zone maps, the loot and kill feed once a minute) stay on Vercel.
