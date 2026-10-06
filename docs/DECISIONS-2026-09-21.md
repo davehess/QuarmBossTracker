@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.107) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`. On beta (agent 3.7.90, `ba89817c`): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
+| **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips reported dead: investigation open | a session: finish the ✕ finding and fix it on beta |
+| **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
 | **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Raid announcers: miMIC, Bristlebane, Lord Mobsincamp** (§169) | Cast bible v0.2 and engine design written (`DESIGN-raid-announcers.md`, `DESIGN-announcer-engine.md`); voice samples on the guild lead's Casting Room page; v0.2 SillyTavern cards and Bristlebane `SOUL.md` being drafted. Nothing built | the guild lead: pick a voice per persona and the six picks (what "mobs in camp" measures; how miMIC's new calls ship; whose voice Bristlebane is; who is named in praise; the Thank-You Embargo; where the always-on GPU lives). A session: this week's four (retire the doubled guild-trigger callouts, prove Bristlebane can play audio in voice, latch PoP first kills, re-voice today's callouts with clips) |
 | **Instruction text nobody reads** (§168) | Audit done 2026-10-06 (`AUDIT-site-monologues-2026-10-06.md`): 130 blocks, ~9,900 words on 63 routes; 13 explanations repeated across pages; ~25 out of date or wrong. Nothing changed yet | the guild lead: pick A (fold in place, recommended) or B (one help drawer); say whether the "Also found" corrections may go straight to `main`. A session: build the pick on `/pop` and `/admin/overlays` as beta variants |
@@ -7525,3 +7526,37 @@ alpha canvas"*, then *"actually, B can be a view on the DPS/Tanking overlay"*.
   Everything. Adding the other 29 would also fix `/parses` and the leaderboards. **The guild lead's call.**
 - **Cost:** reads only, nothing stored. A heavy "every fight" window is ~90 KB before gzip and 0.6 s; cached 5 min
   per person on the bot.
+- **Same evening — mules out of the character list.** The guild lead, looking at ~50 chips in the Mimic tab: *"I
+  need to be able to either set these other watched logs to non-combat/inventory only or we should be able to see
+  that they don't have recent combat and hide them. My expectation on this list is mains and real alts. Perhaps we
+  need the user to set which logs mean what to them."* Both halves already had a home:
+  - **The user's setting already exists:** "Hide from lists" per character on `wolfpack.quest/me`
+    (`characters.hidden_from_lists`, §140: hidden from everything but account inventory). The parse chart was the
+    one list ignoring it, along with rank Trader.
+  - **The fix** (migration `20261006210000_my_parse_series_char_tiers.sql`, applied): every character carries
+    `hidden`, `fights` (in the window) and `recent` (30 days); "all my characters" leaves hidden ones out. A chip shows
+    only for a character that is not hidden and has fought in the window or the last 30 days; the rest fold under
+    "+N more". On the account it was reported from: 47 characters → 6 chips, 7 folded, 34 hidden.
+  - **Not built, offered:** the same switch inside Mimic (per watched log, or ✕ on a chip), so it can be set without
+    the website.
+  - **Shipped:** web 1.8.108 (`/me/parses` chips) and agent 3.7.91 on beta (the Mimic tab's chips). An older bot
+    without the fields shows every chip, as before.
+
+### 171. Long-term bidding stays out of the timers, everywhere (2026-10-06, agent 3.7.92 stable hot-swap · 3.7.93 beta)
+
+The guild lead: *"Longterm bidding for items needs to not show up in timers. Can we kill those across all
+sessions?"*, then *"Same with the command center"*. Eleven ~60-day Ethereal Parchment auctions were sitting in every
+timers window and Command Center (§ "OpenDKP auctions, one timer each", 2026-10-02).
+
+- **The rule:** an OpenDKP auction set to run longer than **6 hours** (`AUCTION_TIMER_MAX_MS`, end minus start) is not
+  a raid call: no countdown, no Command Center row, even in its last minutes. Raid auctions run minutes, extended by
+  late bids; nothing near 6 hours.
+- **Bidding is untouched:** the Loot bidding window reads the bot's auction list itself (`/api/server/auctions`), so
+  long-term auctions stay biddable. That is also why the fix is in the agent, not the bot: the bot serves one list to
+  both, and filtering there would have taken the auctions out of bidding.
+- **"Across all sessions":** main's agent went **3.7.75 → 3.7.92** with only this change (`f5850e89`), so every
+  stable Mimic takes it on its next agent check (the §123 precedent; not a raid night, so no hold). Beta went to
+  **3.7.93** (`d32c7582`) so the beta line stays above it; alpha follows beta by sync.
+- **The ✕ on those chips "can't be clicked"** (same evening, timers window and Command Center): not explained yet.
+  The dismiss path reads correctly end to end (✕ → `/api/timers/cancel` → `_dkpAuctionsDismissed`); an investigation
+  is open. With long-term auctions gone, the reported rows no longer appear.
