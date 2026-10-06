@@ -20988,7 +20988,7 @@ function renderNetMeter(s) {
 // raid-night average #a371f7. #f85149 is reserved for death/critical and is never used here.
 var WP_MP_WINDOWS = [['1d', '1 day'], ['7d', '1 week'], ['30d', '30 days'], ['90d', '90 days'], ['exp', 'This expansion']];
 var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
-var _wpMp = { w: '7d', scope: 'bosses', char: '', chars: [], data: null, state: 'idle', seq: 0, asOf: 0 };
+var _wpMp = { w: '7d', scope: 'bosses', char: '', chars: [], showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
 // The last choice, per machine (the dashboard's convention for these is localStorage, like wp:bufferClass).
 try {
   var _wpMpSaved = JSON.parse(localStorage.getItem('wp:myParses') || 'null');
@@ -21143,20 +21143,57 @@ function wpMpTable(d) {
   }
   return h + '</tbody></table>';
 }
+// Which character chips to show and which to tuck behind "+N more" (the guild lead, 2026-10-06, looking at ~50
+// chips: "my expectation on this list is mains and real alts"). The bot sends each character as
+// {name, class, active, hidden, fights, recent}: hidden = the raider's own "Hide from lists" switch on
+// wolfpack.quest/me or the guild rank Trader; fights = fights in the chosen window; recent = fights in the last
+// 30 days. Shown = not hidden and (fights or recent above zero). An older bot sends no hidden and no counts: a
+// missing hidden is false and missing counts are "unknown, show it", so nothing disappears against it. The
+// character picked right now is always shown. Both lists are sorted by fights, then active, then name (an old
+// bot's lists keep its own order that way); folded puts the hidden ones last. Returns the same objects it was given.
+function wpMpSplitChars(chars, selected) {
+  var sel = String(selected || '').toLowerCase(), shown = [], folded = [];
+  var num = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; };
+  var cmp = function (a, b) {
+    var an = String(a.name).toLowerCase(), bn = String(b.name).toLowerCase();
+    return (num(b.fights) || 0) - (num(a.fights) || 0) || (b.active ? 1 : 0) - (a.active ? 1 : 0) || (an < bn ? -1 : an > bn ? 1 : 0);
+  };
+  (Array.isArray(chars) ? chars : []).forEach(function (c) {
+    if (!c || !c.name) return;
+    var f = num(c.fights), r = num(c.recent);
+    var quiet = f !== null && r !== null && !(f > 0) && !(r > 0);
+    if (String(c.name).toLowerCase() === sel || (c.hidden !== true && !quiet)) shown.push(c); else folded.push(c);
+  });
+  shown.sort(cmp);
+  folded.sort(function (a, b) { return (a.hidden === true ? 1 : 0) - (b.hidden === true ? 1 : 0) || cmp(a, b); });
+  return { shown: shown, folded: folded };
+}
+var WP_MP_HIDDEN_TIP = 'Hidden on wolfpack.quest/me (Hide from lists)';
 // The whole tab, from _wpMp alone.
 function wpMpHtml() {
-  var m = _wpMp, i;
-  var chip = function (k, v, label, on, title) {
-    return '<button type="button" class="wp-btn' + (on ? ' pri' : '') + '" data-k="' + k + '" data-v="' + esc(v) + '" onclick="wpMpSet(this)"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</button>';
+  var m = _wpMp, i, split = wpMpSplitChars(m.chars, m.char);
+  var chip = function (k, v, label, on, title, dim) {
+    return '<button type="button" class="wp-btn' + (on ? ' pri' : '') + '" data-k="' + k + '" data-v="' + esc(v) + '" onclick="wpMpSet(this)"' + (title ? ' title="' + esc(title) + '"' : '') + (dim ? ' style="opacity:.55"' : '') + '>' + esc(label) + '</button>';
   };
   var row = function (label, inner) { return '<span style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="wp-lbl" style="margin-right:4px">' + label + '</span>' + inner + '</span>'; };
   var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from the guild&rsquo;s record</span></h2>';
   var wins = '', scopes = '', chars = '';
   for (i = 0; i < WP_MP_WINDOWS.length; i++) wins += chip('w', WP_MP_WINDOWS[i][0], WP_MP_WINDOWS[i][1], m.w === WP_MP_WINDOWS[i][0]);
   for (i = 0; i < WP_MP_SCOPES.length; i++) scopes += chip('scope', WP_MP_SCOPES[i][0], WP_MP_SCOPES[i][1], m.scope === WP_MP_SCOPES[i][0]);
-  if (m.chars.length) {
+  // "All", the shown characters, then "+N more" / "fewer" with the tucked-away ones after it (the toggle keeps its
+  // place whichever way it is set). One lone character is no choice to offer, so the row waits for a second chip.
+  if (split.shown.length > 1 || split.folded.length) {
+    var cchip = function (c) {
+      var on = String(c.name).toLowerCase() === m.char.toLowerCase(), hid = c.hidden === true;
+      return chip('char', c.name, c.name, on, hid ? WP_MP_HIDDEN_TIP : (c.class || ''), hid && !on);
+    };
     chars = chip('char', '', 'All', !m.char);
-    for (i = 0; i < m.chars.length; i++) chars += chip('char', m.chars[i].name, m.chars[i].name, String(m.chars[i].name).toLowerCase() === m.char.toLowerCase(), m.chars[i].class || '');
+    for (i = 0; i < split.shown.length; i++) chars += cchip(split.shown[i]);
+    if (split.folded.length) {
+      chars += '<button type="button" class="wp-btn ghost" onclick="wpMpMore()" title="Characters with no fights in 30 days, and ones hidden on wolfpack.quest/me">'
+        + (m.showAll ? 'fewer' : '+' + split.folded.length + ' more') + '</button>';
+      if (m.showAll) for (i = 0; i < split.folded.length; i++) chars += cchip(split.folded[i]);
+    }
   }
   var site = 'https://wolfpack.quest/me/parses?w=' + m.w + '&scope=' + m.scope + (m.char ? '&char=' + encodeURIComponent(m.char) : '');
   h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">'
@@ -21166,6 +21203,10 @@ function wpMpHtml() {
     +  '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>'
     +  '</span></div>';
   var dimNote = function (t) { return '<div class="dim" style="font-size:12px;line-height:1.5;margin:6px 0">' + t + '</div>'; };
+  if (split.folded.length) {
+    h += dimNote('Characters with no fights in 30 days, and ones you hid on '
+      + '<a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none">wolfpack.quest/me</a>, are tucked away.');
+  }
   if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses.') + '</div></div>';
   if (m.state === 'unavailable') return h + dimNote("Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
   if (m.state !== 'ok' || !m.data) return h + dimNote('Loading…') + '</div></div>';
@@ -21224,6 +21265,8 @@ function wpMpSet(el) {
   wpMpFetch(false);
 }
 function wpMpRefresh() { if (_wpMp.state !== 'loading') wpMpFetch(true); }
+// "+N more" / "fewer": only changes what is drawn, so it asks nothing and is not saved (a new load starts folded).
+function wpMpMore() { _wpMp.showAll = !_wpMp.showAll; wpMpRepaint(); }
 // Opened from the rail (or the tray's #myparses): ask once. The agent answers from its copy inside five minutes.
 function wpMpOpenTab() { wpMpFetch(false); }
 // wolfpack.quest links go out through Mimic's open-external (it only lets https://wolfpack.quest through), so the
