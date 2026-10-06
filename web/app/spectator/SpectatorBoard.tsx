@@ -5,7 +5,8 @@
 // Rules this file keeps:
 //   * No free-running loop. A frame is drawn only when something changed (a poll, a pan, a toggle, a
 //     resize), through one requestAnimationFrame guard.
-//   * The poll pauses while the tab is hidden and resumes at once when it is shown again.
+//   * The poll (lib/useScreenLive.ts: the bot's feed, with Vercel as the fallback) pauses while the tab is
+//     hidden and resumes at once when it is shown again.
 //   * The map for a zone is fetched once and kept for the visit.
 //   * Colour is never the only carrier: the roster beside the map spells out class, group and HP.
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts with their tests.
@@ -14,10 +15,10 @@ import {
   DOT_STALE_S, classAbbr, classColor, deriveBands, effectiveLayers, fitView, headingVec, layerBounds,
   coreRaiders, lineNearZ, liftColor, mapBox, median, needsRefit, nearestBand, parseZoneMap, pickZone, raidBox,
   scaleBarUnits, toScreen, zoomAt,
-  type LayerChoice, type Positions, type Raider, type View, type ZoneMap,
+  type LayerChoice, type Raider, type View, type ZoneMap,
 } from '@/lib/spectator';
+import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
 
-const POLL_MS = 3000;   // positions are uploaded every ~3 s, so polling faster only repeats the same rows
 const BG = '#0d1117';
 const PANEL = '#161b22';
 const BORDER = '#30363d';
@@ -106,11 +107,15 @@ const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 
 // `embedded`: the board inside /screen, which owns the page chrome. It drops the roster column and the help
 // line (the screen's right rail has its own panels), the "Live" word (the screen's bar says it), and lets the
-// map take the height of the window. Everything else is the same board, with the same poll.
-export default function SpectatorBoard({ embedded = false }: { embedded?: boolean } = {}) {
-  const [feed, setFeed] = useState<{ data: Positions; rxAt: number } | null>(null);
-  const [netErr, setNetErr] = useState(false);
-  const [signedOut, setSignedOut] = useState(false);
+// map take the height of the window. Everything else is the same board.
+// `shared`: positions handed in by a parent that already reads them (the screen reads the bot once for the whole
+// page); given, the board does not poll at all. Left out, the board reads them itself (/spectator).
+export default function SpectatorBoard({ embedded = false, shared }: {
+  embedded?: boolean;
+  shared?: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'>;
+} = {}) {
+  const own = useScreenLive({ enabled: shared === undefined });
+  const { feed, netErr, signedOut } = shared ?? own;
   const [chosen, setChosen] = useState<string | null>(null);
   const [maps, setMaps] = useState<Record<string, MapEntry>>({});
   const [hidden, setHidden] = useState<Set<number>>(new Set());
@@ -368,45 +373,6 @@ export default function SpectatorBoard({ embedded = false }: { embedded?: boolea
   }, [schedule]);
 
   // ── effects ────────────────────────────────────────────────────────────────
-
-  // The poll: sequential (the next one starts POLL_MS after the last answer), paused while hidden.
-  useEffect(() => {
-    let stop = false;
-    let busy = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let ctrl: AbortController | undefined;
-    const run = async () => {
-      timer = undefined;
-      if (stop || busy || document.hidden) return;
-      busy = true;
-      ctrl = new AbortController();
-      try {
-        const res = await fetch('/api/spectator/positions', { cache: 'no-store', signal: ctrl.signal });
-        if (res.status === 401) { setSignedOut(true); stop = true; return; }
-        if (!res.ok) throw new Error('feed ' + res.status);
-        const j = await res.json();
-        if (!Array.isArray(j?.raiders) || !Array.isArray(j?.zones)) throw new Error('feed shape');
-        if (!stop) { setFeed({ data: j as Positions, rxAt: Date.now() }); setNetErr(false); }
-      } catch (e) {
-        if (!stop && (e as Error)?.name !== 'AbortError') setNetErr(true);
-      } finally {
-        busy = false;
-      }
-      if (!stop && !document.hidden) timer = setTimeout(run, POLL_MS);
-    };
-    const onVisibility = () => {
-      if (document.hidden) { if (timer) clearTimeout(timer); timer = undefined; ctrl?.abort(); }
-      else if (!timer && !busy) run();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    run();
-    return () => {
-      stop = true;
-      if (timer) clearTimeout(timer);
-      ctrl?.abort();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
 
   // The map for the zone on screen: once per zone, kept for the visit. 404 = no map yet.
   const loadMap = useCallback((z: string) => {

@@ -7,6 +7,7 @@ import {
   type Award, type FeedKill, type FeedSpawn, type LootedGroup, type ScreenFeed, type ScreenState,
 } from '@/lib/raidScreen';
 import { fmtDuration } from '@/lib/format';
+import type { LiveAuction } from '@/lib/screenLive';
 import type { Positions } from '@/lib/spectator';
 
 export const label = 'text-[11px] uppercase tracking-wider text-dim';
@@ -86,7 +87,18 @@ function AwardRow({ a, now }: { a: Award; now: number }) {
   );
 }
 
-export function LootView({ feed, now }: { feed: ScreenFeed | null; now: number }) {
+// An auction that is open right now, from the bot's own list (item and end time: a bid is sealed and never sent).
+function LiveAuctionRow({ a, now }: { a: LiveAuction; now: number }) {
+  return (
+    <li className="flex items-baseline gap-2 border-b border-border/60 px-3 py-2 last:border-b-0">
+      <span className="min-w-0 flex-1 truncate text-text">{a.item}</span>
+      <span className="w-24 shrink-0 text-right text-xs text-dim">{a.endsAt ? `closes in ${untilText(a.endsAt, now)}` : 'bidding open'}</span>
+    </li>
+  );
+}
+
+/** `auctions`: the bot's list of auctions open right now, or null when it has none to give (then the OpenDKP mirror stands in). */
+export function LootView({ feed, auctions, now }: { feed: ScreenFeed | null; auctions: LiveAuction[] | null; now: number }) {
   if (!feed) return <div className={card}><Empty>Loading loot…</Empty></div>;
   const open = feed.awards.filter(a => a.open);
   const done = feed.awards.filter(a => !a.open);
@@ -96,9 +108,13 @@ export function LootView({ feed, now }: { feed: ScreenFeed | null; now: number }
 
       <section className={card} aria-label="Up for bid">
         <h2 className={`${label} border-b border-border px-3 py-2`}>Up for bid</h2>
-        {open.length > 0
-          ? <ul>{open.map(a => <AwardRow key={a.id} a={a} now={now} />)}</ul>
-          : <Empty>Nothing was open at the last OpenDKP sync. Live bidding is in Mimic and Discord; this page follows the sync, about every 30 minutes.</Empty>}
+        {auctions
+          ? (auctions.length > 0
+            ? <ul>{auctions.map((a, i) => <LiveAuctionRow key={`${i}:${a.item}`} a={a} now={now} />)}</ul>
+            : <Empty>Nothing is up for bid right now.</Empty>)
+          : (open.length > 0
+            ? <ul>{open.map(a => <AwardRow key={a.id} a={a} now={now} />)}</ul>
+            : <Empty>Nothing was open at the last OpenDKP sync. Live bidding is in Mimic and Discord; this page follows the sync, about every 30 minutes.</Empty>)}
       </section>
 
       <div className="grid gap-4 lg:grid-cols-2">

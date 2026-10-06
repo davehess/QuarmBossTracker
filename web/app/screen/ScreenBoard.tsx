@@ -1,30 +1,37 @@
 'use client';
 // The /screen board: one page the whole raid watches. An officer (the "leader only" bar) picks Map, Slides,
-// Loot or Overview; everyone else's page polls /api/screen/state every few seconds and follows.
+// Loot or Overview; everyone else's page polls the screen state every few seconds and follows.
 //
-// Three feeds, each polled on its own and paused while the tab is hidden:
-//   /api/screen/state      every STATE_POLL_MS   the mode, the slide, who is driving   (the thing that follows)
-//   /api/screen/feed       every FEED_POLL_MS    loot, boss kills, next spawns
-//   /api/spectator/positions  every POSITIONS_POLL_MS  who is where (the Map mode polls it faster itself)
+// Two feeds, each paused while the tab is hidden:
+//   the live feed (lib/useScreenLive.ts)  every 3 s  the mode, the slide, who is driving, and who is where. One
+//                                          read of the BOT for the whole page, not three Vercel polls: sixty open
+//                                          screens would otherwise spend most of Vercel's monthly function
+//                                          allowance in a night. Without the bot feed it reads the Vercel routes.
+//   /api/screen/feed  every FEED_POLL_MS    loot, boss kills, next spawns (slow; once more the moment the screen
+//                                          switches to Loot or Overview)
+// The embedded map is handed the positions, so it does not poll at all.
 //
 // Rules this file keeps (the spectator board's, which it embeds):
 //   * No animation. This is read from across a room or between pulls, and motion steals the eye.
 //   * Colour is never the only carrier: Live / Reconnecting is a word, a mode is a labelled button.
-//   * While the officer's own click is in flight, a poll that lands first does not undo it.
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+//   * While the officer's own click is in flight, a poll that lands first does not undo it, and a poll that
+//     carries the screen as it was before the click (the bot answers from a two-second memo) is not shown either.
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SpectatorBoard from '@/app/spectator/SpectatorBoard';
 import {
-  FEED_POLL_MS, MODE_LABEL, SCREEN_MODES, STATE_POLL_MS, TONIGHT_H, agoText, isScreenMode, untilText,
+  FEED_POLL_MS, MODE_LABEL, SCREEN_MODES, TONIGHT_H, agoText, isScreenMode, untilText,
   type ScreenFeed, type ScreenMode, type ScreenState,
 } from '@/lib/raidScreen';
+import { WRITE_TRUST_MS, judgeRead, type WriteMark } from '@/lib/screenLive';
+import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
 import type { Positions } from '@/lib/spectator';
 import SlideEditor from './SlideEditor';
 import { LootView, OverviewView, SlidesView, SpawnList, card, label } from './ScreenPanels';
 
-const POSITIONS_POLL_MS = 8000;
-
 // The map is the spectator board with its own chrome dropped. Memoised so the rail's clock does not redraw it.
-const MapPanel = memo(function MapPanel() { return <SpectatorBoard embedded />; });
+const MapPanel = memo(function MapPanel({ shared }: { shared: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'> }) {
+  return <SpectatorBoard embedded shared={shared} />;
+});
 
 function useNow(ms: number) {
   const [now, setNow] = useState(() => Date.now());
@@ -88,34 +95,44 @@ const modeBtn = 'rounded border px-3 py-1.5 text-sm transition-colors focus-visi
 
 export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
   const [state, setState] = useState<ScreenState | null>(null);
-  const [stateErr, setStateErr] = useState(false);
-  const [signedOut, setSignedOut] = useState(false);
+  const [feedSignedOut, setFeedSignedOut] = useState(false);
   const [feed, setFeed] = useState<ScreenFeed | null>(null);
-  const [positions, setPositions] = useState<Positions | null>(null);
   const [busy, setBusy] = useState(false);
   const [driveErr, setDriveErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const flying = useRef(false);
+  const wrote = useRef<WriteMark | null>(null);   // what the officer's last click was stamped
   const stateRef = useRef<ScreenState | null>(null);
   stateRef.current = state;
   const panelNow = useNow(10_000);
 
-  const fail = (status: number) => { if (status === 401) setSignedOut(true); };
+  // The screen state and the positions: one read of the bot every 3 s (Vercel's routes when it is not set up).
+  const feeds = useScreenLive({
+    wantState: true,
+    onState: d => {
+      // The officer's own click is on its way: let its answer, not this older one, be what shows.
+      if (flying.current) return;
+      // …and for a few seconds after it, not a read of the screen from before the click either.
+      const verdict = judgeRead(d.updatedAt, wrote.current, Date.now());
+      wrote.current = verdict.mark;
+      if (verdict.show) setState(d);
+    },
+  });
+  const { stateErr, auctions, kick: kickState } = feeds;
+  const positions: Positions | null = feeds.feed?.data ?? null;
+  const signedOut = feeds.signedOut || feedSignedOut;
+  // The map's slice of it, kept the same object until it changes so the memoised map is not redrawn by a clock.
+  const mapShared = useMemo(
+    () => ({ feed: feeds.feed, netErr: feeds.netErr, signedOut: feeds.signedOut }),
+    [feeds.feed, feeds.netErr, feeds.signedOut],
+  );
 
-  const kickState = usePoll<ScreenState>('/api/screen/state', STATE_POLL_MS, d => {
-    if (!isScreenMode(d?.mode) || typeof d.slideCount !== 'number') { setStateErr(true); return; }
-    // The officer's own click is on its way: let its answer, not this older one, be what shows.
-    if (flying.current) return;
-    setState(d); setStateErr(false);
-  }, s => { fail(s); if (s !== 401) setStateErr(true); });
-
-  usePoll<ScreenFeed>('/api/screen/feed', FEED_POLL_MS, d => {
+  const kickFeed = usePoll<ScreenFeed>('/api/screen/feed', FEED_POLL_MS, d => {
     if (Array.isArray(d?.awards) && Array.isArray(d?.looted) && Array.isArray(d?.kills) && Array.isArray(d?.spawns)) setFeed(d);
-  }, fail);
-
-  usePoll<Positions>('/api/spectator/positions', POSITIONS_POLL_MS, d => {
-    if (Array.isArray(d?.raiders) && Array.isArray(d?.zones)) setPositions(d);
-  }, fail);
+  }, s => { if (s === 401) setFeedSignedOut(true); });
+  // The feed is slow, so a screen switched to Loot or Overview asks for it at once rather than showing a minute-old list.
+  const shown = state?.mode;
+  useEffect(() => { if (shown === 'loot' || shown === 'overview') kickFeed(); }, [shown, kickFeed]);
 
   // What the officer picked, applied here at once and then confirmed by the server's answer.
   const drive = useCallback(async (patch: { mode?: ScreenMode; slideIndex?: number }) => {
@@ -133,7 +150,8 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
       if (!res.ok) {
         setDriveErr(j?.error ?? `That did not work (${res.status}).`);
       } else if (isScreenMode(j?.mode)) {
-        setState(j as ScreenState); setStateErr(false);
+        setState(j as ScreenState);
+        wrote.current = typeof j.updatedAt === 'string' ? { updatedAt: j.updatedAt, until: Date.now() + WRITE_TRUST_MS } : null;
       }
     } catch {
       setDriveErr('The screen did not answer. Try again.');
@@ -143,6 +161,9 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
       kickState();
     }
   }, [canDrive, kickState]);
+
+  // The editor writes through Vercel and the bot answers from a two-second memo, so read again once that has passed too.
+  const onSlidesChanged = useCallback(() => { kickState(); window.setTimeout(kickState, 2200); }, [kickState]);
 
   const step = (delta: -1 | 1) => {
     const s = stateRef.current;
@@ -197,17 +218,17 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-4">
-          {mode === 'map' && <MapPanel />}
+          {mode === 'map' && <MapPanel shared={mapShared} />}
           {mode === 'slides' && state && (
             <>
               <SlidesView state={state} canDrive={canDrive} busy={busy} editing={editing}
                 onStep={step} onToggleEdit={() => setEditing(e => !e)} />
               {canDrive && editing && (
-                <SlideEditor onChanged={kickState} onShow={i => void drive({ mode: 'slides', slideIndex: i })} />
+                <SlideEditor onChanged={onSlidesChanged} onShow={i => void drive({ mode: 'slides', slideIndex: i })} />
               )}
             </>
           )}
-          {mode === 'loot' && <LootView feed={feed} now={panelNow} />}
+          {mode === 'loot' && <LootView feed={feed} auctions={auctions} now={panelNow} />}
           {mode === 'overview' && <OverviewView positions={positions} feed={feed} now={panelNow} />}
         </div>
 

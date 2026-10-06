@@ -194,6 +194,28 @@ function liveSnapshot(nowMs = _clock()) {
   return { placed, lastRowAt };
 }
 
+/**
+ * The raiders placed in the last `maxAgeMs`, as the rows web/lib/spectator.ts buildPositions takes
+ * (RosterPosRow): the input of the live map, served by utils/screenLive.js. Read-only and O(tracked raiders).
+ * The uploader's Discord id never leaves this function: each uploader becomes an opaque label ('u1', 'u2', …)
+ * numbered in THIS call, which is all the zone vote needs (it only groups raiders by who reported them).
+ */
+function liveRows(nowMs = _clock(), maxAgeMs = 30_000) {
+  const labels = new Map();
+  const out = [];
+  for (const e of latest.values()) {
+    if (nowMs - e.atMs > maxAgeMs) continue;
+    if (!labels.has(e.src)) labels.set(e.src, 'u' + (labels.size + 1));
+    out.push({
+      name: e.name, class: e.cls, group_num: e.group, level: e.level, hp_pct: e.hp,
+      loc_x: e.x, loc_y: e.y, loc_z: e.z, heading: e.h,
+      loc_at: new Date(e.atMs).toISOString(),
+      uploaded_by_discord_id: labels.get(e.src),
+    });
+  }
+  return out;
+}
+
 // ── Zones and exclusions (flush time only) ───────────────────────────────────
 
 const _enc = encodeURIComponent;
@@ -457,7 +479,7 @@ function _state() {
 }
 
 module.exports = {
-  noteRows, takeFrame, closeFinished, liveSnapshot, buildMinuteRow, resolveSrcZones, flush, start, stop,
+  noteRows, takeFrame, closeFinished, liveSnapshot, liveRows, buildMinuteRow, resolveSrcZones, flush, start, stop,
   stepS, minPlaced,
   STEP_S_DEFAULT, MIN_PLACED_DEFAULT, STICKY_MS, FRESH_MS, PRUNE_MS, MAX_TRACKED, MAX_PENDING_MINUTES,
   MAX_ATTEMPTS, RETRY_BACKOFF_MS, SAFETY_MS, EXCLUDE_TTL_MS, ZONE_TTL_MS, LIVE_ZONE_MS,

@@ -15,8 +15,10 @@ export const MODE_LABEL: Record<ScreenMode, string> = {
   map: 'Map', slides: 'Slides', loot: 'Loot', overview: 'Overview',
 };
 
-export const STATE_POLL_MS = 3000;    // how fast a viewer follows the leader
-export const FEED_POLL_MS = 20000;    // loot, kills and spawns change slowly
+export const STATE_POLL_MS = 3000;    // how fast a viewer follows the leader (and how often the map moves): lib/screenLive.ts
+// Loot, kills and spawns change slowly, and this is the one feed that still goes through Vercel (a function
+// call per poll), so it is slow; the board also fetches it once the moment the mode switches to Loot or Overview.
+export const FEED_POLL_MS = 60000;
 export const FEED_CACHE_MS = 10000;   // one answer shared by everyone's poll, per server instance
 export const TONIGHT_H = 6;           // "tonight" = the last six hours: a raid is four, plus the run-up and the loot
 

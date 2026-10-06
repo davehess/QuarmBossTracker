@@ -782,8 +782,8 @@ describe('every write on /api/screen/* is behind the officer check', () => {
       expect(body, f).toBeTruthy();
       const gate = body.indexOf('auth.getUser()');
       expect(gate, f).toBeGreaterThan(-1);
-      const db = body.indexOf('supabaseAdmin()');
-      expect(gate, f).toBeLessThan(db);
+      const db = body.indexOf('supabaseAdmin()');   // the ticket route reads no table: only the session
+      if (db >= 0) expect(gate, f).toBeLessThan(db);
     }
   });
 
@@ -811,7 +811,7 @@ describe('the page, the nav, the embed and the migration', () => {
     expect(src).toMatch(/\{canDrive && \(\s*<>\s*<span[^>]*>LEADER ONLY<\/span>/);
     expect(src).toMatch(/if \(!canDrive\) return;/);
     expect(src).toMatch(/fetch\('\/api\/screen\/state', \{\s*method: 'POST'/);
-    expect(src).toMatch(/<SpectatorBoard embedded \/>/);
+    expect(src).toMatch(/<SpectatorBoard embedded shared=\{shared\} \/>/);
   });
 
   it('a slide is rendered as text nodes, never as HTML', () => {
@@ -824,7 +824,7 @@ describe('the page, the nav, the embed and the migration', () => {
 
   it('the spectator board is embedded by a prop, and /spectator still mounts it with none', () => {
     const board = stripJs(read('web/app/spectator/SpectatorBoard.tsx'));
-    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false \}: \{ embedded\?: boolean \} = \{\}\)/);
+    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false, shared \}: \{\s*embedded\?: boolean;\s*shared\?: Pick<ScreenLive, 'feed' \| 'netErr' \| 'signedOut'>;\s*\} = \{\}\)/);
     expect(stripJs(read('web/app/spectator/page.tsx'))).toMatch(/<SpectatorBoard \/>/);
   });
 

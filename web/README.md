@@ -114,6 +114,9 @@ The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring
   - `DISCORD_GUILD_ID` — guild to check membership in
   - `ALLOWED_ROLE_NAMES` — comma-separated allow-list (set to same value
     Railway uses for the bot)
+  - Optional, for the raid screen's live feed (`/screen`, `/spectator`): `SCREEN_TOKEN_SECRET` (the same
+    value as the bot's) and `SCREEN_LIVE_URL` (the bot's `https://…/api/screen/live`), enabled for
+    Production **and** Preview. Unset, the pages poll Vercel's own routes as before; see `.env.example`.
 
 ## Pages
 
