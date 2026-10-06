@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B picked** (`/screen`, building; its 3-second read comes from the bot, `SCREEN_TOKEN_SECRET` on Vercel + Railway), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: ship `/screen`; dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
+| **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
+| **Instruction text nobody reads** (§168) | Audit done 2026-10-06 (`AUDIT-site-monologues-2026-10-06.md`): 130 blocks, ~9,900 words on 63 routes; 13 explanations repeated across pages; ~25 out of date or wrong. Nothing changed yet | the guild lead: pick A (fold in place, recommended) or B (one help drawer); say whether the "Also found" corrections may go straight to `main`. A session: build the pick on `/pop` and `/admin/overlays` as beta variants |
 | **Log stops / Enrage 12% / « Earlier / Buff-block rename / UI Studio Save / flag hails** (§164) | On beta: agent 3.7.84 (Enrage soon at 12%, spoken first), 3.7.85 (🗄 Archive log & start fresh + the log-silent banner that 3.7.81 never drew), the Canvas vote row fix, 3.7.86 (Buff blocks rename). Why EQ stops logging is unknown. Tower patch written (`PATCH-tower-raid-track.md`), not yet run | the guild lead: A or B for the Command Center hail slot (A recommended); run the Tower patch (local terminal or Claude in Chrome). UI Studio Save: **A picked and on beta** (`c281fea6`) — the guild lead: move a window in Studio, save, log in, check bags kept their spots. A session: build the hail pick |
 | **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
 | **FB-51: EverQuest stopped writing the log** (§162) | Field fix: log moved aside + EQ restarted. On beta (agent 3.7.81): `[log-silent]` warning (state field, no UI), tail watchdog, newest-lines bug-report excerpt, empty queue not "corrupt". Found: log archiving has never run in watch mode | the guild lead: (1) yes/no to wiring log archiving into watch mode (renames logs over 500 MB on members' machines for the first time); (2) whether the silent-log warning gets an on-screen form |
@@ -7434,3 +7435,22 @@ that exposes me to anything."*
   announcer engine's persona pack must import and export that card format, so the cards stay the one source
   for every surface: Mimic's in-ear lines, the Discord bots' personalities, and recorded clips. Another guild
   can bring its own cards. v0.1 cards went to the guild lead directly; v0.2 comes from the cast bible.
+
+### 168. The site's instruction text, swept: 130 blocks nobody reads first (2026-10-06)
+
+The guild lead: *"send lower level agents through the entirety of our site and find large instruction monologues
+that nobody will read, or if they will it'll be when they have a question."*
+
+- **Swept:** 11 Haiku agents read all 96 routes and the shared components; Sonnet verified every finding (51
+  dropped) and wrote a one-line replacement for each. Full ranked list, repeats and appendix:
+  `docs/AUDIT-site-monologues-2026-10-06.md`.
+- **Found:** 130 blocks, ~9,900 words, ~8,900 of them on screen by default. Worst pages: `/admin` (825, the card
+  menu), `/admin/overlays` (682), `/pop` (533), then `/raid` and `/roadmap`. 13 explanations are written on several
+  pages ("blank means unseen", "how your data gets here", "install Mimic", privacy, "how fast a change applies"),
+  and one copy is already wrong: `/admin/triggers` says agents poll every 10 minutes; it is 2.
+- **Out of date or wrong (fix whatever the pick):** among them a Raid-Helper pitch for an API already live,
+  `/admin/voice` asking officers to enable two triggers deliberately turned off, empty states blaming bot
+  v2.5.35, "Loot lockouts" as a title, and a member named in rendered text on `/admin/overlays`.
+- **Waiting on the guild lead:** A, fold in place (each explanation stays beside what it explains, closed behind
+  "How this works" or an ⓘ, repeats become shared components), recommended; or B, one help drawer per page. Both
+  are changes to existing pages, so the pick is built as beta variants first.

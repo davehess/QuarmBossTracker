@@ -208,6 +208,10 @@ next touch one rather than assuming a missing row means a missing doc.
   Next: the guild lead sets the two variables, then an officer drives it on a raid night. C, a Discord Activity,
   is planned in `docs/DESIGN-raid-screen-activity.md` and blocked on Discord verifying the app (first step: the
   guild lead reads the portal's App Verification tab). §166.
+- **⏳ Instruction text nobody reads: audited, nothing changed yet (2026-10-06).** 130 blocks, ~9,900 words on 63
+  routes, ranked with a one-line rewrite each and the 13 explanations repeated across pages
+  (`docs/AUDIT-site-monologues-2026-10-06.md`). Waits on the guild lead: A (fold in place) or B (help drawer), and
+  whether the out-of-date corrections may go straight to `main`. §168.
 - **⏳ How raiders look, kept per raid night (bot 3.1.208, 2026-10-05).** `raid_night_appearance`: race,
   deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
   position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's
