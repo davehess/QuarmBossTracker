@@ -10925,6 +10925,7 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
 // script (scripts/audit-mob-specials.mjs) can never disagree about what a
 // special-ability code means. See docs/audit-mob-specials.md.
 const mobSpecials = require('./utils/mobSpecials');
+const factionAssist = require('./utils/factionAssist');
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
@@ -16393,6 +16394,17 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
       try { factions = await _factionRowsFor(r.name); }
       catch (err) { console.warn('[mob-info] faction rows failed:', err?.message); }
 
+      // Which faction the mob is on, which factions it will help, and which mobs in its
+      // zone will help it (the guild lead, 2026-10-06, on "an enforcer" in Plane of
+      // Justice). Keyed by the picked body's npc id, not its name, so a same-name mob in
+      // another zone cannot lend its faction. Nothing is added when the mob has no
+      // npc_faction, and a failed catalog read costs the overlay nothing else.
+      let assist = null;
+      try {
+        const ix = await factionAssist.getIndex(supabase);
+        assist = ix ? factionAssist.assistFor(ix, r.id) : null;
+      } catch (err) { console.warn('[mob-info] faction assist failed:', err?.message); }
+
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
@@ -16460,6 +16472,9 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         // [{ name, value }] biggest swing first — what killing this does to
         // your standing. Null when the mob has no faction rows.
         factions,
+        // faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more —
+        // utils/factionAssist.js. Absent (not null) when the mob has no npc_faction.
+        ...(assist || {}),
       };
     }
   } catch (err) {
@@ -16481,17 +16496,27 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
 // A pack not built yet answers 202 and builds in the background: one zone at a time,
 // three lookups at a time, so a fleet booting together cannot flood the database.
 const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// The SHAPE of a mob inside a pack. Bump it whenever _buildMobInfo gains or changes a field:
+// a pack stored under another version is still served (a Mimic keeps something useful
+// meanwhile) but counts as stale, so the next ask for that zone rebuilds it, lazily and one
+// zone at a time, instead of waiting out the week or deleting bot_kv keys by hand. A row
+// stored before versions existed has none and reads as 1.
+//   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
+const _MOB_PACK_VERSION = 2;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
-const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz }
+const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
 let _mobPackBuilding = null;          // the zone id being built
 
-function _mobPackFrom(body, builtAt) {
+function _mobPackFrom(body, builtAt, version) {
   return {
     etag: '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"',
-    builtAt, body, gz: require('zlib').gzipSync(body),
+    builtAt, body, gz: require('zlib').gzipSync(body), version,
   };
 }
+// Built to the current shape, and not past its week?
+const _mobPackFresh = (pack) =>
+  !!pack && pack.version === _MOB_PACK_VERSION && (Date.now() - pack.builtAt) < _MOB_PACK_TTL_MS;
 
 const _mobPackKvMiss = new Map();    // zoneId → when bot_kv last had nothing for it
 async function _mobPackLoad(zoneId) {
@@ -16507,7 +16532,7 @@ async function _mobPackLoad(zoneId) {
     const v = Array.isArray(rows) && rows[0] && rows[0].value;
     // The body is stored as the exact string served, so the ETag survives a deploy.
     if (v && typeof v.body === 'string' && v.built_at) {
-      const pack = _mobPackFrom(v.body, Date.parse(v.built_at) || 0);
+      const pack = _mobPackFrom(v.body, Date.parse(v.built_at) || 0, Number(v.version) || 1);
       _mobPackKeep(zoneId, pack);
       return pack;
     }
@@ -16526,6 +16551,14 @@ function _mobPackKeep(zoneId, pack) {
 async function _mobPackBuild(zoneId) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
+  // Every mob below takes its faction fields from one catalog read. A pack built while that
+  // read fails would be stamped with the current version and go a week without them, so wait
+  // for it here (it is cached six hours, and a failure is retried in five minutes) and keep
+  // the old pack, if there is one, until it answers.
+  if (!(await factionAssist.getIndex(supabase))) {
+    console.warn(`[mob-pack] zone ${zoneId}: faction catalog unreadable — not built`);
+    return;
+  }
   const lo = zoneId * 1000;
   const rows = await supabase.select('eqemu_npc_types', `id=gte.${lo}&id=lte.${lo + 999}&select=name&limit=1000`);
   const names = new Map();   // case-kept key → a catalog spelling of it
@@ -16554,11 +16587,11 @@ async function _mobPackBuild(zoneId) {
   }
   const builtAt = new Date().toISOString();
   const body = JSON.stringify({ ok: true, zone_id: zoneId, built_at: builtAt, mobs });
-  _mobPackKeep(zoneId, _mobPackFrom(body, Date.now()));
+  _mobPackKeep(zoneId, _mobPackFrom(body, Date.now(), _MOB_PACK_VERSION));
   try {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     await supabase.upsert('bot_kv',
-      [{ guild_id: guildId, key: `mob_pack:${zoneId}`, value: { built_at: builtAt, body }, updated_at: builtAt }],
+      [{ guild_id: guildId, key: `mob_pack:${zoneId}`, value: { built_at: builtAt, body, version: _MOB_PACK_VERSION }, updated_at: builtAt }],
       'guild_id,key');
   } catch (e) { console.warn('[mob-pack] save failed:', e?.message); }
   console.log(`[mob-pack] zone ${zoneId}: ${found}/${list.length} mobs, ${Math.round(body.length / 1024)} KB`);
@@ -16592,7 +16625,7 @@ async function _handleAgentMobPack(req, res) {
     return res.end(JSON.stringify({ error: 'zone required' }));
   }
   const pack = await _mobPackLoad(zoneId);
-  if (!pack || (Date.now() - pack.builtAt) >= _MOB_PACK_TTL_MS) _mobPackEnqueue(zoneId);
+  if (!_mobPackFresh(pack)) _mobPackEnqueue(zoneId);   // missing, past its week, or an older shape
   if (!pack) {
     res.writeHead(202, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, building: true, retry_after_sec: 120 }));

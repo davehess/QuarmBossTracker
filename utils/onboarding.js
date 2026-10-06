@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.211': [
+    '**Mimic\'s Target Info says which faction a mob is on.** It shows the mob\'s faction, the factions it will help, and which mobs in the zone will come to its aid (like the Guardians of Justice answering a KOS enforcer). Needs a Mimic that shows the new lines.',
+  ],
   '3.1.210': [
     '**Your parses over time.** wolfpack.quest/me/parses graphs your own fights over a day, a week, 30 or 90 days, this expansion or all time, bosses only or every fight, and shows how each fight compares with your usual on that boss. The Mimic beta gets the same chart as a My parses tab.',
   ],
