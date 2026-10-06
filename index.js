@@ -6799,6 +6799,22 @@ function _odkpTime(v) {
 // cached, so it is safe to call unconditionally.
 function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
 
+// The open auctions the shared cache above holds RIGHT NOW, for the raid screen (utils/screenLive.js): item and
+// end time only (a sealed bid is never read here), as { at, items } — or null when nothing usable is cached. It
+// never calls OpenDKP: the cache is kept warm by the raiders' Mimic panels, and a screen that finds it cold
+// shows the OpenDKP mirror instead, so sixty open screens cost OpenDKP nothing.
+function _peekPanelAuctions() {
+  const c = _panelAuctionsCache;
+  if (!c || c.failed || !Array.isArray(c.list)) return null;
+  return {
+    at: c.at,
+    items: c.list.map(a => ({
+      item: a.ItemName || a.Item?.Name || null,
+      endsAt: _odkpTime(a.EndTimestamp || a.EndTime || a.EndsAt),
+    })),
+  };
+}
+
 // Pooled family DKP recomputed from OUR MIRROR — ticks earned, plus
 // adjustments, minus loot spent. No upstream call: it reads the Supabase tables
 // the 30-minute sync fills.
@@ -22616,6 +22632,17 @@ const httpServer = http.createServer(async (req, res) => {
     catch (err) {
       console.error('[raid-live] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // The raid screen's 3-second feed (wolfpack.quest/screen): positions + screen state, read from memory and a
+  // memo, behind a screen ticket Vercel signs and CORS for the site only. utils/screenLive.js has the why.
+  if ((req.method === 'GET' || req.method === 'OPTIONS') && req.url.split('?')[0] === '/api/screen/live') {
+    try { return await require('./utils/screenLive').handle(req, res, { auctions: _peekPanelAuctions }); }
+    catch (err) {
+      console.error('[screen-live] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }

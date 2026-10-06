@@ -114,6 +114,10 @@ The site uses **Supabase Auth** with the **Discord provider**. End-to-end wiring
   - `DISCORD_GUILD_ID` — guild to check membership in
   - `ALLOWED_ROLE_NAMES` — comma-separated allow-list (set to same value
     Railway uses for the bot)
+  - Needed before `/screen` is announced to the raid: `SCREEN_TOKEN_SECRET` (the same value as the bot's) and
+    `SCREEN_LIVE_URL` (the bot's `https://…/api/screen/live`), enabled for Production **and** Preview. Unset,
+    the pages still work but poll Vercel's own routes: `/screen` every 8 s (state and positions), `/spectator`
+    every 3 s, and each of those is a Vercel function call against Hobby's 1M a month. See `.env.example`.
 
 ## Pages
 
