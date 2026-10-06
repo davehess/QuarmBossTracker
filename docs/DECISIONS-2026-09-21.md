@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic beta warnings in progress | the guild lead: add `slow_mitigation` to the mirror? |
 | **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
 | **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened on beta (`cf817067`) | the guild lead: retest a ✕ on the beta (locked overlays) and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
@@ -7587,3 +7588,23 @@ assisted the creature to attack me. Faction should also list who the creatures w
 - **Zone packs are versioned** (`_MOB_PACK_VERSION` 2): a pack of the old shape is served once and rebuilt lazily on
   the next ask, so PoP mobs pick the fields up without waiting out the 7-day pack life. A rebuild of every PoP pack
   is ~40k catalog reads, serialized one zone at a time.
+
+### 173. Reverse Slow, and mob abilities read in Quarm's own numbering (2026-10-06, FB-54, bot 3.1.212 · web 1.8.109)
+
+A member (FB-54): *"Some mobs are reverse slowable. This needs to be picked up on the target overlay"* (Laef
+Windfall, pqdi.cc/npc/209070). The guild lead: *"make sure that's something that's specifically called out."*
+
+- **The mechanic** (EQMacEmu `zone/bonuses.cpp`, `SE_AttackSpeed`): on an NPC with special ability **50 ReverseSlow**,
+  a normal slow (base < 100) gets +100 and lands as **haste** of the same size; it also overrides Unslowable
+  (`zone/spells.cpp`). Only `SE_AttackSpeed` slows flip. Five NPCs: Auliffe Chaoswind, Laef Windfall, Hibdin Cyclone
+  (Bastion of Thunder), Magmaton, Fennin Ro the Tyrant of Fire (Plane of Fire).
+- **The numbering was wrong.** `utils/mobSpecials.js` followed an older EQEmu/ProjectEQ table; Project Quarm runs
+  EQMacEmu (`common/emu_constants.h`, `namespace SpecialAbility`), which differs at 7, 8, 34 and 41-54, and PQDI's
+  labels on real rows agree with EQMacEmu. False chips removed: 44 "Immune Ranged Attacks" (is Use Warrior Skills,
+  192 rows), 46 "Immune Damage (NPC/Pet)" (is No Loitering, 1,312 rows), 7 "Quad Attack" (is Dual Wield). 31 = Pacify
+  Immunity confirmed, and every label a consumer matches on is unchanged. No code above 54 occurs in our data.
+- **Where it shows:** Target Info chips (bot, mob packs → version 3), `/db/npc/<id>` (the web copy `web/lib/npcDecode.ts`,
+  held to the bot table by `test/mob-specials-web-parity.test.js`), and on Mimic beta a red chip, HUD badge and a
+  "don't slow it" callout.
+- **Not stored yet:** `slow_mitigation` (Laef Windfall has 50, halving real slows) is not in our mirror; adding it
+  needs a column + `scripts/sync-from-eqmac.js` pick. The guild lead's call.
