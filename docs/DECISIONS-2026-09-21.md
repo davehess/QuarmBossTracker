@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.107) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`. On beta: Mimic's My parses tab and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
 | **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Raid announcers: miMIC, Bristlebane, Lord Mobsincamp** (§169) | Cast bible v0.2 and engine design written (`DESIGN-raid-announcers.md`, `DESIGN-announcer-engine.md`); voice samples on the guild lead's Casting Room page; v0.2 SillyTavern cards and Bristlebane `SOUL.md` being drafted. Nothing built | the guild lead: pick a voice per persona and the six picks (what "mobs in camp" measures; how miMIC's new calls ship; whose voice Bristlebane is; who is named in praise; the Thank-You Embargo; where the always-on GPU lives). A session: this week's four (retire the doubled guild-trigger callouts, prove Bristlebane can play audio in voice, latch PoP first kills, re-voice today's callouts with clips) |
 | **Instruction text nobody reads** (§168) | Audit done 2026-10-06 (`AUDIT-site-monologues-2026-10-06.md`): 130 blocks, ~9,900 words on 63 routes; 13 explanations repeated across pages; ~25 out of date or wrong. Nothing changed yet | the guild lead: pick A (fold in place, recommended) or B (one help drawer); say whether the "Also found" corrections may go straight to `main`. A session: build the pick on `/pop` and `/admin/overlays` as beta variants |
@@ -7493,3 +7494,34 @@ that's unique to this experience."*
   2. Prove Bristlebane can play audio in Discord voice.
   3. Latch each Planes of Power first kill.
   4. Re-voice today's callouts as clips.
+
+### 170. My parses over time: a Mimic tab, a website page, and a Trend view on the meter (2026-10-06)
+
+A member asked: *"is there a page in mimic that'll graph out my parses over a variable time window (1 day, 1 week,
+etc.)?"* The guild lead: *"we should have some visualization in mimic"*. Three options went out with mock-ups (a
+Mimic tab, a glance sparkline, a website page). The guild lead picked: *"A and C now as you described, B as part of
+alpha canvas"*, then *"actually, B can be a view on the DPS/Tanking overlay"*.
+
+- **Nothing graphed this before.** `/me` and `/character/<name>` list parses; the meter's History steps through one
+  fight at a time; `/mystats` is all-time averages. The data was there; a per-person query and a chart were not.
+- **One function for both server surfaces:** `my_parse_series` (`20261006200000_my_parse_series.sql`, applied via
+  MCP). The Mimic tab and `/me/parses` cannot disagree. Defaults taken from the mock-ups the guild lead picked:
+  - **Which fights count:** Bosses (the curated list) by default, with an Everything switch.
+  - **What a dot means:** DPS per fight, boss named, plus "vs your usual" (the character's median on that boss),
+    because raw DPS mostly says how hard the boss was.
+  - **Windows:** 1 day, 1 week (default), 30 days, 90 days, this expansion, lifetime.
+  - **Floor:** every window starts no earlier than 2026-07-14, the median-merge cutover, like `/leaderboards`; older
+    multi-uploader rows were max-merged and cannot be repaired.
+  - **Who:** the signed-in person's own characters (household + family, minus `exclude_from_stats`), resolved inside
+    the function from a discord id the caller takes from its own session. Service role only.
+- **A — Mimic tab** (beta): a My parses tab in Mimic's main window, fed by `GET /api/agent/my-parses` (bot 3.1.210)
+  through the local agent, with a tray item that opens it.
+- **C — website** (live): `wolfpack.quest/me/parses`, new page, so it went live with the [beta] tag (§135). Not
+  linked from `/me` yet: that is a change to an existing page.
+- **B — Trend view on the DPS/Tank Meter** (beta): the guild lead moved it off the alpha Canvas. It reads only the
+  fights the PC already keeps for History (tonight / 7 days), so it costs no server calls.
+- **Found on the way:** only 14 of the timer board's 43 Planes of Power bosses are on the curated boss list, so the
+  guild logged 0–3 "boss" kills a day since PoP opened. Bosses looks nearly empty this week; both surfaces point to
+  Everything. Adding the other 29 would also fix `/parses` and the leaderboards. **The guild lead's call.**
+- **Cost:** reads only, nothing stored. A heavy "every fight" window is ~90 KB before gzip and 0.6 s; cached 5 min
+  per person on the bot.
