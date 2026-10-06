@@ -22,10 +22,11 @@ function load() {
     const require = (m) => m === './utils/supabase' ? __s.SB : __s.nodeRequire(m);
     const mimicLink = { requireAgentAuth: async () => ({ user_id: 'u' }) };
     const _buildMobInfo = (...a) => __s.build(...a);
+    const factionAssist = { getIndex: async () => __s.index };
     const console = { log() {}, warn() {} };
   `;
   return evalBlock(prefix + helpers + section,
-    ['_mobPacks', '_mobPackBuild', '_handleAgentMobPack', '_MOB_PACK_PINNED', '_mobCaseKey']);
+    ['_mobPacks', '_mobPackBuild', '_handleAgentMobPack', '_MOB_PACK_PINNED', '_MOB_PACK_VERSION', '_mobCaseKey']);
 }
 
 function fakeRes() {
@@ -47,6 +48,7 @@ beforeEach(() => {
       { name: 'a_Shissar_acolyte' }, { name: 'A_Shissar_Acolyte' },    // two mobs, two keys
     ],
     kv: [], upserts: [], fail: new Set(), built: [],
+    index: {},   // the faction catalog index: truthy = readable, null = a failed read
     SB: {
       isEnabled: () => true,
       select: async (table) => (table === 'eqemu_npc_types' ? S.npcRows : table === 'bot_kv' ? S.kv : []),
@@ -151,5 +153,89 @@ describe('GET /api/agent/mob-pack', () => {
     await fresh._handleAgentMobPack({ url: '/api/agent/mob-pack?zone=217', headers: {} }, res);
     expect(res.code).toBe(200);
     expect(res.headers.ETag).toBe(first._mobPacks.get(217).etag);
+  });
+});
+
+// A pack is kept a week, in memory and in bot_kv, so a change to the SHAPE of a mob (the faction
+// fields, 2026-10-06) would otherwise reach Mimic a week late. The pack carries the version it
+// was built to; any other version is stale and is rebuilt on the next ask for that zone.
+describe('a pack built to an older shape', () => {
+  const waitFor = async (fn) => { for (let i = 0; i < 40 && !fn(); i++) await new Promise(r => setTimeout(r, 5)); return fn(); };
+  const ask = async (m, zone, headers = {}) => {
+    const res = fakeRes();
+    await m._handleAgentMobPack({ url: '/api/agent/mob-pack?zone=' + zone, headers }, res);
+    return res;
+  };
+  const stored = (zone, extra = {}) => ({
+    built_at: new Date().toISOString(), ...extra,
+    body: JSON.stringify({ ok: true, zone_id: zone, built_at: 'old', mobs: { an_old_mob: { name: 'an old mob' } } }),
+  });
+
+  it('a bot_kv row from before versions existed is served, then rebuilt to the current shape', async () => {
+    S.kv = [{ value: stored(218) }];                       // no version field: the pre-faction build
+    const m = load();
+    const first = await ask(m, 218);
+    expect(first.code).toBe(200);                          // a Mimic is not left with a 202
+    expect(Object.keys(JSON.parse(first.body).mobs)).toEqual(['an_old_mob']);
+    expect(await waitFor(() => m._mobPacks.get(218).version === m._MOB_PACK_VERSION)).toBe(true);
+    expect(S.built.length).toBeGreaterThan(0);
+    expect(S.built.every(a => a.reqZoneId === 218)).toBe(true);
+    const saved = S.upserts.find(u => u.table === 'bot_kv').rows[0];
+    expect(saved.key).toBe('mob_pack:218');
+    expect(saved.value.version).toBe(m._MOB_PACK_VERSION);
+    const second = await ask(m, 218);                      // the next ask gets the rebuilt body, a new ETag
+    expect(second.headers.ETag).not.toBe(first.headers.ETag);
+    expect(Object.keys(JSON.parse(second.body).mobs)).not.toContain('an_old_mob');
+  });
+
+  it('an in-memory pack of an older version is rebuilt too', async () => {
+    const m = load();
+    await m._mobPackBuild(219);
+    const pack = m._mobPacks.get(219);
+    pack.version = m._MOB_PACK_VERSION - 1;
+    S.built.length = 0;
+    await ask(m, 219);
+    expect(await waitFor(() => m._mobPacks.get(219).version === m._MOB_PACK_VERSION)).toBe(true);
+    expect(S.built.length).toBeGreaterThan(0);
+  });
+
+  it('a pack at the current version, inside its week, is left alone', async () => {
+    S.kv = [{ value: stored(220, { version: 2 }) }];
+    const m = load();
+    expect(m._MOB_PACK_VERSION).toBe(2);
+    const res = await ask(m, 220);
+    expect(res.code).toBe(200);
+    await new Promise(r => setTimeout(r, 30));
+    expect(S.built).toHaveLength(0);
+    expect(S.upserts).toHaveLength(0);
+  });
+
+  it('a pack at the current version but past its week is still rebuilt', async () => {
+    S.kv = [{ value: stored(221, { version: 2, built_at: new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString() }) }];
+    const m = load();
+    await ask(m, 221);
+    expect(await waitFor(() => S.upserts.length > 0)).toBe(true);
+  });
+
+  it('is lazy: loading the handler builds nothing, and one ask queues only that zone', async () => {
+    S.kv = [{ value: stored(222) }];
+    const m = load();
+    await new Promise(r => setTimeout(r, 20));
+    expect(S.built).toHaveLength(0);
+    await ask(m, 222);
+    await waitFor(() => S.upserts.length > 0);
+    expect(new Set(S.built.map(a => a.reqZoneId))).toEqual(new Set([222]));
+  });
+
+  it('keeps the old pack when the faction catalog cannot be read, and builds nothing', async () => {
+    S.kv = [{ value: stored(223) }];
+    S.index = null;
+    const m = load();
+    const res = await ask(m, 223);
+    expect(res.code).toBe(200);
+    await new Promise(r => setTimeout(r, 30));
+    expect(S.built).toHaveLength(0);
+    expect(S.upserts).toHaveLength(0);
+    expect(m._mobPacks.get(223).version).toBe(1);          // still the pre-faction pack, served
   });
 });

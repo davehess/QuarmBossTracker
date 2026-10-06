@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips reported dead: investigation open | a session: finish the ✕ finding and fix it on beta |
+| **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
+| **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened on beta (`cf817067`) | the guild lead: retest a ✕ on the beta (locked overlays) and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
 | **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Raid announcers: miMIC, Bristlebane, Lord Mobsincamp** (§169) | Cast bible v0.2 and engine design written (`DESIGN-raid-announcers.md`, `DESIGN-announcer-engine.md`); voice samples on the guild lead's Casting Room page; v0.2 SillyTavern cards and Bristlebane `SOUL.md` being drafted. Nothing built | the guild lead: pick a voice per persona and the six picks (what "mobs in camp" measures; how miMIC's new calls ship; whose voice Bristlebane is; who is named in praise; the Thank-You Embargo; where the always-on GPU lives). A session: this week's four (retire the doubled guild-trigger callouts, prove Bristlebane can play audio in voice, latch PoP first kills, re-voice today's callouts with clips) |
@@ -7566,3 +7567,23 @@ timers window and Command Center (§ "OpenDKP auctions, one timer each", 2026-10
   in arrange/unlocked mode, where panels take no clicks by design (`body.edit .panel > iframe{pointer-events:none}`);
   (3) another panel's transparent iframe over the stack, or chips clipped past the panel's top. **If it is still
   dead:** add a rate-limited log of `e.senderFrame.url` to `overlay-hover-interactive` in main.js and read one hover.
+
+### 172. Target Info's Faction tab says what a mob is on and who will help it (2026-10-06, bot 3.1.211 · Mimic beta)
+
+The guild lead, on "an enforcer" in Plane of Justice: *"Faction should say the faction the mob is on and link to the
+faction page. In this case the mob is on the faction KOS. But interestingly enough a High Guardian of Justice
+assisted the creature to attack me. Faction should also list who the creatures will assist."*
+
+- **Why the Guardian helped:** the enforcer's npc_faction (79) has primary faction 5017, KOS. The High Guardian of
+  Justice (201446) is on npc_faction 563, "Guardians of Justice", whose entries list KOS with npc_value 1, so it
+  assists any KOS mob. A second High Guardian (201079, npc_faction 1407) does not.
+- **The rule used** (EQEmu): an NPC helps another when the other's primary faction is in its npc_faction entries with
+  npc_value > 0, or both share a primary and the helper's npc_faction has ignore_primary_assist = 0. Scoped to the
+  same zone by npc id range, so "Assisted by" means *can* help, not *was close enough to*.
+- **Order:** helpers through ANOTHER faction come first (Gaoler, Guardian, Sentry, High Guardian of Justice), then
+  mobs sharing the faction; otherwise the enforcer's 52 fellow KOS mobs pushed the High Guardian off a list capped
+  at 12. Checked on production data: the module and an independent SQL of the rule agree on all 57 helpers.
+- **Link:** wolfpack.quest/db/faction/<id> (our faction page), opened like the PQDI chip.
+- **Zone packs are versioned** (`_MOB_PACK_VERSION` 2): a pack of the old shape is served once and rebuilt lazily on
+  the next ask, so PoP mobs pick the fields up without waiting out the 7-day pack life. A rebuild of every PoP pack
+  is ~40k catalog reads, serialized one zone at a time.
