@@ -33,7 +33,29 @@
 // scripts/audit-mob-specials.mjs, so the code→flag table and the placeholder
 // predicate can never drift between the audit and what raiders actually see.
 
-// ── EQEmu SpecialAbility code map ───────────────────────────────────────────
+// ── Project Quarm SpecialAbility code map ───────────────────────────────────
+// NUMBERING SOURCE (the guild lead, 2026-10-06, FB-54): Project Quarm runs the
+// EQMacEmu server, and its `SpecialAbility` enum is the authority for what a
+// code in `eqemu_npc_types.special_abilities` means here:
+//   https://github.com/SecretsOTheP/EQMacEmu  → common/emu_constants.h,
+//   `namespace SpecialAbility` (1 Summon … 50 ReverseSlow … 54 ProximityAggro2,
+//   Max = 55; the display names are in the `special_ability_names` map below it).
+// PQDI renders the same numbering (pqdi.cc/npc/209070: `…^44,1^50,1` reads "Use
+// Warrior Skills, Reverse Slow"; 114618: `7,1` reads "Dual Wield"; 179037:
+// `31,1^42,1^43,1` reads "Immune to lull effects, Proximity Aggro, Always Calls
+// for Help").
+// This table used to follow a DIFFERENT EQEmu numbering (the one with Quad
+// Attack at 7, Dual Wield at 8, Destructible Object at 34 and "Immune Ranged
+// Attacks" at 44). That agrees with the Quarm enum for codes 1-6 and 9-33 and
+// 35-40 and disagrees for 7, 8, 34 and every code from 41 up, so a mob that
+// "Uses Warrior Skills" read as immune to ranged attacks and a Reverse Slow mob
+// read as nothing at all.
+//
+// Consumers match on the LABEL string, never the code number: the agent greps
+// `specials` for 'Immune Pacify', 'Unslowable', 'Enrage', 'Summon', 'Flurry',
+// 'Rampage'; Mimic's Mob Info keys its red chip off the exact label. Renumbering
+// a code is safe; renaming one is a change to those consumers.
+//
 // show:   surface this as a Mob Info chip?
 // danger: is it a combat warning that must be UNIONed across same-name
 //         variants (if ANY real variant does it, warn)?
@@ -50,8 +72,10 @@ const MOB_SPECIAL_CODES = {
   4:  { label: 'Area Rampage',              show: true,  danger: true  },
   5:  { label: 'Flurry',                    show: true,  danger: true  },
   6:  { label: 'Triple Attack',             show: true,  danger: false },
-  7:  { label: 'Quad Attack',               show: true,  danger: false },
-  8:  { label: 'Dual Wield',                show: false, danger: false },
+  // Quarm has NO Quad Attack: 7 is Dual Wield and 8 is Do Not Equip. The old
+  // 7 'Quad Attack' chip was wrong on every mob that carried it (Lord Yelinak).
+  7:  { label: 'Dual Wield',                show: false, danger: false },
+  8:  { label: 'Disallow Equip',            show: false, danger: false },
   9:  { label: 'Bane',                      show: true,  danger: false },
   10: { label: 'Magical',                   show: true,  danger: false },
   11: { label: 'Ranged',                    show: true,  danger: false },
@@ -81,27 +105,53 @@ const MOB_SPECIAL_CODES = {
   31: { label: 'Immune Pacify',             show: true,  danger: false },
   32: { label: 'Leash',                     show: false, danger: false },
   33: { label: 'Tether',                    show: false, danger: false },
-  34: { label: 'Destructible Object',       show: false, danger: false },
+  34: { label: 'Permaroot Flee',            show: false, danger: false },
   35: { label: 'No Harm From Client',       show: false, danger: false },
   36: { label: 'Always Flee',               show: true,  danger: false },  // #171 (7 rows)
   37: { label: 'Flee At Percent',           show: true,  danger: false },  // #171 "runs when low" (54 rows)
   38: { label: 'Allow Beneficial',          show: false, danger: false },
   39: { label: 'Disable Melee',             show: true,  danger: false },  // #171 (106 rows)
   40: { label: 'Chase Distance',            show: false, danger: false },
-  41: { label: 'Casting Resist Diff',       show: false, danger: false },
-  42: { label: 'Counter Avoid Damage',      show: false, danger: false },  // VERIFY tuning
-  43: { label: 'Prox Aggro',                show: false, danger: false },  // VERIFY tuning
-  44: { label: 'Immune Ranged Attacks',     show: true,  danger: false },  // #171 (192 rows)
-  45: { label: 'Immune Damage (Client)',    show: false, danger: false },
-  46: { label: 'Immune Damage (NPC/Pet)',   show: true,  danger: false },  // #171 charm/pet strats (1,312 rows)
-  47: { label: 'Immune Aggro (Client)',     show: false, danger: false },
-  48: { label: 'Immune Aggro (NPC)',        show: false, danger: false },
-  49: { label: 'Modify Avoid Damage',       show: false, danger: false },  // VERIFY tuning
+  // 41-49 below are the Quarm names. The pre-2026-10-06 table had a different
+  // set here: 44 was shown as "Immune Ranged Attacks" (192 rows) and 46 as
+  // "Immune Damage (NPC/Pet)" (1,312 rows) — both WRONG on Quarm, where 44 is
+  // Use Warrior Skills and 46 is No Loitering. They are hidden now: neither is a
+  // thing a raider acts on, and a false "immune to ranged" warns archers off a
+  // mob they can shoot.
+  41: { label: 'Allowed To Tank',           show: false, danger: false },
+  42: { label: 'Proximity Aggro',           show: false, danger: false },
+  43: { label: 'Always Call For Help',      show: false, danger: false },
+  44: { label: 'Use Warrior Skills',        show: false, danger: false },
+  45: { label: 'Always Flee On Low Con',    show: false, danger: false },
+  46: { label: 'No Loitering',              show: false, danger: false },
+  47: { label: 'Block Handin On Bad Faction', show: false, danger: false },
+  48: { label: 'PC Deathblow To Corpse',    show: false, danger: false },
+  49: { label: 'Corpse Camper',             show: false, danger: false },
+  // 50 Reverse Slow (FB-54, the guild lead, 2026-10-06: "Some mobs are 'Reverse
+  // Slow' on pqdi, meaning if you slow them they get haste"). Server behaviour,
+  // EQMacEmu zone/bonuses.cpp `case SE_AttackSpeed:` (NPC targets only):
+  //   if (GetSpecialAbility(SpecialAbility::ReverseSlow) && effect_value < 100)
+  //     effect_value += 100;
+  // so a slow of attack-speed base 40 lands as +40% HASTE on that mob, and
+  // zone/spells.cpp skips the slow-immunity refusal for it. danger: this is the
+  // one flag that turns a raider's routine action against them — the tank
+  // eats faster swings. The label is the contract (the agent and Mimic match it
+  // by prefix 'Reverse Slow'); keep the explanation in it.
+  50: { label: 'Reverse Slow — slowing hastes it', show: true, danger: true },
+  // Immune to Haste. Hidden until PQDI/the server is checked on a live mob:
+  // EQMacEmu's IsHasteSpell() reads `base < 100`, i.e. it matches SLOWS, so on
+  // the upstream code this flag blocks slows rather than hastes.
+  51: { label: 'Immune Haste',              show: false, danger: false },  // VERIFY semantics
+  52: { label: 'Immune Disarm',             show: false, danger: false },
+  53: { label: 'Immune Riposte',            show: false, danger: false },
+  54: { label: 'Proximity Aggro 2',         show: false, danger: false },
 };
 
 // The pre-#171 decoder's label set, kept so the audit can report "codes present
 // in the catalog that the SHIPPED decoder used to drop" and so the regression
-// harness can assert the added-codes delta explicitly.
+// harness can assert the added-codes delta explicitly. (Code 7 is in the list as
+// history: it was labelled 'Quad Attack', which Quarm does not have — it is Dual
+// Wield there and is no longer shown.)
 const LEGACY_DECODED_CODES = Object.freeze([
   1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 27, 28, 31,
 ]);
