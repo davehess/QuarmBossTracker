@@ -21,7 +21,14 @@ export type ParseFight = {
   usual: number | null;    // that character's typical DPS on this same mob, when there are 3+ fights
 };
 export type ParseNight = { night: string; fights: number; bosses: number; avg_dps: number; best_dps: number };
-export type ParseCharacter = { name: string; class: string | null; active: boolean };
+export type ParseCharacter = {
+  name: string;
+  class: string | null;
+  active: boolean;
+  hidden: boolean;         // the owner's "Hide from lists" switch on /me, or guild rank Trader
+  fights: number;          // fights in the requested window, bosses and trash, whatever the scope switch says
+  recent: number;          // fights in the last 30 days
+};
 export type ParseSeries = {
   floor: string;
   characters: ParseCharacter[];
@@ -76,7 +83,12 @@ export function readParseSeries(raw: unknown): ParseSeries {
   const characters: ParseCharacter[] = [];
   for (const c of list(o.characters)) {
     if (typeof c.name !== 'string' || !c.name) continue;
-    characters.push({ name: c.name, class: typeof c.class === 'string' ? c.class : null, active: c.active === true });
+    characters.push({
+      name: c.name, class: typeof c.class === 'string' ? c.class : null, active: c.active === true,
+      hidden: c.hidden === true,
+      fights: Math.max(0, num(c.fights) ?? 0),
+      recent: Math.max(0, num(c.recent) ?? 0),
+    });
   }
 
   return {
@@ -85,6 +97,33 @@ export function readParseSeries(raw: unknown): ParseSeries {
     total: num(o.total) ?? fights.length,
     truncated: o.truncated === true,
     fights, nights,
+  };
+}
+
+/**
+ * The character chips: who gets one up front and who is tucked behind "+N more" (the guild lead, 2026-10-06:
+ * "My expectation on this list is mains and real alts"). `shown` = not hidden AND fought in the window or in
+ * the last 30 days, busiest first (then by name). `folded` = everything else, the ones that merely have no
+ * recent fights first (busiest first) and the hidden ones last. The character picked with ?char= is always in
+ * `shown`, so the chip you are on never disappears behind the fold.
+ */
+export function splitCharChips(
+  characters: ParseCharacter[], activeChar: string | null,
+): { shown: ParseCharacter[]; folded: ParseCharacter[] } {
+  const byBusy = (a: ParseCharacter, b: ParseCharacter) => b.fights - a.fights || a.name.localeCompare(b.name);
+  const picked = (activeChar ?? '').toLowerCase();
+  const shown: ParseCharacter[] = [];
+  const quiet: ParseCharacter[] = [];
+  const hidden: ParseCharacter[] = [];
+  for (const c of characters) {
+    if (picked && c.name.toLowerCase() === picked) shown.push(c);
+    else if (c.hidden) hidden.push(c);
+    else if (c.fights > 0 || c.recent > 0) shown.push(c);
+    else quiet.push(c);
+  }
+  return {
+    shown: shown.sort(byBusy),
+    folded: [...quiet.sort(byBusy), ...hidden.sort(byBusy)],
   };
 }
 

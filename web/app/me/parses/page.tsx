@@ -7,8 +7,13 @@
 //
 // The function is service-role only and resolves the person's characters itself from a Discord id, so the id
 // here comes from the signed-in session (auth user -> wolfpack_members) and never from the URL. The URL
-// carries only the window (?w=), the scope (?scope=all) and one character (?char=), and the last is checked
-// against the person's own list before it is used.
+// carries only the window (?w=), the scope (?scope=all), one character (?char=) and whether the folded
+// character chips are open (?allchars=1), and the character is checked against the person's own list
+// before it is used.
+//
+// The Character row is for mains and real alts (the guild lead, 2026-10-06, after seeing ~50 chips): a
+// character with no fights in the window or the last 30 days, or one hidden on My Stats, sits behind
+// "+N more" (splitCharChips). The ?char= check below still runs against the FULL list.
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
@@ -21,7 +26,9 @@ import ParseTrendChart from '@/components/ParseTrendChart';
 import { resolveWindow, type WindowKey } from '@/lib/timeWindow';
 import { userTz, tzShortLabel } from '@/lib/timezone';
 import { cleanBossName } from '@/lib/format';
-import { readParseSeries, fmtWhen, fmtInt, vsUsualPct, type ParseSeries } from '@/lib/parseTrend';
+import {
+  readParseSeries, splitCharChips, fmtWhen, fmtInt, vsUsualPct, type ParseSeries,
+} from '@/lib/parseTrend';
 
 export const metadata: Metadata = {
   title: '[beta] My parses',
@@ -49,13 +56,17 @@ async function loadSeries(
   return readParseSeries(data);
 }
 
-function Chip({ href, active, children }: { href: string; active: boolean; children: ReactNode }) {
+function Chip(
+  { href, active, dim, title, children }:
+  { href: string; active: boolean; dim?: boolean; title?: string; children: ReactNode },
+) {
   return (
     <Link
-      href={href} prefetch={false} aria-current={active ? 'true' : undefined}
+      href={href} prefetch={false} aria-current={active ? 'true' : undefined} title={title}
       className={[
         'px-2.5 py-1 rounded border text-xs transition-colors',
         active ? 'border-gold text-gold' : 'border-border text-dim hover:text-text hover:no-underline',
+        dim && !active ? 'opacity-60' : '',
       ].join(' ')}
     >
       {children}
@@ -64,15 +75,16 @@ function Chip({ href, active, children }: { href: string; active: boolean; child
 }
 
 export default async function MyParsesPage(
-  { searchParams }: { searchParams: Promise<{ w?: string; scope?: string; char?: string }> },
+  { searchParams }: { searchParams: Promise<{ w?: string; scope?: string; char?: string; allchars?: string }> },
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/me/parses');
 
-  const { w: wParam, scope: scopeParam, char: charParam } = await searchParams;
+  const { w: wParam, scope: scopeParam, char: charParam, allchars: allcharsParam } = await searchParams;
   let w = resolveWindow(wParam, '7d');
   if (!WINDOWS.includes(w.key)) w = resolveWindow(undefined, '7d');   // 60d is a real window elsewhere, not a chip here
   const everything = scopeParam === 'all';
+  const allChars = allcharsParam === '1';
   const wantChar = (charParam ?? '').trim().slice(0, 40) || null;
   const tz = await userTz();
   const nowMs = Date.now();
@@ -102,12 +114,14 @@ export default async function MyParsesPage(
 
   const activeChar = series?.characters.find(c => c.name.toLowerCase() === (wantChar ?? '').toLowerCase())?.name ?? null;
 
-  // Links keep the other choices: a link changes one of window / scope / character and carries the rest.
-  const href = (over: { scope?: string | null; char?: string | null }) => {
+  // Links keep the other choices: a link changes one of window / scope / character / the folded chips and
+  // carries the rest.
+  const href = (over: { scope?: string | null; char?: string | null; allchars?: string | null }) => {
     const cur: Record<string, string | null | undefined> = {
       w: wParam === w.key ? w.key : undefined,
       scope: everything ? 'all' : undefined,
       char: activeChar,
+      allchars: allChars ? '1' : undefined,
       ...over,
     };
     const p = new URLSearchParams();
@@ -119,7 +133,8 @@ export default async function MyParsesPage(
   const noCharacters = !discordId || (series != null && series.characters.length === 0);
   const fights = series?.fights ?? [];
   const multiChar = new Set(fights.map(f => f.char)).size > 1;
-  const showChips = (series?.characters.length ?? 0) > 1;
+  const { shown, folded } = splitCharChips(series?.characters ?? [], activeChar);
+  const showChips = shown.length > 1 || folded.length > 0;
   const bestDps = series && series.nights.length ? Math.max(...series.nights.map(n => n.best_dps)) : 0;
   const rows = [...fights].reverse().slice(0, TABLE_ROWS);
 
@@ -157,13 +172,34 @@ export default async function MyParsesPage(
               <Chip href={href({ scope: 'all' })} active={everything}>Everything</Chip>
             </div>
             {showChips && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="w-20 text-xs text-dim">Character</span>
-                <Chip href={href({ char: null })} active={!activeChar}>All</Chip>
-                {series.characters.map(c => (
-                  <Chip key={c.name} href={href({ char: c.name })} active={activeChar === c.name}>{c.name}</Chip>
-                ))}
-              </div>
+              <>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="w-20 text-xs text-dim">Character</span>
+                  <Chip href={href({ char: null })} active={!activeChar}>All</Chip>
+                  {shown.map(c => (
+                    <Chip key={c.name} href={href({ char: c.name })} active={activeChar === c.name}>{c.name}</Chip>
+                  ))}
+                  {allChars && folded.map(c => (
+                    <Chip
+                      key={c.name} href={href({ char: c.name })} active={activeChar === c.name}
+                      dim={c.hidden} title={c.hidden ? 'Hidden on My Stats (Hide from lists)' : undefined}
+                    >
+                      {c.name}
+                    </Chip>
+                  ))}
+                  {folded.length > 0 && (
+                    <Chip href={href({ allchars: allChars ? null : '1' })} active={false}>
+                      {allChars ? 'fewer' : `+${folded.length} more`}
+                    </Chip>
+                  )}
+                </div>
+                {folded.length > 0 && (
+                  <p className="text-xs text-dim">
+                    Characters with no fights in 30 days, and ones you hid on{' '}
+                    <Link href="/me" className="text-blue hover:underline">My Stats</Link>, are tucked away.
+                  </p>
+                )}
+              </>
             )}
           </div>
 

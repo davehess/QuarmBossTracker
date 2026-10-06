@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
-  readParseSeries, nightKey, fmtWhen, wallToMs, niceTop, vsUsualPct, xTicks, buildTrend, fmtInt,
+  readParseSeries, splitCharChips, nightKey, fmtWhen, wallToMs, niceTop, vsUsualPct, xTicks, buildTrend, fmtInt,
 } from '../web/lib/parseTrend.ts';
 
 const ET = 'America/New_York';
@@ -135,8 +135,107 @@ describe('readParseSeries', () => {
     expect(s.fights[1].usual).toBeNull();
     expect(s.total).toBe(3);
     expect(s.truncated).toBe(true);
-    expect(s.characters).toEqual([{ name: 'Aldenmar', class: 'Wizard', active: true }]);
+    expect(s.characters).toEqual([
+      { name: 'Aldenmar', class: 'Wizard', active: true, hidden: false, fights: 0, recent: 0 },
+    ]);
     expect(s.nights).toHaveLength(1);
+  });
+
+  it('reads the chip tiers (hidden / fights / recent) and defaults them when the function did not send them', () => {
+    const s = readParseSeries({
+      characters: [
+        { name: 'Aldenmar', class: 'Wizard', active: true, hidden: true, fights: 12, recent: '7' },
+        { name: 'Brackwyn' },                                                  // an older function: no tiers at all
+        { name: 'Corvale', hidden: 'yes', fights: 'lots', recent: -3 },        // junk: not true, not a number, negative
+        { name: 'Rethlan', hidden: false, fights: 4.0, recent: null },
+      ],
+    });
+    const by = Object.fromEntries(s.characters.map(c => [c.name, c]));
+    expect(by.Aldenmar).toMatchObject({ hidden: true, fights: 12, recent: 7 });
+    expect(by.Brackwyn).toMatchObject({ hidden: false, fights: 0, recent: 0 });
+    expect(by.Corvale).toMatchObject({ hidden: false, fights: 0, recent: 0 });
+    expect(by.Rethlan).toMatchObject({ hidden: false, fights: 4, recent: 0 });
+  });
+});
+
+describe('splitCharChips', () => {
+  const ch = (name, o = {}) => ({ name, class: null, active: true, hidden: false, fights: 0, recent: 0, ...o });
+  const names = (list) => list.map(c => c.name);
+
+  it('shows a character that fought in the window or in the last 30 days, busiest first, then by name', () => {
+    const { shown, folded } = splitCharChips([
+      ch('Zarrin', { fights: 3, recent: 3 }),
+      ch('Nyssara', { fights: 9, recent: 9 }),
+      ch('Rethlan', { fights: 0, recent: 5 }),         // nothing in this window, but fought lately: still a real alt
+      ch('Brackwyn', { fights: 3, recent: 8 }),        // ties on fights break by name
+      ch('Corvale', { fights: 4, recent: 0 }),         // a 90-day window: fought 6 weeks ago, nothing since
+    ], null);
+    expect(names(shown)).toEqual(['Nyssara', 'Corvale', 'Brackwyn', 'Zarrin', 'Rethlan']);
+    expect(folded).toEqual([]);
+  });
+
+  it('folds a character with no fights in the window and none in 30 days (a watched log, not a raider)', () => {
+    const { shown, folded } = splitCharChips([
+      ch('Aldenmar', { fights: 6, recent: 6 }),
+      ch('Mulealt', { fights: 0, recent: 0 }),
+    ], null);
+    expect(names(shown)).toEqual(['Aldenmar']);
+    expect(names(folded)).toEqual(['Mulealt']);
+  });
+
+  it('folds a hidden character even when it fought, and puts the hidden ones after the quiet ones', () => {
+    const { shown, folded } = splitCharChips([
+      ch('Aldenmar', { fights: 6, recent: 6 }),
+      ch('Bankalt', { hidden: true, fights: 40, recent: 40 }),
+      ch('Mulealt', { fights: 0, recent: 0 }),
+      ch('Astralt', { hidden: true }),
+      ch('Dormant', { fights: 0, recent: 0 }),
+    ], null);
+    expect(names(shown)).toEqual(['Aldenmar']);
+    expect(names(folded)).toEqual(['Dormant', 'Mulealt', 'Bankalt', 'Astralt']);   // quiet by name, then hidden by fights
+  });
+
+  it('always shows the character picked with ?char=, hidden or quiet, matching on case', () => {
+    const list = [
+      ch('Aldenmar', { fights: 6, recent: 6 }),
+      ch('Bankalt', { hidden: true, fights: 2, recent: 2 }),
+      ch('Mulealt'),
+    ];
+    const a = splitCharChips(list, 'bankalt');
+    expect(names(a.shown)).toEqual(['Aldenmar', 'Bankalt']);
+    expect(names(a.folded)).toEqual(['Mulealt']);
+    const b = splitCharChips(list, 'Mulealt');
+    expect(names(b.shown)).toEqual(['Aldenmar', 'Mulealt']);
+    expect(names(b.folded)).toEqual(['Bankalt']);
+    // a name that is not on the list changes nothing
+    expect(names(splitCharChips(list, 'Nobody').shown)).toEqual(['Aldenmar']);
+  });
+
+  it('puts every character in exactly one of the two lists, and does not touch its input', () => {
+    const list = [
+      ch('A', { fights: 1, recent: 1 }), ch('B', { hidden: true }), ch('C'), ch('D', { recent: 2 }),
+    ];
+    const before = JSON.stringify(list);
+    const { shown, folded } = splitCharChips(list, 'C');
+    expect([...names(shown), ...names(folded)].sort()).toEqual(['A', 'B', 'C', 'D']);
+    expect(JSON.stringify(list)).toBe(before);
+    expect(splitCharChips([], null)).toEqual({ shown: [], folded: [] });
+  });
+
+  it('works on what the reader hands it: an old function with no tiers folds everyone, the new one sorts them', () => {
+    // no tiers sent: every character reads fights 0 / recent 0 / hidden false, so none qualifies as active
+    const old = readParseSeries({ characters: [{ name: 'Aldenmar' }, { name: 'Brackwyn' }] });
+    expect(names(splitCharChips(old.characters, null).folded)).toEqual(['Aldenmar', 'Brackwyn']);
+    const now = readParseSeries({
+      characters: [
+        { name: 'Brackwyn', fights: 2, recent: 2, hidden: false },
+        { name: 'Aldenmar', fights: 8, recent: 8, hidden: false },
+        { name: 'Bankalt', fights: 30, recent: 30, hidden: true },
+      ],
+    });
+    const { shown, folded } = splitCharChips(now.characters, null);
+    expect(names(shown)).toEqual(['Aldenmar', 'Brackwyn']);
+    expect(names(folded)).toEqual(['Bankalt']);
   });
 });
 
@@ -217,10 +316,25 @@ describe('the page and the chart', () => {
   it('takes the person from the session, never from the URL', () => {
     expect(page).toMatch(/\.eq\('user_id', user\.id\)/);
     expect(page).toMatch(/p_discord_id:\s*discordId/);
-    // the query string carries only the window, the scope and one character
-    expect(page).toMatch(/const \{ w: wParam, scope: scopeParam, char: charParam \} = await searchParams;/);
+    // the query string carries only the window, the scope, one character and the chip fold
+    expect(page).toMatch(
+      /const \{ w: wParam, scope: scopeParam, char: charParam, allchars: allcharsParam \} = await searchParams;/,
+    );
     expect(page).not.toMatch(/searchParams[^;]*discord/i);
     expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/me\/parses'\)/);
+  });
+
+  it('folds the character chips behind "+N more" and checks ?char= against the FULL list', () => {
+    // the validity check reads series.characters, not the shown chips, so a hidden character can still be opened
+    expect(page).toMatch(/!series\.characters\.some\(c => c\.name\.toLowerCase\(\) === wantChar\.toLowerCase\(\)\)/);
+    expect(page).toMatch(/splitCharChips\(series\?\.characters \?\? \[\], activeChar\)/);
+    expect(page).toMatch(/const showChips = shown\.length > 1 \|\| folded\.length > 0;/);
+    // the toggle keeps the other choices, and the folded chips only render when it is open
+    expect(page).toMatch(/allchars: allChars \? '1' : undefined/);
+    expect(page).toMatch(/\{allChars && folded\.map\(/);
+    expect(page).toContain('Hidden on My Stats (Hide from lists)');
+    expect(page).toMatch(/`\+\$\{folded\.length\} more`/);
+    expect(page).toMatch(/<Link href="\/me"[^>]*>My Stats<\/Link>/);
   });
 
   it('is marked [beta] at the top, as every new page is', () => {
