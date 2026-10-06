@@ -16502,7 +16502,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // zone at a time, instead of waiting out the week or deleting bot_kv keys by hand. A row
 // stored before versions existed has none and reads as 1.
 //   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
-const _MOB_PACK_VERSION = 2;
+//   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
+const _MOB_PACK_VERSION = 3;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
