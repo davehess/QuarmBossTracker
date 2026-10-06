@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'long-bids-2026-10-06',
+    title: 'Long-term bidding leaves your timers',
+    version: 'Agent 3.7.92 · Web 1.8.108',
+    date: '2026-10-06',
+    headline: 'Auctions that run for weeks no longer fill the timers window and the Command Center.',
+    features: [
+      { name: 'My parses: mains and real alts', blurb: 'The character row on wolfpack.quest/me/parses shows the characters you actually fight on. Ones you hid on My Stats ("Hide from lists"), traders, and ones with no fights in 30 days sit behind "+N more". "All" leaves hidden characters out.' },
+    ],
+    fixes: [
+      'Long-term bidding (auctions set to run longer than six hours) no longer shows as a countdown in the timers window or a row in the Command Center. You still bid on them in the Loot bidding window. Every Mimic picks this up by itself.',
+    ],
+  },
+  {
     key: 'my-parses-2026-10-06',
     title: 'Your parses over time',
     version: 'Web 1.8.107 · Bot 3.1.210',
