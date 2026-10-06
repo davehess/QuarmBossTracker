@@ -67,4 +67,28 @@ describe('OpenDKP auctions as timers', () => {
     h._applyDkpAuctions([{ auction_id: 5, item_name: 'C', ends_at: null }, { auction_id: 6, item_name: 'D', ends_at: iso(T0 - 1) }], T0);
     expect(h._activeTimers.size).toBe(0);
   });
+
+  // The guild lead, 2026-10-06: "Longterm bidding for items needs to not show up in timers."
+  it('long-term bidding (set to run over 6 hours) makes no timer and no board row, even in its last minutes', () => {
+    const h = load();
+    const DAY = 86400_000;
+    const list = [
+      { auction_id: 21, item_name: 'Ethereal Parchment', started_at: iso(T0 - 2 * DAY), ends_at: iso(T0 + 58 * DAY) },
+      { auction_id: 22, item_name: 'Sceptre of Destruction', started_at: iso(T0 - 60_000), ends_at: iso(T0 + 120_000) },
+      // started 6 h and a minute before it ends: long-term, though only 5 minutes are left
+      { auction_id: 23, item_name: 'Ornate Silk Turban Pattern', started_at: iso(T0 - 6 * 3600_000 + 5 * 60_000 - 60_000), ends_at: iso(T0 + 5 * 60_000) },
+      // exactly 6 h is still a timer
+      { auction_id: 24, item_name: 'Earring of Influence', started_at: iso(T0 - 6 * 3600_000 + 60_000), ends_at: iso(T0 + 60_000) },
+    ];
+    h._applyDkpAuctions(list, T0);
+    expect([...h._activeTimers.keys()].sort()).toEqual(['auction|22', 'auction|24']);
+    expect(h._dkpAuctionsSnapshot(T0).map(a => a.id)).toEqual(['24', '22']);
+  });
+
+  it('a timer an older build made for a long-term auction is cleared on the next poll', () => {
+    const h = load();
+    h._activeTimers.set('auction|31', { id: 'auction|31', kind: 'loot' });   // left over from before the fix
+    h._applyDkpAuctions([{ auction_id: 31, item_name: 'Ethereal Parchment', started_at: iso(T0 - 86400_000), ends_at: iso(T0 + 59 * 86400_000) }], T0);
+    expect(h._activeTimers.has('auction|31')).toBe(false);
+  });
 });
