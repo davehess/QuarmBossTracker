@@ -104,7 +104,10 @@ const chipOn = 'border-accent bg-accent text-white';
 const chipFloorOn = 'border-accent bg-accent/15 text-text';
 const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 
-export default function SpectatorBoard() {
+// `embedded`: the board inside /screen, which owns the page chrome. It drops the roster column and the help
+// line (the screen's right rail has its own panels), the "Live" word (the screen's bar says it), and lets the
+// map take the height of the window. Everything else is the same board, with the same poll.
+export default function SpectatorBoard({ embedded = false }: { embedded?: boolean } = {}) {
   const [feed, setFeed] = useState<{ data: Positions; rxAt: number } | null>(null);
   const [netErr, setNetErr] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
@@ -627,7 +630,7 @@ export default function SpectatorBoard() {
     return (
       <Panel>
         Your session ended.{' '}
-        <a href="/auth/signin?next=/spectator" className="underline">Sign in again</a> to see the board.
+        <a href={embedded ? '/auth/signin?next=/screen' : '/auth/signin?next=/spectator'} className="underline">Sign in again</a> to see the board.
       </Panel>
     );
   }
@@ -655,13 +658,15 @@ export default function SpectatorBoard() {
   const elapsed = (Date.now() - feed.rxAt) / 1000;
 
   return (
-    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+    <div className={embedded ? 'min-w-0' : 'grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]'}>
       <div className="min-w-0">
         <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dim">
-          <span className={netErr ? 'text-orange' : 'text-green'}>{netErr ? 'Reconnecting…' : '● Live'}</span>
+          {(!embedded || netErr) && (
+            <span className={netErr ? 'text-orange' : 'text-green'}>{netErr ? 'Reconnecting…' : '● Live'}</span>
+          )}
           <span className="text-text">{zoneName}</span>
           <span>{raiders.length} {raiders.length === 1 ? 'raider' : 'raiders'}</span>
-          {awayCount > 0 && <span>{awayCount} away from the raid (tap one in the roster)</span>}
+          {awayCount > 0 && <span>{awayCount} away from the raid{embedded ? '' : ' (tap one in the roster)'}</span>}
           {otherZones > 0 && <span>{otherZones} in other zones</span>}
           {feed.data.unplaced > 0 && <span>{feed.data.unplaced} not placed (zone unknown)</span>}
         </div>
@@ -690,7 +695,8 @@ export default function SpectatorBoard() {
         </div>
 
         <div ref={wrapRef}
-          className="relative h-[52vh] max-h-[720px] sm:h-[62vh] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg">
+          className={`relative w-full overflow-hidden rounded-md border border-border bg-bg min-h-[320px] ${
+            embedded ? 'h-[56vh] lg:h-[calc(100vh-17rem)]' : 'h-[52vh] max-h-[720px] sm:h-[62vh]'}`}>
           <canvas ref={canvasRef}
             tabIndex={0}
             role="img"
@@ -742,12 +748,15 @@ export default function SpectatorBoard() {
             ))}
           </div>
         )}
-        <p className="mt-2 text-xs text-dim">
-          Drag to pan, scroll or pinch to zoom. Dots point the way each raider faces and fade when a position is more than {DOT_STALE_S} seconds old.
-          {bands.length > 1 ? ' The bright lines are the floor the raid is on.' : ''}
-        </p>
+        {!embedded && (
+          <p className="mt-2 text-xs text-dim">
+            Drag to pan, scroll or pinch to zoom. Dots point the way each raider faces and fade when a position is more than {DOT_STALE_S} seconds old.
+            {bands.length > 1 ? ' The bright lines are the floor the raid is on.' : ''}
+          </p>
+        )}
       </div>
 
+      {!embedded && (
       <aside className="min-w-0 rounded-md border border-border bg-panel p-2 lg:max-h-[80vh] lg:overflow-y-auto" aria-label="Raid roster">
         <ul className="space-y-3">
           {groupKeys.map(g => (
@@ -779,6 +788,7 @@ export default function SpectatorBoard() {
           ))}
         </ul>
       </aside>
+      )}
     </div>
   );
 }
