@@ -6882,6 +6882,55 @@ function _refreshSlowFromAmbiguousLand(targetName, line, nowMs) {
   }
   return false;
 }
+// FB-54 (a member: "Some mobs are reverse slowable. This needs to be picked up on
+// the target overlay"). On the server, a normal slow landing on an NPC with special
+// ability 50 (ReverseSlow) becomes HASTE of the slow's size, and it overrides
+// Unslowable. The bot labels it 'Reverse Slow — slowing hastes it' in the mob-info
+// `specials` list; matched by prefix so the explanation after the dash can change.
+// Returns true / false (a cached row says no) / null (no cached row for the name yet,
+// so a slow is treated as a slow). Same any-zone-bucket scan as _pacifyImmuneKnown.
+function _reverseSlowKnown(targetName) {
+  if (typeof _mobInfoByName === 'undefined' || typeof _normMobNameAgent !== 'function') return null;
+  const want = _normMobNameAgent(targetName) + '|';
+  let sawRow = false;
+  for (const [k, v] of _mobInfoByName) {
+    if (!k.startsWith(want)) continue;
+    const mob = v && v.mob;
+    if (!mob || !Array.isArray(mob.specials)) continue;
+    sawRow = true;
+    if (mob.specials.some(s => /^Reverse Slow/.test(s))) return true;
+  }
+  return sawRow ? false : null;
+}
+// A slow on a reverse-slow mob is a mistake, not a debuff: it is NOT recorded (no
+// timer, no badge, no "slow dropped / reslow" nag later) and the raid is told to stop.
+// Main target only, and once per mob per window — a raid's slowers all land at once.
+const _reverseSlowWarnedAt = new Map();   // targetLower → ms
+const REVERSE_SLOW_WARN_GAP_MS = 8000;
+function _announceReverseSlow(mob) {
+  _pushOverlay({
+    text:        '⚠ Reverse slow ' + (mob ? 'on ' + mob + ' ' : '') + "— it's hasted, don't slow it",
+    tts:         'Reverse slow, stop slowing',
+    color:       'red',
+    duration_ms: 6000,
+    shownAt:     Date.now(),
+    firedAt:     Date.now(),
+    trigger:     'Reverse slow',
+    scope:       'slow',
+    test:        false,
+  });
+}
+function _noteReverseSlowLanding(targetLower, targetName, nowMs) {
+  // Anything tracked before the mob's row arrived must not nag "reslow" later.
+  _slowsByTarget.delete(targetLower);
+  _slowCalloutState.delete(targetLower);
+  if (!_rampageOnMainTarget(targetName)) return;
+  const last = _reverseSlowWarnedAt.get(targetLower) || 0;
+  if (nowMs - last < REVERSE_SLOW_WARN_GAP_MS) return;
+  _reverseSlowWarnedAt.set(targetLower, nowMs);
+  if (_reverseSlowWarnedAt.size > SLOW_TARGET_CAP) _reverseSlowWarnedAt.delete(_reverseSlowWarnedAt.keys().next().value);
+  _announceReverseSlow(_slowCalloutMob(targetName, targetLower));
+}
 // Record a slow landing on a target (both parse hook sites feed here). `caster`
 // is the self-cast caster or null. Refreshes an existing same-slow window and
 // keeps every distinct slow so best-active can fall back on expiry. Then fires
@@ -6892,6 +6941,7 @@ function _noteSlowForTarget(evt, caster) {
   const targetLower = String(evt.target).toLowerCase();
   const spellLower  = String(evt.spell_name).toLowerCase().replace(/`/g, "'").trim();
   const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
+  if (_reverseSlowKnown(evt.target) === true) { _noteReverseSlowLanding(targetLower, evt.target, Date.now()); return; }
   // Caster level is unknown at land time — estimate off the era cap, the same
   // floor the buff/timeline trackers use (level-formula slows compute 0 ticks
   // otherwise).
@@ -8323,6 +8373,8 @@ class EncounterBuilder {
     if (!evt || !evt.spell_name || !evt.target) return;
     if (!_isSlowSpell(evt.spell_name)) return;
     if (!this._fightTargetMatches(evt.target)) return;
+    // FB-54: on a reverse-slow mob it hastes it — no "Slow landed" tick, no slow_off later.
+    if (_reverseSlowKnown(evt.target) === true) return;
     const atMs = evt.cast_at ? (Date.parse(evt.cast_at) || Date.now()) : Date.now();
     // Slows are detrimental — the caster's level is unknown at land time, so
     // estimate duration off the era cap (the same floor the buff tracker uses).
@@ -14598,6 +14650,8 @@ function _meTargetExtras(st, active, now) {
     // default; a mob's own setting can move it, which the catalog row doesn't carry).
     summon: specials ? specials.includes('Summon') : null,
     unslowable: specials ? specials.includes('Unslowable') : null,
+    // FB-54: a slow on it HASTES it (and beats Unslowable) — the HUD says so, in red.
+    reverse_slow: specials ? specials.some(s => /^Reverse Slow/.test(s)) : null,
     enraged: !!(until && until > now),
     // Its enrage has come and gone: the HUD stops marking the enrage zone red.
     enrage_ended: !(until && until > now) && _meEnrageEnded.has(tl),

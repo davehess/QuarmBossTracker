@@ -120,6 +120,9 @@
   .slowbadge .sm{color:#f0b429}
   .slowbadge .by{color:#c9a227;font-weight:400;font-style:italic;font-size:10px}
   .slowbadge .st2{color:#e6c34a;margin-left:auto}
+  /* FB-54 reverse slow: red, not amber — a slow on this mob hastes it. */
+  .slowbadge.rev{background:rgba(248,81,73,0.16);border-color:rgba(248,81,73,0.6);color:#ff7b72}
+  .slowbadge.rev .sc,.slowbadge.rev .sn,.slowbadge.rev .sm{color:#ff7b72}
   /* observed buffs on the current target (timed from the cast that landed) */
   .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
   .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
@@ -228,6 +231,9 @@
   /* Timer rows: amber is slow on every overlay (root will be blue #58a6ff). */
   .mini-row.slow .mini-lab{color:#f0b429;font-size:10px;letter-spacing:.3px}
   .mini-row.slow .mini-bar i{background:#f0b429}
+  .mini-row.rev .mini-lab{color:#f85149;font-size:10px;letter-spacing:.3px}
+  .mini-row.rev .mini-bar i{background:#f85149}
+  .mini-row.rev .mini-t{color:#ff7b72;font-weight:700}
   .mini-t{color:#e6edf3}
   .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
   .mini .ht.ok{color:#56d364}
@@ -487,7 +493,14 @@
     return '<div class="tbuffs" data-wp-sect="casting"><div class="hdr">casting</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
-  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
+  // FB-54: 'Reverse Slow' — a slow on it hastes it — is the one a raid must not miss.
+  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1,
+                     'Reverse Slow — slowing hastes it':1 };
+  function isReverseSlow(mob){
+    if (!mob || !Array.isArray(mob.specials)) return false;
+    for (var i = 0; i < mob.specials.length; i++) if (/^Reverse Slow/.test(mob.specials[i])) return true;
+    return false;
+  }
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
 
   // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
@@ -974,6 +987,11 @@
          +   '<span class="mini-t wp-mini-num">' + (rem != null ? fmtSecs(rem) : '?') + '</span>'
          + '</div>';
   }
+  function _reverseSlowTip(sl){
+    return 'Reverse slow — a slow on this mob hastes it'
+      + (sl && sl.name ? ' (a slow landed: ' + sl.name + (sl.magnitude && !sl.ambiguous ? ', so it is hasted ~' + sl.magnitude + '%' : ', so it is hasted') + ')' : '')
+      + '. Do not slow it.';
+  }
   function miniTargetHtml(mi, nm, htChip){
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, Math.round(mi.target_hp_pct))) : null;
     // The 50/25 steps every mini bar shares (preload's _WP_MINI_CSS).
@@ -984,7 +1002,15 @@
           +   '<span class="mini-nm wp-mini-name">' + esc(nm) + '</span>' + (htChip || '')
           + '</div>';
     var sl = mi.target_slow;
-    if (sl && sl.name) {
+    if (isReverseSlow(mi.mob)) {
+      // FB-54: red where the amber slow row would be. The agent records no slow on
+      // these mobs; one that slipped in before the mob's row arrived reads as haste.
+      h += '<div class="mini-row rev" title="' + esc(_reverseSlowTip(sl)) + '">'
+         +   '<span class="mini-lab wp-mini-num">REV</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:100%"></i></span>'
+         +   '<span class="mini-t wp-mini-num">' + (sl && sl.name ? 'HASTED' : 'DON’T SLOW') + '</span>'
+         + '</div>';
+    } else if (sl && sl.name) {
       var tip = sl.ambiguous ? 'Slowed — strength unknown: the game prints one message for several slows'
               : esc(sl.name) + (sl.magnitude ? ' · ' + sl.magnitude + '%' : '') + (sl.caster ? ' · by ' + esc(sl.caster) : '');
       h += _miniTimerRow('slow', 'SLOW', sl.remaining_secs, sl.total_secs, tip);
@@ -1064,6 +1090,14 @@
               + ' · EQ slows do not stack — strongest shown';
       }
       slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
+    }
+    // FB-54: a reverse-slow mob (a slow on it hastes it) gets a red badge in the amber
+    // one's place — "don't slow", or "hasted" when a slow did land.
+    if (isReverseSlow(mob)) {
+      var rsl = mi.target_slow, rsHasted = !!(rsl && rsl.name);
+      var rsMag = (rsHasted && rsl.magnitude && !rsl.ambiguous) ? ' <span class="sm">+' + rsl.magnitude + '%</span>' : '';
+      slowBadge = '<div class="slowbadge rev" title="' + esc(_reverseSlowTip(rsl)) + '">⛔ <span class="sc">REVERSE SLOW</span> '
+                + '<span class="sn">' + (rsHasted ? 'it’s hasted' : 'don’t slow') + '</span>' + rsMag + '</div>';
     }
     // ▭ Mini: health and the slow timer only. The header, tabs, resists, mana
     // and the buff/cast lists are the full overlay's; the title bar hides by CSS.

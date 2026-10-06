@@ -300,6 +300,18 @@ describe('disciplines', () => {
 describe('target read-outs', () => {
   const st = (extra = {}) => ({ target_name: 'a gnoll warlord', zone: 12, gauges: [], ...extra });
 
+  // FB-54: a slow on a Reverse Slow mob hastes it — the target state carries the flag beside unslowable.
+  it('reverse_slow comes from the mob-info row\'s Reverse Slow special, beside unslowable', () => {
+    const h = load();
+    h._mobInfoByName.set('magmaton|12', { at: clock, mob: { specials: ['Unslowable', 'Reverse Slow — slowing hastes it'] } });
+    const t = h._meTargetExtras(st({ target_name: 'Magmaton' }), 'Aldenmar', clock);
+    expect(t.reverse_slow).toBe(true);
+    expect(t.unslowable).toBe(true);
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).reverse_slow).toBe(false);
+    expect(h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock).reverse_slow).toBeNull();   // no row yet: unknown, not "no"
+  });
+
   it('enrage and unslowable come from the mob-info row; ENRAGED from the server\'s own lines', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });

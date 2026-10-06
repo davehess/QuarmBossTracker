@@ -58,6 +58,7 @@ function build() {
     const _slowCalloutState = new Map();
     function _rampageOnMainTarget() { return false; }   // silence the callout path
     function _maybeAnnounceSlowLand() {}                // callout path is not under test here
+    function _reverseSlowKnown() { return null; }       // FB-54: no cached mob row — a slow is a slow
     function _assumedCasterLevel() { return 60; }
     function _durTicksForLevel(f, d) { return Number(d) || 0; }
     function _pickBestActiveSlow(entries) {
