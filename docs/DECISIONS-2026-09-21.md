@@ -7416,3 +7416,9 @@ that exposes me to anything."*
 - **Raid announcers** (miMIC, Bristlebane, Lord Mobsincamp) are being designed now: the cast bible and the
   announcer engine come to the repo with no member names; anything about the guild lead's own setup goes to
   the Home lab tab.
+- **Personas are written and rehearsed as character cards** (the guild lead picked A, 2026-10-06: a
+  SillyTavern rehearsal room). Each announcer is a Character Card V2 (`chara_card_v2`) plus one shared
+  lorebook of guild lore. The three play a raid night in a group chat before any raider hears them. The
+  announcer engine's persona pack must import and export that card format, so the cards stay the one source
+  for every surface: Mimic's in-ear lines, the Discord bots' personalities, and recorded clips. Another guild
+  can bring its own cards. v0.1 cards went to the guild lead directly; v0.2 comes from the cast bible.
