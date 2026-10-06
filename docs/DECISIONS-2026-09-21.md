@@ -7374,3 +7374,12 @@ map during raids."*
 - **Found on the way:** the RaidBosses bot's spoken callouts very likely stopped working on 2026-03-01 — it
   runs `@discordjs/voice` 0.18 on Node 20, before Discord made end-to-end voice encryption mandatory. Not
   fixed here: Bristlebane is meant to take the callouts over. `/voicetest` confirms either way.
+- **For a new guild it is ONE bot** (the guild lead, 2026-10-06: *"for future guilds the same discord bot
+  should do both. give me the permissions"*). Permissions, read off the code and discord.js's own flags:
+  View Channels, Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Embed
+  Links, Attach Files, Read Message History, Manage Messages, Pin Messages (split out of Manage Messages
+  by Discord), Manage Events, Manage Roles, Connect, Speak, Use Voice Activity, Change Nickname =
+  `2252135193504768`; + Create Invite and Use Activities for a Discord-Activity screen = `2252684949318657`.
+  README's old list (six) had drifted. Wolf Pack keeps its two apps. Before one token can carry both, the
+  two command registrations must become one (each bulk-overwrites the guild's commands today) — written into
+  `DESIGN-selfhost-wizard.md` §3.
