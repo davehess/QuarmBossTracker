@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'my-parses-2026-10-06',
+    title: 'Your parses over time',
+    version: 'Web 1.8.107 · Bot 3.1.210',
+    date: '2026-10-06',
+    headline: 'A chart of your own DPS, fight by fight, over a day, a week, a month or longer.',
+    features: [
+      { name: 'wolfpack.quest/me/parses', blurb: 'One dot per fight and a line for each raid night\'s average. Pick 1 day, 1 week, 30 or 90 days, this expansion or all time; bosses only or every fight; all your characters or one. The table under it shows how each fight compares with your usual on that boss. Numbers start 14 July 2026. It is new, so it is marked [beta].' },
+      { name: 'Coming to Mimic', blurb: 'The same chart as a My parses tab in Mimic\'s main window, and a Trend view on the DPS/Tank Meter for tonight and this week, arrive in the Mimic beta.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'raid-screen-2026-10-06',
     title: 'The raid screen',
     version: 'Web 1.8.106 · Bot 3.1.209',
