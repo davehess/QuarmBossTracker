@@ -3,7 +3,7 @@
 // spectator board itself (app/spectator/SpectatorBoard.tsx, embedded). Everything here draws from data the
 // board already holds: the screen state, the slow feed (/api/screen/feed) and the positions feed.
 import {
-  TONIGHT_H, agoText, parseSlideBody, summarizeRaid, untilText,
+  LOOTED_READ_MAX, TONIGHT_H, agoText, parseSlideBody, summarizeRaid, untilText,
   type Award, type FeedKill, type FeedSpawn, type LootedGroup, type ScreenFeed, type ScreenState,
 } from '@/lib/raidScreen';
 import { fmtDuration } from '@/lib/format';
@@ -78,8 +78,8 @@ function AwardRow({ a, now }: { a: Award; now: number }) {
   return (
     <li className="flex items-baseline gap-2 border-b border-border/60 px-3 py-2 last:border-b-0">
       <span className="min-w-0 flex-1 truncate text-text">{a.item}</span>
-      <span className="shrink-0 text-xs text-blue">{a.who ?? 'no bids yet'}</span>
-      {a.dkp != null && <span className="w-12 shrink-0 text-right text-xs tabular-nums text-gold">{a.dkp}</span>}
+      <span className="shrink-0 text-xs text-blue">{a.open ? 'bidding open' : a.who}</span>
+      {!a.open && a.dkp != null && <span className="w-12 shrink-0 text-right text-xs tabular-nums text-gold">{a.dkp}</span>}
       <span className="w-20 shrink-0 text-right text-xs text-dim">
         {a.open ? `closes in ${untilText(a.at, now)}` : agoText(a.at, now)}
       </span>
@@ -127,6 +127,7 @@ export function LootView({ feed, auctions, now }: { feed: ScreenFeed | null; auc
 
         <section className={card} aria-label="Picked up">
           <h2 className={`${label} border-b border-border px-3 py-2`}>Picked up · latest</h2>
+          {feed.truncated && <p className="border-b border-border/60 px-3 py-1 text-xs text-dim">Latest {LOOTED_READ_MAX.toLocaleString('en-US')} pickups only; older ones are not counted.</p>}
           {feed.looted.length > 0
             ? <ul>{feed.looted.map(g => <LootedRow key={g.item} g={g} now={now} />)}</ul>
             : <Empty>Nothing looted in the last {TONIGHT_H} hours.</Empty>}

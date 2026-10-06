@@ -4,7 +4,7 @@
 // WHY IT EXISTS
 // wolfpack.quest/screen is read by ~60 raiders for a whole raid, and its 3-second reads used to go through
 // Vercel (a function call per poll on a plan with a monthly invocation cap). The bot holds every raider's
-// latest position in memory and is flat-rate, so the browser asks the bot instead. The bot has no Supabase
+// latest position in memory (flat compute, metered egress), so the browser asks the bot instead. The bot has no Supabase
 // session to check, so Vercel (which does) vouches for the member by signing a ticket with a secret both
 // sides hold (SCREEN_TOKEN_SECRET); the bot only has to verify the signature.
 //

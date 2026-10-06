@@ -1,15 +1,17 @@
 // GET /api/screen/ticket: the bearer the raid screen's page presents to the BOT for its 3-second reads.
 //
-//   -> { token, exp, liveUrl }   token: a screen ticket (lib/screenTicket.ts), exp in seconds, liveUrl: the
-//                                 bot's /api/screen/live. The page renews it a few minutes before exp.
+//   -> { token, exp, ttl, liveUrl }   token: a screen ticket (lib/screenTicket.ts), exp in seconds (this
+//                                 server's clock), ttl: seconds of life left as this server sees it, liveUrl:
+//                                 the bot's /api/screen/live. The page renews it a few minutes before it ends,
+//                                 counting `ttl` from the moment it arrives (never `exp` against its own clock).
 //   -> { token: null }           the bot feed is not configured (SCREEN_TOKEN_SECRET or SCREEN_LIVE_URL is
 //                                 unset, or SCREEN_LIVE_URL is not an https address): the page keeps polling
 //                                 Vercel exactly as it did before the bot feed existed.
 //
 // Why the reads moved: Vercel (Hobby) caps function invocations per month and sixty viewers polling every
 // three seconds for a raid is most of a month's allowance in one night. The bot holds every raider's latest
-// position in memory and is flat-rate, so the page asks the bot directly and this route is called once per
-// viewer per ~two hours.
+// position in memory (flat compute, metered egress), so the page asks the bot directly and this route is
+// called once per viewer per ~two hours.
 //
 // Members only, the same gate as /api/spectator/positions: a signed-in Supabase session (sign-in itself is
 // the guild and role gate: app/auth/callback). The ticket's `sub` is the user id; the bot never needs more.
@@ -42,5 +44,8 @@ export async function GET() {
   const liveUrl = liveUrlFromEnv();
   const ticket = liveUrl ? signScreenTicket(user.id) : null;
   if (!liveUrl || !ticket) return NextResponse.json({ token: null }, { headers: NO_STORE });
-  return NextResponse.json({ token: ticket.token, exp: ticket.exp, liveUrl }, { headers: NO_STORE });
+  // `ttl` is the ticket's life left by THIS server's clock: the page counts it from the moment the answer
+  // arrives, because `exp` is an instant on our clock and a viewer's own clock may be hours off.
+  const ttl = Math.max(0, ticket.exp - Math.floor(Date.now() / 1000));
+  return NextResponse.json({ token: ticket.token, exp: ticket.exp, ttl, liveUrl }, { headers: NO_STORE });
 }

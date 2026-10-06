@@ -4,8 +4,12 @@
 //   POST    officers only. Two shapes, both answer with the fresh { slides }:
 //             { id?, title, body, imageUrl }   add a slide at the end, or edit the one named by `id`
 //             { action: 'move', id, dir }      dir 'up' | 'down': swap the slide with its neighbour
-//   DELETE  officers only: ?id=<slide id>. The rest close up, and if the slide that was up is gone the
-//           screen's index is pulled back inside the deck.
+//   DELETE  officers only: ?id=<slide id>. The rest close up.
+//
+// The screen stores which slide is up as a position (raid_screen_state.slide_index), so a move or a delete
+// carries that position to wherever the slide that was up now sits, in the same request and before the fresh
+// deck is answered: editing the deck never changes what the raid is looking at. If the slide that was up is
+// the one deleted, the screen stays at the same place (the next slide), pulled back to the last one.
 //
 // Limits (lib/raidScreen.ts): title 120, body 2,000, https image address, SLIDES_MAX slides. A body is plain
 // text, never HTML: the page splits it into paragraphs and bullets and renders text nodes.
@@ -14,7 +18,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { SCREEN_GUILD, SLIDES_MAX, isUuid, moveId, parseSlideInput } from '@/lib/raidScreen';
-import { listSlides, writeOrder } from '@/lib/raidScreenServer';
+import { keepSlideUp, listSlides, readSlideIndex, writeOrder } from '@/lib/raidScreenServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,9 +52,12 @@ export async function POST(req: Request) {
     if (b.action === 'move') {
       if (!isUuid(b.id)) return fail(400, 'id is not a slide id');
       if (b.dir !== 'up' && b.dir !== 'down') return fail(400, "dir must be 'up' or 'down'");
-      const moved = moveId(deck.map(s => s.id), b.id, b.dir);
+      const before = deck.map(s => s.id);
+      const moved = moveId(before, b.id, b.dir);
       if (!moved) return fail(400, 'that slide cannot move that way');
+      const was = await readSlideIndex(admin);
       await writeOrder(admin, moved, positions);
+      await keepSlideUp(admin, was, before, moved);
       return NextResponse.json({ slides: await listSlides(admin) }, { headers: NO_STORE });
     }
 
@@ -90,16 +97,16 @@ export async function DELETE(req: Request) {
     const deck = await listSlides(admin);
     if (!deck.some(s => s.id === id)) return fail(404, 'no such slide');
 
+    const was = await readSlideIndex(admin);
     const { error } = await admin.from('raid_screen_slides').delete().eq('id', id).eq('guild_id', SCREEN_GUILD);
     if (error) return fail(502, 'slides unavailable');
 
     const rest = deck.filter(s => s.id !== id);
     await writeOrder(admin, rest.map(s => s.id), new Map(rest.map(s => [s.id, s.position])));
 
-    // The slide that was up may have been the last one: keep the screen's index inside the deck. Only the
-    // index moves; "Driving" still names whoever last drove.
-    const last = Math.max(0, rest.length - 1);
-    await admin.from('raid_screen_state').update({ slide_index: last }).eq('guild_id', SCREEN_GUILD).gt('slide_index', last);
+    // The screen keeps showing the slide that was up (at its new place); if that one was deleted it stays at
+    // the same place, pulled back inside the deck.
+    await keepSlideUp(admin, was, deck.map(s => s.id), rest.map(s => s.id));
 
     return NextResponse.json({ slides: await listSlides(admin) }, { headers: NO_STORE });
   } catch {

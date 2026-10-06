@@ -6,7 +6,8 @@
 //   the live feed (lib/useScreenLive.ts)  every 3 s  the mode, the slide, who is driving, and who is where. One
 //                                          read of the BOT for the whole page, not three Vercel polls: sixty open
 //                                          screens would otherwise spend most of Vercel's monthly function
-//                                          allowance in a night. Without the bot feed it reads the Vercel routes.
+//                                          allowance in a night. Without the bot feed it reads the Vercel routes,
+//                                          every 8 s, and the leader bar says so.
 //   /api/screen/feed  every FEED_POLL_MS    loot, boss kills, next spawns (slow; once more the moment the screen
 //                                          switches to Loot or Overview)
 // The embedded map is handed the positions, so it does not poll at all.
@@ -106,8 +107,10 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
   stateRef.current = state;
   const panelNow = useNow(10_000);
 
-  // The screen state and the positions: one read of the bot every 3 s (Vercel's routes when it is not set up).
+  // The screen state and the positions: one read of the bot every 3 s (Vercel's routes, every 8 s, when it is
+  // not set up or is down). Off once the session has ended, so a signed-out page stops asking the bot.
   const feeds = useScreenLive({
+    enabled: !feedSignedOut,
     wantState: true,
     onState: d => {
       // The officer's own click is on its way: let its answer, not this older one, be what shows.
@@ -209,6 +212,7 @@ export default function ScreenBoard({ canDrive }: { canDrive: boolean }) {
           Driving: <span className="text-gold">{state?.updatedBy ?? 'nobody yet'}</span>
         </span>
         {!canDrive && <span className="text-sm text-dim">Showing: <span className="text-text">{MODE_LABEL[mode]}</span></span>}
+        {canDrive && feeds.transport === 'vercel' && <span className="text-xs text-dim">live feed: website (slower)</span>}
         {canDrive && <span className="ml-auto text-xs text-dim">only the raid leader sees this bar</span>}
         {driveErr && <span role="alert" className="basis-full text-xs text-red">{driveErr}</span>}
       </div>
@@ -283,7 +287,9 @@ function Rail({ state, feed, positions }: {
             <li key={a.id} className="border-b border-border/60 px-3 py-2 last:border-b-0">
               <span className="block truncate text-text">{a.item}</span>
               <span className="block truncate text-xs text-dim">
-                {a.open ? `closes in ${untilText(a.at, now)}` : agoText(a.at, now)}{a.who ? ` · ${a.who}` : ''}{a.dkp != null ? ` · ${a.dkp} DKP` : ''}
+                {a.open
+                  ? `bidding open · closes in ${untilText(a.at, now)}`
+                  : `${agoText(a.at, now)}${a.who ? ` · ${a.who}` : ''}${a.dkp != null ? ` · ${a.dkp} DKP` : ''}`}
               </span>
             </li>
           ))}

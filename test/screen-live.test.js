@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -26,7 +27,7 @@ import {
 } from '../web/lib/screenTicket.ts';
 import {
   parseLive, afterBotFailure, writeIsStale, judgeRead, createScreenLive,
-  BOT_FAILS_BEFORE_FALLBACK, BOT_REPROBE_MS, TICKET_MIN_GAP_MS, LIVE_POLL_MS, WRITE_TRUST_MS,
+  BOT_FAILS_BEFORE_FALLBACK, BOT_REPROBE_MS, TICKET_MIN_GAP_MS, LIVE_POLL_MS, FALLBACK_POLL_MS, WRITE_TRUST_MS,
 } from '../web/lib/screenLive.ts';
 import { buildPositions } from '../web/lib/spectator.ts';
 import { buildScreenState, toScreenSlide, FEED_POLL_MS } from '../web/lib/raidScreen.ts';
@@ -219,6 +220,16 @@ describe('GET /api/screen/ticket', () => {
     expect(j.exp * 1000).toBeGreaterThan(Date.now() + 7000 * 1000);
   });
 
+  it('also says how long the ticket has left by the SERVER\'s clock (ttl), for a page whose own clock is off', async () => {
+    st.user = { id: 'user-42' };
+    process.env.SCREEN_TOKEN_SECRET = SECRET;
+    process.env.SCREEN_LIVE_URL = 'https://bot.example.test/api/screen/live';
+    const j = await (await (await route())()).json();
+    expect(j.ttl).toBeGreaterThanOrEqual(TICKET_TTL_S - 1);
+    expect(j.ttl).toBeLessThanOrEqual(TICKET_TTL_S);
+    expect(j.ttl).toBe(j.exp - Math.floor(Date.now() / 1000));
+  });
+
   it('will not send a bearer to an address that is not https (localhost excepted), or one with a login in it', async () => {
     st.user = { id: 'user-1' };
     process.env.SCREEN_TOKEN_SECRET = SECRET;
@@ -282,10 +293,11 @@ describe('the bot feed: GET /api/screen/live', () => {
   let clock, sb, failing;
 
   const tableCalls = (t) => sb.calls.filter(c => c.table === t).length;
-  function ask({ origin, token, method = 'GET', ctx } = {}) {
+  function ask({ origin, token, method = 'GET', ctx, encoding } = {}) {
     const headers = {};
     if (origin) headers.origin = origin;
     if (token !== undefined) headers.authorization = `Bearer ${token}`;
+    if (encoding !== undefined) headers['accept-encoding'] = encoding;
     const res = mkRes();
     return screenLive.handle({ method, url: '/api/screen/live', headers }, res, ctx).then(() => res);
   }
@@ -352,6 +364,48 @@ describe('the bot feed: GET /api/screen/live', () => {
       expect(res.status).toBe(200);
       expect(head(res, 'cache-control')).toBe('no-store');
       expect(head(res, 'content-type')).toBe('application/json');
+    });
+  });
+
+  describe('compression: every byte out of the bot is billed', () => {
+    it('a browser that accepts gzip gets the same JSON gzipped, with Content-Encoding and Vary: Origin, Accept-Encoding', async () => {
+      const plain = await ask({ origin: ORIGIN, token: ticket() });
+      const gz = await ask({ origin: ORIGIN, token: ticket(), encoding: 'gzip, deflate, br' });
+      expect(gz.status).toBe(200);
+      expect(head(gz, 'content-encoding')).toBe('gzip');
+      expect(head(gz, 'vary')).toBe('Origin, Accept-Encoding');
+      expect(head(gz, 'content-type')).toBe('application/json');
+      expect(head(gz, 'cache-control')).toBe('no-store');
+      expect(head(gz, 'access-control-allow-origin')).toBe(ORIGIN);
+      expect(Buffer.isBuffer(gz.body)).toBe(true);
+      expect(zlib.gunzipSync(gz.body).toString('utf8')).toBe(plain.body);
+      expect(json({ body: zlib.gunzipSync(gz.body).toString('utf8') }).positions.rows).toHaveLength(3);
+      expect(gz.body.length).toBeLessThan(plain.body.length);
+    });
+
+    it('with no Accept-Encoding (or identity) the answer is plain JSON, and still says it varies on the header', async () => {
+      for (const encoding of [undefined, 'identity', 'br']) {
+        const res = await ask({ origin: ORIGIN, token: ticket(), encoding });
+        expect(res.status, String(encoding)).toBe(200);
+        expect(head(res, 'content-encoding'), String(encoding)).toBeUndefined();
+        expect(head(res, 'vary'), String(encoding)).toBe('Origin, Accept-Encoding');
+        expect(typeof res.body).toBe('string');
+        expect(json(res).positions.rows).toHaveLength(3);
+      }
+    });
+
+    it('only the 200 is gzipped: a 401, a 403, a 503 and the preflight stay plain even for a browser that accepts gzip', async () => {
+      const gzip = 'gzip';
+      const cases = [
+        await ask({ origin: ORIGIN, token: 'garbage', encoding: gzip }),
+        await ask({ origin: 'https://evil.example', token: ticket(), encoding: gzip }),
+        await ask({ origin: ORIGIN, method: 'OPTIONS', encoding: gzip }),
+      ];
+      delete process.env.SCREEN_TOKEN_SECRET;
+      cases.push(await ask({ origin: ORIGIN, token: ticket(), encoding: gzip }));
+      expect(cases.map(r => r.status)).toEqual([401, 403, 204, 503]);
+      for (const r of cases) expect(head(r, 'content-encoding')).toBeUndefined();
+      for (const r of cases.filter(r => r.status !== 204)) expect(typeof r.body).toBe('string');
     });
   });
 
@@ -591,6 +645,44 @@ describe('the bot feed: GET /api/screen/live', () => {
       expect(sb.calls.filter(c => c.table === 'character_live_state' && !c.failed)).toHaveLength(2);
     });
 
+    it('the last good answer is not served forever: past LIVE_STALE_MS the zones are "could not load", past STATE_STALE_MS the state is null', async () => {
+      expect([screenLive.LIVE_STALE_MS, screenLive.STATE_STALE_MS]).toEqual([60_000, 20_000]);
+      expect(screenLive.LIVE_STALE_MS).toBeLessThan(screenLive.LIVE_ZONE_MS);
+      await ask({ origin: ORIGIN, token: ticket() });
+      failing.add('character_live_state');
+      failing.add('raid_screen_state');
+      // The raid keeps uploading positions through the outage, so the rows are fresh; only the database is down.
+      const at = async (ms) => {
+        clock.t = NOW + ms;
+        rt.noteRows([rrow('Aldenmar', 100, 200), rrow('Brackwyn', 110, 210)], UPLOADER_A, clock.t - 500);
+        return json(await ask({ origin: ORIGIN, token: ticket() }));
+      };
+      let body = await at(15_000);                                     // both reads failed, both last-good answers are young enough
+      expect(body.positions.live).toEqual([['aldenmar', 100], ['brackwyn', 100]]);
+      expect(body.state.slideCount).toBe(3);
+      body = await at(screenLive.STATE_STALE_MS + 2_000);                      // the screen state is older than 20 s: unknown; the zones are not
+      expect(body.state).toBeNull();
+      expect(body.positions.live).toEqual([['aldenmar', 100], ['brackwyn', 100]]);
+      body = await at(screenLive.LIVE_STALE_MS + 2_000);                       // the zones are older than a minute: the raid may have zoned
+      expect(body.positions).toBeNull();
+      expect(parseLive(body).positions).toBeNull();                    // the page's "could not load", as the Vercel route's 502
+      expect(body.state).toBeNull();
+      // It recovers on its own once the database does, and the old answer is not what comes back.
+      failing.clear();
+      body = await at(screenLive.LIVE_STALE_MS + 20_000);
+      expect(body.positions.live).toEqual([['aldenmar', 100], ['brackwyn', 100]]);
+      expect(body.state.slideCount).toBe(3);
+    });
+
+    it('a part that has never loaded stays null (there is no last good answer to serve)', async () => {
+      failing.add('raid_screen_state');
+      for (const ms of [0, 5_000, 30_000]) {
+        clock.t = NOW + ms;
+        rt.noteRows([rrow('Aldenmar', 100, 200)], UPLOADER_A, clock.t - 500);
+        expect(json(await ask({ origin: ORIGIN, token: ticket() })).state, String(ms)).toBeNull();
+      }
+    });
+
     it('raiders whose zones cannot be read at all are "could not load", not an empty map; the screen state still comes', async () => {
       failing.add('character_live_state');
       const body = json(await ask({ origin: ORIGIN, token: ticket() }));
@@ -652,6 +744,20 @@ describe('the bot feed: GET /api/screen/live', () => {
 
     it('an empty fresh list is "nothing is up for bid" (an empty array), which is not null', async () => {
       expect(json(await ask({ origin: ORIGIN, token: ticket(), ctx: { auctions: () => ({ at: NOW - 1000, items: [] }) } })).auctions).toEqual([]);
+    });
+
+    it('an EMPTY list stays "nothing is up for bid" for as long as its cache is not re-read (120 s off-raid), a non-empty one only 60 s', async () => {
+      // index.js keeps an empty list 120 s off-raid (30 s in the raid window) and re-reads one with an auction in
+      // it every 15 s, so judging both by 60 s flipped the Loot panel between live and the OpenDKP mirror a minute.
+      const auctions = async (s) => json(await ask({ origin: ORIGIN, token: ticket(), ctx: { auctions: s } })).auctions;
+      const empty = (age) => () => ({ at: NOW - age, items: [] });
+      expect(screenLive.AUCTION_MAX_AGE_MS).toBe(60_000);
+      expect(screenLive.AUCTION_EMPTY_MAX_AGE_MS).toBe(150_000);
+      for (const age of [1_000, 61_000, 90_000, 125_000, 149_000]) expect(await auctions(empty(age)), `${age} ms old, empty`).toEqual([]);
+      expect(await auctions(empty(151_000))).toBeNull();
+      expect(await auctions(() => snap({ at: NOW - 59_000 }))).toHaveLength(3);
+      expect(await auctions(() => snap({ at: NOW - 61_000 }))).toBeNull();
+      expect(await auctions(() => snap({ at: NOW - 90_000 }))).toBeNull();
     });
   });
 });
@@ -788,7 +894,9 @@ describe('createScreenLive: the poll loop and its fallback', () => {
     net = { calls: [], by: {} };
     tickets = 0;
     const routes = {
-      '/api/screen/ticket': () => { tickets++; return reply(200, { token: `T${tickets}`, exp: Math.floor(Date.now() / 1000) + 7200, liveUrl: LIVE }); },
+      // As the real route answers: `exp` on the SERVER's clock (the true Date.now, whatever the page's clock says)
+      // and `ttl`, the seconds left by that same clock.
+      '/api/screen/ticket': () => { tickets++; return reply(200, { token: `T${tickets}`, exp: Math.floor(Date.now() / 1000) + 7200, ttl: 7200, liveUrl: LIVE }); },
       [LIVE]: () => reply(200, liveBody()),
       '/api/spectator/positions': () => reply(200, vercelPositions()),
       '/api/screen/state': () => reply(200, vercelState()),
@@ -859,10 +967,10 @@ describe('createScreenLive: the poll loop and its fallback', () => {
     expect(botCalls().length).toBe(n0 + 1);
   });
 
-  it('with token: null it polls the Vercel routes as it always did, asks for a ticket once, and never touches the bot', async () => {
+  it('with token: null it polls the Vercel routes, asks for a ticket once, and never touches the bot', async () => {
     start({ '/api/screen/ticket': () => reply(200, { token: null }) });
     await run(0);
-    await run(LIVE_POLL_MS * 5);
+    await run(FALLBACK_POLL_MS * 5);
     expect(net.by['/api/screen/ticket']).toBe(1);
     expect(botCalls()).toEqual([]);
     expect(net.by['/api/spectator/positions']).toBeGreaterThanOrEqual(5);
@@ -876,6 +984,72 @@ describe('createScreenLive: the poll loop and its fallback', () => {
     await run(LIVE_POLL_MS * 2);
     expect(net.by['/api/spectator/positions']).toBeGreaterThanOrEqual(2);
     expect(net.by['/api/screen/state']).toBeUndefined();
+  });
+
+  describe('the Vercel fallback is the expensive path: /screen reads it every 8 s, /spectator keeps its 3 s', () => {
+    const unset = { '/api/screen/ticket': () => reply(200, { token: null }) };
+
+    it('/screen with no bot feed set up (token: null): state and positions every FALLBACK_POLL_MS, not every 3 s', async () => {
+      expect(FALLBACK_POLL_MS).toBe(8000);
+      start(unset);
+      await run(0);
+      expect(vercelPolls().length).toBe(2);                         // one positions + one state read at once
+      await run(FALLBACK_POLL_MS - 1);
+      expect(vercelPolls().length).toBe(2);                         // 3 s later was the old cadence: nothing yet
+      await run(2);
+      expect(vercelPolls().length).toBe(4);
+      await run(10 * 60_000);
+      // Ten minutes: ~75 rounds of two calls, where 3 s would have been ~200 rounds.
+      expect(net.by['/api/spectator/positions']).toBeLessThanOrEqual(10 * 60 / 8 + 3);
+      expect(net.by['/api/screen/state']).toBeLessThanOrEqual(10 * 60 / 8 + 3);
+      expect(net.by['/api/spectator/positions']).toBeGreaterThanOrEqual(10 * 60 / 8 - 1);
+    });
+
+    it('/screen after the bot has failed: three quick tries on the bot, then 8 s on Vercel; back to 3 s on the bot once it answers', async () => {
+      let down = true;
+      start({ [LIVE]: () => (down ? new Error('network') : reply(200, liveBody())) });
+      await run(0);
+      await run(LIVE_POLL_MS * 2);                                  // 0, 3, 6: three failed reads
+      expect(botCalls().length).toBe(3);
+      expect(sinks.statuses.at(-1)).toMatchObject({ transport: 'vercel' });
+      const v0 = net.by['/api/spectator/positions'];
+      await run(FALLBACK_POLL_MS * 4);
+      expect(net.by['/api/spectator/positions'] - v0).toBeLessThanOrEqual(4 + 1);   // 8 s apart, not 3 s
+      expect(net.by['/api/spectator/positions'] - v0).toBeGreaterThanOrEqual(4 - 1);
+      down = false;
+      await run(BOT_REPROBE_MS + FALLBACK_POLL_MS);                // the probe is due and answered
+      expect(sinks.statuses.at(-1)).toMatchObject({ transport: 'bot' });
+      const b0 = botCalls().length;
+      await run(30_000);
+      expect(botCalls().length - b0).toBeGreaterThanOrEqual(9);     // the bot's own 3 s again
+    });
+
+    it('/spectator (it does not want the screen state) keeps polling Vercel every 3 s, unchanged', async () => {
+      start(unset, { wantState: false });
+      await run(0);
+      await run(30_000);
+      expect(net.by['/api/spectator/positions']).toBeGreaterThanOrEqual(10);
+      expect(net.by['/api/spectator/positions']).toBeLessThanOrEqual(11);
+      expect(net.by['/api/screen/state']).toBeUndefined();
+    });
+
+    it('a healthy bot feed is still read every 3 s (the slower cadence is only for the fallback)', async () => {
+      start();
+      await run(0);
+      await run(30_000);
+      expect(botCalls().length).toBeGreaterThanOrEqual(10);
+      expect(vercelPolls()).toEqual([]);
+    });
+
+    it('the leader\'s click still reads at once on the fallback', async () => {
+      start(unset);
+      await run(0);
+      const n = vercelPolls().length;
+      await run(1000);
+      loop.kick();
+      await run(0);
+      expect(vercelPolls().length).toBe(n + 2);
+    });
   });
 
   it('an expired ticket (the bot says 401) is renewed once and the read retried at once, with no Vercel poll', async () => {
@@ -978,13 +1152,42 @@ describe('createScreenLive: the poll loop and its fallback', () => {
     expect(net.calls.length).toBe(1);
   });
 
-  it('a viewer whose clock is hours ahead asks for a ticket once a minute at most, not once a poll', async () => {
-    offset = 3 * 3600_000;             // every ticket looks expired to this page
+  it('a viewer whose clock is hours off asks for ONE ticket and keeps reading the bot: no Vercel poll, no renewal storm', async () => {
+    // The ticket's `exp` is an instant on the server's clock. Judged against a clock 2 h or more ahead every fresh
+    // ticket looked about to end, was dropped after one read, and the page sat on Vercel (~38 calls a minute).
+    for (const hours of [2, 3, 10, -3]) {
+      offset = hours * 3600_000;
+      start();
+      await run(0);
+      await run(5 * 60_000);
+      expect(net.by['/api/screen/ticket'], `${hours} h: tickets`).toBe(1);
+      expect(vercelPolls(), `${hours} h: Vercel polls`).toEqual([]);
+      expect(botCalls().length, `${hours} h: bot reads`).toBeGreaterThanOrEqual(5 * 60 / 3);
+      expect(sinks.statuses.at(-1), `${hours} h`).toMatchObject({ transport: 'bot', netErr: false });
+      loop.stop();
+    }
+  });
+
+  it('a clock 3 h ahead renews the ticket when the SERVER says it is nearly over, not before and not after', async () => {
+    offset = 3 * 3600_000;
     start();
     await run(0);
-    await run(5 * 60_000);
-    expect(net.by['/api/screen/ticket']).toBeLessThanOrEqual(1 + 5 * 60_000 / TICKET_MIN_GAP_MS + 1);
-    expect(net.by['/api/screen/ticket']).toBeGreaterThan(0);
+    await run((7200 - 5 * 60) * 1000 - 60_000);                  // a minute before the renewal point
+    expect(net.by['/api/screen/ticket']).toBe(1);
+    await run(70_000);                                           // past it
+    expect(net.by['/api/screen/ticket']).toBe(2);
+    expect(botCalls().at(-1).init.headers.Authorization).toBe('Bearer T2');
+    expect(vercelPolls()).toEqual([]);
+  });
+
+  it('with an older ticket route (no ttl) it falls back to exp against the page clock, as before', async () => {
+    start({ '/api/screen/ticket': () => { tickets++; return reply(200, { token: `T${tickets}`, exp: Math.floor(Date.now() / 1000) + 7200, liveUrl: LIVE }); } });
+    await run(0);
+    await run(60_000);
+    expect(tickets).toBe(1);
+    expect(vercelPolls()).toEqual([]);
+    await run((7200 - 5 * 60) * 1000);
+    expect(tickets).toBe(2);
   });
 
   it('renews the ticket before it ends, and the new one is the bearer from then on', async () => {
@@ -1012,7 +1215,7 @@ describe('createScreenLive: the poll loop and its fallback', () => {
 describe('the pages and the wiring', () => {
   it('the screen reads state and positions through the hook, and no longer polls them on Vercel by itself', () => {
     const src = stripJs(read('web/app/screen/ScreenBoard.tsx'));
-    expect(src).toMatch(/useScreenLive\(\{\s*wantState: true/);
+    expect(src).toMatch(/useScreenLive\(\{\s*enabled: !feedSignedOut,\s*wantState: true/);
     expect(src).not.toMatch(/usePoll<ScreenState>/);
     expect(src).not.toMatch(/usePoll<Positions>/);
     expect(src).not.toMatch(/\/api\/spectator\/positions/);
@@ -1023,6 +1226,22 @@ describe('the pages and the wiring', () => {
     expect(src).toMatch(/usePoll<ScreenFeed>\('\/api\/screen\/feed', FEED_POLL_MS/);
     expect(src).toMatch(/shown === 'loot' \|\| shown === 'overview'\) kickFeed\(\)/);
     expect(FEED_POLL_MS).toBe(60_000);
+  });
+
+  it('once the slow feed says the session ended, the screen stops polling the bot too', () => {
+    // No DOM here to mount the board in: the wiring is checked in the source (comments stripped).
+    const src = stripJs(read('web/app/screen/ScreenBoard.tsx'));
+    expect(src).toMatch(/const \[feedSignedOut, setFeedSignedOut\] = useState\(false\)/);
+    expect(src).toMatch(/if \(s === 401\) setFeedSignedOut\(true\)/);
+    expect(src).toMatch(/useScreenLive\(\{\s*enabled: !feedSignedOut,/);
+    // `enabled: false` is what ends the loop: the hook's effect stops the engine when it goes false.
+    const hook = stripJs(read('web/lib/useScreenLive.ts'));
+    expect(hook).toMatch(/if \(!enabled\) return;[\s\S]*?e\.stop\(\);[\s\S]*?\}, \[enabled, wantState\]\)/);
+  });
+
+  it('an officer on /screen is told when the live feed is the slower website one, and nobody else is', () => {
+    const src = stripJs(read('web/app/screen/ScreenBoard.tsx'));
+    expect(src).toMatch(/\{canDrive && feeds\.transport === 'vercel' && <span className="[^"]*">live feed: website \(slower\)<\/span>\}/);
   });
 
   it('the standalone spectator board reads through the hook only when it was not handed positions', () => {

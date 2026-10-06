@@ -1,29 +1,33 @@
 // GET /api/screen/feed: the slow-moving facts the raid screen's Loot and Overview modes and its right rail
 // show. Members only (signed in), the same gate as /api/spectator/positions.
 //
-//   -> { at, awards, looted, kills, spawns, partial }
+//   -> { at, awards, looted, kills, spawns, partial, truncated }
 //
 //   awards  opendkp_auctions of the last TONIGHT_H hours, with the character name resolved through
 //           opendkp_loot_recent. This is the OpenDKP MIRROR, which the bot refreshes every ~30 minutes: a
 //           live auction is in the bot's memory only (the site has no route to it), so "open" here means
 //           bidding had not closed when the mirror last ran. Mostly an auction shows up already closed.
-//   looted  looted_items (what the raiders' agents saw picked up) in the same window, folded by item.
+//   looted  looted_items (what the raiders' agents saw picked up) in the same window, folded by item. The
+//           whole window is read, a page at a time, up to LOOTED_READ_MAX rows; past that `truncated` is
+//           true and the counts cover only the latest pickups.
 //   kills   curated bosses (bosses_local) killed tonight: ended, not classified out, damage > 0 (the
 //           /parses rule, web/lib/bossFilter.ts).
 //   spawns  bot_boards timers opening in the next 24 hours (the table /boards mirrors).
 //
 // Each part is read on its own: one that fails is left empty and `partial` is set, so the page says "some
-// of this did not load" instead of showing an empty list as fact. Every read is bounded (limit <= 100) for
-// the 1,000-row cap and test/db-read-discipline-web.test.js. The answer is shared for FEED_CACHE_MS, so a
-// room of viewers polling costs the database one read of each, not forty.
+// of this did not load" instead of showing an empty list as fact. Every read is bounded for the 1,000-row
+// cap and test/db-read-discipline-web.test.js: a small limit, or (looted) a page walk with a hard cap. The
+// answer is shared for FEED_CACHE_MS, so a room of viewers polling costs the database one read of each,
+// not forty.
 import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { cleanBossName } from '@/lib/format';
+import { selectAll } from '@/lib/selectAll';
 import {
-  FEED_CACHE_MS, SCREEN_GUILD, buildAwards, groupLooted, sinceIso,
-  type AwardRow, type FeedKill, type FeedSpawn, type LootedRow, type NameRow, type ScreenFeed,
+  FEED_CACHE_MS, LOOTED_READ_MAX, SCREEN_GUILD, buildAwards, groupLooted, sinceIso,
+  type AwardRow, type FeedKill, type FeedSpawn, type LootedGroup, type LootedRow, type NameRow, type ScreenFeed,
 } from '@/lib/raidScreen';
 
 export const dynamic = 'force-dynamic';
@@ -55,15 +59,22 @@ async function loadAwards(db: Db, since: string, nowMs: number) {
   return buildAwards(rows, names, nowMs);
 }
 
-async function loadLooted(db: Db, since: string) {
-  const { data, error } = await db.from('looted_items')
-    .select('looter_character, item_name, looted_at')
-    .eq('guild_id', SCREEN_GUILD)
-    .gte('looted_at', since)
-    .order('looted_at', { ascending: false })
-    .limit(100);
-  if (error) throw new Error(error.message);
-  return groupLooted((data ?? []) as LootedRow[]);
+// The whole six-hour window, a page at a time (a busy night holds a thousand or more pickups, and a single
+// read stops at 1,000 rows without saying so), newest first and ending on the primary key so no row is
+// skipped or doubled between pages. LOOTED_READ_MAX bounds it; past that the answer says `truncated`.
+async function loadLooted(db: Db, since: string): Promise<{ looted: LootedGroup[]; truncated: boolean }> {
+  let truncated = false;
+  const rows = await selectAll<LootedRow>(
+    (from, to) => db.from('looted_items')
+      .select('looter_character, item_name, looted_at')
+      .eq('guild_id', SCREEN_GUILD)
+      .gte('looted_at', since)
+      .order('looted_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to),
+    { hardCap: LOOTED_READ_MAX, onTruncate: () => { truncated = true; } },
+  );
+  return { looted: groupLooted(rows), truncated };
 }
 
 type KillRow = { id: string; ended_at: string | null; duration_sec: number | null; eqemu_npc_types: { name: string | null } | null };
@@ -121,10 +132,11 @@ export async function GET() {
     const body: ScreenFeed = {
       at: new Date(nowMs).toISOString(),
       awards: awards.status === 'fulfilled' ? awards.value : [],
-      looted: looted.status === 'fulfilled' ? looted.value : [],
+      looted: looted.status === 'fulfilled' ? looted.value.looted : [],
       kills: kills.status === 'fulfilled' ? kills.value : [],
       spawns: spawns.status === 'fulfilled' ? spawns.value : [],
       partial: [awards, looted, kills, spawns].some(r => r.status === 'rejected'),
+      truncated: looted.status === 'fulfilled' && looted.value.truncated,
     };
     // A feed with a hole in it is not kept: the next poll tries again.
     if (!body.partial) cache = { at: nowMs, body };

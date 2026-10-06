@@ -4,7 +4,7 @@
 // most SLIDES_MAX rows and is read with an explicit limit, the state is one row, a member is one row.
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import {
-  SCREEN_GUILD, SLIDES_MAX, buildScreenState, toScreenSlide,
+  SCREEN_GUILD, SLIDES_MAX, buildScreenState, slideIndexAfter, toScreenSlide,
   type ScreenSlide, type ScreenState,
 } from '@/lib/raidScreen';
 
@@ -79,6 +79,29 @@ export async function driverName(db: Db, user: Pick<User, 'id' | 'user_metadata'
     }
   }
   return (name || 'An officer').slice(0, 60);
+}
+
+/** The slide index the screen is on right now; null while nobody has driven it (no state row: the Map, index 0). */
+export async function readSlideIndex(db: Db): Promise<number | null> {
+  const { data, error } = await db.from('raid_screen_state')
+    .select('slide_index')
+    .eq('guild_id', SCREEN_GUILD)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? ((data as { slide_index: number | null }).slide_index ?? 0) : null;
+}
+
+/**
+ * After the deck changed from `before` to `after` (ids in order), put the screen's index on the slide that
+ * was up, at its new place (slideIndexAfter). `was` is readSlideIndex() from BEFORE the change. Only the index
+ * moves and only when it has to; "Driving" still names whoever last drove.
+ */
+export async function keepSlideUp(db: Db, was: number | null, before: string[], after: string[]): Promise<void> {
+  if (was === null) return;
+  const next = slideIndexAfter(was, before, after);
+  if (next === was) return;
+  const { error } = await db.from('raid_screen_state').update({ slide_index: next }).eq('guild_id', SCREEN_GUILD);
+  if (error) throw new Error(error.message);
 }
 
 /**

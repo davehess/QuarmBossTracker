@@ -17,8 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
 import {
-  SCREEN_MODES, MODE_LABEL, TITLE_MAX, BODY_MAX, IMAGE_URL_MAX, SLIDES_MAX, TONIGHT_H, FEED_CACHE_MS,
-  isScreenMode, clampSlideIndex, parseStateInput, parseSlideInput, parseImageUrl, moveId, parseSlideBody,
+  SCREEN_MODES, MODE_LABEL, TITLE_MAX, BODY_MAX, IMAGE_URL_MAX, SLIDES_MAX, TONIGHT_H, FEED_CACHE_MS, LOOTED_READ_MAX,
+  isScreenMode, clampSlideIndex, slideIndexAfter, parseStateInput, parseSlideInput, parseImageUrl, moveId, parseSlideBody,
   agoText, untilText, sinceIso, buildScreenState, buildAwards, groupLooted, summarizeRaid, isUuid,
 } from '../web/lib/raidScreen.ts';
 
@@ -56,6 +56,25 @@ describe('clampSlideIndex', () => {
   });
   it('drops a fraction', () => {
     expect(clampSlideIndex(1.9, 5)).toBe(1);
+  });
+});
+
+describe('slideIndexAfter: the slide that was up stays up through a deck change', () => {
+  it('follows the slide to its new place', () => {
+    expect(slideIndexAfter(2, ['a', 'b', 'c', 'd'], ['b', 'c', 'd'])).toBe(1);      // an earlier slide deleted
+    expect(slideIndexAfter(2, ['a', 'b', 'c', 'd'], ['a', 'c', 'b', 'd'])).toBe(1); // it moved up
+    expect(slideIndexAfter(1, ['a', 'b', 'c'], ['a', 'c', 'b'])).toBe(2);           // a later one moved across it
+    expect(slideIndexAfter(0, ['a', 'b', 'c'], ['a', 'b'])).toBe(0);                // a later one deleted
+  });
+  it('a deleted slide leaves the screen at the same place (the next slide), or the new last one', () => {
+    expect(slideIndexAfter(1, ['a', 'b', 'c'], ['a', 'c'])).toBe(1);
+    expect(slideIndexAfter(2, ['a', 'b', 'c'], ['a', 'b'])).toBe(1);
+    expect(slideIndexAfter(0, ['a'], [])).toBe(0);
+  });
+  it('an index the old deck never reached counts as its last slide; junk counts as the first', () => {
+    expect(slideIndexAfter(9, ['a', 'b', 'c'], ['b', 'c'])).toBe(1);
+    expect(slideIndexAfter('x', ['a', 'b'], ['b'])).toBe(0);
+    expect(slideIndexAfter(0, [], ['a'])).toBe(0);
   });
 });
 
@@ -249,10 +268,18 @@ describe('buildAwards', () => {
   const names = [{ auction_id: 1, character_name: 'Aldenmar' }, { auction_id: 4, character_name: 'Brackwyn' }];
   const out = buildAwards(rows, names, NOW);
 
-  it('names the character when the view knows it, else the bidder login', () => {
+  it('names the character when the view knows it, else the bidder login, once the auction has closed', () => {
     expect(out.find(a => a.id === 1).who).toBe('Aldenmar');
     expect(out.find(a => a.id === 2).who).toBe('acct_login_2');
-    expect(out.find(a => a.id === 4).who).toBe('Brackwyn');
+  });
+  it('an auction still open never carries its leader or the leading bid (every auction is closed-bid)', () => {
+    // The mirror can capture the current leader mid-auction; showing it lets anyone outbid by a point.
+    expect(out.find(a => a.id === 4)).toEqual({ id: 4, item: 'Bidding Now', who: null, dkp: null, at: ahead(90), open: true });
+    expect(JSON.stringify(out.filter(a => a.open))).not.toMatch(/Brackwyn|acct_login_4/);
+  });
+  it('the same auction names its winner and amount once it has closed', () => {
+    const later = buildAwards(rows, names, NOW + 120_000);
+    expect(later.find(a => a.id === 4)).toMatchObject({ who: 'Brackwyn', dkp: 10, open: false });
   });
   it('drops a closed auction nobody won, and a row with no item; keeps an open one with no bid', () => {
     expect(out.map(a => a.id).sort()).toEqual([1, 2, 4, 5]);
@@ -309,9 +336,11 @@ it('isUuid takes a UUID and nothing else', () => {
 
 // ── The routes ───────────────────────────────────────────────────────────────
 
-// An in-memory PostgREST: it applies eq / gt / gte / lte / in / is / not-is filters, order, limit and
-// maybeSingle, and runs update / insert / upsert / delete, so a wrong filter or a missing guard shows.
+// An in-memory PostgREST: it applies eq / gt / gte / lte / in / is / not-is filters, order, limit, range
+// and maybeSingle (and the 1,000-row response cap), and runs update / insert / upsert / delete, so a wrong
+// filter, a missing guard or a read that stops at the cap shows.
 const st = vi.hoisted(() => ({ user: null, officers: new Set(), tables: {}, calls: [], fail: new Set() }));
+const PGRST_CAP = 1000;
 
 function run(q) {
   st.calls.push({ table: q.table, kind: q.kind, ops: q.ops });
@@ -338,12 +367,14 @@ function run(q) {
   for (const [c, asc] of [...q.ord].reverse()) {
     out = [...out].sort((a, b) => (a[c] < b[c] ? -1 : a[c] > b[c] ? 1 : 0) * (asc ? 1 : -1));
   }
+  if (q.lo != null) out = out.slice(q.lo, q.hi + 1);
   if (q.lim != null) out = out.slice(0, q.lim);
+  out = out.slice(0, PGRST_CAP);   // PostgREST's silent per-response ceiling, which .limit() cannot raise
   return { data: q.one ? (out[0] ?? null) : out, error: null };
 }
 
 function query(table) {
-  const q = { table, kind: 'select', ops: [], preds: [], ord: [], lim: null, one: false, payload: null, opts: null };
+  const q = { table, kind: 'select', ops: [], preds: [], ord: [], lim: null, lo: null, hi: null, one: false, payload: null, opts: null };
   const api = {};
   const op = (name, fn) => { api[name] = (...a) => { q.ops.push([name, ...a]); fn?.(...a); return api; }; };
   op('select');
@@ -356,6 +387,7 @@ function query(table) {
   op('not', (c, o, v) => { if (o !== 'is') throw new Error('fake: not() supports is only'); q.preds.push(r => (r[c] ?? null) !== v); });
   op('order', (c, o = {}) => q.ord.push([c, o.ascending !== false]));
   op('limit', n => { q.lim = n; });
+  op('range', (a, b) => { q.lo = a; q.hi = b; });
   op('maybeSingle', () => { q.one = true; });
   op('update', p => { q.kind = 'update'; q.payload = p; });
   op('insert', p => { q.kind = 'insert'; q.payload = p; });
@@ -374,6 +406,7 @@ vi.mock('@/lib/raidScreen', async () => await import('../web/lib/raidScreen.ts')
 vi.mock('@/lib/raidScreenServer', async () => await import('../web/lib/raidScreenServer.ts'));
 vi.mock('@/lib/spectator', async () => await import('../web/lib/spectator.ts'));
 vi.mock('@/lib/bossFilter', async () => await import('../web/lib/bossFilter.ts'));
+vi.mock('@/lib/selectAll', async () => await import('../web/lib/selectAll.ts'));
 vi.mock('@/lib/format', async () => await import('../web/lib/format.ts'));
 // CI installs the root packages only, so `next/server` (web/node_modules) does not resolve there; the routes
 // only need NextResponse.json, which is a plain Response.
@@ -625,6 +658,77 @@ describe('/api/screen/slides', () => {
     expect(st.tables.raid_screen_state[0].slide_index).toBe(0);
   });
 
+  describe('the slide that is up stays up when the deck is edited (the screen stores a position, not an id)', () => {
+    const shown = async () => {
+      const { GET } = await import('../web/app/api/screen/state/route.ts');
+      const b = await (await GET()).json();
+      return [b.slideIndex, b.slide?.title];
+    };
+    const deck = () => { st.tables.raid_screen_slides = [1, 2, 3, 4].map(n => slideRow(n)); };
+    const driving = (slide_index, extra = {}) => {
+      st.tables.raid_screen_state = [{ guild_id: 'wolfpack', mode: 'slides', slide_index, updated_by: 'Rethlan', ...extra }];
+    };
+
+    it('DELETE of a slide BEFORE the one that is up moves the index down with it', async () => {
+      st.user = OFFICER; deck(); driving(2);   // Slide 3 is up
+      const { DELETE } = await import('../web/app/api/screen/slides/route.ts');
+      expect(await shown()).toEqual([2, 'Slide 3']);
+      expect((await DELETE(del(slideRow(1).id))).status).toBe(200);
+      expect(await shown()).toEqual([1, 'Slide 3']);
+      expect(st.tables.raid_screen_state[0]).toMatchObject({ slide_index: 1, updated_by: 'Rethlan', mode: 'slides' });
+    });
+
+    it('DELETE of a slide AFTER the one that is up leaves the index and the slide alone', async () => {
+      st.user = OFFICER; deck(); driving(1);
+      const { DELETE } = await import('../web/app/api/screen/slides/route.ts');
+      await DELETE(del(slideRow(4).id));
+      await DELETE(del(slideRow(3).id));
+      expect(await shown()).toEqual([1, 'Slide 2']);
+      expect(st.calls.filter(c => c.table === 'raid_screen_state' && c.kind === 'update')).toEqual([]);
+    });
+
+    it('DELETE of the slide that is up shows the one that took its place, or the new last one at the end', async () => {
+      st.user = OFFICER; deck(); driving(1);   // Slide 2
+      const { DELETE } = await import('../web/app/api/screen/slides/route.ts');
+      await DELETE(del(slideRow(2).id));
+      expect(await shown()).toEqual([1, 'Slide 3']);
+      driving(2);                               // the deck is [1, 3, 4]: Slide 4 is up, and last
+      await DELETE(del(slideRow(4).id));
+      expect(await shown()).toEqual([1, 'Slide 3']);   // pulled back inside the deck of [1, 3]
+    });
+
+    it('DELETE of the only slide leaves the screen at index 0 of an empty deck', async () => {
+      st.user = OFFICER; st.tables.raid_screen_slides = [slideRow(1)]; driving(0);
+      const { DELETE } = await import('../web/app/api/screen/slides/route.ts');
+      expect((await (await DELETE(del(slideRow(1).id))).json()).slides).toEqual([]);
+      expect(st.tables.raid_screen_state[0].slide_index).toBe(0);
+    });
+
+    it('POST move of a slide up or down across the one that is up keeps that slide up', async () => {
+      st.user = OFFICER; deck(); driving(1);   // Slide 2
+      const { POST } = await import('../web/app/api/screen/slides/route.ts');
+      await POST(post({ action: 'move', id: slideRow(3).id, dir: 'up' }));    // [1,3,2,4]: Slide 2 is now at 2
+      expect(await shown()).toEqual([2, 'Slide 2']);
+      await POST(post({ action: 'move', id: slideRow(1).id, dir: 'down' }));  // [3,1,2,4]: Slide 2 stays at 2
+      expect(await shown()).toEqual([2, 'Slide 2']);
+      await POST(post({ action: 'move', id: slideRow(2).id, dir: 'up' }));    // [3,2,1,4]: the shown slide itself moves
+      expect(await shown()).toEqual([1, 'Slide 2']);
+      expect(st.tables.raid_screen_state[0]).toMatchObject({ slide_index: 1, updated_by: 'Rethlan', mode: 'slides' });
+    });
+
+    it('the answer to the officer already reflects it, and a screen nobody has driven gets no state row', async () => {
+      st.user = OFFICER; deck(); driving(2);
+      const { DELETE } = await import('../web/app/api/screen/slides/route.ts');
+      const { slides } = await (await DELETE(del(slideRow(1).id))).json();
+      expect(slides.map(s => s.title)).toEqual(['Slide 2', 'Slide 3', 'Slide 4']);
+      expect(st.tables.raid_screen_state[0].slide_index).toBe(1);   // already moved when the answer came back
+      st.tables.raid_screen_state = []; st.calls = [];
+      await DELETE(del(slideRow(2).id));
+      expect(st.tables.raid_screen_state).toEqual([]);
+      expect(writes().filter(c => c.table === 'raid_screen_state')).toEqual([]);
+    });
+  });
+
   it('DELETE refuses a missing or malformed id and an unknown slide', async () => {
     st.user = OFFICER;
     st.tables.raid_screen_slides = [slideRow(1)];
@@ -688,8 +792,10 @@ describe('GET /api/screen/feed', () => {
     expect(res.headers.get('cache-control')).toBe('no-store');
     const body = await res.json();
     expect(body.partial).toBe(false);
-    // Awards: the open one first, the closed one with the character's name; the 8-hour-old one is out.
-    expect(body.awards.map(a => [a.item, a.who, a.open])).toEqual([['Open Ring', 'acct_3', true], ['Valor-Sworn Cloak', 'Aldenmar', false]]);
+    // Awards: the open one first (no leader, no amount: it is a sealed bid), the closed one with the
+    // character's name; the 8-hour-old one is out.
+    expect(body.awards.map(a => [a.item, a.who, a.dkp, a.open])).toEqual([['Open Ring', null, null, true], ['Valor-Sworn Cloak', 'Aldenmar', 40, false]]);
+    expect(JSON.stringify(body)).not.toContain('acct_3');
     // Loot: folded by item, only the last six hours.
     expect(body.looted).toHaveLength(1);
     expect(body.looted[0]).toMatchObject({ item: 'Strand of Ether', count: 2, who: ['Corvale', 'Nyssara'] });
@@ -699,16 +805,72 @@ describe('GET /api/screen/feed', () => {
     expect(body.spawns.map(s => s.name)).toEqual(['Just Opened', 'Soon Boss']);
   });
 
-  it('every read of a big table carries a limit of 100 or less (the 1,000-row cap)', async () => {
+  it('every read of a big table carries a limit of 100 or less (the 1,000-row cap), except the pickups, which are paged', async () => {
     fixture();
     const GET = await route();
     await GET();
-    for (const t of ['opendkp_auctions', 'opendkp_loot_recent', 'looted_items', 'encounters', 'bot_boards']) {
+    for (const t of ['opendkp_auctions', 'opendkp_loot_recent', 'encounters', 'bot_boards']) {
       const call = st.calls.find(c => c.table === t);
       const lim = call.ops.find(o => o[0] === 'limit');
       expect(lim, t).toBeTruthy();
       expect(lim[1], t).toBeLessThanOrEqual(100);
     }
+    const looted = st.calls.filter(c => c.table === 'looted_items');
+    expect(looted.length).toBeGreaterThan(0);
+    for (const c of looted) {
+      expect(c.ops.find(o => o[0] === 'limit'), 'a page walk, not a limit').toBeFalsy();
+      expect(c.ops.find(o => o[0] === 'range')).toBeTruthy();
+      expect(c.ops.filter(o => o[0] === 'order').map(o => o[1])).toEqual(['looted_at', 'id']);   // ends on the primary key
+    }
+  });
+
+  describe('the pickups cover the whole six hours, not the newest hundred', () => {
+    // 1,500 recent pickups of one item, then three of another from five hours ago: the older item is far
+    // past a limit of 100 and past the 1,000-row cap, and must still be counted.
+    const pickups = (recent, { old = 3, ancient = 0 } = {}) => {
+      let id = 1;
+      const rows = [];
+      for (let i = 0; i < ancient; i++) rows.push({ id: id++, guild_id: 'wolfpack', looter_character: 'Zarrin', item_name: 'Ancient Relic', looted_at: ago(5.5 * 3600 + i) });
+      for (let i = 0; i < old; i++) rows.push({ id: id++, guild_id: 'wolfpack', looter_character: 'Corvale', item_name: 'Old Gem', looted_at: ago(5 * 3600 + i) });
+      for (let i = 0; i < recent; i++) rows.push({ id: id++, guild_id: 'wolfpack', looter_character: 'Nyssara', item_name: 'Fresh Ore', looted_at: ago(60 + i) });
+      return rows;
+    };
+    const get = async (rows) => {
+      fixture();
+      st.tables.looted_items = rows;
+      return await (await (await route())()).json();
+    };
+
+    it('reads every page of the window and counts all of it', async () => {
+      const body = await get(pickups(1500));
+      expect(body.truncated).toBe(false);
+      expect(body.partial).toBe(false);
+      expect(body.looted.map(g => [g.item, g.count])).toEqual([['Fresh Ore', 1500], ['Old Gem', 3]]);
+      const lo = st.calls.filter(c => c.table === 'looted_items').map(c => c.ops.find(o => o[0] === 'range').slice(1));
+      expect(lo).toEqual([[0, 999], [1000, 1999]]);
+    });
+
+    it('stops at the bound and says so: the latest pickups are counted, the oldest are not', async () => {
+      const body = await get(pickups(LOOTED_READ_MAX, { old: 3, ancient: 200 }));
+      expect(body.truncated).toBe(true);
+      expect(body.looted.map(g => [g.item, g.count])).toEqual([['Fresh Ore', LOOTED_READ_MAX]]);
+      expect(st.calls.filter(c => c.table === 'looted_items')).toHaveLength(LOOTED_READ_MAX / 1000);
+    });
+
+    it('a window just under the bound is not truncated', async () => {
+      const body = await get(pickups(LOOTED_READ_MAX - 1, { old: 0 }));
+      expect(body.truncated).toBe(false);
+      expect(body.looted).toEqual([expect.objectContaining({ item: 'Fresh Ore', count: LOOTED_READ_MAX - 1 })]);
+    });
+
+    it('a page that fails marks the feed partial, empties the pickups and is not cached', async () => {
+      fixture();
+      st.tables.looted_items = pickups(1500);
+      st.fail.add('looted_items');
+      const GET = await route();
+      const body = await (await GET()).json();
+      expect(body).toMatchObject({ partial: true, looted: [], truncated: false });
+    });
   });
 
   it('a part that fails is empty and marks the feed partial; the rest still shows; it is not cached', async () => {
@@ -812,6 +974,13 @@ describe('the page, the nav, the embed and the migration', () => {
     expect(src).toMatch(/if \(!canDrive\) return;/);
     expect(src).toMatch(/fetch\('\/api\/screen\/state', \{\s*method: 'POST'/);
     expect(src).toMatch(/<SpectatorBoard embedded shared=\{shared\} \/>/);
+  });
+
+  it('an open auction row says "bidding open" and prints no name or amount, in the Loot panel and in the rail', () => {
+    const panels = stripJs(read('web/app/screen/ScreenPanels.tsx'));
+    expect(panels).toMatch(/\{a\.open \? 'bidding open' : a\.who\}/);
+    expect(panels).toMatch(/\{!a\.open && a\.dkp != null/);
+    expect(stripJs(read('web/app/screen/ScreenBoard.tsx'))).toMatch(/`bidding open · closes in \$\{untilText\(a\.at, now\)\}`/);
   });
 
   it('a slide is rendered as text nodes, never as HTML', () => {

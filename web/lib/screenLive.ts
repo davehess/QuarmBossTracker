@@ -2,14 +2,18 @@
 //
 // The reads used to be three Vercel polls per viewer (state, positions, and the spectator board's own positions)
 // and sixty viewers for a raid is most of a month's function allowance on Vercel's Hobby plan. Now the page asks
-// the BOT, which already holds every raider's position in memory and is flat-rate:
+// the BOT, which already holds every raider's position in memory (flat compute, metered egress):
 //
 //   1. GET /api/screen/ticket (Vercel, once per viewer per ~two hours) -> a signed ticket and the bot's address
 //   2. GET <bot>/api/screen/live every 3 s with `Authorization: Bearer <ticket>` -> positions + screen state
 //
-// and falls back to the Vercel polls it always had when the bot feed is not set up (the ticket says token: null),
-// or when it keeps failing (it is tried again once a minute, so a bot restart does not park every viewer on
-// Vercel for the rest of the night).
+// and falls back to the Vercel polls when the bot feed is not set up (the ticket says token: null), or when it
+// keeps failing (it is tried again once a minute, so a bot restart does not park every viewer on Vercel for the
+// rest of the night). The fallback is the expensive path, so on /screen (the page that wants the state too) it
+// polls every FALLBACK_POLL_MS, not every 3 s; /spectator keeps its old 3 s.
+//
+// A ticket's life is counted from the moment it arrives, by the server's own `ttl`: its `exp` is an instant on
+// Vercel's clock, and a viewer whose clock is hours off must not judge every ticket expired.
 //
 // This file is the framework-free part, so the whole decision tree is testable: parseLive turns the bot's answer
 // into the same Positions and ScreenState the Vercel routes return (by running the SAME shaping functions the
@@ -19,11 +23,15 @@ import { buildPositions, type Positions, type RosterPosRow } from '@/lib/spectat
 import { STATE_POLL_MS, buildScreenState, isScreenMode, toScreenSlide, type ScreenState } from '@/lib/raidScreen';
 
 export const LIVE_POLL_MS = STATE_POLL_MS;
+// On /screen while it reads Vercel (no bot feed, or the bot is down): every poll is two function calls, so a
+// room of viewers polling every 3 s is what the bot feed exists to avoid. 8 s keeps a leader's click and the
+// map moving, at about a third of the cost.
+export const FALLBACK_POLL_MS = 8_000;
 export const TICKET_RENEW_BEFORE_MS = 5 * 60_000;   // ask for a new ticket this long before the old one ends
 export const TICKET_SKEW_MS = 30_000;               // a ticket this close to its end is not used any more
 export const TICKET_RETRY_MS = 30_000;              // after a failed ticket request
-// After a good one, no scheduled renewal for this long: a viewer whose clock is hours off would otherwise judge
-// every ticket "about to end" and ask for a new one every poll, which is the Vercel traffic this feed removes.
+// After a good one, no scheduled renewal for this long, whatever the clocks say: a ticket request is a Vercel
+// call, and the bot feed exists to remove those.
 export const TICKET_MIN_GAP_MS = 60_000;
 export const BOT_FAILS_BEFORE_FALLBACK = 3;
 export const BOT_REPROBE_MS = 60_000;               // while on the Vercel fallback, try the bot again this often
@@ -139,7 +147,8 @@ export type LiveOptions = {
   now?: () => number;
 };
 
-type Ticket = { token: string; exp: number; liveUrl: string };
+/** `deadline` is when it ends by THIS page's clock: now() at receipt plus the server's `ttl` (`exp` only if the server sent no ttl). */
+type Ticket = { token: string; deadline: number; liveUrl: string };
 type Json = { status: number; json?: unknown } | null;   // null = aborted
 
 const isAbort = (e: unknown) => (e as Error | null)?.name === 'AbortError';
@@ -197,8 +206,10 @@ export function createScreenLive(opts: LiveOptions) {
     const j = r.json;
     if (r.status === 200 && isRecord(j) && j.token === null) { unconfigured = true; return 'none'; }
     if (r.status === 200 && isRecord(j) && typeof j.token === 'string' && typeof j.liveUrl === 'string' && finite(j.exp)) {
-      ticket = { token: j.token, exp: j.exp, liveUrl: j.liveUrl };
-      ticketRetryAt = now() + TICKET_MIN_GAP_MS;
+      const received = now();
+      const deadline = finite(j.ttl) ? received + Math.max(0, j.ttl) * 1000 : j.exp * 1000;
+      ticket = { token: j.token, deadline, liveUrl: j.liveUrl };
+      ticketRetryAt = received + TICKET_MIN_GAP_MS;
       probeAt = 0;
       return 'ok';
     }
@@ -292,8 +303,8 @@ export function createScreenLive(opts: LiveOptions) {
     try {
       if (!unconfigured) {
         const t = now();
-        if (ticket && t >= ticket.exp * 1000 - TICKET_SKEW_MS) ticket = null;                        // no longer usable
-        const wanted = !ticket || t >= ticket.exp * 1000 - TICKET_RENEW_BEFORE_MS;                   // none yet, or one due for renewal
+        if (ticket && t >= ticket.deadline - TICKET_SKEW_MS) ticket = null;                          // no longer usable
+        const wanted = !ticket || t >= ticket.deadline - TICKET_RENEW_BEFORE_MS;                     // none yet, or one due for renewal
         if (wanted && t >= ticketRetryAt) await getTicket();                                          // a failed renewal keeps the old one
       }
       if (!stopped) {
@@ -308,7 +319,9 @@ export function createScreenLive(opts: LiveOptions) {
     } finally {
       busy = false;
     }
-    if (!stopped && !opts.isHidden()) timer = setTimeout(tick, aborted ? 0 : LIVE_POLL_MS);
+    // Reading Vercel on /screen is slower (FALLBACK_POLL_MS); /spectator and the bot feed keep the 3 s.
+    const every = opts.wantState && status.transport === 'vercel' ? FALLBACK_POLL_MS : LIVE_POLL_MS;
+    if (!stopped && !opts.isHidden()) timer = setTimeout(tick, aborted ? 0 : every);
   }
 
   return {

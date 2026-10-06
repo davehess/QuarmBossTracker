@@ -21,6 +21,7 @@ export const STATE_POLL_MS = 3000;    // how fast a viewer follows the leader (a
 export const FEED_POLL_MS = 60000;
 export const FEED_CACHE_MS = 10000;   // one answer shared by everyone's poll, per server instance
 export const TONIGHT_H = 6;           // "tonight" = the last six hours: a raid is four, plus the run-up and the loot
+export const LOOTED_READ_MAX = 3000;  // the most pickups the feed reads for that window (three pages); past it the panel says "latest N"
 
 export const TITLE_MAX = 120;
 export const BODY_MAX = 2000;
@@ -113,6 +114,21 @@ export function moveId(ids: string[], id: string, dir: 'up' | 'down'): string[] 
   const next = [...ids];
   [next[at], next[to]] = [next[to], next[at]];
   return next;
+}
+
+/**
+ * The screen stores which slide is up as a position, so a deck change must carry that position along or
+ * everyone's screen silently switches slides. `index` is where the screen was, `before` and `after` the deck's
+ * ids in order either side of the change: the slide that was up keeps being up, at its new place. If that
+ * slide is gone, the screen stays at the same place (the slide that took over), pulled back to the last one
+ * when the deck got shorter than that, and 0 for an empty deck.
+ */
+export function slideIndexAfter(index: unknown, before: string[], after: string[]): number {
+  if (!after.length) return 0;
+  const was = clampSlideIndex(index, before.length);
+  const up = before[was];
+  const now = up === undefined ? -1 : after.indexOf(up);
+  return now >= 0 ? now : Math.min(was, after.length - 1);
 }
 
 // ── Slide text ──────────────────────────────────────────────────────────────
@@ -215,14 +231,19 @@ export function buildScreenState(row: StateRow | null, slideCount: number, slide
 
 export type AwardRow = { auction_id: number; item_name: string | null; winner: string | null; bid_amount: number | null; end_at: string | null };
 export type NameRow = { auction_id: number; character_name: string | null };
-/** `open`: bidding had not closed when the bot last mirrored OpenDKP (so `who` is the high bidder so far, if any). */
+/**
+ * `open`: bidding had not closed when the bot last mirrored OpenDKP. An open row never carries `who` or `dkp`:
+ * every Wolf Pack auction is closed-bid, and the mirror can capture the current leader mid-auction, so the
+ * leader's name and amount would let anyone outbid them by a point. They appear once the auction has ended.
+ */
 export type Award = { id: number; item: string; who: string | null; dkp: number | null; at: string | null; open: boolean };
 
 /**
  * opendkp_auctions' `winner` is the bidder's OpenDKP login, which is often not the character; the
  * opendkp_loot_recent view resolves the character. Prefer the view's name, fall back to the login. A closed
- * auction with no winner is dropped (nobody bid); one still open is kept, with or without a bid. Rows with
- * no item name are dropped. Open ones first (soonest to close), then the closed, newest first.
+ * auction with no winner is dropped (nobody bid); one still open is kept with only its item and closing time
+ * (the bids are sealed until it ends). Rows with no item name are dropped. Open ones first (soonest to
+ * close), then the closed, newest first.
  */
 export function buildAwards(auctions: AwardRow[], names: NameRow[], nowMs: number): Award[] {
   const byId = new Map<number, string>();
@@ -234,7 +255,10 @@ export function buildAwards(auctions: AwardRow[], names: NameRow[], nowMs: numbe
     const open = Number.isFinite(end) && end > nowMs;
     const who = byId.get(a.auction_id) ?? a.winner ?? null;
     if (!who && !open) continue;
-    out.push({ id: a.auction_id, item: a.item_name, who, dkp: a.bid_amount ?? null, at: a.end_at ?? null, open });
+    out.push({
+      id: a.auction_id, item: a.item_name, who: open ? null : who, dkp: open ? null : (a.bid_amount ?? null),
+      at: a.end_at ?? null, open,
+    });
   }
   const t = (a: Award) => Date.parse(a.at ?? '') || 0;
   return out.sort((a, b) => Number(b.open) - Number(a.open) || (a.open ? t(a) - t(b) : t(b) - t(a)));
@@ -307,6 +331,8 @@ export type ScreenFeed = {
   looted: LootedGroup[];
   kills: FeedKill[];
   spawns: FeedSpawn[];
-  /** False when a part could not be read; the page says so rather than showing an empty list as fact. */
+  /** True when a part could not be read; the page says so rather than showing an empty list as fact. */
   partial: boolean;
+  /** True when the window held more pickups than LOOTED_READ_MAX: `looted` then counts only the latest ones. */
+  truncated: boolean;
 };

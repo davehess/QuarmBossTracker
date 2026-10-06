@@ -2,9 +2,11 @@
 //
 // WHY IT EXISTS
 // wolfpack.quest/screen is open on ~60 screens for a whole raid. Polled through Vercel, that is most of a
-// month's function allowance in one night (Hobby plan) plus a GoTrue round trip per poll. The bot is flat-rate
-// and already holds every raider's latest position in memory (utils/raidTrack.js, fed by the roster ingest), so
-// the browser asks the bot instead. Vercel's only part is minting the ticket (web/lib/screenTicket.ts).
+// month's function allowance in one night (Hobby plan) plus a GoTrue round trip per poll. The bot is flat
+// compute with metered egress, and already holds every raider's latest position in memory
+// (utils/raidTrack.js, fed by the roster ingest), so the browser asks the bot instead: the answer is gzipped
+// for a browser that accepts it, since every byte out is billed. Vercel's only part is minting the ticket
+// (web/lib/screenTicket.ts).
 // RAID_TRACK_ENABLED=0 only stops the recorder's timers: the ingest still feeds that memory, so this feed does
 // not depend on the flag (test/screen-live.test.js pins it).
 //
@@ -37,10 +39,14 @@
 // Sixty viewers must cost the database what one does. The live zones (+ zone names) are read at most once per
 // LIVE_TTL_MS and the screen state at most once per STATE_TTL_MS, whoever asks and however many do at once: a
 // request inside the window shares the settled value, or the read still in flight. A failed read is not retried
-// until its window passes and the last good value is served meanwhile. Zone names are kept for a day per id.
+// until its window passes and the last good value is served meanwhile, but only while it is young enough to
+// trust: LIVE_STALE_MS for the zones (the raid may have zoned since), STATE_STALE_MS for the screen state. Past
+// that the part is null, which the page shows as "could not load", as the Vercel route's 502 would. Zone names
+// are kept for a day per id.
 
 'use strict';
 
+const zlib = require('zlib');
 const screenTicket = require('./screenTicket');
 const { bearerOf } = require('./serviceKey');
 
@@ -49,11 +55,18 @@ const ROWS_MAX_AGE_MS = 30_000;          // web/lib/spectator.ts POSITION_FRESH_
 const LIVE_ZONE_MS = 10 * 60 * 1000;     // web/lib/spectator.ts ZONE_LIVE_MS (and raidTrack's)
 const LIVE_TTL_MS = 10_000;              // live zones: one read per window, total
 const STATE_TTL_MS = 2_000;              // screen state: one read per window, total
+const LIVE_STALE_MS = 60_000;            // a failed read serves the last good zones this long, well inside LIVE_ZONE_MS
+const STATE_STALE_MS = 20_000;           // ...and the last good screen state this long
 const ZONE_TTL_MS = 24 * 60 * 60 * 1000;
 const ZONES_PER_READ = 100;
 const DECK_READ_LIMIT = 60;              // web/lib/raidScreenServer.ts: SLIDES_MAX (40) + 20
 const SLIDE_COLS = 'id,position,title,body,image_url,updated_at';
-const AUCTION_MAX_AGE_MS = 60_000;       // an open-auction list older than this is "unknown", not "none"
+// The cache index.js keeps (_panelAuctions) re-reads a list that has an auction in it every 15 s, but an EMPTY
+// one only every 120 s off-raid (30 s in the raid window), and Mimic's 20 s poll is what drives it. A list older
+// than this is "unknown", not "none": 60 s for a non-empty list, and for an empty one the idle window plus the
+// poll gap, or the Loot panel would flip between "nothing up for bid" and the OpenDKP mirror every minute.
+const AUCTION_MAX_AGE_MS = 60_000;
+const AUCTION_EMPTY_MAX_AGE_MS = 150_000;
 const AUCTIONS_MAX = 20;
 const PREFLIGHT_MAX_AGE_S = 600;
 
@@ -76,24 +89,26 @@ function allowedOrigins() {
 
 // ── Memo ─────────────────────────────────────────────────────────────────────
 
-const _memo = new Map();   // key → { at, pending, last, promise }
+const _memo = new Map();   // key → { at, pending, last, lastAt, promise }
 
 /**
  * `load()` at most once per `ttlMs` for everyone. Concurrent callers share one promise; a load still in flight
- * is shared past its window. `load` resolves a value, or null/throws on failure — then the last good value (if
- * any) is served and the next try waits for the window like any other.
+ * is shared past its window. `load` resolves a value, or null/throws on failure — then the last good value is
+ * served while it is at most `maxStaleMs` old (null once it is older, so a long outage reads as "could not
+ * load" and never as a frozen picture), and the next try waits for the window like any other.
  */
-function cached(key, ttlMs, load) {
+function cached(key, ttlMs, maxStaleMs, load) {
   const now = _clock();
   const m = _memo.get(key);
   if (m && (m.pending || now - m.at < ttlMs)) return m.promise;
-  const entry = { at: now, pending: true, last: m ? m.last : null, promise: null };
+  const entry = { at: now, pending: true, last: m ? m.last : null, lastAt: m ? m.lastAt : 0, promise: null };
   entry.promise = (async () => {
     let v = null;
     try { v = await load(); } catch { v = null; }
-    if (v != null) entry.last = v;
+    if (v != null) { entry.last = v; entry.lastAt = now; }
     entry.pending = false;
-    return v != null ? v : entry.last;
+    if (v != null) return v;
+    return entry.last != null && now - entry.lastAt <= maxStaleMs ? entry.last : null;
   })();
   _memo.set(key, entry);
   return entry.promise;
@@ -178,7 +193,8 @@ async function loadState() {
 function auctionsFor(ctx, nowMs) {
   let snap = null;
   try { snap = ctx && typeof ctx.auctions === 'function' ? ctx.auctions() : null; } catch { snap = null; }
-  if (!snap || !Array.isArray(snap.items) || !Number.isFinite(snap.at) || nowMs - snap.at > AUCTION_MAX_AGE_MS) return null;
+  if (!snap || !Array.isArray(snap.items) || !Number.isFinite(snap.at)) return null;
+  if (nowMs - snap.at > (snap.items.length ? AUCTION_MAX_AGE_MS : AUCTION_EMPTY_MAX_AGE_MS)) return null;
   const out = [];
   for (const a of snap.items) {
     const item = typeof a?.item === 'string' ? a.item.trim().slice(0, 100) : '';
@@ -197,7 +213,10 @@ async function buildPayload(ctx = {}) {
   const nowMs = _clock();
   const rows = _rt().liveRows(nowMs, ROWS_MAX_AGE_MS);
   // Nothing placed = nothing to look the zones of up.
-  const [mem, state] = await Promise.all([rows.length ? cached('live', LIVE_TTL_MS, loadLive) : null, cached('state', STATE_TTL_MS, loadState)]);
+  const [mem, state] = await Promise.all([
+    rows.length ? cached('live', LIVE_TTL_MS, LIVE_STALE_MS, loadLive) : null,
+    cached('state', STATE_TTL_MS, STATE_STALE_MS, loadState),
+  ]);
 
   const names = new Set(rows.map(r => r.name.toLowerCase()));
   const live = [];
@@ -256,7 +275,17 @@ async function handle(req, res, ctx = {}) {
   try { enabled = !!_sb().isEnabled(); } catch { enabled = false; }
   if (!enabled) return send(503, { error: 'screen feed unavailable' });
 
-  return send(200, await buildPayload(ctx));
+  // The 200 is the only big answer, and every byte out is billed: gzip it for a browser that takes gzip (the
+  // same check as index.js's mob-pack route). The error answers and the preflight stay plain.
+  const body = JSON.stringify(await buildPayload(ctx));
+  headers['Vary'] = 'Origin, Accept-Encoding';
+  if (/\bgzip\b/.test(String(req.headers?.['accept-encoding'] || ''))) {
+    headers['Content-Encoding'] = 'gzip';
+    res.writeHead(200, headers);
+    return res.end(zlib.gzipSync(body));
+  }
+  res.writeHead(200, headers);
+  return res.end(body);
 }
 
 // Test-only: drop the memo, the zone names and any injected deps.
@@ -267,6 +296,6 @@ function _setDeps(d = {}) { _deps = { ..._deps, ...d }; }
 module.exports = {
   handle, buildPayload, allowedOrigins, clampSlideIndex,
   DEFAULT_ORIGINS, ROWS_MAX_AGE_MS, LIVE_ZONE_MS, LIVE_TTL_MS, STATE_TTL_MS, ZONE_TTL_MS, DECK_READ_LIMIT,
-  AUCTION_MAX_AGE_MS, AUCTIONS_MAX, PREFLIGHT_MAX_AGE_S,
+  LIVE_STALE_MS, STATE_STALE_MS, AUCTION_MAX_AGE_MS, AUCTION_EMPTY_MAX_AGE_MS, AUCTIONS_MAX, PREFLIGHT_MAX_AGE_S,
   _reset, _setDeps,
 };
