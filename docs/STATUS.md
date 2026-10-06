@@ -208,6 +208,12 @@ next touch one rather than assuming a missing row means a missing doc.
   Next: the guild lead sets the two variables, then an officer drives it on a raid night. C, a Discord Activity,
   is planned in `docs/DESIGN-raid-screen-activity.md` and blocked on Discord verifying the app (first step: the
   guild lead reads the portal's App Verification tab). §166.
+- **✅ My parses over time (web 1.8.107 · bot 3.1.210 live; Mimic parts on beta, 2026-10-06).** A member asked
+  for a graph of their own parses over 1 day, 1 week and so on. Live: `wolfpack.quest/me/parses` [beta] (window,
+  Bosses/Everything, character; dots per fight, raid-night average, "vs your usual" per boss) and the bot route
+  Mimic reads (`/api/agent/my-parses`). Both read one function, `my_parse_series`. On beta: a My parses tab in
+  Mimic's main window and a Trend view on the DPS/Tank Meter (local fights, tonight / 7 days). Open: only 14 of 43
+  PoP bosses are on the boss list, so Bosses is thin; `/me/parses` is not linked from `/me` yet. §170.
 - **⏳ The announcer cast: written, nothing built (2026-10-06).** miMIC (your ear, the fight), Bristlebane (the
   room's laugh) and Lord Mobsincamp (meaning and the Ledger). The bible is `docs/DESIGN-raid-announcers.md` and the
   engine `docs/DESIGN-announcer-engine.md`; the personas are Character Card V2 files. Waits on the guild lead: a

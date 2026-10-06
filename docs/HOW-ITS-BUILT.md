@@ -3568,6 +3568,30 @@ viewer follows within ~3 s. New page, so it carries `NewPageTag` ([beta]).
 - **The Discord Activity version** (option C) is planned, not built: `docs/DESIGN-raid-screen-activity.md`.
 - **Tests:** `test/raid-screen.test.js`, `test/screen-live.test.js`.
 
+### My parses over time (`/me/parses` web 1.8.107 · bot 3.1.210 · Mimic tab + meter Trend on beta, §170)
+A raider's own DPS per fight over a window they pick. Three surfaces, two data sources:
+- **One function for the server numbers:** `my_parse_series(p_discord_id, p_since, p_until, p_bosses_only,
+  p_character, p_cap)` (migration `20261006200000_my_parse_series.sql`). One jsonb value (row-cap safe), service
+  role only. It resolves the person's characters itself (household aliases → anchored characters → whole family,
+  minus `exclude_from_stats`, mirroring `loadOwnedCharacters` in `web/app/me/page.tsx`), floors every window at the
+  2026-07-14 median-merge cutover (like `/leaderboards`), drops classified encounters and fights over 45 min, and
+  returns the newest `p_cap` fights (default 400) plus a per-night summary for the whole window (night = ET date
+  minus 6 h). Each fight carries `usual`: that character's median DPS on that NPC since the cutover, when there are
+  three or more. Bosses = `bosses_local.auto_registered = false`.
+- **Website:** `web/app/me/parses/page.tsx` ([beta] via `NewPageTag`), chart `web/components/ParseTrendChart.tsx`
+  (server-rendered SVG, DamageCurve palette), helpers `web/lib/parseTrend.ts`. Window via `WindowPicker`
+  (1d/7d/30d/90d/exp/life), `?scope=all`, `?char=` (checked against the person's own list). The discord id comes
+  from the session, never the URL. Not linked from `/me` or the nav yet.
+- **Bot route for Mimic:** `GET /api/agent/my-parses?w=&scope=&char=` (`_handleAgentMyParses` in `index.js`, rules
+  and cache in `utils/myParses.js`): the person is the Mimic token's `identity.discord_id`; 5-min per-person
+  cache; gzip; a failed read is an uncached 502. `EXPANSION_STARTS` there must match `web/lib/timeWindow.ts` (a
+  test reads both).
+- **Measured 2026-10-06:** 30 days of boss fights for the busiest raider ≈ 0.25 s; every fight over 30 days or
+  lifetime ≈ 0.6–0.7 s and ~90 KB before gzip (capped at 400 fights).
+- ⚠ **"Bosses" is thin in Planes of Power:** only 14 of the timer board's 43 PoP bosses are curated in
+  `bosses_local`, so most PoP kills count as "Everything". Both surfaces say so on an empty Bosses view.
+- **Tests:** `test/my-parses.test.js`, `test/parse-trend.test.js`.
+
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes
 `.limit(5000)`, a one-call `.range(0, N)`, a set-returning RPC and a view.
