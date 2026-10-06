@@ -333,6 +333,7 @@ async function main() {
     const ids = humanIds();
     const notice = lib.joinNotice({
       channelId: ch.id, recording: !!rec, optedIn: ids.filter((id) => store.has(id)).length, total: ids.length,
+      screenUrl: cfg.screenUrl,
     });
     const announced = Promise.all([refreshNick(), post(notice)]);
     await Promise.race([announced, new Promise((resolve) => setTimeout(resolve, 3_000))]);

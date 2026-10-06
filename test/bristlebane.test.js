@@ -203,6 +203,12 @@ describe('loadConfig', () => {
     expect(() => lib.loadConfig({ ...base, RECORD_MODE: 'optout' })).toThrow(/opt-in only/);
     expect(() => lib.loadConfig({ ...base, RECORD_MODE: 'opt-in' })).toThrow(/RECORD_MODE/);
   });
+  it('SCREEN_URL is optional, and when set must be a full https address', () => {
+    expect(lib.loadConfig(base).screenUrl).toBeNull();
+    expect(lib.loadConfig({ ...base, SCREEN_URL: ' https://wolfpack.quest/screen ' }).screenUrl).toBe('https://wolfpack.quest/screen');
+    expect(() => lib.loadConfig({ ...base, SCREEN_URL: 'http://wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
+    expect(() => lib.loadConfig({ ...base, SCREEN_URL: 'wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
+  });
   it('reads the optional application id', () => {
     expect(lib.loadConfig({ ...base, BRISTLEBANE_APP_ID: ' 12345 ' }).appId).toBe('12345');
   });
@@ -642,6 +648,14 @@ describe('texts', () => {
     const off = lib.joinNotice({ channelId: '1186', recording: false, optedIn: 3, total: 9 });
     expect(off).toBe('🎙 Bristlebane is in 🔊 <#1186> (not recording).');
     expect(off).not.toMatch(/optin|opted/);
+  });
+  it('the notice links the raid screen on its own line when SCREEN_URL is set, recording or not', () => {
+    const url = 'https://wolfpack.quest/screen';
+    const on = lib.joinNotice({ channelId: '1186', recording: true, optedIn: 2, total: 9, screenUrl: url });
+    expect(on.endsWith('/bristlebane forget.\n📺 Raid screen: https://wolfpack.quest/screen')).toBe(true);
+    expect(lib.joinNotice({ channelId: '1186', recording: false, optedIn: 0, total: 0, screenUrl: url }))
+      .toBe('🎙 Bristlebane is in 🔊 <#1186> (not recording).\n📺 Raid screen: https://wolfpack.quest/screen');
+    expect(lib.joinNotice({ channelId: '1186', recording: true, optedIn: 2, total: 9, screenUrl: null })).not.toMatch(/Raid screen/);
   });
 
   it('[REC] only while at least one opted-in member is in the channel', () => {

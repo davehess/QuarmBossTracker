@@ -84,6 +84,7 @@ joins deafened. It is always muted.
 | `BOT_API_URL` | required | the main bot's agent API base, ending `/api/agent` (no trailing slash needed) |
 | `BOT_API_KEY` | required | bearer for `BOT_API_URL`: must equal **`BRISTLEBANE_API_KEY` on the main bot** |
 | `RAID_CHAT_CHANNEL_ID` | optional | where the join notice is posted; unset = no notice |
+| `SCREEN_URL` | optional | the raid screen page (Wolf Pack: `https://wolfpack.quest/screen`), added to the join notice on its own line; must be `https://` |
 | `RECORD_MODE` | `optin` | `optin` (record the members who opted in) · `off` (record nobody; the commands still work) |
 | `RECORDINGS_DIR` | `/data/recordings` | where recordings go; `consent.json` lives in its **parent** |
 | `POLL_SECONDS` | `30` | clamped to 5–300 |

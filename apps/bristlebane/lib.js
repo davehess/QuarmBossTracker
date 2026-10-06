@@ -41,8 +41,12 @@ function loadConfig(env) {
     apiKey: need('BOT_API_KEY'),                                // = BRISTLEBANE_API_KEY on the main bot
     recordMode: (opt('RECORD_MODE') || 'optin').toLowerCase(),
     recordingsDir: opt('RECORDINGS_DIR') || '/data/recordings',
+    screenUrl: opt('SCREEN_URL'),                               // optional: the raid screen page, linked in the join notice
     pollMs: 30_000,
   };
+  if (cfg.screenUrl && !/^https:\/\/[^\s]+$/.test(cfg.screenUrl)) {
+    problems.push(`SCREEN_URL must be a full https:// address (got "${cfg.screenUrl}")`);
+  }
   if (!RECORD_MODES.includes(cfg.recordMode)) {
     problems.push(`RECORD_MODE must be one of ${RECORD_MODES.join(' | ')} (got "${cfg.recordMode}")`
       + (cfg.recordMode === 'optout' ? ' — recording is opt-in only; there is no opt-out mode' : ''));
@@ -511,11 +515,13 @@ const REC_NICK = '[REC] Bristlebane';
 /**
  * The notice posted to the raid chat when the bot joins. `optedIn` of `total` is how many of the people in
  * the channel have opted in. Not recording (RECORD_MODE=off) says so and offers nothing to opt into.
+ * `screenUrl` (SCREEN_URL) adds a line pointing at the raid screen page.
  */
-function joinNotice({ channelId, recording, optedIn, total }) {
-  if (!recording) return `🎙 Bristlebane is in 🔊 <#${channelId}> (not recording).`;
+function joinNotice({ channelId, recording, optedIn, total, screenUrl = null }) {
+  const screen = screenUrl ? `\n📺 Raid screen: ${screenUrl}` : '';
+  if (!recording) return `🎙 Bristlebane is in 🔊 <#${channelId}> (not recording).${screen}`;
   return `🎙 Bristlebane is in 🔊 <#${channelId}>. Recording only members who opted in — ${optedIn} of ${total} here. `
-    + 'Want in? /bristlebane optin. Change your mind any time: /bristlebane optout or /bristlebane forget.';
+    + 'Want in? /bristlebane optin. Change your mind any time: /bristlebane optout or /bristlebane forget.' + screen;
 }
 
 /** "[REC]" only while at least one opted-in member is in the channel; otherwise the plain name. */
