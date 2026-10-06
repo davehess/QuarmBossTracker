@@ -237,7 +237,7 @@ When a new member joins, the bot sends them a welcome message (DM, or falls back
 4. **General Information** → copy your **Application ID** (`DISCORD_CLIENT_ID`)
 5. **OAuth2 → URL Generator:**
    - Scopes: `bot` and `applications.commands`
-   - Bot Permissions: `Send Messages`, `Embed Links`, `Read Message History`, `Manage Messages`, `Manage Events`, `Manage Roles`
+   - Bot Permissions: the list under **Required Bot Permissions** below (or use its ready-made invite URL)
 6. Copy the generated URL and invite the bot to your server
 
 > `Manage Events` is required for Discord Scheduled Events created by `/announce` and `/quake`.
@@ -430,15 +430,36 @@ Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take
 
 ## Required Bot Permissions
 
+**One bot for everything (a new guild's setup, 2026-10-06).** The raid-timer bot and the raid-voice
+bot (Bristlebane) are ONE Discord application for a new guild; Wolf Pack runs them as two only because
+Bristlebane came later. Invite it with scopes `bot applications.commands` and permissions
+**`2252135193504768`**:
+
+`https://discord.com/oauth2/authorize?client_id=<your application id>&scope=bot+applications.commands&permissions=2252135193504768`
+
 | Permission | Why |
 |------------|-----|
-| Send Messages | Kill cards, spawn alerts, boards, PVP alerts, onboarding messages |
-| Embed Links | Rich embeds with PQDI links |
-| Read Message History | Fetch messages to edit in place |
-| Manage Messages | Delete kill cards on respawn; clean up at midnight |
-| Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
-| Manage Roles | Add/remove @PVP role via `/pvprole` |
+| View Channels | See the channels it posts to and the raid voice channel |
+| Send Messages | Kill cards, spawn alerts, boards, PVP alerts, onboarding messages, Bristlebane's join notice |
+| Send Messages in Threads | Expansion threads, raid-night threads, the roster and parse threads |
 | Create Public Threads | Create announce and raid-night threads |
+| Manage Threads | Rename event threads, archive them at midnight |
+| Embed Links | Rich embeds with PQDI links |
+| Attach Files | Parse and leaderboard images, exports |
+| Read Message History | Fetch messages to edit in place |
+| Manage Messages | Delete kill cards on respawn; clean up at midnight; `/removespam` |
+| Pin Messages | Pin the parse leaderboard (Discord split this out of Manage Messages) |
+| Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
+| Manage Roles | Add/remove @PVP role via `/pvprole` (the bot's role must sit above @PVP) |
+| Connect | Join the raid voice channel |
+| Speak | Spoken callouts and loot calls |
+| Use Voice Activity | A bot has no push-to-talk; without this it cannot be heard |
+| Change Nickname | Bristlebane's `[REC]` name while a member who opted in is in the channel |
+
+Add **Create Invite + Use Activities** (`2252684949318657` in total) only if the raid screen is run as a
+Discord Activity. Privileged intents: **Server Members** (member sync) — on; **Message Content** — only
+for the patch-notes mirror (`MESSAGE_CONTENT_INTENT=1`); Presence — off. Mentioning @PVP needs the
+role set to "Allow anyone to @mention this role"; the bot does not get Mention Everyone.
 
 ---
 
