@@ -42646,15 +42646,21 @@ let _lastLootSig     = null;
 // spoken warnings. A dismissed one stays dismissed until it closes.
 const _dkpAuctions = new Map();          // auction_id → { id, item, ends_at_ms, first_ends_ms, started_ms, top_bid, extended }
 const _dkpAuctionsDismissed = new Set(); // auction_ids whose timer chip was ✕'d
+// Long-term bidding is not a raid call (the guild lead, 2026-10-06: "Longterm bidding for items needs to not
+// show up in timers"; the guild runs some auctions for ~60 days). An auction set to run longer than this gets
+// no timer and no Command Center row. The bidding panel reads the bot's list itself and still shows it.
+const AUCTION_TIMER_MAX_MS = 6 * 3600_000;
 function _applyDkpAuctions(list, nowMs) {
   const live = new Set();
   for (const a of (Array.isArray(list) ? list : [])) {
     const id = a && a.auction_id != null ? String(a.auction_id) : null;
     const endMs = a && a.ends_at ? Date.parse(a.ends_at) : NaN;
     if (!id || !Number.isFinite(endMs) || endMs <= nowMs) continue;
-    live.add(id);
     const prev = _dkpAuctions.get(id);
     const startedMs = (a.started_at && Date.parse(a.started_at)) || (prev && prev.started_ms) || nowMs;
+    // Not in `live`, so the sweep below also clears a timer an older build already made for it.
+    if (endMs - startedMs > AUCTION_TIMER_MAX_MS) continue;
+    live.add(id);
     const rec = { id, item: String(a.item_name || 'Auction'), ends_at_ms: endMs,
       first_ends_ms: prev ? prev.first_ends_ms : endMs, started_ms: startedMs,
       top_bid: a.top_bid != null ? a.top_bid : null };
@@ -42674,6 +42680,10 @@ function _applyDkpAuctions(list, nowMs) {
   for (const id of [..._dkpAuctions.keys()]) {
     if (live.has(id)) continue;
     _dkpAuctions.delete(id); _dkpAuctionsDismissed.delete(id); _activeTimers.delete('auction|' + id);
+  }
+  // An auction timer for anything not live now (closed, or long-term) goes too, tracked or not.
+  for (const tid of [..._activeTimers.keys()]) {
+    if (tid.startsWith('auction|') && !live.has(tid.slice(8))) _activeTimers.delete(tid);
   }
 }
 // The Command Center's list: soonest to close first.
