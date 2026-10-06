@@ -198,9 +198,14 @@ next touch one rather than assuming a missing row means a missing doc.
   2026-10-05).** A separate Discord app on Tower (`apps/bristlebane`): joins the raid voice channel while
   `GET /api/agent/raid-live` says a raid is on, leaves when it ends, records ONLY members who ran
   `/bristlebane optin` (optout / forget delete). No speech yet. Waits on the guild lead: the Coolify app +
-  the bot token + the shared key + a recordings share, the screen pick (B / A / C), and the client-art
-  rights call. Next: callouts moved over from RaidBosses (whose own voice very likely broke on 2026-03-01 —
-  `/voicetest`), then the `/screen` page. DECISIONS-2026-09-21 §166.
+  the bot token + the shared key + a recordings share, and the client-art rights call. Next: callouts moved
+  over from RaidBosses (whose own voice very likely broke on 2026-03-01 — `/voicetest`). DECISIONS-2026-09-21
+  §166.
+- **⏳ The raid screen: B being built, C planned (2026-10-06).** B is `wolfpack.quest/screen` (Map / Slides /
+  Loot / Overview, officers switch it). It goes live with the [beta] tag, and its 3-second read comes from
+  the Railway bot because of Vercel Hobby's invocation cap. C, a Discord Activity, is planned in
+  `docs/DESIGN-raid-screen-activity.md`. It is blocked on Discord verifying the app, so the first step is the
+  guild lead reading the portal's App Verification tab. §166.
 - **⏳ How raiders look, kept per raid night (bot 3.1.208, 2026-10-05).** `raid_night_appearance`: race,
   deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
   position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's
