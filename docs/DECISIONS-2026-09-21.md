@@ -115,6 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
+| **Raid announcers: miMIC, Bristlebane, Lord Mobsincamp** (§169) | Cast bible v0.2 and engine design written (`DESIGN-raid-announcers.md`, `DESIGN-announcer-engine.md`); voice samples on the guild lead's Casting Room page; v0.2 SillyTavern cards and Bristlebane `SOUL.md` being drafted. Nothing built | the guild lead: pick a voice per persona and the six picks (what "mobs in camp" measures; how miMIC's new calls ship; whose voice Bristlebane is; who is named in praise; the Thank-You Embargo; where the always-on GPU lives). A session: this week's four (retire the doubled guild-trigger callouts, prove Bristlebane can play audio in voice, latch PoP first kills, re-voice today's callouts with clips) |
 | **Instruction text nobody reads** (§168) | Audit done 2026-10-06 (`AUDIT-site-monologues-2026-10-06.md`): 130 blocks, ~9,900 words on 63 routes; 13 explanations repeated across pages; ~25 out of date or wrong. Nothing changed yet | the guild lead: pick A (fold in place, recommended) or B (one help drawer); say whether the "Also found" corrections may go straight to `main`. A session: build the pick on `/pop` and `/admin/overlays` as beta variants |
 | **Log stops / Enrage 12% / « Earlier / Buff-block rename / UI Studio Save / flag hails** (§164) | On beta: agent 3.7.84 (Enrage soon at 12%, spoken first), 3.7.85 (🗄 Archive log & start fresh + the log-silent banner that 3.7.81 never drew), the Canvas vote row fix, 3.7.86 (Buff blocks rename). Why EQ stops logging is unknown. Tower patch written (`PATCH-tower-raid-track.md`), not yet run | the guild lead: A or B for the Command Center hail slot (A recommended); run the Tower patch (local terminal or Claude in Chrome). UI Studio Save: **A picked and on beta** (`c281fea6`) — the guild lead: move a window in Studio, save, log in, check bags kept their spots. A session: build the hail pick |
 | **Lag meter** (§163) | On beta (agent 3.7.83, reads the Quarm client's eqhost.txt): router + Quarm login server pinged once a second, local only; Diagnostics card + Tick overlay line | the member with lag (or any beta tester): run beta Mimic, open Diagnostics → 📶 Connection during a laggy stretch, paste the Copy summary |
@@ -7454,3 +7455,41 @@ that nobody will read, or if they will it'll be when they have a question."*
 - **Waiting on the guild lead:** A, fold in place (each explanation stays beside what it explains, closed behind
   "How this works" or an ⓘ, repeats become shared components), recommended; or B, one help drawer per page. Both
   are changes to existing pages, so the pick is built as beta variants first.
+
+### 169. The announcer cast: miMIC, Bristlebane and Lord Mobsincamp (2026-10-06)
+
+The guild lead: *"Develop me really kickass Raid Announcers and personalities for the miMIC, Bristlebane, and Lord
+Mobsincamp. miMIC is the tactical arm of the raid, Bristlebane is the diety of fun in the chaos, and Lord Mobsincamp
+is the diety we worship, who praises us with kind fortune for keeping its namesake, mobs-in-camp … This is likely
+the last time we all play a game together, and I want it to be easy to enjoy, fun to be with, and have a spark
+that's unique to this experience."*
+
+- **Written:** `docs/DESIGN-raid-announcers.md` (the cast bible v0.2) and `docs/DESIGN-announcer-engine.md`. Six
+  researchers, three drafts per persona, a judge each, an ensemble pass, five adversarial reviews (raid leader, EQ
+  veteran, kindness, engineer, spark) and a final synthesis.
+- **Three lanes:** miMIC owns *now* (your ear, you alone); Bristlebane owns *just now* (the room's laugh); the Lord
+  owns *always* (meaning and the Ledger).
+- **Hard rules the reviews forced:**
+  - miMIC is the only voice in a fight. The gods never speak in a fight, over an opted-in caller, or during a loot
+    call; otherwise they post text.
+  - CH GO gets a priority rung nothing else shares.
+  - Every line is written ahead and reviewed; no model speaks live.
+  - Today's guild triggers that already speak the same moments ("Enrage on", "Rest in Peace", DI landed) are
+    retired as miMIC takes them over, so nothing is called twice.
+  - Naming follows one consent setting (`announce_name`).
+- **Personas are Character Card V2 files** plus one shared lorebook (§167).
+- **Samples:** 24 voice samples (two castings per persona) are on the guild lead's Casting Room page.
+- **Private:** the hardware plan and the last-night drafts went to the private briefing (Home lab → Hardware plan),
+  per §167.
+- **Waiting on the guild lead:** a voice for each persona, and six picks. The recommended option in each:
+  - what "mobs in camp" measures: A, a raid-wide streak of clean pulls;
+  - how miMIC's new calls ship: A, re-voice today's first, then promote one at a time;
+  - whose voice Bristlebane is: B, the guild lead performs it;
+  - who is named in praise: A, after a one-time notice;
+  - the Thank-You Embargo: B, the Lord only;
+  - where the always-on GPU lives: A, the Tower transplant, gated on a bench test.
+- **This week, once the picks land:**
+  1. Retire the doubled callouts.
+  2. Prove Bristlebane can play audio in Discord voice.
+  3. Latch each Planes of Power first kill.
+  4. Re-voice today's callouts as clips.

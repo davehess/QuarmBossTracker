@@ -208,6 +208,11 @@ next touch one rather than assuming a missing row means a missing doc.
   Next: the guild lead sets the two variables, then an officer drives it on a raid night. C, a Discord Activity,
   is planned in `docs/DESIGN-raid-screen-activity.md` and blocked on Discord verifying the app (first step: the
   guild lead reads the portal's App Verification tab). §166.
+- **⏳ The announcer cast: written, nothing built (2026-10-06).** miMIC (your ear, the fight), Bristlebane (the
+  room's laugh) and Lord Mobsincamp (meaning and the Ledger). The bible is `docs/DESIGN-raid-announcers.md` and the
+  engine `docs/DESIGN-announcer-engine.md`; the personas are Character Card V2 files. Waits on the guild lead: a
+  voice per persona and six picks. Then this week's four: retire the doubled guild-trigger callouts, prove Discord
+  voice playback, latch PoP first kills, re-voice today's callouts as clips. §169.
 - **⏳ Instruction text nobody reads: audited, nothing changed yet (2026-10-06).** 130 blocks, ~9,900 words on 63
   routes, ranked with a one-line rewrite each and the 13 explanations repeated across pages
   (`docs/AUDIT-site-monologues-2026-10-06.md`). Waits on the guild lead: A (fold in place) or B (help drawer), and
