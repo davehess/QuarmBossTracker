@@ -9,7 +9,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { loadSpawn2 } from '@/lib/fullReads';
-import { MOB_CLASS_NAMES, decodeMobSpecials, deUnderscore } from '@/lib/npcDecode';
+import { MOB_CLASS_NAMES, decodeMobSpecialChips, deUnderscore } from '@/lib/npcDecode';
 import { ERA_LABEL } from '@/lib/itemDecode';
 
 export const dynamic = 'force-dynamic';
@@ -175,7 +175,8 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
 
   const name = deUnderscore(npc.name) || `NPC #${npcId}`;
   const className = npc.class != null ? MOB_CLASS_NAMES[npc.class] : null;
-  const specials = decodeMobSpecials(npc.special_abilities, npc.npcspecialattks);
+  const specials = decodeMobSpecialChips(npc.special_abilities, npc.npcspecialattks)
+    .sort((a, b) => Number(b.danger) - Number(a.danger));   // warnings first (sort is stable)
   const resists = [npc.mr && `MR ${npc.mr}`, npc.cr && `CR ${npc.cr}`, npc.dr && `DR ${npc.dr}`, npc.fr && `FR ${npc.fr}`, npc.pr && `PR ${npc.pr}`].filter(Boolean).join(' · ');
 
   return (
@@ -214,7 +215,12 @@ export default async function DbNpcPage({ params }: { params: Promise<{ id: stri
         {specials.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
             {specials.map(s => (
-              <span key={s} className="px-2 py-0.5 rounded bg-bg border border-border/60 text-[11px] text-orange">{s}</span>
+              <span key={s.label}
+                className={s.danger
+                  ? 'px-2 py-0.5 rounded bg-bg border border-red-400/70 text-[11px] font-semibold text-red-400'
+                  : 'px-2 py-0.5 rounded bg-bg border border-border/60 text-[11px] text-orange'}>
+                {s.danger ? '⚠ ' : ''}{s.label}
+              </span>
             ))}
           </div>
         )}
