@@ -7557,6 +7557,12 @@ timers window and Command Center (§ "OpenDKP auctions, one timer each", 2026-10
 - **"Across all sessions":** main's agent went **3.7.75 → 3.7.92** with only this change (`f5850e89`), so every
   stable Mimic takes it on its next agent check (the §123 precedent; not a raid night, so no hold). Beta went to
   **3.7.93** (`d32c7582`) so the beta line stays above it; alpha follows beta by sync.
-- **The ✕ on those chips "can't be clicked"** (same evening, timers window and Command Center): not explained yet.
-  The dismiss path reads correctly end to end (✕ → `/api/timers/cancel` → `_dkpAuctionsDismissed`); an investigation
-  is open. With long-term auctions gone, the reported rows no longer appear.
+- **The ✕ on those chips "can't be clicked"** (same evening): the dismiss path is sound end to end (✕ →
+  `/api/timers/cancel` → `_dkpAuctionsDismissed`; nothing spares a loot chip from a single ✕), so it is hit-testing,
+  not logic. One real gap fixed on beta (`cf817067`): the countdown ✕ and the pinned-callout ✕ were `<span>`s armed
+  only by their own mouseenter; both now carry `data-wp-interact`, so the preload's document-level arm (re-asserted
+  every 150 ms) covers them, which matters most inside a Canvas panel iframe. Ranked remaining causes: (1) a locked
+  Canvas where forwarded mouse moves never reach the iframe (unproven either way on real Windows); (2) the Canvas
+  in arrange/unlocked mode, where panels take no clicks by design (`body.edit .panel > iframe{pointer-events:none}`);
+  (3) another panel's transparent iframe over the stack, or chips clipped past the panel's top. **If it is still
+  dead:** add a rate-limited log of `e.senderFrame.url` to `overlay-hover-interactive` in main.js and read one hover.
