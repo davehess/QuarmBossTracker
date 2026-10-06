@@ -3204,13 +3204,13 @@ setInterval(() => {
   } catch { /* watcher must never throw */ }
 }, 4000);
 
-function navigateToDashboard(reason) {
+function navigateToDashboard(reason, hash) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     appendAgentLog(`[mimic] dashboard nav skipped — no window (reason=${reason})\n`);
     return;
   }
   const seq = ++_dashNavSeq;
-  const url = 'http://127.0.0.1:' + agentPort + '/';
+  const url = 'http://127.0.0.1:' + agentPort + '/' + (hash || '');
   appendAgentLog(`[mimic] dashboard nav #${seq}: loading ${url} (reason=${reason}, was=${_curWindowUrl()})\n`);
   const wc = mainWindow.webContents;
   Promise.resolve()
@@ -3222,6 +3222,26 @@ function navigateToDashboard(reason) {
     })
     .then(() => appendAgentLog(`[mimic] dashboard nav #${seq}: load OK (url=${_curWindowUrl()})\n`))
     .catch((err) => appendAgentLog(`[mimic] dashboard nav #${seq}: load REJECTED — ${err && err.message}\n`));
+}
+
+// Bring the dashboard window forward on one of its tabs (the tray's 📈 My parses). The mechanism is the
+// one the tray's "Send feedback" item already uses — a URL #hash the dashboard reads on load and on
+// change (`#feedback`, `#replay`) — only here in the main window rather than the browser. A window already
+// on the dashboard gets the bare hash (a same-page jump, nothing reloads); one still on loading/welcome/
+// settings goes through the normal dashboard navigation, hash and all.
+function showDashboardTab(tab) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show(); mainWindow.focus();
+  } catch (e) { void e; }
+  const hash = '#' + String(tab || '').replace(/[^a-z]/g, '');
+  if (/^https?:\/\/127\.0\.0\.1:\d+\//.test(_curWindowUrl())) {
+    mainWindow.webContents.loadURL('http://127.0.0.1:' + agentPort + '/' + hash)
+      .catch((err) => appendAgentLog(`[mimic] dashboard tab ${hash} REJECTED — ${err && err.message}\n`));
+  } else {
+    navigateToDashboard('tray-' + tab, hash);
+  }
 }
 
 let _lastConsoleMsg = '';
@@ -7622,6 +7642,9 @@ function buildTrayMenu() {
     { type: 'separator' },
     // Most-used actions up top: open the local dashboard, jump to the site.
     { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
+    // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
+    { label: '📈 My parses', click: () => showDashboardTab('myparses') },
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
     // Multi-monitor rescue — run from the tray on the monitor you play on;

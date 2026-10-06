@@ -17601,6 +17601,9 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <button data-tab="buffs">✨ Buffs</button>
   <button data-tab="buffblocks">🔇 Buff blocks</button>
   <button data-tab="fights">⚔️ Fights</button>
+  <!-- 📈 My parses (2026-10-06): your own fights from the guild's record, charted over a window you pick.
+       The tray's "📈 My parses" opens this tab through the #myparses hash. -->
+  <button data-tab="myparses">📈 My parses</button>
   <!-- 📊 Stats + 🩺 Diagnostics were carved OUT of Info and Triggers (the guild lead
        2026-08-13 — "having to scroll in our dashboard is somewhat annoying to
        navigate"). Info had grown to 16 cards and Triggers to 12 by mixing three
@@ -17651,6 +17654,7 @@ body.wp-overlay-mode .wp-overlay-target table th:nth-child(2) { text-align:right
   <div id="tanks"></div>
   <div id="deeps"></div>
 </div>
+<div id="myparses" class="section"></div>
 <div id="loot" class="section"></div>
 <div id="stats" class="section"></div>
 <div id="info" class="section"></div>
@@ -20971,6 +20975,262 @@ function renderNetMeter(s) {
   var sec = document.getElementById('diag');
   if (sec && sec.classList.contains('active') && !_wpNet.busy && Date.now() - _wpNet.at >= 5000) _wpNetFetch();
   wpNetRepaint();
+}
+
+// ── 📈 My parses ────────────────────────────────────────────────────────────
+// A member asked (2026-10-06) for "a page in Mimic that graphs my parses over a variable time window"; the
+// guild lead picked this tab plus a page on wolfpack.quest. The numbers are the guild's record of YOUR fights,
+// so the tab asks the agent (GET /api/my-parses, which proxies the bot and keeps each answer five minutes)
+// and ONLY when it is opened, a chip changes, or ↻ is pressed: there is no poll and no render-loop entry. The
+// section is painted from _wpMp alone, so its HTML is byte-stable and holds no "5m ago" timestamp. In local
+// mode (no token) the agent answers signed_out without a call and the tab says to sign in.
+// The chart is a fixed-viewBox SVG string like _wpNetChart: boss fights #4493e8, other fights #4a5568, the
+// raid-night average #a371f7. #f85149 is reserved for death/critical and is never used here.
+var WP_MP_WINDOWS = [['1d', '1 day'], ['7d', '1 week'], ['30d', '30 days'], ['90d', '90 days'], ['exp', 'This expansion']];
+var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
+var _wpMp = { w: '7d', scope: 'bosses', char: '', chars: [], data: null, state: 'idle', seq: 0, asOf: 0 };
+// The last choice, per machine (the dashboard's convention for these is localStorage, like wp:bufferClass).
+try {
+  var _wpMpSaved = JSON.parse(localStorage.getItem('wp:myParses') || 'null');
+  if (_wpMpSaved && typeof _wpMpSaved === 'object') {
+    if (WP_MP_WINDOWS.some(function (x) { return x[0] === _wpMpSaved.w; })) _wpMp.w = _wpMpSaved.w;
+    if (_wpMpSaved.scope === 'all') _wpMp.scope = 'all';
+    if (/^[A-Za-z]{1,24}$/.test(String(_wpMpSaved.char || ''))) _wpMp.char = String(_wpMpSaved.char);
+  }
+} catch (e) { void e; }
+var _WP_MP_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+var _WP_MP_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function _wpMpClock(d) { var h = d.getHours(), m = d.getMinutes(); return (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'am' : 'pm'); }
+// "Sun 9:17 pm", or with the date ("Sun Oct 4 9:17 pm") when the window is wider than a week. The viewer's own clock.
+function _wpMpWhen(ms, withDate) {
+  var d = new Date(ms);
+  if (isNaN(d.getTime())) return '—';
+  return _WP_MP_DOW[d.getDay()] + ' ' + (withDate ? _WP_MP_MON[d.getMonth()] + ' ' + d.getDate() + ' ' : '') + _wpMpClock(d);
+}
+function _wpMpDay(ms) { var d = new Date(ms); return isNaN(d.getTime()) ? '—' : _WP_MP_MON[d.getMonth()] + ' ' + d.getDate(); }
+// 10 pm Eastern on a raid night ("YYYY-MM-DD"), as an instant: raids run 8 pm to midnight ET, so that is the middle
+// of the night wherever the viewer sits. Falls back to 10 pm on the viewer's own clock if Intl cannot do zones.
+function _wpMpNightMs(night) {
+  var p = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(night || ''));
+  if (!p) return NaN;
+  var y = +p[1], mo = +p[2] - 1, da = +p[3];
+  try {
+    var fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    var off = function (t) {
+      var o = {};
+      fmt.formatToParts(new Date(t)).forEach(function (x) { o[x.type] = +x.value; });
+      return Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - t;   // ET's offset from UTC at t (negative)
+    };
+    var wall = Date.UTC(y, mo, da, 22, 0, 0);         // 22:00 read as if it were UTC
+    return wall - off(wall - off(wall));
+  } catch (e) { return new Date(y, mo, da, 22, 0, 0).getTime(); }
+}
+// The top of the DPS axis: the first round figure at or above the highest point.
+function _wpMpNice(top) {
+  if (!(top > 0)) return 100;
+  var mag = Math.pow(10, Math.floor(Math.log(top) / Math.LN10)), steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  for (var i = 0; i < steps.length; i++) if (steps[i] * mag >= top) return steps[i] * mag;
+  return 10 * mag;
+}
+function _wpMpNum(v) {
+  v = Number(v) || 0;
+  if (v >= 10000) return (v / 1000).toFixed(1).replace(/\\.0$/, '') + 'k';
+  return Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1);
+}
+function _wpMpVsUsual(dps, usual) {
+  dps = Number(dps); usual = Number(usual);
+  if (!(usual > 0) || !isFinite(dps)) return '<span class="dim">—</span>';
+  var pct = Math.round((dps - usual) / usual * 100);
+  if (pct > 0) return '<span style="color:var(--green)">+' + pct + '%</span>';
+  if (pct < 0) return '<span style="color:var(--orange)">−' + (-pct) + '%</span>';
+  return '<span class="dim">0%</span>';
+}
+// The fight's name, as a link to its card on wolfpack.quest. Only a real-looking id becomes a link.
+function _wpMpFightLink(f) {
+  var label = esc(f.name || 'Fight'), eid = String(f.eid || '');
+  if (!/^[0-9a-f][0-9a-f-]{7,39}$/i.test(eid)) return label;
+  return '<a href="https://wolfpack.quest/parses/' + eid + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none" title="Open this fight on wolfpack.quest">' + label + '</a>';
+}
+// Dots per fight at (when, DPS), the raid-night average as a line, one faint band per raid night.
+// \`asOf\` is when the answer arrived (stored with it, so the same data always draws the same picture).
+function wpMpChart(d, asOf) {
+  var all = (d && d.fights) || [], pts = [], nights = [], i;
+  var tMin = Infinity, tMax = -Infinity, top = 0, seen = {}, nChars = 0;
+  for (i = 0; i < all.length; i++) {
+    var t = Date.parse(all[i].t), v = Number(all[i].dps);
+    if (!isFinite(t) || !isFinite(v) || v < 0) continue;
+    pts.push({ t: t, v: v, f: all[i] });
+    if (t < tMin) tMin = t;
+    if (t > tMax) tMax = t;
+    if (v > top) top = v;
+    var c = String(all[i].char || '');
+    if (c && !seen[c]) { seen[c] = 1; nChars++; }
+  }
+  if (!pts.length) return '';
+  var nj = (d && d.nights) || [];
+  for (i = 0; i < nj.length; i++) {
+    var nx = _wpMpNightMs(nj[i].night), na = Number(nj[i].avg_dps);
+    if (!isFinite(nx) || !isFinite(na) || na < 0) continue;
+    nights.push({ x: nx, avg: na, n: nj[i] });
+    if (nx < tMin) tMin = nx;
+    if (nx > tMax) tMax = nx;
+    if (na > top) top = na;
+  }
+  nights.sort(function (a, b) { return a.x - b.x; });
+  var since = Date.parse((d && d.window && d.window.since) || '');
+  var t0 = isFinite(since) ? Math.min(since, tMin) : tMin;
+  var t1 = Math.max(isFinite(asOf) ? asOf : 0, tMax);
+  if (t1 - t0 < 3600000) { t0 -= 1800000; t1 += 1800000; }   // one lone fight still gets a readable axis
+  var span = t1 - t0, withDate = span > 8 * 86400000;
+  var W = 640, H = 230, L = 60, R = 14, T = 16, B = 190, PAD = 6;   // plot box: x L..W-R, y T..B; the time labels sit below it
+  var pw = W - L - R - 2 * PAD, ph = B - T, yMax = _wpMpNice(top);
+  var X = function (ms) { return L + PAD + Math.max(0, Math.min(1, (ms - t0) / span)) * pw; };
+  var Y = function (val) { return B - Math.min(Math.max(val, 0), yMax) / yMax * ph; };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Your DPS in each fight over the chosen window, with the raid-night average" style="width:100%;height:auto;display:block">';
+  // A faint band behind each raid night (8 pm to midnight Eastern).
+  for (i = 0; i < nights.length; i++) {
+    var bx = X(nights[i].x - 7200000);
+    s += '<rect x="' + bx.toFixed(1) + '" y="' + T + '" width="' + Math.max(2, X(nights[i].x + 7200000) - bx).toFixed(1) + '" height="' + (B - T) + '" fill="#a371f7" opacity="0.08"/>';
+  }
+  // Grid at 0, half and the top; the unit rides the top label.
+  var ticks = [0, yMax / 2, yMax];
+  for (i = 0; i < ticks.length; i++) {
+    s += '<line x1="' + L + '" y1="' + Y(ticks[i]).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(ticks[i]).toFixed(1) + '" stroke="#30363d" stroke-width="1"/>'
+      +  '<text x="' + (L - 6) + '" y="' + (Y(ticks[i]) + 3).toFixed(1) + '" text-anchor="end" fill="#6e7681" font-size="10">' + _wpMpNum(ticks[i]) + (i === ticks.length - 1 ? ' dps' : '') + '</text>';
+  }
+  var lab = function (ms) { return span <= 2 * 86400000 ? _wpMpWhen(ms, false) : _wpMpDay(ms); };
+  s += '<text x="' + L + '" y="' + (H - 8) + '" fill="#6e7681" font-size="10">' + lab(t0) + '</text>'
+    +  '<text x="' + (L + (W - L - R) / 2) + '" y="' + (H - 8) + '" text-anchor="middle" fill="#6e7681" font-size="10">' + lab((t0 + t1) / 2) + '</text>'
+    +  '<text x="' + (W - R) + '" y="' + (H - 8) + '" text-anchor="end" fill="#6e7681" font-size="10">' + lab(t1) + '</text>';
+  // Other fights first, boss fights on top.
+  var dot = function (p, boss) {
+    var tip = (p.f.name || 'Fight') + ' · ' + (nChars > 1 && p.f.char ? p.f.char + ' · ' : '') + Math.round(p.v) + ' dps · ' + _wpMpWhen(p.t, withDate);
+    return '<circle cx="' + X(p.t).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="' + (boss ? 3.4 : 2.6) + '" fill="' + (boss ? '#4493e8' : '#4a5568') + '"><title>' + esc(tip) + '</title></circle>';
+  };
+  for (i = 0; i < pts.length; i++) if (!pts[i].f.boss) s += dot(pts[i], false);
+  for (i = 0; i < pts.length; i++) if (pts[i].f.boss) s += dot(pts[i], true);
+  // The raid-night average: a line through the nights, the newest point larger and labelled with its value.
+  if (nights.length) {
+    var path = '';
+    for (i = 0; i < nights.length; i++) path += (i ? 'L' : 'M') + X(nights[i].x).toFixed(1) + ' ' + Y(nights[i].avg).toFixed(1);
+    if (nights.length > 1) s += '<path d="' + path + '" fill="none" stroke="#a371f7" stroke-width="1.6" stroke-linejoin="round"/>';
+    for (i = 0; i < nights.length; i++) {
+      var nd = nights[i].n, last = i === nights.length - 1, best = Number(nd.best_dps);
+      // The night's own date as the guild names it, not the instant's date on the viewer's clock (10 pm Eastern can be tomorrow elsewhere).
+      var ntip = 'Raid night ' + _WP_MP_MON[+String(nd.night).slice(5, 7) - 1] + ' ' + (+String(nd.night).slice(8, 10)) + ' · ' + (Number(nd.fights) || 0) + ' fights · avg ' + Math.round(nights[i].avg) + ' dps' + (isFinite(best) ? ' · best ' + Math.round(best) + ' dps' : '');
+      s += '<circle cx="' + X(nights[i].x).toFixed(1) + '" cy="' + Y(nights[i].avg).toFixed(1) + '" r="' + (last ? 4 : 2.2) + '" fill="#a371f7"' + (last ? ' stroke="#0d1117" stroke-width="1.5"' : '') + '><title>' + esc(ntip) + '</title></circle>';
+    }
+    var ln = nights[nights.length - 1], ly = Y(ln.avg), ty = ly - 9 < T + 6 ? ly + 17 : ly - 9;
+    s += '<text x="' + Math.min(X(ln.x) + 4, W - R).toFixed(1) + '" y="' + ty.toFixed(1) + '" text-anchor="end" fill="#a371f7" font-size="11" font-weight="bold">avg ' + _wpMpNum(ln.avg) + '</text>';
+  }
+  return s + '</svg>';
+}
+// The newest twelve fights, newest first. The Character column only exists when more than one character is in the data.
+function wpMpTable(d) {
+  var all = (d && d.fights) || [], seen = {}, nChars = 0, i;
+  for (i = 0; i < all.length; i++) { var c = String(all[i].char || ''); if (c && !seen[c]) { seen[c] = 1; nChars++; } }
+  var rows = all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var h = '<table style="font-size:12px;margin:10px 0 4px"><thead><tr><th>When</th><th>Fight</th>' + (nChars > 1 ? '<th>Character</th>' : '')
+    + '<th ' + th + '>DPS</th><th ' + th + '>vs usual</th><th ' + th + '>Rank</th></tr></thead><tbody>';
+  for (i = 0; i < rows.length; i++) {
+    var f = rows[i], rank = Number(f.rank);
+    h += '<tr><td class="dim" style="white-space:nowrap">' + _wpMpWhen(Date.parse(f.t), true) + '</td>'
+      +  '<td><span style="color:' + (f.boss ? '#4493e8' : '#4a5568') + '">●</span> ' + _wpMpFightLink(f) + '</td>'
+      +  (nChars > 1 ? '<td>' + esc(f.char) + '</td>' : '')
+      +  '<td ' + td + '>' + Math.round(Number(f.dps) || 0) + '</td>'
+      +  '<td ' + td + '>' + _wpMpVsUsual(f.dps, f.usual) + '</td>'
+      +  '<td ' + td + '>' + (f.rank != null && isFinite(rank) ? '#' + Math.round(rank) : '<span class="dim">—</span>') + '</td></tr>';
+  }
+  return h + '</tbody></table>';
+}
+// The whole tab, from _wpMp alone.
+function wpMpHtml() {
+  var m = _wpMp, i;
+  var chip = function (k, v, label, on, title) {
+    return '<button type="button" class="wp-btn' + (on ? ' pri' : '') + '" data-k="' + k + '" data-v="' + esc(v) + '" onclick="wpMpSet(this)"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(label) + '</button>';
+  };
+  var row = function (label, inner) { return '<span style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="wp-lbl" style="margin-right:4px">' + label + '</span>' + inner + '</span>'; };
+  var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from the guild&rsquo;s record</span></h2>';
+  var wins = '', scopes = '', chars = '';
+  for (i = 0; i < WP_MP_WINDOWS.length; i++) wins += chip('w', WP_MP_WINDOWS[i][0], WP_MP_WINDOWS[i][1], m.w === WP_MP_WINDOWS[i][0]);
+  for (i = 0; i < WP_MP_SCOPES.length; i++) scopes += chip('scope', WP_MP_SCOPES[i][0], WP_MP_SCOPES[i][1], m.scope === WP_MP_SCOPES[i][0]);
+  if (m.chars.length) {
+    chars = chip('char', '', 'All', !m.char);
+    for (i = 0; i < m.chars.length; i++) chars += chip('char', m.chars[i].name, m.chars[i].name, String(m.chars[i].name).toLowerCase() === m.char.toLowerCase(), m.chars[i].class || '');
+  }
+  var site = 'https://wolfpack.quest/me/parses?w=' + m.w + '&scope=' + m.scope + (m.char ? '&char=' + encodeURIComponent(m.char) : '');
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">'
+    +  row('Window', wins) + row('Show', scopes) + (chars ? row('Character', chars) : '')
+    +  '<span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">'
+    +  '<button type="button" class="wp-btn ghost" onclick="wpMpRefresh()" title="Ask the guild server again">↻</button>'
+    +  '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>'
+    +  '</span></div>';
+  var dimNote = function (t) { return '<div class="dim" style="font-size:12px;line-height:1.5;margin:6px 0">' + t + '</div>'; };
+  if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses.') + '</div></div>';
+  if (m.state === 'unavailable') return h + dimNote("Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
+  if (m.state !== 'ok' || !m.data) return h + dimNote('Loading…') + '</div></div>';
+  var d = m.data, fights = d.fights || [];
+  if (!fights.length) {
+    h += dimNote(m.scope === 'bosses'
+      ? "No boss fights in this window. Most Planes of Power bosses aren't on the boss list yet, so try Everything."
+      : 'No parses in this window yet.');
+  } else {
+    var total = d.total != null ? d.total : fights.length, nn = (d.nights || []).length;
+    h += '<div style="font-size:12px;margin:0 0 4px"><b>' + esc((d.window && d.window.label) || '') + '</b> <span class="dim">· ' + total + (total === 1 ? ' fight' : ' fights')
+      +  (nn ? ' · ' + nn + (nn === 1 ? ' raid night' : ' raid nights') : '') + '</span></div>'
+      +  wpMpChart(d, m.asOf)
+      +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
+      +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
+      +  wpMpTable(d);
+    if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
+  }
+  return h + dimNote('Numbers start 14 July 2026, when parse merging was fixed.') + '</div></div>';
+}
+function wpMpRepaint() { setSectionHTML('myparses', wpMpHtml()); }
+function wpMpSave() {
+  try { localStorage.setItem('wp:myParses', JSON.stringify({ w: _wpMp.w, scope: _wpMp.scope, char: _wpMp.char })); } catch (e) { void e; }
+}
+// Ask the agent. \`fresh\` is the ↻ button: it skips the agent's five-minute copy (the agent still holds a
+// floor of a few seconds between asks). A newer ask makes an older answer irrelevant, whenever it lands.
+function wpMpFetch(fresh) {
+  var m = _wpMp, seq = ++m.seq;
+  m.state = 'loading';
+  wpMpRepaint();
+  var url = '/api/my-parses?w=' + encodeURIComponent(m.w) + '&scope=' + encodeURIComponent(m.scope)
+    + (m.char ? '&char=' + encodeURIComponent(m.char) : '') + (fresh ? '&fresh=1' : '');
+  fetch(url, { cache: 'no-store' })
+    .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+    .then(function (j) {
+      if (seq !== m.seq) return;
+      if (j && j.error === 'signed_out') { m.state = 'signed_out'; m.data = null; return; }
+      if (!j || j.error || !Array.isArray(j.fights)) { m.state = 'unavailable'; m.data = null; return; }
+      m.data = j; m.state = 'ok'; m.asOf = Date.now();
+      m.chars = Array.isArray(j.characters) ? j.characters.filter(function (c) { return c && c.name; }) : [];
+      // A remembered character the guild no longer lists for this raider: back to All, once.
+      if (m.char && !m.chars.some(function (c) { return String(c.name).toLowerCase() === m.char.toLowerCase(); })) {
+        m.char = ''; wpMpSave(); wpMpFetch(false);
+      }
+    })
+    .catch(function () { if (seq === m.seq) { m.state = 'unavailable'; m.data = null; } })
+    .then(function () { if (seq === m.seq) wpMpRepaint(); });
+}
+function wpMpSet(el) {
+  var k = el && el.getAttribute('data-k'), v = el ? (el.getAttribute('data-v') || '') : '', m = _wpMp;
+  if (k === 'w') { if (m.w === v || !WP_MP_WINDOWS.some(function (x) { return x[0] === v; })) return; m.w = v; }
+  else if (k === 'scope') { if (m.scope === v || (v !== 'bosses' && v !== 'all')) return; m.scope = v; }
+  else if (k === 'char') { if (m.char === v) return; m.char = v; }
+  else return;
+  wpMpSave();
+  wpMpFetch(false);
+}
+function wpMpRefresh() { if (_wpMp.state !== 'loading') wpMpFetch(true); }
+// Opened from the rail (or the tray's #myparses): ask once. The agent answers from its copy inside five minutes.
+function wpMpOpenTab() { wpMpFetch(false); }
+// wolfpack.quest links go out through Mimic's open-external (it only lets https://wolfpack.quest through), so the
+// page opens in the real browser where the raider is signed in. A plain browser just follows the link.
+function wpMpLink(a) {
+  try { if (window.mimic && window.mimic.openExternal) { window.mimic.openExternal(a.getAttribute('href')); return false; } } catch (e) { void e; }
+  return true;
 }
 
 function renderTriggers(s) {
@@ -24728,7 +24988,21 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   document.getElementById(b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'optin') refreshOptin();
   if (b.dataset.tab === 'raid') refreshRaidTab();
+  if (b.dataset.tab === 'myparses') wpMpOpenTab();
 }));
+// #myparses opens the 📈 My parses tab — the tray's "📈 My parses" item loads the dashboard with that hash, the
+// same way its "Send feedback" item loads #feedback. Read on load and on every change, then dropped from the URL
+// so the next tray click is a fresh change rather than a no-op (or a reload) on the same hash.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#myparses') return;
+    var btn = document.querySelector('.nav button[data-tab="myparses"]');
+    if (btn) btn.click();
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 // ⏪ Replay deep-link (#101) — a link like #replay&from=<iso>&to=<iso> (built
 // by wolfpack.quest/parses on the "Replay this fight locally" link) opens the
 // Triggers tab with the Replay form prefilled. It never auto-starts — the user
@@ -29527,6 +29801,14 @@ function startWebDashboard(port) {
         try { have = new URL(req.url, 'http://x').searchParams.get('rev') || ''; } catch { /* */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
+      }
+      // The dashboard's 📈 My parses tab: the guild's record of THIS raider's fights, proxied from the bot and
+      // cached 5 minutes per (window, scope, character). Always 200 with an `error` field on a miss — the
+      // dashboard reads the body without checking the status. Local mode answers signed_out with no call.
+      if (req.method === 'GET' && req.url && (req.url === '/api/my-parses' || req.url.indexOf('/api/my-parses?') === 0)) {
+        const out = await fetchMyParses(_myParsesParams(req.url));
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
       }
       // Tank overlay snapshot (the guild lead, 2026-06-25). Aggregates everything the
       // tank.html overlay needs from the active character's live state:
@@ -41817,6 +42099,71 @@ function fetchExtendedTarget(character) {
   } catch { _extTargetInflight.delete(key); }
 }
 
+// ── "My parses" proxy — the dashboard's 📈 My parses tab ────────────────────
+// A member asked (2026-10-06) for a graph of their own parses over a window they pick; the guild lead
+// chose a Mimic tab plus a wolfpack.quest page. The numbers live in Supabase, so this proxies the bot's
+// GET /api/agent/my-parses and keeps each answer for 5 minutes per (window, scope, character): the tab
+// asks only when it is opened or a chip changes, and re-opening it inside the 5 minutes costs the guild
+// server nothing. The same rule as everything else here: local mode (no token) makes ZERO calls and the
+// tab says to sign in. Only a good answer is cached, so signing in and re-opening the tab works at once.
+const MY_PARSES_WINDOWS = ['1d', '7d', '30d', '90d', 'exp', 'life'];
+const MY_PARSES_SCOPES  = ['bosses', 'all'];
+const MY_PARSES_TTL_MS  = parseInt(process.env.WP_MY_PARSES_TTL_MS, 10) || 5 * 60_000;
+// The tab's ↻ button asks with fresh=1 to skip that copy, but never closer together than this: a held-down
+// button cannot turn into a stream of requests to the guild server.
+const MY_PARSES_FRESH_MIN_MS = 15_000;
+const MY_PARSES_CACHE_MAX = 48;
+const _myParsesCache = new Map();      // key → { at, payload }
+const _myParsesInflight = new Map();   // key → Promise<payload>
+// Whitelist before anything is forwarded: a window or scope that is not on the list falls back to the
+// default, and a character that is not a plain EQ name (letters only) is dropped, so the bot only ever
+// sees values this function chose.
+function _myParsesParams(url) {
+  let sp;
+  try { sp = new URL(String(url || ''), 'http://x').searchParams; } catch { sp = new URLSearchParams(); }
+  const w = String(sp.get('w') || '').toLowerCase();
+  const scope = String(sp.get('scope') || '').toLowerCase();
+  const char = String(sp.get('char') || '').trim();
+  return {
+    w: MY_PARSES_WINDOWS.includes(w) ? w : '7d',
+    scope: MY_PARSES_SCOPES.includes(scope) ? scope : 'bosses',
+    char: /^[A-Za-z]{1,24}$/.test(char) ? char : '',
+    fresh: sp.get('fresh') === '1',          // agent-side only: never forwarded to the bot
+  };
+}
+async function fetchMyParses(params) {
+  // Local mode, no token, or a dry run: nothing is sent, nothing is asked.
+  if (!_canAskGuildForFights()) return { error: 'signed_out' };
+  const opts = _uploadOpts;
+  const p = params || {};
+  // The sign-in is part of the key so a different raider on the same agent never reads the last one's numbers.
+  const key = [p.w, p.scope, String(p.char || '').toLowerCase(), String(_mimicSessionToken || '').slice(-8)].join('|');
+  const hit = _myParsesCache.get(key);
+  if (hit && (Date.now() - hit.at) < (p.fresh ? MY_PARSES_FRESH_MIN_MS : MY_PARSES_TTL_MS)) return hit.payload;
+  if (_myParsesInflight.has(key)) return _myParsesInflight.get(key);
+  const run = (async () => {
+    try {
+      const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+      const qs = 'w=' + encodeURIComponent(p.w) + '&scope=' + encodeURIComponent(p.scope)
+        + (p.char ? '&char=' + encodeURIComponent(p.char) : '');
+      const headers = { Authorization: 'Bearer ' + opts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+      if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+      const r = await fetch(base + '/my-parses?' + qs, { headers, signal: AbortSignal.timeout(10_000) });
+      if (r.status === 401) return { error: 'signed_out' };
+      if (!r.ok) return { error: 'unavailable' };         // an older bot (404), or a bot having a bad minute
+      const j = await r.json();
+      if (!j || typeof j !== 'object' || !Array.isArray(j.fights)) return { error: 'unavailable' };
+      _myParsesCache.set(key, { at: Date.now(), payload: j });
+      if (_myParsesCache.size > MY_PARSES_CACHE_MAX) _myParsesCache.delete(_myParsesCache.keys().next().value);
+      return j;
+    } catch { return { error: 'unavailable' }; }
+  })();
+  // `run` never rejects (every path returns an object), so this clears the key however it ended.
+  _myParsesInflight.set(key, run);
+  run.then(() => { _myParsesInflight.delete(key); });
+  return run;
+}
+
 // ── #56 Same-name mob serial tracks (death-boundary + HP-continuity) ─────────
 // Spec: docs/DESIGN-dedup-and-mob-serialization.md. The Zeal pipe carries NO
 // spawn id, so ≥2 identically-named mobs alive at once can't be told apart from
@@ -48088,6 +48435,9 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  // The 📈 My parses proxy (2026-10-06): the param whitelist, the fetch with its 5-minute cache.
+  _myParsesParams, fetchMyParses, MY_PARSES_TTL_MS, MY_PARSES_FRESH_MIN_MS,
+  _resetMyParsesForTest: () => { _myParsesCache.clear(); _myParsesInflight.clear(); },
   // Arm persistence onto a temp file (or, with no argument, disarm it again).
   _fightHistoryPersistForTest: (file) => { _fightsFile = file || FIGHTS_FILE; _fightsPersist = !!file; },
   _noteMobDeathFromState,

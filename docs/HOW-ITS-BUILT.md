@@ -3586,11 +3586,20 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   and cache in `utils/myParses.js`): the person is the Mimic token's `identity.discord_id`; 5-min per-person
   cache; gzip; a failed read is an uncached 502. `EXPANSION_STARTS` there must match `web/lib/timeWindow.ts` (a
   test reads both).
+- **Mimic tab (beta, agent 3.7.90):** a 📈 My parses tab in the dashboard (`packages/wolfpack-logsync/dashboard.html`,
+  chart `wpMpChart`), fed by the agent's `GET /api/my-parses` (`fetchMyParses`: params whitelisted, local mode /
+  no token → `signed_out` with no network call, 5-min cache per window/scope/character/session, shared in-flight
+  ask). Asks only on open, chip change or ↻; choices kept in localStorage `wp:myParses`. Tray item 📈 My parses
+  (`showDashboardTab` in `apps/mimic/main.js`) opens the main window on `#myparses` — the same #hash mechanism as
+  Send feedback. Links open wolfpack.quest via `window.mimic.openExternal`.
+- **Meter Trend view (beta):** a Trend tab on the DPS/Tank Meter (`apps/mimic/overlay.html`) from the LOCAL fight
+  ring only, tonight / 7 days, Dealt / Taken. See `docs/DESIGN-overlay-catalog.md` → DPS HUD.
 - **Measured 2026-10-06:** 30 days of boss fights for the busiest raider ≈ 0.25 s; every fight over 30 days or
   lifetime ≈ 0.6–0.7 s and ~90 KB before gzip (capped at 400 fights).
 - ⚠ **"Bosses" is thin in Planes of Power:** only 14 of the timer board's 43 PoP bosses are curated in
   `bosses_local`, so most PoP kills count as "Everything". Both surfaces say so on an empty Bosses view.
-- **Tests:** `test/my-parses.test.js`, `test/parse-trend.test.js`.
+- **Tests:** `test/my-parses.test.js` (bot route), `test/parse-trend.test.js` (web), and on beta
+  `test/my-parses-tab.test.js` (agent + dashboard + tray) and `test/dps-trend.test.js` (meter Trend).
 
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes

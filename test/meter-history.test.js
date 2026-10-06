@@ -544,7 +544,7 @@ describe('the ring is off the /api/state poll and on its own endpoint', () => {
   });
 });
 
-describe('the overlay reads it only while History is open, and every consumer still has what it reads', () => {
+describe('the overlay reads it only while History or Trend is open, and every consumer still has what it reads', () => {
   const src = stripJs(overlay);
   const ringBlock = upTo(overlay, '  var _histRing = { rev: null, fights: [] };', '\n  async function tick(){');
   function histFetcher(fetchImpl, PORT = 7777) {
@@ -552,8 +552,10 @@ describe('the overlay reads it only while History is open, and every consumer st
   }
   const json = (o, ok = true) => ({ ok, json: async () => o });
 
-  it('the tick fetches the ring inside the History branch and nowhere else', () => {
-    expect(src).toMatch(/if \(TAB_MODE === 'history'\) \{\s*HISTLIST = await _histFights\(s\);/);
+  it('the tick fetches the ring in one place, for the History tab and the Trend tab, and nowhere else', () => {
+    // Trend (2026-10-06) draws from the same ring, so it shares this one read rather than asking again.
+    expect(src).toMatch(/if \(TAB_MODE === 'history' \|\| _trendShown\) \{\s*HISTLIST = await _histFights\(s\);/);
+    expect(src).toMatch(/var _trendShown = TAB_MODE === 'trend' && !document\.body\.classList\.contains\('wp-mini'\);/);
     expect(src.match(/_histFights\(/g)).toHaveLength(2);                       // the definition and that one call
     expect(src.match(/\/api\/fight-history/g)).toHaveLength(1);
     expect(src).toMatch(/var HISTLIST = \[\];/);                               // not read off the state any more
