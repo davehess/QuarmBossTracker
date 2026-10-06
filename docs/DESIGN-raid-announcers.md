@@ -530,3 +530,32 @@ Wednesday, 8pm–midnight ET: Grummus, then Aerin`Dar (never killed by the Pack)
 # Part V — What the cast needs built
 
 The engine design holds the order and costs. Cast gates: the first-kill latch (this week); the contract list C1–C11 for the guild lead; `announce_name` with its notice and the `/privacy` voice section before any named line; the reserved-word, embargo and count rules in the linter; a reviewed raid-target list per zone; per-boss lines for the 43 Planes of Power bosses; lore citations for held lines; and the three v0.2 cards plus the shared lorebook, rehearsed in the group chat before anyone hears them.
+
+---
+
+# Appendix — contradictions to settle (found while building the v0.2 cards, 2026-10-06)
+
+The v0.2 cards made a working choice for each one; settle them here before line banks are recorded. Several follow from
+the open picks.
+
+1. **miMIC says "Pack"** in C9 and the Part IV first-kill line, but its Never list bans "Pack"/"Wolf Pack". The cards allow that one line.
+2. **miMIC says "please"** ("Loading. Please wait."), banned by its Never list. The cards allow it as a quoted client message.
+3. **miMIC's banter replies run past its 3-word cap** ("You cannot see your target." is five).
+4. **Bristlebane says "up"** ("turn up") although "up" is reserved for miMIC.
+5. **Bristlebane speaks after the Lord** in bits 4, 6, 8 and Part IV #13 and #21; his Never list forbids it (the Lord speaks last).
+6. **Bit 3 is four lines**; the banter cap is three.
+7. **Bit 7 gives Bristlebane "mobs in camp"**, which his prompt reserves for the Lord. Probably intended as a mimic of the Lord; say so.
+8. **"Welcome back"** after a disconnect (rule 8, `any`) is a miMIC reserved phrase; Bristlebane's own line is "is back".
+9. **Thank-You Embargo pick B** lets miMIC and Bristlebane thank at milestones, but both Never lists still ban "thank you", and no milestone line exists yet.
+10. **Camp check counts** ("{count} answer", "Forty-one answer") conflict with tradition 2 ("never counted"); the count's source is undefined.
+11. **First raid of the week:** the moment table gives miMIC nothing, tradition 11 gives it a line.
+12. **Routine kills:** "kills 3, 6, 9 and about one in three" is redundant, and "otherwise nobody" conflicts with the Lord speaking when Bristlebane passes.
+13. **Part IV counts:** three bosses named but "Five kills" at the close; the Lord's line count does not match its table.
+14. **"A few of us"** for one or two deaths is untrue (truth rule).
+15. **Deathroll winner who chose `never`:** no wording given.
+16. **"Dice are honest. I'm not."** on a loot roll sits close to the no-loot-cheating-jokes rule.
+17. **The Ask box's "voiced answer"** implies live generation, against rule 14. Answers stay text unless pre-rendered.
+18. **"Never generates a line live"** is unscoped for Bristlebane, but the OpenClaw chat agent is a live text model. The cards scope it to voice.
+19. **The Lord "never gives an order"**, yet "Bring it to me one at a time", "Rest now" and "Go well" are imperatives. Probably blessings, not orders; say so.
+20. **Part IV is a progression night with miMIC on Light**, but the officer key defaults to Off on progression nights.
+21. **The weekly "They solved this game…" line** is filed under Open but plays at 20:16 in Part IV.
