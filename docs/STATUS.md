@@ -217,7 +217,9 @@ next touch one rather than assuming a missing row means a missing doc.
   Same evening: mules and traders fold behind "+N more" (web 1.8.108, agent 3.7.91 beta).
 - **✅ Long-term bidding out of the timers (agent 3.7.92 stable hot-swap · 3.7.93 beta, 2026-10-06).** Auctions set to
   run over 6 h get no countdown and no Command Center row; the bidding window still lists them. ⏳ The ✕ on timer
-  chips was reported unclickable; investigation open. §171.
+  chips was reported unclickable; hardened on beta (`data-wp-interact`, `cf817067`), awaiting a retest. §171.
+- **✅ Target Info says a mob's faction and who assists it (bot 3.1.211 · Mimic beta, 2026-10-06).** "Faction: KOS ↗"
+  (links to wolfpack.quest), "Assisted by:" same-zone NPCs that will help it, "Helps:" factions it defends. §172.
 - **⏳ The announcer cast: written, nothing built (2026-10-06).** miMIC (your ear, the fight), Bristlebane (the
   room's laugh) and Lord Mobsincamp (meaning and the Ledger). The bible is `docs/DESIGN-raid-announcers.md` and the
   engine `docs/DESIGN-announcer-engine.md`; the personas are Character Card V2 files. Waits on the guild lead: a
