@@ -1939,6 +1939,13 @@ NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dr
 `scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
 and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
 3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
+**Faction: what the mob is on and who assists it (bot 3.1.211, Mimic beta `0ec3414a`, §172):** mob-info (and the
+zone mob packs, `_MOB_PACK_VERSION` 2) carry `faction_primary {id,name}`, `faction_assists [{id,name}]` and
+`faction_assisted_by [{name,npc_id}]` + `_more`, from `utils/factionAssist.js` (one 6 h catalog index; EQEmu's rule:
+helps when the other's primary faction is in its npc_faction entries with npc_value > 0, or a shared primary without
+ignore_primary_assist; same zone by npc id range; helpers through another faction listed first, cap 12). The
+Faction sub-tab heads with "Faction: <name> ↗" (wolfpack.quest/db/faction/<id>), "Assisted by:", "Helps:", above
+the on-kill list.
 **What a branch does (bot 3.1.170–3.1.171, §74):** `questDialog.effects()` (Lua + Perl) → despawn / spawn /
 faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()` splits `event_trade` per
 `check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
