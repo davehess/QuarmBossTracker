@@ -4,9 +4,16 @@
 // A member asked (2026-10-06) whether Mimic has a page that graphs their parses over a variable time window
 // (a day, a week, ...). The guild lead picked a My parses tab in Mimic AND wolfpack.quest/me/parses reading
 // ONE Postgres function, so the tab and the page always show the same numbers:
-// supabase/migrations/20261006200000_my_parse_series.sql, my_parse_series(). This file is the bot's side of
-// the Mimic half: it turns the query string into the function's arguments and keeps the answer for a few
-// minutes. The route itself (auth, status codes, gzip) is _handleAgentMyParses in index.js.
+// supabase/migrations/20261007000000_my_parse_series_v2.sql, my_parse_series_v2() (the first version,
+// 20261006200000, had no zone or mob filter). This file is the bot's side of the Mimic half: it turns the
+// query string into the function's arguments and keeps the answer for a few minutes. The route itself (auth,
+// status codes, gzip) is _handleAgentMyParses in index.js.
+//
+// ZONE AND MOB FILTERS (the guild lead, 2026-10-06: "chop it up by days, zones, mobs, search bar")
+// `zone=<id>` and `q=<text>` narrow the fights, nights and totals the function returns; the answer also
+// carries `zones` and `mobs` lists for the pickers and a zone on every fight. Both are read as data, never
+// trusted: a zone is a small integer and a search is a short run of name characters, anything else is ignored
+// (as if not sent) rather than passed on.
 //
 // WHO IS ASKED ABOUT
 // The caller's own Discord id, taken from the Mimic session by the route and passed in here. Nothing in the
@@ -43,6 +50,13 @@ const CHAR_MAX_LEN = 64;
 // display name can carry. Anything else is not a character name, so it is ignored rather than passed on.
 const CHAR_RX = /^[A-Za-z '`-]+$/;
 
+// A zone id is the NPC catalog's zone (npc_id / 1000): one to three digits, 1..999.
+const ZONE_MAX = 999;
+// A mob-name search: a name's own characters plus digits (a mob can be "Dain Frostreaver IV" or "an orc 2")
+// and the underscore the catalog stores for a space. No wildcard, quote, comma or slash gets through.
+const SEARCH_MAX_LEN = 40;
+const SEARCH_RX = /^[A-Za-z0-9 '`_-]+$/;
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_MAX = 500;
 
@@ -77,7 +91,26 @@ function cleanChar(raw) {
   return s;
 }
 
-// The request URL (path and query) -> { w, scope, char }. A URL that will not parse reads as no parameters.
+// A zone id as an integer 1..ZONE_MAX, or null (absent, not plain digits, zero, or out of range).
+function cleanZone(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!/^\d{1,3}$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 1 && n <= ZONE_MAX ? n : null;
+}
+
+// A mob-name search, trimmed, or null when there is none worth passing on (absent, blank, too long, or it
+// carries a character a mob name does not).
+function cleanSearch(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s.length > SEARCH_MAX_LEN || !SEARCH_RX.test(s)) return null;
+  return s;
+}
+
+// The request URL (path and query) -> { w, scope, char, zone, search }. A URL that will not parse reads as
+// no parameters. The query string's `q` is the search.
 function parseQuery(url, nowMs = Date.now()) {
   let sp;
   try { sp = new URL(url, 'http://x').searchParams; } catch { sp = new URLSearchParams(); }
@@ -85,13 +118,17 @@ function parseQuery(url, nowMs = Date.now()) {
     w: resolveWindow(sp.get('w'), nowMs),
     scope: cleanScope(sp.get('scope')),
     char: cleanChar(sp.get('char')),
+    zone: cleanZone(sp.get('zone')),
+    search: cleanSearch(sp.get('q')),
   };
 }
 
-// One slot per person x window x scope x character. The name is case-folded because the function matches it
-// case-insensitively, so "Aldenmar" and "aldenmar" are one answer.
+// One slot per person x window x scope x character x zone x search. The name and the search are case-folded
+// because the function matches both case-insensitively, so "Aldenmar" and "aldenmar" are one answer. Neither
+// can contain the "|" that separates the parts (their patterns exclude it).
 function cacheKey(discordId, q) {
-  return `${discordId}|${q.w.key}|${q.scope}|${q.char ? q.char.toLowerCase() : ''}`;
+  return `${discordId}|${q.w.key}|${q.scope}|${q.char ? q.char.toLowerCase() : ''}`
+    + `|${q.zone ?? ''}|${q.search ? q.search.toLowerCase() : ''}`;
 }
 
 // A small TTL map, bounded: past `max` entries the OLDEST goes (insertion order; a re-set moves a key to the
@@ -123,12 +160,16 @@ async function fetchSeries(supabase, discordId, q) {
     p_bosses_only: q.scope !== 'all',
   };
   if (q.char) params.p_character = q.char;
-  const out = await supabase.rpc('my_parse_series', params);
+  if (q.zone) params.p_zone = q.zone;
+  if (q.search) params.p_search = q.search;
+  const out = await supabase.rpc('my_parse_series_v2', params);
   if (!out || typeof out !== 'object' || Array.isArray(out)) return null;
   return { ...out, window: { key: q.w.key, label: q.w.label, since: q.w.since }, scope: q.scope };
 }
 
 module.exports = {
-  EXPANSION_STARTS, DAY_WINDOWS, DEFAULT_WINDOW, DEFAULT_SCOPE, CHAR_MAX_LEN, CACHE_TTL_MS, CACHE_MAX,
-  currentExpansion, resolveWindow, cleanScope, cleanChar, parseQuery, cacheKey, createCache, fetchSeries,
+  EXPANSION_STARTS, DAY_WINDOWS, DEFAULT_WINDOW, DEFAULT_SCOPE, CHAR_MAX_LEN, ZONE_MAX, SEARCH_MAX_LEN,
+  CACHE_TTL_MS, CACHE_MAX,
+  currentExpansion, resolveWindow, cleanScope, cleanChar, cleanZone, cleanSearch, parseQuery, cacheKey,
+  createCache, fetchSeries,
 };
