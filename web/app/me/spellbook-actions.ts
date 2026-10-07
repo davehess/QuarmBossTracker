@@ -9,6 +9,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 type ParsedSpell = { spell_id: number; spell_name: string; spell_level: number | null };
 
@@ -47,7 +48,7 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; erro
   const admin = supabaseAdmin();
   const [{ data: me }, { data: ch }] = await Promise.all([
     admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle(),
-    admin.from('characters').select('name, discord_id, main_name').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
+    admin.from('characters').select('name, discord_id, main_name').eq('guild_id', GUILD_TAG).ilike('name', characterName).maybeSingle(),
   ]);
   if (!me?.discord_id || !ch) return { ok: false, error: 'not your character' };
   if (ch.discord_id === me.discord_id) return { ok: true };
@@ -56,7 +57,7 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; erro
   // character" on a spellbook upload (the guild lead, 2026-10-03: "spellbook upload is screwing up").
   if (ch.main_name && ch.main_name.toLowerCase() !== String(ch.name).toLowerCase()) {
     const { data: root } = await admin
-      .from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', ch.main_name).maybeSingle();
+      .from('characters').select('discord_id').eq('guild_id', GUILD_TAG).ilike('name', ch.main_name).maybeSingle();
     if (root?.discord_id === me.discord_id) return { ok: true };
   }
   return { ok: false, error: 'not your character' };
@@ -73,15 +74,15 @@ export async function uploadSpellbook(characterName: string, rawText: string): P
 
   const admin = supabaseAdmin();
   const { data: ch } = await admin
-    .from('characters').select('name').eq('guild_id', 'wolfpack').ilike('name', name).maybeSingle();
+    .from('characters').select('name').eq('guild_id', GUILD_TAG).ilike('name', name).maybeSingle();
   const canonical = ch?.name || name;
 
   await admin.from('character_spellbook')
-    .delete().eq('guild_id', 'wolfpack').ilike('character_name', canonical);
+    .delete().eq('guild_id', GUILD_TAG).ilike('character_name', canonical);
 
   const now = new Date().toISOString();
   const rows = spells.map(s => ({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character_name: canonical,
     spell_id: s.spell_id,
     spell_name: s.spell_name,

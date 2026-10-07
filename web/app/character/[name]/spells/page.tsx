@@ -29,6 +29,7 @@ import { groupSources, vendorSpots, type ItemSources, type VendorSpots } from '@
 import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,7 +58,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const { data: charRows } = await sb
     .from('characters')
     .select('name, class, discord_id, show_inventory_publicly')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', decoded)
     .limit(1);
   const char = (charRows && charRows[0]) as
@@ -103,14 +104,14 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const { count: scribedCount } = await sb
     .from('character_spellbook')
     .select('id', { count: 'exact', head: true })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', decoded);
 
   let missing: MissingSpell[] = [];
   let rpcError: string | null = null;
   if (bit > 0) {
     const { data, error } = await sb.rpc('character_missing_spells', {
-      p_guild_id: 'wolfpack', p_character: decoded, p_class_bit: bit,
+      p_guild_id: GUILD_TAG, p_character: decoded, p_class_bit: bit,
     });
     if (error) rpcError = error.message;
     else missing = (data ?? []) as MissingSpell[];

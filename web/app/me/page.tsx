@@ -53,6 +53,7 @@ import { type StripNight } from '@/components/RaidNightsStrips';
 import AttendanceSection from './AttendanceSection';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -182,7 +183,7 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   const { data: allChars } = await admin
     .from('characters')
     .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly, show_quests_publicly, hidden_from_lists')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
   // 1) Anchored characters — directly linked to ANY discord_id in the household.
@@ -629,7 +630,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
   const { data: rows } = await admin
     .from('characters')
     .select('name, discord_id, link_ignored, deleted')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('name', names);
   const known = new Map<string, { discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }>();
   for (const r of (rows ?? []) as { name: string; discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }[]) {
