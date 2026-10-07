@@ -12,10 +12,12 @@
 //   2. The typed getters below (guildName(), webBase(), repo() ...) — for NEW code and the
 //      de-brand sweep, so a value is resolved in one place instead of re-deriving a literal.
 //
-// SECRETS NEVER COME FROM THE FILE. Any key (at any depth) matching /spec|token|key|secret|password/i
-// is stripped when the file is loaded, and get() will not read a file path or env name of that
-// shape from the file. A channel password pasted into a committed file must not silently work
-// (guild/README.md: names are config, passwords are secrets). Env may hold them; the file may not.
+// SECRETS NEVER COME FROM THE FILE. Any key (at any depth) that has spec / token / key / secret /
+// password as a WHOLE word (apiKey, api_key, botToken, spec — but not keyboard or keyring) is
+// stripped when the file is loaded, and get() will not read a file path of that shape from the
+// file; an ENV NAME is matched more conservatively (substring). A channel password pasted into a
+// committed file must not silently work (guild/README.md: names are config, passwords are
+// secrets). Env may hold them; the file may not.
 //
 // Zero dependencies, CommonJS. The only side effect is a lazy, cached read of guild/config.json.
 // Missing file -> {} silently. Invalid JSON -> {} with one console.warn.
@@ -27,8 +29,13 @@ const path = require('path');
 
 const DEFAULT_DIR = path.join(__dirname, '..', 'guild');
 const SECRET_RE_UPPER = /SPEC|TOKEN|KEY|SECRET|PASSWORD/;   // env-name shape (matches _loadGuildDiscordJson)
-const SECRET_RE_ANY   = /spec|token|key|secret|password/i;  // config-key shape (camelCase keys too)
-const PLACEHOLDER_RE  = /<[^<>]+>/;                         // "<discord-guild-id>", "https://<your-guild>.x"
+const SECRET_WORD_RE  = /(^|[^a-z])(spec|token|key|secret|password)s?(?=$|[^a-z])/i;   // a whole word of a split key
+const PLACEHOLDER_RE  = /<[a-z0-9][a-z0-9-]*>/i;            // the example's token shape: "<discord-guild-id>", "https://<your-guild>.x"
+
+// A config key (or one segment of a dot path) is secret-shaped when spec/token/key/secret/password is
+// a whole word of it, after camelCase is split: apiKey, api_key, botToken, spec — not keyboard, keyring.
+function _secretKey(k) { return SECRET_WORD_RE.test(String(k).replace(/([a-z0-9])([A-Z])/g, '$1_$2')); }
+function _secretPath(p) { return String(p).split('.').some(_secretKey); }
 
 // ── file loading ────────────────────────────────────────────────────────────
 
@@ -47,8 +54,23 @@ function _secretPaths(obj, prefix = '', out = []) {
   if (!obj || typeof obj !== 'object') return out;
   for (const k of Object.keys(obj)) {
     const p = prefix ? `${prefix}.${k}` : k;
-    if (SECRET_RE_ANY.test(k)) { out.push(p); continue; }
+    if (_secretKey(k)) { out.push(p); continue; }
     _secretPaths(obj[k], p, out);
+  }
+  return out;
+}
+
+// Dotted paths whose string value (or any string in an array) still holds the example's placeholder.
+// "_comment"-style keys are prose, not values, and are skipped.
+function _placeholderPaths(obj, prefix = '', out = []) {
+  if (!obj || typeof obj !== 'object') return out;
+  for (const k of Object.keys(obj)) {
+    if (k.startsWith('_')) continue;
+    const p = prefix ? `${prefix}.${k}` : k;
+    const v = obj[k];
+    if (typeof v === 'string') { if (PLACEHOLDER_RE.test(v)) out.push(p); }
+    else if (Array.isArray(v)) { if (v.some((x) => typeof x === 'string' && PLACEHOLDER_RE.test(x))) out.push(p); }
+    else _placeholderPaths(v, p, out);
   }
   return out;
 }
@@ -58,7 +80,7 @@ function _stripSecrets(v) {
   if (Array.isArray(v)) return v.map(_stripSecrets);
   if (v && typeof v === 'object') {
     const o = {};
-    for (const k of Object.keys(v)) { if (!SECRET_RE_ANY.test(k)) o[k] = _stripSecrets(v[k]); }
+    for (const k of Object.keys(v)) { if (!_secretKey(k)) o[k] = _stripSecrets(v[k]); }
     return o;
   }
   return v;
@@ -79,6 +101,8 @@ function _info(dir) {
         if (info.refused.length) {
           console.warn(`[guild] config.json: refused secret-shaped key(s) ${info.refused.join(', ')} — secrets belong in .env, never in a committed file`);
         }
+        // A placeholder is dropped silently by every reader below, so say so once, here, per path.
+        for (const p of _placeholderPaths(info.cfg)) console.warn(`[guild] guild/config.json: ${p} still holds the example placeholder`);
       } else {
         console.warn(`[guild] ${file} is not a JSON object — ignored`);
       }
@@ -128,7 +152,7 @@ function dig(cfg, cfgPath) {
 function _isPlaceholder(v) { return typeof v === 'string' && PLACEHOLDER_RE.test(v); }
 
 function _fileValue(c, cfgPath) {
-  if (!cfgPath || SECRET_RE_ANY.test(cfgPath)) return undefined;
+  if (!cfgPath || _secretPath(cfgPath)) return undefined;
   const v = dig(load(c.dir), cfgPath);
   if (v == null || _isPlaceholder(v)) return undefined;
   if (Array.isArray(v)) {
@@ -174,12 +198,14 @@ function _csv(s) { return String(s || '').split(',').map((r) => r.trim()).filter
 
 // ── ENV_MAP + fillEnv ───────────────────────────────────────────────────────
 // Which config paths fill which env names. `path` may be an array (union, de-duplicated, in order).
-// `join` is the separator for arrays; `bool` writes '1'/'0'.
+// `join` is the separator for arrays; `bool` writes '1'/'0'; `alsoSetBy` lists legacy alias env names
+// the bot reads in place of this one — a non-blank alias counts as "env already set".
 const ENV_MAP = Object.freeze([
   { env: 'SUPABASE_GUILD_ID',                path: 'guild.tag' },
   { env: 'DISCORD_GUILD_ID',                 path: 'discord.guildId' },
   // Discord roles are flat, so the allow-list is the UNION of the member and officer lists.
-  { env: 'ALLOWED_ROLE_NAMES',               path: ['discord.roles.member', 'discord.roles.officer'], join: ',' },
+  // utils/roles.js reads ALLOWED_ROLE_NAMES || ALLOWED_ROLE_NAME, so the singular name is an alias.
+  { env: 'ALLOWED_ROLE_NAMES',               path: ['discord.roles.member', 'discord.roles.officer'], join: ',', alsoSetBy: ['ALLOWED_ROLE_NAME'] },
   { env: 'OFFICER_ROLE_NAMES',               path: 'discord.roles.officer', join: ',' },
   { env: 'OPENDKP_CLIENT_NAME',              path: 'opendkp.clientName' },
   { env: 'DEFAULT_TIMEZONE',                 path: 'guild.timezone' },
@@ -233,7 +259,8 @@ function fillEnv(env, cfg) {
   for (const entry of ENV_MAP) {
     const val = _entryValue(entry, src);
     if (val === undefined) continue;
-    if (env[entry.env] != null && String(env[entry.env]).trim() !== '') { out.skipped.push(entry.env); continue; }
+    const isSet = (k) => env[k] != null && String(env[k]).trim() !== '';
+    if (isSet(entry.env) || (entry.alsoSetBy || []).some(isSet)) { out.skipped.push(entry.env); continue; }
     env[entry.env] = val;
     out.filled.push(entry.env);
   }
@@ -275,28 +302,23 @@ function opendkpBase(ctx) {
 }
 
 /**
- * {member:[], officer:[]} resolved EXACTLY as utils/roles.js does, with the file layer slotted
- * between env and the built-in default. Empty-value semantics are roles.js's, on purpose:
- *   - allowed  = ALLOWED_ROLE_NAMES || ALLOWED_ROLE_NAME || file(member ∪ officer) || 'Pack Member'
- *   - officer  = OFFICER_ROLE_NAMES || ALLOWED_ROLE_NAMES || file(officer) || 'Officer,Guild Leader'
- *   - `||` means an EMPTY string falls through to the next source, but a whitespace-only string
- *     is truthy and yields an EMPTY list (nobody allowed) — kept, because changing it would change
- *     who may run commands. Entries are trimmed and empties dropped, as roles.js does.
+ * {member:[], officer:[]} — what utils/roles.js answers at runtime. index.js runs fillEnv() at boot,
+ * which writes the file's role lists into ALLOWED_ROLE_NAMES / OFFICER_ROLE_NAMES, and roles.js then
+ * reads those; so this derives from the SAME effective env (a copy of ctx.env, fillEnv'd from the
+ * file) and applies roles.js's own expressions, rather than re-deciding the precedence here:
+ *   - allowed  = ALLOWED_ROLE_NAMES || ALLOWED_ROLE_NAME || 'Pack Member'
+ *   - officer  = OFFICER_ROLE_NAMES || ALLOWED_ROLE_NAMES || 'Officer,Guild Leader'
+ *   - fillEnv writes only blank names, and treats a non-blank ALLOWED_ROLE_NAME as ALLOWED_ROLE_NAMES
+ *     being set. A whitespace-only value is therefore "unset" when the file has roles (the file
+ *     fills it) and truthy when it does not (an EMPTY list, as roles.js has it).
  */
 function roles(ctx) {
   const c = _ctx(ctx);
-  const fileMember  = _fileList(c, 'discord.roles.member');
-  const fileOfficer = _fileList(c, 'discord.roles.officer');
-  const fileUnion   = [...new Set([...fileMember, ...fileOfficer])].join(',');
-  const allowed = c.env.ALLOWED_ROLE_NAMES || c.env.ALLOWED_ROLE_NAME || fileUnion || 'Pack Member';
-  const officer = c.env.OFFICER_ROLE_NAMES || c.env.ALLOWED_ROLE_NAMES || fileOfficer.join(',') || 'Officer,Guild Leader';
+  const eff = { ...c.env };
+  fillEnv(eff, load(c.dir));
+  const allowed = eff.ALLOWED_ROLE_NAMES || eff.ALLOWED_ROLE_NAME || 'Pack Member';
+  const officer = eff.OFFICER_ROLE_NAMES || eff.ALLOWED_ROLE_NAMES || 'Officer,Guild Leader';
   return { member: _csv(allowed), officer: _csv(officer) };
-}
-
-function _fileList(c, cfgPath) {
-  const v = _fileValue(c, cfgPath);
-  const arr = Array.isArray(v) ? v : (typeof v === 'string' ? [v] : []);
-  return arr.filter((x) => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
 }
 
 /** OpenDKP rank vocabulary. Defaults mirror utils/roster.js and web/lib/popRoster.ts. */
@@ -388,9 +410,9 @@ function brand(text, ctx) {
   const base = webBase(ctx);
   let host = 'wolfpack.quest';
   try { host = new URL(base).host; } catch { /* keep default host */ }
+  // ONE pass: a base whose host contains 'wolfpack.quest' (b.wolfpack.quest) must not be rewritten again.
   return text
-    .split('https://wolfpack.quest').join(base)
-    .split('wolfpack.quest').join(host)
+    .replace(/https:\/\/wolfpack\.quest|wolfpack\.quest/g, (m) => (m.startsWith('https') ? base : host))
     .split('Wolf Pack').join(guildName(ctx));
 }
 

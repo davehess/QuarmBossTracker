@@ -17,13 +17,14 @@ code; `config.example.json` is the schema by example.
 ### What `config.json` can fill
 
 At boot the bot fills these env names from `config.json` **only when they are
-unset** (arrays join with commas; `<angle-bracket>` values are ignored):
+unset** (arrays join with commas; example placeholders such as `<your-guild>` are
+ignored, with a warning at boot naming each one):
 
 | Env name | `config.json` path |
 |---|---|
 | `SUPABASE_GUILD_ID` | `guild.tag` |
 | `DISCORD_GUILD_ID` | `discord.guildId` |
-| `ALLOWED_ROLE_NAMES` | `discord.roles.member` + `discord.roles.officer` (Discord roles are flat, so the allow-list is the union) |
+| `ALLOWED_ROLE_NAMES` | `discord.roles.member` + `discord.roles.officer` (Discord roles are flat, so the allow-list is the union; a set legacy `ALLOWED_ROLE_NAME` also counts as "already set") |
 | `OFFICER_ROLE_NAMES` | `discord.roles.officer` |
 | `OPENDKP_CLIENT_NAME` | `opendkp.clientName` |
 | `DEFAULT_TIMEZONE` | `guild.timezone` |
@@ -34,8 +35,12 @@ unset** (arrays join with commas; `<angle-bracket>` values are ignored):
 | `GUILD_NAME`, `GUILD_SHORT` | `guild.name`, `guild.short` |
 | `GUILD_PROVISION`, `_OPTIONAL`, `_SKIP`, `_CREATE_CHANNELS`, `_LOCK`, `_PIN` | `discord.provision.*` |
 
-Keys whose name contains `spec`, `token`, `key`, `secret` or `password` are
-refused when the file is read — they are logged and ignored, never used.
+Keys with `spec`, `token`, `key`, `secret` or `password` as a word of their name
+(`apiKey`, `api_key`, `botToken`, `spec` — not `keyboard`) are refused when the
+file is read — they are logged and ignored, never used.
+
+Committing your own `guild/config.json` is the intended setup; the test suite
+never reads the real `guild/` folder, so a fork's `npm test` stays green with it.
 
 ## What goes where
 

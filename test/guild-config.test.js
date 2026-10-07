@@ -10,7 +10,8 @@
 //   • fillEnv fills ONLY unset names, joins arrays, unions the role lists, skips placeholders;
 //   • every getter's built-in default is today's literal — pinned here AND compared to the code
 //     that still holds the literal (utils/roles.js, the roster rank list, the web rank lists);
-//   • every ENV_MAP target is an env name something actually reads;
+//   • every ENV_MAP target is read by the bot or resolvable through a getter (the getter-only ones listed);
+//   • the real guild/ folder is never read — a fork commits its own config.json there;
 //   • index.js runs fillEnv after the slice-1a loader and before the first env read.
 //
 // Behaviour over text wherever possible; the few text assertions strip comments first
@@ -114,6 +115,28 @@ describe('get(): env -> file -> default', () => {
     expect(gc.get(null, 'sites.botApiBase', 'D', ctx(d))).toBe('D');
     expect(gc.get(null, 'discord.guildId', 'D', ctx(d))).toBe('D');
   });
+  it('only the example\'s <token-shape> is a placeholder: a real name with angle brackets is kept', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = tmpDir({ guild: { name: 'Wolves <3 Raids>', short: '<your-short>' } });
+    expect(gc.guildName(ctx(d))).toBe('Wolves <3 Raids>');
+    expect(gc.guildShort(ctx(d))).toBe('WP');
+    warn.mockRestore();
+  });
+  it('warns once per placeholder path at load, naming the path; _comment prose is not a value', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = tmpDir({
+      _comment: 'fill in <your-guild>',
+      sites: { _comment: 'use <slug>.example', botApiBase: 'https://<your-bot-host>/api/agent', web: 'https://ok.example' },
+      discord: { guildId: '<discord-guild-id>', roles: { member: ['<role-a>', '<role-b>'] } },
+    });
+    gc.load(d); gc.get(null, 'sites.botApiBase', 'D', ctx(d)); gc.load(d);
+    const msgs = warn.mock.calls.map((a) => a[0]);
+    expect(msgs).toHaveLength(3);
+    for (const p of ['sites.botApiBase', 'discord.guildId', 'discord.roles.member']) {
+      expect(msgs.filter((m) => m.includes(`${p} still holds the example placeholder`))).toHaveLength(1);
+    }
+    warn.mockRestore();
+  });
   it('does not walk the prototype chain', () => {
     expect(gc.get(null, 'toString', 'D', ctx(dir))).toBe('D');
     expect(gc.get(null, '__proto__.polluted', 'D', ctx(dir))).toBe('D');
@@ -163,6 +186,28 @@ describe('secrets never come from the file', () => {
       expect(e.env).not.toMatch(/SPEC|TOKEN|KEY|SECRET|PASSWORD/);
       for (const p of [].concat(e.path)) expect(p).not.toMatch(/spec|token|key|secret|password/i);
     }
+  });
+
+  it('matches whole words, not substrings: keyboard / keyring / monkey / specialRules survive', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = tmpDir({
+      ui: { keyboard: 'qwerty', keyring: 'ring', monkey: 'see', specialRules: 'none', tokenizer: 'x' },
+      secretish: { apiKey: 'a', api_key: 'b', botToken: 'c', spec: 'd', API_KEY: 'e', tokens: 'f', clientSecret: 'g', Password: 'h' },
+    });
+    const cfg = gc.load(d);
+    expect(cfg.ui).toEqual({ keyboard: 'qwerty', keyring: 'ring', monkey: 'see', specialRules: 'none', tokenizer: 'x' });
+    expect(cfg.secretish).toEqual({});
+    expect(warn).toHaveBeenCalledTimes(1);
+    for (const k of ['apiKey', 'api_key', 'botToken', 'spec', 'API_KEY', 'tokens', 'clientSecret', 'Password']) {
+      expect(warn.mock.calls[0][0], k).toContain(`secretish.${k}`);
+    }
+    for (const k of ['keyboard', 'keyring', 'monkey', 'specialRules', 'tokenizer']) expect(warn.mock.calls[0][0], k).not.toContain(k);
+    // the getter path is checked per segment with the same rule
+    expect(gc.get(null, 'ui.keyboard', 'D', ctx(d))).toBe('qwerty');
+    expect(gc.get(null, 'ui.specialRules', 'D', ctx(d))).toBe('none');
+    expect(gc.get(null, 'secretish.apiKey', 'D', ctx(d))).toBe('D');
+    expect(gc.get(null, 'ui.botToken', 'D', ctx(d))).toBe('D');
+    warn.mockRestore();
   });
 });
 
@@ -224,7 +269,7 @@ describe('fillEnv', () => {
   it('skips angle-bracket placeholders, including inside arrays', () => {
     const env = {};
     const r = gc.fillEnv(env, {
-      discord: { guildId: '<discord-guild-id>', roles: { member: ['<role name>'], officer: ['Officer', '<another>'] } },
+      discord: { guildId: '<discord-guild-id>', roles: { member: ['<role-name>'], officer: ['Officer', '<another>'] } },
       sites: { web: 'https://<your-domain>' },
     });
     expect(env.DISCORD_GUILD_ID).toBeUndefined();
@@ -246,14 +291,25 @@ describe('fillEnv', () => {
     expect(env.DISCORD_GUILD_ID).toBe('12345');
   });
 
-  it('is a no-op for an empty config and for the real repo (no config.json committed)', () => {
+  // Never reads the real guild/ folder: a fork commits its own config.json there (guild/README.md), and
+  // the no-file property is the EMPTY temp dir's.
+  it('is a no-op for an empty config', () => {
     const env = { A: '1' };
     expect(gc.fillEnv(env, {})).toEqual({ filled: [], skipped: [], refused: [] });
     expect(env).toEqual({ A: '1' });
-    expect(fs.existsSync(path.join(ROOT, 'guild', 'config.json'))).toBe(false);
-    const env2 = { A: '1' };
-    expect(gc.fillEnv(env2)).toEqual({ filled: [], skipped: [], refused: [] });
-    expect(env2).toEqual({ A: '1' });
+  });
+
+  it('a set legacy ALLOWED_ROLE_NAME counts as ALLOWED_ROLE_NAMES being set — env wins for the alias too', () => {
+    const cfg = { discord: { roles: { member: ['M'], officer: ['O'] } } };
+    const env = { ALLOWED_ROLE_NAME: 'Solo' };
+    const r = gc.fillEnv(env, cfg);
+    expect(env.ALLOWED_ROLE_NAMES).toBeUndefined();
+    expect(r.skipped).toContain('ALLOWED_ROLE_NAMES');
+    expect(r.filled).not.toContain('ALLOWED_ROLE_NAMES');
+    expect(env.OFFICER_ROLE_NAMES).toBe('O');                       // only the aliased name is held back
+    const blank = { ALLOWED_ROLE_NAME: '   ' };                      // a blank alias is unset
+    gc.fillEnv(blank, cfg);
+    expect(blank.ALLOWED_ROLE_NAMES).toBe('M,O');
   });
 });
 
@@ -436,6 +492,12 @@ describe('getters: env beats file beats default', () => {
       .toBe('My Pack: https://mypack.example/raid and mypack.example/me');
   });
 
+  it('brand() rewrites in ONE pass: a base that itself contains wolfpack.quest is not rewritten twice', () => {
+    const c = ctx(EMPTY, { WEB_BASE_URL: 'https://b.wolfpack.quest' });
+    expect(gc.brand('see https://wolfpack.quest/raid or wolfpack.quest', c))
+      .toBe('see https://b.wolfpack.quest/raid or b.wolfpack.quest');
+  });
+
   it('agentManifest carries no id, password or token, whatever the env holds', () => {
     const c = ctx(dir, {
       DISCORD_TOKEN: 'tok', TAG_CHANNEL_SPEC: 'Tag:pw', SUPABASE_SERVICE_ROLE_KEY: 'srk', DISCORD_GUILD_ID: '999888777',
@@ -447,7 +509,7 @@ describe('getters: env beats file beats default', () => {
   });
 });
 
-describe('roles(): exactly utils/roles.js, with the file between env and the default', () => {
+describe('roles(): exactly utils/roles.js as the bot sees it (env filled from the file at boot)', () => {
   const cases = [
     {},
     { ALLOWED_ROLE_NAMES: 'A, B ,,C' },
@@ -482,14 +544,43 @@ describe('roles(): exactly utils/roles.js, with the file between env and the def
     expect(gc.roles(ctx(d))).toEqual({ member: ['M', 'O1', 'O2'], officer: ['O1', 'O2'] });
   });
 
-  it('env still beats the file, and officer follows an env allow-list before the file', () => {
+  // What the bot sees: index.js fillEnv()s process.env at boot, THEN utils/roles.js reads it. So an env
+  // allow-list does not make officer follow it once the file has officers (the file fills the blank
+  // OFFICER_ROLE_NAMES first), and a legacy singular name or a blank value behaves as fillEnv says.
+  it('env still beats the file for the name it sets; the file fills the other, blank, name', () => {
     const d = tmpDir({ discord: { roles: { member: ['M'], officer: ['O'] } } });
-    expect(gc.roles(ctx(d, { ALLOWED_ROLE_NAMES: 'E' }))).toEqual({ member: ['E'], officer: ['E'] });
+    expect(gc.roles(ctx(d, { ALLOWED_ROLE_NAMES: 'E' }))).toEqual({ member: ['E'], officer: ['O'] });         // (A)
     expect(gc.roles(ctx(d, { OFFICER_ROLE_NAMES: 'EO' }))).toEqual({ member: ['M', 'O'], officer: ['EO'] });
+    expect(gc.roles(ctx(d, { ALLOWED_ROLE_NAME: 'Solo' }))).toEqual({ member: ['Solo'], officer: ['O'] });    // (B)
+    expect(gc.roles(ctx(d, { ALLOWED_ROLE_NAMES: '   ' }))).toEqual({ member: ['M', 'O'], officer: ['O'] });  // (F)
+  });
+
+  it('with no officer list in the file, officer still follows an env allow-list (roles.js default chain)', () => {
+    const d = tmpDir({ discord: { roles: { member: ['M'] } } });
+    expect(gc.roles(ctx(d, { ALLOWED_ROLE_NAMES: 'E' }))).toEqual({ member: ['E'], officer: ['E'] });
+  });
+
+  // The invariant itself: roles() IS utils/roles.js evaluated on the boot-filled env, for every env shape.
+  it.each(cases)('with a config.json present, matches roles.js on a fillEnv\'d copy of env %j', (env) => {
+    const fileCfg = { discord: { roles: { member: ['M'], officer: ['O1', 'O2'] } } };
+    const d = tmpDir(fileCfg);
+    const eff = { ...env };
+    gc.fillEnv(eff, fileCfg);
+    const saved = { ...process.env };
+    for (const k of ['ALLOWED_ROLE_NAMES', 'ALLOWED_ROLE_NAME', 'OFFICER_ROLE_NAMES']) delete process.env[k];
+    Object.assign(process.env, eff);
+    try {
+      const got = gc.roles(ctx(d, { ...env }));
+      expect(got.member).toEqual(roles.getAllowedRoles());
+      expect(got.officer).toEqual(roles.getOfficerRoles());
+    } finally {
+      for (const k of ['ALLOWED_ROLE_NAMES', 'ALLOWED_ROLE_NAME', 'OFFICER_ROLE_NAMES']) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
   });
 
   it('a placeholder role in the file is ignored', () => {
-    const d = tmpDir({ discord: { roles: { member: ['<your member role>'], officer: ['<your officer role>'] } } });
+    const d = tmpDir({ discord: { roles: { member: ['<your-member-role>'], officer: ['<your-officer-role>'] } } });
     expect(gc.roles(ctx(d))).toEqual({ member: ['Pack Member'], officer: ['Officer', 'Guild Leader'] });
   });
 });
@@ -552,10 +643,10 @@ describe('guild/config.example.json', () => {
   });
 
   it('carries the new keys', () => {
-    for (const p of ['repo', 'guild.tag', 'guild.inGameGuild', 'discord.roles.active', 'discord.provision.mode', 'discord.provision.optional',
+    for (const p of ['repo', 'guild.tag', 'guild.inGameGuild', 'discord.provision.mode', 'discord.provision.optional',
       'discord.provision.skip', 'discord.provision.createChannels', 'discord.provision.lock', 'discord.provision.pin',
       'opendkp.clientName', 'opendkp.ranks.priority', 'opendkp.ranks.raider', 'opendkp.ranks.raidAlt', 'opendkp.ranks.nonRaid',
-      'opendkp.ranks.newMain', 'raid.altMinLevel', 'raid.popMinLevel', 'sites.loginEmailDomain']) {
+      'opendkp.ranks.newMain', 'raid.altMinLevel', 'raid.popMinLevel']) {
       expect(gc.dig(example, p), p).not.toBeUndefined();
     }
     expect(example.discord.provision).toMatchObject({ mode: 'auto', optional: [], skip: [], createChannels: false, lock: 'none', pin: false });
@@ -567,8 +658,6 @@ describe('guild/config.example.json', () => {
 
   it('filling an empty env from the example yields Wolf Pack\'s own values and never a placeholder', () => {
     const env = {};
-    const r = gc.fillEnv(env);   // default dir has no file; use the example explicitly
-    expect(r.filled).toEqual([]);
     const r2 = gc.fillEnv(env, example);
     expect(r2.refused).toEqual([]);
     expect(env.DISCORD_GUILD_ID).toBeUndefined();                       // still "<discord-guild-id>"
@@ -609,15 +698,24 @@ describe('ENV_MAP targets are env names the bot actually reads', () => {
   if (anchorAt < 0) throw new Error('typed-getters anchor comment not found in utils/guildConfig.js');
   const getterSrc = stripJs(gcRaw.slice(anchorAt));
 
-  it('every target is read by the bot, or by a typed getter that new code resolves it through', () => {
+  // The names nothing in the bot reads yet — they resolve ONLY through a guildConfig getter. That is
+  // debt for the de-brand sweep (slice 2) to pay by giving each a real call site; it is listed so the
+  // next slice sees it, and the test fails if the list goes stale in either direction.
+  const GETTER_ONLY = ['GITHUB_REPO', 'GUILD_NAME', 'GUILD_SHORT', 'TAG_CHANNEL_NAME', 'OFFICER_CHANNEL_NAME',
+    'GUILD_PROVISION', 'GUILD_PROVISION_OPTIONAL', 'GUILD_PROVISION_SKIP', 'GUILD_PROVISION_CREATE_CHANNELS',
+    'GUILD_PROVISION_LOCK', 'GUILD_PROVISION_PIN'];
+
+  it('every target is read by the bot or resolvable through a getter; the getter-only names are listed', () => {
     expect(gc.ENV_MAP.length).toBeGreaterThanOrEqual(18);
     const botReads = [];
+    const getterOnly = [];
     for (const { env } of gc.ENV_MAP) {
       const byBot = new RegExp(`process\\.env\\.${env}\\b|process\\.env\\[['"]${env}['"]\\]`).test(botSrc);
       const byGetter = new RegExp(`['"]${env}['"]`).test(getterSrc);
       expect(byBot || byGetter, `${env} is read nowhere`).toBe(true);
-      if (byBot) botReads.push(env);
+      if (byBot) botReads.push(env); else getterOnly.push(env);
     }
+    expect(getterOnly.sort()).toEqual([...GETTER_ONLY].sort());
     // the pre-existing reads we are feeding must really exist in the bot today
     for (const k of ['SUPABASE_GUILD_ID', 'DISCORD_GUILD_ID', 'ALLOWED_ROLE_NAMES', 'OFFICER_ROLE_NAMES', 'OPENDKP_CLIENT_NAME', 'DEFAULT_TIMEZONE', 'WEB_BASE_URL', 'PVP_GUILD_NAME']) {
       expect(botReads, k).toContain(k);
