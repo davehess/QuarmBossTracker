@@ -25,6 +25,7 @@ import { cache } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from './selectAll';
+import { GUILD_TAG } from './guild';
 
 export type RosterChar = {
   name: string;
@@ -42,7 +43,7 @@ export type RosterChar = {
 
 /** Every character of the guild, name order. `characters` is keyed (guild_id, name),
  *  so with the guild fixed `name` is a unique page key. Throws if a page fails. */
-export async function fetchRoster(sb: SupabaseClient, guildId = 'wolfpack'): Promise<RosterChar[]> {
+export async function fetchRoster(sb: SupabaseClient, guildId = GUILD_TAG): Promise<RosterChar[]> {
   return selectAll<RosterChar>((from, to) => sb
     .from('characters')
     .select('name, class, rank, main_name, main_name_override, active, discord_id, opendkp_id, exclude_from_stats, exclude_inventory, hidden_from_lists')

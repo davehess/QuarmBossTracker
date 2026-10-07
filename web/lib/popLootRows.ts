@@ -9,9 +9,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { LootSighting } from './popWho';
 import { selectAll } from './selectAll';
+import { GUILD_TAG } from './guild';
 
 export type LootRow = LootSighting & { character_key: string };
 
-export async function loadLootSightings(sb: SupabaseClient, guildId = 'wolfpack'): Promise<LootRow[]> {
+export async function loadLootSightings(sb: SupabaseClient, guildId = GUILD_TAG): Promise<LootRow[]> {
   return selectAll<LootRow>((from, to) => sb.rpc('pop_loot_sightings', { p_guild_id: guildId }).range(from, to));
 }

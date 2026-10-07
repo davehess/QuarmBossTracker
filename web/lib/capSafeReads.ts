@@ -19,6 +19,7 @@
 // Pure and import-light on purpose (no `@/` alias): tests real-import it.
 
 import { selectAll } from './selectAll';
+import { GUILD_TAG } from './guild';
 import type { SourceRow } from './spellSources';
 
 /** The slice of the Supabase client these loaders touch. */
@@ -68,7 +69,7 @@ export async function fetchLiveStateRows(db: Db, names: string[]): Promise<LiveS
   if (!filter) return [];
   const { data } = await db.from('character_live_state')
     .select('character, zone_name, buff_count, buffs, self_hp_pct, updated_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .or(filter);
   return asArray(data) as LiveStateRow[];
 }
@@ -416,7 +417,7 @@ export async function fetchFamilyInventory(db: Db, familyNames: string[]): Promi
   if (!filter) return [];
   return selectAll<InventoryRow>((from, to) => db.from('character_inventory')
     .select('character_name, slot_label, item_id, item_name, quantity')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .or(filter)
     .order('character_name', { ascending: true })
     .order('slot_label', { ascending: true })
