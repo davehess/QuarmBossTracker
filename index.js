@@ -19777,17 +19777,19 @@ function _githubJson(pathname) {
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
   });
 }
-async function _feedbackAdvance(readyClient, ref, branch, sha) {
+async function _feedbackAdvance(readyClient, ref, branch, sha, commitMessage) {
   const supabase = require('./utils/supabase');
   const fr = require('./utils/feedbackRefs');
   const rows = await supabase.select('feedback',
-    `ref=eq.${ref}&select=id,ref,status,category,submitter_discord_id,discord_msg_id,notes&limit=1`).catch(() => null);
+    `ref=eq.${ref}&select=id,ref,status,category,message,discord_msg_link,submitter_discord_id,discord_msg_id,notes&limit=1`).catch(() => null);
   const row = Array.isArray(rows) ? rows[0] : null;
   const next = row ? fr.advance(row.status, branch) : null;
   if (!next) return;
   const line = fr.statusLine(next, sha);
+  const commit = { ...fr.splitCommit(commitMessage), branch, sha };
+  const note = fr.statusNote(next, sha, fr.whatChanged(commit, ref));
   const now = new Date().toISOString();
-  const patch = { status: next, notes: [row.notes, `${now.slice(0, 10)} ${line}`].filter(Boolean).join('\n') };
+  const patch = { status: next, notes: [row.notes, `${now.slice(0, 10)} ${note}`].filter(Boolean).join('\n') };
   if (next === 'addressed') { patch.addressed_by = `commit ${String(sha).slice(0, 7)}`; patch.addressed_at = now; }
   await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
     .catch(err => console.warn('[feedback-ref] row update failed:', err?.message));
@@ -19808,8 +19810,13 @@ async function _feedbackAdvance(readyClient, ref, branch, sha) {
   }
   if (row.submitter_discord_id) {
     try {
-      const text = fr.dmText(row.ref, row.category, next);
-      if (text) await (await readyClient.users.fetch(row.submitter_discord_id)).send(text);
+      // Their own words, what changed, how to get it and a link to the card (FB-4, the guild lead 2026-10-07:
+      // "needs more details than this"). Links in it should not unfurl into previews.
+      const text = fr.buildStatusDm({
+        ref: row.ref, category: row.category, message: row.message, link: row.discord_msg_link,
+        status: next, prevStatus: row.status, betaSha: fr.betaShaFromNotes(row.notes), commit,
+      });
+      if (text) await (await readyClient.users.fetch(row.submitter_discord_id)).send({ content: text, flags: MessageFlags.SuppressEmbeds });
     } catch { /* DMs may be closed */ }
   }
   console.log(`[feedback-ref] FB-${ref} → ${next} (${branch} ${String(sha).slice(0, 7)})`);
@@ -19830,7 +19837,7 @@ async function _feedbackCommitWatch(readyClient) {
     for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
     for (const c of fresh.reverse()) {
       for (const ref of fr.refsIn(c.commit && c.commit.message)) {
-        await _feedbackAdvance(readyClient, ref, branch, c.sha).catch(err => console.warn('[feedback-ref] failed:', err?.message));
+        await _feedbackAdvance(readyClient, ref, branch, c.sha, c.commit && c.commit.message).catch(err => console.warn('[feedback-ref] failed:', err?.message));
       }
     }
     await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: commits[0].sha }, updated_at: new Date().toISOString() }],
