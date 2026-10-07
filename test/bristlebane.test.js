@@ -14,7 +14,7 @@
 //
 // Run: npx vitest run test/bristlebane.test.js
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -186,36 +186,46 @@ describe('loadConfig', () => {
     BRISTLEBANE_TOKEN: 't', DISCORD_GUILD_ID: 'g', RAID_VOICE_CHANNEL_ID: 'v',
     BOT_API_URL: 'https://bot.example/api/agent/', BOT_API_KEY: 'key-123',
   };
+  // These tests are about env handling, so every call names an (empty) guild file of its own: with no file
+  // named loadConfig reads the checkout's guild/discord.json, and a fork that has filled that in would turn
+  // "DISCORD_GUILD_ID is not set" into a pass. The file layer itself is covered by
+  // apps/bristlebane/test/guild-file.test.js.
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bristlebane-cfg-'));
+  const none = path.join(emptyDir, 'discord.json');
+  fs.writeFileSync(none, '{}');
+  afterAll(() => fs.rmSync(emptyDir, { recursive: true, force: true }));
+  const loadConfig = (env) => lib.loadConfig(env, none);
+
   it('applies the defaults (opt-in recording) and trims the API url', () => {
-    const c = lib.loadConfig(base);
+    const c = loadConfig(base);
     expect(c).toMatchObject({ recordMode: 'optin', recordingsDir: '/data/recordings', pollMs: 30_000, apiUrl: 'https://bot.example/api/agent', apiKey: 'key-123', raidChatChannelId: null, appId: null });
   });
   it('names every missing variable at once — the API key is BOT_API_KEY, not the old agent token', () => {
-    expect(() => lib.loadConfig({})).toThrow(/BRISTLEBANE_TOKEN.*DISCORD_GUILD_ID.*RAID_VOICE_CHANNEL_ID.*BOT_API_URL.*BOT_API_KEY/s);
+    expect(() => loadConfig({})).toThrow(/BRISTLEBANE_TOKEN.*DISCORD_GUILD_ID.*RAID_VOICE_CHANNEL_ID.*BOT_API_URL.*BOT_API_KEY/s);
     const noKey = { ...base, WOLFPACK_AGENT_TOKEN: 'wpms_x' };
     delete noKey.BOT_API_KEY;
-    expect(() => lib.loadConfig(noKey)).toThrow(/BOT_API_KEY is not set/);
+    expect(() => loadConfig(noKey)).toThrow(/BOT_API_KEY is not set/);
   });
   it('RECORD_MODE is off or optin; there is no opt-out mode, and a typo is refused instead of guessed', () => {
     expect(lib.RECORD_MODES).toEqual(['off', 'optin']);
-    expect(lib.loadConfig({ ...base, RECORD_MODE: 'off' }).recordMode).toBe('off');
-    expect(lib.loadConfig({ ...base, RECORD_MODE: 'OptIn' }).recordMode).toBe('optin');
-    expect(() => lib.loadConfig({ ...base, RECORD_MODE: 'optout' })).toThrow(/opt-in only/);
-    expect(() => lib.loadConfig({ ...base, RECORD_MODE: 'opt-in' })).toThrow(/RECORD_MODE/);
+    expect(loadConfig({ ...base, RECORD_MODE: 'off' }).recordMode).toBe('off');
+    expect(loadConfig({ ...base, RECORD_MODE: 'OptIn' }).recordMode).toBe('optin');
+    expect(() => loadConfig({ ...base, RECORD_MODE: 'optout' })).toThrow(/opt-in only/);
+    expect(() => loadConfig({ ...base, RECORD_MODE: 'opt-in' })).toThrow(/RECORD_MODE/);
   });
   it('SCREEN_URL is optional, and when set must be a full https address', () => {
-    expect(lib.loadConfig(base).screenUrl).toBeNull();
-    expect(lib.loadConfig({ ...base, SCREEN_URL: ' https://wolfpack.quest/screen ' }).screenUrl).toBe('https://wolfpack.quest/screen');
-    expect(() => lib.loadConfig({ ...base, SCREEN_URL: 'http://wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
-    expect(() => lib.loadConfig({ ...base, SCREEN_URL: 'wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
+    expect(loadConfig(base).screenUrl).toBeNull();
+    expect(loadConfig({ ...base, SCREEN_URL: ' https://wolfpack.quest/screen ' }).screenUrl).toBe('https://wolfpack.quest/screen');
+    expect(() => loadConfig({ ...base, SCREEN_URL: 'http://wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
+    expect(() => loadConfig({ ...base, SCREEN_URL: 'wolfpack.quest/screen' })).toThrow(/SCREEN_URL/);
   });
   it('reads the optional application id', () => {
-    expect(lib.loadConfig({ ...base, BRISTLEBANE_APP_ID: ' 12345 ' }).appId).toBe('12345');
+    expect(loadConfig({ ...base, BRISTLEBANE_APP_ID: ' 12345 ' }).appId).toBe('12345');
   });
   it('clamps the poll interval to 5 s – 5 min', () => {
-    expect(lib.loadConfig({ ...base, POLL_SECONDS: '1' }).pollMs).toBe(5_000);
-    expect(lib.loadConfig({ ...base, POLL_SECONDS: '9999' }).pollMs).toBe(300_000);
-    expect(lib.loadConfig({ ...base, POLL_SECONDS: 'x' }).pollMs).toBe(30_000);
+    expect(loadConfig({ ...base, POLL_SECONDS: '1' }).pollMs).toBe(5_000);
+    expect(loadConfig({ ...base, POLL_SECONDS: '9999' }).pollMs).toBe(300_000);
+    expect(loadConfig({ ...base, POLL_SECONDS: 'x' }).pollMs).toBe(30_000);
   });
 });
 

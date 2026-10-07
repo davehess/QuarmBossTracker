@@ -6,7 +6,8 @@
   "license": "AGPL-3.0-or-later",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "vitest run"
   },
   "engines": {
     "node": ">=22.12"
