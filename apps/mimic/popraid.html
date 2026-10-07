@@ -149,9 +149,41 @@
   .qcopy.map{border-color:rgba(88,166,255,0.4);background:rgba(88,166,255,0.10);color:#79c0ff}
   .qcopy.sit{border-color:rgba(240,180,41,0.45);background:rgba(240,180,41,0.10);color:#f0b429}
   .qcopy.ok{border-color:rgba(126,231,135,0.5);background:rgba(126,231,135,0.12);color:#7ee787}
+  /* A step's seq: one numbered list (the guild lead, 2026-10-03: "the hand in items should be in order with
+     the text we say to them"). The zone-in that flags you is gold; a note hangs under its row, unnumbered. */
+  .qseq{list-style:none;margin:0;padding:0}
+  .qs{display:flex;gap:4px;padding:3px 0;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;line-height:1.5}
+  .ph + .qseq .qs:first-child{border-top:0}
+  .qs.zone{border-left:2px solid rgba(240,180,41,0.7);background:rgba(240,180,41,0.06);padding-left:4px}
+  .qn{flex:0 0 auto;min-width:14px;text-align:right;color:#8b949e;font-variant-numeric:tabular-nums}
+  .qb{min-width:0;flex:1 1 auto;word-break:break-word}
+  .qx{color:#f0b429;font-size:9px}
+  .qnote{color:#8b949e;font-size:9px;margin-top:1px}
   .qnext{padding:1px 4px;font-size:10px;color:#8b949e;cursor:pointer;line-height:1.4;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 1px 2px #000}
   .qnext:hover{color:#e9d5ff;background:rgba(163,113,247,0.12)}
+  /* Fixed height, the default (the guild lead, 2026-10-04: the overlay "jumps around when resizing"):
+     the window keeps the height you gave it and #content scrolls, the same pattern as who.html. The
+     grip at the bottom sets the height; double-click it to size to the content instead. Mini never
+     takes it (its JS never sets body.fixed there). */
+  body.fixed #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column}
+  body.fixed #content{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:2px}
+  #content::-webkit-scrollbar{width:6px}
+  #content::-webkit-scrollbar-thumb{background:rgba(163,113,247,0.35);border-radius:3px}
+  #content::-webkit-scrollbar-track{background:transparent}
+  #grip{flex:0 0 auto;height:7px;margin-top:3px;border-radius:3px;cursor:ns-resize;opacity:0.3;
+    background:repeating-linear-gradient(90deg,rgba(163,113,247,0.8) 0 6px,transparent 6px 10px)}
+  #grip:hover,#grip.drag{opacity:1}
+  body.wp-mini #grip{display:none}
+  /* Text size: the Aa button opens this strip. The zoom lands on #content only, never #wrap, which
+     is what the auto-fit measures. */
+  #fspanel{display:none;align-items:center;gap:8px;margin:0 0 5px;padding:3px 7px;font-size:10px;color:#c4b5fd;
+    background:rgb(8 5 16 / var(--bg-alpha));border-radius:5px;text-shadow:0 1px 2px #000}
+  #fspanel.open{display:flex}
+  #fspanel input[type=range]{flex:1;min-width:0;cursor:pointer}
+  #fsVal{min-width:32px;text-align:right;font-variant-numeric:tabular-nums}
+  /* A step's parts (the six Justice trials): folds inside one panel. */
+  .qparts > details.sub.panel{margin-top:3px;background:rgb(255 255 255 / 0.04)}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -204,10 +236,13 @@
         <button id="prevBtn" class="nbtn" title="Previous encounter">◀</button>
         <button id="nextBtn" class="nbtn" title="Next encounter">▶</button>
         <button id="frameBtn" class="nbtn" title="Framed multi-panel layout (ultrawide monitors)">🖥</button>
+        <button id="fsBtn" class="nbtn" title="Text size">Aa</button>
         <button id="flagBtn" class="nbtn" title="Flag an anomaly — Quarm doesn't match the guide? Report it to the QOL thread with full encounter context.">⚑</button>
       </div>
     </div>
+    <div id="fspanel" class="wp-mini-hide" data-wp-interact><span>Text size</span><input id="fsSlider" type="range" min="80" max="160" step="10" value="100" /><span id="fsVal">100%</span></div>
     <div id="content"></div>
+    <div id="grip" data-wp-interact title="Drag to set the height (the card scrolls) · double-click to fit the content instead"></div>
   </div>
 <script src="pop-raids.js"></script>
 <script src="pop-quests.js"></script>
@@ -285,16 +320,28 @@
   // Locked overlays are click-through; every interactive control needs the
   // handshake or "the button does nothing". Content rerenders on slide change,
   // so delegate ONCE at document level for anything interactive.
+  // Every clickable <div>/<span>/<summary> also carries data-wp-interact: the preload arms the window for
+  // `button, a, input, select, textarea, [role=button], [data-wp-interact]` on its own, and a control that
+  // only this list knew about lost the window to the preload's next mousemove after a hop from a button
+  // (the guild lead, 2026-10-04: the overlay "doesn't like to always show the mouse over it").
   var _IA_SEL = 'button, select, input, textarea, a, .obj, .lnk, .dg, summary, .qcopy, .qnext';
+  // The zone where the window takes the mouse: any control, the Aa strip, the height grip and, in fixed
+  // height, the whole scrolling card, so the pointer shows over the text and the wheel scrolls it. One
+  // owner for enter and leave: a leave that fired when the pointer moved from a control onto the card
+  // switched the wheel off under it (who.html learned the same).
+  function _zoneOf(el){
+    if (!el || !el.closest) return null;
+    return el.closest(_IA_SEL) || el.closest('#fspanel, #grip') || (_isFixed() ? el.closest('#content') : null);
+  }
+  var _gripDrag = null;
   document.addEventListener('mouseover', function(e){
-    if (e.target && e.target.closest && e.target.closest(_IA_SEL)) {
+    if (_zoneOf(e.target)) {
       try { window.mimic.overlayHoverInteractive(true); } catch (er) {}
     }
   });
   document.addEventListener('mouseout', function(e){
-    if (!e.target || !e.target.closest || !e.target.closest(_IA_SEL)) return;
-    var to = e.relatedTarget;
-    if (to && to.closest && to.closest(_IA_SEL)) return;   // still on a control
+    if (_gripDrag) return;
+    if (!_zoneOf(e.target) || _zoneOf(e.relatedTarget)) return;   // not on one, or still on one
     try { window.mimic.overlayHoverInteractive(false); } catch (er) {}
   });
 
@@ -389,9 +436,107 @@
   }
   frameBtn.addEventListener('click', function(){ framed = !framed; applyFramed(); });
 
-  function _fit(){
-    try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
+  // ── Fixed height (the default) or fit-to-content, remembered in wp:pop:height ──────────────────────
+  // The guild lead, 2026-10-04: the overlay "jumps around when resizing". Fit mode sized the window to
+  // each step, so ◀ ▶ moved its bottom edge every time. Fixed mode keeps the height you gave it and the
+  // card (#content) scrolls, as who.html does (the grip at the bottom sets it; double-click = fit).
+  // 'fit' is the old behaviour. Mini is always fit: it is a two-line strip.
+  var POP_DEFAULT_H = 480, POP_MIN_H = 140, POP_MAX_H = 2000;
+  var _fixedH = POP_DEFAULT_H;
+  try {
+    var _savedH = localStorage.getItem('wp:pop:height');
+    if (_savedH === 'fit') _fixedH = null;
+    else if (_savedH && +_savedH >= POP_MIN_H) _fixedH = Math.min(POP_MAX_H, +_savedH);
+  } catch (e) {}
+  function _isFixed(){ return _fixedH != null && !document.body.classList.contains('wp-mini'); }
+  // Fixed height puts body.fixed on (the scrolling layout) and data-wp-interact on the card: the preload
+  // arms the window while the pointer is anywhere over it, so the pointer shows and the wheel scrolls.
+  function applyFixed(){
+    var f = _isFixed();
+    var c = document.getElementById('content');
+    document.body.classList.toggle('fixed', f);
+    if (f) c.setAttribute('data-wp-interact', ''); else c.removeAttribute('data-wp-interact');
   }
+  // Fixed sends its own height, so nothing about the step changes the window; fit measures #wrap. It goes
+  // through overlayAutoHeight (the raw height, as who.html does), not autoFitOverlay, in fixed mode only.
+  function _fit(){
+    try {
+      if (_isFixed()) { window.mimic && window.mimic.overlayAutoHeight && window.mimic.overlayAutoHeight(_fixedH); return; }
+      window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap'));
+    } catch (e) {}
+  }
+  // The grip: drag to set the height (it stays and the card scrolls), double-click to fit the content
+  // instead. Measured in screen px and converted by the window's own scale (who.html's maths).
+  var gripEl = document.getElementById('grip');
+  function _hoverNow(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
+  gripEl.addEventListener('pointerdown', function(e){
+    if (e.button !== 0) return;
+    if (e.preventDefault) e.preventDefault();
+    var z = (window.outerHeight && window.innerHeight) ? (window.outerHeight / window.innerHeight) : 1;
+    _gripDrag = { y0: e.screenY, h0: _fixedH != null ? _fixedH : document.getElementById('wrap').scrollHeight + 8, z: z > 0 ? z : 1 };
+    gripEl.classList.add('drag');
+    try { gripEl.setPointerCapture(e.pointerId); } catch (err) {}
+    _hoverNow(true);
+  });
+  gripEl.addEventListener('pointermove', function(e){
+    if (!_gripDrag) return;
+    var h = Math.round(_gripDrag.h0 + (e.screenY - _gripDrag.y0) / _gripDrag.z);
+    _fixedH = Math.max(POP_MIN_H, Math.min(POP_MAX_H, h));
+    applyFixed();
+    _fit();
+  });
+  function _endGrip(e){
+    if (!_gripDrag) return;
+    _gripDrag = null;
+    gripEl.classList.remove('drag');
+    try { gripEl.releasePointerCapture(e.pointerId); } catch (err) {}
+    try { localStorage.setItem('wp:pop:height', String(_fixedH)); } catch (err) {}
+    var under = null;
+    try { under = document.elementFromPoint(e.clientX, e.clientY); } catch (err) {}
+    if (!_zoneOf(under)) _hoverNow(false);
+  }
+  gripEl.addEventListener('pointerup', _endGrip);
+  gripEl.addEventListener('pointercancel', _endGrip);
+  gripEl.addEventListener('dblclick', function(){
+    _fixedH = null;
+    applyFixed();
+    try { localStorage.setItem('wp:pop:height', 'fit'); } catch (err) {}
+    _fit();
+  });
+
+  // ── Text size: the Aa button opens a slider, 80–160% in steps of 10, remembered in wp:pop:fs ───────
+  // The zoom goes on #content, never on #wrap: _fit() measures #wrap's scrollHeight, so the zoomed card
+  // makes the window the right size by itself, and the title row and the grip stay one size. Mini keeps
+  // its own density and ignores it.
+  var FS_MIN = 80, FS_MAX = 160, FS_STEP = 10;
+  var _fs = 100;
+  try {
+    var _savedFs = parseInt(localStorage.getItem('wp:pop:fs'), 10);
+    if (_savedFs >= FS_MIN && _savedFs <= FS_MAX) _fs = Math.round(_savedFs / FS_STEP) * FS_STEP;
+  } catch (e) {}
+  var fsBtn = document.getElementById('fsBtn');
+  var fsPanel = document.getElementById('fspanel');
+  var fsSlider = document.getElementById('fsSlider');
+  var fsVal = document.getElementById('fsVal');
+  function applyFs(){
+    var zoomed = _fs !== 100 && !document.body.classList.contains('wp-mini');
+    document.getElementById('content').style.zoom = zoomed ? String(_fs / 100) : '';
+    fsSlider.value = String(_fs);
+    fsVal.textContent = _fs + '%';
+  }
+  fsBtn.addEventListener('click', function(){
+    var open = !fsPanel.classList.contains('open');
+    fsPanel.classList.toggle('open', open);
+    fsBtn.classList.toggle('on', open);
+    _fit();
+  });
+  fsSlider.addEventListener('input', function(){
+    var v = Math.round((parseFloat(fsSlider.value) || 100) / FS_STEP) * FS_STEP;
+    _fs = Math.max(FS_MIN, Math.min(FS_MAX, v));
+    try { localStorage.setItem('wp:pop:fs', String(_fs)); } catch (e) {}
+    applyFs();
+    _fit();
+  });
 
   // ── Shared objectives (raid-wide, via agent proxy of the bot board) ────────
   var _objRev = -1;
@@ -440,7 +585,7 @@
     (enc.tracker || []).forEach(function(t){
       var o = st[t.id];
       var done = !!(o && o.c);
-      html += '<div class="obj' + (done ? ' done' : '') + '" data-obj="' + esc(t.id) + '" title="' + (done ? 'Un-check (raid-wide)' : 'Check off — the whole raid sees it') + '">'
+      html += '<div class="obj' + (done ? ' done' : '') + '" data-obj="' + esc(t.id) + '" data-wp-interact title="' + (done ? 'Un-check (raid-wide)' : 'Check off — the whole raid sees it') + '">'
             +   '<span class="bx">' + (done ? '☑' : '☐') + '</span>'
             +   '<span class="lb">' + esc(t.label) + '</span>'
             +   (done && o.by ? '<span class="by">✓ ' + esc(o.by) + '</span>' : '')
@@ -555,7 +700,7 @@
     var short = String(enc ? enc.name : sec.title).replace(/\s*\([^)]*\)\s*$/, '');
     var url = (enc && enc.guide) || sec.guide || '';
     return '<div class="mini-ttl"><span class="wp-mini-name">PoP · ' + esc(short) + '</span>'
-      +   (url ? '<span class="lnk mini-go" data-url="' + esc(url) + '" title="Open the guide page">↗</span>' : '')
+      +   (url ? '<span class="lnk mini-go" data-url="' + esc(url) + '" data-wp-interact title="Open the guide page">↗</span>' : '')
       + '</div>'
       + ((enc && enc.tracker && enc.tracker.length)
           ? '<div id="trackerBody"></div>'
@@ -568,7 +713,7 @@
   //  · The words are the guide's and nobody else's. A place with no recorded words says so (qNone);
   //    a phrase is never filled in.
   //  · Every chip is a clickable <span>: it carries data-wp-interact (a locked overlay is click-through
-  //    and a span is not on the preload's own list) and its class is in _IA_SEL.
+  //    and a span is not on the preload's own list) and its class is in _IA_SEL. So does every <summary>.
   //  · <details> open state lives in _qOpen, keyed per quest, never in the DOM: the panel is rewritten
   //    on every quest change and a bare <details> would snap shut (mobinfo.html's _qOpen, same reason).
   var _qOpen = {};
@@ -590,7 +735,7 @@
   }
   function qDetails(key, label, body){
     return '<details class="sub panel" data-dk="' + esc(key) + '"' + (_qOpen[key] ? ' open' : '') + '>'
-      + '<summary>' + esc(label) + '</summary>' + body + '</details>';
+      + '<summary data-wp-interact>' + esc(label) + '</summary>' + body + '</details>';
   }
   // "Before the planes — Start here" where a level holds several sections; the section's own title where
   // it is the level's only one (the tiers), as the web guide's sidebar groups them.
@@ -637,16 +782,85 @@
       + (get ? ' <span class="qk">→ get</span> <span>' + esc(get) + '</span>' : '')
       + '</div>';
   }
+  // A step's seq (pop-quests.js): the whole step as ONE ordered list (the guild lead, 2026-10-03: "some of
+  // the steps require you to hail after something else or say a line multiple times. the hand in items
+  // should be in order with the text we say to them"). The same rows the website draws (web/lib/popGuide.ts
+  // seqRows is the rule, this is its copy): every act is a numbered row except a `get`, which rides on the
+  // row before it ("→ get …"), and a `note`, which hangs under its row (before any row it leads the list).
+  // The words are the guide's: a hail is "/say Hail", a say is its text, nothing is filled in.
+  function seqRows(seq){
+    var lead = [], rows = [];
+    (seq || []).forEach(function(a){
+      var last = rows[rows.length - 1];
+      if (a.kind === 'note') (last ? last.notes : lead).push(a);
+      else if (a.kind === 'get' && last) last.gets.push(a);
+      else rows.push({ n: rows.length + 1, act: a, gets: [], notes: [] });
+    });
+    return { lead: lead, rows: rows };
+  }
+  // Item names (the generator turned [[Name#id]] into Name). The same item twice reads "Name ×2".
+  function qItems(items){
+    var order = [], count = {};
+    (items || []).forEach(function(t){ if (!count[t]) { count[t] = 0; order.push(t); } count[t]++; });
+    return order.map(function(t){ return esc(t) + (count[t] > 1 ? ' ×' + count[t] : ''); }).join(', ');
+  }
+  function qGetBits(a){
+    var has = a.items && a.items.length;
+    return (has ? qItems(a.items) : '') + (a.text ? (has ? ' <span class="qk">(' + esc(a.text) + ')</span>' : esc(a.text)) : '');
+  }
+  function qActLine(a){
+    var who = a.to ? '<span class="qwho">' + esc(a.to) + '</span>' : '';
+    var aside = (a.text && a.kind !== 'say' && a.kind !== 'get') ? ' <span class="qk">(' + esc(a.text) + ')</span>' : '';
+    switch (a.kind) {
+      case 'hail': return '<span class="qk">Hail</span> ' + who + aside + ' ' + qChip('say', '/say Hail');
+      case 'say': return '<span class="qk">Say to</span> ' + who + '<span class="qk">:</span> ' + qSay(a)
+        + (a.times > 1 ? ' <span class="qx" title="Say it this many times in a row">×' + a.times + '</span>' : '')
+        + (a.until ? ' <span class="qx">repeat until ' + esc(a.until) + '</span>' : '');
+      case 'give': return '<span class="qk">Give</span> ' + who + '<span class="qk">:</span> ' + qItems(a.items) + aside;
+      case 'get': return '<span class="qk">Get</span> ' + qGetBits(a);
+      case 'kill': return '<span class="qk">Kill</span> ' + who + aside;
+      case 'click': return '<span class="qk">Click</span> ' + who + (a.items && a.items.length ? '<span class="qk">:</span> ' + qItems(a.items) : '') + aside;
+      case 'zone': return '<span class="qx">Zone in:</span> ' + who + '<div class="qnote">' + esc(a.text) + '</div>';
+      case 'wait': return '<span class="qk">Wait for</span> ' + esc(a.text);
+      default: return esc(a.text);
+    }
+  }
+  function qSeqRow(r){
+    var h = '<li class="qs' + (r.act.kind === 'zone' ? ' zone' : '') + '"><span class="qn">' + r.n + '.</span><div class="qb">' + qActLine(r.act);
+    r.gets.forEach(function(g){ h += ' <span class="qx">→</span> <span class="qk">get</span> ' + qGetBits(g); });
+    r.notes.forEach(function(n){ h += '<div class="qnote">' + esc(n.text) + (n.items && n.items.length ? ' ' + qItems(n.items) : '') + '</div>'; });
+    return h + '</div></li>';
+  }
+  // `bare` is the list alone, with no panel and no "In order" header: a part draws it inside its own fold.
+  function qSeqHtml(seq, bare){
+    var s = seqRows(seq);
+    var list = s.lead.map(function(n){ return '<div class="qnote">' + esc(n.text) + (n.items && n.items.length ? ' ' + qItems(n.items) : '') + '</div>'; }).join('')
+      + '<ol class="qseq">' + s.rows.map(qSeqRow).join('') + '</ol>';
+    return bare ? list : '<div class="panel"><div class="ph">🧭 In order <span class="ct">' + s.rows.length + '</span></div>' + list + '</div>';
+  }
+  // A step's parts (the six Justice trials, web/lib/popGuide.ts GuidePart): one fold each under the step's
+  // "In order", folded until asked for, open state in _qOpen like every other fold. A part is where to go
+  // (its /map chip) and then its own numbered list, drawn by the same row renderers the step uses.
+  function qParts(q){
+    return '<div class="panel qparts"><div class="ph">📑 Parts <span class="ct">' + q.parts.length + '</span></div>'
+      + q.parts.map(function(p){
+          return qDetails(q.key + '|part|' + p.key, p.title,
+            (p.where || []).map(function(l){ return '<div class="qstop"><div class="qrow">' + qWhere(l) + '</div></div>'; }).join('')
+            + qSeqHtml(p.seq, true));
+        }).join('')
+      + '</div>';
+  }
   // A chain quest (Willamina's Needles): where to start and what to say, then the hand-ins in the order
-  // you walk them and the optional story each NPC tells, both folded away until asked for.
-  function qChain(q, c){
+  // you walk them and the optional story each NPC tells, both folded away until asked for. With a seq the
+  // hand-ins are already in it, in order (skipHandins), so the folded copy is left out.
+  function qChain(q, c, skipHandins){
     var h = '<div class="panel"><div class="ph">🔗 Start here</div>'
       + '<div class="callout">' + esc(c.first.text) + '</div>'
       + '<div class="qstop"><div class="qrow">' + qWhere(c.first.at) + '</div>'
       + qSayRow((c.first.say || []).map(function(t){ return { text: t }; }), true) + '</div>'
       + (c.first.fetch ? '<div class="qstop"><div class="qrow"><span class="qk">fetch from</span> ' + qWhere(c.first.fetch) + '</div></div>' : '')
       + '</div>';
-    var hand = (c.handins || []).map(function(s, n){
+    var hand = skipHandins ? '' : (c.handins || []).map(function(s, n){
       return '<div class="qstop"><div class="qrow"><span class="qk">' + (n + 1) + '.</span> ' + qWhere(s.at) + '</div>' + qGiveGet(s.give, s.get) + '</div>';
     }).join('');
     if (hand) h += qDetails(q.key + '|handins', 'Hand-ins, in order · ' + c.handins.length, hand);
@@ -662,11 +876,29 @@
     var h = '';
     var what = (q.detail ? '<div class="callout">' + esc(q.detail) + '</div>' : '')
       + (q.expect ? '<div class="callout"><b>Expect</b> ' + esc(q.expect) + '</div>' : '');
-    if (what) h += '<div class="panel"><div class="ph">📝 What to do</div>' + what + '</div>';
-    if (q.chain) h += qChain(q, q.chain);
-    var stops = questStops(q);
-    if (stops.length) h += '<div class="panel"><div class="ph">🗣 Talk to <span class="ct">' + stops.length + '</span></div>' + stops.map(qStop).join('') + '</div>';
-    if (q.turnIn && q.turnIn.length) {
+    // A step with a brief (the guild lead, 2026-10-04: "The What to do is wordy") shows that first; the full
+    // detail and Expect are folded under "More", never dropped. A step without one is drawn as before.
+    if (q.brief) {
+      h += '<div class="panel"><div class="ph">📝 What to do</div><div class="callout">' + esc(q.brief) + '</div></div>';
+      if (what) h += qDetails(q.key + '|more', 'More', what);
+    } else if (what) h += '<div class="panel"><div class="ph">📝 What to do</div>' + what + '</div>';
+    var hasSeq = !!(q.seq && q.seq.length);
+    var parts = (q.parts && q.parts.length) ? qParts(q) : '';
+    if (q.chain) h += qChain(q, q.chain, hasSeq);
+    if (hasSeq) {
+      // The order is the seq's, so "Talk to" and "Turn in" (each half of it) give way to it; the places
+      // stay, with their /map chips, since the seq says who and not where. Parts sit under the order.
+      h += qSeqHtml(q.seq) + parts;
+      if (q.where && q.where.length) {
+        h += '<div class="panel"><div class="ph">📍 Where <span class="ct">' + q.where.length + '</span></div>'
+          + q.where.map(function(l){ return '<div class="qstop"><div class="qrow">' + qWhere(l) + '</div></div>'; }).join('') + '</div>';
+      }
+    } else {
+      var stops = questStops(q);
+      if (stops.length) h += '<div class="panel"><div class="ph">🗣 Talk to <span class="ct">' + stops.length + '</span></div>' + stops.map(qStop).join('') + '</div>';
+      h += parts;
+    }
+    if (!hasSeq && q.turnIn && q.turnIn.length) {
       h += '<div class="panel"><div class="ph">📦 Turn in</div>' + q.turnIn.map(function(t){
         return '<div class="qstop"><div class="qrow">' + qWhere(t.to) + '</div>' + qGiveGet(t.give, t.get)
           + (t.note ? '<div class="qrow"><span class="qk">' + esc(t.note) + '</span></div>' : '') + '</div>';
@@ -691,6 +923,11 @@
 
   // ── Slide renderer ──────────────────────────────────────────────────────────
   function renderSlide(){
+    // Every navigation, mode flip and mini flip comes through here: set the layout it needs (fixed or
+    // fit, text size) and start the card back at the top.
+    applyFixed();
+    applyFs();
+    document.getElementById('content').scrollTop = 0;
     if (popMode === 'quests') { renderQuest(); return; }
     var s = SLIDES[idx]; if (!s) return;
     var sec = s.sec, enc = s.enc;
@@ -720,7 +957,7 @@
       // Pending section card (PoTime P2/P3 until the local capture runbook runs)
       html += '<div class="panel"><div class="ph">⏳ Awaiting capture</div>'
             +   '<div class="callout">' + esc(sec.note || 'Not captured yet.') + '</div>'
-            +   (sec.guide ? '<div class="links" style="margin-top:4px"><span class="lnk" data-url="' + esc(sec.guide) + '">📖 Guide page</span></div>' : '')
+            +   (sec.guide ? '<div class="links" style="margin-top:4px"><span class="lnk" data-url="' + esc(sec.guide) + '" data-wp-interact>📖 Guide page</span></div>' : '')
             + '</div>';
     } else {
       // Callouts
@@ -742,7 +979,7 @@
         html += '<div class="abil"><span class="an">' + esc(a.name) + '</span>' + (a.note ? ' <span class="at">— ' + esc(a.note) + '</span>' : '') + '</div>';
       });
       if (enc.npcName) {
-        html += '<details class="sub"><summary>💰 Live drop table</summary><div id="lootBody"><div class="empty">open to load</div></div></details>';
+        html += '<details class="sub"><summary data-wp-interact>💰 Live drop table</summary><div id="lootBody"><div class="empty">open to load</div></div></details>';
       }
       html += '</div>';
       // Tracker
@@ -757,10 +994,10 @@
       var hasLinks = enc.guide || enc.video || sec.video || sec.guide || diagrams.length || sec.overviewDiagram;
       if (hasLinks) {
         html += '<div class="panel"><div class="ph">🔗 Guide &amp; diagrams</div><div class="links">';
-        if (enc.guide)  html += '<span class="lnk" data-url="' + esc(enc.guide) + '">📖 Guide page</span>';
-        if (!enc.guide && sec.guide) html += '<span class="lnk" data-url="' + esc(sec.guide) + '">📖 Phase guide</span>';
+        if (enc.guide)  html += '<span class="lnk" data-url="' + esc(enc.guide) + '" data-wp-interact>📖 Guide page</span>';
+        if (!enc.guide && sec.guide) html += '<span class="lnk" data-url="' + esc(sec.guide) + '" data-wp-interact>📖 Phase guide</span>';
         var vid = enc.video || sec.video;
-        if (vid) html += '<span class="lnk vid" data-url="' + esc(vid) + '">🎬 Video</span>';
+        if (vid) html += '<span class="lnk vid" data-url="' + esc(vid) + '" data-wp-interact>🎬 Video</span>';
         html += '</div>';
         var dgs = diagrams.slice();
         if (sec.overviewDiagram) dgs.unshift(sec.overviewDiagram);
@@ -768,7 +1005,7 @@
           html += '<div class="diagrams">';
           dgs.forEach(function(d){
             var u = imgUrl(d);
-            html += '<div class="dg" data-url="' + esc(u) + '" title="Click to open full size">'
+            html += '<div class="dg" data-url="' + esc(u) + '" data-wp-interact title="Click to open full size">'
                   +   '<img src="' + esc(u) + '" loading="lazy" alt="" onerror="this.parentNode.style.display=\'none\'">'
                   +   '<div class="cap">' + esc(d.replace(/^.*\//, '')) + '</div>'
                   + '</div>';
@@ -780,7 +1017,7 @@
       }
     }
     // Quarm global notes (every slide — these apply across PoP)
-    html += '<details class="sub panel" style="border-left-color:#d4a72c"><summary>⚠ Quarm divergences (known)</summary>';
+    html += '<details class="sub panel" style="border-left-color:#d4a72c"><summary data-wp-interact>⚠ Quarm divergences (known)</summary>';
     (DB.quarmGlobalNotes || []).forEach(function(n){ html += '<div class="qnote">' + esc(n) + '</div>'; });
     html += '</details>';
     // ⚑ form
@@ -896,11 +1133,13 @@
     }
     if (t.closest('.qnext') && qIdx < QUESTS.length - 1) { qIdx++; renderSlide(); }
   });
-  // <details> do not bubble `toggle`; the capture phase sees it. Open state goes to _qOpen.
+  // <details> do not bubble `toggle`; the capture phase sees it. Open state goes to _qOpen. A fold changes
+  // the card's height, so fit mode re-measures (fixed height keeps its window and the card scrolls).
   _questBox.addEventListener('toggle', function(e){
     var d = e.target;
     var k = (d && d.getAttribute) ? d.getAttribute('data-dk') : null;
     if (k) _qOpen[k] = !!d.open;
+    if (!_isFixed()) _fit();
   }, true);
 
   var modeSlidesBtn = document.getElementById('modeSlides');

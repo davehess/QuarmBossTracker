@@ -251,6 +251,14 @@
     transform:scale(var(--part-scale,1));transform-origin:left bottom}
   body.part.timers-topdown #timers{top:4px;bottom:auto;transform-origin:left top}
   body.part-callouts #alertcol{margin:0 !important;transform:scale(var(--part-scale,1))}
+  /* The callout column sits on the panel's BOTTOM edge, not its middle (the guild lead, 2026-10-05:
+     "the earlier button no longer works"). Centred, a column taller than the panel spills out of
+     both ends and the vote row, second from the bottom, is the first thing cut off, so a panel
+     sized to the callout line had no « Earlier at all. Pinned to the bottom, an overflow cuts
+     the top of a long callout instead and the row stays clickable. */
+  body.part-callouts{align-items:flex-end}
+  body.part-callouts #alertcol{transform-origin:50% 100%}
+  body.part-callouts #sticky:empty{display:none}
   body.part-callouts.part-edit #placeholder{display:block}
 </style></head>
 <body>
@@ -500,6 +508,8 @@
     var t = String((meta && meta.trigger) || '');
     // A missed CH beat wipes the raid; everything else can wait 2 seconds.
     if (/^CH GO$/i.test(t)) return 2;
+    // Nor does a late "Enrage soon" (the guild lead, 2026-10-05: "goes off WAY too late").
+    if (/^Enrage soon$/i.test(t)) return 2;
     return 1;
   }
 
@@ -631,8 +641,11 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           direction,
-          trigger_id:   _lastTrigger.id   || null,
-          trigger_name: _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
+          // A fire carries trigger_id + trigger (its name); .text is the shown line, which for a
+          // built-in like "Enrage soon" changes every fire ("⚠ <mob> at 12% — …"), so votes never
+          // added up under one name. Same order as reportCalloutFeedback.
+          trigger_id:   _lastTrigger.trigger_id || _lastTrigger.id || null,
+          trigger_name: _lastTrigger.trigger || _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
           fired_at:     new Date(_lastFireTs).toISOString(),
         }),
       });
@@ -709,6 +722,7 @@
       span.textContent = (t.rehearsal ? '🧪 ' : '📌 ') + (t.text || t.tts || 'Alert');
       const x = document.createElement('span');
       x.className = 'sk-x';
+      x.setAttribute('data-wp-interact', '');   // as the countdown ✕: the preload's document-level arm covers it
       x.textContent = '✕';
       x.title = 'Dismiss this pinned callout';
       row.appendChild(span);
@@ -1012,6 +1026,10 @@
         {
           const x = document.createElement('span');
           x.className = 'timer-x';
+          // A clickable <span> needs data-wp-interact so the preload's document-level arm (re-asserted every
+          // 150 ms) covers it too, not only the one mouseenter below; in a Canvas panel that iframe arm is the
+          // dependable path (the guild lead, 2026-10-06: "I can't click on these x's either").
+          x.setAttribute('data-wp-interact', '');
           x.textContent = '✕';
           x.title = 'Dismiss this countdown (yours only)';
           x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });

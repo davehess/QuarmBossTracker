@@ -26,7 +26,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, stripJs, ROOT, AGENT_INDEX, BOT_INDEX } from './_source-slice.js';
+import { readSource, sliceBlock, stripJs, stripCss, ROOT, AGENT_INDEX, BOT_INDEX } from './_source-slice.js';
 
 const agentSrc = readSource(AGENT_INDEX);
 const botSrc   = readSource(BOT_INDEX);
@@ -328,6 +328,15 @@ describe('the overlay surface itself', () => {
     expect(overlay, 'the #107 loot-only gate is gone').not.toMatch(/if \(t\.dismissible\)\{/);
   });
 
+  // The guild lead, 2026-10-06: "I can't click on these x's either". A clickable <span> needs
+  // data-wp-interact so the preload's document-level arm covers it (CLAUDE.md checklist item 3) — in a
+  // Canvas panel iframe that arm, re-asserted every 150 ms, is the dependable path.
+  it('the countdown ✕ and the pinned-callout ✕ carry data-wp-interact', () => {
+    const code = stripJs(overlay);
+    expect(code).toMatch(/x\.className = 'timer-x';\s*x\.setAttribute\('data-wp-interact', ''\);/);
+    expect(code).toMatch(/x\.className = 'sk-x';\s*x\.setAttribute\('data-wp-interact', ''\);/);
+  });
+
   it('the ✕, the 🗑 clear-all and the sticky row all do the hover handshake', () => {
     // Locked overlays are click-through: without the handshake the click falls
     // through to EQ and "the button does nothing" (CLAUDE.md checklist item 3).
@@ -502,6 +511,34 @@ describe('timing feedback can be switched off', () => {
     expect(JSON.parse(post.opts.body)).toEqual({ timingFeedback: false });
     v.api.showFeedback({ text: 'Slow landed' });
     expect(v.shown.has('show')).toBe(false);
+  });
+
+  // The guild lead, 2026-10-05: "the earlier button no longer works on TTS". A vote named itself
+  // after the shown text, which a built-in callout rewrites every fire, so votes never added up.
+  it('« Earlier is sent under the trigger\'s name and id, not the line it showed', async () => {
+    const block = sliceBlock(overlay, '  let _votesOn = true;',
+      "castVote._t = setTimeout(()=>fbWrap.classList.remove('show'), 2000);\n  }");
+    const calls = [];
+    const el = { classList: { add() {}, remove() {} }, querySelectorAll: () => [] };
+    const fetch = (url, opts) => { calls.push({ url, opts }); return Promise.resolve({ ok: true, json: () => Promise.resolve({}) }); };
+    const make = new Function('fbWrap', 'fbThanks', 'fetch', 'setTimeout', 'setInterval', 'clearTimeout', 'window',
+      'let PORT = 7779; let _lastFireTs = 0; let _lastTrigger = null;\n' + block + '\nreturn { showFeedback, castVote };');
+    const api = make(el, el, fetch, () => 0, () => 0, () => {}, { mimic: { overlayHoverInteractive() {} } });
+    api.showFeedback({ trigger: 'Enrage soon', trigger_id: null, text: '⚠ a gnoll warlord at 12% — enrage soon' });
+    await api.castVote('earlier');
+    const body = JSON.parse(calls.find((c) => /\/api\/triggers\/feedback$/.test(c.url)).opts.body);
+    expect(body).toMatchObject({ direction: 'earlier', trigger_name: 'Enrage soon' });
+    api.showFeedback({ trigger: 'Slow landed', trigger_id: 'g_12', text: 'SLOWED' });
+    await api.castVote('earlier');
+    expect(JSON.parse(calls[calls.length - 1].opts.body)).toMatchObject({ trigger_id: 'g_12', trigger_name: 'Slow landed' });
+  });
+
+  // A Canvas callouts panel shorter than callout + vote row clipped the row (centred column spills
+  // out of both ends). Pinned to the bottom, the overflow cuts the callout's top instead.
+  it('in a Canvas callouts panel the column sits on the bottom edge so the vote row is never the part cut off', () => {
+    const css = stripCss(overlay);
+    expect(css).toMatch(/body\.part-callouts\{align-items:flex-end\}/);
+    expect(css).toMatch(/body\.part-callouts #alertcol\{transform-origin:50% 100%\}/);
   });
 
   it('🔕 is a vote-row button, so it gets the hover handshake, and its click is not a vote', () => {

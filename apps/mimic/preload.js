@@ -663,6 +663,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // POSTs it makes: 'import' old logs, 'backfill' the main's log.
   openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
   welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
+  // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
+  // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks
+  // wolfpack.quest and saves it, and main keeps the don't-transmit list (the log gate) in step.
+  characterModes:   ()                => ipcRenderer.invoke('character-modes-get'),
+  setCharacterMode: (character, mode) => ipcRenderer.invoke('character-mode-set', String(character || ''), String(mode || '')),
   // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
   // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
   captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),
@@ -807,7 +812,8 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
   uiStudioIsEqRunning:    ()        => ipcRenderer.invoke('ui-studio-eq-running'),
   // Background deferred save — applied by the main process when the character
-  // logs out (survives closing UI Studio + a Mimic restart).
+  // logs out (survives closing UI Studio + a Mimic restart). params carries
+  // `edits` (key edits, as uiStudioWriteEdits), never whole file texts.
   uiStudioDeferSave:      (params)  => ipcRenderer.invoke('ui-studio-defer-save', params),
   uiStudioPendingList:    ()        => ipcRenderer.invoke('ui-studio-pending-list'),
   uiStudioCancelDefer:    (params)  => ipcRenderer.invoke('ui-studio-cancel-defer', params),
@@ -821,6 +827,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // text map; write takes the edited map and persists with .bak backups.
   uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
   uiStudioWriteBundle:    (eqDir, bundle, opts) => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle, opts),
+  // Save's key-level write: edits = [{ file, section, key, value }] applied to
+  // each file as it is on disk NOW — only those keys change. Window layout goes
+  // through this (and the deferred save queues the same edits), not the bundle.
+  uiStudioWriteEdits:     (eqDir, edits, opts) => ipcRenderer.invoke('ui-studio-write-edits', eqDir, edits, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
   openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,

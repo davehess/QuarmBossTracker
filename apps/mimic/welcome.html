@@ -66,6 +66,17 @@
   table.chars td{padding:5px 6px;border-bottom:1px solid #21262d}
   table.chars tr.main td{background:#1f6feb14}
   table.chars td.num{text-align:right;color:var(--dim)}
+  .chars-wrap{overflow-x:auto}
+  /* Main / alt · Inventory only · Hide completely: three real radios drawn as one segmented control. */
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:5px;overflow:hidden;white-space:nowrap}
+  .seg label{position:relative;padding:3px 9px;cursor:pointer;border-right:1px solid var(--border);color:var(--dim);font-size:12px}
+  .seg label:last-child{border-right:0}
+  .seg label:hover{color:var(--text)}
+  .seg label.on{background:#1f6feb33;color:#e6edf3}
+  .seg label.hide.on{background:#f8514922;color:var(--red)}
+  .seg label:focus-within{outline:2px solid var(--blue);outline-offset:-2px}
+  .seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0}
+  .mnote{margin-top:3px;font-size:11px;max-width:340px;white-space:normal}
 
   /* link code */
   .code{font-size:22px;letter-spacing:.3em;color:var(--gold);font-weight:bold;background:var(--ink);border:1px solid var(--border);border-radius:4px;padding:4px 12px}
@@ -149,6 +160,7 @@
     eqConfigured: false, agentReady: false, engineFailed: false, port: 7779, clockOffsetMs: null,
     found: [], checked: new Set(), manual: [], excludedFound: new Set(), scanned: [],
     chars: [], excluded: new Set(), main: null,
+    modes: {}, modeBusy: {}, modesAt: 0, modesBusyLoad: false, modesSynced: null, modesRetried: false, focusKey: null,
     zeal: null, zealLatest: null, eqSetup: null, defender: null, clock: null,
     backfill: true, imported: [], visited: new Set(),
   };
@@ -179,7 +191,7 @@
     { id: 'folder',   icon: '📁', title: 'EverQuest folder',     kind: 'req', ess: true, body: bFolder,
       lede: 'Mimic reads the log files EverQuest writes. Tick the folder you play from.' },
     { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', ess: true, body: bChars,
-      lede: 'Every character with a log in that folder. Star your main; untick any you would rather keep to yourself.' },
+      lede: 'Every character with a log in that folder. Star your main, and say how each one shows up.' },
     { id: 'zeal',     icon: '📡', title: 'Zeal',                 kind: 'rec', body: bZeal,
       summary: 'Live HP, mana, raid groups and charm breaks — the things the log never says.',
       lede: 'Zeal is a free add-on for the Quarm client: one file, Zeal.asi, in your EverQuest folder. It hands Mimic what the game knows but never writes down.' },
@@ -323,6 +335,76 @@
     return recent.length ? { recent: recent, older: older } : { recent: older, older: [] };
   }
 
+  // ── Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06) ─────────────────
+  // "the complete hide or hide from all but inventory should be with mimic during onboarding but the
+  // denotation on other side should be carried over." One choice per character, the same three
+  // switches as My Stats on wolfpack.quest. Each row starts on what wolfpack.quest already says for
+  // that character; a character it does not know starts on this PC's own don't-send list (Hide
+  // completely) or Main / alt. Nothing is ever guessed from level or last played.
+  var MODES = [['show', 'Main / alt'], ['inventory', 'Inventory only'], ['hidden', 'Hide completely']];
+  function modeFor(name, modes, excluded) {
+    var m = modes && modes[String(name || '').toLowerCase()];
+    if (m && m.mode) return m.mode;
+    return excluded && excluded.has && excluded.has(String(name || '').toLowerCase()) ? 'hidden' : 'show';
+  }
+  // The engine's answer ({ characters: [{ name, mode, src, on_pc, log_read }] }) as lowercase name → state.
+  // A `default` row means nobody has said anything about that character, so it adds nothing here.
+  function modesFromAnswer(list) {
+    var out = {};
+    (Array.isArray(list) ? list : []).forEach(function (c) {
+      if (!c || !c.name || c.src === 'default') return;
+      out[String(c.name).toLowerCase()] = { mode: c.mode, src: c.src, pending: !!c.pending, logRead: c.on_pc ? c.log_read !== false : null, note: '' };
+    });
+    return out;
+  }
+  // The line under a row's choice, only when there is something to say.
+  function modeNote(m) {
+    if (!m) return '';
+    if (m.note) return m.note;
+    if (m.mode === 'hidden' && m.logRead === true) return 'Hidden on wolfpack.quest, but Mimic still reads this log. Choose it again to stop that.';
+    if (m.mode !== 'hidden' && m.mode !== 'custom' && m.logRead === false) return 'Mimic is not reading this log. Choose this again to start.';
+    if (m.mode === 'custom') return 'Set up differently on wolfpack.quest. Choose one to replace it.';
+    return '';
+  }
+  function setMode(name, mode) {
+    var lc = name.toLowerCase();
+    S.modeBusy[lc] = true;
+    S.modes[lc] = { mode: mode, src: 'local', pending: true, logRead: null, note: '' };
+    if (mode === 'hidden') S.excluded.add(lc); else S.excluded.delete(lc);
+    S.focusKey = lc + '|' + mode;
+    changed('chars');
+    Promise.resolve(M.setCharacterMode(name, mode)).then(function (r) {
+      delete S.modeBusy[lc];
+      if (!r || r.ok === false) { S.modes[lc].note = 'Could not save that. Choose it again.'; changed('chars'); return; }
+      S.modes[lc] = { mode: mode, src: r.synced ? 'site' : 'local', pending: !r.synced, logRead: mode !== 'hidden', note: r.synced ? '' : (r.note || '') };
+      if (r.restart_needed) restartSoon();
+      changed('chars');
+    }).catch(function () { delete S.modeBusy[lc]; S.modes[lc].note = 'Could not save that. Choose it again.'; changed('chars'); });
+  }
+  // Ask the engine what wolfpack.quest and this PC already say. At most every 15 seconds, and a repaint
+  // only when the answer changed, so the step mounting again cannot loop.
+  function loadModes() {
+    if (S.modesBusyLoad || Date.now() - S.modesAt < 15000) return Promise.resolve();
+    S.modesBusyLoad = true;
+    return Promise.resolve(M.characterModes()).catch(function () { return null; }).then(function (r) {
+      S.modesBusyLoad = false; S.modesAt = Date.now();
+      if (!r || r.ok === false) return;
+      var next = modesFromAnswer(r.characters), before = JSON.stringify([S.modes, S.modesSynced]);
+      Object.keys(next).forEach(function (lc) {
+        if (S.modeBusy[lc]) return;
+        S.modes[lc] = next[lc];
+        if (next[lc].mode === 'hidden') S.excluded.add(lc); else S.excluded.delete(lc);
+      });
+      S.modesSynced = r.synced !== false;
+      // Signed in a moment ago: the engine is handed the sign-in a beat after Mimic has it, so ask once more.
+      if (!S.modesSynced && S.signedIn && !S.modesRetried) {
+        S.modesRetried = true;
+        setTimeout(function () { S.modesAt = 0; changed('chars'); }, 4000);
+      }
+      if (JSON.stringify([S.modes, S.modesSynced]) !== before) changed('chars');
+    });
+  }
+
   function bChars(el) {
     if (!S.chars.length) {
       el.innerHTML = S.eqConfigured
@@ -332,31 +414,41 @@
         : '<div class="dim">Pick your EverQuest folder first — characters are found from its log files.</div>';
       return;
     }
+    loadModes();
     // Characters played in the last 3 months (and the starred main) show; the rest fold into a
     // collapsed "more" (the guild lead, 2026-09-29: "just show things that have been touched in
     // the last 3 months and then a collapsed section with more"). Nothing recent → show them all.
     var split = splitRecentChars(S.chars, S.main), recent = split.recent, older = split.older;
-    var head = '<table class="chars"><thead><tr><th>★ Main</th><th>Character</th><th>Send</th><th style="text-align:right">Log</th><th>Last played</th></tr></thead><tbody>';
-    var h = head;
+    var head = '<div class="chars-wrap"><table class="chars"><thead><tr><th>★ Main</th><th>Character</th><th>Show as</th><th style="text-align:right">Log</th><th>Last played</th></tr></thead><tbody>';
+    var h = '<div class="note dim" style="margin:0 0 6px"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
+      + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+      + (S.modesSynced === false && !S.signedIn ? '<div class="note dim" style="margin:0 0 6px">Not connected to wolfpack.quest, so these are kept on this PC until you sign in.</div>' : '')
+      + head;
     var row = function (c) {
       var lc = c.character.toLowerCase();
       var ago = c.ago_days == null ? '—' : (c.ago_days >= 30 ? '<span class="warn">' + c.ago_days + ' days ago</span>' : c.ago_days >= 7 ? c.ago_days + ' days ago' : 'this week');
+      var cur = modeFor(c.character, S.modes, S.excluded), note = modeNote(S.modes[lc]);
       h += '<tr' + (S.main && S.main.toLowerCase() === lc ? ' class="main"' : '') + '>'
         + '<td><input type="radio" name="wMain" data-main="' + esc(c.character) + '"' + (S.main && S.main.toLowerCase() === lc ? ' checked' : '') + ' aria-label="Main: ' + esc(c.character) + '"></td>'
         + '<td><b>' + esc(c.character) + '</b></td>'
-        + '<td><input type="checkbox" data-tx="' + esc(c.character) + '"' + (S.excluded.has(lc) ? '' : ' checked') + ' aria-label="Send ' + esc(c.character) + '"></td>'
+        + '<td><div class="seg" role="radiogroup" aria-label="Show ' + esc(c.character) + ' as">'
+        + MODES.map(function (m) {
+            return '<label class="' + (cur === m[0] ? 'on' : '') + (m[0] === 'hidden' ? ' hide' : '') + '"><input type="radio" name="wMode_' + esc(c.character) + '" data-mode-char="' + esc(c.character) + '" data-mode="' + m[0] + '"'
+              + (cur === m[0] ? ' checked' : '') + '>' + m[1] + '</label>';
+          }).join('')
+        + '</div>' + (note ? '<div class="mnote dim">' + esc(note) + '</div>' : '') + '</td>'
         + '<td class="num">' + size(c.log_size) + '</td><td>' + ago + '</td></tr>';
     };
     recent.forEach(row);
-    h += '</tbody></table>';
+    h += '</tbody></table></div>';
     if (older.length) {
       h += '<details id="wCharsMore"' + (S.charsMore ? ' open' : '') + '><summary class="dim" style="cursor:pointer;margin:8px 0">'
         + older.length + ' more · not played in 3 months</summary>' + head;
       older.forEach(row);
-      h += '</tbody></table></details>';
+      h += '</tbody></table></div></details>';
     }
     h += '<div class="note dim">★ <b>Main</b> is the character whose old log the last step offers to read. '
-      + '<b>Send</b> unticked means that character\'s log never leaves this PC — overlays still work for it. The engine restarts a moment after you change one.</div>';
+      + 'Mimic restarts its engine a moment after a log is hidden or brought back.</div>';
     el.innerHTML = h;
     // A repaint rebuilds the list, so remember whether "more" was open.
     var more = $('#wCharsMore', el);
@@ -364,14 +456,17 @@
     el.querySelectorAll('[data-main]').forEach(function (r) {
       r.addEventListener('change', function () { S.main = r.dataset.main; M.saveConfig({ mainCharacter: S.main }).catch(function () {}); changed('chars'); });
     });
-    el.querySelectorAll('[data-tx]').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        var lc = cb.dataset.tx.toLowerCase();
-        if (cb.checked) S.excluded.delete(lc); else S.excluded.add(lc);
-        var out = S.chars.filter(function (c) { return S.excluded.has(c.character.toLowerCase()); }).map(function (c) { return c.character; });
-        Promise.resolve(M.saveConfig({ excludedCharacters: out })).catch(function () {}).then(restartSoon);
-      });
+    // click, not change: choosing the choice a row already shows still has to reach the engine (a log
+    // hidden on the website that this PC still reads is fixed by choosing Hide completely again).
+    el.querySelectorAll('[data-mode]').forEach(function (r) {
+      r.addEventListener('click', function () { setMode(r.dataset.modeChar, r.dataset.mode); });
     });
+    // The repaint above dropped the focus the keyboard was on; put it back.
+    if (S.focusKey) {
+      var fk = S.focusKey.split('|'), f = el.querySelector('[data-mode-char="' + fk[0].replace(/[^a-z]/g, '') + '" i][data-mode="' + fk[1] + '"]');
+      S.focusKey = null;
+      if (f) { try { f.focus(); } catch (e) { void e; } }
+    }
   }
   // The engine reads the don't-send list when it starts, so an untick means nothing until it
   // restarts — and until then that character's log is still being sent. Restart once the ticking
@@ -534,7 +629,7 @@
 
   function bHistory(el) {
     var can = S.signedIn && !!S.main && !S.excluded.has(String(S.main || '').toLowerCase());
-    var why = !S.signedIn ? 'Needs a signed-in account.' : !S.main ? 'Star a main in Your characters first.' : !can ? 'Your main is set not to send.' : '';
+    var why = !S.signedIn ? 'Needs a signed-in account.' : !S.main ? 'Star a main in Your characters first.' : !can ? 'Your main is set to Hide completely.' : '';
     el.innerHTML =
         '<label class="tick"><input type="checkbox" data-bf' + (can && S.backfill ? ' checked' : '') + (can ? '' : ' disabled') + '>'
       + '<span>When I finish, read <b>' + esc(S.main || 'my main') + '</b>\'s whole log'
@@ -715,6 +810,7 @@
         .then(function (st) {
           clearInterval(id);
           S.agentReady = true;
+          S.modesAt = 0;   // the engine is up (again): ask it what the characters are set to
           S.clockOffsetMs = st && typeof st.clockOffsetMs === 'number' ? st.clockOffsetMs : null;
           changed();
           if (_finishWhenUp) { _finishWhenUp = false; finish(); }
@@ -762,7 +858,7 @@
 
   function onStatus(st) {
     S.status = st || {};
-    if (st && st.localOnly === false) { S.signedIn = true; S.localOnly = false; }
+    if (st && st.localOnly === false) { if (!S.signedIn) { S.modesAt = 0; S.modesRetried = false; } S.signedIn = true; S.localOnly = false; }
     else if (st && st.localOnly === true && !st.mimicSession) S.signedIn = false;
     changed();
   }
@@ -800,6 +896,11 @@
       zealInstallUpdate: ok({ ok: true }), eqSetupForMe: ok({ ok: true, folders: [{}] }), defenderAddExclusions: ok({ ok: true }),
       clockResync: ok({ ok: true }), setQuietMode: ok(true), toggleCrashReports: ok(true), openUiStudio: ok(true), openExternal: ok(true),
       mimicLinkStart: ok(true), mimicLinkCancel: ok(true), mimicLinkSignOut: ok(true), welcomeOptin: ok({ ok: true, results: [] }),
+      characterModes: ok({ ok: true, synced: true, characters: [
+        { name: 'Aldenmar', mode: 'show', src: 'site', on_pc: true, log_read: true },
+        { name: 'Brackwyn', mode: 'inventory', src: 'site', on_pc: true, log_read: true },
+        { name: 'Corvale', mode: 'hidden', src: 'site', on_pc: true, log_read: false } ] }),
+      setCharacterMode: ok({ ok: true, synced: true, restart_needed: false }),
     };
   }
 })();

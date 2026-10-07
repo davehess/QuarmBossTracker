@@ -335,6 +335,9 @@
   // keys NOT present (e.g. a brand-new XPos<targetRes> block) are INSERTED
   // right after the section header. Inserting is what lets us add a widescreen
   // resolution block without disturbing the user's original-resolution layout.
+  // ⚠ Save no longer goes through here (2026-10-05): it rebuilt WHOLE files from
+  // the load-time copy. Save sends key edits and main applies them to the file
+  // as it is on disk (_buildSaveEdits; main.js _applyUiKeyEdits).
   function emitIni(parsed, edits){
     // edits: { sectionName → { "XPos3840x1600": N, "YPos3840x1600": N, Width, Height } }
     var lines = parsed.lines.slice();
@@ -829,7 +832,7 @@
         if (xmlMax && !hasWH && xmlMax.cx > 0 && xmlMax.cy > 0) {
           // No size in the INI — fall back to the skin XML's design size purely
           // so the window still renders. XML sizes are absolute pixels (NOT
-          // resolution-scaled), and this is render-only: _buildSaveBundle never
+          // resolution-scaled), and this is render-only: _buildSaveEdits never
           // writes a Width/Height for a window whose INI had none. Windows that
           // DO carry an INI size keep it VERBATIM — we no longer clamp them to an
           // fx-scaled XML cap (that clamp was the other half of the #146 shrink:
@@ -1401,35 +1404,64 @@
     renderStage();
     setStatus('reset to last load', 'ok');
   });
-  // Build the { filename → new text } bundle for the current edits, writing
-  // into the TARGET resolution's suffix block (XPos<W>x<H>); emitIni inserts
-  // the block if absent, leaving other-resolution blocks intact.
-  function _buildSaveBundle(){
+  // What Save sends: KEY EDITS, [{ file, section, key, value }], not file texts
+  // (the guild lead, 2026-10-05: "A for UI Studio"). Save used to rebuild whole
+  // files from the copy read at Load, for every window, so positions EQ had
+  // saved since — the ~50 bag windows the stage hides, a window moved in game —
+  // were put back, and a save after logout overwrote EQ's own on-camp save.
+  // Main now applies these to each file as it is on disk at write time (and as
+  // EQ left it, for the deferred save), changing only the keys named.
+  //
+  // Default: only a window the user changed in this session — moved, or sized.
+  // Two cases write EVERY window instead, because there the editor, not the
+  // disk, is the layout (a window left out would have no place in the block):
+  //   cloud   the bundle came from a cloud backup (📥 Restore), not this
+  //           machine's files, so unchanged here is not unchanged on disk;
+  //   rescale the block written (Target) is not the block the positions were
+  //           read from (Source) — a layout rescaled to a new monitor must
+  //           place every window.
+  function _writeAllReason(tgtSuffix){
+    if (STATE.fromCloud) return 'cloud';
+    var srcSuffix = STATE.srcSuffix || (STATE.srcW + 'x' + STATE.srcH);
+    if (srcSuffix !== tgtSuffix) return 'rescale';
+    return '';
+  }
+  function _sizeChanged(w){
+    return !!(w.sizeEdited || (w.hasWH && (w.w !== w.origW || w.h !== w.origH)));
+  }
+  function _windowChanged(w){
+    return w.x !== w.origX || w.y !== w.origY || _sizeChanged(w);
+  }
+  // Writes into the TARGET resolution's suffix block (XPos<W>x<H>); main adds
+  // the keys when absent and leaves other-resolution blocks alone.
+  function _buildSaveEdits(){
     var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
-    var edits = {};
+    var all = _writeAllReason(tgtSuffix);
+    var edits = [], files = {}, nWin = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
-      if (!edits[w.file]) edits[w.file] = {};
-      if (w.zealBar) { edits[w.file][w.section] = _zealBarEdits(w); continue; }
-      var e = {};
-      e['XPos' + tgtSuffix] = w.x;
-      e['YPos' + tgtSuffix] = w.y;
-      // Never fabricate a size for a window the ini left auto-sizing — but a
-      // window the user RESIZED here gets one, or the resize is a silent no-op:
-      // A member + the guild lead, 2026-09-13, the Zeal item windows "defaulting to huge
-      // tooltips" every time — their ini sections carried no Width/Height, so
-      // every 100×200 set here was dropped on Save while the same edit on a
-      // character whose ini had the keys stuck.
-      if (w.hasWH || w.sizeEdited) { e.Width = w.w; e.Height = w.h; }
-      edits[w.file][w.section] = e;
+      if (!all && !_windowChanged(w)) continue;
+      var kv;
+      if (w.zealBar) kv = _zealBarEdits(w);
+      else {
+        kv = {};
+        kv['XPos' + tgtSuffix] = w.x;
+        kv['YPos' + tgtSuffix] = w.y;
+        // Never fabricate a size for a window the ini left auto-sizing — but a
+        // window the user RESIZED here gets one, or the resize is a silent no-op:
+        // A member + the guild lead, 2026-09-13, the Zeal item windows "defaulting to huge
+        // tooltips" every time — their ini sections carried no Width/Height, so
+        // every 100×200 set here was dropped on Save while the same edit on a
+        // character whose ini had the keys stuck.
+        // Changed-only mode writes a size only when the size changed; a window
+        // that was merely moved keeps whatever size EQ has for it now.
+        if (all ? (w.hasWH || w.sizeEdited) : _sizeChanged(w)) { kv.Width = w.w; kv.Height = w.h; }
+      }
+      for (var k in kv) edits.push({ file: w.file, section: w.section, key: k, value: kv[k] });
+      files[w.file] = true;
+      nWin++;
     }
-    var newBundle = {};
-    for (var fname in edits) {
-      var parsed = STATE.bundle[fname + '__parsed'];
-      if (!parsed) continue;
-      newBundle[fname] = emitIni(parsed, edits[fname]);
-    }
-    return { newBundle: newBundle, tgtSuffix: tgtSuffix };
+    return { edits: edits, tgtSuffix: tgtSuffix, files: Object.keys(files), windows: nWin, all: all };
   }
 
   // Is this character currently logged in? We ask the agent's Zeal state — a
@@ -1443,9 +1475,10 @@
     } catch (e) { return null; }   // null = unknown (agent not reachable)
   }
 
-  async function _writeBundle(newBundle, tgtSuffix, opts){
+  async function _writeEdits(built, opts){
     var deferred = opts && opts.deferred;
-    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle, deferred ? { backupTag: 'eq' } : null);
+    var tgtSuffix = built.tgtSuffix;
+    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
     var resWarn = '';
     try {
@@ -1455,12 +1488,16 @@
           ' — set Target to that (🖥 Detect) or EQ reads a different block';
       }
     } catch (e2) {}
+    // A file that is gone from the EQ folder is skipped, never re-created.
+    var gone = (res.missing && res.missing.length) ? ' · ⚠ not found, skipped: ' + res.missing.join(', ') : '';
+    var bad = resWarn || gone;
+    var nFiles = (res.written || []).length;
     if (deferred) {
-      setStatus('✅ applied ' + Object.keys(newBundle).length + ' file(s) now that ' + STATE.character +
-        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + resWarn, resWarn ? 'err' : 'ok');
+      setStatus('✅ applied ' + nFiles + ' file(s) now that ' + STATE.character +
+        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + gone + resWarn, bad ? 'err' : 'ok');
     } else {
-      setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix +
-        ' block · log the character in to apply (EQ reads positions at login)' + resWarn, resWarn ? 'err' : 'ok');
+      setStatus('saved ' + nFiles + ' file(s) · ' + built.windows + ' window(s) · wrote ' + tgtSuffix +
+        ' block · log the character in to apply (EQ reads positions at login)' + gone + resWarn, bad ? 'err' : 'ok');
     }
     return true;
   }
@@ -1475,9 +1512,11 @@
     var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
     if (!silent) setStatus('scheduled save cancelled', 'ok');
   }
-  async function _queueDefer(newBundle, tgtSuffix){
+  async function _queueDefer(built){
+    // The queue holds the KEY EDITS, not file texts: they are merged into the
+    // file as EQ leaves it on logout, so EQ's own save is never overwritten.
     var res = await window.mimic.uiStudioDeferSave({
-      character: STATE.character, eqDir: STATE.eqDir, bundle: newBundle, tgtSuffix: tgtSuffix,
+      character: STATE.character, eqDir: STATE.eqDir, edits: built.edits, tgtSuffix: built.tgtSuffix,
     }).catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
     _showDeferBanner();
@@ -1624,9 +1663,37 @@
     var nn=document.getElementById('ssNew'); if (nn) nn.addEventListener('input', _ssRefreshPreview);
   })();
 
+  // A cloud backup loaded into the editor (📥 Restore) is a deliberate restore, often onto a new PC
+  // where the files may not exist yet: it keeps writing WHOLE files from the backup, rescaled, as
+  // before. Only while the character is logged out — EQ would overwrite it on camp, and a restore
+  // is not something to run unattended after logout, so there is no scheduling here.
+  async function _saveCloudRestore(built){
+    if (await _isCharActiveInZeal(STATE.character.toLowerCase())) {
+      setStatus('log ' + STATE.character + ' out (or close EverQuest) first: restoring a backup replaces the files, and EQ would write over them when you camp', 'err');
+      return;
+    }
+    var per = {};
+    for (var i = 0; i < built.edits.length; i++) {
+      var e = built.edits[i];
+      ((per[e.file] = per[e.file] || {})[e.section] = per[e.file][e.section] || {})[e.key] = e.value;
+    }
+    var texts = {};
+    for (var fname in per) {
+      var parsed = STATE.bundle[fname + '__parsed'];
+      if (parsed) texts[fname] = emitIni(parsed, per[fname]);
+    }
+    setStatus('restoring…');
+    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, texts, null).catch(function(err){ return { ok: false, error: String(err) }; });
+    if (!res || !res.ok) { setStatus('restore failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
+    setStatus('restored ' + Object.keys(texts).length + ' file(s) from the backup · wrote ' + built.tgtSuffix +
+      ' block · log the character in to apply (each replaced file was backed up as .bak)', 'ok');
+  }
+
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    var built = _buildSaveBundle();
+    var built = _buildSaveEdits();
+    if (STATE.fromCloud) { try { await _saveCloudRestore(built); } catch (e) { setStatus('restore failed: ' + e.message, 'err'); } return; }
+    if (!built.edits.length) { setStatus('nothing to save — no window was moved or resized since Load', 'ok'); return; }
     // Is the character logged in right now? If so, a plain Save won't apply
     // (EQ keeps the layout in memory, ignores it on a skin reload, and
     // overwrites the file on the next camp/zone/quit). Offer to schedule.
@@ -1640,10 +1707,10 @@
         'OK  = schedule it: apply automatically when ' + STATE.character + ' logs out\n' +
         '         (recommended — runs in the background; you can close UI Studio)\n' +
         'Cancel = save right now anyway');
-      if (schedule) { _queueDefer(built.newBundle, built.tgtSuffix); return; }
+      if (schedule) { _queueDefer(built); return; }
     }
     setStatus('saving…');
-    try { await _writeBundle(built.newBundle, built.tgtSuffix, { deferred: false }); }
+    try { await _writeEdits(built, { deferred: false }); }
     catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
   document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });

@@ -46,12 +46,14 @@ function fakeEl(id, all, { tag = 'div', classes = [], attrs = {}, parent = null 
     fire(ev, evt) { for (const fn of on[ev] || []) fn(evt || {}); },
     getAttribute(a) { return a in attrs ? attrs[a] : null; },
     setAttribute(a, v) { attrs[a] = String(v); },
+    removeAttribute(a) { delete attrs[a]; },
+    hasAttribute(a) { return a in attrs; },
     focus() {},
-    // Enough of Element.closest for comma lists of `.class` and tag selectors.
+    // Enough of Element.closest for comma lists of `.class`, `#id` and tag selectors.
     closest(sel) {
       const parts = sel.split(',').map(x => x.trim());
       for (let n = this; n; n = n.parent) {
-        if (parts.some(p => (p[0] === '.' ? n.classList.contains(p.slice(1)) : n.tag === p))) return n;
+        if (parts.some(p => (p[0] === '.' ? n.classList.contains(p.slice(1)) : p[0] === '#' ? n.id === p.slice(1) : n.tag === p))) return n;
       }
       return null;
     },
@@ -88,7 +90,7 @@ function fakeDom(staticIds) {
   return { document, byId };
 }
 
-function boot(html, { win = {}, fetchImpl, pre = '', returns = [], bodyClasses = [] } = {}) {
+function boot(html, { win = {}, fetchImpl, pre = '', returns = [], bodyClasses = [], store = {} } = {}) {
   const ids = [...markupOf(html).matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   const { document, byId } = fakeDom(ids);
   for (const c of bodyClasses) document.body.classList.add(c);
@@ -105,7 +107,6 @@ function boot(html, { win = {}, fetchImpl, pre = '', returns = [], bodyClasses =
     addEventListener(ev, fn) { (wOn[ev] ||= []).push(fn); },
     fire(ev) { for (const fn of wOn[ev] || []) fn({ type: ev }); },
   }, win);
-  const store = {};
   const localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
   const run = new Function('window', 'document', 'fetch', 'localStorage', 'setInterval', 'setTimeout',
     pre + inlineScript(html) + '\nreturn { ' + returns.join(', ') + ' };');
@@ -261,10 +262,11 @@ const DB = {
 };
 const OBJ = { rev: 1, encounters: { rz: { tank: { c: true, by: 'Aldenmar' } } } };
 
-async function bootPop({ mini = false } = {}) {
+async function bootPop({ mini = false, store = {}, db = DB } = {}) {
   const posts = [];
   const h = boot(popHtml, {
-    win: { POP_RAIDS: JSON.parse(JSON.stringify(DB)) },
+    store,
+    win: { POP_RAIDS: JSON.parse(JSON.stringify(db)) },
     fetchImpl: async (url, opts) => {
       if (opts && opts.method === 'POST') { posts.push({ url, body: JSON.parse(opts.body) }); return { status: 200, ok: true, json: async () => ({ ok: true }) }; }
       return { json: async () => OBJ };
@@ -340,12 +342,25 @@ describe('PoP mini — the checklist rows and nothing else', () => {
     expect(h.content()).toContain('<div class="nm">Vallon Zek</div>');
   });
 
-  it('flipping mini redraws, THEN re-fits the window, both ways', async () => {
-    const h = await bootPop();
+  it('flipping mini redraws, THEN re-fits the window, both ways (fit height)', async () => {
+    const h = await bootPop({ store: { 'wp:pop:height': 'fit' } });
     await h.setMini(true);
     expect(h.rec.fits.at(-1).content).toContain('mini-ttl');
     await h.setMini(false);
     expect(h.rec.fits.at(-1).content).toContain('enc-hdr');
+  });
+
+  // Full is fixed height by default (the guild lead, 2026-10-04: "it jumps around when resizing"), which sends
+  // its own height; mini is always fit, whatever full was set to.
+  it('flipping mini redraws, THEN re-fits: mini always fits the strip, full goes back to its fixed height', async () => {
+    const h = await bootPop();
+    await h.setMini(true);
+    expect(h.rec.fits.at(-1).content).toContain('mini-ttl');
+    expect(h.rec.heights.every(x => !x.content.includes('mini-ttl'))).toBe(true);
+    await h.setMini(false);
+    expect(h.rec.heights.at(-1).content).toContain('enc-hdr');
+    expect(h.rec.heights.at(-1).h).toBe(480);
+    expect(h.document.body.classList.contains('fixed')).toBe(true);
   });
 
   it('a slide without a checklist says so, keeps its ↗, and still re-fits', async () => {
@@ -359,7 +374,72 @@ describe('PoP mini — the checklist rows and nothing else', () => {
     expect(h.rec.fits.at(-1).content).toContain('no shared checklist on this slide');
   });
 
-  it('the title bar (picker, ◀ ▶, 🖥, ⚑) hides in mini', () => {
-    expect(stripJs(stripCss(markupOf(popHtml)))).toContain('<div class="title wp-mini-hide">');
+  it('the title bar (picker, ◀ ▶, 🖥, Aa, ⚑) hides in mini, and so does the text-size strip', () => {
+    const markup = stripJs(stripCss(markupOf(popHtml)));
+    expect(markup).toContain('<div class="title wp-mini-hide">');
+    expect(markup).toMatch(/id="fspanel" class="wp-mini-hide"/);
+  });
+});
+
+// ── every clickable <div>/<span>/<summary> carries data-wp-interact (the guild lead, 2026-10-04: the overlay
+// "doesn't like to always show the mouse over it") ─────────────────────────────────────────────────────────
+// The preload arms a locked overlay's window for `button, a, input, select, textarea, [role=button],
+// [data-wp-interact]` on its own mousemove. A control that only the page's own delegated list knew (.obj,
+// .lnk, .dg, summary) lost the window to that next mousemove after a hop from a button.
+describe('PoP — what the preload cannot see by tag carries data-wp-interact', () => {
+  // The first encounter with a video too, so the red .lnk.vid is drawn as well.
+  const RICH = JSON.parse(JSON.stringify(DB));
+  RICH.sections[0].encounters[0].video = 'https://video.invalid/rallos';
+  const opening = (html, re) => [...html.matchAll(re)].map(m => m[0]);
+  const NEEDS = ' data-wp-interact';
+
+  it('full: every .obj row, .lnk, .dg and <summary> opens with it', async () => {
+    const h = await bootPop({ db: RICH });
+    const html = h.content();
+    const rows = opening(h.rows(), /<div class="obj[^"]*"[^>]*>/g);
+    const links = opening(html, /<span class="lnk[^"]*"[^>]*>/g);
+    const dgs = opening(html, /<div class="dg"[^>]*>/g);
+    const sums = opening(html, /<summary[^>]*>/g);
+    expect(rows.length).toBe(3);
+    expect(links.length).toBe(2);        // 📖 Guide page and 🎬 Video
+    expect(dgs.length).toBe(1);
+    expect(sums.length).toBe(2);         // 💰 Live drop table and ⚠ Quarm divergences
+    for (const t of [...rows, ...links, ...dgs, ...sums]) expect(t, t).toContain(NEEDS);
+    // …and the pending section card's Guide page link, which is its own template.
+    h.byId.nextBtn.fire('click'); h.byId.nextBtn.fire('click');      // Rallos → Vallon → the pending Phase 2 card
+    const pending = opening(h.content(), /<span class="lnk[^"]*"[^>]*>/g);
+    expect(pending.length).toBe(1);
+    expect(pending[0]).toContain(NEEDS);
+  });
+
+  it('mini: the checklist rows and the ↗ carry it too', async () => {
+    const h = await bootPop({ mini: true, db: RICH });
+    const rows = opening(h.rows(), /<div class="obj[^"]*"[^>]*>/g);
+    const go = opening(h.content(), /<span class="lnk mini-go"[^>]*>/g);
+    expect(rows.length).toBe(3);
+    expect(go.length).toBe(1);
+    for (const t of [...rows, ...go]) expect(t, t).toContain(NEEDS);
+  });
+
+  it('every class the page’s delegated list names is built with it, wherever the page builds it (no new clickable slips by)', () => {
+    const js = stripJs(inlineScript(popHtml));
+    const sel = js.match(/var _IA_SEL = '([^']+)'/)[1].split(',').map(s => s.trim());
+    const native = new Set(['button', 'select', 'input', 'textarea', 'a']);    // the preload's own tags
+    let built = 0;
+    for (const s of sel) {
+      if (native.has(s)) continue;
+      // A class: every `class="name …` in a template; the tag: every `<summary`. Each must name data-wp-interact
+      // in the same opening tag (the closest `>` after it, allowing for the string pieces the tags are built from).
+      const re = s[0] === '.' ? new RegExp('class="' + s.slice(1) + '[ "\']', 'g') : new RegExp('<' + s + '[ >]', 'g');
+      let m;
+      let n = 0;
+      while ((m = re.exec(js))) {
+        n++; built++;
+        const tag = js.slice(m.index, m.index + 280);
+        expect(tag, s + ' built without data-wp-interact: ' + tag.slice(0, 120)).toContain('data-wp-interact');
+      }
+      expect(n, s + ' is in the delegated list but the page never builds it').toBeGreaterThan(0);
+    }
+    expect(built).toBeGreaterThanOrEqual(12);     // .obj ×1, .lnk ×5, .dg ×1, summary ×3, .qcopy ×1, .qnext ×1 today
   });
 });

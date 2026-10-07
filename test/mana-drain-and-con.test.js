@@ -29,6 +29,7 @@ const conBlock   = sliceBlock(agent, 'const CON_STANDINGS = [', '\n];')
 const playerBlock = sliceBlock(agent, 'function _targetPlayerInfo(st, selfChar, cached) {', '\nfunction buildMobInfo() {')
   .replace(/\nfunction buildMobInfo\(\) \{$/, '');
 const tsBlock = agent.match(/const TS_RX = [^\n]+/)[0] + '\n' + sliceBlock(agent, 'function parseEqTimestamp(line) {', '\n}');
+const zealLevelBlock = sliceBlock(agent, 'function _zealLevelFor(name) {', '\n}');
 
 // The real catalog entries' drain shapes (eqemu_spells, bot 3.1.147).
 const CATALOG = [
@@ -38,8 +39,12 @@ const CATALOG = [
   { name: "Denon`s Dissension", drain: { b: 5, f: 101, m: 0 }, durf: 0, dur: 0 },
 ];
 
-function load({ mobs = {}, zeal = {}, who = {}, hist = {} } = {}) {
+// raidPipe / group = { ageMs, members }: Zeal's type-5 and type-6 samples (type 6's `data` is a JSON string).
+function load({ mobs = {}, zeal = {}, who = {}, hist = {}, raidPipe = null, group = null } = {}) {
   const pre = `
+    const _lastRaidPipe = ${raidPipe ? `{ at: Date.now() - ${raidPipe.ageMs || 0}, members: ${JSON.stringify(raidPipe.members)} }` : 'null'};
+    const _zeal = { lastSamples: ${group ? `{ '6': { at: Date.now() - ${group.ageMs || 0}, obj: { type: 6, data: ${JSON.stringify(JSON.stringify(group.members))} } } }` : '{}'} };
+    ${zealLevelBlock}
     const fs = { readFileSync() { throw new Error('none'); }, writeFileSync() {} };
     const path = { join: (...a) => a.join('/') };
     const __dirname = '/tmp';
@@ -221,6 +226,51 @@ describe('a player on Target Info', () => {
     red.noteConsiderLevel(L('Tovrin regards you indifferently -- what would you like your tombstone to say?'), 'Nyssara');
     expect(red._targetPlayerInfo(st('Tovrin'), 'Nyssara', { mob: null })).toMatchObject({ level: null, level_min: null, con_colour: null });
   });
+  // The guild lead, 2026-10-04: "We shouldn't have a gap in our own players levels." Zeal's raid and
+  // group rosters carry the exact CURRENT level, so it outranks an even con and history. Only a live
+  // /who (not /anon) outranks it. Level 59 here, against a 60 con and a 58 history, tells them apart.
+  describe('a level from Zeal (the guild lead, 2026-10-04)', () => {
+    const anonFaeder = { faeder: { name: 'Faeder', anonymous: true } };
+    const histFaeder = { faeder: { class: 'Bard', level: 58 } };
+    const conEven = (m) => m.noteConsiderLevel(L('Faeder regards you indifferently -- looks like quite a gamble.'), 'Nyssara');
+    const raid59 = { ageMs: 1000, members: [{ name: 'Faeder', class: 'Bard', level: '59' }] };
+    const group59 = { ageMs: 1000, members: [{ name: 'Faeder', level: 59 }] };
+
+    it('a raid member: the exact level, beating an even con and history', () => {
+      const m = load({ zeal: me('Nyssara', 60), who: anonFaeder, hist: histFaeder, raidPipe: raid59 });
+      conEven(m);
+      expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({
+        level: 59, level_src: 'zeal', level_min: null, level_max: null, history_level: 58 });
+    });
+    it('a group mate sending the level (/pipeverbose): the same', () => {
+      const m = load({ zeal: me('Nyssara', 60), who: anonFaeder, hist: histFaeder, group: group59 });
+      conEven(m);
+      expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 59, level_src: 'zeal' });
+    });
+    it('beats history on its own, with no con at all', () => {
+      const m = load({ zeal: me('Nyssara', 60), who: anonFaeder, hist: histFaeder, raidPipe: raid59 });
+      expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 59, level_src: 'zeal' });
+    });
+    it('a live /who still wins', () => {
+      const m = load({ zeal: me('Nyssara', 60), hist: histFaeder, raidPipe: raid59,
+        who: { faeder: { name: 'Faeder', class: 'Bard', level: 57, anonymous: false } } });
+      conEven(m);
+      expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 57, level_src: 'who' });
+    });
+    it('an /anon /who row does not: Zeal still fills in', () => {
+      const m = load({ zeal: me('Nyssara', 60), hist: histFaeder, raidPipe: raid59,
+        who: { faeder: { name: 'Faeder', class: 'Bard', level: 57, anonymous: true } } });
+      expect(m._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 59, level_src: 'zeal' });
+    });
+    it('a stale sample, or a group sample with no level, changes nothing: even con, then history', () => {
+      const stale = load({ zeal: me('Nyssara', 60), who: anonFaeder, hist: histFaeder, raidPipe: { ...raid59, ageMs: 130_000 } });
+      conEven(stale);
+      expect(stale._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 60, level_src: 'con' });
+      const bare = load({ zeal: me('Nyssara', 60), who: anonFaeder, hist: histFaeder,
+        group: { ageMs: 1000, members: [{ name: 'Faeder', spawn_id: 4 }] } });
+      expect(bare._targetPlayerInfo(st('Faeder'), 'Nyssara', { mob: null })).toMatchObject({ level: 58, level_src: 'history' });
+    });
+  });
   it('says when there is nothing to drain', () => {
     const m = load({ who: { rethlan: { class: 'Bard', level: 60 }, zarrin: { class: 'Warrior', level: 60 } } });
     expect(m._targetPlayerInfo(st('Rethlan'), 'Nyssara', { mob: null }).drain_immune).toBe(true);
@@ -255,5 +305,12 @@ describe('the Target Info card', () => {
   });
   it('an even-con level says so', () => {
     expect(card({ class: 'Bard', level: 60, level_src: 'con' })).toContain('level <b>60</b> <span style="color:#8b949e">(even con)</span>');
+  });
+  // Zeal's level is exact and current, so it reads like /who: no "(last seen)" tag.
+  it('a Zeal level is exact, so it carries no tag, as with /who', () => {
+    expect(card({ class: 'Bard', level: 59, level_src: 'zeal' })).toBe(card({ class: 'Bard', level: 59, level_src: 'who' }));
+    expect(card({ class: 'Bard', level: 59, level_src: 'zeal' })).toContain('level <b>59</b>');
+    expect(card({ class: 'Bard', level: 59, level_src: 'zeal' })).not.toContain('last seen');
+    expect(card({ class: 'Bard', level: 58, level_src: 'history' })).toContain('(last seen)');
   });
 });

@@ -27,6 +27,8 @@ const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
 const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
 const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
 const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
+// The per-mob procs/stuns tally keys by these two (the HUD's target block carries the counts).
+const mobKey = sliceBlock(agent, 'function _normMobName(v) {', '\n}') + '\n' + sliceBlock(agent, 'function _provableTargetId(observer, targetName) {', '\n}');
 
 // Catalog: the real costs/recasts from eqemu_spells.
 const CATALOG = [
@@ -59,6 +61,7 @@ function load({ zeal = {}, et = null, blind = {} } = {}) {
     // real where they are pure, inert where they would touch the network.
     ${noManaRx}
     ${pipeCandidate}
+    ${mobKey}
     const _discReadyAt = new Map();
     const _mobInfoByName = new Map();
     const MOB_INFO_TTL_MS = 60000;
@@ -183,9 +186,10 @@ describe('damage', () => {
     expect(n).toEqual({ dmg: 45000, secs: 150, fights: 2, avg_dps: 300 });
   });
 
-  it('this fight: live damage over elapsed time', () => {
+  it('this fight: live DAMAGE (not threat) over elapsed time', () => {
+    // swing/spell carry threat (a taunt and resists inflate them); dmg is what was actually dealt.
     const et = { startedAt: new Date(Date.now() - 20_000).toISOString(), targetName: 'a Kromrif warrior',
-      perPlayer: { Aldenmar: { swing: 3000, spell: 1000 }, Brackwyn: { swing: 9000 } } };
+      perPlayer: { Aldenmar: { dmg: 4000, swing: 5200, spell: 1360 }, Brackwyn: { dmg: 9000, swing: 9000 } } };
     const s = load({ zeal: zealFor('Aldenmar', { cls: 'Ranger' }), et })._serializeMeState();
     expect(s.dps.fight.dmg).toBe(4000);
     expect(s.dps.fight.dps).toBe(200);
@@ -362,7 +366,7 @@ describe('the three HUDs', () => {
     // Round four, the guild lead: "The ENRAGES section should just make a red
     // outline for the last 8% of the healthbar" — 10% since 2026-10-02 ("8% is
     // going off too late and I'm getting hit").
-    it(name + ' outlines the last 10% of the target\'s health bar in red for a mob that can enrage', () => {
+    it(name + ' outlines the last 12% of the target\'s health bar in red for a mob that can enrage', () => {
       const RED = /<path d="M([\d.]+) ([\d.]+) A172 172 0 0 1 ([\d.]+) ([\d.]+)" stroke="(?:var\(--red\)|rgba\(248,81,73,0\.6\))"/;
       const can = fn(base), not = fn(cleric);
       const m = can.match(RED);
@@ -371,7 +375,7 @@ describe('the three HUDs', () => {
       // Clockwise degrees from 12 o'clock: the bar runs -44..44, the outline covers its low end only.
       const deg = (x, y) => Math.atan2(x - 200, 200 - y) * 180 / Math.PI;
       expect(deg(+m[1], +m[2])).toBeCloseTo(-44, 0);
-      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.10, 0);
+      expect(deg(+m[3], +m[4]) - deg(+m[1], +m[2])).toBeCloseTo(88 * 0.12, 0);
       expect(can).not.toMatch(/>enrages</);                        // the outline says it; no word
       const on = fn(Object.assign({}, base, { target: Object.assign({}, base.target, { enraged: true }) }));
       expect(on).toContain('ENRAGED');
@@ -901,6 +905,109 @@ describe('the HUD — rounds, damage shield, builder', () => {
     expect(h).toMatch(/<circle[^>]*stroke="var\(--orange\)"/);
     expect(h).toMatch(/font-weight="700">38<\/text>/);
     expect(h).toContain('>DS<');
+  });
+
+  // The guild lead, 2026-10-05: "Hud should have the number of procs that you have had on a mob, as
+  // well as how many stuns/aggro spells you've put into the mob. on the right side of the circle hud
+  // above the damage shield, Procs can go to the right of damage and stuns/aggro spells can go to the
+  // right of that". One short row over the shield button: procs (purple), then stuns/aggro (gold).
+  describe('procs and stuns/aggro on the target', () => {
+    const dsInfo = { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true };
+    const snap = (mine, extra = {}) => s([], Object.assign({
+      target: Object.assign({ name: 'a gnoll warlord', hp_pct: 63 }, mine),
+      combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: [], ds: dsInfo },
+    }, extra));
+    // The row's numbers, left to right: [x, y, size, fill, text].
+    const row = (h) => {
+      const g = (h.match(/<g class="mine">([\s\S]*?)<\/g>/) || [])[1] || '';
+      return [...g.matchAll(/<text x="([\d.]+)" y="([\d.]+)" font-size="([\d.]+)" fill="([^"]+)" text-anchor="start" font-weight="700">(\d+)<\/text>/g)]
+        .map(m => [+m[1], +m[2], +m[3], m[4], m[5]]);
+    };
+
+    it('draws procs, then stuns/aggro to their right — purple, then gold — over the shield button', () => {
+      reset();
+      const h = R.renderHud(snap({ my_procs: 7, my_stuns: 3 }));
+      const [procs, stuns] = row(h);
+      expect(procs.slice(3)).toEqual(['var(--purple)', '7']);
+      expect(stuns.slice(3)).toEqual(['var(--gold)', '3']);
+      expect(stuns[0]).toBeGreaterThan(procs[0]);
+      expect(stuns[1]).toBe(procs[1]);                                  // one row
+      // The shield button: its circle (cx 286, cy 272, r 13) — the row sits above its top and clear of its middle.
+      const btn = h.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="13" fill="rgba\(13,17,23,0\.72\)"/);
+      expect(btn).not.toBeNull();
+      expect(procs[1]).toBeLessThan(+btn[2] - 13);
+      expect(h.indexOf('class="mine"')).toBeGreaterThan(h.indexOf('>DS<'));   // drawn after the button, over it in the markup
+      expect(h.match(/<path d="M2\.2 -5\.5[^>]*fill="var\(--purple\)"/)).not.toBeNull();   // a bolt for procs
+      expect(h.match(/<path d="M0 -5\.5[^>]*fill="var\(--gold\)"/)).not.toBeNull();         // a spark for stuns
+    });
+
+    it('a 0 stays, dim — the way the shield button does — and a number lights its own colour', () => {
+      reset();
+      const [procs, stuns] = row(R.renderHud(snap({ my_procs: 0, my_stuns: 3 })));
+      expect(procs.slice(3)).toEqual(['var(--dim)', '0']);
+      expect(stuns.slice(3)).toEqual(['var(--gold)', '3']);
+      expect(R.renderHud(snap({ my_procs: 0, my_stuns: 0 }))).toMatch(/fill="var\(--dim\)"[^>]*opacity="0\.6"/);
+    });
+
+    it('nothing without a live target, on a corpse, or from an agent that sends neither', () => {
+      reset();
+      expect(R.renderHud(snap({ my_procs: 7, my_stuns: 3 }, { target: null }))).not.toContain('class="mine"');
+      expect(R.renderHud(snap({ my_procs: 7, my_stuns: 3, corpse: true }))).not.toContain('class="mine"');
+      expect(R.renderHud(snap({}))).not.toContain('class="mine"');
+    });
+
+    it('is a builder part, on by default, with a size slider — off, the row goes and the shield button stays', () => {
+      reset();
+      expect(R.HUD_DEFAULTS.procs).toBe(1);
+      const hits = R.HUD_PARTS.find(g => g[0] === 'Hits')[1];
+      expect(hits.map(it => it[0])).toContain('procs');
+      expect(stripJs(meHtml)).toMatch(/var HUD_SIZED = \[[^\]]*'procs'/);
+      R.hudParts.procs = 0;
+      const h = R.renderHud(snap({ my_procs: 7, my_stuns: 3 }));
+      expect(h).not.toContain('class="mine"');
+      expect(h).toContain('>DS<');
+      reset();
+    });
+
+    it('its size slider scales it — up to 1.15×, which is as big as its band allows', () => {
+      reset();
+      const px = () => row(R.renderHud(snap({ my_procs: 7, my_stuns: 3 })))[0][2];
+      const plain = px();
+      const near = (got, want) => expect(Math.abs(got - want)).toBeLessThan(0.11);   // the size is written to a tenth
+      R.hudParts.sizes = { procs: 1.1 };
+      near(px(), plain * 1.1);
+      R.hudParts.sizes = { procs: 1.6 };
+      near(px(), plain * 1.15);                                          // capped
+      R.hudParts.sizes = { all: 1.6 };
+      near(px(), plain * 1.15);
+      reset();
+    });
+
+    // The band is fixed: below the last row of your hits (a column's last baseline, y 239.5), above the
+    // shield column's top line (capitals at y 251.6 at the largest text), and in the ring — flush
+    // right against it, out of the open middle — whatever the numbers or the text size.
+    it('stays in its band, inside the ring and out of the middle — big numbers, largest text', () => {
+      const hout = R.HIT_LANES.hout, lastHit = hout.y + (hout.rows - 1) * R.HIT_STEP;
+      const dsTop = R.HIT_LANES.hds.y - 0.72 * R.HIT_SIZE * 1.6;
+      for (const sizes of [{}, { procs: 1.6 }, { all: 1.6 }, { all: 0.7 }]) {
+        for (const [p, st] of [[7, 3], [128, 14], [9999, 999]]) {
+          reset();
+          R.hudParts.sizes = sizes;
+          const [a, b] = row(R.renderHud(snap({ my_procs: p, my_stuns: st })));
+          for (const [x, y, size, , txt] of [a, b]) {
+            expect(y - 0.72 * size, txt).toBeGreaterThanOrEqual(lastHit);         // its capitals clear the last hit row's baseline
+            expect(y, txt).toBeLessThanOrEqual(dsTop);                            // its baseline over the shield column's capitals
+            const w = txt.length * 0.6 * size;
+            const edge = 200 + Math.sqrt(R.LANE_EDGE_R ** 2 - (y - 200) ** 2);
+            expect(x + w, txt).toBeLessThanOrEqual(edge + 0.1);                   // inside the ring (x is written to a tenth)
+          }
+          // The whole row (a chip starts one em before its number) clear of the open middle, em box and all.
+          const left = a[0] - a[2], top = a[1] - a[2];
+          expect(Math.hypot(Math.max(left, 200) - 200, top - 200), JSON.stringify([p, st, sizes])).toBeGreaterThan(95);
+        }
+      }
+      reset();
+    });
   });
 
   it('the builder switches parts off — and nothing else moves', () => {

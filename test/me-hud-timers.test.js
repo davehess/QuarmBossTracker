@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
-import { readSource, ROOT, sliceBlock } from './_source-slice.js';
+import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
 
 const agent = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
 const meBlock = sliceBlock(agent, '// ── Me overlay (the guild lead, 2026-09-24)', '\nfunction _serializeTankState() {')
@@ -25,6 +25,20 @@ const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
 const failRx = agent.match(/const _CAST_FAIL_RX = [^\n]+/)[0];
 const noManaRx = agent.match(/const _NO_MANA_CLASSES = [^\n]+/)[0];
 const pipeCandidate = sliceBlock(agent, 'function _pipeCandidateOf(st, key) {', '\n}');
+const zealLevel = sliceBlock(agent, 'function _zealLevelFor(name) {', '\n}');
+
+// Your own casts and what they land as — the REAL chain the tail runs (noteSelfCast, then
+// resolveSelfCastLanding, then _meNoteMyLanding), and the two helpers the per-mob counters key by.
+const castChain = [
+  agent.match(/const _CAST_BEGIN_RX = [^\n]+/)[0],
+  agent.match(/const _recentSelfCast = new Map\(\);[^\n]*/)[0],
+  agent.match(/const SELF_CAST_WINDOW_MS = [^\n]+/)[0],
+  sliceBlock(agent, 'function _normMobName(v) {', '\n}'),
+  sliceBlock(agent, 'function _provableTargetId(observer, targetName) {', '\n}'),
+  sliceBlock(agent, 'function _zealTargetForChar(charLower) {', '\n}'),
+  sliceBlock(agent, 'function noteSelfCast(line, character) {', '\n}'),
+  sliceBlock(agent, 'function resolveSelfCastLanding(line, observer) {', '\n}'),
+].join('\n');
 
 const dsSlack = agent.match(/const DS_UNLISTED_SLACK = [^\n]+/)[0];
 const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.match(/const _SLAIN_YOU_RX = [^\n]+/)[0];
@@ -32,13 +46,18 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
-  '_xpNoteRawLine', '_xpPending', '_xpFlush'];
+  '_xpNoteRawLine', '_xpPending', '_xpFlush',
+  'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
 
-function load({ zeal = {}, victim = null, dsKnown = 0, player = null } = {}) {
+function load({ zeal = {}, victim = null, dsKnown = 0, player = null, spells = [] } = {}) {
   const pre = `
-    const _spellByNameLower = new Map();
+    const _spellByNameLower = new Map(${JSON.stringify(spells.map(e => [e.name.toLowerCase(), e]))});
+    function _petOwnerByName() { return null; }
+    ${castChain}
     const _zealState = ${JSON.stringify(zeal)};
-    const whoData = new Map();
+    const whoData = new Map(Object.entries(globalThis.__who || {}));
+    const _zeal = { lastSamples: globalThis.__zealSamples || {} };
+    ${zealLevel}
     const _raidClassByName = new Map();
     const CHARM_SPELLS = new Map();
     const stats = { currentEncounterThreat: null, characterInventories: globalThis.__invs || {} };
@@ -281,6 +300,18 @@ describe('disciplines', () => {
 describe('target read-outs', () => {
   const st = (extra = {}) => ({ target_name: 'a gnoll warlord', zone: 12, gauges: [], ...extra });
 
+  // FB-54: a slow on a Reverse Slow mob hastes it — the target state carries the flag beside unslowable.
+  it('reverse_slow comes from the mob-info row\'s Reverse Slow special, beside unslowable', () => {
+    const h = load();
+    h._mobInfoByName.set('magmaton|12', { at: clock, mob: { specials: ['Unslowable', 'Reverse Slow — slowing hastes it'] } });
+    const t = h._meTargetExtras(st({ target_name: 'Magmaton' }), 'Aldenmar', clock);
+    expect(t.reverse_slow).toBe(true);
+    expect(t.unslowable).toBe(true);
+    h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });
+    expect(h._meTargetExtras(st(), 'Aldenmar', clock).reverse_slow).toBe(false);
+    expect(h._meTargetExtras(st({ target_name: 'a gnoll shaman' }), 'Aldenmar', clock).reverse_slow).toBeNull();   // no row yet: unknown, not "no"
+  });
+
   it('enrage and unslowable come from the mob-info row; ENRAGED from the server\'s own lines', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage', 'Unslowable'] } });
@@ -302,19 +333,19 @@ describe('target read-outs', () => {
   // The guild lead, 2026-10-02: "Enrage timer and TTS should go off at 10%, not 8%, because it's
   // going off too late and I'm getting hit. And then when it ends, it should no longer be red
   // underneath the name."
-  it('says "Enrage soon" once as the target crosses 10%, re-arms for a fresh mob, and an ended enrage clears', () => {
+  it('says "Enrage soon" once as the target crosses 12%, re-arms for a fresh mob, and an ended enrage clears', () => {
     const h = load();
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     globalThis.__enragePushed = [];
     const at = (hp, id = 7) => { globalThis.__enrageTgt = st({ target_hp_pct: hp, target_id: id }); h._tickEnrageWarn(clock); };
-    at(40); at(11);
-    expect(globalThis.__enragePushed).toHaveLength(0);              // 11% is not yet
-    at(10); at(9); at(4);
-    expect(globalThis.__enragePushed).toHaveLength(1);              // once, at 10%
+    at(40); at(13);
+    expect(globalThis.__enragePushed).toHaveLength(0);              // 13% is not yet
+    at(12); at(9); at(4);
+    expect(globalThis.__enragePushed).toHaveLength(1);              // once, at 12%
     expect(globalThis.__enragePushed[0]).toMatchObject({ tts: 'Enrage soon', scope: 'enrage', color: 'red' });
     at(9, 8);                                                       // another of the same name, already low
     expect(globalThis.__enragePushed).toHaveLength(2);
-    at(100, 7); at(10, 7);                                          // a respawn under the old id re-arms
+    at(100, 7); at(12, 7);                                          // a respawn under the old id re-arms
     expect(globalThis.__enragePushed).toHaveLength(3);
     // A mob that cannot enrage says nothing.
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: [] } });
@@ -324,7 +355,7 @@ describe('target read-outs', () => {
     h._mobInfoByName.set('a gnoll warlord|12', { at: clock, mob: { specials: ['Enrage'] } });
     say(h, 'Aldenmar', 'a gnoll warlord has become ENRAGED.');
     let t = h._meTargetExtras(st(), 'Aldenmar', clock);
-    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 10 });
+    expect(t).toMatchObject({ enraged: true, enrage_ended: false, enrage_pct: 12 });
     say(h, 'Aldenmar', 'a gnoll warlord is no longer enraged.');
     t = h._meTargetExtras(st(), 'Aldenmar', clock);
     expect(t).toMatchObject({ enraged: false, enrage_ended: true });   // the red goes
@@ -658,6 +689,14 @@ describe('side arcs: the rampage target and raiders running low', () => {
     expect(s.low_hp).toEqual([{ name: 'Nyssara', hp_pct: 9 }, { name: 'Brackwyn', hp_pct: 18 }, { name: 'Zarrin', hp_pct: 24 }]);
   });
 
+  // The guild lead, 2026-10-05, on a thin arc at the HUD's top left reading "1 6%": the XP / AA / gem
+  // gauges carry text and a percent too, and were listed as low raiders.
+  it('lists only group members\' health bars, never the XP, AA, cast, tick or spell-gem gauges', () => {
+    const others = [4, 5, 7, 8, 9, 10, 16, 17, 23, 24, 25, 26, 33].map((slot) => ({ slot, text: '1', hp_pct: 6 }));
+    const z = { Aldenmar: { charInfo: [{ id: 3, value: 'Cleric' }], gauges: gauges.concat(others), updatedAt: clock } };
+    expect(load({ zeal: z })._serializeMeState().low_hp).toEqual([{ name: 'Brackwyn', hp_pct: 18 }]);
+  });
+
   it('a stale raid window is ignored, and the list holds three at most', () => {
     globalThis.__raidPipe = { at: clock - 60_000, members: [{ name: 'Nyssara', hp_pct: 9 }] };
     expect(load({ zeal: Z() })._serializeMeState().low_hp.map(m => m.name)).toEqual(['Brackwyn']);
@@ -680,7 +719,7 @@ describe('side arcs: the rampage target and raiders running low', () => {
 // that are together during the day and find what compositions work and in what area in what zone,
 // with what mobs we're killing" · "Also track when we have an XP potion on".
 describe('XP events', () => {
-  afterEach(() => { vi.useRealTimers(); globalThis.__uploads = null; });
+  afterEach(() => { vi.useRealTimers(); globalThis.__uploads = null; globalThis.__who = null; globalThis.__raidPipe = null; globalThis.__zealSamples = null; });
   const zeal = (xp, aa, extra = {}) => ({ Aldenmar: Object.assign({
     charInfo: [{ id: 2, value: '58' }, { id: 3, value: 'Cleric' }, { id: 26, value: xp + '%' }, { id: 27, value: aa + '%' }, { id: 71, value: '3' }],
     gauges: [{ slot: 11, text: 'Brackwyn', hp_pct: 90 }, { slot: 12, text: 'Corvale', hp_pct: 100 }],
@@ -719,6 +758,34 @@ describe('XP events', () => {
     const [a, b] = h._xpPending;
     expect(b).toMatchObject({ kind: 'solo', xp_before: 41.5, xp_after: 43, potion: false, mob: null });
     expect(Date.parse(b.at)).toBe(Date.parse(a.at) + 1);
+  });
+
+  // The guild lead, 2026-10-04: "We shouldn't have a gap in our own players levels." An /anon group mate
+  // has no /who level, but Zeal does: the raid roster always, the group pipe with /pipeverbose on.
+  it('a group mate\'s level comes from Zeal when /who has none, and /who wins when it has one', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    globalThis.__raidPipe = { at: clock - 1000, members: [{ name: 'Brackwyn', class: 'Bard', level: '60' }] };
+    globalThis.__zealSamples = { '6': { at: clock - 1000, obj: { type: 6, character: 'Aldenmar',
+      data: JSON.stringify([{ name: 'Corvale', spawn_id: 9, level: 57 }]) } } };
+    const h = load({ zeal: zeal(41.5, 10) });
+    h._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending[0].group_members).toMatchObject([{ name: 'Brackwyn', level: 60 }, { name: 'Corvale', level: 57 }]);
+
+    globalThis.__who = { brackwyn: { name: 'Brackwyn', class: 'Bard', level: 59, anonymous: false } };
+    const w = load({ zeal: zeal(41.5, 10) });
+    w._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(w._xpPending[0].group_members[0]).toMatchObject({ name: 'Brackwyn', level: 59 });
+  });
+
+  it('no Zeal level for a group mate (no /pipeverbose, not in the raid) stays null', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval'] });
+    globalThis.__zealSamples = { '6': { at: clock - 1000, obj: { type: 6, data: JSON.stringify([{ name: 'Corvale', spawn_id: 9 }]) } } };
+    const h = load({ zeal: zeal(41.5, 10) });
+    h._xpNoteRawLine(ts(clock) + 'You gain party experience!!', 'Aldenmar', clock);
+    vi.advanceTimersByTime(3000);
+    expect(h._xpPending[0].group_members.map(g => g.level)).toEqual([null, null]);
   });
 
   it('raid experience is its own kind', () => {
@@ -826,6 +893,154 @@ describe('weapon procs', () => {
     h._meNoteCastFailed(ts(clock) + 'Your spell fizzles!', 'Aldenmar');   // the tail calls it beside _meNoteRawLine
     swing(h, 88, 1000); anon(h, 70, 1100);
     expect(procs(h)).toEqual([[70, true]]);
+  });
+});
+
+// The guild lead, 2026-10-05: "Hud should have the number of procs that you have had on a mob, as
+// well as how many stuns/aggro spells you've put into the mob." Procs are the purple ones on the
+// hit ledger; a stun or an aggro spell counts when it LANDS (your own cast, resolved by its
+// cast_on_other text) and the catalog says it is a stun (cc) or adds hate (hate, effect 92 > 0).
+describe('procs and stuns/aggro put into the target', () => {
+  const MOB = 'a gnoll warlord';
+  const Z = { get zeal() { return { Aldenmar: { charInfo: [{ id: 3, value: 'Monk' }], gauges: [], target_name: MOB, target_id: 7, updatedAt: clock } }; } };
+  const SPELLS = [
+    { id: 216, name: 'Stun', good: 0, cc: ['stun'], other: 'is struck by a sudden force.' },
+    { id: 1223, name: 'Terror of Death', good: 0, hate: 450, other: 'is consumed by deadly terrors.' },
+    { id: 1741, name: 'Jolt', good: 0, other: "'s head snaps back." },               // takes hate OFF: the catalog sends it no hate
+    { id: 202, name: 'Ice Comet', good: 0, rt: 3, other: 'is struck by a comet of ice.' },
+  ];
+  const iso = (ms) => new Date(ms).toISOString();
+  const swing = (h, mob = MOB, dt = 0) => h._meNoteHit('Aldenmar', { ts: iso(clock + dt), type: 'damage', attacker: null, defender: mob, ability: 'punch', amount: 45 });
+  const anon = (h, n, mob = MOB, dt = 0) => h._meNoteHit('Aldenmar', { ts: iso(clock + dt), type: 'damage', attacker: null, defender: mob, ability: 'non-melee', spellName: 'non-melee', amount: n });
+  // [procs, stuns] the HUD would read for a target (its name and Zeal spawn id).
+  const mine = (h, id = 7, name = MOB) => {
+    const t = h._meTargetExtras({ target_name: name, target_id: id, zone: 12, gauges: [] }, 'Aldenmar', clock);
+    return [t.my_procs, t.my_stuns];
+  };
+  // One log line the way the tail takes it: your cast begins, what it landed as, the raw hook. The
+  // stamp is the log's own shape ("Thu Sep 24 20:00:00 2026") — the landing event is dated from it.
+  const eqts = (ms) => { const p = new Date(ms).toString().split(' '); return '[' + [p[0], p[1], p[2], p[4], p[3]].join(' ') + '] '; };
+  const tail = (h, msg) => {
+    const line = eqts(clock) + msg;
+    h.noteSelfCast(line, 'Aldenmar');
+    const ev = h.resolveSelfCastLanding(line, 'Aldenmar');
+    if (ev) { ev.target_id = h._provableTargetId('Aldenmar', ev.target); h._meNoteMyLanding('Aldenmar', ev); }
+    h._meNoteRawLine(line, 'Aldenmar');
+  };
+  const cast = (h, spell, landing, who = MOB) => { tail(h, 'You begin casting ' + spell + '.'); clock += 2000; if (landing) tail(h, who + ' ' + landing); };
+
+  it('counts your weapon procs — the ones the hit ledger paints purple — whichever prints first', () => {
+    const h = load({ zeal: Z.zeal });
+    swing(h); anon(h, 71, MOB, 200);                 // after the swing
+    anon(h, 70, MOB, 4000); swing(h, MOB, 4300);     // before it
+    expect(mine(h)).toEqual([2, 0]);
+    // …the same two the ledger marks, and the number rides the target block of /api/me
+    expect(h._serializeMeState().combat.feed.filter(f => f.proc)).toHaveLength(2);
+    expect(h._serializeMeState().target).toMatchObject({ name: MOB, my_procs: 2, my_stuns: 0 });
+  });
+
+  it('a spell hit with no swing near it, or your own nuke, is not a proc', () => {
+    const h = load({ zeal: Z.zeal });
+    swing(h); anon(h, 70, MOB, 4000);                // no swing within 1.5 s
+    say(h, 'Aldenmar', 'You begin casting Ice Comet.');
+    swing(h, MOB, 9000); anon(h, 180, MOB, 9100);    // the cast lands beside a swing
+    expect(mine(h)).toEqual([0, 0]);
+  });
+
+  it('procs are counted on the mob they hit', () => {
+    const h = load({ zeal: Z.zeal });
+    swing(h, 'a bat'); anon(h, 50, 'a bat', 100);
+    expect(mine(h, null, 'a bat')).toEqual([1, 0]);
+    expect(mine(h)).toEqual([0, 0]);
+  });
+
+  it('…and one that was your damage shield after all is given back', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 14 });
+    swing(h); anon(h, 14, MOB, 100);
+    expect(mine(h)).toEqual([1, 0]);                 // it looks like a proc…
+    h._meNoteHit('Aldenmar', { ts: iso(clock + 200), type: 'damage', attacker: MOB, defender: 'You', ability: 'hits', amount: 57 });
+    expect(mine(h)).toEqual([0, 0]);                 // …until the mob's hit says it was the shield
+  });
+
+  it('a stun counts when it LANDS — not when you begin casting it, and not when it is resisted', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    tail(h, 'You begin casting Stun.');
+    expect(mine(h)).toEqual([0, 0]);
+    clock += 2000; tail(h, MOB + ' is struck by a sudden force.');
+    expect(mine(h)).toEqual([0, 1]);
+    cast(h, 'Stun', null);                           // resisted: no landing line prints
+    expect(mine(h)).toEqual([0, 1]);
+  });
+
+  it('an aggro spell counts with the stuns, as one number — and a spell that takes hate off does not', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    cast(h, 'Stun', 'is struck by a sudden force.');
+    cast(h, 'Terror of Death', 'is consumed by deadly terrors.');
+    expect(mine(h)).toEqual([0, 2]);
+    cast(h, 'Jolt', "'s head snaps back.", MOB);     // effect 92 with a NEGATIVE base: de-aggro
+    expect(mine(h)).toEqual([0, 2]);
+  });
+
+  it('a nuke is neither a stun nor an aggro spell', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    cast(h, 'Ice Comet', 'is struck by a comet of ice.');
+    expect(mine(h)).toEqual([0, 0]);
+  });
+
+  it('a stun landing with no cast of yours behind it (a proc, or someone else\'s) is not yours', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    tail(h, MOB + ' is struck by a sudden force.');
+    expect(mine(h)).toEqual([0, 0]);
+  });
+
+  it('one cast lands once on a mob: the same line from someone else\'s stun inside its window is not yours too', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    cast(h, 'Stun', 'is struck by a sudden force.');
+    clock += 3000; tail(h, MOB + ' is struck by a sudden force.');
+    expect(mine(h)).toEqual([0, 1]);
+    cast(h, 'Stun', 'is struck by a sudden force.');   // your next cast is your next stun
+    expect(mine(h)).toEqual([0, 2]);
+  });
+
+  it('is kept per mob by name and Zeal spawn id — another spawn of the same name starts at 0', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    swing(h); anon(h, 71, MOB, 100);
+    cast(h, 'Stun', 'is struck by a sudden force.');
+    expect(mine(h, 7)).toEqual([1, 1]);
+    expect(mine(h, 8)).toEqual([0, 0]);              // a second gnoll warlord, targeted
+    expect(mine(h, null)).toEqual([1, 1]);           // no id on the pipe: the name alone
+    expect(mine(h, 7, 'a bat')).toEqual([0, 0]);
+  });
+
+  it('its death clears it: the next mob of that name starts at 0, and counts up again', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    swing(h); anon(h, 71, MOB, 100);
+    cast(h, 'Stun', 'is struck by a sudden force.');
+    expect(mine(h)).toEqual([1, 1]);
+    say(h, 'Aldenmar', 'You have slain ' + MOB + '!');
+    expect(mine(h)).toEqual([0, 0]);
+    clock += 15_000; swing(h); anon(h, 60, MOB, 100);   // (past the stun's 12 s: a cast claims the next anonymous spell hit)
+    expect(mine(h)).toEqual([1, 0]);
+  });
+
+  it('an entry nobody touched for half an hour is dropped — a mob whose death went unseen', () => {
+    const h = load({ zeal: Z.zeal, spells: SPELLS });
+    swing(h); anon(h, 71, MOB, 100);
+    clock += 29 * 60_000;
+    expect(mine(h)).toEqual([1, 0]);
+    clock += 2 * 60_000;
+    expect(mine(h)).toEqual([0, 0]);
+  });
+
+  it('no target: no target block; a corpse carries no counts', () => {
+    const h = load({ zeal: { Aldenmar: { charInfo: [], gauges: [], updatedAt: clock } } });
+    expect(h._serializeMeState().target).toBeNull();
+    expect(h._meTargetExtras({ target_name: "a gnoll warlord's corpse", zone: 12, gauges: [] }, 'Aldenmar', clock)).toEqual({ corpse: true });
+  });
+
+  it('the tail hands every landing of yours to the counter, after its spawn id is known', () => {
+    const tailBody = stripJs(sliceBlock(agent, 'const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding', 'if (!_shouldSuppressBuffLanding(bcEvt)'));
+    expect(tailBody).toMatch(/bcEvt\.target_id = _provableTargetId\(b\.character, bcEvt\.target\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
   });
 });
 

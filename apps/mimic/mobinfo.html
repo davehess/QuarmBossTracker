@@ -63,6 +63,14 @@
   .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
   .fac .up{color:#56d364}
   .fac .dn{color:#f85149}
+  /* What the mob IS on, who will assist it, what it helps (above the on-kill list). Wraps — the
+     window is small and a zone can hold a dozen helpers. The faction name is the one link; the
+     handshake and the click are wired with the PQDI chip's, below. */
+  .fhead{margin-bottom:3px}
+  .fmeta{font-size:10px;line-height:1.35;padding:1px 0;color:#c9d1d9;overflow-wrap:anywhere}
+  .fmeta .fk{color:#6e7681}
+  .facl{color:#d2a8ff;cursor:pointer;text-decoration:none;border-bottom:1px dotted #a371f7}
+  .facl:hover{color:#e9d5ff;border-bottom-color:#d2a8ff}
   /* F/Q/V sub-tabs (Faction / Quest / Vendor), the quest rows and their copy chips. */
   .fqvtabs{display:flex;gap:3px;margin:6px 0 3px}
   .fqvtab{background:rgba(255,255,255,0.04);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
@@ -112,6 +120,9 @@
   .slowbadge .sm{color:#f0b429}
   .slowbadge .by{color:#c9a227;font-weight:400;font-style:italic;font-size:10px}
   .slowbadge .st2{color:#e6c34a;margin-left:auto}
+  /* FB-54 reverse slow: red, not amber — a slow on this mob hastes it. */
+  .slowbadge.rev{background:rgba(248,81,73,0.16);border-color:rgba(248,81,73,0.6);color:#ff7b72}
+  .slowbadge.rev .sc,.slowbadge.rev .sn,.slowbadge.rev .sm{color:#ff7b72}
   /* observed buffs on the current target (timed from the cast that landed) */
   .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
   .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
@@ -220,6 +231,9 @@
   /* Timer rows: amber is slow on every overlay (root will be blue #58a6ff). */
   .mini-row.slow .mini-lab{color:#f0b429;font-size:10px;letter-spacing:.3px}
   .mini-row.slow .mini-bar i{background:#f0b429}
+  .mini-row.rev .mini-lab{color:#f85149;font-size:10px;letter-spacing:.3px}
+  .mini-row.rev .mini-bar i{background:#f85149}
+  .mini-row.rev .mini-t{color:#ff7b72;font-weight:700}
   .mini-t{color:#e6edf3}
   .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
   .mini .ht.ok{color:#56d364}
@@ -472,7 +486,14 @@
     return '<div class="tbuffs" data-wp-sect="casting"><div class="hdr">casting</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
-  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
+  // FB-54: 'Reverse Slow' — a slow on it hastes it — is the one a raid must not miss.
+  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1,
+                     'Reverse Slow — slowing hastes it':1 };
+  function isReverseSlow(mob){
+    if (!mob || !Array.isArray(mob.specials)) return false;
+    for (var i = 0; i < mob.specials.length; i++) if (/^Reverse Slow/.test(mob.specials[i])) return true;
+    return false;
+  }
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
 
   // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
@@ -492,14 +513,15 @@
   // saying. see_hide is 0 rows today; the branch costs nothing and covers a
   // future sync that sets one.
   // A player target's card (2026-09-24). Level says where it came from — an
-  // exact /who, an even con, a con RANGE (in EverQuest's own con colours), or
-  // the last level /who history saw — because those are different confidences.
+  // exact /who or Zeal's raid and group roster (both exact, so no tag), an even con, a con
+  // RANGE (in EverQuest's own con colours), or the last level /who history saw — because
+  // those are different confidences.
   var CON_COLOURS = { green: '#56d364', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: '#f85149' };
   var CON_NAMES = { green: 'green', lightblue: 'light blue', blue: 'blue', white: 'even', yellow: 'yellow', red: 'red' };
   function playerCard(pl){
     var lvl = '';
     if (pl.level != null) {
-      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
+      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' || pl.level_src === 'zeal' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
     } else if (pl.level_min != null || pl.level_max != null) {
       lvl = 'level <b>' + (pl.level_max == null ? pl.level_min + '+' : (pl.level_min === pl.level_max ? pl.level_min : pl.level_min + '–' + pl.level_max)) + '</b>'
           + (pl.history_level ? ' <span style="color:#8b949e">· last seen ' + pl.history_level + '</span>' : '');
@@ -626,6 +648,14 @@
         bodyEl.__wpHtml = null;
         return;
       }
+      // The faction name on the Faction sub-tab: its wolfpack.quest page, same IPC as the PQDI chip.
+      var fl = t.closest('.facl');
+      if (fl) {
+        ev.preventDefault();
+        var furl = fl.getAttribute('data-facl');
+        if (furl) { try { window.mimic.openExternal(furl); } catch (e) {} }
+        return;
+      }
       var a = t.closest('.pqdi');
       if (!a) return;
       ev.preventDefault();
@@ -633,11 +663,11 @@
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
   }
@@ -669,11 +699,50 @@
   // client log — ⚠ names live in eqemu_faction_list_full because the short
   // faction_list table is EMPTY in our mirror, and a null name silently drops
   // the row. Sorted biggest swing first by the bot.
+  //
+  // Above the on-kill list sits the faction the mob IS on, linked to its wolfpack.quest page,
+  // who in this zone will assist it, and which factions it helps (the guild lead, 2026-10-06:
+  // "Faction should say the faction the mob is on and link to the faction page ... Faction
+  // should also list who the creatures will assist"). The bot sends faction_primary
+  // {id,name}, faction_assists [{id,name}], faction_assisted_by [{name,npc_id}] (+ a
+  // faction_assisted_by_more count); an older bot sends none and the tab reads as it did.
   function renderFactions(mob){
     var f = mob && mob.factions;
+    var prim = mob && mob.faction_primary;
+    var by = mob && mob.faction_assisted_by;
+    var byMore = Number(mob && mob.faction_assisted_by_more) || 0;
+    var helps = mob && mob.faction_assists;
+    // Names as plain escaped text; a name that repeats (five guards of one kind) is folded to "×5".
+    function nameList(list){
+      var seen = [], count = [];
+      (Array.isArray(list) ? list : []).forEach(function(x){
+        var n = x && x.name ? String(x.name) : '';
+        if (!n) return;
+        var i = seen.indexOf(n);
+        if (i < 0) { seen.push(n); count.push(1); } else count[i]++;
+      });
+      return seen.map(function(n, i){ return esc(n) + (count[i] > 1 ? ' ×' + count[i] : ''); });
+    }
+    var head = '';
+    if (prim && prim.name) {
+      // The id is interpolated into a URL, so only a plain integer makes a link; else the bare name.
+      var link = /^\d+$/.test(String(prim.id))
+        ? '<a class="facl" data-facl="https://wolfpack.quest/db/faction/' + prim.id + '" title="Open this faction on wolfpack.quest (opens your browser)">' + esc(prim.name) + ' ↗</a>'
+        : esc(prim.name);
+      head += '<div class="fmeta"><span class="fk">Faction:</span> ' + link + '</div>';
+    }
+    var byNames = nameList(by);
+    if (byNames.length || byMore > 0) {
+      head += '<div class="fmeta"><span class="fk">Assisted by:</span> ' + byNames.join(', ')
+            + (byMore > 0 ? (byNames.length ? ' ' : '') + '<span class="fk">+' + byMore + ' more</span>' : '') + '</div>';
+    }
+    var helpNames = nameList(helps);
+    if (helpNames.length) head += '<div class="fmeta"><span class="fk">Helps:</span> ' + helpNames.join(', ') + '</div>';
+    if (head) head = '<div class="fhead">' + head + '</div>';
     if (!f || !f.length) {
-      return '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
-           + (mob ? 'No faction change recorded for this mob.' : '') + '</div>';
+      var none = '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
+               + (mob ? (head ? 'No faction change on kill.' : 'No faction change recorded for this mob.') : '') + '</div>';
+      return head ? '<div class="facwrap">' + head + none + '</div>' : none;
     }
     var rows = f.map(function(r){
       var up = Number(r.value) > 0;
@@ -682,7 +751,7 @@
            +   '<span class="fv ' + (up ? 'up' : 'dn') + '">' + (up ? '+' : '') + r.value + '</span>'
            + '</div>';
     }).join('');
-    return '<div class="facwrap"><div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+    return '<div class="facwrap">' + head + '<div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
   }
 
   // ── F/Q/V: Faction · Quest · Vendor ───────────────────────────────────────
@@ -911,6 +980,11 @@
          +   '<span class="mini-t wp-mini-num">' + (rem != null ? fmtSecs(rem) : '?') + '</span>'
          + '</div>';
   }
+  function _reverseSlowTip(sl){
+    return 'Reverse slow — a slow on this mob hastes it'
+      + (sl && sl.name ? ' (a slow landed: ' + sl.name + (sl.magnitude && !sl.ambiguous ? ', so it is hasted ~' + sl.magnitude + '%' : ', so it is hasted') + ')' : '')
+      + '. Do not slow it.';
+  }
   function miniTargetHtml(mi, nm, htChip){
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, Math.round(mi.target_hp_pct))) : null;
     // The 50/25 steps every mini bar shares (preload's _WP_MINI_CSS).
@@ -921,7 +995,15 @@
           +   '<span class="mini-nm wp-mini-name">' + esc(nm) + '</span>' + (htChip || '')
           + '</div>';
     var sl = mi.target_slow;
-    if (sl && sl.name) {
+    if (isReverseSlow(mi.mob)) {
+      // FB-54: red where the amber slow row would be. The agent records no slow on
+      // these mobs; one that slipped in before the mob's row arrived reads as haste.
+      h += '<div class="mini-row rev" title="' + esc(_reverseSlowTip(sl)) + '">'
+         +   '<span class="mini-lab wp-mini-num">REV</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:100%"></i></span>'
+         +   '<span class="mini-t wp-mini-num">' + (sl && sl.name ? 'HASTED' : 'DON’T SLOW') + '</span>'
+         + '</div>';
+    } else if (sl && sl.name) {
       var tip = sl.ambiguous ? 'Slowed — strength unknown: the game prints one message for several slows'
               : esc(sl.name) + (sl.magnitude ? ' · ' + sl.magnitude + '%' : '') + (sl.caster ? ' · by ' + esc(sl.caster) : '');
       h += _miniTimerRow('slow', 'SLOW', sl.remaining_secs, sl.total_secs, tip);
@@ -1001,6 +1083,14 @@
               + ' · EQ slows do not stack — strongest shown';
       }
       slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
+    }
+    // FB-54: a reverse-slow mob (a slow on it hastes it) gets a red badge in the amber
+    // one's place — "don't slow", or "hasted" when a slow did land.
+    if (isReverseSlow(mob)) {
+      var rsl = mi.target_slow, rsHasted = !!(rsl && rsl.name);
+      var rsMag = (rsHasted && rsl.magnitude && !rsl.ambiguous) ? ' <span class="sm">+' + rsl.magnitude + '%</span>' : '';
+      slowBadge = '<div class="slowbadge rev" title="' + esc(_reverseSlowTip(rsl)) + '">⛔ <span class="sc">REVERSE SLOW</span> '
+                + '<span class="sn">' + (rsHasted ? 'it’s hasted' : 'don’t slow') + '</span>' + rsMag + '</div>';
     }
     // ▭ Mini: health and the slow timer only. The header, tabs, resists, mana
     // and the buff/cast lists are the full overlay's; the title bar hides by CSS.
@@ -1198,7 +1288,8 @@
       var pp = mi._enc.perPlayer;
       var names = Object.keys(pp);
       var rows = names
-        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: (v.swing||0)+(v.proc||0)+(v.spell||0), took: v.took||0 }; })
+        // Raw damage (dmg), not swing+proc+spell — those are threat, and taunts and resists inflate them.
+        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: v.dmg||0, took: v.took||0 }; })
         .filter(function(r){ return r.dmg > 0 || r.took > 0; })
         .sort(function(a,b){ return b.dmg - a.dmg; })
         .slice(0, 5);
