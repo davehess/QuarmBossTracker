@@ -14943,7 +14943,9 @@ function _meClickies(character) {
     const have = fresh ? full * c.copies : c.count;
     return { name: c.name, left: charged ? Math.max(0, have - used) : null, unlimited, used, worn: c.worn,
       kind: _clickyKind(c.effect), max: full };
-  }).sort((a, b) => ((_CLICKY_KIND_RANK[a.kind] ?? 3) - (_CLICKY_KIND_RANK[b.kind] ?? 3))
+  // Charged items only (the guild lead, 2026-10-07: "tracked clickies should only be for charged items, not
+  // unlimited clickies"): an unlimited clicky, or one whose charges are unknown, has nothing to count down.
+  }).filter(c => c.left != null).sort((a, b) => ((_CLICKY_KIND_RANK[a.kind] ?? 3) - (_CLICKY_KIND_RANK[b.kind] ?? 3))
     || (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_LIST_MAX);
 }
 // Damage shield from WORN gear (the guild lead, 2026-10-04: "Missing my additional DS from my neck
