@@ -21038,11 +21038,23 @@ function renderNetMeter(s) {
 // and ONLY when it is opened, a chip changes, or ↻ is pressed: there is no poll and no render-loop entry. The
 // section is painted from _wpMp alone, so its HTML is byte-stable and holds no "5m ago" timestamp. In local
 // mode (no token) the agent answers signed_out without a call and the tab says to sign in.
+// Two sources (the guild lead, 2026-10-06: "toggle between their data from logs and the guild's data"): Guild
+// is the above; My logs asks the same route with source=local and gets what THIS PC's Mimic recorded from the
+// player's own log, in the same shape, with no call and no sign-in. And a way to explore either one ("chop it
+// up by days, zones, mobs, search bar"): a search box with the mobs as suggestions, a Zone picker, and By day,
+// which groups the list under each raid night. The chart follows the filters because the answer does.
 // The chart is a fixed-viewBox SVG string like _wpNetChart: boss fights #4493e8, other fights #4a5568, the
 // raid-night average #a371f7. #f85149 is reserved for death/critical and is never used here.
 var WP_MP_WINDOWS = [['1d', '1 day'], ['7d', '1 week'], ['30d', '30 days'], ['90d', '90 days'], ['exp', 'This expansion']];
 var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
-var _wpMp = { w: '7d', scope: 'bosses', char: '', chars: [], showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+// src: 'guild' | 'local'. zone: the picked zone's id as text (the bot's integer id for Guild, the zone's name
+// for My logs: the id an answer gives each zone). q: what the search box asked for; qBox is what is typed in it
+// right now (the debounce below is what turns one into the other). zones/mobs are the last answer's pickers, and
+// facets says it had any: an older bot sends none, and the tab then leaves the pickers out.
+var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+// What a search may hold, as the agent's whitelist has it: letters, digits, spaces and ' \` - _, at most 40.
+function wpMpCleanQ(v) { return String(v || '').replace(/[^A-Za-z0-9 '\`_-]/g, '').replace(/ +/g, ' ').trim().slice(0, 40); }
+function _wpMpZoneOk(src, z) { z = String(z || ''); return src === 'local' ? z.length > 0 && z.length <= 64 : /^[1-9][0-9]{0,2}$/.test(z); }
 // The last choice, per machine (the dashboard's convention for these is localStorage, like wp:bufferClass).
 try {
   var _wpMpSaved = JSON.parse(localStorage.getItem('wp:myParses') || 'null');
@@ -21050,6 +21062,10 @@ try {
     if (WP_MP_WINDOWS.some(function (x) { return x[0] === _wpMpSaved.w; })) _wpMp.w = _wpMpSaved.w;
     if (_wpMpSaved.scope === 'all') _wpMp.scope = 'all';
     if (/^[A-Za-z]{1,24}$/.test(String(_wpMpSaved.char || ''))) _wpMp.char = String(_wpMpSaved.char);
+    if (_wpMpSaved.src === 'local') _wpMp.src = 'local';
+    if (_wpMpZoneOk(_wpMp.src, _wpMpSaved.zone)) _wpMp.zone = String(_wpMpSaved.zone);
+    _wpMp.q = _wpMp.qBox = wpMpCleanQ(_wpMpSaved.q);
+    _wpMp.day = _wpMpSaved.day === true;
   }
 } catch (e) { void e; }
 var _WP_MP_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -21078,6 +21094,31 @@ function _wpMpNightMs(night) {
     var wall = Date.UTC(y, mo, da, 22, 0, 0);         // 22:00 read as if it were UTC
     return wall - off(wall - off(wall));
   } catch (e) { return new Date(y, mo, da, 22, 0, 0).getTime(); }
+}
+// The raid night a fight belongs to ("YYYY-MM-DD"), as the bot's \`nights\` reckons it: the Eastern date, with the
+// night running to 6 am (Eastern wall clock minus six hours). Falls back to the viewer's own clock minus six
+// hours if Intl cannot do zones. The Day headers group fights by this, and look their numbers up in \`nights\` by it.
+var _wpMpEtFmt = null;
+function _wpMpNightKey(ms) {
+  if (!isFinite(ms)) return '';
+  var d;
+  try {
+    if (!_wpMpEtFmt) _wpMpEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    var o = {};
+    _wpMpEtFmt.formatToParts(new Date(ms)).forEach(function (x) { o[x.type] = +x.value; });
+    d = new Date(Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - 6 * 3600000);
+  } catch (e) {
+    var l = new Date(ms - 6 * 3600000);
+    d = new Date(Date.UTC(l.getFullYear(), l.getMonth(), l.getDate()));
+  }
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate());
+}
+// "Sun Oct 4" for a raid night's own date, whatever the viewer's clock says.
+function _wpMpNightLabel(night) {
+  var p = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(night || ''));
+  if (!p) return '—';
+  return _WP_MP_DOW[new Date(Date.UTC(+p[1], +p[2] - 1, +p[3])).getUTCDay()] + ' ' + _WP_MP_MON[+p[2] - 1] + ' ' + (+p[3]);
 }
 // The top of the DPS axis: the first round figure at or above the highest point.
 function _wpMpNice(top) {
@@ -21179,21 +21220,44 @@ function wpMpChart(d, asOf) {
   }
   return s + '</svg>';
 }
-// The newest twelve fights, newest first. The Character column only exists when more than one character is in the data.
-function wpMpTable(d) {
-  var all = (d && d.fights) || [], seen = {}, nChars = 0, i;
-  for (i = 0; i < all.length; i++) { var c = String(all[i].char || ''); if (c && !seen[c]) { seen[c] = 1; nChars++; } }
-  var rows = all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
-  var h = '<table style="font-size:12px;margin:10px 0 4px"><thead><tr><th>When</th><th>Fight</th>' + (nChars > 1 ? '<th>Character</th>' : '')
-    + '<th ' + th + '>DPS</th><th ' + th + '>vs usual</th><th ' + th + '>Rank</th></tr></thead><tbody>';
+// The newest twelve fights, newest first; with \`byDay\`, every fight in the answer, newest first, under a header
+// for each raid night ("Sun Oct 4 · 12 fights · avg 142 · best 210", the numbers from \`nights\`, which cover the
+// whole window, so a night cut by the 400-fight limit still says how many it had). The Character column only
+// exists when more than one character is in the data, the Zone column when any fight has a zone (an older bot
+// sends none), and the Rank column not for My logs (a log has no rank among the guild).
+function wpMpTable(d, byDay) {
+  var all = (d && d.fights) || [], seen = {}, nChars = 0, anyZone = false, i;
+  for (i = 0; i < all.length; i++) {
+    var c = String(all[i].char || '');
+    if (c && !seen[c]) { seen[c] = 1; nChars++; }
+    if (all[i].zone) anyZone = true;
+  }
+  var noRank = !!(d && d.source === 'local');
+  var rows = byDay ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var cols = 4 + (nChars > 1 ? 1 : 0) + (anyZone ? 1 : 0) + (noRank ? 0 : 1);
+  var nmap = {};
+  ((d && d.nights) || []).forEach(function (n) { if (n && n.night) nmap[n.night] = n; });
+  var h = '<table style="font-size:12px;margin:10px 0 4px"><thead><tr><th>When</th><th>Fight</th>' + (anyZone ? '<th>Zone</th>' : '') + (nChars > 1 ? '<th>Character</th>' : '')
+    + '<th ' + th + '>DPS</th><th ' + th + '>vs usual</th>' + (noRank ? '' : '<th ' + th + '>Rank</th>') + '</tr></thead><tbody>';
+  var lastNight = null;
   for (i = 0; i < rows.length; i++) {
-    var f = rows[i], rank = Number(f.rank);
-    h += '<tr><td class="dim" style="white-space:nowrap">' + _wpMpWhen(Date.parse(f.t), true) + '</td>'
+    var f = rows[i], rank = Number(f.rank), ms = Date.parse(f.t);
+    if (byDay) {
+      var night = _wpMpNightKey(ms);
+      if (night !== lastNight) {
+        lastNight = night;
+        var nt = nmap[night], nf = nt ? Number(nt.fights) || 0 : 0;
+        h += '<tr><td colspan="' + cols + '" style="padding-top:10px;font-weight:600;border-bottom:1px solid var(--border)">' + esc(_wpMpNightLabel(night))
+          +  (nt ? ' · ' + nf + (nf === 1 ? ' fight' : ' fights') + ' · avg ' + Math.round(Number(nt.avg_dps) || 0) + ' · best ' + Math.round(Number(nt.best_dps) || 0) : '') + '</td></tr>';
+      }
+    }
+    h += '<tr><td class="dim" style="white-space:nowrap">' + (byDay ? (isFinite(ms) ? _wpMpClock(new Date(ms)) : '—') : _wpMpWhen(ms, true)) + '</td>'
       +  '<td><span style="color:' + (f.boss ? '#4493e8' : '#4a5568') + '">●</span> ' + _wpMpFightLink(f) + '</td>'
+      +  (anyZone ? '<td class="dim">' + (f.zone ? esc(f.zone) : '—') + '</td>' : '')
       +  (nChars > 1 ? '<td>' + esc(f.char) + '</td>' : '')
       +  '<td ' + td + '>' + Math.round(Number(f.dps) || 0) + '</td>'
       +  '<td ' + td + '>' + _wpMpVsUsual(f.dps, f.usual) + '</td>'
-      +  '<td ' + td + '>' + (f.rank != null && isFinite(rank) ? '#' + Math.round(rank) : '<span class="dim">—</span>') + '</td></tr>';
+      +  (noRank ? '' : '<td ' + td + '>' + (f.rank != null && isFinite(rank) ? '#' + Math.round(rank) : '<span class="dim">—</span>') + '</td>') + '</tr>';
   }
   return h + '</tbody></table>';
 }
@@ -21225,12 +21289,17 @@ function wpMpSplitChars(chars, selected) {
 var WP_MP_HIDDEN_TIP = 'Hidden on wolfpack.quest/me (Hide from lists)';
 // The whole tab, from _wpMp alone.
 function wpMpHtml() {
-  var m = _wpMp, i, split = wpMpSplitChars(m.chars, m.char);
+  var m = _wpMp, i, split = wpMpSplitChars(m.chars, m.char), local = m.src === 'local';
   var chip = function (k, v, label, on, title, dim) {
     return '<button type="button" class="wp-btn' + (on ? ' pri' : '') + '" data-k="' + k + '" data-v="' + esc(v) + '" onclick="wpMpSet(this)"' + (title ? ' title="' + esc(title) + '"' : '') + (dim ? ' style="opacity:.55"' : '') + '>' + esc(label) + '</button>';
   };
   var row = function (label, inner) { return '<span style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="wp-lbl" style="margin-right:4px">' + label + '</span>' + inner + '</span>'; };
-  var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from the guild&rsquo;s record</span></h2>';
+  var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from '
+    + (local ? 'this PC&rsquo;s logs' : 'the guild&rsquo;s record') + '</span></h2>';
+  // Where the numbers come from: the guild's merged parses, or what this PC's own log recorded.
+  h += '<div style="margin:0 0 8px">' + row('Data',
+    chip('src', 'guild', 'Guild', !local, "The guild's merged parses of your fights")
+    + chip('src', 'local', 'My logs', local, "What this PC's Mimic recorded from your own log. Nothing here is uploaded or merged.")) + '</div>';
   var wins = '', scopes = '', chars = '';
   for (i = 0; i < WP_MP_WINDOWS.length; i++) wins += chip('w', WP_MP_WINDOWS[i][0], WP_MP_WINDOWS[i][1], m.w === WP_MP_WINDOWS[i][0]);
   for (i = 0; i < WP_MP_SCOPES.length; i++) scopes += chip('scope', WP_MP_SCOPES[i][0], WP_MP_SCOPES[i][1], m.scope === WP_MP_SCOPES[i][0]);
@@ -21244,7 +21313,7 @@ function wpMpHtml() {
     chars = chip('char', '', 'All', !m.char);
     for (i = 0; i < split.shown.length; i++) chars += cchip(split.shown[i]);
     if (split.folded.length) {
-      chars += '<button type="button" class="wp-btn ghost" onclick="wpMpMore()" title="Characters with no fights in 30 days, and ones hidden on wolfpack.quest/me">'
+      chars += '<button type="button" class="wp-btn ghost" onclick="wpMpMore()" title="Characters with no fights in 30 days' + (local ? '' : ', and ones hidden on wolfpack.quest/me') + '">'
         + (m.showAll ? 'fewer' : '+' + split.folded.length + ' more') + '</button>';
       if (m.showAll) for (i = 0; i < split.folded.length; i++) chars += cchip(split.folded[i]);
     }
@@ -21253,22 +21322,42 @@ function wpMpHtml() {
   h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">'
     +  row('Window', wins) + row('Show', scopes) + (chars ? row('Character', chars) : '')
     +  '<span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">'
-    +  '<button type="button" class="wp-btn ghost" onclick="wpMpRefresh()" title="Ask the guild server again">↻</button>'
-    +  '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>'
+    +  '<button type="button" class="wp-btn ghost" onclick="wpMpRefresh()" title="' + (local ? 'Read this PC&rsquo;s log again' : 'Ask the guild server again') + '">↻</button>'
+    +  (local ? '' : '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>')
     +  '</span></div>';
   var dimNote = function (t) { return '<div class="dim" style="font-size:12px;line-height:1.5;margin:6px 0">' + t + '</div>'; };
   if (split.folded.length) {
-    h += dimNote('Characters with no fights in 30 days, and ones you hid on '
+    h += dimNote(local ? 'Characters with no fights in 30 days are tucked away.' : 'Characters with no fights in 30 days, and ones you hid on '
       + '<a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none">wolfpack.quest/me</a>, are tucked away.');
   }
-  if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses.') + '</div></div>';
-  if (m.state === 'unavailable') return h + dimNote("Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
+  // Search, Zone, By day, Clear. The pickers come from the last answer (the zones and mobs in the window and
+  // scope, before the search and zone narrow them) and wait for one; By day only regroups what is drawn.
+  var fl = '';
+  if (m.facets) {
+    var inStyle = 'background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px';
+    var zs = (m.zones || []).filter(function (z) { return z && z.id != null && z.name; }).sort(function (a, b) {
+      return (Number(b.fights) || 0) - (Number(a.fights) || 0) || (String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : 0);
+    });
+    var zopts = '<option value="">All zones</option>', mopts = '';
+    for (i = 0; i < zs.length; i++) zopts += '<option value="' + esc(zs[i].id) + '"' + (String(zs[i].id) === m.zone ? ' selected' : '') + '>' + esc(zs[i].name) + ' (' + (Number(zs[i].fights) || 0) + ')</option>';
+    (m.mobs || []).slice(0, 200).forEach(function (x) { if (x && x.name) mopts += '<option value="' + esc(x.name) + '">'; });
+    fl += row('Search', '<input type="search" id="wpMpQ" list="wpMpMobs" maxlength="40" autocomplete="off" placeholder="mob name" value="' + esc(m.qBox) + '" oninput="wpMpTyping(this)" style="' + inStyle + ';width:170px">'
+        + '<datalist id="wpMpMobs">' + mopts + '</datalist>')
+      +  row('Zone', '<select id="wpMpZoneSel" onchange="wpMpZone(this)" style="' + inStyle + ';max-width:220px">' + zopts + '</select>');
+  }
+  fl += chip('day', m.day ? '0' : '1', 'By day', m.day, 'Group the list under each raid night');
+  if (m.q || m.zone) fl += '<button type="button" class="wp-btn ghost" onclick="wpMpClear()" title="Drop the search and the zone">Clear</button>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">' + fl + '</div>';
+  if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses. My logs works without signing in.') + '</div></div>';
+  if (m.state === 'unavailable') return h + dimNote(local ? "Couldn't read this PC's fight log. Try again in a minute." : "Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
   if (m.state !== 'ok' || !m.data) return h + dimNote('Loading…') + '</div></div>';
   var d = m.data, fights = d.fights || [];
   if (!fights.length) {
-    h += dimNote(m.scope === 'bosses'
-      ? "No boss fights in this window. Most Planes of Power bosses aren't on the boss list yet, so try Everything."
-      : 'No parses in this window yet.');
+    h += dimNote(m.q || m.zone ? 'Nothing matches those filters in this window. Clear them to see everything.'
+      : m.scope === 'bosses'
+        ? (local ? "No boss fights in your logs for this window. Mimic only knows a fight was a boss when it already holds that mob's details, so try Everything."
+                 : "No boss fights in this window. Most Planes of Power bosses aren't on the boss list yet, so try Everything.")
+        : (local ? 'No fights recorded from your logs in this window yet. Mimic adds each fight as it ends.' : 'No parses in this window yet.'));
   } else {
     var total = d.total != null ? d.total : fights.length, nn = (d.nights || []).length;
     h += '<div style="font-size:12px;margin:0 0 4px"><b>' + esc((d.window && d.window.label) || '') + '</b> <span class="dim">· ' + total + (total === 1 ? ' fight' : ' fights')
@@ -21276,14 +21365,25 @@ function wpMpHtml() {
       +  wpMpChart(d, m.asOf)
       +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
       +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
-      +  wpMpTable(d);
+      +  wpMpTable(d, m.day);
     if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
   }
-  return h + dimNote('Numbers start 14 July 2026, when parse merging was fixed.') + '</div></div>';
+  var since = local ? Date.parse(d.since || '') : NaN;
+  return h + dimNote(local ? "From this PC's logs" + (isFinite(since) ? ' since ' + _wpMpDay(since) : '') + '.' : 'Numbers start 14 July 2026, when parse merging was fixed.') + '</div></div>';
 }
-function wpMpRepaint() { setSectionHTML('myparses', wpMpHtml()); }
+// A repaint wipes the search box with the rest of the section, so what is typed in it is read first and the focus
+// and caret are put back (the Buff blocks editor's rule): a keystroke typed while an answer is landing is not lost.
+function wpMpRepaint() {
+  var ae = typeof document !== 'undefined' ? document.activeElement : null, typing = !!(ae && ae.id === 'wpMpQ'), pos = 0;
+  if (typing) { _wpMp.qBox = String(ae.value || ''); pos = ae.selectionStart || 0; }
+  setSectionHTML('myparses', wpMpHtml());
+  if (typing) {
+    var again = document.getElementById('wpMpQ');
+    if (again && again !== document.activeElement) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (e) { void e; } }
+  }
+}
 function wpMpSave() {
-  try { localStorage.setItem('wp:myParses', JSON.stringify({ w: _wpMp.w, scope: _wpMp.scope, char: _wpMp.char })); } catch (e) { void e; }
+  try { localStorage.setItem('wp:myParses', JSON.stringify({ w: _wpMp.w, scope: _wpMp.scope, char: _wpMp.char, src: _wpMp.src, zone: _wpMp.zone, q: _wpMp.q, day: _wpMp.day })); } catch (e) { void e; }
 }
 // Ask the agent. \`fresh\` is the ↻ button: it skips the agent's five-minute copy (the agent still holds a
 // floor of a few seconds between asks). A newer ask makes an older answer irrelevant, whenever it lands.
@@ -21292,7 +21392,8 @@ function wpMpFetch(fresh) {
   m.state = 'loading';
   wpMpRepaint();
   var url = '/api/my-parses?w=' + encodeURIComponent(m.w) + '&scope=' + encodeURIComponent(m.scope)
-    + (m.char ? '&char=' + encodeURIComponent(m.char) : '') + (fresh ? '&fresh=1' : '');
+    + (m.char ? '&char=' + encodeURIComponent(m.char) : '') + (m.zone ? '&zone=' + encodeURIComponent(m.zone) : '') + (m.q ? '&q=' + encodeURIComponent(m.q) : '')
+    + (m.src === 'local' ? '&source=local' : '') + (fresh ? '&fresh=1' : '');
   fetch(url, { cache: 'no-store' })
     .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(function (j) {
@@ -21301,10 +21402,21 @@ function wpMpFetch(fresh) {
       if (!j || j.error || !Array.isArray(j.fights)) { m.state = 'unavailable'; m.data = null; return; }
       m.data = j; m.state = 'ok'; m.asOf = Date.now();
       m.chars = Array.isArray(j.characters) ? j.characters.filter(function (c) { return c && c.name; }) : [];
+      m.zones = Array.isArray(j.zones) ? j.zones : [];
+      m.mobs = Array.isArray(j.mobs) ? j.mobs : [];
+      m.facets = Array.isArray(j.zones) || Array.isArray(j.mobs);
+      var again = false;
       // A remembered character the guild no longer lists for this raider: back to All, once.
-      if (m.char && !m.chars.some(function (c) { return String(c.name).toLowerCase() === m.char.toLowerCase(); })) {
-        m.char = ''; wpMpSave(); wpMpFetch(false);
+      if (m.char && !m.chars.some(function (c) { return String(c.name).toLowerCase() === m.char.toLowerCase(); })) { m.char = ''; again = true; }
+      if (!m.facets) {
+        // An older bot ignored the search and the zone, so what came back is not filtered by them: forget them
+        // rather than show a filter that is not applied (nothing to ask again, the answer is what it is).
+        if (m.zone || m.q || m.qBox) { m.zone = ''; m.q = ''; m.qBox = ''; wpMpSave(); }
+      } else if (m.zone && !m.zones.some(function (z) { return z && String(z.id) === m.zone; })) {
+        // The same for a zone the picker no longer offers (a new window, or the other source): back to All, once.
+        m.zone = ''; again = true;
       }
+      if (again) { wpMpSave(); wpMpFetch(false); }
     })
     .catch(function () { if (seq === m.seq) { m.state = 'unavailable'; m.data = null; } })
     .then(function () { if (seq === m.seq) wpMpRepaint(); });
@@ -21314,7 +21426,47 @@ function wpMpSet(el) {
   if (k === 'w') { if (m.w === v || !WP_MP_WINDOWS.some(function (x) { return x[0] === v; })) return; m.w = v; }
   else if (k === 'scope') { if (m.scope === v || (v !== 'bosses' && v !== 'all')) return; m.scope = v; }
   else if (k === 'char') { if (m.char === v) return; m.char = v; }
+  else if (k === 'src') {
+    if (m.src === v || (v !== 'guild' && v !== 'local')) return;
+    // A zone id means something different on each source, and so do the pickers and the character list.
+    m.src = v; m.zone = ''; m.data = null; m.chars = []; m.zones = []; m.mobs = []; m.facets = false; m.showAll = false;
+  }
+  else if (k === 'day') { m.day = v === '1'; wpMpSave(); wpMpRepaint(); return; }       // only regroups what is drawn: asks nothing
   else return;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// The search box: what is typed is held in qBox at once, and one pause of 300 ms later turns it into the search
+// that is asked for. This is the tab's only timer; each keystroke restarts it.
+var _wpMpTimer = null;
+function wpMpTyping(el) {
+  _wpMp.qBox = el ? String(el.value || '') : '';
+  clearTimeout(_wpMpTimer);
+  _wpMpTimer = setTimeout(wpMpApplyQ, 300);
+}
+function wpMpApplyQ() {
+  var m = _wpMp, q = wpMpCleanQ(m.qBox);
+  _wpMpTimer = null;
+  if (q === m.q) return;
+  m.q = q;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// The Zone picker.
+function wpMpZone(el) {
+  var m = _wpMp, v = el ? String(el.value || '') : '';
+  if (!el || v === m.zone || (v && !_wpMpZoneOk(m.src, v))) return;
+  m.zone = v;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// Clear: drops the search and the zone (By day is a way of reading, not a filter, so it stays).
+function wpMpClear() {
+  var m = _wpMp;
+  if (!m.q && !m.zone && !m.qBox) return;
+  clearTimeout(_wpMpTimer);
+  _wpMpTimer = null;
+  m.q = ''; m.qBox = ''; m.zone = '';
   wpMpSave();
   wpMpFetch(false);
 }
@@ -29900,10 +30052,12 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(_fightHistoryPayload(have)));
       }
       // The dashboard's 📈 My parses tab: the guild's record of THIS raider's fights, proxied from the bot and
-      // cached 5 minutes per (window, scope, character). Always 200 with an `error` field on a miss — the
-      // dashboard reads the body without checking the status. Local mode answers signed_out with no call.
+      // cached 5 minutes per (window, scope, character, zone, search). Always 200 with an `error` field on a
+      // miss — the dashboard reads the body without checking the status. Local mode answers signed_out with no
+      // call. `source=local` is the other half: the fights this PC's own logs recorded, answered from disk with
+      // no call at all (so it works signed out, too).
       if (req.method === 'GET' && req.url && (req.url === '/api/my-parses' || req.url.indexOf('/api/my-parses?') === 0)) {
-        const out = await fetchMyParses(_myParsesParams(req.url));
+        const out = _myParsesIsLocal(req.url) ? myLogsAnswer(_myLogsParams(req.url)) : await fetchMyParses(_myParsesParams(req.url));
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         return res.end(JSON.stringify(out));
       }
@@ -36345,6 +36499,9 @@ function _recordFightHistory(et, character) {
   const boss = et.bossName || et.targetName || null;
   if (!boss) return;
   const startedMs = et.startedAt ? Date.parse(et.startedAt) : 0;
+  // The My parses tab's "My logs" source: this builder's own character, before the ring's one-entry-per-fight
+  // guard below (two characters on one PC each get a row). A nicety, so it can never break History.
+  try { _myFightsNote(et, character); } catch { void 0; }
   stats.fightHistory = Array.isArray(stats.fightHistory) ? stats.fightHistory : [];
   // A multi-log install flushes once per builder, and flush() also propagates
   // to peer builders on the same fight — so the same kill arrives several
@@ -42199,7 +42356,7 @@ function fetchExtendedTarget(character) {
 // ── "My parses" proxy — the dashboard's 📈 My parses tab ────────────────────
 // A member asked (2026-10-06) for a graph of their own parses over a window they pick; the guild lead
 // chose a Mimic tab plus a wolfpack.quest page. The numbers live in Supabase, so this proxies the bot's
-// GET /api/agent/my-parses and keeps each answer for 5 minutes per (window, scope, character): the tab
+// GET /api/agent/my-parses and keeps each answer for 5 minutes per (window, scope, character, zone, search): the tab
 // asks only when it is opened or a chip changes, and re-opening it inside the 5 minutes costs the guild
 // server nothing. The same rule as everything else here: local mode (no token) makes ZERO calls and the
 // tab says to sign in. Only a good answer is cached, so signing in and re-opening the tab works at once.
@@ -42214,17 +42371,27 @@ const _myParsesCache = new Map();      // key → { at, payload }
 const _myParsesInflight = new Map();   // key → Promise<payload>
 // Whitelist before anything is forwarded: a window or scope that is not on the list falls back to the
 // default, and a character that is not a plain EQ name (letters only) is dropped, so the bot only ever
-// sees values this function chose.
+// sees values this function chose. The exploring filters (the guild lead, 2026-10-06: "chop it up by days,
+// zones, mobs, search bar") ride the same rule: `zone` is the bot's integer zone id (1..999, else none) and
+// `q` is a mob-name search of at most 40 letters, digits, spaces and ' ` - _ (anything else is dropped,
+// not trimmed to fit, so the bot never sees a value this function did not choose). An older bot ignores
+// both, which the tab notices from the answer carrying no zones/mobs.
+const MY_PARSES_Q_RX = /^[A-Za-z0-9 '`_-]{1,40}$/;
 function _myParsesParams(url) {
   let sp;
   try { sp = new URL(String(url || ''), 'http://x').searchParams; } catch { sp = new URLSearchParams(); }
   const w = String(sp.get('w') || '').toLowerCase();
   const scope = String(sp.get('scope') || '').toLowerCase();
   const char = String(sp.get('char') || '').trim();
+  const zoneRaw = String(sp.get('zone') || '').trim();
+  const zone = /^\d{1,3}$/.test(zoneRaw) ? parseInt(zoneRaw, 10) : 0;
+  const q = String(sp.get('q') || '').trim();
   return {
     w: MY_PARSES_WINDOWS.includes(w) ? w : '7d',
     scope: MY_PARSES_SCOPES.includes(scope) ? scope : 'bosses',
     char: /^[A-Za-z]{1,24}$/.test(char) ? char : '',
+    zone: zone >= 1 && zone <= 999 ? zone : 0,
+    q: MY_PARSES_Q_RX.test(q) ? q : '',
     fresh: sp.get('fresh') === '1',          // agent-side only: never forwarded to the bot
   };
 }
@@ -42234,7 +42401,8 @@ async function fetchMyParses(params) {
   const opts = _uploadOpts;
   const p = params || {};
   // The sign-in is part of the key so a different raider on the same agent never reads the last one's numbers.
-  const key = [p.w, p.scope, String(p.char || '').toLowerCase(), String(_mimicSessionToken || '').slice(-8)].join('|');
+  const key = [p.w, p.scope, String(p.char || '').toLowerCase(), p.zone > 0 ? p.zone : '', String(p.q || '').toLowerCase(),
+    String(_mimicSessionToken || '').slice(-8)].join('|');
   const hit = _myParsesCache.get(key);
   if (hit && (Date.now() - hit.at) < (p.fresh ? MY_PARSES_FRESH_MIN_MS : MY_PARSES_TTL_MS)) return hit.payload;
   if (_myParsesInflight.has(key)) return _myParsesInflight.get(key);
@@ -42242,7 +42410,9 @@ async function fetchMyParses(params) {
     try {
       const base = opts.botUrl.replace(/\/encounter(\?.*)?$/, '');
       const qs = 'w=' + encodeURIComponent(p.w) + '&scope=' + encodeURIComponent(p.scope)
-        + (p.char ? '&char=' + encodeURIComponent(p.char) : '');
+        + (p.char ? '&char=' + encodeURIComponent(p.char) : '')
+        + (p.zone > 0 ? '&zone=' + p.zone : '')
+        + (p.q ? '&q=' + encodeURIComponent(p.q) : '');
       const headers = { Authorization: 'Bearer ' + opts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
       if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
       const r = await fetch(base + '/my-parses?' + qs, { headers, signal: AbortSignal.timeout(10_000) });
@@ -42259,6 +42429,286 @@ async function fetchMyParses(params) {
   _myParsesInflight.set(key, run);
   run.then(() => { _myParsesInflight.delete(key); });
   return run;
+}
+
+// ── "My logs" — the same tab's other source: what THIS PC saw ───────────────
+// The guild lead, 2026-10-06: "I'd like the user to be able to toggle between their data from logs and the
+// guild's data." Guild is the proxy above (the guild's merged parses). My logs is a slim fight log this agent
+// keeps for the player's OWN characters and it never holds an uploaded-and-merged number: a row is written
+// when a fight ends, from the same hook that feeds the DPS meter's History ring (_recordFightHistory), out of
+// what this machine's own log said. It needs no token and makes no call, so local mode has the whole tab.
+//   • Own = the character whose log this builder is reading (the identity the meter highlights as "you"),
+//     with that character's owned pets credited to it, as the meter does. One row per (character, mob, start
+//     within 8 s): a multi-log flush is one row, and two characters on one PC are two rows.
+//   • zone = where Zeal last said that character stood (the ZONE_NAMES long name); null when Zeal is not
+//     connected, which the tab shows as "—" and leaves out of the Zone picker.
+//   • boss = the catalog's raid_target flag, read from a mob pack or a Mob Info answer this machine already
+//     holds (_myFightIsBoss). The agent has no raid-boss list, so a PC that never held that mob's catalog row
+//     (never signed in, or never looked at the mob) records false.
+//   • logsync.myfights.json: 365 days / 20,000 rows, written 10 s after a change and at exit. The first run
+//     seeds it from the History ring (logsync.fights.json) for the characters whose logs this PC has.
+const MYFIGHTS_FILE = path.join(__dirname, 'logsync.myfights.json');
+const MYFIGHTS_MAX = 20_000;
+const MYFIGHTS_KEEP_MS = 365 * 24 * 3600_000;
+const MYFIGHTS_SAVE_MS = 10_000;
+const MYFIGHTS_DEDUPE_MS = 8_000;           // the ring's own window for "the same fight, flushed twice"
+const MYFIGHTS_ZONE_FRESH_MS = 10 * 60_000;
+const MYFIGHTS_CAP = 400;                   // fights an answer carries, as the guild's does
+const MYFIGHTS_FACET_MAX = 200;
+let _myFights = [];                         // rows, oldest recorded first
+let _myFightsFile = MYFIGHTS_FILE;
+let _myFightsPersist = false;
+let _myFightsTimer = null;
+let _myFightsExitHooked = false;
+
+// The zone a character stood in at its last Zeal snapshot: { id, name }, both null when there is none.
+function _myFightZone(character) {
+  const cl = String(character || '').toLowerCase();
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== cl) continue;
+    const st = _zealState[ch];
+    const id = st ? Number(st.zone) : 0;
+    if (!(id > 0) || Date.now() - (st.updatedAt || 0) > MYFIGHTS_ZONE_FRESH_MS) break;
+    return { id, name: _zoneName(id) || ('Zone ' + id) };
+  }
+  return { id: null, name: null };
+}
+// Is this mob a raid target by the catalog rows this machine already holds? Zone pack first (it works
+// offline), then the Mob Info answer for that zone, then any held row of that name.
+function _myFightIsBoss(mob, zoneId) {
+  try {
+    let m = zoneId != null ? _mobPackLookup(mob, zoneId) : null;
+    if (!m) { const c = _mobInfoByName.get(_mobInfoCacheKey(mob, zoneId)); m = c && c.mob; }
+    if (!m) m = _npcMobInfoFor(mob);
+    return !!(m && m.raid_target);
+  } catch { return false; }
+}
+// The damage a fight credits to `character`: its own row plus every row whose pet_owner is that character
+// (the rule _meNoteFight and the meter's fold both use).
+function _myFightCredit(perPlayer, character) {
+  const me = String(character || '').toLowerCase();
+  let dmg = 0;
+  if (!me) return dmg;
+  for (const [name, p] of Object.entries(perPlayer || {})) {
+    if (p && String(p.pet_owner || name).toLowerCase() === me) dmg += Number(p.dmg) || 0;
+  }
+  return dmg;
+}
+function _myFightRow(startMs, endMs, mob, zone, char, dmg, dur, boss) {
+  return {
+    t: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), mob: String(mob), zone: zone || null,
+    char: String(char), dmg: Math.round(dmg), dur, dps: Math.round(dmg / dur * 10) / 10, boss: !!boss,
+  };
+}
+// Age and cap, wherever the log grows or is read back from disk.
+function _trimMyFights(now = Date.now()) {
+  let keep = _myFights.filter(r => now - Date.parse(r.end) <= MYFIGHTS_KEEP_MS);
+  if (keep.length > MYFIGHTS_MAX) keep = keep.slice(keep.length - MYFIGHTS_MAX);
+  _myFights = keep;
+}
+// The hook: `et` is the fight's last snapshot with flushedAt stamped, `character` the builder's own
+// character. Returns the row it wrote, or null (no start time, no damage, or already written).
+function _myFightsNote(et, character) {
+  const mob = et && (et.bossName || et.targetName);
+  const startMs = et && et.startedAt ? Date.parse(et.startedAt) : 0;
+  if (!mob || !character || !(startMs > 0)) return null;
+  const dmg = _myFightCredit(et.perPlayer, character);
+  if (!(dmg > 0)) return null;
+  const endMs = et.flushedAt || Date.now();
+  const dur = Math.max(1, Math.round((endMs - startMs) / 1000));      // the ring's own durationSec
+  const cl = String(character).toLowerCase(), ml = String(mob).toLowerCase();
+  for (let i = _myFights.length - 1, n = 0; i >= 0 && n < 100; i--, n++) {
+    const r = _myFights[i];
+    if (r.char.toLowerCase() === cl && r.mob.toLowerCase() === ml && Math.abs(Date.parse(r.t) - startMs) < MYFIGHTS_DEDUPE_MS) return null;
+  }
+  const z = _myFightZone(character);
+  const row = _myFightRow(startMs, endMs, mob, z.name, character, dmg, dur, _myFightIsBoss(mob, z.id));
+  _myFights.push(row);
+  _trimMyFights();
+  _saveMyFightsSoon();
+  return row;
+}
+// A row read back from disk: only the known keys, and only if it is a fight (a hand-edited file cannot add more).
+function _cleanMyFightRow(r) {
+  if (!r || typeof r !== 'object') return null;
+  const t = Date.parse(r.t), end = Date.parse(r.end), dmg = Number(r.dmg), dur = Math.max(1, Math.round(Number(r.dur) || 0));
+  const mob = String(r.mob || '').trim().slice(0, 120), char = String(r.char || '').trim().slice(0, 40);
+  if (!(t > 0) || !(end > 0) || !mob || !char || !(dmg > 0) || !(Number(r.dur) > 0)) return null;
+  return _myFightRow(t, end, mob, r.zone ? String(r.zone).slice(0, 64) : null, char, dmg, dur, r.boss === true);
+}
+function _saveMyFights(file = _myFightsFile) {
+  try {
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, savedAt: Date.now(), rows: _myFights }));
+    fs.renameSync(file + '.tmp', file);
+  } catch { /* non-fatal */ }
+}
+function _saveMyFightsSoon() {
+  if (!_myFightsPersist || _myFightsTimer) return;
+  _myFightsTimer = setTimeout(() => { _myFightsTimer = null; _saveMyFights(); }, MYFIGHTS_SAVE_MS);
+  if (_myFightsTimer.unref) _myFightsTimer.unref();
+}
+// true when there was a file to read (even an empty one): that is what tells a first run from a later one.
+function _loadMyFights(file = _myFightsFile, now = Date.now()) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return false; }
+  if (!raw || !Array.isArray(raw.rows)) return false;
+  _myFights = raw.rows.map(_cleanMyFightRow).filter(Boolean);
+  _trimMyFights(now);
+  return true;
+}
+// First run: one row per own character per fight in the History ring. `chars` are the characters whose logs
+// this PC has; the ring does not say which builder wrote an entry, so every one of them that is in an entry's
+// local view (itself or through its pets) gets a row. The ring has no zone, so seeded rows carry none.
+function _seedMyFightsFromRing(chars) {
+  const canon = new Map();
+  for (const c of chars || []) if (c) canon.set(String(c).toLowerCase(), String(c));
+  const rows = [];
+  if (canon.size) {
+    for (const h of stats.fightHistory || []) {
+      if (!h || !h.boss || !(h.endedMs > 0) || !(h.durationSec > 0)) continue;
+      const startMs = h.startedMs > 0 ? h.startedMs : h.endedMs - h.durationSec * 1000;
+      const by = new Map();
+      for (const p of h.local || []) {
+        const k = String((p && (p.pet_owner || p.character)) || '').toLowerCase();
+        if (canon.has(k)) by.set(k, (by.get(k) || 0) + (Number(p.dmg) || 0));
+      }
+      for (const [k, dmg] of by) {
+        if (dmg > 0) rows.push(_myFightRow(startMs, h.endedMs, h.boss, null, canon.get(k), dmg, h.durationSec, _myFightIsBoss(h.boss, null)));
+      }
+    }
+  }
+  rows.sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  _myFights = rows;
+  _trimMyFights();
+  return rows.length;
+}
+// Armed by main() once the watched logs are known (a bare require() never touches the disk).
+function _startMyFightsPersistence() {
+  if (!_loadMyFights()) {
+    _seedMyFightsFromRing((stats.watchedLogs || []).map(w => w && w.character));
+    _saveMyFights();                      // so the next start finds a file and does not seed again
+  }
+  _myFightsPersist = true;
+  if (!_myFightsExitHooked) {
+    _myFightsExitHooked = true;
+    process.on('exit', () => { if (_myFightsTimer) _saveMyFights(); });
+  }
+}
+
+// ── The My logs answer: the guild answer's shape, from the rows above ───────
+// Window labels and era starts mirror utils/myParses.js (keep in step with it, and with EXPANSION_STARTS in
+// web/lib/timeWindow.ts): the same chip means the same span on both sources.
+const MYFIGHTS_WINDOWS = { '1d': ['1 day', 1], '7d': ['1 week', 7], '30d': ['30 days', 30], '90d': ['90 days', 90] };
+const MYFIGHTS_ERAS = [
+  { name: 'PoP', startMs: Date.UTC(2026, 9, 1) }, { name: 'Luclin', startMs: Date.UTC(2025, 9, 1) },
+  { name: 'Velious', startMs: Date.UTC(2025, 3, 1) }, { name: 'Kunark', startMs: Date.UTC(2024, 6, 1) },
+  { name: 'Classic', startMs: 0 },
+];
+function _myLogsWindow(key, now) {
+  if (key === 'life') return { key, label: 'Lifetime', since: null };
+  if (key === 'exp') {
+    const e = MYFIGHTS_ERAS.find(x => now >= x.startMs) || MYFIGHTS_ERAS[MYFIGHTS_ERAS.length - 1];
+    return { key, label: e.name + ' era', since: new Date(e.startMs).toISOString() };
+  }
+  const k = MYFIGHTS_WINDOWS[key] ? key : '7d';
+  return { key: k, label: MYFIGHTS_WINDOWS[k][0], since: new Date(now - MYFIGHTS_WINDOWS[k][1] * 86400_000).toISOString() };
+}
+// The raid-night date a fight belongs to: its Eastern date, with the night running to 6 am (the bot's `nights`:
+// Eastern wall clock minus six hours). Eastern is a whole number of hours from UTC and the date only turns at a
+// whole hour there, so the answer is memoised per UTC hour: a lifetime window is 20,000 rows, not 20,000 Intl calls.
+const _myNightMemo = new Map();
+let _myEtFmt = null;
+function _myNightKey(ms) {
+  const hr = Math.floor(ms / 3600_000);
+  let k = _myNightMemo.get(hr);
+  if (k !== undefined) return k;
+  try {
+    if (!_myEtFmt) {
+      _myEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    }
+    const o = {};
+    for (const x of _myEtFmt.formatToParts(new Date(hr * 3600_000))) o[x.type] = +x.value;
+    k = new Date(Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - 6 * 3600_000).toISOString().slice(0, 10);
+  } catch { k = new Date(hr * 3600_000 - 11 * 3600_000).toISOString().slice(0, 10); }   // no zone data: Eastern is about UTC-5
+  if (_myNightMemo.size > 20_000) _myNightMemo.clear();
+  _myNightMemo.set(hr, k);
+  return k;
+}
+function _myMedian(nums) {
+  const a = nums.slice().sort((x, y) => x - y), n = a.length;
+  return Math.round(n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2);
+}
+// The guild's whitelist for everything but the zone, which here is a zone NAME (the id the answer gives each
+// zone locally), so it takes any short text: it is only ever compared with the names on the rows.
+function _myLogsParams(url) {
+  let sp;
+  try { sp = new URL(String(url || ''), 'http://x').searchParams; } catch { sp = new URLSearchParams(); }
+  return { ..._myParsesParams(url), zone: String(sp.get('zone') || '').trim().slice(0, 64) };
+}
+function _myParsesIsLocal(url) {
+  try { return new URL(String(url || ''), 'http://x').searchParams.get('source') === 'local'; } catch { return false; }
+}
+// The window + scope + character pick the base; the Zone and Mob pickers list what is in that base, and the
+// zone and search filters then narrow it. characters ignore scope, zone and search (a chip does not change
+// with them), exactly as the guild's do.
+function myLogsAnswer(p, now = Date.now()) {
+  p = p || {};
+  const win = _myLogsWindow(p.w, now);
+  const since = win.since ? Date.parse(win.since) : -Infinity;
+  const all = p.scope === 'all';
+  const charL = String(p.char || '').toLowerCase(), zoneL = String(p.zone || '').toLowerCase(), qL = String(p.q || '').toLowerCase();
+  const recentSince = now - 30 * 86400_000;
+  const people = new Map(), base = [], zones = new Map(), mobs = new Map(), hist = new Map();
+  let oldest = Infinity;
+  for (const r of _myFights) {
+    const ms = Date.parse(r.t), cl = r.char.toLowerCase(), ml = r.mob.toLowerCase();
+    if (ms < oldest) oldest = ms;
+    const hk = cl + '|' + ml;
+    if (hist.has(hk)) hist.get(hk).push(r.dps); else hist.set(hk, [r.dps]);
+    let c = people.get(cl);
+    if (!c) people.set(cl, c = { name: r.char, fights: 0, recent: 0 });
+    if (ms >= since) c.fights++;
+    if (ms >= recentSince) c.recent++;
+    if (ms < since || (!all && !r.boss) || (charL && cl !== charL)) continue;
+    base.push({ r, ms });
+    if (r.zone) { const z = zones.get(r.zone); if (z) z.fights++; else zones.set(r.zone, { id: r.zone, name: r.zone, fights: 1 }); }
+    const m = mobs.get(ml); if (m) m.fights++; else mobs.set(ml, { name: r.mob, fights: 1 });
+  }
+  const byFights = (a, b) => b.fights - a.fights || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const sel = base.filter(({ r }) => (!zoneL || (r.zone && r.zone.toLowerCase() === zoneL)) && (!qL || r.mob.toLowerCase().includes(qL)));
+  sel.sort((a, b) => a.ms - b.ms);
+  const usual = new Map();
+  const usualOf = (r) => {
+    const hk = r.char.toLowerCase() + '|' + r.mob.toLowerCase();
+    if (!usual.has(hk)) { const h = hist.get(hk); usual.set(hk, h && h.length >= 3 ? _myMedian(h) : null); }
+    return usual.get(hk);
+  };
+  const nights = new Map();
+  for (const { r, ms } of sel) {
+    const k = _myNightKey(ms);
+    const n = nights.get(k) || { night: k, fights: 0, bosses: 0, sum: 0, best: 0 };
+    n.fights++; if (r.boss) n.bosses++; n.sum += r.dps; if (r.dps > n.best) n.best = r.dps;
+    nights.set(k, n);
+  }
+  return {
+    source: 'local',
+    since: oldest === Infinity ? null : new Date(oldest).toISOString(),
+    window: win,
+    scope: all ? 'all' : 'bosses',
+    characters: [...people.values()]
+      .map(c => ({ name: c.name, active: _isOwnCharacterName(c.name), hidden: false, fights: c.fights, recent: c.recent }))
+      .sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+    total: sel.length,
+    truncated: sel.length > MYFIGHTS_CAP,
+    fights: sel.slice(-MYFIGHTS_CAP).map(({ r }) => ({
+      t: r.t, name: r.mob, zone: r.zone, zone_id: r.zone, boss: r.boss, char: r.char,
+      dps: r.dps, dmg: r.dmg, dur: r.dur, usual: usualOf(r),
+    })),
+    nights: [...nights.values()].sort((a, b) => (a.night < b.night ? -1 : a.night > b.night ? 1 : 0))
+      .map(n => ({ night: n.night, fights: n.fights, bosses: n.bosses, avg_dps: Math.round(n.sum / n.fights), best_dps: Math.round(n.best) })),
+    zones: [...zones.values()].sort(byFights),
+    mobs: [...mobs.values()].sort(byFights).slice(0, MYFIGHTS_FACET_MAX),
+  };
 }
 
 // ── #56 Same-name mob serial tracks (death-boundary + HP-continuity) ─────────
@@ -47712,6 +48162,9 @@ async function main() {
   // The watched characters are known now — re-bind {c} in personal triggers,
   // which loaded before this list existed.
   _recompilePersonalTriggersForChars();
+  // The My parses tab's "My logs" file: loaded here, and on a first run seeded from the History ring for the
+  // characters just registered above.
+  _startMyFightsPersistence();
 
   // Enable the dashboard if stdout is a TTY (terminal). When the agent runs
   // headless under the Windows scheduled task, stdout is redirected and we
@@ -48545,6 +48998,15 @@ module.exports = {
   // The 📈 My parses proxy (2026-10-06): the param whitelist, the fetch with its 5-minute cache.
   _myParsesParams, fetchMyParses, MY_PARSES_TTL_MS, MY_PARSES_FRESH_MIN_MS,
   _resetMyParsesForTest: () => { _myParsesCache.clear(); _myParsesInflight.clear(); },
+  // "My logs": the local fight log behind the tab's second source.
+  _myFightsNote, myLogsAnswer, _myLogsParams, _myParsesIsLocal, _myNightKey, _myFightIsBoss, _myFightZone,
+  _loadMyFights, _saveMyFights, _seedMyFightsFromRing, _trimMyFights, _startMyFightsPersistence,
+  MYFIGHTS_MAX, MYFIGHTS_KEEP_MS, MYFIGHTS_CAP, MYFIGHTS_SAVE_MS,
+  _myFightsForTest: () => _myFights,
+  _mobInfoByNameForTest: () => _mobInfoByName,
+  _setMyFightsForTest: (rows) => { _myFights = rows || []; },
+  // Point the log at a temp file and arm its debounced save (no argument: disarm and clear it again).
+  _myFightsPersistForTest: (file) => { _myFightsFile = file || MYFIGHTS_FILE; _myFightsPersist = !!file; if (!file) { _myFights = []; if (_myFightsTimer) { clearTimeout(_myFightsTimer); _myFightsTimer = null; } } },
   // Arm persistence onto a temp file (or, with no argument, disarm it again).
   _fightHistoryPersistForTest: (file) => { _fightsFile = file || FIGHTS_FILE; _fightsPersist = !!file; },
   _noteMobDeathFromState,

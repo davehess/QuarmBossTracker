@@ -29,13 +29,13 @@ const tick = () => new Promise(r => setTimeout(r, 0));
 describe('the agent proxy: what it forwards', () => {
   it('lets a known window, scope and plain character name through', () => {
     expect(agent._myParsesParams('/api/my-parses?w=30d&scope=all&char=Brackwyn'))
-      .toEqual({ w: '30d', scope: 'all', char: 'Brackwyn', fresh: false });
+      .toEqual({ w: '30d', scope: 'all', char: 'Brackwyn', zone: 0, q: '', fresh: false });
     for (const w of ['1d', '7d', '30d', '90d', 'exp', 'life']) expect(agent._myParsesParams('/x?w=' + w).w).toBe(w);
     expect(agent._myParsesParams('/x?w=EXP&scope=ALL').w, 'case does not matter').toBe('exp');
   });
 
   it('falls back to 1 week + Bosses for anything it does not recognise, and drops a character that is not a plain name', () => {
-    expect(agent._myParsesParams('/api/my-parses')).toEqual({ w: '7d', scope: 'bosses', char: '', fresh: false });
+    expect(agent._myParsesParams('/api/my-parses')).toEqual({ w: '7d', scope: 'bosses', char: '', zone: 0, q: '', fresh: false });
     expect(agent._myParsesParams('/x?w=forever&scope=%3Cscript%3E')).toMatchObject({ w: '7d', scope: 'bosses' });
     for (const bad of ['Brack%20wyn', 'Brack%26w%3D1d', '..%2F..', 'a%27b', '%E2%98%83', 'Abcdefghijklmnopqrstuvwxyz1', '']) {
       expect(agent._myParsesParams('/x?char=' + bad).char, bad).toBe('');
@@ -47,8 +47,26 @@ describe('the agent proxy: what it forwards', () => {
     for (const v of ['0', 'true', 'yes', '']) expect(agent._myParsesParams('/x?fresh=' + v).fresh, v).toBe(false);
   });
 
+  it('zone is the bot\'s integer id, 1 to 999: anything else is no zone', () => {
+    for (const z of ['1', '12', '202', '999']) expect(agent._myParsesParams('/x?zone=' + z).zone, z).toBe(+z);
+    expect(agent._myParsesParams('/x?zone=%2012%20').zone, 'padded').toBe(12);
+    for (const bad of ['0', '000', '1000', '-3', '1.5', '12abc', 'abc', '1e2', '0x10', '12;13', '12%2C13', '', '%E2%98%83']) {
+      expect(agent._myParsesParams('/x?zone=' + bad).zone, bad).toBe(0);
+    }
+  });
+
+  it('q is a mob search of letters, digits, spaces and \' ` - _, at most 40: anything else is no search at all', () => {
+    for (const q of ['aten', 'Aten%20Ha%20Ra', 'Vyzh%60dra', 'a%27b', 'a-b_c', 'Lord%20Nagafen%202', 'A'.repeat(40)]) {
+      expect(agent._myParsesParams('/x?q=' + q).q, q).toBe(decodeURIComponent(q));
+    }
+    expect(agent._myParsesParams('/x?q=%20%20aten%20').q, 'trimmed').toBe('aten');
+    for (const bad of ['A'.repeat(41), 'a%26w%3D1d', 'a%3Cb%3E', 'a%3Bb', 'a%2Fb', 'a.b', '%E2%98%83', '%20%20', '']) {
+      expect(agent._myParsesParams('/x?q=' + bad).q, bad).toBe('');
+    }
+  });
+
   it('survives a URL that does not parse', () => {
-    expect(agent._myParsesParams(undefined)).toEqual({ w: '7d', scope: 'bosses', char: '', fresh: false });
+    expect(agent._myParsesParams(undefined)).toEqual({ w: '7d', scope: 'bosses', char: '', zone: 0, q: '', fresh: false });
     expect(agent._myParsesParams('http://[')).toMatchObject({ w: '7d' });
   });
 });
@@ -100,6 +118,34 @@ describe('the agent proxy: asking the guild server', () => {
       'https://bot.example/api/agent/my-parses?w=7d&scope=bosses',
       'https://bot.example/api/agent/my-parses?w=1d&scope=bosses',
     ]);
+  });
+
+  it('forwards a zone and a search after the character, and nothing for none', async () => {
+    await agent.fetchMyParses(P({ w: '30d', scope: 'all', char: 'Brackwyn', zone: 12, q: 'Aten Ha' }));
+    await agent.fetchMyParses(P({ zone: 12 }));
+    await agent.fetchMyParses(P({ q: "Vyzh`dra" }));
+    await agent.fetchMyParses(P({ zone: 0, q: '' }));
+    expect(calls.map(c => c.url)).toEqual([
+      'https://bot.example/api/agent/my-parses?w=30d&scope=all&char=Brackwyn&zone=12&q=Aten%20Ha',
+      'https://bot.example/api/agent/my-parses?w=7d&scope=bosses&zone=12',
+      'https://bot.example/api/agent/my-parses?w=7d&scope=bosses&q=Vyzh%60dra',
+      'https://bot.example/api/agent/my-parses?w=7d&scope=bosses',
+    ]);
+  });
+
+  it('the 5-minute copy is per zone and per search as well, and a search does not care about case', async () => {
+    await agent.fetchMyParses(P());                          // 1
+    await agent.fetchMyParses(P({ zone: 12 }));              // 2
+    await agent.fetchMyParses(P({ zone: 13 }));              // 3
+    await agent.fetchMyParses(P({ q: 'aten' }));             // 4
+    await agent.fetchMyParses(P({ q: 'ATEN' }));             // the same slot as 4
+    await agent.fetchMyParses(P({ q: 'nagafen' }));          // 5
+    await agent.fetchMyParses(P({ zone: 12, q: 'aten' }));   // 6
+    expect(calls).toHaveLength(6);
+    await agent.fetchMyParses(P({ zone: 12 }));
+    await agent.fetchMyParses(P({ zone: 12, q: 'Aten' }));
+    await agent.fetchMyParses(P());
+    expect(calls, 'each of those is a held copy').toHaveLength(6);
   });
 
   it('401 is signed_out; an old bot (404), a bad minute (500), garbage, and a dead network are all unavailable', async () => {
@@ -221,6 +267,40 @@ describe('the agent proxy: the route', () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ error: 'signed_out' });
     expect(calls).toHaveLength(0);
+  });
+
+  it('forwards a good zone and search, and drops one that is not on the whitelist', async () => {
+    await get('/api/my-parses?w=7d&zone=12&q=Aten%20Ha');
+    await get('/api/my-parses?w=7d&zone=abc&q=%3Cscript%3E');
+    expect(calls).toEqual([
+      'https://bot.example/api/agent/my-parses?w=7d&scope=bosses&zone=12&q=Aten%20Ha',
+      'https://bot.example/api/agent/my-parses?w=7d&scope=bosses',
+    ]);
+  });
+
+  it('source=local answers from this PC\'s log with NO call to the bot, signed in or out, and the browser keeps nothing', async () => {
+    const T = Date.UTC(2026, 9, 5, 1, 17, 0);
+    const row = (over) => ({ t: new Date(T).toISOString(), end: new Date(T + 90_000).toISOString(), mob: 'Aten Ha Ra', zone: 'Plane of Fire', char: 'Brackwyn', dmg: 90_000, dur: 90, dps: 1000, boss: true, ...over });
+    agent._setMyFightsForTest([row(), row({ t: new Date(T + 3_600_000).toISOString(), mob: 'a Shissar acolyte', zone: 'Plane of Water', boss: false, dps: 480 })]);
+    try {
+      for (const token of ['t0k', null]) {
+        agent._setUploadOptsForTest({ botUrl: 'https://bot.example/api/agent/encounter', token, dryRun: false });
+        const r = await get('/api/my-parses?source=local&w=life&scope=all&zone=Plane%20of%20Fire');
+        expect(r.status).toBe(200);
+        expect(r.headers['cache-control']).toBe('no-store');
+        expect(r.body).toMatchObject({ source: 'local', scope: 'all', total: 1 });
+        expect(r.body.fights.map(f => f.name)).toEqual(['Aten Ha Ra']);
+      }
+      expect(calls, 'the bot was never asked').toHaveLength(0);
+      // anything but exactly source=local is the guild path, as before
+      agent._setUploadOptsForTest({ botUrl: 'https://bot.example/api/agent/encounter', token: 't0k', dryRun: false });
+      await get('/api/my-parses?source=guild');
+      await get('/api/my-parses?source=LOCAL&w=30d');                 // a different slot: not served from the first one's copy
+      expect(calls).toEqual([
+        'https://bot.example/api/agent/my-parses?w=7d&scope=bosses',
+        'https://bot.example/api/agent/my-parses?w=30d&scope=bosses',
+      ]);
+    } finally { agent._myFightsPersistForTest(); }
   });
 
   it('a bot error is a 200 with unavailable (the dashboard reads the body without checking the status)', async () => {
@@ -476,7 +556,7 @@ describe('the tab\'s states, captions and links', () => {
     const h = html({ w: '30d', scope: 'all', char: 'corvale' });
     for (const label of ['1 day', '1 week', '30 days', '90 days', 'This expansion', 'Bosses', 'Everything', 'All', 'Brackwyn', 'Corvale']) expect(h).toContain('>' + label + '</button>');
     const lit = [...h.matchAll(/class="wp-btn pri" data-k="(\w+)" data-v="([^"]*)"/g)].map(m => m[1] + '=' + m[2]);
-    expect(lit).toEqual(['w=30d', 'scope=all', 'char=Corvale']);
+    expect(lit).toEqual(['src=guild', 'w=30d', 'scope=all', 'char=Corvale']);
     expect(html({ char: '' })).toMatch(/class="wp-btn pri" data-k="char" data-v=""/);
   });
 
@@ -689,20 +769,270 @@ describe('the character chips: who is shown, who is tucked away', () => {
   });
 });
 
+// ── the source switch, the filters and By day ───────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-06: "chop it up by days, zones, mobs, search bar" and "toggle between their data from
+// logs and the guild's data". Instants here are explicit UTC, so the raid nights do not depend on the machine's
+// clock (the night is Eastern-time by definition; only the clock times shown are the viewer's).
+describe('My logs, the filters and By day', () => {
+  const pure = sliceBlock(dash, 'var WP_MP_WINDOWS =', '\nfunction wpMpRepaint').replace(/\nfunction wpMpRepaint$/, '\n');
+  const mk = () => new Function('esc', 'localStorage', pure + '\nreturn { _wpMp, wpMpHtml, wpMpTable, wpMpCleanQ, _wpMpNightKey, _wpMpNightLabel, _wpMpZoneOk };')(esc, undefined);
+  const T = mk();
+  const html = (patch, data) => { const t = mk(); Object.assign(t._wpMp, { state: 'ok', asOf: AS_OF, data: data || ANSWER(), chars: (data || ANSWER()).characters }, patch); return t.wpMpHtml(); };
+  const U = (t, over) => ({ t, name: 'Aten Ha Ra', zone: 'Plane of Fire', zone_id: 61, boss: true, char: 'Brackwyn', dps: 200, dmg: 200000, dur: 1000, usual: 180, rank: 2, eid: eid(9), ...over });
+  const DAY = [
+    U('2026-10-02T01:10:00Z', { name: 'Lord Nagafen', dps: 160 }),                               // Oct 1, 9:10 pm Eastern
+    U('2026-10-05T01:17:00Z', { dps: 189 }),                                                      // Oct 4, 9:17 pm
+    U('2026-10-05T05:30:00Z', { name: 'a Shissar acolyte', boss: false, dps: 480, zone: null }),  // Oct 5, 1:30 am: still the Oct 4 night
+    U('2026-10-05T10:30:00Z', { name: 'Lady Vox', dps: 140 }),                                    // Oct 5, 6:30 am: the next night
+  ];
+  const DAYNIGHTS = [
+    { night: '2026-10-01', fights: 1, bosses: 1, avg_dps: 160, best_dps: 160 },
+    { night: '2026-10-04', fights: 12, bosses: 2, avg_dps: 141.6, best_dps: 209.7 },             // 12: the night's own count, not the 2 rows listed
+    { night: '2026-10-05', fights: 1, bosses: 1, avg_dps: 140, best_dps: 140 },
+  ];
+  const rows = (h) => h.split('<tbody>')[1].split('</tr>').filter(r => r.includes('<td'));
+  const text = (r) => r.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+  const LOCAL = (over) => ({ source: 'local', since: '2026-10-06T23:10:00Z', window: { key: '7d', label: '1 week', since: iso(1, 0, 0, 10) }, scope: 'all', total: 3, truncated: false,
+    characters: [{ name: 'Brackwyn', active: true, hidden: false, fights: 3, recent: 3 }],
+    fights: [U('2026-10-05T01:17:00Z', { eid: undefined, rank: undefined, zone_id: 'Plane of Fire' }), U('2026-10-05T01:40:00Z', { eid: undefined, rank: undefined, zone: null, zone_id: null, name: 'a Shissar acolyte', boss: false })],
+    nights: [{ night: '2026-10-04', fights: 2, bosses: 1, avg_dps: 200, best_dps: 200 }],
+    zones: [{ id: 'Plane of Fire', name: 'Plane of Fire', fights: 1 }], mobs: [{ name: 'Aten Ha Ra', fights: 1 }, { name: 'a Shissar acolyte', fights: 1 }], ...over });
+
+  describe('the raid night a fight belongs to', () => {
+    it('is the Eastern date with the night running to 6 am, summer or winter', () => {
+      const k = (iso8601) => T._wpMpNightKey(Date.parse(iso8601));
+      expect(k('2026-10-05T01:17:00Z')).toBe('2026-10-04');          // 9:17 pm EDT
+      expect(k('2026-10-05T09:59:00Z')).toBe('2026-10-04');          // 5:59 am EDT: the same night
+      expect(k('2026-10-05T10:00:00Z')).toBe('2026-10-05');          // 6:00 am EDT: the next
+      expect(k('2026-12-06T10:59:00Z')).toBe('2026-12-05');          // 5:59 am EST
+      expect(k('2026-12-06T11:00:00Z')).toBe('2026-12-06');          // 6:00 am EST
+      expect(T._wpMpNightKey(NaN)).toBe('');
+    });
+    it('is named by its own date, whatever the viewer\'s clock says, and says nothing for a bad one', () => {
+      expect(T._wpMpNightLabel('2026-10-04')).toBe('Sun Oct 4');
+      expect(T._wpMpNightLabel('2026-10-05')).toBe('Mon Oct 5');
+      expect(T._wpMpNightLabel('2026-12-31')).toBe('Thu Dec 31');
+      expect(T._wpMpNightLabel('tonight')).toBe('—');
+    });
+  });
+
+  describe('By day', () => {
+    const grouped = () => rows(T.wpMpTable({ fights: DAY, nights: DAYNIGHTS }, true));
+    it('puts a header over each raid night, newest first, with the count, average and best from `nights`', () => {
+      const r = grouped();
+      expect(r.filter(x => x.includes('colspan')).map(text)).toEqual([
+        'Mon Oct 5 · 1 fight · avg 140 · best 140',
+        'Sun Oct 4 · 12 fights · avg 142 · best 210',
+        'Thu Oct 1 · 1 fight · avg 160 · best 160',
+      ]);
+    });
+    it('lists the fights under their own night, newest first, the 1:30 am kill under the night it belongs to', () => {
+      const r = grouped();
+      const order = r.map(x => (x.includes('colspan') ? '# ' : '') + text(x));
+      const at = (s) => order.findIndex(x => x.includes(s));
+      expect(at('Lady Vox')).toBe(at('Mon Oct 5') + 1);
+      expect(at('a Shissar acolyte')).toBe(at('Sun Oct 4') + 1);
+      expect(at('Aten Ha Ra')).toBe(at('a Shissar acolyte') + 1);
+      expect(at('Lord Nagafen')).toBe(at('Thu Oct 1') + 1);
+      expect(r).toHaveLength(7);
+    });
+    it('shows the clock only on a row (the header carries the day) and the full day-and-clock when ungrouped', () => {
+      const day = rows(T.wpMpTable({ fights: DAY, nights: DAYNIGHTS }, true)).find(x => x.includes('Lady Vox'));
+      expect(day).toMatch(/<td class="dim" style="white-space:nowrap">\d{1,2}:\d{2} [ap]m<\/td>/);
+      const flat = rows(T.wpMpTable({ fights: DAY, nights: DAYNIGHTS }, false)).find(x => x.includes('Lady Vox'));
+      expect(flat).toMatch(/<td class="dim" style="white-space:nowrap">\w{3} \w{3} \d{1,2} \d{1,2}:\d{2} [ap]m<\/td>/);
+    });
+    it('without By day nothing changes: the newest twelve, no headers', () => {
+      const flat = rows(T.wpMpTable({ fights: DAY, nights: DAYNIGHTS }));
+      expect(flat).toHaveLength(4);
+      expect(flat.some(x => x.includes('colspan'))).toBe(false);
+      const many = Array.from({ length: 30 }, (_, i) => U(new Date(Date.UTC(2026, 9, 1, 12, i)).toISOString(), { name: 'Mob ' + i }));
+      expect(rows(T.wpMpTable({ fights: many, nights: [] }, false))).toHaveLength(12);
+      expect(rows(T.wpMpTable({ fights: many, nights: [] }, true)).filter(x => !x.includes('colspan')), 'every fight when grouped').toHaveLength(30);
+    });
+    it('every header spans the whole table, whichever columns are showing', () => {
+      const span = (d, byDay = true) => rows(T.wpMpTable(d, byDay)).filter(x => x.includes('colspan')).map(x => +x.match(/colspan="(\d+)"/)[1]);
+      const cols = (d) => (T.wpMpTable(d, true).split('</thead>')[0].match(/<th[ >]/g) || []).length;
+      const two = DAY.map((f, i) => (i === 0 ? { ...f, char: 'Corvale' } : f));
+      for (const d of [{ fights: DAY, nights: DAYNIGHTS }, { fights: two, nights: DAYNIGHTS }, { fights: DAY.map(f => ({ ...f, zone: null })), nights: DAYNIGHTS }, LOCAL()]) {
+        expect(new Set(span(d)), JSON.stringify(Object.keys(d))).toEqual(new Set([cols(d)]));
+      }
+    });
+    it('a night `nights` does not list still gets its header (the day, no numbers), and a bad time does not break the table', () => {
+      const r = rows(T.wpMpTable({ fights: DAY, nights: [DAYNIGHTS[0]] }, true));
+      expect(r.filter(x => x.includes('colspan')).map(text)).toEqual(['Mon Oct 5', 'Sun Oct 4', 'Thu Oct 1 · 1 fight · avg 160 · best 160']);
+      const bad = T.wpMpTable({ fights: [...DAY, U('not a time')], nights: DAYNIGHTS }, true);
+      expect(bad).not.toMatch(/NaN|undefined|null/);
+    });
+    it('is byte-stable and keeps clear of the name-click rule', () => {
+      const a = T.wpMpTable({ fights: DAY, nights: DAYNIGHTS }, true);
+      expect(T.wpMpTable({ fights: JSON.parse(JSON.stringify(DAY)), nights: JSON.parse(JSON.stringify(DAYNIGHTS)) }, true)).toBe(a);
+      expect(a).not.toContain('class="name"');
+      expect(a).not.toMatch(/NaN|undefined|null/);
+    });
+    it('the By day chip is lit when on, flips on click, and is there even before the pickers are', () => {
+      expect(html({})).toMatch(/class="wp-btn" data-k="day" data-v="1"[^>]*>By day<\/button>/);
+      expect(html({ day: true })).toMatch(/class="wp-btn pri" data-k="day" data-v="0"[^>]*>By day<\/button>/);
+      expect(html({ day: true, data: DAYANSWER() })).toContain('Sun Oct 4 · 12 fights · avg 142 · best 210');
+      expect(html({ day: false, data: DAYANSWER() })).not.toContain('Sun Oct 4 · 12 fights');
+    });
+    function DAYANSWER() { return ANSWER({ fights: DAY, nights: DAYNIGHTS, total: DAY.length }); }
+  });
+
+  describe('the Zone column', () => {
+    it('is there when any fight has a zone (a blank one reads —), and not for an older bot that sends none', () => {
+      const withZone = T.wpMpTable({ fights: DAY, nights: DAYNIGHTS });
+      expect(withZone).toContain('<th>Zone</th>');
+      expect(rows(withZone).find(x => x.includes('Lady Vox'))).toContain('<td class="dim">Plane of Fire</td>');
+      expect(rows(withZone).find(x => x.includes('a Shissar acolyte'))).toContain('<td class="dim">—</td>');
+      expect(T.wpMpTable({ fights: FIGHTS })).not.toContain('Zone');
+    });
+    it('sits after Fight and before Character, and zone names are escaped', () => {
+      const two = DAY.map((f, i) => (i === 0 ? { ...f, char: 'Corvale', zone: 'x"><script>' } : f));
+      const h = T.wpMpTable({ fights: two, nights: [] });
+      expect(h.indexOf('<th>Fight</th>')).toBeLessThan(h.indexOf('<th>Zone</th>'));
+      expect(h.indexOf('<th>Zone</th>')).toBeLessThan(h.indexOf('<th>Character</th>'));
+      expect(h).not.toContain('<script>');
+    });
+  });
+
+  describe('the source switch', () => {
+    const lit = (h) => [...h.matchAll(/class="wp-btn pri" data-k="src" data-v="(\w+)"/g)].map(m => m[1]);
+    it('is a Guild | My logs pair at the top, Guild lit by default', () => {
+      const h = html({});
+      expect(lit(h)).toEqual(['guild']);
+      expect(h).toMatch(/data-k="src" data-v="guild"[^>]*>Guild<\/button>[\s\S]*data-k="src" data-v="local"[^>]*>My logs<\/button>/);
+      expect(h.indexOf('data-k="src"'), 'before the window chips').toBeLessThan(h.indexOf('data-k="w"'));
+      expect(lit(html({ src: 'local' }, LOCAL()))).toEqual(['local']);
+    });
+    it('My logs hides "Open on wolfpack.quest", links no fight, drops the Rank column and says where the numbers come from', () => {
+      const h = html({ src: 'local', scope: 'all' }, LOCAL());
+      expect(h).not.toContain('Open on wolfpack.quest');
+      expect(h).not.toContain('wolfpack.quest/parses');
+      expect(h).not.toContain('<a ');
+      expect(h).not.toContain('<th style="text-align:right">Rank</th>');
+      expect(h).not.toContain('Numbers start 14 July 2026');
+      expect(h).toContain('from this PC&rsquo;s logs');
+      expect(text(h)).toMatch(/From this PC's logs since [A-Z][a-z]{2} \d{1,2}\./);
+      expect(text(h)).toContain('Aten Ha Ra');
+    });
+    it('the guild side keeps its link, its Rank column and its 14 July caption', () => {
+      const h = html({});
+      expect(h).toContain('Open on wolfpack.quest');
+      expect(h).toContain('<th style="text-align:right">Rank</th>');
+      expect(h).toContain('Numbers start 14 July 2026, when parse merging was fixed.');
+      expect(h).not.toContain("From this PC's logs");
+    });
+    it('the caption names the date of the oldest fight in the log, and has no date for an empty one', () => {
+      const day = (iso8601) => { const d = new Date(iso8601); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate(); };
+      expect(text(html({ src: 'local', scope: 'all' }, LOCAL()))).toContain("From this PC's logs since " + day('2026-10-06T23:10:00Z') + '.');
+      const empty = text(html({ src: 'local', scope: 'all' }, LOCAL({ since: null, fights: [], nights: [], total: 0, zones: [], mobs: [] })));
+      expect(empty).toContain("From this PC's logs.");
+      expect(empty).not.toContain('since');
+    });
+    it('says what a sign-in does for each source, and a log that cannot be read is not "the guild server"', () => {
+      expect(html({ state: 'signed_out', data: null })).toContain('Sign in to Mimic to see your parses. My logs works without signing in.');
+      expect(html({ src: 'local', state: 'unavailable', data: null })).toContain("Couldn't read this PC's fight log.");
+      expect(html({ src: 'local', state: 'unavailable', data: null })).not.toContain('guild server');
+    });
+    it('the empty states: a boss-less log points at Everything and why, an empty one says fights are added as they end, a filter says to clear it', () => {
+      const none = LOCAL({ fights: [], nights: [], total: 0 });
+      expect(text(html({ src: 'local', scope: 'bosses' }, none))).toContain("No boss fights in your logs for this window. Mimic only knows a fight was a boss when it already holds that mob's details, so try Everything.");
+      expect(text(html({ src: 'local', scope: 'all' }, none))).toContain('No fights recorded from your logs in this window yet. Mimic adds each fight as it ends.');
+      for (const patch of [{ q: 'zzz' }, { zone: '61' }, { src: 'local', q: 'zzz' }]) {
+        const h = text(html({ scope: 'bosses', ...patch }, patch.src ? none : ANSWER({ fights: [], nights: [] })));
+        expect(h, JSON.stringify(patch)).toContain('Nothing matches those filters in this window. Clear them to see everything.');
+        expect(h).not.toContain('No boss fights');
+      }
+    });
+    it('the tucked-away note names no wolfpack.quest page for My logs', () => {
+      const chars = [CHN('Aldenmar', 9), CHN('Brackwyn', 0, 0)];
+      const h = html({ src: 'local', chars, scope: 'all' }, LOCAL({ characters: chars }));
+      expect(h).toContain('Characters with no fights in 30 days are tucked away.');
+      expect(h).not.toContain('wolfpack.quest/me');
+    });
+    function CHN(name, fights, recent = fights) { return { name, active: false, hidden: false, fights, recent }; }
+  });
+
+  describe('the filters row', () => {
+    const FACETS = { zones: [{ id: 61, name: 'Plane of Fire', fights: 5 }, { id: 217, name: 'Plane of Water', fights: 9 }, { id: 3, name: 'Surefall Glade', fights: 5 }],
+      mobs: [{ name: 'Aten Ha Ra', fights: 7 }, { name: 'Lord Nagafen', fights: 3 }, { name: 'x"><b>', fights: 1 }] };
+    const withFacets = (patch, over) => html({ facets: true, zones: FACETS.zones, mobs: FACETS.mobs, ...patch }, ANSWER({ ...FACETS, ...over }));
+    it('has a search box with the mobs as suggestions, a Zone picker with All zones first, and By day', () => {
+      const h = withFacets({});
+      expect(h).toMatch(/<input type="search" id="wpMpQ" list="wpMpMobs" maxlength="40" autocomplete="off" placeholder="mob name" value="" oninput="wpMpTyping\(this\)"/);
+      expect(h).toContain('<datalist id="wpMpMobs"><option value="Aten Ha Ra"><option value="Lord Nagafen">');
+      expect(h).toMatch(/<select id="wpMpZoneSel" onchange="wpMpZone\(this\)"[^>]*><option value="">All zones<\/option>/);
+      expect(h).toContain('>By day</button>');
+    });
+    it('lists the zones as "Name (N)", most fights first then by name, with the chosen one selected', () => {
+      const h = withFacets({ zone: '61' });
+      const opts = [...h.matchAll(/<option value="(\d+)"( selected)?>([^<]*)<\/option>/g)].map(m => [m[1], !!m[2], m[3]]);
+      expect(opts).toEqual([['217', false, 'Plane of Water (9)'], ['61', true, 'Plane of Fire (5)'], ['3', false, 'Surefall Glade (5)']]);
+      expect([...withFacets({}).matchAll(/ selected>/g)]).toHaveLength(0);
+    });
+    it('shows what is typed in the box, and Clear only while there is a search or a zone', () => {
+      expect(withFacets({ qBox: 'aten h' })).toContain('value="aten h"');
+      expect(withFacets({})).not.toContain('>Clear</button>');
+      expect(withFacets({ q: 'aten', qBox: 'aten' })).toContain('onclick="wpMpClear()" title="Drop the search and the zone">Clear</button>');
+      expect(withFacets({ zone: '61' })).toContain('>Clear</button>');
+    });
+    it('leaves the pickers out for an older bot (no zones or mobs), keeping By day', () => {
+      const h = html({}, ANSWER());
+      expect(h).not.toContain('id="wpMpQ"');
+      expect(h).not.toContain('<select');
+      expect(h).not.toContain('<datalist');
+      expect(h).toContain('>By day</button>');
+    });
+    it('keeps the row while the next answer loads, so a typing user is not cut off', () => {
+      const h = html({ facets: true, zones: FACETS.zones, mobs: FACETS.mobs, state: 'loading', data: null, qBox: 'ate' });
+      expect(h).toContain('Loading…');
+      expect(h).toContain('id="wpMpQ"');
+      expect(h).toContain('value="ate"');
+    });
+    it('escapes what it prints, offers at most 200 mobs, and stays byte-stable and clear of the name-click and details rules', () => {
+      const h = withFacets({ qBox: 'x"><script>' });
+      expect(h).not.toContain('<script>');
+      expect(h).toContain('<option value="x&quot;&gt;&lt;b&gt;">');
+      const lots = Array.from({ length: 300 }, (_, i) => ({ name: 'Mob ' + i, fights: 300 - i }));
+      expect(html({ facets: true, mobs: lots }, ANSWER({ mobs: lots, zones: [] })).match(/<option value="Mob /g)).toHaveLength(200);
+      const a = withFacets({ zone: '61', q: 'aten', qBox: 'aten' });
+      expect(withFacets({ zone: '61', q: 'aten', qBox: 'aten' })).toBe(a);
+      expect(a).not.toContain('class="name"');
+      expect(a).not.toContain('<details');
+      expect(a).not.toMatch(/ago\b|NaN|undefined|null/);
+    });
+    it('cleans a search to what the agent will accept: its letters, digits, spaces and \' ` - _, at most 40', () => {
+      expect(T.wpMpCleanQ("  Vyzh`dra  the   Exiled-2_x ")).toBe('Vyzh`dra the Exiled-2_x');
+      expect(T.wpMpCleanQ('a<b>&c;d.e/f')).toBe('abcdef');
+      expect(T.wpMpCleanQ('x'.repeat(60))).toHaveLength(40);
+      expect(T.wpMpCleanQ(null)).toBe('');
+      expect(T.wpMpCleanQ('☃')).toBe('');
+    });
+    it('knows a zone id for each source: a 1-999 number for Guild, a short name for My logs', () => {
+      for (const z of ['1', '61', '999']) expect(T._wpMpZoneOk('guild', z), z).toBe(true);
+      for (const z of ['', '0', '1000', '06', 'Plane of Fire', '12a']) expect(T._wpMpZoneOk('guild', z), z).toBe(false);
+      expect(T._wpMpZoneOk('local', 'Plane of Fire')).toBe(true);
+      expect(T._wpMpZoneOk('local', 'x'.repeat(65))).toBe(false);
+      expect(T._wpMpZoneOk('local', '')).toBe(false);
+    });
+  });
+});
+
 describe('asking: only when opened, on a change, or on ↻', () => {
   const full = sliceBlock(dash, 'var WP_MP_WINDOWS =', '\nfunction renderTriggers(s) {').replace(/\nfunction renderTriggers\(s\) \{$/, '\n');
-  const build = new Function('esc', 'localStorage', 'setSectionHTML', 'fetch', 'window',
-    full + '\nreturn { _wpMp, wpMpFetch, wpMpSet, wpMpRefresh, wpMpOpenTab, wpMpLink, wpMpHtml, wpMpMore };');
+  const build = new Function('esc', 'localStorage', 'setSectionHTML', 'fetch', 'window', 'document',
+    full + '\nreturn { _wpMp, wpMpFetch, wpMpSet, wpMpRefresh, wpMpOpenTab, wpMpLink, wpMpHtml, wpMpMore, wpMpTyping, wpMpZone, wpMpClear, wpMpRepaint };');
   const el = (k, v) => ({ getAttribute: (a) => ({ 'data-k': k, 'data-v': v })[a] ?? null });
 
-  function harness(saved, win = {}) {
+  function harness(saved, win = {}, doc = undefined) {
     const store = saved ? { 'wp:myParses': JSON.stringify(saved) } : {};
     const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     const calls = [], painted = [];
     const fetchFn = (url) => new Promise((resolve, reject) => {
       calls.push({ url, ok: (j) => resolve({ ok: true, json: async () => j }), status: (s) => resolve({ ok: false, status: s, json: async () => ({}) }), boom: reject });
     });
-    const t = build(esc, ls, (id, h) => { painted.push([id, h]); return true; }, fetchFn, win);
+    const t = build(esc, ls, (id, h) => { painted.push([id, h]); return true; }, fetchFn, win, doc);
     return { ...t, calls, painted, store, last: () => painted[painted.length - 1][1] };
   }
 
@@ -737,7 +1067,7 @@ describe('asking: only when opened, on a change, or on ↻', () => {
       '/api/my-parses?w=30d&scope=all',
       '/api/my-parses?w=30d&scope=all&char=Corvale',
     ]);
-    expect(JSON.parse(h.store['wp:myParses'])).toEqual({ w: '30d', scope: 'all', char: 'Corvale' });
+    expect(JSON.parse(h.store['wp:myParses'])).toEqual({ w: '30d', scope: 'all', char: 'Corvale', src: 'guild', zone: '', q: '', day: false });
     h.wpMpSet(el('w', '30d')); h.wpMpSet(el('scope', 'all')); h.wpMpSet(el('char', 'Corvale'));
     expect(h.calls).toHaveLength(3);
   });
@@ -851,9 +1181,185 @@ describe('asking: only when opened, on a change, or on ↻', () => {
     expect(browser.wpMpLink({ getAttribute: () => 'https://wolfpack.quest/parses/x' })).toBe(true);
   });
 
-  it('has no timer of its own: no poll, no render-loop entry', () => {
+  it('asks with the source, the zone and the search in the URL, after the character, and nothing for the defaults', () => {
+    const l = harness({ w: '30d', scope: 'all', char: 'Brackwyn', src: 'local', zone: 'Plane of Fire', q: 'aten', day: true });
+    l.wpMpOpenTab();
+    expect(l.calls[0].url).toBe('/api/my-parses?w=30d&scope=all&char=Brackwyn&zone=Plane%20of%20Fire&q=aten&source=local');
+    const g = harness({ w: '7d', scope: 'bosses', src: 'guild', zone: '61', q: 'Vyzh`dra' });
+    g.wpMpOpenTab();
+    expect(g.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&zone=61&q=Vyzh%60dra');
+    const f = harness({ src: 'guild' });
+    f.wpMpOpenTab(); f.wpMpRefresh();
+    expect(f.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses');
+  });
+
+  it('a remembered zone and search are checked for the source they were saved on; junk is dropped', () => {
+    const g = harness({ src: 'guild', zone: 'Plane of Fire', q: 'a<b>c' });
+    g.wpMpOpenTab();
+    expect(g.calls[0].url, 'a zone NAME is no Guild zone id; the search is cleaned').toBe('/api/my-parses?w=7d&scope=bosses&q=abc');
+    const l = harness({ src: 'local', zone: 'x'.repeat(65) });
+    l.wpMpOpenTab();
+    expect(l.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&source=local');
+    const b = harness({ src: 'elsewhere', zone: '0', day: 'yes', q: '<>' });
+    b.wpMpOpenTab();
+    expect(b.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses');
+    expect(b._wpMp).toMatchObject({ src: 'guild', zone: '', q: '', day: false });
+  });
+
+  it('switching the source asks again with it, forgets the zone and the old answer, saves, and a lit chip asks nothing', async () => {
+    const h = harness({ w: '7d', scope: 'bosses', zone: '61' });
+    h.wpMpOpenTab();
+    expect(h.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&zone=61');
+    h.calls[0].ok(ANSWER({ zones: [{ id: 61, name: 'Plane of Fire', fights: 3 }], mobs: [] })); await tick();
+    expect(h.last()).toContain('id="wpMpZoneSel"');
+    h.wpMpSet(el('src', 'local'));
+    expect(h.calls[1].url, 'zone 61 is a Guild id: it is not carried over').toBe('/api/my-parses?w=7d&scope=bosses&source=local');
+    expect(h.last()).toContain('Loading…');
+    expect(h.last(), 'the pickers wait for the new source\'s answer').not.toContain('id="wpMpZoneSel"');
+    expect(JSON.parse(h.store['wp:myParses'])).toMatchObject({ src: 'local', zone: '' });
+    h.wpMpSet(el('src', 'local')); h.wpMpSet(el('src', 'elsewhere')); h.wpMpSet(el('src', ''));
+    expect(h.calls).toHaveLength(2);
+    h.wpMpSet(el('src', 'guild'));
+    expect(h.calls[2].url).toBe('/api/my-parses?w=7d&scope=bosses');
+    expect(JSON.parse(h.store['wp:myParses']).src).toBe('guild');
+  });
+
+  it('a late answer from the other source is dropped, like any answer that lands after a newer ask', async () => {
+    const h = harness();
+    h.wpMpOpenTab();
+    h.wpMpSet(el('src', 'local'));
+    h.calls[1].ok(ANSWER({ source: 'local', window: { key: '7d', label: 'From my log', since: null } })); await tick();
+    h.calls[0].ok(ANSWER({ window: { key: '7d', label: 'From the guild', since: null } })); await tick();
+    expect(h.last()).toContain('From my log');
+    expect(h.last()).not.toContain('From the guild');
+  });
+
+  it('the Zone picker asks with the picked zone, the same pick asks nothing, and a value that is no zone of this source is refused', () => {
+    const h = harness();
+    h.wpMpZone({ value: '61' });
+    expect(h.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&zone=61');
+    h.wpMpZone({ value: '61' }); h.wpMpZone({ value: 'Plane of Fire' }); h.wpMpZone({ value: '0' }); h.wpMpZone(null);
+    expect(h.calls).toHaveLength(1);
+    h.wpMpZone({ value: '' });                                     // All zones
+    expect(h.calls[1].url).toBe('/api/my-parses?w=7d&scope=bosses');
+    expect(JSON.parse(h.store['wp:myParses']).zone).toBe('');
+    const l = harness({ src: 'local' });
+    l.wpMpZone({ value: 'Plane of Fire' });
+    expect(l.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&zone=Plane%20of%20Fire&source=local');
+  });
+
+  it('By day only regroups what is drawn: it asks nothing, repaints, and is saved', async () => {
+    const h = harness();
+    h.wpMpOpenTab(); h.calls[0].ok(ANSWER()); await tick();
+    const painted = h.painted.length;
+    h.wpMpSet(el('day', '1'));
+    expect(h.calls).toHaveLength(1);
+    expect(h.painted.length).toBe(painted + 1);
+    expect(h._wpMp.day).toBe(true);
+    expect(JSON.parse(h.store['wp:myParses']).day).toBe(true);
+    expect(h.last()).toMatch(/class="wp-btn pri" data-k="day" data-v="0"/);
+    h.wpMpSet(el('day', '0'));
+    expect(h._wpMp.day).toBe(false);
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('an older bot (no zones or mobs in the answer): the remembered search and zone are forgotten, nothing is asked again, no pickers', async () => {
+    const h = harness({ zone: '61', q: 'aten' });
+    h.wpMpOpenTab();
+    expect(h.calls[0].url).toBe('/api/my-parses?w=7d&scope=bosses&zone=61&q=aten');
+    h.calls[0].ok(ANSWER()); await tick();
+    expect(h.calls).toHaveLength(1);
+    expect(h._wpMp).toMatchObject({ zone: '', q: '', qBox: '', facets: false });
+    expect(JSON.parse(h.store['wp:myParses'])).toMatchObject({ zone: '', q: '' });
+    expect(h.last()).not.toContain('id="wpMpQ"');
+    expect(h.last()).toContain('>By day</button>');
+  });
+
+  it('a zone the picker no longer offers goes back to All zones and asks once more; one it offers stays', async () => {
+    const facets = (ids) => ({ zones: ids.map(id => ({ id, name: 'Zone ' + id, fights: 2 })), mobs: [{ name: 'Aten Ha Ra', fights: 2 }] });
+    const h = harness({ zone: '61' });
+    h.wpMpOpenTab(); h.calls[0].ok(ANSWER(facets([217]))); await tick();
+    expect(h.calls).toHaveLength(2);
+    expect(h.calls[1].url).toBe('/api/my-parses?w=7d&scope=bosses');
+    expect(h._wpMp.zone).toBe('');
+    expect(JSON.parse(h.store['wp:myParses']).zone).toBe('');
+    h.calls[1].ok(ANSWER(facets([217]))); await tick();
+    expect(h.calls, 'and then it stops').toHaveLength(2);
+    const k = harness({ zone: '217' });
+    k.wpMpOpenTab(); k.calls[0].ok(ANSWER(facets([217]))); await tick();
+    expect(k.calls).toHaveLength(1);
+    expect(k._wpMp.zone).toBe('217');
+    const both = harness({ char: 'Zarrin', zone: '61' });
+    both.wpMpOpenTab(); both.calls[0].ok(ANSWER(facets([217]))); await tick();
+    expect(both.calls, 'a stale character and a stale zone cost one more ask, not two').toHaveLength(2);
+    expect(both.calls[1].url).toBe('/api/my-parses?w=7d&scope=bosses');
+  });
+
+  it('a repaint while the search box has focus reads what is typed and puts its focus and caret back; otherwise it looks at nothing', () => {
+    const box = { id: 'wpMpQ', value: 'ate', selectionStart: 2 };
+    const fresh = { id: 'wpMpQ', focus: vi.fn(), setSelectionRange: vi.fn() };
+    const h = harness(null, {}, { activeElement: box, getElementById: (id) => (id === 'wpMpQ' ? fresh : null) });
+    h.wpMpRepaint();
+    expect(h._wpMp.qBox).toBe('ate');
+    expect(fresh.focus).toHaveBeenCalledTimes(1);
+    expect(fresh.setSelectionRange).toHaveBeenCalledWith(2, 2);
+    const elsewhere = harness(null, {}, { activeElement: { id: 'wpMpZoneSel' }, getElementById: () => { throw new Error('should not look'); } });
+    elsewhere.wpMpRepaint();
+    expect(elsewhere._wpMp.qBox).toBe('');
+    expect(() => harness().wpMpRepaint(), 'no document at all').not.toThrow();
+  });
+
+  describe('the search box (its one timer)', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('waits for a 300 ms pause, then asks once with the cleaned text, and saves it', () => {
+      const h = harness();
+      h.wpMpTyping({ value: 'a' }); vi.advanceTimersByTime(200);
+      h.wpMpTyping({ value: 'at' }); vi.advanceTimersByTime(200);
+      h.wpMpTyping({ value: 'ate<n>' });
+      expect(h.calls, 'nothing while it is still being typed').toHaveLength(0);
+      vi.advanceTimersByTime(299);
+      expect(h.calls).toHaveLength(0);
+      vi.advanceTimersByTime(1);
+      expect(h.calls.map(c => c.url)).toEqual(['/api/my-parses?w=7d&scope=bosses&q=aten']);
+      expect(JSON.parse(h.store['wp:myParses']).q).toBe('aten');
+      expect(h._wpMp.qBox, 'the box keeps what was typed').toBe('ate<n>');
+      vi.advanceTimersByTime(5000);
+      expect(h.calls, 'and nothing more').toHaveLength(1);
+    });
+
+    it('a pause that leaves the search as it was asks nothing; emptying the box asks without it', () => {
+      const h = harness();
+      h.wpMpTyping({ value: 'aten' }); vi.advanceTimersByTime(300);
+      h.wpMpTyping({ value: 'aten ' }); vi.advanceTimersByTime(300);
+      h.wpMpTyping({ value: '<>' }); vi.advanceTimersByTime(300);
+      expect(h.calls.map(c => c.url), 'a trailing space asks nothing; a box that cleans to nothing asks without the search').toEqual([
+        '/api/my-parses?w=7d&scope=bosses&q=aten',
+        '/api/my-parses?w=7d&scope=bosses',
+      ]);
+    });
+
+    it('Clear drops the search and the zone, asks once, keeps By day, cancels a search still waiting, and does nothing with nothing to clear', () => {
+      const h = harness({ zone: '61', q: 'aten', day: true });
+      h.wpMpClear();
+      expect(h.calls.map(c => c.url)).toEqual(['/api/my-parses?w=7d&scope=bosses']);
+      expect(h._wpMp).toMatchObject({ q: '', qBox: '', zone: '', day: true });
+      h.wpMpClear();
+      expect(h.calls).toHaveLength(1);
+      h.wpMpTyping({ value: 'abc' });
+      h.wpMpClear();
+      expect(h.calls).toHaveLength(2);
+      vi.advanceTimersByTime(1000);
+      expect(h.calls, 'the pending search died with Clear').toHaveLength(2);
+      expect(h._wpMp).toMatchObject({ q: '', qBox: '' });
+    });
+  });
+
+  it('has no timer but the search box\'s one debounce: no poll, no render-loop entry', () => {
     const code = stripJs(full);
-    expect(code).not.toMatch(/setInterval|setTimeout|requestAnimationFrame/);
+    expect(code).not.toMatch(/setInterval|requestAnimationFrame/);
+    expect(code.match(/setTimeout/g), 'the debounce, and nothing else').toHaveLength(1);
     const loop = sliceBlock(dash, 'var _sections = [', ']];');
     expect(loop).not.toMatch(/wpMp|myparses/i);
     // the one fetch of the agent route is the one inside wpMpFetch
