@@ -14975,6 +14975,34 @@ function _meSideArcs(active, st, now, skip) {
   return { rampage, low_hp: low };
 }
 
+// A bard's mana slot on the HUD counts instead of reading a percentage (a member, 2026-10-07, FB-56:
+// "Bard songs don't take up mana typically - only display how many Faded Memories they have left, or
+// Dirges, or charms"; the guild lead picked option A the same day). 78 of the 80 bard songs cost no
+// mana; what a bard spends it on is the Dirge (800), the Fading Memories AA (900, invisible until
+// broken, reuse 1 s — DECISIONS-2026-09-21 §128) and the charm song (60). So the HUD gets the three
+// counts, and the mana arc keeps filling with the mana %.
+//  - dirges: shown when Denon`s Desperate Dirge is memorized. _dirgeInfo (the Melody board) cannot say —
+//    it counts for every bard — but the spell gems can. With no gem labels at all the pipe is not
+//    saying, and a level 60 bard is assumed to carry it, the level the guild lead gave for the song.
+//  - fm: the pipe cannot say who owns the AA, so a bard of level 60 or more is assumed to (the guild
+//    lead's call, 2026-10-07).
+//  - charm: the same number as the "Charm left" focus item, handed in so the two cannot disagree.
+// A count that does not apply is null and the HUD leaves it out; a non-bard gets no block.
+const FADING_MEMORIES_MANA = 900;
+const FADING_MEMORIES_LEVEL = 60;
+const DIRGE_LEVEL = 60;
+function _meBardCounts(cls, level, manaCur, gems, charmLeft) {
+  if (cls !== 'Bard' || manaCur == null) return null;
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const list = Array.isArray(gems) ? gems : [];
+  const hasDirge = list.length ? list.some(g => g && slug(g.name) === 'denonsdesperatedirge') : (level != null && level >= DIRGE_LEVEL);
+  return {
+    dirges: hasDirge ? Math.floor(manaCur / DIRGE_MANA) : null,
+    fm: (level != null && level >= FADING_MEMORIES_LEVEL) ? Math.floor(manaCur / FADING_MEMORIES_MANA) : null,
+    charm: charmLeft != null ? charmLeft : null,
+  };
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -15056,6 +15084,7 @@ function _serializeMeState() {
   for (const t of timers) {
     focus.push({ key: 'timer:' + t.name.toLowerCase(), label: t.name, timer_ms: t.ready_in_ms, recast_ms: t.recast_ms });
   }
+  const bard = _meBardCounts(cls, level, manaCur, gems, charmGem ? charmGem.casts_left : null);   // FB-56
 
   // Group: Zeal's group gauges 11-15 (name + HP%), class from /pipeverbose.
   const group = [];
@@ -15151,6 +15180,7 @@ function _serializeMeState() {
     gems,
     timers,
     focus,
+    bard,
     group,
     dps: { fight, night },
     combat,
