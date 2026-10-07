@@ -200,9 +200,9 @@ describe('a pack built to an older shape', () => {
   });
 
   it('a pack at the current version, inside its week, is left alone', async () => {
-    S.kv = [{ value: stored(220, { version: 3 }) }];
+    S.kv = [{ value: stored(220, { version: 4 }) }];
     const m = load();
-    expect(m._MOB_PACK_VERSION).toBe(3);   // 3: Quarm special-ability labels (FB-54)
+    expect(m._MOB_PACK_VERSION).toBe(4);   // 4: procs on the mob (2026-10-07)
     const res = await ask(m, 220);
     expect(res.code).toBe(200);
     await new Promise(r => setTimeout(r, 30));
@@ -211,7 +211,7 @@ describe('a pack built to an older shape', () => {
   });
 
   it('a pack at the current version but past its week is still rebuilt', async () => {
-    S.kv = [{ value: stored(221, { version: 3, built_at: new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString() }) }];
+    S.kv = [{ value: stored(221, { version: 4, built_at: new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString() }) }];
     const m = load();
     await ask(m, 221);
     expect(await waitFor(() => S.upserts.length > 0)).toBe(true);
