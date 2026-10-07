@@ -12,7 +12,7 @@
 //
 // Run: npx vitest run test/me-overlay.test.js
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import path from 'node:path';
 import { readSource, ROOT, sliceBlock, stripJs, stripCss } from './_source-slice.js';
 
@@ -270,7 +270,7 @@ describe('group, blind, and nothing to show', () => {
 const script = meHtml.slice(meHtml.indexOf('<script>') + 8, meHtml.indexOf('</script>'));
 const renderBlock = script.slice(script.indexOf('  // ── helpers'), script.indexOf('  var bodyEl'));
 // eslint-disable-next-line no-new-func
-const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE, HIT_STEP, laneSpan, LANE_EDGE_R, LANE_MID_R };')();
+const R = new Function('var window = { innerWidth: 1114, innerHeight: 713 };\n' + renderBlock + '\nreturn { renderA, renderHud, hudParts, HUD_DEFAULTS, HUD_PARTS, hudData, hudLanes, HIT_LANES, HIT_SIZE, HIT_STEP, laneSpan, LANE_EDGE_R, LANE_MID_R, readParts, clickyList, clickyKey, clickyPicked, clickyShown, clickyShort, clickyFit, clickyPickerHtml, CLICKY_MAX_PICK, CLICKY_DEFAULT_N };')();
 // The hit columns are their own layer now (round five); a lane's lines, top to bottom.
 // Round seven made a round ONE line of hits side by side, so a lane reads as
 // its lines, top to bottom, each line's items left to right.
@@ -593,10 +593,233 @@ describe('the three HUDs', () => {
       { name: 'Ring of Shadows', left: 0, unlimited: false }, { name: 'Rod of Insidious Glamour', left: null, unlimited: true },
       { name: 'Bracer', left: null, unlimited: false }] }));
     expect(h).toMatch(/id="hcl"/);
-    expect(h).toMatch(/Ring…<\/tspan><tspan fill="var\(--red\)" font-weight="700"> 0</);
-    expect(h).toMatch(/Rod…<\/tspan><tspan fill="#c9d1d9" font-weight="700"> ∞</);
+    // The distinctive part of the name, bright (FB-65: "the names need to be easier to see") — not the
+    // old grey "Ring…" / "Rod…", which made every "<thing> of …" look alike.
+    expect(h).toMatch(/<tspan fill="#e6edf3">Shadows<\/tspan><tspan fill="var\(--red\)" font-weight="700"> 0</);
+    expect(h).toMatch(/<tspan fill="#e6edf3">Insid[^<]*<\/tspan><tspan fill="#c9d1d9" font-weight="700"> ∞</);
     expect(h).toMatch(/Bracer<\/tspan>(?!<tspan fill="(?:var|#c9))/);   // not known: no number
     expect(HUDS.HUD(base)).not.toMatch(/id="hcl"/);
+  });
+
+  // FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
+  // need to be easier to see. Root/Dispel/Stun are prioritized".
+  describe('clicky counters — the picker, and names you can read (FB-65)', () => {
+    const resetParts = () => Object.assign(R.hudParts, R.HUD_DEFAULTS, { sizes: {}, clickyPick: [] });
+    afterEach(resetParts);
+    const C = (name, left, extra = {}) => Object.assign({ name, left, unlimited: false, used: 0, worn: false, kind: null, max: null }, extra);
+    // The agent's order: root, dispel, stun, then the rest.
+    const eight = [C('Rooting Rod', 3, { kind: 'root', max: 3 }), C('Wand of Cancel Magic', 4, { kind: 'dispel', max: 4 }),
+      C('Stunning Gem', 1, { kind: 'stun', max: 2 }), C('Ring of Shadows', 5, { max: 5 }), C('Cloak of Flames', 2, { max: 2 }),
+      C('Orb of Sight', 1, { max: 1 }), C('Bridle of Plenty', 3, { max: 3 }), C('Staff of the Serpent', 4, { max: 5 })];
+    const snap = (list) => Object.assign({}, base, { clickies: list.slice(0, 8), clickies_all: list.length > 8 ? list : undefined });
+    // The line's text as drawn, and its font size.
+    const line = (h) => {
+      const m = h.match(/<text font-size="([\d.]+)"><textPath href="#hcl"[^>]*>([\s\S]*?)<\/textPath>/);
+      return m ? { size: +m[1], text: m[2].replace(/<[^>]+>/g, ''), html: m[2] } : null;
+    };
+    const ARC = 80 * Math.PI / 180 * 122 * 0.96;   // the bottom arc the line is written along
+
+    it('names come from the part of the item that tells it apart, as much as fits', () => {
+      expect(R.clickyShort('Ring of Shadows', 10)).toBe('Shadows');
+      expect(R.clickyShort('Rod of Insidious Glamour', 10)).toBe('Insidious');
+      expect(R.clickyShort('Staff of the Serpent', 10)).toBe('Serpent');
+      expect(R.clickyShort('White Ornate Chain Bridle', 10)).toBe('Bridle');
+      expect(R.clickyShort('White Ornate Chain Bridle', 12)).toBe('White Bridle');
+      expect(R.clickyShort('Rooting Rod', 8)).toBe('Rooting');                         // the longer of its two words
+      expect(R.clickyShort('The Gnarled Staff', 20)).toBe('Gnarled Staff');
+      expect(R.clickyShort('Ring of Shadows', 30)).toBe('Ring of Shadows');           // room for all of it: all of it
+      expect(R.clickyShort('Ring of Supercalifragilistic', 8)).toBe('Superca…');           // 8 characters in all
+    });
+
+    it('the size slider is its own: it grows the line, and the resists slider no longer does', () => {
+      resetParts();
+      const one = [C('Bracer', 3)];
+      const at1 = line(HUDS.HUD(snap(one))).size;
+      R.hudParts.sizes = { clickies: 1.4 };
+      expect(line(HUDS.HUD(snap(one))).size).toBeCloseTo(at1 * 1.4, 5);
+      R.hudParts.sizes = { resists: 1.5 };
+      expect(line(HUDS.HUD(snap(one))).size).toBe(at1);
+      expect(at1).toBeGreaterThan(7.5);                                                // bigger than the old 7.5
+    });
+
+    it('with nothing picked it lists the first that fit — root, dispel, stun first — and counts the rest', () => {
+      resetParts();
+      const l = line(HUDS.HUD(snap(eight)));
+      expect(l.size).toBe(8.5);                                                       // full size: it drops items, not legibility
+      const shown = l.text.replace(/ \+\d+$/, '').split(' · ');
+      expect(shown.length).toBeGreaterThan(1);
+      expect(shown.length).toBeLessThan(8);
+      expect(shown[0]).toMatch(/^Root/);
+      expect(shown[1]).toMatch(/^Cancel/);
+      expect(l.text).toMatch(new RegExp(' \\+' + (8 - shown.length) + '$'));
+    });
+
+    it('the text never runs past its arc, whatever is listed (a textPath draws nothing beyond its end)', () => {
+      const lists = [eight, eight.slice(0, 3), eight.slice(0, 1), [C('Supercalifragilisticexpialidocious Staff of Everlasting Torment', 12)],
+        Array.from({ length: 40 }, (_, i) => C('Gem of Number ' + i, i % 10, { max: 9 }))];
+      for (const picks of [[], eight.slice(0, 4).map(R.clickyKey), eight.slice(3, 7).map(R.clickyKey)]) {
+        for (const scale of [0.7, 1, 1.6]) {
+          for (const list of lists) {
+            Object.assign(R.hudParts, R.HUD_DEFAULTS, { sizes: { clickies: scale }, clickyPick: picks });
+            const l = line(HUDS.HUD(snap(list)));
+            expect(l.text.length * 0.6 * l.size).toBeLessThanOrEqual(ARC + 1e-6);
+          }
+        }
+      }
+    });
+
+    it('the " +N" that counts the rest has room of its own', () => {
+      const list = Array.from({ length: 5 }, (_, i) => C('Aaaaaa' + i, 1));         // 9 characters each with its count
+      const f = R.clickyFit(list, 10, 204, false);                                  // 204 / (0.6 × 10) = 34 characters
+      const chars = f.items.reduce((a, e) => a + e.len, 0) + 3 * (f.items.length - 1) + (f.more ? 2 + String(f.more).length : 0);
+      expect(f.more).toBeGreaterThan(0);
+      expect(chars).toBeLessThanOrEqual(34);
+    });
+
+    it('the ones you picked are all that show — in the agent\'s order, none dropped, no "+N"', () => {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['ring of shadows', 'rooting rod', 'stunning gem'] });
+      const three = line(HUDS.HUD(snap(eight)));
+      expect(three.text).toBe('Rooting 3 · Stunning 1 · Shadows 5');                // whole words, with counts, root and stun first
+      expect(three.size).toBeGreaterThanOrEqual(7);                                  // shrunk a little to fit, no more
+      // four is the most the builder lets you tick; they all still show, a name shortening before the text is too small to read
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['staff of the serpent', 'ring of shadows', 'rooting rod', 'stunning gem'] });
+      const four = line(HUDS.HUD(snap(eight)));
+      expect(four.text.split(' · ').map(s => s.split(' ')[0].slice(0, 4))).toEqual(['Root', 'Stun', 'Shad', 'Serp']);
+      expect(four.text).not.toContain('+');
+      expect(four.size).toBeGreaterThanOrEqual(8.5 * 0.7);
+      // fewer picked → bigger: one clicky at the slider's top is far larger than the old line ever was
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['ring of shadows'], sizes: { clickies: 1.6 } });
+      expect(line(HUDS.HUD(snap(eight))).size).toBeCloseTo(8.5 * 1.6, 5);
+    });
+
+    it('picks that are not on you any more fall back to the default list, not a blank line', () => {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['cloak of nothing'] });
+      expect(line(HUDS.HUD(snap(eight))).text).toMatch(/^Rooting/);
+      expect(R.clickyShown(eight, ['cloak of nothing'])).toEqual(eight.slice(0, R.CLICKY_DEFAULT_N));
+    });
+
+    it('an older agent\'s list (no clickies_all) is picked from just the same', () => {
+      Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['ring of shadows'] });
+      const l = line(HUDS.HUD({ ...base, clickies: eight }));
+      expect(l.text).toBe('Shadows 5');
+    });
+
+    it('the picker lists every clicky, ticks the picked, shows kind and charges, and offers Recharged on a charged one', () => {
+      const list = eight.concat([C('Rod of Glamour', null, { unlimited: true }), C('Plain Hat', null)]);
+      const h = R.clickyPickerHtml(list, ['ring of shadows']);
+      expect((h.match(/<input type="checkbox"/g) || []).length).toBe(10);
+      expect(h).toContain('data-clk="ring of shadows" checked>');
+      expect(h).not.toMatch(/data-clk="rooting rod" checked/);
+      expect(h).toContain('<i class="ck ck-root">Root</i>');
+      expect(h).toContain('<i class="ck ck-dispel">Dispel</i>');
+      expect(h).toContain('<i class="ck ck-stun">Stun</i>');
+      expect(h).toContain('<span class="cn">3/3</span>');                              // charges left / full
+      expect(h).toMatch(/<span class="cn">∞<\/span>/);
+      // Recharged only where there is a full count to put back
+      expect((h.match(/data-recharged="/g) || []).length).toBe(8);
+      expect(h).toContain('data-recharged="ring of shadows"');
+      expect(h).not.toContain('data-recharged="rod of glamour"');
+      expect(h).not.toContain('data-recharged="plain hat"');
+      expect(h).toContain('Counting 1 of 10');
+      expect(h).toContain('data-clk-clear');
+    });
+
+    it('with nothing picked it says what the default is and has no Clear; at four picks the rest cannot be ticked', () => {
+      const none = R.clickyPickerHtml(eight, []);
+      expect(none).not.toContain('data-clk-clear');
+      expect(none).not.toContain(' checked');
+      expect(none).not.toContain(' disabled');
+      expect(none).toMatch(/root · dispel · stun first/);
+      const four = R.clickyPickerHtml(eight, eight.slice(0, 4).map(R.clickyKey));
+      expect((four.match(/ checked>/g) || []).length).toBe(4);
+      expect((four.match(/ disabled>/g) || []).length).toBe(4);
+      expect(four).not.toMatch(/data-clk="rooting rod" checked disabled/);
+      expect(R.CLICKY_MAX_PICK).toBe(4);
+    });
+
+    it('item names are escaped, and an empty list says where clickies come from', () => {
+      const h = R.clickyPickerHtml([C('Staff <b>"x"</b>', 1, { max: 2 })], []);
+      expect(h).toContain('Staff &lt;b&gt;&quot;x&quot;&lt;/b&gt;');
+      expect(h).not.toContain('<b>"x"');
+      expect(R.clickyPickerHtml([], [])).toMatch(/\/output inventory/);
+    });
+
+    it('picks are saved per character as part of the HUD\'s settings, and bad data reads as none', () => {
+      const store = {};
+      globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = v; } };
+      try {
+        store['wpHudParts:aldenmar'] = JSON.stringify({ clickies: 1, clickyPick: ['ring of shadows', 7, 'rooting rod'] });
+        expect(R.readParts('Aldenmar').clickyPick).toEqual(['ring of shadows', 'rooting rod']);
+        store['wpHudParts:brackwyn'] = JSON.stringify({ clickyPick: 'ring of shadows' });
+        expect(R.readParts('Brackwyn').clickyPick).toEqual([]);
+        expect(R.readParts('Corvale').clickyPick).toEqual([]);                          // nothing saved
+        const a = R.readParts('Corvale'), b = R.readParts('Corvale');
+        expect(a.clickyPick).not.toBe(b.clickyPick);                                    // never the default's own array
+        expect(a.clickyPick).not.toBe(R.HUD_DEFAULTS.clickyPick);
+      } finally { delete globalThis.localStorage; }
+    });
+
+    it('the builder gives the part its size slider, puts the picker under it, and its ↺ clears the picks too', () => {
+      const body = stripJs(meHtml);
+      expect(body).toMatch(/var HUD_SIZED = \[[^\]]*'clickies'/);
+      expect(body).toContain("if (g[0] === 'Items') h += '<div id=\"clkpick\"></div>';");
+      expect(body).toMatch(/if \(k === 'clickies'\) hudParts\.clickyPick = \[\];/);
+      expect(R.HUD_PARTS.find(g => g[0] === 'Items')[1].map(it => it[0])).toEqual(['clickies']);
+    });
+
+    // The builder's handlers (they sit after the render block, so the test cuts them out and drives them).
+    describe('the builder\'s handlers', () => {
+      const wiring = sliceBlock(meHtml, '  // Ticking a clicky counts it', "  // Size sliders — each part's");
+      const drive = (picks, last = { character: 'Aldenmar', clickies: eight }) => {
+        const handlers = {};
+        const parts = { clickyPick: picks };
+        const calls = { saves: 0, refreshes: 0, fetches: [], ticks: 0 };
+        const builderList = { addEventListener: (t, fn) => { (handlers[t] = handlers[t] || []).push(fn); } };
+        const fetchStub = (url, opts) => { calls.fetches.push([url, opts]); return { then: (ok) => ok() }; };
+        // eslint-disable-next-line no-new-func
+        new Function('builderList', 'hudParts', '_last', 'clickyPicked', 'clickyList', 'clickyKey', 'CLICKY_MAX_PICK', 'saveParts', 'refreshClickyPicker',
+          'fetch', 'PORT', 'tick', wiring)(builderList, parts, last, R.clickyPicked, R.clickyList, R.clickyKey, R.CLICKY_MAX_PICK,
+          () => { calls.saves++; }, () => { calls.refreshes++; }, fetchStub, 7779, () => { calls.ticks++; });
+        const tick = (key, checked) => handlers.change.forEach(fn => fn({ target: { getAttribute: (a) => (a === 'data-clk' ? key : null), checked } }));
+        const click = (attrs) => {
+          const el = { disabled: false, getAttribute: (a) => attrs[a] };
+          handlers.click.forEach(fn => fn({ target: { closest: (sel) => (attrs[sel.slice(1, -1)] !== undefined ? el : null) } }));
+          return el;
+        };
+        return { parts, calls, tick, click };
+      };
+
+      it('ticking adds to the picks (no more than four), unticking removes, Clear empties — each saved', () => {
+        const d = drive([]);
+        d.tick('ring of shadows', true); d.tick('rooting rod', true);
+        expect(d.parts.clickyPick).toEqual(['ring of shadows', 'rooting rod']);
+        d.tick('stunning gem', true); d.tick('orb of sight', true); d.tick('bridle of plenty', true);
+        expect(d.parts.clickyPick).toHaveLength(4);
+        expect(d.parts.clickyPick).not.toContain('bridle of plenty');
+        d.tick('ring of shadows', false);
+        expect(d.parts.clickyPick).not.toContain('ring of shadows');
+        d.click({ 'data-clk-clear': '1' });
+        expect(d.parts.clickyPick).toEqual([]);
+        expect(d.calls.saves).toBe(7);
+        expect(d.calls.refreshes).toBe(7);
+      });
+
+      it('Recharged tells the agent which item on which character, locks the button, and repolls', () => {
+        const d = drive([]);
+        const el = d.click({ 'data-recharged': 'ring of shadows' });
+        expect(el.disabled).toBe(true);
+        expect(d.calls.fetches).toHaveLength(1);
+        const [url, opts] = d.calls.fetches[0];
+        expect(url).toBe('http://127.0.0.1:7779/api/me/clicky-recharged');
+        expect(opts.method).toBe('POST');
+        expect(JSON.parse(opts.body)).toEqual({ character: 'Aldenmar', item: 'ring of shadows' });
+        expect(d.calls.ticks).toBe(1);
+        // no character yet, nothing to tell the agent
+        const idle = drive([], null);
+        idle.click({ 'data-recharged': 'ring of shadows' });
+        expect(idle.calls.fetches).toHaveLength(0);
+      });
+    });
   });
 
   // The guild lead, 2026-10-02: the DS amount "wrapped in a thorny green area if it's druid DS or
@@ -1108,8 +1331,8 @@ describe('the HUD — rounds, damage shield, builder', () => {
 
   it('every part in the builder has a default, and every default is in the builder', () => {
     const listed = R.HUD_PARTS.flatMap(g => g[1].map(it => it[0])).sort();
-    // `sizes` is the sliders' store, not a part of its own.
-    expect(listed).toEqual(Object.keys(R.HUD_DEFAULTS).filter(k => k !== 'sizes').sort());
+    // `sizes` is the sliders' store, not a part of its own; `clickyPick` is the clicky picker's.
+    expect(listed).toEqual(Object.keys(R.HUD_DEFAULTS).filter(k => k !== 'sizes' && k !== 'clickyPick').sort());
   });
 
   // Round six, the guild lead: "Lets try adding in small sliders next to each of

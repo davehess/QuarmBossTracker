@@ -14354,6 +14354,10 @@ function _meTimersLoad() {
         if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
         if (!mp.has(k)) mp.set(k, a);
       }
+      // Clickies the member marked recharged (FB-65), by item name.
+      for (const [item, at] of Object.entries(e.clk || {})) {
+        if (item && at > now - _CLICKY_RECHARGE_KEEP_MS && !_clickyRecharged.has(cl + '|' + item)) _clickyRecharged.set(cl + '|' + item, at);
+      }
     }
   } catch { /* first run, or not writable — nothing to restore */ }
 }
@@ -14372,6 +14376,10 @@ function _meTimersSave() {
       }
       for (const [cl, mp] of _meAaTimers) {
         for (const [k, a] of mp) if (a.learned || a.ready > now - _ME_TIMER_KEEP_MS) (slot(cl).aa = slot(cl).aa || {})[k] = a;
+      }
+      for (const [k, at] of _clickyRecharged) {
+        const bar = k.indexOf('|');
+        if (bar > 0 && at > now - _CLICKY_RECHARGE_KEEP_MS) (slot(k.slice(0, bar)).clk = slot(k.slice(0, bar)).clk || {})[k.slice(bar + 1)] = at;
       }
       fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
     } catch { /* best effort */ }
@@ -14801,8 +14809,50 @@ function _noteClickyUse(character, itemName, atMs) {
   if (list.length > 50) list.shift();
   _clickyUses.set(k, list);
 }
-const ME_CLICKIES_MAX = 8;
+// FB-65 (a member, 2026-10-07: "Root/Dispel/Stun are prioritized" · "pick which clicky charges you track"):
+// the counters are sorted root, dispel, stun first, and each carries its `kind` and full `max` so the
+// HUD's picker can show them. The spell catalog's `cc` already tags a HARMFUL spell's SPA 99 (root) and
+// SPA 21 (stun) — the read the suggested triggers use. It has no dispel (SPA 27), so the clicky spells
+// that carry one are listed by id: eqemu_spells joined to eqemu_items.clickeffect, 2026-10-07 — Strip
+// Enchantment 24, Pillage Enchantment 25, Cancel Magic 48, Nullify Magic 49, Static Pulse 1025, Guide
+// Cancel Magic 1211, Annul Magic 1526, Abolish Enchantment 1792. A new one would show as a plain clicky.
+const _CLICKY_DISPEL_SPELLS = new Set([24, 25, 48, 49, 1025, 1211, 1526, 1792]);
+const _CLICKY_KIND_RANK = { root: 0, dispel: 1, stun: 2 };
+let _clickySpellIdx = null, _clickySpellIdxSrc = null;   // spell id → catalog entry, rebuilt when the catalog is
+function _clickyKind(spellId) {
+  const id = Number(spellId);
+  if (!(id > 0)) return null;
+  if (_CLICKY_DISPEL_SPELLS.has(id)) return 'dispel';
+  if (_clickySpellIdxSrc !== _spellByNameLower) {
+    _clickySpellIdx = new Map();
+    for (const e of _spellByNameLower.values()) if (e && e.id != null) _clickySpellIdx.set(Number(e.id), e);
+    _clickySpellIdxSrc = _spellByNameLower;
+  }
+  const cc = (_clickySpellIdx.get(id) || {}).cc;
+  if (!Array.isArray(cc)) return null;
+  return cc.includes('root') ? 'root' : (cc.includes('stun') ? 'stun' : null);
+}
+// A recharge leaves NOTHING in the log that names the item. The one report we have (FB-65) shows six
+// lines, "You give 38 platinum 1 gold 9 silver 0 copper to <vendor>." then five of "You give 19 platinum 0
+// gold 9 silver 5 copper to <vendor>.", and no other line from the vendor transaction — a coin amount to
+// an NPC, which is also what any hand-in of coin prints. Guessing which item it paid for would mis-set
+// counters, so the member says so instead: the picker's "Recharged" button lands here, putting
+// that counter back to the item's full charges from this moment (glows count from then). An export
+// written after it is newer, and wins again.
+const _clickyRecharged = new Map();   // "char|itemLower" → ms the member marked it recharged
+const _CLICKY_RECHARGE_KEEP_MS = 30 * 86400_000;
+function _noteClickyRecharged(character, itemName, atMs) {
+  const lower = String(itemName || '').toLowerCase();
+  const c = _meClickies(character).find(x => x.name.toLowerCase() === lower);
+  if (!c || !(c.max > 0)) return false;   // not carried, or not a charged item: nothing to put back
+  _clickyRecharged.set(String(character).toLowerCase() + '|' + lower, atMs);
+  _meTimersSave();
+  return true;
+}
+const ME_CLICKIES_MAX = 8;          // what `clickies` carries (an older HUD draws all of it)
+const ME_CLICKIES_LIST_MAX = 40;    // what `clickies_all` carries, for the picker
 function _meClickies(character) {
+  _meTimersLoad();   // a restored "recharged" mark, before the first poll after a restart
   const invs = stats.characterInventories || {};
   const cl = String(character || '').toLowerCase();
   const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
@@ -14822,16 +14872,25 @@ function _meClickies(character) {
     const cat = _itemClickyByNameLower.get(lower);
     if (!cat || !cat.clickeffect) continue;
     const prev = seen.get(lower);
-    if (prev) { prev.count += it.count; continue; }   // two of the same: one counter
-    seen.set(lower, { name: it.name, count: it.count, max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
+    if (prev) { prev.count += it.count; prev.copies++; continue; }   // two of the same: one counter
+    seen.set(lower, { name: it.name, count: it.count, copies: 1, effect: cat.clickeffect,
+      max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
       worn: !/^General|^Bank|^SharedBank/i.test(it.loc || '') });
   }
   return [...seen.values()].map(c => {
-    const used = (_clickyUses.get(cl + '|' + c.name.toLowerCase()) || []).filter(t => t >= since).length;
+    const lower = c.name.toLowerCase();
+    const full = c.max != null && c.max > 0 ? c.max : null;
+    // "Recharged" newer than the export: full charges (per copy), and glows count from the mark.
+    const mark = _clickyRecharged.get(cl + '|' + lower) || 0;
+    const fresh = full != null && mark > since;
+    const used = (_clickyUses.get(cl + '|' + lower) || []).filter(t => t >= (fresh ? mark : since)).length;
     const unlimited = c.max != null && c.max < 0;
     const charged = c.max != null ? c.max > 0 : c.count > 1;
-    return { name: c.name, left: charged ? Math.max(0, c.count - used) : null, unlimited, used, worn: c.worn };
-  }).sort((a, b) => (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_MAX);
+    const have = fresh ? full * c.copies : c.count;
+    return { name: c.name, left: charged ? Math.max(0, have - used) : null, unlimited, used, worn: c.worn,
+      kind: _clickyKind(c.effect), max: full };
+  }).sort((a, b) => ((_CLICKY_KIND_RANK[a.kind] ?? 3) - (_CLICKY_KIND_RANK[b.kind] ?? 3))
+    || (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_LIST_MAX);
 }
 // Damage shield from WORN gear (the guild lead, 2026-10-04: "Missing my additional DS from my neck
 // slot. It only gets added when you have other damage shield"). An item's worn-effect shield
@@ -15217,8 +15276,14 @@ function _serializeMeState() {
     blind: !!(blind && blind.active),
     track: _meTrackFor(cl, st, now),
     ..._meSideArcs(active, st, now, [tx && tx.tot ? tx.tot.name : null]),
-    clickies: _meClickies(active),
+    ..._meClickyFields(active),
   };
+}
+// `clickies` is the first ME_CLICKIES_MAX, as an older HUD has always drawn them; `clickies_all` rides
+// along only when there are more, for the builder's picker (FB-65).
+function _meClickyFields(active) {
+  const all = _meClickies(active);
+  return { clickies: all.slice(0, ME_CLICKIES_MAX), clickies_all: all.length > ME_CLICKIES_MAX ? all : undefined };
 }
 
 function _serializeTankState() {
@@ -30562,6 +30627,8 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // The HUD builder's "Recharged" button on a clicky (FB-65).
+      if (req.url === '/api/me/clicky-recharged' && req.method === 'POST') return _handleClickyRecharged(req, res);
       // Command Center overlay (command.html) — the "one window" board.
       if (req.url === '/api/command-center') {
         let _b;
@@ -46103,6 +46170,18 @@ async function _handleHailMark(req, res) {
   let by = null;
   try { by = (stats.activeCharacter && String(stats.activeCharacter)) || (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null; } catch { void 0; }
   _hailMarkRelay({ window_id: windowId, name, hailed: b.hailed, by }, send);
+}
+// POST /api/me/clicky-recharged (the HUD builder's "Recharged" button): { character, item }.
+async function _handleClickyRecharged(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const character = b && b.character ? String(b.character).trim().slice(0, 40) : '';
+  const item = b && b.item ? String(b.item).trim().slice(0, 120) : '';
+  if (!character || !item) return send(400, { error: 'character and item are required' });
+  if (!_noteClickyRecharged(character, item, Date.now())) return send(404, { error: 'no charged clicky of that name on that character' });
+  send(200, { ok: true });
 }
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as

@@ -2572,7 +2572,12 @@ HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken b
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
-from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:
+from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"; sorted root · dispel · stun
+first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISPEL_SPELLS` ids for dispel;
+`clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
+`_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
+`clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the
+⚙ builder's `clickyPickerHtml` is the picker — per character in `hudParts.clickyPick`, FB-65). Auctions:
 `_pollDkpAuctions` → `_applyDkpAuctions` (one `auction|<id>` timer each) + the
 Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assist`
 header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).
