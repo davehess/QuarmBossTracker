@@ -5442,3 +5442,35 @@ roadmaps.
   screenshots — the same category as the `OverlayDemo` swap, on a published
   surface. `test-archive-merge.sh`'s names are fixture DATA and stay. Not fixed:
   it is unrelated to the change that found it.
+
+### 🧾 2026-10-07 — Mimic beta: hide-all crash, taskbar, overlays growing back, Box HUD procs, mob procs, /parses (agent 3.7.97 · web 1.8.113)
+Five reports in one beta push, each built and mutation-checked by a parallel agent.
+- **Hide-all crashed the main process** (the guild lead's dialog: "Object has been
+  destroyed at applyMobInfoVisibility"). Mob Info's window had been closed from
+  outside Mimic (nothing in the log said `freed mobinfo` for that session), nothing
+  nulled the reference, and the next hide-all called `.hide()` on a corpse. Now every
+  window's `closed` event drops its reference (`_forgetClosedOverlay`, logged as
+  "closed from outside Mimic"), the materialise sweep rebuilds a destroyed one, and
+  all 18 `apply*Visibility` guards use `_live(win)`. **FB-61**: Settings, Resource use
+  and UI Studio were the three framed windows without `skipTaskbar`; every overlay
+  already had it — if a tester still sees overlays on the taskbar, the next suspects
+  are a post-show `setSkipTaskbar(true)` re-assert and popup windows from dashboard links.
+- **Overlays came back bigger after every resize** (a beta tester; FB-16). The
+  right-click ✥ menu stretches a short overlay to 420 px so the menu fits, and that
+  loan was SAVED as the overlay's size on byte-stable pages (Command Center, Target
+  Info, the HUD) — ✕ and restarts brought the 420 back. The loan is now returned on
+  menu close for every page (`overlay-menu-closed`), the pre-menu height is what gets
+  saved, ✕ flushes a resize made in the last 400 ms, and the HUD builder's ✕ keeps the
+  size you left instead of restoring the bounds from when the panel opened. Left for
+  the guild lead: whether a dragged height should become a floor for auto-height
+  overlays (DECISIONS to follow).
+- **Box HUD** shows `procs · stuns · DS` under the target line like the ring. **FB-60**:
+  a monk's Dragon Punch lands "Dragon Force" as an anonymous 10-point hit right after
+  the strike, which the proc counter took for a proc; the "stricken by the force of a
+  dragon" line now takes it back (24 → 17 procs on the report's own log). **FB-58**: the
+  DS badge shows the measured per-hit value once your own shield hits repeat
+  (`DS`), the catalog estimate until then (`DS~`); still an estimate for a bard whose
+  real shield is more than 30 above the catalog with no shield buff visible.
+- **Target Info shows the mob's procs** (PROCS section above Offensive; bot 3.1.216).
+- **/parses defaults to 7 days** (FB-59) and runs its reads in parallel; preview at
+  https://b.wolfpack.quest/parses (old window: https://b.wolfpack.quest/parses?w=60d).
