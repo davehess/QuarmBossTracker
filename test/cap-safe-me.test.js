@@ -445,7 +445,9 @@ describe('item 10 — the who delete reports the real count', () => {
   });
   it('keeps the officer gate and the case-insensitive, guild-scoped match', () => {
     expect(del).toMatch(/officerIdentity\(\)/);
-    expect(del).toMatch(/\.ilike\('character', name\)\s*\.eq\('guild_id', 'wolfpack'\)/);
+    // The guild kit swaps the literal for GUILD_TAG (web/lib/guild.ts, default 'wolfpack'); either spelling is
+    // the guild-scoped match this test guards, so accept both and let the slices land in any order.
+    expect(del).toMatch(/\.ilike\('character', name\)\s*\.eq\('guild_id', (?:'wolfpack'|GUILD_TAG)\)/);
   });
 });
 
