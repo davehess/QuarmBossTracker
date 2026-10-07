@@ -113,6 +113,15 @@ function _wpPrefs(name, extra) {
   }, extra || {});
 }
 
+// A window reference is only drivable while the window is alive. Electron
+// THROWS ("Object has been destroyed") on any method call against a destroyed
+// BrowserWindow, and in the main process that is an uncaught exception - an
+// error dialog, not a log line (the guild lead, 2026-10-07: hide-all hotkey,
+// applyMobInfoVisibility). `if (!win)` is not this check: a destroyed window is
+// still truthy. Every guard in front of showInactive()/hide()/show()/
+// setBounds()/webContents on an overlay reference uses this instead.
+function _live(win) { return !!(win && !win.isDestroyed()); }
+
 let mainWindow = null;
 let dockWindow = null;      // the Dock — hosts other overlays as iframe panes
 let overlayWindow = null;
@@ -4442,6 +4451,7 @@ function openSettings(section) {
   }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
+    skipTaskbar: true,   // only the dashboard takes a taskbar slot (FB-61)
     webPreferences: _wpPrefs('Settings'),
   });
   settingsWindow.loadFile('settings.html', sec ? { hash: sec } : undefined);
@@ -4463,6 +4473,7 @@ function openResources() {
   if (resourcesWindow) { resourcesWindow.focus(); return; }
   resourcesWindow = new BrowserWindow({
     width: 520, height: 520, title: 'Mimic — Resource use', backgroundColor: '#0e1116',
+    skipTaskbar: true,
     webPreferences: _wpPrefs('Resource use'),
   });
   resourcesWindow.loadFile('resources.html');
@@ -4486,6 +4497,7 @@ function openUiStudio() {
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
+    skipTaskbar: true,
     webPreferences: _wpPrefs('UI Studio'),
   });
   uiStudioWindow.setMenu(null);
@@ -5501,14 +5513,14 @@ function _eqGateOk(cfg) {
   return _eqRunning;
 }
 function applyOverlayVisibility() {
-  if (!overlayWindow) return;
+  if (!_live(overlayWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showHud && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
-  if (!triggerWindow) return;
+  if (!_live(triggerWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // The Timers canvas shows the timers and callouts while it is on; this window
@@ -5567,7 +5579,7 @@ function createCanvasWindow() {
   });
 }
 function applyCanvasVisibility() {
-  if (!canvasWindow) return;
+  if (!_live(canvasWindow)) return;
   const cfg = loadConfig();
   const unlocked = setupMode || cfg.overlaysLocked === false;
   const shouldShow = !!cfg.showCanvas && (unlocked || _canvasArrange || (!cfg.hideOverlays && _eqGateOk(cfg)));
@@ -5626,7 +5638,7 @@ function createCharmOverlay() {
   });
 }
 function applyCharmVisibility() {
-  if (!charmWindow) return;
+  if (!_live(charmWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
@@ -5660,7 +5672,7 @@ function createPetsOverlay() {
   });
 }
 function applyPetsVisibility() {
-  if (!petsWindow) return;
+  if (!_live(petsWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
@@ -5694,7 +5706,7 @@ function createBuffQueueOverlay() {
   });
 }
 function applyBuffQueueVisibility() {
-  if (!buffQueueWindow) return;
+  if (!_live(buffQueueWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — most useful to support classes (clerics, druids,
@@ -5730,7 +5742,7 @@ function createPopRaidOverlay() {
   });
 }
 function applyPopRaidVisibility() {
-  if (!popRaidWindow) return;
+  if (!_live(popRaidWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — raid leaders + anyone following the fight plan.
@@ -5765,7 +5777,7 @@ function createMeOverlay() {
   });
 }
 function applyMeVisibility() {
-  if (!meWindow) return;
+  if (!_live(meWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('me') || (cfg.showMe && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5796,7 +5808,7 @@ function createMobInfoOverlay() {
   });
 }
 function applyMobInfoVisibility() {
-  if (!mobInfoWindow) return;
+  if (!_live(mobInfoWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5827,7 +5839,7 @@ function createWhoOverlay() {
   });
 }
 function applyWhoVisibility() {
-  if (!whoWindow) return;
+  if (!_live(whoWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showWho && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5859,7 +5871,7 @@ function createMelodyOverlay() {
   });
 }
 function applyMelodyVisibility() {
-  if (!melodyWindow) return;
+  if (!_live(melodyWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to bards. EQ-gated.
@@ -5895,7 +5907,7 @@ function createZealHealthOverlay() {
   });
 }
 function applyZealVisibility() {
-  if (!zealWindow) return;
+  if (!_live(zealWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — diagnostic; users only need it during setup
@@ -5932,7 +5944,7 @@ function createTankOverlay() {
   });
 }
 function applyTankVisibility() {
-  if (!tankWindow) return;
+  if (!_live(tankWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
@@ -5967,7 +5979,7 @@ function createThreatMeterOverlay() {
   });
 }
 function applyThreatVisibility() {
-  if (!threatWindow) return;
+  if (!_live(threatWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — primarily for tanks but useful to anyone who
@@ -6002,7 +6014,7 @@ function createExtTargetOverlay() {
   });
 }
 function applyExtTargetVisibility() {
-  if (!extTargetWindow) return;
+  if (!_live(extTargetWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
@@ -6086,7 +6098,7 @@ function createCommandOverlay() {
   _loadOverlayPreferAgent(commandWindow, '/overlay/command', 'command.html');
 }
 function applyCommandVisibility() {
-  if (!commandWindow) return;
+  if (!_live(commandWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
@@ -6169,7 +6181,7 @@ function createDockWindow() {
   });
 }
 function applyDockVisibility() {
-  if (!dockWindow) return;
+  if (!_live(dockWindow)) return;
   const cfg = loadConfig();
   // setupMode counts as unlocked here (and in every apply* fn above): setup
   // force-shows every overlay ONCE in applySetupMode, but any later
@@ -6189,7 +6201,7 @@ function applyDockVisibility() {
 }
 
 function applyChChainVisibility() {
-  if (!chChainWindow) return;
+  if (!_live(chChainWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — healers + raid leads watching the rotation. EQ-gated.
@@ -6406,10 +6418,40 @@ function _overlayWanted(cfg, e) {
 function _materializeEnabledOverlays() {
   let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
   for (const e of _OVERLAY_WINDOWS) {
-    if (e.get()) continue;
+    const held = e.get();
+    if (_live(held)) continue;
+    // A destroyed window is still truthy, so the old `if (e.get()) continue`
+    // treated it as "exists" and never rebuilt it. Let it go through drop()
+    // like any other freed window, so the create below can run.
+    if (held) {
+      e.drop();
+      appendAgentLog(`[overlay] ${e.key} window was already destroyed — forgot it\n`);
+    }
     if (!_overlayWanted(cfg, e)) continue;
     try { e.create(); }
     catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
+  }
+}
+
+// A window can die WITHOUT going through the reaper below: the user closes an
+// overlay (Alt+F4 while it has focus, the taskbar's "Close window", the window
+// menu) or its page closes itself. Electron then destroys the BrowserWindow,
+// but the module-level reference still points at it - and a destroyed window
+// is truthy, so every `!xWindow` create-if-missing test said "it exists" and
+// the next showInactive()/hide() on it threw "Object has been destroyed" out of
+// the main process (the guild lead, 2026-10-07: hide-all hotkey ->
+// applyAllVisibility -> applyMobInfoVisibility, Mimic 2.7.10-beta.1). The
+// reaper cannot have done it: it is the only code that destroys an overlay on
+// purpose, it nulls the reference through drop() and it always logs "freed",
+// and that session's log has no "freed mobinfo" line.
+// Wired to every window's 'closed' event by the 'browser-window-created'
+// listener just below applyAllVisibility; matching by identity, so the
+// dashboard, Settings and panel overlays fall straight through.
+function _forgetClosedOverlay(win) {
+  for (const e of _OVERLAY_WINDOWS) {
+    if (e.get() !== win) continue;
+    e.drop();
+    appendAgentLog(`[overlay] ${e.key} window was closed from outside Mimic (Alt+F4, the taskbar or the window menu) — forgot it; it is rebuilt when it is next wanted\n`);
   }
 }
 
@@ -6424,8 +6466,11 @@ function _reapDisabledOverlays() {
     if (!win) continue;
     if (_overlayWanted(cfg, e)) continue;
     if (_inSingleSetup(win)) continue;
-    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+    // Let go BEFORE destroying: destroy() emits 'closed', and _forgetClosedOverlay
+    // (the catch for outside closes) must find this window already released, or
+    // every deliberate free would also be logged as an accident.
     e.drop();
+    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
     const why = !cfg[e.flag] ? `${e.flag} is off`
               : cfg.hideOverlays ? 'overlays are switched off'
               : 'EverQuest is not running';
@@ -6459,6 +6504,12 @@ function applyAllVisibility() {
   applyCanvasVisibility();
   _reapDisabledOverlays();
 }
+
+// Every window we build reports here the moment it is constructed, so no
+// creator has to remember to wire its own 'closed' (none of the eighteen did).
+app.on('browser-window-created', (_e, win) => {
+  try { win.once('closed', () => _forgetClosedOverlay(win)); } catch (e) { void e; }
+});
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
 // Quick way to clear the screen for a screenshot / a tough fight / whatever.

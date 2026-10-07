@@ -30,6 +30,9 @@ const src = readSource(MAIN);
 
 // The shipped lifecycle block: the table, _overlayForcedOn, and both halves.
 const block = sliceBlock(src, 'const _OVERLAY_WINDOWS = [', '// Convenience: refresh every overlay');
+// _live() sits above the block (every apply*Visibility shares it), so slice the
+// real one in rather than keeping a copy that could drift from the shipped check.
+const liveFn = sliceBlock(src, 'function _live(win) {', '}');
 
 // main.js's module-level window bindings and the creator that fills each one.
 // Order matches _OVERLAY_WINDOWS; a mismatch is caught below.
@@ -64,14 +67,20 @@ const PLACED = PAIRS.length - 1;
 
 // Stand up the sliced code over fake windows. `alive` seeds windows that
 // already exist (i.e. "before" state); everything else starts null.
-function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], singleSetup = [], alive = [], eqRunning = true } = {}) {
+// `dead` seeds windows whose BrowserWindow was destroyed behind main.js's back
+// (the user closed it): the reference is still set, isDestroyed() says true.
+// `closedOnDestroy` makes destroy() emit 'closed' synchronously, the way the
+// worst-case Electron ordering would, so the reaper is tested against it.
+// `extra` is more shipped source evaluated after the block (with `exports` the
+// names it hands back) - how the crash test runs the REAL applyAllVisibility.
+function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], singleSetup = [], alive = [], dead = [], closedOnDestroy = false, eqRunning = true, extra = '', exports = [] } = {}) {
   const decls = PAIRS.map(([v, c]) => `
     let ${v} = null;
     function ${c}() { ${v} = __mkWin('${v}'); __created.push('${v}'); }
   `).join('\n');
 
   const prelude = `
-    const __created = [], __destroyed = [], __log = [];
+    const __created = [], __destroyed = [], __log = [], __shown = [], __hidden = [];
     const __cfg = ${JSON.stringify(cfg)};
     function loadConfig() { return __cfg; }
     function appendAgentLog(s) { __log.push(s); }
@@ -85,19 +94,28 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     const __single = new Set(${JSON.stringify(singleSetup)});
     function _inSingleSetup(w) { return !!w && __single.has(w.name); }
     function __mkWin(name) {
+      // showInactive()/hide() throw once destroyed, exactly as Electron does.
+      const dead = (w) => { if (w.gone) throw new TypeError('Object has been destroyed'); };
       return { name, gone: false, isDestroyed() { return this.gone; },
-               destroy() { this.gone = true; __destroyed.push(name); } };
+               showInactive() { dead(this); __shown.push(name); },
+               hide() { dead(this); __hidden.push(name); },
+               destroy() { this.gone = true; __destroyed.push(name); if (${JSON.stringify(closedOnDestroy)}) _forgetClosedOverlay(this); } };
     }
+    ${liveFn}
     ${decls}
     for (const n of ${JSON.stringify(alive)}) {
       switch (n) { ${PAIRS.map(([v]) => `case '${v}': ${v} = __mkWin('${v}'); break;`).join(' ')} }
     }
+    for (const n of ${JSON.stringify(dead)}) {
+      switch (n) { ${PAIRS.map(([v]) => `case '${v}': ${v} = __mkWin('${v}'); ${v}.gone = true; break;`).join(' ')} }
+    }
     function __live() { return [${PAIRS.map(([v]) => v).join(', ')}].filter(Boolean).map(w => w.name); }
   `;
 
-  return evalBlock(prelude + '\n' + block, [
+  return evalBlock(prelude + '\n' + block + '\n' + extra, [
     '_OVERLAY_WINDOWS', '_overlayForcedOn', '_overlayWanted', '_materializeEnabledOverlays',
-    '_reapDisabledOverlays', '__created', '__destroyed', '__log', '__live',
+    '_reapDisabledOverlays', '_forgetClosedOverlay', '__created', '__destroyed', '__log', '__live',
+    '__shown', '__hidden', ...exports,
   ]);
 }
 
@@ -512,5 +530,127 @@ describe('the round trip a user actually performs', () => {
     h._reapDisabledOverlays();
     expect(h.__created).toEqual(['overlayWindow', 'triggerWindow']);
     expect(h.__destroyed).toEqual([]);
+  });
+});
+
+// ── A window that dies outside the lifecycle ────────────────────────────────
+// The guild lead, 2026-10-07 (Mimic 2.7.10-beta.1): the hide-all hotkey raised
+// "Uncaught Exception: TypeError: Object has been destroyed at
+// applyMobInfoVisibility <- applyAllVisibility <- toggleHideAllOverlays".
+// The reaper is the only code that destroys an overlay on purpose, and it nulls
+// the reference and logs "freed"; that session's log has no such line. So the
+// window was closed from outside (Alt+F4, the taskbar, the window menu), and
+// the reference kept pointing at a destroyed - but TRUTHY - object. Three
+// layers now stop it, each tested on its own below: the 'closed' catch
+// (_forgetClosedOverlay), the materialize sweep, and the _live() guard in every
+// apply*Visibility (test/mimic-destroyed-window-guard.test.js).
+describe('a window destroyed outside the lifecycle', () => {
+  const entry = (h, key) => h._OVERLAY_WINDOWS.find(e => e.key === key);
+
+  it('fixture sanity: a dead window is still truthy, which is the whole trap', () => {
+    const h = harness({ dead: ['mobInfoWindow'] });
+    const w = entry(h, 'mobinfo').get();
+    expect(!!w, 'a destroyed BrowserWindow reference is still truthy').toBe(true);
+    expect(w.isDestroyed()).toBe(true);
+    expect(() => w.hide()).toThrow(/Object has been destroyed/);
+  });
+
+  it('materialize forgets a destroyed window and rebuilds it when it is wanted', () => {
+    const h = harness({ cfg: { showMobInfo: true, overlaysLocked: true }, dead: ['mobInfoWindow'] });
+    h._materializeEnabledOverlays();
+    expect(h.__created, 'the old `if (e.get()) continue` never rebuilt it').toEqual(['mobInfoWindow']);
+    const w = entry(h, 'mobinfo').get();
+    expect(w.isDestroyed(), 'the binding now holds a fresh, live window').toBe(false);
+    expect(h.__log.join('')).toMatch(/mobinfo window was already destroyed/);
+  });
+
+  it('materialize forgets a destroyed window it does not want, without building one', () => {
+    const h = harness({ cfg: { overlaysLocked: true }, dead: ['mobInfoWindow'] });
+    h._materializeEnabledOverlays();
+    expect(entry(h, 'mobinfo').get(), 'dropped through the table, so the binding reads empty').toBeNull();
+    expect(h.__created).toEqual([]);
+  });
+
+  it('materialize leaves every live neighbour alone', () => {
+    const h = harness({ cfg: { showMobInfo: true, showWho: true, overlaysLocked: true },
+                        alive: ['whoWindow'], dead: ['mobInfoWindow'] });
+    const who = entry(h, 'who').get();
+    h._materializeEnabledOverlays();
+    expect(entry(h, 'who').get(), 'the live /who window is the same object').toBe(who);
+    expect(h.__created).toEqual(['mobInfoWindow']);
+  });
+
+  it('_forgetClosedOverlay nulls the binding through drop() the moment its window dies', () => {
+    const h = harness({ cfg: { showMobInfo: true, overlaysLocked: true }, alive: ['mobInfoWindow', 'whoWindow'] });
+    const w = entry(h, 'mobinfo').get();
+    w.gone = true;                       // Alt+F4 on the focused overlay
+    h._forgetClosedOverlay(w);
+    expect(entry(h, 'mobinfo').get()).toBeNull();
+    expect(h.__live(), 'the other overlay is untouched').toEqual(['whoWindow']);
+    expect(h.__log.join('')).toMatch(/mobinfo window was closed from outside Mimic/);
+  });
+
+  it('_forgetClosedOverlay ignores a window that is not an overlay (dashboard, Settings, panels)', () => {
+    const h = harness({ alive: ['mobInfoWindow'] });
+    h._forgetClosedOverlay({ name: 'dashboard', isDestroyed: () => true });
+    expect(h.__live()).toEqual(['mobInfoWindow']);
+    expect(h.__log).toEqual([]);
+  });
+
+  it('_forgetClosedOverlay only forgets its own window, not a newer one in the same slot', () => {
+    // A stale 'closed' (the old window's) arriving after a rebuild must not
+    // null the replacement.
+    const h = harness({ cfg: { showMobInfo: true, overlaysLocked: true }, alive: ['mobInfoWindow'] });
+    const stale = { name: 'old', isDestroyed: () => true };
+    h._forgetClosedOverlay(stale);
+    expect(entry(h, 'mobinfo').get()).not.toBeNull();
+  });
+
+  it('a deliberate free is not also logged as an outside close', () => {
+    // destroy() emits 'closed'. If the reaper destroyed BEFORE letting go of the
+    // binding, the catch above would see its own window still bound and report
+    // every free as an accident. closedOnDestroy replays the synchronous worst
+    // case.
+    const h = harness({ cfg: { overlaysLocked: true }, alive: ['mobInfoWindow'], closedOnDestroy: true });
+    h._reapDisabledOverlays();
+    expect(h.__destroyed).toEqual(['mobInfoWindow']);
+    expect(entry(h, 'mobinfo').get()).toBeNull();
+    const log = h.__log.join('');
+    expect(log).toMatch(/freed mobinfo/);
+    expect(log).not.toMatch(/closed from outside/);
+  });
+
+  it('the hide-all pass no longer throws when Mob Info was destroyed behind our back', () => {
+    // The reported sequence end to end, on the shipped code: the hotkey has
+    // already flipped every flag off and saved; applyAllVisibility runs.
+    const all = sliceBlock(src, 'function applyAllVisibility() {', '\n}');
+    const names = [...all.matchAll(/\b(apply\w+Visibility)\(\)/g)].map(m => m[1]);
+    expect(names, 'the pass must still call Mob Info').toContain('applyMobInfoVisibility');
+    const stubs = names.filter(n => n !== 'applyMobInfoVisibility').map(n => `function ${n}() {}`).join('\n');
+    const mobInfo = sliceBlock(src, 'function applyMobInfoVisibility() {', '\n}');
+    const h = harness({
+      cfg: { overlaysLocked: true },            // hide-all: every show* flag is off
+      dead: ['mobInfoWindow'],
+      extra: `${stubs}\n${mobInfo}\n${all}`,
+      exports: ['applyAllVisibility'],
+    });
+    expect(() => h.applyAllVisibility()).not.toThrow();
+    expect(entry(h, 'mobinfo').get(), 'nothing left bound to the dead window').toBeNull();
+  });
+
+  it('...and the un-hide pass rebuilds and shows it', () => {
+    const all = sliceBlock(src, 'function applyAllVisibility() {', '\n}');
+    const names = [...all.matchAll(/\b(apply\w+Visibility)\(\)/g)].map(m => m[1]);
+    const stubs = names.filter(n => n !== 'applyMobInfoVisibility').map(n => `function ${n}() {}`).join('\n');
+    const mobInfo = sliceBlock(src, 'function applyMobInfoVisibility() {', '\n}');
+    const h = harness({
+      cfg: { showMobInfo: true, overlaysLocked: true },
+      dead: ['mobInfoWindow'],
+      extra: `${stubs}\n${mobInfo}\n${all}`,
+      exports: ['applyAllVisibility'],
+    });
+    expect(() => h.applyAllVisibility()).not.toThrow();
+    expect(h.__created).toEqual(['mobInfoWindow']);
+    expect(h.__shown, 'the rebuilt Mob Info is actually shown').toEqual(['mobInfoWindow']);
   });
 });
