@@ -2545,7 +2545,10 @@ into its corpse or hits 0% (`_noteMobDeathFromState` →
 `EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
 HUD per-mob ⚡ procs / ✦ stuns-aggro (agent 3.7.88): `_meNoteHit` proc flag + `_meNoteMyLanding` (catalog
 cc 'stun' or `hate` > 0, bot 3.1.205), keyed name#spawn id → `/api/me` `target.my_procs` / `my_stuns`;
-drawn above the DS badge, builder part `procs`.
+drawn above the DS badge, builder part `procs`. The Box layout (`renderA`) draws the same fields as one line
+under the target, `procs 3 · stuns 2 · DS 24` (`mineHtml`; `mineOf` and `dsMark` are shared with the ring). A
+monk's Dragon Punch is not a proc: its spell, Dragon Force, prints an anonymous hit beside the swing and the
+landing line "<mob> is stricken by the force of a dragon." takes it back out (`_meNoteDragonForce`, FB-60).
 HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
@@ -3937,6 +3940,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   worn effect is a damage shield, from `/output inventory` or the Quarmy export) only while a shield
   spell is up; `combat.ds.from_items` says how much. The item list is view `item_worn_damage_shield`,
   served as `worn_ds` on `/api/agent/item-clickies` (v2).
+  **Measured wins (FB-58):** that sum is an ESTIMATE (catalog values — no instrument skill, no AA). Once a
+  shield hit of yours has landed this fight, `per_hit` is the amount that repeats among the last five
+  (`_dsSeenPerHit`, a tie to the newest) and `combat.ds.measured` is true; the badge's "~" (`dsMark`) marks
+  the estimate. The hits it reads are the ledger's `kind: 'ds'` ones: the named "YOUR" line, or an anonymous
+  hit after the mob hit you that fits the shield you wear + `DS_UNLISTED_SLACK`.
   **Round four (agent 3.7.9):** cooldowns on an inner arc (`cdItems`), tick
   and swing their own arcs under them (`tickItem` / `swingItem`); `weight`
   part (`HUD_WEIGHTS`, svg class `w-<weight>`); builder is a side panel

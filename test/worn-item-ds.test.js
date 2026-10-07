@@ -80,9 +80,12 @@ describe('_wornItemDs: the shield from the gear a character wears', () => {
 describe('the HUD badge adds the gear shield only on top of a shield spell', () => {
   const body = stripJs(sliceBlock(agent, '  const dsKnown = _knownDsPerHitFor(active, dsWorn);', '  // HUD: swing timer'));
 
+  // The ESTIMATE: what the badge reads until a hit of the shield has landed this fight. Once one has
+  // (FB-58) the measured amount wins — test/me-hud-timers.test.js, "the shield badge reads what the
+  // shield did".
   it('per hit = spell shield + gear shield while a spell shield is up; the last landed hit otherwise', () => {
     expect(body).toMatch(/const dsItem = dsKnown \? _wornItemDs\(active\) : 0;/);
-    expect(body).toMatch(/combat\.ds\.per_hit = dsKnown \? dsKnown \+ dsItem : combat\.ds\.last;/);
+    expect(body).toMatch(/combat\.ds\.per_hit = seen != null \? seen : \(dsKnown \? dsKnown \+ dsItem : combat\.ds\.last\);/);
     expect(body).toMatch(/combat\.ds\.from_items = dsItem;/);
   });
 

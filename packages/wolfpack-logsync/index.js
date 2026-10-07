@@ -13436,6 +13436,7 @@ function _meNoteHit(character, ev) {
   const nearSwing = arr.some(x => x.dir === 'out' && x.kind === 'melee' && Math.abs(t - x.t) <= 1500);
   const hit = { t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
     anon: dir === 'out' && kind === 'spell' && nonMelee, cast: fromCast,
+    dsGuess: kind === 'ds' && !ev.ds,   // a shield by inference (a mob's hit on you), not by the log's own say-so
     proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast };
   arr.push(hit);
   if (hit.proc) _meProcCount(cl, hit, true);
@@ -13450,12 +13451,39 @@ function _meNoteHit(character, ev) {
     for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
       const x = arr[i];
       if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
-      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false;
+      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false; x.dsGuess = true;
       _meProcCount(cl, x, false);   // it was the shield after all: not a proc
     }
   }
   const cutoff = t - 10 * 60_000;
   while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
+}
+// A monk's Dragon Punch is not a weapon proc (a member, 2026-10-07, FB-60: "The proc counter is
+// including monk AA Dragon Punches instead of just damage procs"). The AA fires the spell Dragon Force
+// from the skill hit, and the log prints, one line after another:
+//   You strike A jord militis for 64 points of damage.            ← the skill, your swing
+//   A jord militis was hit by non-melee for 10 points of damage.  ← the spell's damage, anonymous
+//   A jord militis is stricken by the force of a dragon.          ← its landing text (cast_on_other)
+// The middle line is an anonymous spell hit beside your swing, which is exactly what a proc looks like
+// when it arrives, so _meNoteHit counts it. The landing line after it is what says whose it was: the
+// newest anonymous hit on that mob in the last 1.5 s is Dragon Force's — it stops being a proc (and is
+// given back from the count), keeps its place as spell damage, and the swing that follows it cannot
+// make it one again (`cast`). A resisted Dragon Force prints no damage and no landing, so it never
+// gets here. 10 is its base damage; the log showed 1, 10 and 12 (a crit), so the amount is not a test.
+// A hit the log had taken for your damage shield on a guess (`dsGuess`) is Dragon Force's too.
+const _ME_DRAGON_FORCE_LANDING = ' is stricken by the force of a dragon.';
+function _meNoteDragonForce(cl, mob, atMs) {
+  const arr = _meHits.get(cl);
+  const m = String(mob || '').toLowerCase();
+  if (!arr || !m) return;
+  for (let i = arr.length - 1; i >= 0 && atMs - arr[i].t <= 1500; i--) {
+    const x = arr[i];
+    if (x.dir !== 'out' || !x.other || String(x.other).toLowerCase() !== m || !(x.anon || x.dsGuess)) continue;
+    _meProcCount(cl, x, false);
+    x.kind = 'spell'; x.name = 'Dragon Force'; x.el = 'magic';   // resist type 1, spell 2767
+    x.anon = false; x.dsGuess = false; x.proc = false; x.cast = true;
+    return;
+  }
 }
 // In/out totals and per-element split since `sinceMs`, plus the newest hits.
 function _meCombatSince(cl, sinceMs, now) {
@@ -13480,8 +13508,24 @@ function _meCombatSince(cl, sinceMs, now) {
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
   const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount,
-    kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
+    seen: _dsSeenPerHit(dsHits), kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
   return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
+}
+// What your shield DOES per hit, read off the hits themselves (a member, 2026-10-07, FB-58: "DS doesn't
+// seem to account for AA or +skill from instruments"). The buffs-and-gear sum the badge used to show is
+// an estimate from catalog data, and a bard song scales with the instrument and singing skill while an
+// AA adds on top, none of which the catalog or the buff list carries. A shield hits for the same amount
+// every time, so the amount that repeats among the newest few hits is the shield — and one stray hit
+// (a proc the mob's swing made look like a shield) cannot move it. A tie goes to the newest hit.
+function _dsSeenPerHit(dsHits) {
+  const recent = dsHits.slice(-5), n = new Map();
+  for (const h of recent) n.set(h.amount, (n.get(h.amount) || 0) + 1);
+  let best = null, most = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const c = n.get(recent[i].amount);
+    if (c > most) { best = recent[i].amount; most = c; }
+  }
+  return best;
 }
 // Damage per MOB — done, taken and your damage shield — so the HUD can roll
 // old hits into a running total and drop it when the mob dies (the guild lead,
@@ -14466,6 +14510,12 @@ function _meNoteRawLine(line, character) {
     _meNoteBellow(cl, 'land', msg.slice(0, -' is shaken by a loud bellow.'.length), now);
     return;
   }
+  // A Dragon Punch landing: the anonymous hit just before it is the AA's spell, not a proc (FB-60).
+  if (msg.endsWith(_ME_DRAGON_FORCE_LANDING)) {
+    const d = parseEqTimestamp(line);
+    _meNoteDragonForce(cl, msg.slice(0, -_ME_DRAGON_FORCE_LANDING.length), d ? d.getTime() : now);
+    return;
+  }
   const disc = _ME_DISCS.get(msg);
   if (disc) { _meNoteDisc(cl, disc, now); return; }
   // Someone else's discipline — for Target Info when you target them.
@@ -15029,6 +15079,10 @@ function _serializeMeState() {
   // Your damage shield per hit — the HUD's DS button ("a button with current DS
   // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
   // right now, else the last one that landed.
+  // ⚠ The shield you visibly wear is an ESTIMATE (catalog value of each buff + worn gear); what your
+  // shield hits for lands in the log. Once a hit has landed this fight the badge reads THAT, whenever the
+  // two differ (a member, 2026-10-07, FB-58: bard songs scale with instrument and skill, an AA adds
+  // more, and neither is in the catalog) — `measured` tells the HUD which one it is drawing.
   const dsWorn = {};
   const dsKnown = _knownDsPerHitFor(active, dsWorn);
   if (!combat.ds && (dsKnown || dsWorn.off)) combat.ds = { hits: 0, total: 0, last: null };
@@ -15036,11 +15090,14 @@ function _serializeMeState() {
     // Worn-gear shields add only on top of a shield spell (_wornItemDs). The last-hit fallback
     // already includes them: it is what landed.
     const dsItem = dsKnown ? _wornItemDs(active) : 0;
-    combat.ds.per_hit = dsKnown ? dsKnown + dsItem : combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    const seen = combat.ds.seen > 0 ? combat.ds.seen : null;
+    delete combat.ds.seen;
+    combat.ds.per_hit = seen != null ? seen : (dsKnown ? dsKnown + dsItem : combat.ds.last);
+    combat.ds.measured = seen != null; combat.ds.from_buffs = !!dsKnown;
     combat.ds.from_items = dsItem;
     combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
     // Shield cancelled (_dsOffFrom): 0 a hit, whatever landed before the debuff.
-    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.from_buffs = true; combat.ds.kind = null; }
+    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.measured = false; combat.ds.from_buffs = true; combat.ds.kind = null; }
   }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.

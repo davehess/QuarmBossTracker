@@ -116,6 +116,25 @@ next touch one rather than assuming a missing row means a missing doc.
     was open — it now reads the live window.
   - **Left for the guild lead:** minimum heights (Command Center and PoP raids 160, Dock 140 — FB-38's width twin), and
     whether an auto-height overlay keeps a height you drag it to. `test/mimic-menu-grow-loan.test.js`.
+- **⏳ Box HUD shows procs, stuns and DS; procs exclude Dragon Punch (FB-60); DS badge reads the hit (FB-58) —
+  branch `fbhud-work`, not yet on beta (2026-10-07).** The guild lead's screenshots: the ring had "DS 24" with
+  the procs/stuns counts, the Box had none of them.
+  - **Box** (`me.html` `mineHtml`): one line under the target, `procs 3 · stuns 2 · DS 24` — the ring's fields
+    (`target.my_procs` / `my_stuns`, `combat.ds`) and colours; the Box has no per-part text sliders (that is the
+    HUD builder), so it is the line's own 11px. Chosen over a second line in the damage block because the counts
+    are about the mob on the line above, and that block only exists once a fight has been counted.
+  - **FB-60:** a monk's Dragon Punch fires the spell Dragon Force, which prints an anonymous 1–12 point hit beside
+    the skill swing ("You strike …") — what a weapon proc looks like. Its landing text, "<mob> is stricken by
+    the force of a dragon.", comes one line later; `_meNoteDragonForce` then takes the newest anonymous hit on
+    that mob back out of the proc count. On the report's own excerpt: 24 counted → 17 (the 7 landings given back).
+    Not verified: the Iksar Tail Rake (assumed the same spell).
+  - **FB-58:** the badge was an ESTIMATE (catalog value of each shield buff + worn gear); only with no shield
+    visible did it read a landed hit. Bard songs scale with instrument and skill and an AA adds more — none of it
+    in the catalog. Now `combat.ds.measured` / `per_hit` read the amount that repeats among the last five of your
+    shield hits this fight (`_dsSeenPerHit`), and the badge drops its "~" (the estimate's mark). It can only
+    read a hit the HUD ledger already takes for your shield: a named "YOUR" line, or an anonymous hit after the
+    mob hit you that fits the shield you wear + 30. The report's excerpt holds none of the reporter's own shield
+    hits, so this is unconfirmed on their log. Waits on the guild lead checking both on the beta.
 - **⏳ HUD DS badge counts worn-gear shields (agent 3.7.80 on beta, bot 3.1.202, 2026-10-04).** The guild lead:
   "Missing my additional DS from my neck slot" (Talisman of Vah Kerrath, +8 on a 10-point shield, hits for 18).
   Gear adds only on top of a shield spell, as the server does. Two items carry one today. Waits on the guild lead
