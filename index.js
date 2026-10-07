@@ -17035,16 +17035,66 @@ async function _characterPrefsFor(characters) {
   return { prefs };
 }
 
+// ?mine=1 is the OTHER question, asked by Mimic's onboarding: not "what are these characters' prefs" but
+// "which characters are mine, and what is each set to". It answers every character in the caller's family
+// (the Mimic session's own discord_id, nothing in the query) with its three flags and the mode they name:
+//   { ok, characters: [{ name, hidden_from_lists, exclude_from_stats, exclude_inventory, mode }] }
+// and 403s a session with no linked account. utils/characterPrefs.js has the rules.
+const characterPrefs = require('./utils/characterPrefs');
+const _ownedCharsCache = characterPrefs.createOwnedCache();
+function _sendPrefsResult(res, out) {
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out.body));
+}
+
 async function _handleAgentCharacterPrefs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.searchParams.get('mine') === '1') {
+    return _sendPrefsResult(res, await characterPrefs.minePrefs(
+      require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || '')));
+  }
   const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
   const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
   const data = await _characterPrefsFor(characters);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify(data));
+}
+
+// POST /api/agent/character-prefs — Mimic SETS a character's display and collection switches (the guild lead,
+// 2026-10-06: "the complete hide or hide from all but inventory should be with mimic during onboarding but
+// the denotation on other side should be carried over"). It writes the same three columns on the characters
+// row that wolfpack.quest/me writes (hidden_from_lists, exclude_from_stats, exclude_inventory), so both sides
+// show the same state; there is no second copy and, like the website's switch, no audit_log row.
+//   body  { character, mode?: 'show'|'inventory'|'hidden', hidden_from_lists?, exclude_from_stats?,
+//           exclude_inventory? }   mode sets all three (show: none; inventory: hidden from lists only;
+//           hidden: all three); an explicit boolean overrides it, or alone changes just that one flag.
+//   200   { ok, character, prefs: {three flags}, mode }   mode is 'custom' when the three match no named mode
+//   400 bad body · 403 not your character / no linked account · 404 gone · 502 database unavailable
+// WHO: the Mimic session's own discord_id; a character is the caller's when it is in its family (see
+// utils/characterPrefs.js). Agents pick the change up on their next prefs poll (no prefs cache to bust:
+// _characterPrefsFor reads the row every time). A write route, not an ingest stream: no shed flag, no budget.
+async function _handleAgentCharacterPrefsSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const discordId = String(identity.discord_id || '');
+  const out = await characterPrefs.setPrefs(require('./utils/supabase'), _ownedCharsCache, discordId, payload);
+  if (out.status === 200) {
+    console.log(`[character-prefs] ${discordId} set ${out.body.character} → ${out.body.mode} (${JSON.stringify(out.body.prefs)})`);
+  }
+  return _sendPrefsResult(res, out);
 }
 
 // POST /api/agent/live-state
@@ -22605,6 +22655,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefs(req, res); }
     catch (err) {
       console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/character-prefs') {
+    try { return await _handleAgentCharacterPrefsSet(req, res); }
+    catch (err) {
+      console.error('[character-prefs set] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
