@@ -5443,3 +5443,16 @@ branch), fixes applied per review, merged on `integ/guildkit`. `DECISIONS-2026-0
   above 2^53 — and the root `discord.json` loader now matches it rule for rule.
 - **Web (slice A)** — `web/lib/guild.ts` + the literal swap across ~78 files is
   reviewed separately and lands on `beta` as web; see the Branch inventory.
+
+### 🧾 2026-10-07 — feedback DMs say what changed; Target Info shows the mob's procs (bot 3.1.216)
+- **Feedback status DMs** (the guild lead: *"This message to the submitter needs
+  more details than this"*). `buildStatusDm` in `utils/feedbackRefs.js` quotes
+  the report, says what changed (player-notes → the commit's FB line → the
+  subject), how to get it per component and branch (the ⤴ beta switch, stable
+  updates itself, the `b.wolfpack.quest` link, live in Discord), links the card,
+  and says how to reopen it. `HOW-ITS-BUILT.md` "Feedback numbers".
+- **Mob procs** (the guild lead: *"Need to see mobs Procs as well, not just
+  spells"*). `eqemu_npc_spells.attack_proc` (+ range/defensive) along the
+  parent-list chain → mob-info `procs[]` with chance and an effect digest
+  (`utils/npcProcs.js`); the Target Info Spells tab's PROCS section is on the
+  Mimic beta. Zone packs are version 4 so held packs rebuild.

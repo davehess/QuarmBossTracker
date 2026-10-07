@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.216': [
+    '**Your feedback DMs now say what changed and how to get it.** When a bug or idea you filed is fixed, the bot quotes your report, says what was done, and tells you whether it is on the Mimic beta, in stable, on the website or already live in Discord, with a link back to your card.',
+    '**Target Info shows what a mob can proc.** The Spells tab lists the mob\'s procs with their chance and effect (for example Stone Gale: 1500 damage, 2 s stun, area) above the spells it casts. Needs the Mimic beta for the overlay side.',
+  ],
   '3.1.215': [
     '**Officers: `/setup discord` can build or check the bot\'s Discord layout.** Run it with dry run on first; it lists every channel and thread the bot expects, which ones exist, and what it would create. Part of the kit that lets another guild run this platform; nothing changes for Wolf Pack\'s server.',
   ],
