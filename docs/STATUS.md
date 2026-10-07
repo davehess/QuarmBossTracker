@@ -103,6 +103,62 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ HUD: a second clicky row (Mimic beta, 2026-10-07; DECISIONS §185).** The guild lead: "add a second clicky row to
+  the HUD". Row 2 sits one line inside row 1 on the same bottom arc; row 1 fills first, then row 2, and `+N` counts
+  only what fits on neither. On by default; ⚙ → Items → "Two clicky rows" goes back to one (exactly today's line).
+  Picks: up to 7 on two rows, 4 on one. `apps/mimic/me.html` (`clickyFit` with `rows`, labels `hcl` / `hcl2`), test
+  `test/me-overlay.test.js`.
+- **⏳ HUD Mana and Endurance as two parts; charm break said once; panel windows keep their size (agent 3.7.100 +
+  Mimic beta, 2026-10-07; FB-12, FB-21; DECISIONS §184).**
+  - **FB-12.** The HUD builder's one "Mana or endurance" part is two (`mana`, `end` in `HUD_PARTS`, apps/mimic/me.html),
+    each with its own tick-box and size slider. An old save's `right` becomes both, on or off as it was; placement is
+    unchanged. The out-DPS and class-number text still ride the right arc's label, so turning off the part that owns
+    that arc hides them too.
+  - **FB-21.** The "Your charm broke" Suggested alert is one trigger listed twice (Suggested panel and the Personal list,
+    which now tags it "(from Suggested)"). An unticked 🔊 on ANY Suggested alert now flashes and stays silent (it used
+    to read the display text aloud). The instant charm fire counts as spoken only when the row will really speak (on,
+    on for that character, 🔊 ticked), so one voice says it.
+  - **Panel overlay windows** (a dashboard card popped out) reopen at the size and place they were left: the screen
+    signature was saved as `panelBounds_<k>Sig` and read from `panelBoundsSig_<k>`, which nothing wrote.
+  - Tests `test/me-hud-mana-end.test.js`, `test/charm-break-once.test.js`, `test/mimic-panel-bounds.test.js`.
+- **⏳ Pets on the DPS meter: another raider's charm pet, and the copy line (agent 3.7.100 + Mimic beta, 2026-10-07;
+  FB-52, FB-22; DECISIONS §183).**
+  - **FB-52.** Another raider's charm pet showed "(charmed)" on everyone else's meter however often its owner typed
+    /pet leader. The pet's own public `My leader is <Owner>.` is now kept with its time (`EncounterBuilder.petClaims`,
+    `_noteCharmClaim`) and credits the owner while it is FRESH (heard no earlier than 15 minutes before the pull, the
+    bot's own rule) and UNAMBIGUOUS (one raider claims that name; two claimants stay "(charmed)"). It ranks below every
+    proof the agent holds itself; a charm-break line ends it. **Open:** the upload (`_provenPets` → `pet_leaders`)
+    does not carry these claims, so a pet whose owner runs no Mimic is still missing from the guild's settled numbers
+    — the guild lead's call (§183).
+  - **FB-22.** The 📋 copy now folds each pet into its owner, live and in History (`_rsRaiders`, `_rsLine`,
+    `_liveRsRows` in `apps/mimic/overlay.html`): an owner carrying a pet reads `Owner +Pets = …`, which the bot's
+    parse reader already understands. Unowned pets stay off the line and in the header total.
+  - Tests `test/charm-pet-bystander-claim.test.js`, `test/rs-copy-pets.test.js`.
+- **⏳ Reports fixed on a merged branch now move on (bot 3.1.219, on `claude/sharp-lamport-dC0TW`, waiting for the
+  guild lead's push to `main`; DECISIONS §182).** FB-58, FB-59, FB-60 and FB-61 have `Fixes FB-n` on beta and stayed
+  `acked`: the scanner read the newest 40 commits by DATE and stopped at the last sha it had seen, and a side branch
+  merged after that look sorts below it. It now asks the compare API for everything new since that sha. The first
+  look after the deploy moves those four (and their submitters hear). ⚠ A fix that lives only on `alpha` (FB-64) still
+  never moves — the scanner reads `beta` and `main`; it moves when the fix reaches beta.
+- **⏳ Guild triggers: countdown, warning and repeat set on /admin/triggers (web 1.8.115 on beta; FB-31's officer
+  half; DECISIONS §181).** `https://b.wolfpack.quest/admin/triggers`. Migration `20261008000000_guild_triggers_loop.sql`
+  (`timer_loop`, `timer_loop_max`) applied to production 2026-10-07 and committed on main and beta alike. The agent
+  half (3.7.99) is on beta; stable agents run a repeat once. Graduates with the next web promotion to `main`.
+- **⏳ Canvas: a hotkey that shows or hides a saved group (Mimic alpha `9e87325e`, 2026-10-07; DECISIONS §180).** The
+  guild lead: "we should be able to assign hotkeys to show or hide canvas groups as well."
+  - **What a group is.** A SAVED group in the Canvas's ★ Groups list (not an overlay set — a set is the whole screen;
+    loading one swaps the layout, the hidden state with it). Set from the ⚙ of any piece in the group or its row in the
+    chooser; the key is by the group's id.
+  - **A press** hides the group's pieces (kept where they are, saved with the layout) or shows them. With the Canvas
+    switched off it turns it on and shows the group. A hide-all in force is left alone.
+  - Tray: "↳ Canvas groups — show / hide" under the Canvas entry. `/pipe mimic group <name>` does the same.
+  - **An overlay's own key also shows / hides it on the Canvas** ("if you're using an overlay as whole it should let you
+    use that overlay's same hide key combo"): the one key sets the overlay's "as is" Canvas panels and its own switch
+    (window) together; pieces taken apart are not covered; no new key.
+  - **Dashboard twin (agent 3.7.100 beta):** the Overlays tab lists the saved groups with their key (Change…) and a
+    Show / hide button, feature-detected on the alpha bridge, so a beta Mimic shows nothing (`_wpCanvasGroupsHTML`,
+    `test/dashboard-canvas-groups.test.js`). A group already on someone's Canvas from before this build is not linked
+    to its saved group until it is saved or dropped again. `test/canvas-group-hotkeys.test.js`.
 - **⏳ Trigger manager: open a trigger's settings, warn before the end, repeat the countdown (agent on beta, draft on
   branch `fbtrig-work`, 2026-10-07; FB-23, FB-30, FB-26, FB-31).** Four beta-tester reports on the dashboard's
   Triggers tab.

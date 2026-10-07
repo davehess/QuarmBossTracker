@@ -1141,12 +1141,38 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
 - `fitPiece` sizes a piece to its content on a mode change and on ↕ Fit.
 - The canvas counts two clicks itself to open settings; dblclick never gets past the drag shield.
 Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
+**A hotkey per saved Canvas group (alpha, 2026-10-07, DECISIONS §180):** "a Canvas group" is a SAVED group (★ Groups →
+My groups, `cfg.canvasGroups`). Pieces placed from it, or saved as it, are marked in the layout (`layout.named`: the
+live `grp` they share → the saved group's id; `sanitize` keeps only marks that still have pieces).
+`cfg.canvasGroupHotkeys` `{ <saved group id>: accelerator }` (by id, so a rename keeps it) is bound by
+`_registerCanvasGroupHotkeys` after the overlay keys; a key for a deleted group is dropped with a log line. A press
+(`_toggleCanvasGroup`) is queued for the Canvas (`canvas-state` → `groupOps`, or a `canvas-group-ops` ping) and
+`toggleSavedGroup` flips `off` on the group's pieces — all hidden → shown, otherwise hidden; a press that switches the
+Canvas on SHOWS the group. Set from the ⚙ of any piece in the group or the chooser's group row (`captureAccel`, the
+dashboard's capture for the Canvas); one conflict list (`_mimicHotkeyUses` carries `canvasGroup:<id>` entries with a
+`label`). Tray: "↳ Canvas groups — show / hide" under the Canvas entry. `/pipe mimic group <name>` is the same toggle.
+IPC `canvas-group-hotkey` (id, accel|'') and `canvas-group-toggle` (id); status carries `canvasGroups`,
+`canvasGroupHotkeys`, `canvasGroupHotkeysBlocked` for the dashboard's Overlays tab: its "Canvas groups" strip
+(`_wpCanvasGroupsHTML` in `#wpCanvasGroups`, painted by `wpPaintCanvasGroups` from `wpRefreshOverlayHotkeys`;
+Change… → `_wpCaptureAccel(…, 'canvasGroup:<id>')`, Show / hide → `toggleCanvasGroup`) is agent 3.7.100 on beta,
+feature-detected on `window.mimic.canvasGroupHotkey`; `_wpHotkeyUseLabel` prefers a use's own `label`.
+**An overlay's own key also shows / hides its Canvas panel (alpha, 2026-10-07):** `_registerOverlayHotkeys` calls
+`_overlayHotkeyPress(key)`. With an "as is" panel of that overlay in the layout (kind `overlay`, every look; not
+`sect` pieces or `part`s, which belong to groups) one press sets one state everywhere the overlay lives: the panels
+(queued as `{ overlay, show }` in the same queue as the groups' presses, applied by `setOverlayPanels`, `off` kept in
+the layout) and its own switch (`cfg.showX`; with the Canvas off, the ordinary `_toggleOverlay`, so the window
+follows). With the Canvas on the panels say what is seen; with it off the switch does. No panel: plain
+`_toggleOverlay`. No new key, so no new conflict entry. The Canvas catalog calls the pet tracker `pets`. The
+dashboard's ON/OFF and the tray's overlay toggles stay the plain toggle. Test `test/canvas-group-hotkeys.test.js`.
 
 ### Feedback numbers — FB-<n>, closed by commits (bot 3.1.172 · web 1.8.41, 2026-09-29)
 `feedback.ref` (sequence, migration `20260929020000`) is the handle. It is stamped on the Mimic post's first
 line (`_handleAgentFeedback`), the web relay's embed title (`relayWebFeedback`), and the `/feedback` card
 after its insert returns (`commands/feedback.js`); open cards were numbered once (`_backfillFeedbackRefsOnce`).
-`_feedbackCommitWatch` (every 10 min) reads the last 40 commits of `beta` then `main` from GitHub, keeps the
+`_feedbackCommitWatch` (every 10 min) asks GitHub what `beta` then `main` gained since the last sha it saw
+(`_feedbackFreshCommits`: the compare API, `compare/<seen>...<branch>`, up to three pages of 100 — reachability, so a
+side branch merged after the last look still counts; bot 3.1.219, DECISIONS §182. The newest 40 by date only for a
+first look or a sha GitHub no longer knows), keeps the
 last sha per branch in `bot_kv` (`fb_commit_seen_<branch>`), and `_feedbackAdvance` moves each closed ref
 forward only: status `on_beta` / `addressed`, a dated note, the card's status line, a DM. Logic in
 `utils/feedbackRefs.js`; `/admin/feedback` shows the number and the on-beta status. DECISIONS §78.
@@ -1752,6 +1778,14 @@ is" lines (poll stream `pet_owners` → `_guildPetOwners`, live fights only); a
 pet nobody named whose name fits the server's pet-name generator
 (`_isGeneratedPetName`) is sent as `pet_summoned` and the DPS HUD labels it
 "(pet)" (FB-35, §84).
+**Another raider's charm pet (FB-52, agent 3.7.100 beta, §183):** the pet's public `My leader is <Owner>.` is kept
+with its log time (`EncounterBuilder.petClaims`, `_noteCharmClaim`, charm-shaped names and player-shaped owners
+only) and `_freshClaimOwner` credits that owner while it is fresh (`PET_CLAIM_FRESH_MS`, 15 min before the pull,
+the bot's number) and only one raider claims the name. `_publishLiveThreat` asks it last, below every proof the
+agent holds itself; a charm-break line deletes the claim. Live meter and local History only — `_provenPets` (the
+upload's `pet_leaders`) still skips article-prefixed names. **The 📋 copy (FB-22, Mimic beta):** `_rsRaiders`,
+`_rsLine`, `_liveRsRows` in `apps/mimic/overlay.html` build the live and History lines from folded rows, with
+`Owner +Pets = …` (EQLogParser's mark, read back by `utils/parseEqLog.js` as `hasPets`).
 The DPS HUD folds an owned pet into its owner (`_foldPetsIntoOwners`, row
 index 10 keeps each pet), draws the pet's share as the orange end of the row
 bar, and "+pet" (same orange) opens a line per pet with name, damage and
@@ -1905,7 +1939,13 @@ Dashboard → Triggers tab (`dashboard.html`; never the `WEB_HTML` literal).
   Mimic change. Stops on ✕ (`/api/timers/cancel`), the cancel-early phrase, or the mob dying; the trigger firing again
   replaces the row. A rehearsal stops after 3; the `cooldown_timer_sec` recast bar never loops.
   **Guild**: a `guild_triggers` row with `timer_loop` / `timer_loop_max` works through `_applyGuildTriggersResponse`
-  (it spreads the row) — but the columns and the `/admin/triggers` form fields do not exist yet.
+  (it spreads the row). The columns arrived 2026-10-07 (migration `20261008000000_guild_triggers_loop.sql`, applied
+  by MCP) and the form fields with them (web 1.8.115, beta first — `https://b.wolfpack.quest/admin/triggers`;
+  DECISIONS §181): `web/app/admin/triggers/page.tsx` + `TimerFields.tsx` set `timer_duration_sec`, `warning_seconds`,
+  `warning_text`, `timer_loop`, `timer_loop_max`. The rules are `parseTimerFields` in `web/lib/triggerTimer.ts`,
+  run by both the live form check and the server action (a refusal comes back as a "Not saved — …" banner); each row
+  with a countdown shows a ⏱ chip (`describeTimer`). The bot serves the row whole, so no bot change; the touch trigger
+  stamps `updated_at` on any edit, so agents see it on their next poll. Test `test/guild-trigger-timer-fields.test.js`.
 - Guarded by `test/trigger-manager-settings-warn-loop.test.js` (engine behaviour under fake time; the pure dashboard
   functions and the editor IIFE run from the shipped `dashboard.html`).
 
@@ -2650,7 +2690,9 @@ first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISP
 `clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
 `_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
 `clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the
-⚙ builder's `clickyPickerHtml` is the picker — per character in `hudParts.clickyPick`, FB-65). Auctions:
+⚙ builder's `clickyPickerHtml` is the picker — per character in `hudParts.clickyPick`, FB-65; a second row
+one line inside the first, `clickyFit(…, rows, extra)` → labels `hcl` / `hcl2`, switch `clickyRows`, picks
+`CLICKY_MAX_PICK` 7 / `CLICKY_MAX_PICK_ONE` 4, Mimic beta 2026-10-07, §185). Auctions:
 `_pollDkpAuctions` → `_applyDkpAuctions` (one `auction|<id>` timer each) + the
 Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assist`
 header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).
@@ -4051,6 +4093,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   **Round three (agent 3.7.8): one HUD from parts.** `renderHud` replaces
   H1/H2/H3; `HUD_PARTS` / `HUD_DEFAULTS` list every part, the ⚙ builder
   (`#builder`, `renderBuilder`) toggles them into `localStorage` `wpHudParts`.
+  **Mana and Endurance are two parts (FB-12, Mimic beta 2026-10-07):** `mana` and `end` replace `right`; `hudData`
+  tags the right arc's owner `d.right.part` (`end` for a class with no mana, else `mana`), and the thin endurance arc
+  under health is `end`. `readParts` turns an old `right` (and `sizes.right`) into both.
+  **An unticked 🔊 on a Suggested alert is muted (FB-21, agent 3.7.100 beta):** `_fireTriggerActions` sets
+  `overlay.mute` for a `suggested:` row with no `tts`; `_pushCharmBreakInstant` marks `charm_spoken` only when that row
+  is on, on for the character (`_triggerOnFor`) and has its 🔊 ticked.
   Hits: `hitRounds` (one log second per line) → `hitLane` (IN left, OUT right,
   DS below OUT) with a per-hit DS button. Agent: `_meNoteHit` gives the damage
   shield its own `kind: 'ds'`; `combat.feed` entries carry `at`; `combat.ds`
