@@ -13979,11 +13979,12 @@ async function _handleAgentLiveDamage(req, res) {
   return res.end(body);
 }
 
-// GET /api/agent/my-parses?w=<1d|7d|30d|90d|exp|life>&scope=<bosses|all>&char=<name>
+// GET /api/agent/my-parses?w=<1d|7d|30d|90d|exp|life>&scope=<bosses|all>&char=<name>&zone=<id>&q=<mob text>
 //
 // The signed-in raider's own parses over a window, for Mimic's My parses chart (a member asked
 // 2026-10-06 for a graph of their parses over a variable window; the guild lead picked this design).
-// One call to the my_parse_series() function (supabase/migrations/20261006200000_my_parse_series.sql),
+// One call to the my_parse_series_v2() function (supabase/migrations/20261007000000_my_parse_series_v2.sql:
+// the first version plus the zone and mob filters the guild lead asked for 2026-10-06),
 // the same one wolfpack.quest/me/parses reads, so the two always agree. utils/myParses.js has the query
 // rules and the cache; this is the route.
 // WHO: the person is the Mimic session's own discord_id and nothing in the query string can change that.

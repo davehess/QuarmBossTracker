@@ -8,6 +8,8 @@
 //   * a window key resolves to the wrong start (the website and the bot disagree on where "this expansion"
 //     begins, or w=constructor reaches a prototype property);
 //   * a character name that is not a name reaches the database;
+//   * a zone or a mob search that is not a zone id / a name-shaped string reaches the database, or the cache
+//     serves a zone-filtered answer to an unfiltered ask (or the reverse);
 //   * the cache serves one person's answer to another, never expires, grows without bound, or keeps a FAILED read;
 //   * a failed read is shown as an empty answer instead of a 502;
 //   * the route is shed or budgeted like an ingest stream (it is a read route), or a thrown error leaks.
@@ -101,10 +103,60 @@ describe('cleanChar', () => {
   });
 });
 
+describe('cleanZone', () => {
+  it('accepts a zone id of one to three digits, 1..999', () => {
+    expect(mp.cleanZone('1')).toBe(1);
+    expect(mp.cleanZone('344')).toBe(344);
+    expect(mp.cleanZone(' 344 ')).toBe(344);
+    expect(mp.cleanZone('999')).toBe(999);
+    expect(mp.cleanZone('007')).toBe(7);
+  });
+
+  it('ignores what is not a zone id: zero, out of range, not plain digits, not a string', () => {
+    for (const raw of [undefined, null, '', '   ', '0', '000', '1000', '-5', '+5', '3.5', '1e2', '0x10', '12a', 'a12',
+      '1 2', '344;drop', "344' or 1=1", [344], 344, NaN, {}]) {
+      expect(mp.cleanZone(raw)).toBeNull();
+    }
+  });
+
+  it('is capped at ZONE_MAX', () => {
+    expect(mp.ZONE_MAX).toBe(999);
+    expect(mp.cleanZone(String(mp.ZONE_MAX))).toBe(mp.ZONE_MAX);
+    expect(mp.cleanZone(String(mp.ZONE_MAX + 1))).toBeNull();
+  });
+});
+
+describe('cleanSearch', () => {
+  it('accepts a mob name fragment, trimmed, with letters, digits, spaces and a name\'s own punctuation', () => {
+    expect(mp.cleanSearch('nagafen')).toBe('nagafen');
+    expect(mp.cleanSearch('  Lord Nagafen \t')).toBe('Lord Nagafen');
+    expect(mp.cleanSearch("a Shik`nar Forager")).toBe("a Shik`nar Forager");
+    expect(mp.cleanSearch("O'Neil")).toBe("O'Neil");
+    expect(mp.cleanSearch('Foo-Bar')).toBe('Foo-Bar');
+    expect(mp.cleanSearch('a_cave_bat')).toBe('a_cave_bat');
+    expect(mp.cleanSearch('Dain Frostreaver IV')).toBe('Dain Frostreaver IV');
+    expect(mp.cleanSearch('orc 2')).toBe('orc 2');
+  });
+
+  it('ignores what is not a name fragment, including every wildcard and quote', () => {
+    for (const raw of [undefined, null, '', '   ', 'a%b', '%', 'a\\b', 'a;b', 'x=1', 'a|b', 'a,b', 'a.b', '<b>', '"x"',
+      'a/b', 'a*b', 'a(b)', 'Rethlán', 'a\nb', 'a\tb', ['nagafen'], 12, {}]) {
+      expect(mp.cleanSearch(raw)).toBeNull();
+    }
+  });
+
+  it('allows 40 characters and ignores 41, counting the trimmed text', () => {
+    expect(mp.SEARCH_MAX_LEN).toBe(40);
+    expect(mp.cleanSearch('a'.repeat(40))).toBe('a'.repeat(40));
+    expect(mp.cleanSearch('a'.repeat(41))).toBeNull();
+    expect(mp.cleanSearch('  ' + 'a'.repeat(40) + '  ')).toBe('a'.repeat(40));
+  });
+});
+
 describe('parseQuery', () => {
-  it('defaults: 7 days, bosses, every character', () => {
+  it('defaults: 7 days, bosses, every character, every zone, no search', () => {
     expect(mp.parseQuery('/api/agent/my-parses', NOW)).toEqual({
-      w: { key: '7d', label: '1 week', since: iso(NOW - 7 * DAY) }, scope: 'bosses', char: null,
+      w: { key: '7d', label: '1 week', since: iso(NOW - 7 * DAY) }, scope: 'bosses', char: null, zone: null, search: null,
     });
   });
 
@@ -116,6 +168,27 @@ describe('parseQuery', () => {
     expect(mp.parseQuery('/api/agent/my-parses?w=life', NOW).w.since).toBeNull();
   });
 
+  it('reads zone and q (the search), decoding the query string', () => {
+    const q = mp.parseQuery('/api/agent/my-parses?zone=344&q=Lord%20Nagafen', NOW);
+    expect(q.zone).toBe(344);
+    expect(q.search).toBe('Lord Nagafen');
+    expect(mp.parseQuery('/x?q=a+cave+bat', NOW).search).toBe('a cave bat');
+    expect(mp.parseQuery('/x?q=Shik%60nar', NOW).search).toBe('Shik`nar');
+    expect(mp.parseQuery('/x?q=%20%20bat%20', NOW).search).toBe('bat');
+  });
+
+  it('ignores a bad zone or search, as if it had not been sent', () => {
+    for (const bad of ['zone=0', 'zone=1000', 'zone=abc', 'zone=3.5', 'zone=', 'q=', 'q=%25', 'q=a%3Bb', 'q=a%5Cb',
+      'q=' + 'a'.repeat(41), 'q=%0A']) {
+      const q = mp.parseQuery('/x?' + bad, NOW);
+      expect(q.zone).toBeNull();
+      expect(q.search).toBeNull();
+    }
+    // one bad parameter does not take its good neighbour with it
+    expect(mp.parseQuery('/x?zone=344&q=a%3Bb', NOW)).toMatchObject({ zone: 344, search: null });
+    expect(mp.parseQuery('/x?zone=nope&q=bat', NOW)).toMatchObject({ zone: null, search: 'bat' });
+  });
+
   it('decodes an encoded character name and ignores a bad one', () => {
     expect(mp.parseQuery('/x?char=Bri%60an', NOW).char).toBe('Bri`an');
     expect(mp.parseQuery('/x?char=Foo%20Bar', NOW).char).toBe('Foo Bar');
@@ -124,7 +197,7 @@ describe('parseQuery', () => {
 
   it('never reads a person from the query string', () => {
     const q = mp.parseQuery('/x?discord_id=999&user_id=u&user=someone&p_discord_id=999&w=1d', NOW);
-    expect(Object.keys(q).sort()).toEqual(['char', 'scope', 'w']);
+    expect(Object.keys(q).sort()).toEqual(['char', 'scope', 'search', 'w', 'zone']);
     expect(JSON.stringify(q)).not.toContain('999');
   });
 
@@ -135,7 +208,7 @@ describe('parseQuery', () => {
 
 describe('cacheKey', () => {
   const q = (url) => mp.parseQuery(url, NOW);
-  it('is one slot per person, window, scope and character', () => {
+  it('is one slot per person, window, scope, character, zone and search', () => {
     const base = mp.cacheKey('111', q('/x?w=7d&scope=bosses&char=Aldenmar'));
     expect(mp.cacheKey('111', q('/x?w=7d&scope=bosses&char=Aldenmar'))).toBe(base);
     expect(mp.cacheKey('222', q('/x?w=7d&scope=bosses&char=Aldenmar'))).not.toBe(base);
@@ -143,10 +216,36 @@ describe('cacheKey', () => {
     expect(mp.cacheKey('111', q('/x?w=7d&scope=all&char=Aldenmar'))).not.toBe(base);
     expect(mp.cacheKey('111', q('/x?w=7d&scope=bosses&char=Brackwyn'))).not.toBe(base);
     expect(mp.cacheKey('111', q('/x?w=7d&scope=bosses'))).not.toBe(base);
+    expect(mp.cacheKey('111', q('/x?w=7d&scope=bosses&char=Aldenmar&zone=344'))).not.toBe(base);
+    expect(mp.cacheKey('111', q('/x?w=7d&scope=bosses&char=Aldenmar&q=nagafen'))).not.toBe(base);
+  });
+
+  it('keeps a zone, a search and a character apart even when they are the same text or number', () => {
+    const slots = new Set([
+      mp.cacheKey('111', q('/x?zone=344')),
+      mp.cacheKey('111', q('/x?zone=345')),
+      mp.cacheKey('111', q('/x?q=344')),
+      mp.cacheKey('111', q('/x?char=Aldenmar')),
+      mp.cacheKey('111', q('/x?q=Aldenmar')),
+      mp.cacheKey('111', q('/x?zone=344&q=344')),
+      mp.cacheKey('111', q('/x')),
+    ]);
+    expect(slots.size).toBe(7);
   });
 
   it('folds the character name, which the database matches case-insensitively', () => {
     expect(mp.cacheKey('111', q('/x?char=ALDENMAR'))).toBe(mp.cacheKey('111', q('/x?char=aldenmar')));
+  });
+
+  it('folds the search, which the database matches case-insensitively, but not different text', () => {
+    expect(mp.cacheKey('111', q('/x?q=NAGAFEN'))).toBe(mp.cacheKey('111', q('/x?q=nagafen')));
+    expect(mp.cacheKey('111', q('/x?q=nagafen'))).not.toBe(mp.cacheKey('111', q('/x?q=nagafe')));
+    // padding is trimmed before the key is made
+    expect(mp.cacheKey('111', q('/x?q=%20nagafen%20'))).toBe(mp.cacheKey('111', q('/x?q=nagafen')));
+  });
+
+  it('a bad zone or search shares the slot of the unfiltered ask it falls back to', () => {
+    expect(mp.cacheKey('111', q('/x?zone=9999&q=a%3Bb'))).toBe(mp.cacheKey('111', q('/x')));
   });
 
   it('a bad window or scope shares the slot of the default it falls back to', () => {
@@ -194,15 +293,17 @@ describe('createCache', () => {
 });
 
 describe('fetchSeries', () => {
-  const RPC_OBJ = { floor: '2026-07-14T00:00:00Z', characters: [], total: 0, truncated: false, fights: [], nights: [] };
+  const RPC_OBJ = {
+    floor: '2026-07-14T00:00:00Z', characters: [], total: 0, truncated: false, fights: [], nights: [], zones: [], mobs: [],
+  };
   const stub = (result) => { const calls = []; return { calls, rpc: async (fn, params) => { calls.push({ fn, params }); return result; } }; };
 
-  it('calls my_parse_series with the person, the window start and the scope', async () => {
+  it('calls my_parse_series_v2 with the person, the window start and the scope', async () => {
     const sb = stub(RPC_OBJ);
     const q = mp.parseQuery('/x?w=30d', NOW);
     await mp.fetchSeries(sb, '111', q);
     expect(sb.calls).toHaveLength(1);
-    expect(sb.calls[0].fn).toBe('my_parse_series');
+    expect(sb.calls[0].fn).toBe('my_parse_series_v2');
     expect(sb.calls[0].params).toEqual({ p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: true });
   });
 
@@ -210,6 +311,35 @@ describe('fetchSeries', () => {
     const sb = stub(RPC_OBJ);
     await mp.fetchSeries(sb, '111', mp.parseQuery('/x?w=life&scope=all&char=Aldenmar', NOW));
     expect(sb.calls[0].params).toEqual({ p_discord_id: '111', p_since: null, p_bosses_only: false, p_character: 'Aldenmar' });
+  });
+
+  it('passes a zone as p_zone and a search as p_search, and sends neither when there is none', async () => {
+    const sb = stub(RPC_OBJ);
+    await mp.fetchSeries(sb, '111', mp.parseQuery('/x?w=30d&zone=344&q=Lord%20Nagafen', NOW));
+    expect(sb.calls[0].fn).toBe('my_parse_series_v2');
+    expect(sb.calls[0].params).toEqual({
+      p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: true, p_zone: 344, p_search: 'Lord Nagafen',
+    });
+    await mp.fetchSeries(sb, '111', mp.parseQuery('/x?w=30d&zone=344', NOW));
+    expect(sb.calls[1].params).toEqual({ p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: true, p_zone: 344 });
+    await mp.fetchSeries(sb, '111', mp.parseQuery('/x?w=30d&q=bat', NOW));
+    expect(sb.calls[2].params).toEqual({ p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: true, p_search: 'bat' });
+    // what the cleaners ignore never becomes a parameter
+    await mp.fetchSeries(sb, '111', mp.parseQuery('/x?w=30d&zone=0&q=a%25b', NOW));
+    expect(Object.keys(sb.calls[3].params).sort()).toEqual(['p_bosses_only', 'p_discord_id', 'p_since']);
+  });
+
+  it('hands back the zones, the mobs and each fight\'s zone untouched', async () => {
+    const withFacets = {
+      ...RPC_OBJ,
+      fights: [{ t: '2026-10-05T01:00:00Z', eid: 7, zone_id: 32, zone: 'Nagafen\'s Lair' }],
+      zones: [{ id: 32, name: 'Nagafen\'s Lair', fights: 1 }],
+      mobs: [{ name: 'Lord Nagafen', fights: 1 }],
+    };
+    const out = await mp.fetchSeries(stub(withFacets), '111', mp.parseQuery('/x', NOW));
+    expect(out.zones).toEqual(withFacets.zones);
+    expect(out.mobs).toEqual(withFacets.mobs);
+    expect(out.fights[0]).toMatchObject({ zone_id: 32, zone: 'Nagafen\'s Lair' });
   });
 
   it('answers the function\'s object plus the window and scope it was asked for', async () => {
@@ -249,8 +379,10 @@ describe('the route', () => {
   const RPC_OBJ = {
     floor: '2026-07-14T00:00:00Z', characters: [{ name: 'Aldenmar', class: 'Warrior', active: true }],
     total: 1, truncated: false,
-    fights: [{ t: '2026-10-05T01:00:00Z', eid: 7, npc_id: 1, name: 'Lord Nagafen', boss: true, char: 'Aldenmar', dps: 410, dmg: 50000, dur: 120, rank: 1, usual: 395 }],
+    fights: [{ t: '2026-10-05T01:00:00Z', eid: 7, npc_id: 1, name: 'Lord Nagafen', zone_id: 32, zone: 'Nagafen\'s Lair', boss: true, char: 'Aldenmar', dps: 410, dmg: 50000, dur: 120, rank: 1, usual: 395 }],
     nights: [{ night: '2026-10-04', fights: 1, bosses: 1, avg_dps: 410, best_dps: 410 }],
+    zones: [{ id: 32, name: 'Nagafen\'s Lair', fights: 1 }],
+    mobs: [{ name: 'Lord Nagafen', fights: 1 }],
   };
 
   beforeEach(() => {
@@ -284,7 +416,7 @@ describe('the route', () => {
       scope: 'all',
     });
     expect(S.rpcCalls).toEqual([{
-      fn: 'my_parse_series',
+      fn: 'my_parse_series_v2',
       params: { p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: false, p_character: 'Aldenmar' },
     }]);
   });
@@ -294,7 +426,28 @@ describe('the route', () => {
     await handler(req('/api/agent/my-parses'), res);
     expect(res.json().window).toEqual({ key: '7d', label: '1 week', since: iso(NOW - 7 * DAY) });
     expect(res.json().scope).toBe('bosses');
+    expect(S.rpcCalls[0].fn).toBe('my_parse_series_v2');
     expect(S.rpcCalls[0].params).toEqual({ p_discord_id: '111', p_since: iso(NOW - 7 * DAY), p_bosses_only: true });
+  });
+
+  it('passes zone and q to the function and answers with the zone and mob lists', async () => {
+    const res = fakeRes();
+    await handler(req('/api/agent/my-parses?w=30d&zone=32&q=Lord%20Nagafen'), res);
+    expect(res.code).toBe(200);
+    expect(S.rpcCalls).toEqual([{
+      fn: 'my_parse_series_v2',
+      params: { p_discord_id: '111', p_since: iso(NOW - 30 * DAY), p_bosses_only: true, p_zone: 32, p_search: 'Lord Nagafen' },
+    }]);
+    expect(res.json().zones).toEqual(RPC_OBJ.zones);
+    expect(res.json().mobs).toEqual(RPC_OBJ.mobs);
+    expect(res.json().fights[0]).toMatchObject({ zone_id: 32, zone: 'Nagafen\'s Lair' });
+  });
+
+  it('a zone or q that is not a zone id or a name never reaches the database', async () => {
+    const res = fakeRes();
+    await handler(req('/api/agent/my-parses?zone=32%3Bdrop&q=%25%27%3B--'), res);
+    expect(res.code).toBe(200);
+    expect(Object.keys(S.rpcCalls[0].params).sort()).toEqual(['p_bosses_only', 'p_discord_id', 'p_since']);
   });
 
   it('asks about the Mimic session\'s person and nobody a query string names', async () => {
@@ -358,6 +511,21 @@ describe('the route', () => {
     vi.setSystemTime(NOW + 5 * 60 * 1000);
     await ask('/api/agent/my-parses?w=7d');
     expect(S.rpcCalls).toHaveLength(6);                     // expired: read again
+  });
+
+  it('keeps a zone-filtered or searched answer in its own slot, never serving it to a plainer ask', async () => {
+    const ask = async (url) => { const r = fakeRes(); await handler(req(url), r); return r; };
+    await ask('/api/agent/my-parses?w=7d');
+    await ask('/api/agent/my-parses?w=7d&zone=32');         // a new slot
+    await ask('/api/agent/my-parses?w=7d&zone=32');         // ... answered from it
+    await ask('/api/agent/my-parses?w=7d&q=nagafen');       // another
+    await ask('/api/agent/my-parses?w=7d&q=NAGAFEN');       // ... the other spelling shares it
+    await ask('/api/agent/my-parses?w=7d&zone=33');         // a different zone is a different slot
+    await ask('/api/agent/my-parses?w=7d&zone=32&q=nagafen');
+    await ask('/api/agent/my-parses?w=7d&zone=0&q=%25');    // ignored filters: the unfiltered slot
+    expect(S.rpcCalls.map(c => [c.params.p_zone ?? null, c.params.p_search ?? null])).toEqual([
+      [null, null], [32, null], [null, 'nagafen'], [33, null], [32, 'nagafen'],
+    ]);
   });
 
   it('gzips for a client that takes gzip, and says the body varies on it', async () => {
@@ -427,5 +595,13 @@ describe('release bookkeeping', () => {
     const lines = changesSince('3.1.209').filter(l => l.startsWith('**3.1.210**'));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(/parses/i);
+  });
+
+  it('3.1.213 has a changelog line about filtering the parses by zone and mob', () => {
+    const lines = changesSince('3.1.212').filter(l => l.startsWith('**3.1.213**'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/parses/i);
+    expect(lines[0]).toMatch(/zone/i);
+    expect(lines[0]).toMatch(/mob/i);
   });
 });

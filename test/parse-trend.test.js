@@ -4,18 +4,27 @@
 // tab plus wolfpack.quest/me/parses, both reading the my_parse_series function. This pins:
 //   · the clock: Eastern raid nights (a 1 am fight belongs to the night before), 12-hour labels, DST days
 //   · the scales: the DPS axis top, the x labels (hours / weekdays / dates), where a night's average sits
-//   · the reader: junk in, a series out
+//   · the reader: junk in, a series out (fights with their zone, and the zone and mob lists for the pickers)
+//   · the filters: ?zone= and ?q= are checked for shape, by the same rules as the bot's route
+//   · By day: fights grouped under their Eastern raid night, with the function's numbers on the heading
 //   · the page: it takes the person from the SESSION and never from the URL, and the chart never uses red
+//
+// The guild lead asked on 2026-10-06 to "explore more in the fights section: chop it up by days, zones, mobs,
+// search bar" (option A: filters on the list), which is the zone / q / By day half of this file.
 //
 // Run: npx vitest run test/parse-trend.test.js
 
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
   readParseSeries, splitCharChips, nightKey, fmtWhen, wallToMs, niceTop, vsUsualPct, xTicks, buildTrend, fmtInt,
+  cleanZoneParam, cleanSearchParam, SEARCH_MAX_LEN, fmtNight, groupByNight, nightHeading,
 } from '../web/lib/parseTrend.ts';
+
+const botParses = createRequire(import.meta.url)('../utils/myParses.js');
 
 const ET = 'America/New_York';
 const iso = (s) => Date.parse(s);
@@ -112,9 +121,60 @@ describe('readParseSeries', () => {
       expect(s.fights).toEqual([]);
       expect(s.nights).toEqual([]);
       expect(s.characters).toEqual([]);
+      expect(s.zones).toEqual([]);
+      expect(s.mobs).toEqual([]);
       expect(s.truncated).toBe(false);
       expect(s.floor).toBe('2026-07-14T00:00:00Z');
     }
+  });
+
+  it('reads each fight\'s zone, and a function that sent none (or junk) leaves it null', () => {
+    const s = readParseSeries({
+      fights: [
+        fight({ eid: 'a', zone_id: 32, zone: 'Nagafen\'s Lair' }),
+        fight({ eid: 'b', t: '2026-10-05T02:00:00Z', zone_id: '344', zone: '   ' }),
+        fight({ eid: 'c', t: '2026-10-05T03:00:00Z', zone_id: 'x', zone: 7 }),
+        fight({ eid: 'd', t: '2026-10-05T04:00:00Z' }),
+      ],
+    });
+    expect(s.fights.map(f => [f.zone_id, f.zone])).toEqual([
+      [32, 'Nagafen\'s Lair'], [344, null], [null, null], [null, null],
+    ]);
+  });
+
+  it('reads the zone and mob lists for the pickers: junk dropped, numbers coerced, busiest first', () => {
+    const s = readParseSeries({
+      zones: [
+        { id: 33, name: 'Ssraeshza Temple', fights: 4 },
+        { id: '32', name: 'Nagafen\'s Lair', fights: '9' },
+        { id: 99, name: '  ', fights: 2 },                  // no name: the id stands in
+        { id: 'nope', name: 'Nowhere', fights: 50 },        // no id: dropped
+        { id: 10, name: 'Tied Zone', fights: 4 },           // ties on fights break by name
+        { id: 11, name: 'Alphabetically First', fights: 4 },
+        { id: 12, name: 'Negative', fights: -3 },
+        null, 5,
+      ],
+      mobs: [
+        { name: 'Zzz bat', fights: 2 },
+        { name: 'Lord Nagafen', fights: '7' },
+        { name: '', fights: 99 },                           // no name: dropped
+        { fights: 4 },
+        { name: 'Aaa', fights: 2 },
+      ],
+    });
+    expect(s.zones).toEqual([
+      { id: 32, name: 'Nagafen\'s Lair', fights: 9 },
+      { id: 11, name: 'Alphabetically First', fights: 4 },
+      { id: 33, name: 'Ssraeshza Temple', fights: 4 },
+      { id: 10, name: 'Tied Zone', fights: 4 },
+      { id: 99, name: 'Zone 99', fights: 2 },
+      { id: 12, name: 'Negative', fights: 0 },
+    ]);
+    expect(s.mobs).toEqual([
+      { name: 'Lord Nagafen', fights: 7 },
+      { name: 'Aaa', fights: 2 },
+      { name: 'Zzz bat', fights: 2 },
+    ]);
   });
 
   it('keeps good rows, drops unusable ones, coerces numbers, sorts oldest first', () => {
@@ -308,6 +368,103 @@ describe('buildTrend', () => {
   });
 });
 
+describe('the zone and search filters', () => {
+  it('?zone= is a zone id: one to three digits, 1..999, trimmed', () => {
+    expect(cleanZoneParam('1')).toBe(1);
+    expect(cleanZoneParam(' 344 ')).toBe(344);
+    expect(cleanZoneParam('999')).toBe(999);
+    expect(cleanZoneParam('007')).toBe(7);
+    for (const raw of [undefined, null, '', ' ', '0', '000', '1000', '-5', '+5', '3.5', '1e2', '12a', '1 2', "3' or 1=1", ['344'], 344]) {
+      expect(cleanZoneParam(raw)).toBeNull();
+    }
+  });
+
+  it('?q= is up to 40 name-shaped characters, trimmed; wildcards, quotes and the rest are ignored', () => {
+    expect(SEARCH_MAX_LEN).toBe(40);
+    expect(cleanSearchParam('  Lord Nagafen ')).toBe('Lord Nagafen');
+    expect(cleanSearchParam('a Shik`nar Forager')).toBe('a Shik`nar Forager');
+    expect(cleanSearchParam("O'Neil-2_x")).toBe("O'Neil-2_x");
+    expect(cleanSearchParam('a'.repeat(40))).toBe('a'.repeat(40));
+    expect(cleanSearchParam('a'.repeat(41))).toBeNull();
+    expect(cleanSearchParam('  ' + 'a'.repeat(40) + '  ')).toBe('a'.repeat(40));
+    for (const raw of [undefined, null, '', '   ', '%', 'a%b', 'a\\b', 'a;b', 'a,b', 'a.b', 'a|b', '<b>', '"x"', 'a\nb', 'Rethlán', ['bat'], 5]) {
+      expect(cleanSearchParam(raw)).toBeNull();
+    }
+  });
+
+  it('takes exactly what the bot\'s /api/agent/my-parses takes, so the page and Mimic agree', () => {
+    const corpus = [
+      undefined, null, '', ' ', '0', '1', '7', '007', '344', ' 344 ', '999', '1000', '-1', '3.5', '1e2', '12a', '1 2',
+      'nagafen', ' Lord Nagafen ', "a Shik`nar Forager", "O'Neil", 'Foo-Bar', 'a_b', 'a%b', 'a;b', 'a,b', 'a.b', 'a\\b',
+      'a|b', 'x=1', '<b>', 'Rethlán', 'a\nb', 'a'.repeat(40), 'a'.repeat(41), '  ' + 'a'.repeat(40) + ' ', ['344'], 344, {},
+    ];
+    for (const raw of corpus) {
+      expect(cleanZoneParam(raw)).toBe(botParses.cleanZone(raw));
+      expect(cleanSearchParam(raw)).toBe(botParses.cleanSearch(raw));
+    }
+    expect(SEARCH_MAX_LEN).toBe(botParses.SEARCH_MAX_LEN);
+  });
+});
+
+describe('groupByNight', () => {
+  const f = (t, eid, dps, o = {}) => readParseSeries({ fights: [fight({ t, eid, dps, ...o })] }).fights[0];
+  // Sunday night (Oct 4): 9:00 pm, 9:30 pm and 1:30 am Monday; Tuesday night (Oct 6): 9:15 pm.
+  const sunA = f('2026-10-05T01:00:00Z', 'a', 100);
+  const sunB = f('2026-10-05T01:30:00Z', 'b', 200, { boss: false });
+  const sunC = f('2026-10-05T05:30:00Z', 'c', 150);
+  const tue = f('2026-10-07T01:15:00Z', 'd', 300);
+  const nights = [
+    { night: '2026-10-04', fights: 5, bosses: 4, avg_dps: 142, best_dps: 210 },
+    { night: '2026-10-06', fights: 1, bosses: 1, avg_dps: 300, best_dps: 300 },
+  ];
+
+  it('puts the newest night first and each night\'s newest fight first, whatever order they arrive in', () => {
+    const g = groupByNight([sunB, tue, sunA, sunC], nights);
+    expect(g.map(x => x.night)).toEqual(['2026-10-06', '2026-10-04']);
+    expect(g[0].fights.map(x => x.eid)).toEqual(['d']);
+    expect(g[1].fights.map(x => x.eid)).toEqual(['c', 'b', 'a']);       // the 1:30 am fight belongs to Sunday's night
+    expect(groupByNight([tue, sunC, sunB, sunA], nights)).toEqual(g);
+  });
+
+  it('uses the function\'s numbers for the night, which can count more fights than the list holds', () => {
+    const g = groupByNight([sunA, sunB, sunC, tue], nights);
+    expect(g[1].summary).toBe(nights[0]);                              // 5 fights on the night, 3 in the list
+    expect(g[1].fights).toHaveLength(3);
+    expect(g[0].summary).toBe(nights[1]);
+  });
+
+  it('gives a night with no fights in the list no group, and derives numbers for a night the summary lacks', () => {
+    const g = groupByNight([sunA, sunB, sunC], [nights[1]]);           // the summary only knows Tuesday
+    expect(g).toHaveLength(1);
+    expect(g[0].night).toBe('2026-10-04');
+    expect(g[0].summary).toEqual({ night: '2026-10-04', fights: 3, bosses: 2, avg_dps: 150, best_dps: 200 });
+    expect(groupByNight([], nights)).toEqual([]);
+  });
+
+  it('does not change its input', () => {
+    const list = [sunB, tue, sunA];
+    const before = JSON.stringify(list);
+    groupByNight(list, nights);
+    expect(JSON.stringify(list)).toBe(before);
+  });
+
+  it('breaks a tie on the clock by encounter id, newest id first, so the order never flickers', () => {
+    const x = f('2026-10-05T01:00:00Z', 'x1', 100);
+    const y = f('2026-10-05T01:00:00Z', 'x2', 100);
+    expect(groupByNight([x, y], []).at(0).fights.map(r => r.eid)).toEqual(['x2', 'x1']);
+    expect(groupByNight([y, x], []).at(0).fights.map(r => r.eid)).toEqual(['x2', 'x1']);
+  });
+
+  it('words the heading as "Sun Oct 4 · 12 fights · avg 142 · best 210"', () => {
+    expect(fmtNight('2026-10-04')).toBe('Sun Oct 4');
+    expect(fmtNight('2026-11-01')).toBe('Sun Nov 1');
+    expect(nightHeading({ night: '2026-10-04', fights: 12, bosses: 9, avg_dps: 141.6, best_dps: 210 }))
+      .toBe('Sun Oct 4 · 12 fights · avg 142 · best 210');
+    expect(nightHeading({ night: '2026-10-06', fights: 1, bosses: 1, avg_dps: 1234, best_dps: 1234 }))
+      .toBe('Tue Oct 6 · 1 fight · avg 1,234 · best 1,234');
+  });
+});
+
 describe('the page and the chart', () => {
   const read = (rel) => stripJs(fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const page = read('web/app/me/parses/page.tsx');
@@ -316,12 +473,68 @@ describe('the page and the chart', () => {
   it('takes the person from the session, never from the URL', () => {
     expect(page).toMatch(/\.eq\('user_id', user\.id\)/);
     expect(page).toMatch(/p_discord_id:\s*discordId/);
-    // the query string carries only the window, the scope, one character and the chip fold
+    // the query string carries only the window, the scope, one character, the chip fold, a zone, a search and By day
     expect(page).toMatch(
-      /const \{ w: wParam, scope: scopeParam, char: charParam, allchars: allcharsParam \} = await searchParams;/,
+      /const \{\s*w: wParam, scope: scopeParam, char: charParam, allchars: allcharsParam,\s*zone: zoneParam, q: qParam, byday: bydayParam,?\s*\} = await searchParams;/,
     );
     expect(page).not.toMatch(/searchParams[^;]*discord/i);
     expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/me\/parses'\)/);
+  });
+
+  it('reads my_parse_series_v2 and sends it the zone and the search, checked for shape first', () => {
+    expect(page).toMatch(/\.rpc\('my_parse_series_v2', \{/);
+    expect(page).not.toMatch(/\.rpc\('my_parse_series'/);
+    expect(page).toMatch(/p_zone:\s*zone,/);
+    expect(page).toMatch(/p_search:\s*search,/);
+    expect(page).toMatch(/const zone = cleanZoneParam\(zoneParam\);/);
+    expect(page).toMatch(/const search = cleanSearchParam\(qParam\);/);
+    // both the first read and the retry without ?char= carry the filters
+    expect(page.match(/loadSeries\(discordId, w\.sinceIso, !everything, (?:wantChar|null), zone, search\)/g)).toHaveLength(2);
+  });
+
+  it('has a plain GET form: a search box with the mob list, a Zone picker, and the other choices carried as hidden fields', () => {
+    expect(page).toMatch(/<form method="GET" action="\/me\/parses"/);
+    expect(page).toMatch(/type="search" name="q" list="parse-mobs" defaultValue=\{search \?\? ''\}/);
+    expect(page).toMatch(/<datalist id="parse-mobs">/);
+    expect(page).toMatch(/\$\{m\.name\} — \$\{m\.fights\}/);
+    expect(page).toMatch(/name="zone" defaultValue=\{zone != null \? String\(zone\) : ''\}/);
+    expect(page).toContain('<option value="">All zones</option>');
+    expect(page).toMatch(/\$\{z\.name\} \(\$\{z\.fights\}\)/);
+    // what is already chosen rides along as hidden fields, never zone or q (those are the form's own inputs)
+    expect(page).toMatch(/type="hidden" name=\{k\} value=\{v as string\}/);
+    expect(page).toMatch(/k !== 'zone' && k !== 'q'/);
+    expect(page).toMatch(/byday: byDay \? '1' : undefined/);
+  });
+
+  it('suggests only mob names the search box would accept, so a pick always filters', () => {
+    expect(page).toMatch(/series\.mobs\.filter\(m => cleanSearchParam\(m\.name\) != null\)/);
+  });
+
+  it('keeps a ?zone= with no fights in the Zone picker, so it still says what is applied', () => {
+    expect(page).toMatch(/!series\.zones\.some\(z => z\.id === zone\)/);
+  });
+
+  it('has a By day link and a Clear filters link that keep the other choices', () => {
+    expect(page).toMatch(/href=\{href\(\{ byday: byDay \? null : '1' \}\)\}/);
+    expect(page).toMatch(/href=\{href\(\{ zone: null, q: null \}\)\}/);
+    expect(page).toContain('Clear filters');
+    // a link carries zone, q and byday along with the rest
+    expect(page).toMatch(/zone: zone != null \? String\(zone\) : undefined,\s*q: search,\s*byday: byDay \? '1' : undefined,/);
+  });
+
+  it('shows a Zone column after Fight and groups under night headings when ?byday=1', () => {
+    const fightAt = page.indexOf('>Fight</th>');
+    const zoneAt = page.indexOf('>Zone</th>');
+    expect(fightAt).toBeGreaterThan(-1);
+    expect(zoneAt).toBeGreaterThan(fightAt);
+    expect(page).toMatch(/\{f\.zone \?\? '—'\}/);
+    expect(page).toMatch(/const byDay = bydayParam === '1';/);
+    expect(page).toMatch(/groupByNight\(fights, series\.nights\)/);
+    expect(page).toMatch(/nightHeading\(g\.summary\)/);
+  });
+
+  it('says so when the filters match nothing, rather than showing the "no boss fights" copy', () => {
+    expect(page).toContain('match these filters in this window');
   });
 
   it('folds the character chips behind "+N more" and checks ?char= against the FULL list', () => {
