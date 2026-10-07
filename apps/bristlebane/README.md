@@ -90,6 +90,24 @@ joins deafened. It is always muted.
 | `POLL_SECONDS` | `30` | clamped to 5–300 |
 | `BRISTLEBANE_APP_ID` | optional | the application id for registering the command; defaults to the bot's own user id |
 | `OFFNIGHT_VOICE_CHANNEL_ID` | optional | read, **not used yet** (reserved) |
+| `BRISTLEBANE_GUILD_FILE` | optional | path to the guild file below; default `guild/discord.json` at the repo root |
+
+### Guild file (optional)
+
+A guild that keeps its Discord ids in the committed `guild/discord.json` (the one the main bot reads) does not
+have to key them in here by hand. When the **environment leaves them unset or blank**, these four come from the
+file: `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `OFFNIGHT_VOICE_CHANNEL_ID`.
+
+- **Environment wins**, id by id: a deployment that sets everything (Wolf Pack's) behaves exactly as before.
+- **Everything else stays environment-only.** `BOT_API_URL` and `SCREEN_URL` are deployment values, and
+  `BOT_API_KEY` and `BRISTLEBANE_TOKEN` are secrets: a key matching `SPEC|TOKEN|KEY|SECRET|PASSWORD` is refused
+  with a warning, and the other keys in the file are ignored.
+- A missing or unparseable file is a no-op (a bad one logs a warning), so `DISCORD_GUILD_ID is not set` still
+  stops the boot when neither source has it. The boot log lists the names it filled, never the values.
+- **In Docker the image cannot see this file.** It is built from this folder alone (build context
+  `apps/bristlebane`), so `../../guild` does not exist inside it. Mount a copy and point at it, for example
+  `-v "$PWD/guild/discord.json:/config/discord.json:ro"` with `BRISTLEBANE_GUILD_FILE=/config/discord.json` (in
+  Coolify, a file mount plus that variable). A path that is named but missing logs a warning.
 
 **The key.** The main bot's `/api/agent/*` routes want a per-user session token, which a service has no person
 to borrow. So the main bot has one dedicated variable, **`BRISTLEBANE_API_KEY`** (generate a long random
@@ -152,7 +170,9 @@ branch you want; it does not share a deploy with the main bot. `SIGTERM` is hand
 the channel is left and the nickname is restored.
 
 Tests: `npx vitest run test/bristlebane.test.js` from the repo root (the join/leave rule, the consent store,
-deletion, the recording writer and the texts; the Discord glue is covered by the smoke test below).
+deletion, the recording writer and the texts; the Discord glue is covered by the smoke test below), and
+`npm test` here for `test/` in this folder (the guild file layer; it uses the repo root's vitest, so it needs
+the monorepo checkout, not the Docker image).
 
 ## 30-minute smoke test (three testers, one rejoin)
 

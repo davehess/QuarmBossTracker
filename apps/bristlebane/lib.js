@@ -17,18 +17,70 @@ const path = require('node:path');
 
 const RECORD_MODES = ['off', 'optin'];
 
+// ── guild/discord.json → unset env (the guild kit) ──────────────────────────
+// Resolution order is environment → guild/discord.json → built-in default, and env always wins, so a
+// deployment that sets every id in its environment (Wolf Pack's) behaves exactly as it did before the file
+// layer existed. The loader is the main bot's (index.js at the repo root), copied rule for rule: fill only
+// keys the environment leaves unset or blank, stringify values, join arrays with commas, skip `_` keys and
+// nulls, refuse secret-shaped keys with a warning, and treat a missing or invalid file as "nothing to do".
+//
+// loadConfig narrows it to the four Discord ids below. BOT_API_URL and SCREEN_URL are deployment values and
+// BOT_API_KEY is a secret, so those three stay env-only even if someone writes them into the file.
+const GUILD_FILE_KEYS = ['DISCORD_GUILD_ID', 'RAID_VOICE_CHANNEL_ID', 'RAID_CHAT_CHANNEL_ID', 'OFFNIGHT_VOICE_CHANNEL_ID'];
+const DEFAULT_GUILD_FILE = path.join(__dirname, '..', '..', 'guild', 'discord.json');
+
+/**
+ * Fill `env` (modified in place) from the JSON file at `file`. `only`, when given, is a list of the only
+ * keys it may fill; the secret-shaped check still looks at every key in the file. Returns
+ * { filled, skipped, refused }: keys set from the file, keys left alone because env already had a value,
+ * and secret-shaped keys it would not read. Logs key names only, never values.
+ */
+function fillEnvFromGuildFile(env, file = DEFAULT_GUILD_FILE, only = null) {
+  const out = { filled: [], skipped: [], refused: [] };
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return out; }   // no file → nothing to do
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { console.warn(`[guild] ${file} is not valid JSON — ignored (${e.message})`); return out; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    console.warn(`[guild] ${file} is not a JSON object — ignored`);
+    return out;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    if (k.startsWith('_') || v == null) continue;                      // _comment, nulls
+    if (/SPEC|TOKEN|KEY|SECRET|PASSWORD/.test(k)) { out.refused.push(k); continue; }
+    if (only && !only.includes(k)) continue;
+    if (env[k] != null && String(env[k]).trim() !== '') { out.skipped.push(k); continue; }
+    env[k] = Array.isArray(v) ? v.join(',') : String(v);
+    out.filled.push(k);
+  }
+  if (out.refused.length) console.warn(`[guild] ${file}: refused secret-shaped key(s) ${out.refused.join(', ')} — secrets belong in the environment, never in a committed file`);
+  if (out.filled.length) console.log(`[guild] ${file} filled ${out.filled.length} unset id(s): ${out.filled.join(', ')}`);
+  return out;
+}
+
 /**
  * Read the service's settings from an env object. Throws one Error naming EVERY problem, so a bad
  * deploy is fixed in one pass instead of one variable per crash loop.
+ *
+ * The four Discord ids (GUILD_FILE_KEYS) may come from the guild file when env leaves them unset. Which file:
+ * `guildFile` if given, else BRISTLEBANE_GUILD_FILE, else guild/discord.json at the repo root. `env` itself is
+ * never modified. The Docker image is built from apps/bristlebane alone and cannot see the repo's guild/
+ * folder, so a container points BRISTLEBANE_GUILD_FILE at a mounted copy (README).
  */
-function loadConfig(env) {
+function loadConfig(env, guildFile) {
+  const e = { ...env };
+  const explicit = guildFile || String(e.BRISTLEBANE_GUILD_FILE ?? '').trim();
+  if (explicit && !fs.existsSync(explicit)) console.warn(`[guild] ${explicit} does not exist — no ids read from a file`);
+  fillEnvFromGuildFile(e, explicit || undefined, GUILD_FILE_KEYS);
+
   const problems = [];
   const need = (k) => {
-    const v = String(env[k] ?? '').trim();
+    const v = String(e[k] ?? '').trim();
     if (!v) problems.push(`${k} is not set`);
     return v;
   };
-  const opt = (k) => String(env[k] ?? '').trim() || null;
+  const opt = (k) => String(e[k] ?? '').trim() || null;
 
   const cfg = {
     token: need('BRISTLEBANE_TOKEN'),
@@ -51,7 +103,7 @@ function loadConfig(env) {
     problems.push(`RECORD_MODE must be one of ${RECORD_MODES.join(' | ')} (got "${cfg.recordMode}")`
       + (cfg.recordMode === 'optout' ? ' — recording is opt-in only; there is no opt-out mode' : ''));
   }
-  const secs = parseInt(env.POLL_SECONDS, 10);
+  const secs = parseInt(e.POLL_SECONDS, 10);
   if (Number.isFinite(secs)) cfg.pollMs = Math.min(300, Math.max(5, secs)) * 1000;
   if (problems.length) throw new Error('bad configuration: ' + problems.join('; '));
   return cfg;
@@ -564,7 +616,7 @@ function parseForgetButton(customId) {
 }
 
 module.exports = {
-  RECORD_MODES, loadConfig, normalizePoll,
+  RECORD_MODES, GUILD_FILE_KEYS, DEFAULT_GUILD_FILE, fillEnvFromGuildFile, loadConfig, normalizePoll,
   JOIN_AFTER_LIVE_POLLS, LEAVE_NOT_LIVE_MS, LEAVE_EMPTY_MS, LEAVE_UNREACHABLE_MS, initialState, decide,
   consentPath, ConsentStore, shouldRecord,
   RECORD_HEADER_BYTES, encodeRecord, decodeRecords, nightDirName, fsSafeIso, sessionDir, SessionRecorder,
