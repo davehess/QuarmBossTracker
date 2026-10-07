@@ -633,6 +633,32 @@ describe('20261004140500_cap_safe_admin2.sql', () => {
   });
 });
 
+// guild_held_spell_needs took ~31 s (555 per-scroll runs of the uploaders + spellbook scan) and ran past
+// PostgREST's statement timeout; /admin/spells showed its error banner. These pin the one-pass shape.
+describe('20261004221000_guild_held_spell_needs_fast.sql', () => {
+  const sql = stripSql(read('supabase/migrations/20261004221000_guild_held_spell_needs_fast.sql'));
+
+  it('keeps the signature, the columns, the pinned search_path and the unique order', () => {
+    expect(sql).toMatch(/create or replace function public\.guild_held_spell_needs\(p_guild_id text\)\s+returns table\(\s*spell_name text, scroll_item_id integer, class_bitmask integer,\s*holders text\[\], needers text\[\]\)/);
+    expect(sql).toMatch(/set search_path = public/);
+    expect(sql).toMatch(/order by sm\.spell_name;\s*\$\$;/);
+    expect(sql).not.toMatch(/security definer|\bdrop\b|\brevoke\b/i);
+  });
+
+  it('materialises the uploaders once, the only place eq_class_bit runs', () => {
+    expect(sql).toMatch(/chars as materialized \([^\n]*\n\s*select c\.name, lower\(c\.name\) as nm_l, eq_class_bit\(c\.class\) as bit\s+from characters c/);
+    expect((sql.match(/eq_class_bit\(/g) ?? []).length).toBe(1);
+  });
+
+  it('reads the spellbook once into distinct pairs and finds needers in one grouped join', () => {
+    expect(sql).toMatch(/have as \([^\n]*\n\s*select distinct lower\(character_name\) as nm_l, lower\(spell_name\) as nm\s+from character_spellbook\s+where guild_id = p_guild_id/);
+    expect(sql).toMatch(/join chars c on \(c\.bit & sm\.class_bitmask\) > 0\s+where not exists \(select 1 from have hv where hv\.nm_l = c\.nm_l and hv\.nm = h\.nm\)\s+group by h\.nm/);
+    expect(sql).toMatch(/left join needs n on n\.nm = h\.nm/);
+    // No per-row subplan in the select list any more:
+    expect(sql).not.toMatch(/as needers\s*,|\(\s*select array_agg[^)]*\)\s+as needers/);
+  });
+});
+
 // ── The pages ───────────────────────────────────────────────────────────────
 
 describe('the seven pages no longer carry the cap-blind reads', () => {
