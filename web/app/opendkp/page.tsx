@@ -21,6 +21,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import AutoRefresh from './AutoRefresh';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -73,7 +74,7 @@ export default async function OpenDkpPage() {
   // the limit would only move the cliff; the RPC removes it.
   const [{ data: summaryRaw, error: summaryErr }, { data: tuneRows }] = await Promise.all([
     sb.rpc('opendkp_traffic_summary'),
-    sb.from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').limit(1),
+    sb.from('overlay_tuning').select('tuning').eq('guild_id', GUILD_TAG).limit(1),
   ]);
   const tuning = (tuneRows?.[0]?.tuning ?? {}) as Record<string, unknown>;
   const haltFlag = Number(tuning.flag_opendkp_halt) >= 1;

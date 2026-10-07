@@ -68,6 +68,7 @@ import { OwnedFlagCount, OwnedGateCell, SelfFlagsProvider } from './SelfFlagCell
 import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
 import { demoEssenceQueue } from '@/lib/essencesQueue';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Flags — Wolf Pack' };
@@ -156,7 +157,7 @@ export default async function PopFlagsPage(
   // "nothing missing". Read a page at a time; the function's ORDER BY ends on a unique key
   // (20261004140800_cap_safe_pop.sql) so the pages never skip or repeat a row.
   const [needRows, myCharsAll, traderNames, flaggedHidden] = await Promise.all([
-    selectAll<SpellNeed>((from, to) => sbAdmin.rpc('pop_spell_needs', { p_guild_id: 'wolfpack' }).range(from, to)),
+    selectAll<SpellNeed>((from, to) => sbAdmin.rpc('pop_spell_needs', { p_guild_id: GUILD_TAG }).range(from, to)),
     ownedCharacters(user.id),
     loadTraderNames(sbAdmin),
     loadHiddenNames(sbAdmin),
@@ -207,7 +208,7 @@ export default async function PopFlagsPage(
     // 1,000-row cap, and one household has 1,095, so a character whose rows all sat past the first
     // 1,000 would have read as "no spellbook on file".
     const haveBook = await selectAll<{ character_key: string }>((from, to) => sbAdmin
-      .rpc('pop_spellbook_names', { p_guild_id: 'wolfpack', p_names: myChars.map(c => c.name.toLowerCase()) })
+      .rpc('pop_spellbook_names', { p_guild_id: GUILD_TAG, p_names: myChars.map(c => c.name.toLowerCase()) })
       .range(from, to));
     mySpellbookNames = new Set(haveBook.map(r => r.character_key));
   }
@@ -239,7 +240,7 @@ export default async function PopFlagsPage(
     // (character_name, item_key) is the rest of the primary key once the guild is fixed.
     return selectAll<{ character_name: string; item_key: string }>((from, to) => sb.from('pop_guide_ticks')
       .select('character_name, item_key')
-      .eq('guild_id', 'wolfpack').in('item_key', SELF_TICK_KEYS)
+      .eq('guild_id', GUILD_TAG).in('item_key', SELF_TICK_KEYS)
       .order('character_name', { ascending: true }).order('item_key', { ascending: true })
       .range(from, to));
   }
@@ -262,11 +263,11 @@ export default async function PopFlagsPage(
     const [loots, inv] = await Promise.all([
       selectAll<{ looter_character: string; item_name: string }>((from, to) => sb.from('looted_items')
         .select('looter_character, item_name')
-        .eq('guild_id', 'wolfpack').eq('zone', '201').in('item_name', [...byName.keys()])
+        .eq('guild_id', GUILD_TAG).eq('zone', '201').in('item_name', [...byName.keys()])
         .order('id', { ascending: true }).range(from, to)),
       selectAll<{ character_name: string; item_id: number }>((from, to) => sb.from('character_inventory')
         .select('character_name, item_id')
-        .eq('guild_id', 'wolfpack').in('item_id', [...byId.keys()])
+        .eq('guild_id', GUILD_TAG).in('item_id', [...byId.keys()])
         .order('id', { ascending: true }).range(from, to)),
     ]);
     for (const r of loots) add(r.looter_character, r.item_name);
@@ -274,7 +275,7 @@ export default async function PopFlagsPage(
     if (invRows.length) {
       const names = [...new Set(invRows.map(r => r.character_name))];
       const { data: optedOut } = await sb.from('characters').select('name')
-        .eq('guild_id', 'wolfpack').eq('exclude_inventory', true).in('name', names).limit(1000);
+        .eq('guild_id', GUILD_TAG).eq('exclude_inventory', true).in('name', names).limit(1000);
       const hidden = new Set(((optedOut ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
       for (const r of invRows) {
         const mark = byId.get(r.item_id);
@@ -289,12 +290,12 @@ export default async function PopFlagsPage(
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
       .select('name, rank, active')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('rank', [...RAIDER_RANKS, ...RAID_ALT_RANKS])
       .limit(1000),
     sb.from('characters')
       .select('name', { count: 'exact', head: true })
-      .eq('guild_id', 'wolfpack'),
+      .eq('guild_id', GUILD_TAG),
     marksByChar(),
     selfTickRows(),
   ]);
@@ -338,7 +339,7 @@ export default async function PopFlagsPage(
   const [sightRows, lootRows] = await Promise.all([
     nameOf.size
       ? selectAll<SightRow>((from, to) =>
-        sb.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES }).range(from, to))
+        sb.rpc('pop_who_sightings', { p_guild_id: GUILD_TAG, p_names: [...nameOf.keys()], p_zones: WHO_ZONE_NAMES }).range(from, to))
       : Promise.resolve([] as SightRow[]),
     nameOf.size ? loadLootSightings(sb) : Promise.resolve([] as LootRow[]),
   ]);

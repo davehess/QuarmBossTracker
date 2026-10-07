@@ -11,6 +11,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -95,7 +96,7 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   const { data: ov } = await admin
     .from('who_overrides')
     .select('character, class, is_zek, set_by_name, updated_at')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const overrides = new Map<string, OverrideRow>();
   for (const o of (ov ?? []) as OverrideRow[]) {
     overrides.set(o.character.toLowerCase(), o);

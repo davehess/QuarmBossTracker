@@ -21,6 +21,7 @@ import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -116,7 +117,7 @@ async function loadAll(w: ResolvedWindow): Promise<{
     const { data: rosterRows } = await sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack');
+      .eq('guild_id', GUILD_TAG);
     const roster = new Set<string>(
       (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
     );

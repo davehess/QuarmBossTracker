@@ -16,6 +16,7 @@ import { viewerMayMarkQuit } from '@/lib/funLdAuth';
 import { countEvents, ldView, parseLds, raidStreaks, type LdRow } from '@/lib/funLd';
 import { loadRaidDatesAndAttendance } from '@/lib/funLdRaids';
 import QuitButton from './QuitButton';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -236,7 +237,7 @@ SECTIONS.push(async (sb, counters) => {
     const { data: family, error: famErr } = await sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .or('main_name.eq.Naggato,name.eq.Naggato');
     if (famErr) throw famErr;
     const familyNames = (family ?? []).map((r: { name: string }) => r.name);
@@ -779,7 +780,7 @@ SECTIONS.push(async (sb, counters) => {
         .eq('event_type', 'deathroll')
         .order('event_ts', { ascending: false })
         .limit(1000),
-      sb.from('characters').select('name').eq('guild_id', 'wolfpack').eq('exclude_from_stats', true),
+      sb.from('characters').select('name').eq('guild_id', GUILD_TAG).eq('exclude_from_stats', true),
     ]);
     const excluded = new Set((optedOut ?? []).map((r: { name: string | null }) => (r.name || '').toLowerCase()));
     const games = ((data ?? []) as DeathrollRow[]).filter(g =>

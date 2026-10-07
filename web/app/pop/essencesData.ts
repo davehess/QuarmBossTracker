@@ -3,6 +3,7 @@
 
 import { supabaseAdmin } from '@/lib/supabase';
 import { ESSENCES, BID_ITEM_NAMES, buildEssenceQueue, type Award, type Looted } from '@/lib/essencesQueue';
+import { GUILD_TAG } from '@/lib/guild';
 
 // The live raid: a roster row captured in the last 15 minutes (the /raid page's window).
 const ROSTER_FRESH_MS = 15 * 60 * 1000;
@@ -13,9 +14,9 @@ export async function loadEssenceQueue() {
   const since = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
   const [{ data: loot }, { data: looted }, { data: roster }] = await Promise.all([
     admin.from('opendkp_loot').select('id, raid_id, character_name, item_name, dkp').in('item_name', itemNames).limit(1000),
-    admin.from('looted_items').select('looter_character, item_name, looted_at').eq('guild_id', 'wolfpack')
+    admin.from('looted_items').select('looter_character, item_name, looted_at').eq('guild_id', GUILD_TAG)
       .in('item_name', ESSENCES.map(e => e.name)).limit(1000),
-    admin.from('raid_roster').select('name').eq('guild_id', 'wolfpack').gte('captured_at', since).limit(200),
+    admin.from('raid_roster').select('name').eq('guild_id', GUILD_TAG).gte('captured_at', since).limit(200),
   ]);
   const lootRows = (loot ?? []) as { id: number; raid_id: number; character_name: string; item_name: string; dkp: number | null }[];
   const raidIds = [...new Set(lootRows.map(r => r.raid_id))];
