@@ -19,6 +19,7 @@ import { GUILD_TAG } from '@/lib/guild';
 import {
   buildPositions, POSITION_FRESH_S, ZONE_LIVE_MS, type RosterPosRow,
 } from '@/lib/spectator';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 

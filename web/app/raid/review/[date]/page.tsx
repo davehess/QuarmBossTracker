@@ -46,6 +46,7 @@ import { ClassificationChip } from '@/components/KillCard';
 import NightSummary, { type NightStats } from '@/components/NightSummary';
 import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { FightTimeline, type TLEvent } from '@/components/FightTimeline';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -113,7 +114,7 @@ async function load(date: string) {
         .order('started_at', { ascending: true }),
       sb.from('characters')
         .select('name, class, exclude_from_stats')
-        .eq('guild_id', 'wolfpack'),
+        .eq('guild_id', GUILD_TAG),
       sb.from('eqemu_zone').select('short_name, long_name'),
       // The day-wide streams (slows, mechanics fires) are NOT read here: a raid
       // night is 8k-33k buff_casts rows and 1.3k-10.9k fires, PostgREST hands
@@ -133,7 +134,7 @@ async function load(date: string) {
         .order('raid_id'),
       sb.from('raid_nights')
         .select('zone_main')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .eq('date', date)
         .limit(1)
         .maybeSingle(),

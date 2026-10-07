@@ -18,6 +18,7 @@ import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
 import GuideRoute from './GuideRoute';
 import { loadRoute } from './routeData';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Checklist — Wolf Pack' };
@@ -97,7 +98,7 @@ export default async function PopGuidePage(
   const [{ data: tickRows }, { data: flagRows }, { data: cardRows }] = await Promise.all([
     names.length === 0 ? Promise.resolve({ data: [] }) :
       admin.from('pop_guide_ticks').select('character_name, item_key')
-        .eq('guild_id', 'wolfpack').in('character_name', names),
+        .eq('guild_id', GUILD_TAG).in('character_name', names),
     // pop_flags.character is free text, so match names case-blind (same as /pop). The real flags only:
     // 'unmapped' and 'hail' rows are not flags and there are thousands of them (about 16,000 unmapped
     // across the roster's households on 2026-10-04; three households hold over 1,000 rows each, max 2,291,

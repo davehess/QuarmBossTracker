@@ -42,6 +42,7 @@ import RaidNightsStrips, { type StripNight } from '@/components/RaidNightsStrips
 import RaidLayoutPicker from '@/components/RaidLayoutPicker';
 import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Two layouts, member's choice (the guild lead, 2026-09-04, after the beta side-by-side:
 // "I like blocks and strips, let's keep both as options, default to strips").
@@ -58,7 +59,7 @@ async function loadFullRaid(): Promise<number> {
   const { data } = await supabaseAdmin()
     .from('raid_targets')
     .select('target')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('raid_size', '60-man');
   const sum = ((data ?? []) as { target: number | null }[]).reduce((s, r) => s + (Number(r.target) || 0), 0);
   return sum > 0 ? sum : DEFAULT_FULL_RAID;

@@ -119,9 +119,11 @@ describe('/admin/extra-spells page', () => {
     expect(page).toMatch(/export const metadata = \{ title: '\[beta\] Extra PoP spells' \};/);
   });
 
-  it('reads the RPC for the wolfpack guild through the service client', () => {
+  it('reads the RPC for the guild through the service client', () => {
     expect(page).toMatch(/supabaseAdmin\(\)/);
-    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: 'wolfpack' \}\)/);
+    // GUILD_TAG (web/lib/guild.ts, defaults to 'wolfpack'); the bare literal is still accepted so this holds on
+    // a branch where the admin directory has not been swept yet.
+    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: (?:GUILD_TAG|'wolfpack') \}\)/);
   });
 
   it('links character names to /character/<name>, holders and needers', () => {

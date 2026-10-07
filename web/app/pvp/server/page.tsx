@@ -18,6 +18,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import VengeanceList from './VengeanceList';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,7 +59,7 @@ async function loadServerLeaderboard() {
   const { data, error } = await sb
     .from('pvp_kills')
     .select('killer, killer_guild, victim, victim_guild, via_pet, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('killed_at', { ascending: false })
     .limit(20000);
   if (error) return { rows: [], vengeance: [] as VengeanceRow[], totals: { kills: 0, wpKills: 0, wpDeaths: 0 }, error: error.message };
